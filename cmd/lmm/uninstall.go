@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+
+	"lmm/internal/core"
 
 	"github.com/spf13/cobra"
 )
@@ -65,24 +68,32 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Uninstalling mod %s from %s (profile: %s)...\n", modID, game.Name, profileName)
 	}
 
-	// Get installed mods to find the one to remove
-	mods, err := service.GetInstalledMods(gameID, profileName)
+	// Get the installed mod details
+	installedMod, err := service.GetInstalledMod(uninstallSource, modID, gameID, profileName)
 	if err != nil {
-		return fmt.Errorf("failed to get installed mods: %w", err)
+		return fmt.Errorf("mod %s not found in profile %s", modID, profileName)
 	}
 
-	var found bool
-	var modName string
-	for _, mod := range mods {
-		if mod.ID == modID && mod.SourceID == uninstallSource {
-			found = true
-			modName = mod.Name
-			break
+	ctx := context.Background()
+
+	// Undeploy files from game directory
+	linker := service.GetLinker(game.LinkMethod)
+	installer := core.NewInstaller(service.Cache(), linker)
+
+	if err := installer.Uninstall(ctx, game, &installedMod.Mod); err != nil {
+		// Warn but continue - files may have been manually removed
+		if verbose {
+			fmt.Printf("  Warning: failed to undeploy some files: %v\n", err)
 		}
 	}
 
-	if !found {
-		return fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+	// Clean up cache unless --keep-cache is set
+	if !uninstallKeep {
+		if err := service.Cache().Delete(gameID, uninstallSource, modID, installedMod.Version); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: failed to clean cache: %v\n", err)
+			}
+		}
 	}
 
 	// Remove from database
@@ -90,13 +101,10 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to remove mod record: %w", err)
 	}
 
-	fmt.Printf("✓ Uninstalled: %s\n", modName)
+	fmt.Printf("✓ Uninstalled: %s\n", installedMod.Name)
 
-	// Note about cache
 	if uninstallKeep {
 		fmt.Println("  Cache files preserved")
-	} else {
-		fmt.Println("  Note: Cache cleanup not yet implemented")
 	}
 
 	return nil
