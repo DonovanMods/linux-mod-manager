@@ -5,11 +5,29 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"lmm/internal/domain"
 
 	"gopkg.in/yaml.v3"
 )
+
+// expandPath expands ~ to the user's home directory
+func expandPath(path string) string {
+	if path == "" {
+		return path
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	} else if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	}
+	return path
+}
 
 // GameConfig is the YAML representation of a game
 type GameConfig struct {
@@ -46,8 +64,8 @@ func LoadGames(configDir string) (map[string]*domain.Game, error) {
 		games[id] = &domain.Game{
 			ID:          id,
 			Name:        cfg.Name,
-			InstallPath: cfg.InstallPath,
-			ModPath:     cfg.ModPath,
+			InstallPath: expandPath(cfg.InstallPath),
+			ModPath:     expandPath(cfg.ModPath),
 			SourceIDs:   cfg.Sources,
 			LinkMethod:  domain.ParseLinkMethod(cfg.LinkMethod),
 		}

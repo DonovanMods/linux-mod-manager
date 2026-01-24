@@ -143,3 +143,33 @@ func TestSaveProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, profile.Name, loaded.Name)
 }
+
+func TestLoadGames_ExpandsTilde(t *testing.T) {
+	dir := t.TempDir()
+	gamesPath := filepath.Join(dir, "games.yaml")
+
+	content := `
+games:
+  test-game:
+    name: Test Game
+    install_path: ~/games/test
+    mod_path: ~/games/test/mods
+    sources:
+      nexusmods: testgame
+`
+	err := os.WriteFile(gamesPath, []byte(content), 0644)
+	require.NoError(t, err)
+
+	games, err := config.LoadGames(dir)
+	require.NoError(t, err)
+	require.Len(t, games, 1)
+
+	game := games["test-game"]
+	home, _ := os.UserHomeDir()
+
+	// Paths should be expanded, not contain literal ~
+	assert.NotContains(t, game.InstallPath, "~")
+	assert.NotContains(t, game.ModPath, "~")
+	assert.Equal(t, filepath.Join(home, "games/test"), game.InstallPath)
+	assert.Equal(t, filepath.Join(home, "games/test/mods"), game.ModPath)
+}
