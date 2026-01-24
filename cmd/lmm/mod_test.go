@@ -105,3 +105,85 @@ func TestModSetUpdateCmd_MultiplePolicies(t *testing.T) {
 	modSetAuto = false
 	modSetPin = false
 }
+
+func TestModEnableCmd_Structure(t *testing.T) {
+	assert.Equal(t, "enable <mod-id>", modEnableCmd.Use)
+	assert.NotEmpty(t, modEnableCmd.Short)
+}
+
+func TestModDisableCmd_Structure(t *testing.T) {
+	assert.Equal(t, "disable <mod-id>", modDisableCmd.Use)
+	assert.NotEmpty(t, modDisableCmd.Short)
+}
+
+func TestModEnableCmd_NoGame(t *testing.T) {
+	gameID = ""
+
+	cmd := &cobra.Command{Use: "test"}
+	modCmdCopy := &cobra.Command{Use: "mod"}
+	modCmdCopy.AddCommand(modEnableCmd)
+	cmd.AddCommand(modCmdCopy)
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"mod", "enable", "12345"})
+
+	err := cmd.Execute()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no game specified")
+}
+
+func TestModDisableCmd_NoGame(t *testing.T) {
+	gameID = ""
+
+	cmd := &cobra.Command{Use: "test"}
+	modCmdCopy := &cobra.Command{Use: "mod"}
+	modCmdCopy.AddCommand(modDisableCmd)
+	cmd.AddCommand(modCmdCopy)
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"mod", "disable", "12345"})
+
+	err := cmd.Execute()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no game specified")
+}
+
+func TestModEnableCmd_NoModID(t *testing.T) {
+	gameID = "test-game"
+
+	cmd := &cobra.Command{Use: "test"}
+	modCmdCopy := &cobra.Command{Use: "mod"}
+	modCmdCopy.AddCommand(modEnableCmd)
+	cmd.AddCommand(modCmdCopy)
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"mod", "enable"})
+
+	err := cmd.Execute()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "accepts 1 arg")
+}
+
+func TestModDisableCmd_NoModID(t *testing.T) {
+	gameID = "test-game"
+
+	cmd := &cobra.Command{Use: "test"}
+	modCmdCopy := &cobra.Command{Use: "mod"}
+	modCmdCopy.AddCommand(modDisableCmd)
+	cmd.AddCommand(modCmdCopy)
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"mod", "disable"})
+
+	err := cmd.Execute()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "accepts 1 arg")
+}

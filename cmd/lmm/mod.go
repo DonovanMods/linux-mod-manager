@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
+	"lmm/internal/core"
 	"lmm/internal/domain"
 
 	"github.com/spf13/cobra"
@@ -40,6 +42,36 @@ Examples:
 	RunE: runModSetUpdate,
 }
 
+var modEnableCmd = &cobra.Command{
+	Use:   "enable <mod-id>",
+	Short: "Enable a disabled mod",
+	Long: `Enable a mod that was previously disabled.
+
+This redeploys the mod files from the cache to the game directory.
+The mod must already be installed and in the cache.
+
+Examples:
+  lmm mod enable 12345 --game skyrim-se
+  lmm mod enable 12345 --game skyrim-se --profile survival`,
+	Args: cobra.ExactArgs(1),
+	RunE: runModEnable,
+}
+
+var modDisableCmd = &cobra.Command{
+	Use:   "disable <mod-id>",
+	Short: "Disable a mod without uninstalling",
+	Long: `Disable a mod by removing its files from the game directory.
+
+The mod remains installed and cached, so it can be re-enabled later
+without downloading again.
+
+Examples:
+  lmm mod disable 12345 --game skyrim-se
+  lmm mod disable 12345 --game skyrim-se --profile survival`,
+	Args: cobra.ExactArgs(1),
+	RunE: runModDisable,
+}
+
 func init() {
 	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "nexusmods", "mod source")
 	modCmd.PersistentFlags().StringVarP(&modProfile, "profile", "p", "", "profile (default: active profile)")
@@ -49,6 +81,8 @@ func init() {
 	modSetUpdateCmd.Flags().BoolVar(&modSetPin, "pin", false, "pin to current version")
 
 	modCmd.AddCommand(modSetUpdateCmd)
+	modCmd.AddCommand(modEnableCmd)
+	modCmd.AddCommand(modDisableCmd)
 	rootCmd.AddCommand(modCmd)
 }
 
@@ -121,5 +155,121 @@ func runModSetUpdate(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
+	return nil
+}
+
+func runModEnable(cmd *cobra.Command, args []string) error {
+	if err := requireGame(cmd); err != nil {
+		return err
+	}
+
+	modID := args[0]
+
+	service, err := initService()
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer service.Close()
+
+	// Verify game exists
+	game, err := service.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	profileName := modProfile
+	if profileName == "" {
+		profileName = "default"
+	}
+
+	// Get the mod to verify it exists
+	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("mod not found: %s", modID)
+	}
+
+	if mod.Enabled {
+		fmt.Printf("%s is already enabled.\n", mod.Name)
+		return nil
+	}
+
+	// Check if mod is in cache
+	if !service.Cache().Exists(gameID, modSource, modID, mod.Version) {
+		return fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
+	}
+
+	ctx := context.Background()
+
+	// Deploy mod files from cache
+	linker := service.GetLinker(game.LinkMethod)
+	installer := core.NewInstaller(service.Cache(), linker)
+
+	if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
+		return fmt.Errorf("failed to deploy mod: %w", err)
+	}
+
+	// Update enabled flag in database
+	if err := service.DB().SetModEnabled(modSource, modID, gameID, profileName, true); err != nil {
+		return fmt.Errorf("failed to update mod status: %w", err)
+	}
+
+	fmt.Printf("✓ Enabled: %s\n", mod.Name)
+	return nil
+}
+
+func runModDisable(cmd *cobra.Command, args []string) error {
+	if err := requireGame(cmd); err != nil {
+		return err
+	}
+
+	modID := args[0]
+
+	service, err := initService()
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer service.Close()
+
+	// Verify game exists
+	game, err := service.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	profileName := modProfile
+	if profileName == "" {
+		profileName = "default"
+	}
+
+	// Get the mod to verify it exists
+	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("mod not found: %s", modID)
+	}
+
+	if !mod.Enabled {
+		fmt.Printf("%s is already disabled.\n", mod.Name)
+		return nil
+	}
+
+	ctx := context.Background()
+
+	// Undeploy mod files from game directory
+	linker := service.GetLinker(game.LinkMethod)
+	installer := core.NewInstaller(service.Cache(), linker)
+
+	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
+		// Warn but continue - files may have been manually removed
+		if verbose {
+			fmt.Printf("  Warning: failed to undeploy some files: %v\n", err)
+		}
+	}
+
+	// Update enabled flag in database
+	if err := service.DB().SetModEnabled(modSource, modID, gameID, profileName, false); err != nil {
+		return fmt.Errorf("failed to update mod status: %w", err)
+	}
+
+	fmt.Printf("✓ Disabled: %s (files removed from game, kept in cache)\n", mod.Name)
 	return nil
 }
