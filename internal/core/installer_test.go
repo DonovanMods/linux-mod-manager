@@ -10,6 +10,7 @@ import (
 	"lmm/internal/domain"
 	"lmm/internal/linker"
 	"lmm/internal/storage/cache"
+	"lmm/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,4 +142,163 @@ func TestInstaller_IsInstalled(t *testing.T) {
 	installed, err = installer.IsInstalled(game, mod)
 	require.NoError(t, err)
 	assert.True(t, installed)
+}
+
+func TestInstaller_Install_VerifyFilesInModPath(t *testing.T) {
+	// This test verifies that files are actually deployed to game.ModPath
+	cacheDir := t.TempDir()
+	modPath := t.TempDir() // This is where mods should be deployed
+
+	// Create cache with multiple files including nested directories
+	modCache := cache.New(cacheDir)
+	testFiles := map[string][]byte{
+		"plugin.esp":             []byte("plugin data"),
+		"textures/texture1.dds":  []byte("texture data 1"),
+		"textures/texture2.dds":  []byte("texture data 2"),
+		"meshes/model.nif":       []byte("mesh data"),
+		"scripts/script.pex":     []byte("script data"),
+	}
+
+	for path, content := range testFiles {
+		err := modCache.Store("testgame", "nexusmods", "999", "2.0.0", path, content)
+		require.NoError(t, err)
+	}
+
+	game := &domain.Game{
+		ID:         "testgame",
+		Name:       "Test Game",
+		ModPath:    modPath,
+		LinkMethod: domain.LinkSymlink,
+	}
+
+	mod := &domain.Mod{
+		ID:       "999",
+		SourceID: "nexusmods",
+		Name:     "Test Mod",
+		Version:  "2.0.0",
+		GameID:   "testgame",
+	}
+
+	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink))
+
+	// Install the mod
+	err := installer.Install(context.Background(), game, mod, "default")
+	require.NoError(t, err)
+
+	// Verify ALL files exist in mod_path
+	for path := range testFiles {
+		fullPath := filepath.Join(modPath, path)
+		info, err := os.Lstat(fullPath)
+		require.NoError(t, err, "File should exist: %s", path)
+		assert.True(t, info.Mode()&os.ModeSymlink != 0, "File should be a symlink: %s", path)
+
+		// Verify symlink points to correct source
+		target, err := os.Readlink(fullPath)
+		require.NoError(t, err)
+		expectedSource := modCache.GetFilePath("testgame", "nexusmods", "999", "2.0.0", path)
+		assert.Equal(t, expectedSource, target, "Symlink should point to cache")
+	}
+
+	// Verify we can read the content through the symlink
+	content, err := os.ReadFile(filepath.Join(modPath, "plugin.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("plugin data"), content)
+}
+
+func TestInstaller_Install_WithExpandedTildePath(t *testing.T) {
+	// This test verifies installation works with real absolute paths
+	// (simulating what happens after tilde expansion)
+	cacheDir := t.TempDir()
+	modPath := t.TempDir()
+
+	modCache := cache.New(cacheDir)
+	err := modCache.Store("game", "src", "1", "1.0", "mod.file", []byte("content"))
+	require.NoError(t, err)
+
+	// Use absolute path (as would happen after tilde expansion)
+	game := &domain.Game{
+		ID:         "game",
+		Name:       "Game",
+		ModPath:    modPath, // absolute path
+		LinkMethod: domain.LinkSymlink,
+	}
+
+	mod := &domain.Mod{
+		ID:       "1",
+		SourceID: "src",
+		Version:  "1.0",
+		GameID:   "game",
+	}
+
+	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink))
+	err = installer.Install(context.Background(), game, mod, "default")
+	require.NoError(t, err)
+
+	// Verify file exists at absolute path
+	deployedPath := filepath.Join(modPath, "mod.file")
+	_, err = os.Lstat(deployedPath)
+	require.NoError(t, err, "File should be deployed to mod_path")
+}
+
+func TestInstaller_Integration_GamesYAMLToDeployment(t *testing.T) {
+	// Integration test: Load game from YAML with tilde path, deploy mod, verify files
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+	modPath := t.TempDir() // This simulates expanded ~/games/test/mods
+
+	// Write games.yaml with the mod_path pointing to our temp dir
+	// (In real use, this would have ~ which gets expanded)
+	gamesYAML := `
+games:
+  testgame:
+    name: Test Game
+    install_path: /tmp/game
+    mod_path: ` + modPath + `
+    sources:
+      nexusmods: testgame
+    link_method: symlink
+`
+	err := os.WriteFile(filepath.Join(configDir, "games.yaml"), []byte(gamesYAML), 0644)
+	require.NoError(t, err)
+
+	// Load games from YAML (this is what the service does)
+	games, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, games, "testgame")
+
+	game := games["testgame"]
+	assert.Equal(t, modPath, game.ModPath, "ModPath should match")
+
+	// Create cache with mod files
+	modCache := cache.New(cacheDir)
+	err = modCache.Store("testgame", "nexusmods", "123", "1.0", "Data/plugin.esp", []byte("plugin"))
+	require.NoError(t, err)
+	err = modCache.Store("testgame", "nexusmods", "123", "1.0", "Data/textures/tex.dds", []byte("texture"))
+	require.NoError(t, err)
+
+	mod := &domain.Mod{
+		ID:       "123",
+		SourceID: "nexusmods",
+		Version:  "1.0",
+		GameID:   "testgame",
+	}
+
+	// Deploy using the game loaded from YAML
+	installer := core.NewInstaller(modCache, linker.New(game.LinkMethod))
+	err = installer.Install(context.Background(), game, mod, "default")
+	require.NoError(t, err)
+
+	// Verify files are deployed to the mod_path from YAML
+	pluginPath := filepath.Join(modPath, "Data", "plugin.esp")
+	_, err = os.Lstat(pluginPath)
+	require.NoError(t, err, "plugin.esp should be deployed to mod_path")
+
+	texturePath := filepath.Join(modPath, "Data", "textures", "tex.dds")
+	_, err = os.Lstat(texturePath)
+	require.NoError(t, err, "texture should be deployed to mod_path")
+
+	// Verify content is accessible
+	content, err := os.ReadFile(pluginPath)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("plugin"), content)
 }
