@@ -15,6 +15,7 @@ import (
 type Config struct {
 	DefaultLinkMethod domain.LinkMethod `yaml:"-"`
 	LinkMethodStr     string            `yaml:"default_link_method"`
+	DefaultGame       string            `yaml:"default_game"`
 	Keybindings       string            `yaml:"keybindings"`
 	CachePath         string            `yaml:"cache_path"`
 }

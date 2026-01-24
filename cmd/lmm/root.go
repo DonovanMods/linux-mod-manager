@@ -7,6 +7,7 @@ import (
 
 	"lmm/internal/core"
 	"lmm/internal/source/nexusmods"
+	"lmm/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -114,10 +115,21 @@ func getServiceConfig() core.ServiceConfig {
 	return cfg
 }
 
-// requireGame ensures a game is specified
+// requireGame ensures a game is specified, checking config for default if not provided
 func requireGame(cmd *cobra.Command) error {
-	if gameID == "" {
-		return fmt.Errorf("no game specified; use --game or -g flag")
+	if gameID != "" {
+		return nil
 	}
-	return nil
+
+	// Check config for default game
+	cfg, err := config.Load(getServiceConfig().ConfigDir)
+	if err == nil && cfg.DefaultGame != "" {
+		gameID = cfg.DefaultGame
+		if verbose {
+			fmt.Printf("Using default game: %s\n", gameID)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("no game specified; use --game or -g flag, or set a default with 'lmm game set-default <game-id>'")
 }

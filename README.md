@@ -42,6 +42,30 @@ lmm auth login
 export NEXUSMODS_API_KEY="your-api-key"
 ```
 
+### Set Default Game
+
+Set a default game to avoid specifying `--game` for every command:
+
+```bash
+# Set default game
+lmm game set-default skyrim-se
+
+# Now all game commands work without --game
+lmm search "skyui"
+lmm install "skyui"
+lmm list
+lmm update
+lmm uninstall 12345
+lmm mod set-update 12345 --auto
+lmm profile list
+
+# Show current default
+lmm game show-default
+
+# Clear the default
+lmm game clear-default
+```
+
 ### Basic Usage
 
 ```bash
@@ -93,7 +117,7 @@ Configuration files are stored in `~/.config/lmm/`:
 
 ```yaml
 default_link_method: symlink # symlink, hardlink, or copy
-default_source: nexusmods
+default_game: skyrim-se # optional, set via 'lmm game set-default'
 ```
 
 ### Games (`games.yaml`)
@@ -112,12 +136,12 @@ games:
 
 ### Global Flags
 
-| Flag        | Short | Description             |
-| ----------- | ----- | ----------------------- |
-| `--game`    | `-g`  | Game ID to operate on   |
-| `--verbose` | `-v`  | Enable verbose output   |
-| `--config`  |       | Custom config directory |
-| `--data`    |       | Custom data directory   |
+| Flag        | Short | Description                                              |
+| ----------- | ----- | -------------------------------------------------------- |
+| `--game`    | `-g`  | Game ID (optional if default set via `game set-default`) |
+| `--verbose` | `-v`  | Enable verbose output                                    |
+| `--config`  |       | Custom config directory                                  |
+| `--data`    |       | Custom data directory                                    |
 
 ### Commands
 
@@ -137,6 +161,9 @@ games:
 | `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod      |
 | `lmm mod set-update <mod-id> --notify` | Notify only (default)            |
 | `lmm mod set-update <mod-id> --pin`    | Pin mod to current version       |
+| `lmm game set-default <game-id>`       | Set the default game             |
+| `lmm game show-default`                | Show current default game        |
+| `lmm game clear-default`               | Clear the default game setting   |
 | `lmm auth login`                       | Authenticate with NexusMods      |
 | `lmm auth logout`                      | Remove stored credentials        |
 | `lmm auth status`                      | Show authentication status       |
@@ -180,6 +207,7 @@ internal/
 
 - [x] NexusMods authentication and downloads
 - [x] Update management with policies and rollback
+- [x] Default game setting (avoid --game on every command)
 - [ ] Interactive TUI (Bubble Tea) - see BACKLOG.md
 - [ ] Additional mod sources (CurseForge, ESOUI)
 - [ ] Conflict detection and resolution
