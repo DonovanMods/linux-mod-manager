@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"lmm/internal/domain"
@@ -191,4 +192,52 @@ func TestClient_ReturnsAuthRequired_On401(t *testing.T) {
 	_, err := client.GetMod(context.Background(), "starrupture", 12345)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrAuthRequired)
+}
+
+func TestClient_SearchMods_CombinesMultipleEndpoints(t *testing.T) {
+	latestAdded := []ModData{
+		{ModID: 1, Name: "Ore Mod", Version: "1.0.0"},
+		{ModID: 2, Name: "Stone Mod", Version: "1.0.0"},
+	}
+	latestUpdated := []ModData{
+		{ModID: 3, Name: "OreStack", Version: "2.0.0"},
+		{ModID: 1, Name: "Ore Mod", Version: "1.0.0"}, // Duplicate
+	}
+	trending := []ModData{
+		{ModID: 4, Name: "Better Ores", Version: "1.0.0"},
+		{ModID: 5, Name: "UI Mod", Version: "1.0.0"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "latest_added"):
+			json.NewEncoder(w).Encode(latestAdded)
+		case strings.Contains(r.URL.Path, "latest_updated"):
+			json.NewEncoder(w).Encode(latestUpdated)
+		case strings.Contains(r.URL.Path, "trending"):
+			json.NewEncoder(w).Encode(trending)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.baseURL = server.URL
+
+	// Search for "ore" - should find mods from all endpoints (deduplicated)
+	mods, err := client.SearchMods(context.Background(), "starrupture", "ore", 10, 0)
+	require.NoError(t, err)
+
+	// Should find: "Ore Mod" (1), "OreStack" (3), "Better Ores" (4)
+	// Mod 1 should only appear once (deduplicated)
+	assert.Len(t, mods, 3)
+
+	// Verify all expected mods are present
+	names := make([]string, len(mods))
+	for i, m := range mods {
+		names[i] = m.Name
+	}
+	assert.Contains(t, names, "Ore Mod")
+	assert.Contains(t, names, "OreStack")
+	assert.Contains(t, names, "Better Ores")
 }

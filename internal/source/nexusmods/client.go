@@ -162,20 +162,46 @@ func (c *Client) GetTrending(ctx context.Context, gameDomain string) ([]ModData,
 	return mods, nil
 }
 
-// SearchMods searches for mods by fetching latest mods and filtering client-side.
+// SearchMods searches for mods by fetching from multiple endpoints and filtering client-side.
 // Note: NexusMods REST API v1 doesn't have a dedicated search endpoint,
-// so we fetch recent mods and filter by name.
+// so we fetch mods from latest_added, latest_updated, and trending endpoints,
+// then deduplicate and filter by name.
 func (c *Client) SearchMods(ctx context.Context, gameDomain, query string, limit, offset int) ([]ModData, error) {
+	// Fetch from multiple endpoints to get a broader set of mods
+	var allMods []ModData
+	seen := make(map[int]bool)
+
+	// Helper to add mods while deduplicating
+	addMods := func(mods []ModData) {
+		for _, mod := range mods {
+			if !seen[mod.ModID] {
+				seen[mod.ModID] = true
+				allMods = append(allMods, mod)
+			}
+		}
+	}
+
 	// Fetch latest added mods
-	mods, err := c.GetLatestAdded(ctx, gameDomain)
-	if err != nil {
-		return nil, fmt.Errorf("fetching mods for search: %w", err)
+	if latestAdded, err := c.GetLatestAdded(ctx, gameDomain); err == nil {
+		addMods(latestAdded)
+	} else {
+		return nil, fmt.Errorf("fetching latest added mods: %w", err)
+	}
+
+	// Fetch latest updated mods
+	if latestUpdated, err := c.GetLatestUpdated(ctx, gameDomain); err == nil {
+		addMods(latestUpdated)
+	}
+
+	// Fetch trending mods
+	if trending, err := c.GetTrending(ctx, gameDomain); err == nil {
+		addMods(trending)
 	}
 
 	// Filter by query (case-insensitive substring match)
 	query = strings.ToLower(query)
 	var results []ModData
-	for _, mod := range mods {
+	for _, mod := range allMods {
 		if strings.Contains(strings.ToLower(mod.Name), query) {
 			results = append(results, mod)
 		}
