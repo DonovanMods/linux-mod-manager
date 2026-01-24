@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"lmm/internal/core"
+	"lmm/internal/domain"
+	"lmm/internal/tui/views"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -48,12 +50,22 @@ type App struct {
 
 // NewApp creates a new TUI application
 func NewApp(service *core.Service) App {
-	return App{
+	app := App{
 		service:     service,
 		currentView: ViewGameSelect,
 		width:       80,
 		height:      24,
 	}
+
+	// Initialize game select view
+	var games []*domain.Game
+	if service != nil {
+		games = service.ListGames()
+	}
+	gameSelect := views.NewGameSelect(games)
+	app.gameSelect = gameSelect
+
+	return app
 }
 
 // CurrentView returns the current view type
@@ -83,6 +95,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ErrorMsg:
 		a.err = msg.Err
+		return a, nil
+
+	case views.GameSelectedMsg:
+		// Game was selected, navigate to mod browser
+		a.currentView = ViewModBrowser
 		return a, nil
 	}
 
