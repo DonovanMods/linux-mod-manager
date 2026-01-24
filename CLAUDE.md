@@ -113,6 +113,24 @@ Core types in `internal/domain/` have no external dependencies:
 - `LinkMethod`: symlink (default), hardlink, copy
 - `UpdatePolicy`: notify (default), auto, pinned
 
+## Versioning
+
+**This project uses [Semantic Versioning](https://semver.org/).** After completing significant work, you MUST:
+
+1. **Bump the version** in `cmd/lmm/root.go` (the `version` variable)
+2. **Update CHANGELOG.md**:
+   - Move `[Unreleased]` items to a new version section with today's date
+   - Add the new version to the comparison links at the bottom
+3. **Commit the version bump** as a separate commit (e.g., `chore: bump version to X.Y.Z`)
+
+**Version increment rules:**
+
+- **MAJOR** (X.0.0): Breaking changes to CLI interface or config format
+- **MINOR** (0.X.0): New features, new commands, significant enhancements
+- **PATCH** (0.0.X): Bug fixes, minor improvements, documentation updates
+
+When in doubt, bump MINOR for new functionality, PATCH for fixes.
+
 ## Implementation Plan
 
 The detailed implementation plan is in [docs/plans/2026-01-22-lmm-implementation.md](docs/plans/2026-01-22-lmm-implementation.md). Follow TDD: write failing test → implement → verify pass.
