@@ -152,3 +152,105 @@ func TestNexusMods_GetDownloadURL_InvalidFileID(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid file ID")
 }
+
+func TestNexusMods_CheckUpdates_FindsUpdate(t *testing.T) {
+	// Mock server returns mod with newer version
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/games/skyrimspecialedition/mods/12345.json", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ModData{
+			ModID:   12345,
+			Name:    "Test Mod",
+			Version: "2.0.0", // Newer than installed 1.0.0
+			Author:  "TestAuthor",
+		})
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.baseURL = server.URL
+
+	installed := []domain.InstalledMod{
+		{
+			Mod: domain.Mod{
+				ID:       "12345",
+				SourceID: "nexusmods",
+				Name:     "Test Mod",
+				Version:  "1.0.0",
+				GameID:   "skyrimspecialedition",
+			},
+			ProfileName:  "default",
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+		},
+	}
+
+	updates, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	assert.Equal(t, "2.0.0", updates[0].NewVersion)
+	assert.Equal(t, "12345", updates[0].InstalledMod.ID)
+}
+
+func TestNexusMods_CheckUpdates_NoUpdateWhenSameVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ModData{
+			ModID:   12345,
+			Name:    "Test Mod",
+			Version: "1.0.0", // Same as installed
+		})
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.baseURL = server.URL
+
+	installed := []domain.InstalledMod{
+		{
+			Mod: domain.Mod{
+				ID:       "12345",
+				SourceID: "nexusmods",
+				Name:     "Test Mod",
+				Version:  "1.0.0",
+				GameID:   "skyrimspecialedition",
+			},
+		},
+	}
+
+	updates, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	assert.Empty(t, updates)
+}
+
+func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/v1/games/skyrimspecialedition/mods/111.json":
+			json.NewEncoder(w).Encode(ModData{ModID: 111, Version: "2.0.0"}) // Update available
+		case "/v1/games/skyrimspecialedition/mods/222.json":
+			json.NewEncoder(w).Encode(ModData{ModID: 222, Version: "1.0.0"}) // No update
+		case "/v1/games/skyrimspecialedition/mods/333.json":
+			json.NewEncoder(w).Encode(ModData{ModID: 333, Version: "3.5.0"}) // Update available
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.baseURL = server.URL
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "111", Version: "1.0.0", GameID: "skyrimspecialedition"}},
+		{Mod: domain.Mod{ID: "222", Version: "1.0.0", GameID: "skyrimspecialedition"}},
+		{Mod: domain.Mod{ID: "333", Version: "3.0.0", GameID: "skyrimspecialedition"}},
+	}
+
+	updates, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	assert.Len(t, updates, 2, "should find 2 mods with updates")
+	assert.Equal(t, 3, requestCount, "should make one API call per mod")
+}

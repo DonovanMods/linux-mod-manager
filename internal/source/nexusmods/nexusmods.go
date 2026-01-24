@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"lmm/internal/domain"
 	"lmm/internal/source"
@@ -160,10 +161,35 @@ func (n *NexusMods) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID 
 	return links[0].URI, nil
 }
 
-// CheckUpdates checks for available updates
+// CheckUpdates checks for available updates by comparing installed versions against NexusMods
 func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
-	// TODO: Implement update checking
-	return nil, nil
+	var updates []domain.Update
+
+	for _, inst := range installed {
+		select {
+		case <-ctx.Done():
+			return updates, ctx.Err()
+		default:
+		}
+
+		// Fetch current mod info from NexusMods
+		remoteMod, err := n.GetMod(ctx, inst.GameID, inst.ID)
+		if err != nil {
+			// Skip mods that can't be fetched (deleted, private, etc.)
+			continue
+		}
+
+		// Compare versions
+		if isNewerVersion(inst.Version, remoteMod.Version) {
+			updates = append(updates, domain.Update{
+				InstalledMod: inst,
+				NewVersion:   remoteMod.Version,
+				Changelog:    "", // Could fetch from mod files if needed
+			})
+		}
+	}
+
+	return updates, nil
 }
 
 func modDataToDomain(data ModData, gameID string) domain.Mod {
@@ -180,4 +206,71 @@ func modDataToDomain(data ModData, gameID string) domain.Mod {
 		Endorsements: int64(data.EndorsementCount),
 		UpdatedAt:    data.UpdatedTime,
 	}
+}
+
+// isNewerVersion returns true if newVersion is newer than currentVersion
+func isNewerVersion(currentVersion, newVersion string) bool {
+	return compareVersions(currentVersion, newVersion) < 0
+}
+
+// compareVersions compares two version strings
+// Returns: -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+func compareVersions(v1, v2 string) int {
+	parts1 := parseVersion(v1)
+	parts2 := parseVersion(v2)
+
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		var p1, p2 int
+		if i < len(parts1) {
+			p1 = parts1[i]
+		}
+		if i < len(parts2) {
+			p2 = parts2[i]
+		}
+
+		if p1 < p2 {
+			return -1
+		}
+		if p1 > p2 {
+			return 1
+		}
+	}
+
+	return 0
+}
+
+// parseVersion splits a version string into numeric parts
+func parseVersion(v string) []int {
+	// Remove common prefixes
+	v = strings.TrimPrefix(v, "v")
+	v = strings.TrimPrefix(v, "V")
+
+	parts := strings.Split(v, ".")
+	result := make([]int, 0, len(parts))
+
+	for _, part := range parts {
+		// Extract numeric portion (handle things like "1.0.0-beta")
+		numStr := ""
+		for _, c := range part {
+			if c >= '0' && c <= '9' {
+				numStr += string(c)
+			} else {
+				break
+			}
+		}
+
+		if numStr == "" {
+			result = append(result, 0)
+		} else {
+			n, _ := strconv.Atoi(numStr)
+			result = append(result, n)
+		}
+	}
+
+	return result
 }
