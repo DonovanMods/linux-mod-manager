@@ -45,3 +45,4 @@ debug
 # Coverage
 coverage.out
 coverage.html
+.envrc
