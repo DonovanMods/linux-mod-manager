@@ -80,10 +80,29 @@ func initService() (*core.Service, error) {
 		return nil, err
 	}
 
+	// Get NexusMods API key from environment or database
+	apiKey := getNexusModsAPIKey(svc)
+
 	// Register default mod sources
-	svc.RegisterSource(nexusmods.New(nil, ""))
+	svc.RegisterSource(nexusmods.New(nil, apiKey))
 
 	return svc, nil
+}
+
+// getNexusModsAPIKey retrieves the API key from environment or database
+func getNexusModsAPIKey(svc *core.Service) string {
+	// Check environment variable first
+	if key := os.Getenv("NEXUSMODS_API_KEY"); key != "" {
+		return key
+	}
+
+	// Fall back to stored token
+	token, err := svc.GetSourceToken("nexusmods")
+	if err != nil || token == nil {
+		return ""
+	}
+
+	return token.APIKey
 }
 
 // getServiceConfig returns the service configuration with defaults
