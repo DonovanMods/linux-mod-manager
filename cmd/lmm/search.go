@@ -86,16 +86,15 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Print results
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\tDOWNLOADS")
-	fmt.Fprintln(w, "--\t----\t------\t-------\t---------")
+	fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION")
+	fmt.Fprintln(w, "--\t----\t------\t-------")
 
 	for _, mod := range mods {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			mod.ID,
 			truncate(mod.Name, 40),
 			truncate(mod.Author, 20),
 			mod.Version,
-			mod.Downloads,
 		)
 	}
 	w.Flush()
