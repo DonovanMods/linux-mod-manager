@@ -110,6 +110,19 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("no mods found matching \"%s\"", query)
 		}
 
+		// Get installed mods to mark already-installed ones
+		profileName := installProfile
+		if profileName == "" {
+			profileName = "default"
+		}
+		installedMods, _ := service.GetInstalledMods(gameID, profileName)
+		installedIDs := make(map[string]bool)
+		for _, im := range installedMods {
+			if im.SourceID == installSource {
+				installedIDs[im.ID] = true
+			}
+		}
+
 		// Select the mod
 		if len(mods) == 1 || installYes {
 			mod = &mods[0]
@@ -120,7 +133,11 @@ func runInstall(cmd *cobra.Command, args []string) error {
 					fmt.Printf("  ... and %d more\n", len(mods)-10)
 					break
 				}
-				fmt.Printf("  [%d] %s v%s by %s (ID: %s)\n", i+1, m.Name, m.Version, m.Author, m.ID)
+				installedMark := ""
+				if installedIDs[m.ID] {
+					installedMark = " [installed]"
+				}
+				fmt.Printf("  [%d] %s v%s by %s (ID: %s)%s\n", i+1, m.Name, m.Version, m.Author, m.ID, installedMark)
 			}
 
 			selection, err := promptSelection("Select mod", 1, len(mods))

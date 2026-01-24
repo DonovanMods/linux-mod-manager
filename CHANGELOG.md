@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-01-24
+
+### Added
+
+- **Install Command**: Search results now show `[installed]` marker for mods already in your profile
+
 ## [0.5.1] - 2026-01-24
 
 ### Changed
@@ -165,7 +171,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.3.0...v0.4.0
