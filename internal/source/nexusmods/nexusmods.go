@@ -37,6 +37,21 @@ func (n *NexusMods) AuthURL() string {
 	return oauthAuthorize
 }
 
+// SetAPIKey sets the API key for authentication
+func (n *NexusMods) SetAPIKey(key string) {
+	n.client.SetAPIKey(key)
+}
+
+// IsAuthenticated returns true if an API key is configured
+func (n *NexusMods) IsAuthenticated() bool {
+	return n.client.IsAuthenticated()
+}
+
+// ValidateAPIKey validates an API key with the NexusMods API
+func (n *NexusMods) ValidateAPIKey(ctx context.Context, key string) error {
+	return n.client.ValidateAPIKey(ctx, key)
+}
+
 // ExchangeToken exchanges an OAuth code for tokens
 func (n *NexusMods) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
 	// TODO: Implement OAuth token exchange

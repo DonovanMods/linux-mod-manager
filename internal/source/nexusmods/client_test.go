@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"lmm/internal/domain"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -101,4 +103,92 @@ func TestClient_SearchMods_FiltersByQuery(t *testing.T) {
 	mods, err := client.SearchMods(context.Background(), "starrupture", "orestack", 10, 0)
 	require.NoError(t, err)
 	assert.Len(t, mods, 2) // Should match "OreStack Mod" and "OreStack Enhancer"
+}
+
+func TestClient_SetAPIKey(t *testing.T) {
+	client := NewClient(nil, "")
+
+	assert.False(t, client.IsAuthenticated())
+
+	client.SetAPIKey("new-api-key")
+	assert.True(t, client.IsAuthenticated())
+	assert.Equal(t, "new-api-key", client.apiKey)
+}
+
+func TestClient_IsAuthenticated(t *testing.T) {
+	tests := []struct {
+		name     string
+		apiKey   string
+		expected bool
+	}{
+		{"empty key", "", false},
+		{"with key", "test-key", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := NewClient(nil, tt.apiKey)
+			assert.Equal(t, tt.expected, client.IsAuthenticated())
+		})
+	}
+}
+
+func TestClient_ValidateAPIKey_Success(t *testing.T) {
+	// Mock response for /v1/users/validate.json
+	mockResponse := map[string]interface{}{
+		"user_id":        12345,
+		"key":            "test-key",
+		"name":           "TestUser",
+		"is_premium":     false,
+		"is_supporter":   false,
+		"email":          "test@example.com",
+		"profile_url":    "https://www.nexusmods.com/users/12345",
+		"is_premium?":    false,
+		"is_supporter?":  false,
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/users/validate.json", r.URL.Path)
+		assert.Equal(t, "test-key", r.Header.Get("apikey"))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "")
+	client.baseURL = server.URL
+
+	err := client.ValidateAPIKey(context.Background(), "test-key")
+	require.NoError(t, err)
+}
+
+func TestClient_ValidateAPIKey_Invalid(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"message":"Invalid API Key"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "")
+	client.baseURL = server.URL
+
+	err := client.ValidateAPIKey(context.Background(), "invalid-key")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid API key")
+}
+
+func TestClient_ReturnsAuthRequired_On401(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"message":"Not authorized"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "bad-key")
+	client.baseURL = server.URL
+
+	_, err := client.GetMod(context.Background(), "starrupture", 12345)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrAuthRequired)
 }

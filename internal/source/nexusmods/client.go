@@ -3,10 +3,13 @@ package nexusmods
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+
+	"lmm/internal/domain"
 )
 
 const (
@@ -35,6 +38,46 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 	}
 }
 
+// SetAPIKey sets the API key for authentication
+func (c *Client) SetAPIKey(key string) {
+	c.apiKey = key
+}
+
+// IsAuthenticated returns true if an API key is configured
+func (c *Client) IsAuthenticated() bool {
+	return c.apiKey != ""
+}
+
+// ValidateAPIKey validates an API key by calling the NexusMods validate endpoint
+func (c *Client) ValidateAPIKey(ctx context.Context, key string) error {
+	url := c.baseURL + "/v1/users/validate.json"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("apikey", key)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return errors.New("invalid API key")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // doRequest performs an HTTP request with authentication
 func (c *Client) doRequest(ctx context.Context, method, path string, result interface{}) error {
 	url := c.baseURL + path
@@ -54,6 +97,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 		return fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("%w: NexusMods API key required", domain.ErrAuthRequired)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
