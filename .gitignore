@@ -20,6 +20,7 @@ vendor/
 # Build output
 /bin/
 /dist/
+/lmm
 
 # IDE and editor files
 .idea/
