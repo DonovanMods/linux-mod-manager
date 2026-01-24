@@ -1,0 +1,6 @@
+1. You cannot actually select a game from the TUI (it lists them, but they are not selectable)
+2. When trying to search, it says there's no nexusmods available
+```sh
+> ./lmm -g starrupture search OreStack
+Error: search failed: source not found: nexusmods
+```

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"lmm/internal/core"
+	"lmm/internal/source/nexusmods"
 	"lmm/internal/tui"
 
 	"github.com/spf13/cobra"
@@ -74,7 +75,15 @@ func initService() (*core.Service, error) {
 		return nil, fmt.Errorf("creating cache dir: %w", err)
 	}
 
-	return core.NewService(cfg)
+	svc, err := core.NewService(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Register default mod sources
+	svc.RegisterSource(nexusmods.New(nil, ""))
+
+	return svc, nil
 }
 
 // getServiceConfig returns the service configuration with defaults

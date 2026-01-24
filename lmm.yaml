@@ -1,0 +1,7 @@
+games:
+  starrupture:
+    name: "StarRupture"
+    install_path: "~/.steamapps/StarRupture"
+    mod_path: "~/.steamapps/StarRupture/StarRupture/Content/Paks"
+    source_ids:
+      nexusmods: "starrupture"
