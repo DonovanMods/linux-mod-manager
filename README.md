@@ -4,12 +4,12 @@ A terminal-based mod manager for Linux that provides a CLI interface for searchi
 
 ## Features
 
-- **NexusMods Integration**: Search, download, and install mods from NexusMods
+- **NexusMods Integration**: Search, download, install, and check updates from NexusMods
 - **Profile System**: Manage multiple mod configurations per game
 - **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
 - **Rollback Support**: Revert to previous mod versions when updates cause issues
 - **Flexible Deployment**: Symlink, hardlink, or copy mods to game directories
-- **Dependency Resolution**: Automatic handling of mod dependencies with cycle detection
+- **Dependency Detection**: Fetches mod dependencies from NexusMods (automatic installation coming soon)
 - **Pure Go**: No CGO required, easy cross-compilation
 
 ## Installation
@@ -208,6 +208,8 @@ internal/
 - [x] NexusMods authentication and downloads
 - [x] Update management with policies and rollback
 - [x] Default game setting (avoid --game on every command)
+- [x] Mod dependency detection from NexusMods
+- [ ] Automatic dependency installation
 - [ ] Interactive TUI (Bubble Tea) - see BACKLOG.md
 - [ ] Additional mod sources (CurseForge, ESOUI)
 - [ ] Conflict detection and resolution
