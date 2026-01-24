@@ -152,11 +152,11 @@ func TestInstaller_Install_VerifyFilesInModPath(t *testing.T) {
 	// Create cache with multiple files including nested directories
 	modCache := cache.New(cacheDir)
 	testFiles := map[string][]byte{
-		"plugin.esp":             []byte("plugin data"),
-		"textures/texture1.dds":  []byte("texture data 1"),
-		"textures/texture2.dds":  []byte("texture data 2"),
-		"meshes/model.nif":       []byte("mesh data"),
-		"scripts/script.pex":     []byte("script data"),
+		"plugin.esp":            []byte("plugin data"),
+		"textures/texture1.dds": []byte("texture data 1"),
+		"textures/texture2.dds": []byte("texture data 2"),
+		"meshes/model.nif":      []byte("mesh data"),
+		"scripts/script.pex":    []byte("script data"),
 	}
 
 	for path, content := range testFiles {

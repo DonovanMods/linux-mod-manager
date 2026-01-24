@@ -60,7 +60,13 @@ lint-fix:
 	@trunk fmt
 
 ## check: Run fmt, vet, and tests
-check: fmt vet test
+check: fmt lint vet test
+
+## update: Update dependencies
+update:
+	@go get -u ./...
+	@go mod tidy
+	@trunk upgrade
 
 ## clean: Remove build artifacts
 clean:
