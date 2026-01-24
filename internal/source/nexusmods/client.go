@@ -2,23 +2,24 @@ package nexusmods
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-
-	"github.com/hasura/go-graphql-client"
+	"strings"
 )
 
 const (
-	graphqlEndpoint = "https://api.nexusmods.com/v2/graphql"
-	oauthAuthorize  = "https://www.nexusmods.com/oauth/authorize"
-	oauthToken      = "https://www.nexusmods.com/oauth/token"
+	defaultBaseURL = "https://api.nexusmods.com"
+	oauthAuthorize = "https://www.nexusmods.com/oauth/authorize"
+	oauthToken     = "https://www.nexusmods.com/oauth/token"
 )
 
-// Client wraps the NexusMods GraphQL API
+// Client wraps the NexusMods REST API v1
 type Client struct {
-	gql        *graphql.Client
 	httpClient *http.Client
 	apiKey     string
+	baseURL    string
 }
 
 // NewClient creates a new NexusMods API client
@@ -27,92 +28,144 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 		httpClient = http.DefaultClient
 	}
 
-	// Create transport that adds API key header
-	transport := &apiKeyTransport{
-		base:   httpClient.Transport,
-		apiKey: apiKey,
-	}
-	authedClient := &http.Client{Transport: transport}
-
 	return &Client{
-		gql:        graphql.NewClient(graphqlEndpoint, authedClient),
 		httpClient: httpClient,
 		apiKey:     apiKey,
+		baseURL:    defaultBaseURL,
 	}
 }
 
-type apiKeyTransport struct {
-	base   http.RoundTripper
-	apiKey string
-}
+// doRequest performs an HTTP request with authentication
+func (c *Client) doRequest(ctx context.Context, method, path string, result interface{}) error {
+	url := c.baseURL + path
 
-func (t *apiKeyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.apiKey != "" {
-		req.Header.Set("apikey", t.apiKey)
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
 	}
-	base := t.base
-	if base == nil {
-		base = http.DefaultTransport
+
+	if c.apiKey != "" {
+		req.Header.Set("apikey", c.apiKey)
 	}
-	return base.RoundTrip(req)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return fmt.Errorf("decoding response: %w", err)
+	}
+
+	return nil
 }
 
 // GetMod fetches a mod by ID
-func (c *Client) GetMod(ctx context.Context, gameID string, modID int) (*ModData, error) {
-	var query struct {
-		Mod ModData `graphql:"mod(gameId: $gameId, modId: $modId)"`
+func (c *Client) GetMod(ctx context.Context, gameDomain string, modID int) (*ModData, error) {
+	path := fmt.Sprintf("/v1/games/%s/mods/%d.json", gameDomain, modID)
+
+	var mod ModData
+	if err := c.doRequest(ctx, http.MethodGet, path, &mod); err != nil {
+		return nil, fmt.Errorf("getting mod: %w", err)
 	}
 
-	variables := map[string]interface{}{
-		"gameId": graphql.String(gameID),
-		"modId":  graphql.Int(modID),
-	}
-
-	if err := c.gql.Query(ctx, &query, variables); err != nil {
-		return nil, fmt.Errorf("querying mod: %w", err)
-	}
-
-	return &query.Mod, nil
+	return &mod, nil
 }
 
-// SearchMods searches for mods
-func (c *Client) SearchMods(ctx context.Context, gameID, search string, limit, offset int) ([]ModData, error) {
-	var query struct {
-		Mods struct {
-			Nodes []ModData `graphql:"nodes"`
-		} `graphql:"mods(gameId: $gameId, filter: {name: $name}, first: $first, offset: $offset)"`
+// GetLatestAdded fetches the latest added mods for a game
+func (c *Client) GetLatestAdded(ctx context.Context, gameDomain string) ([]ModData, error) {
+	path := fmt.Sprintf("/v1/games/%s/mods/latest_added.json", gameDomain)
+
+	var mods []ModData
+	if err := c.doRequest(ctx, http.MethodGet, path, &mods); err != nil {
+		return nil, fmt.Errorf("getting latest added mods: %w", err)
 	}
 
-	variables := map[string]interface{}{
-		"gameId": graphql.String(gameID),
-		"name":   graphql.String(search),
-		"first":  graphql.Int(limit),
-		"offset": graphql.Int(offset),
+	return mods, nil
+}
+
+// GetLatestUpdated fetches the latest updated mods for a game
+func (c *Client) GetLatestUpdated(ctx context.Context, gameDomain string) ([]ModData, error) {
+	path := fmt.Sprintf("/v1/games/%s/mods/latest_updated.json", gameDomain)
+
+	var mods []ModData
+	if err := c.doRequest(ctx, http.MethodGet, path, &mods); err != nil {
+		return nil, fmt.Errorf("getting latest updated mods: %w", err)
 	}
 
-	if err := c.gql.Query(ctx, &query, variables); err != nil {
-		return nil, fmt.Errorf("searching mods: %w", err)
+	return mods, nil
+}
+
+// GetTrending fetches the trending mods for a game
+func (c *Client) GetTrending(ctx context.Context, gameDomain string) ([]ModData, error) {
+	path := fmt.Sprintf("/v1/games/%s/mods/trending.json", gameDomain)
+
+	var mods []ModData
+	if err := c.doRequest(ctx, http.MethodGet, path, &mods); err != nil {
+		return nil, fmt.Errorf("getting trending mods: %w", err)
 	}
 
-	return query.Mods.Nodes, nil
+	return mods, nil
+}
+
+// SearchMods searches for mods by fetching latest mods and filtering client-side.
+// Note: NexusMods REST API v1 doesn't have a dedicated search endpoint,
+// so we fetch recent mods and filter by name.
+func (c *Client) SearchMods(ctx context.Context, gameDomain, query string, limit, offset int) ([]ModData, error) {
+	// Fetch latest added mods
+	mods, err := c.GetLatestAdded(ctx, gameDomain)
+	if err != nil {
+		return nil, fmt.Errorf("fetching mods for search: %w", err)
+	}
+
+	// Filter by query (case-insensitive substring match)
+	query = strings.ToLower(query)
+	var results []ModData
+	for _, mod := range mods {
+		if strings.Contains(strings.ToLower(mod.Name), query) {
+			results = append(results, mod)
+		}
+	}
+
+	// Apply pagination
+	if offset >= len(results) {
+		return []ModData{}, nil
+	}
+	results = results[offset:]
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+
+	return results, nil
 }
 
 // GetModFiles fetches files for a mod
-func (c *Client) GetModFiles(ctx context.Context, gameID string, modID int) ([]FileData, error) {
-	var query struct {
-		ModFiles struct {
-			Nodes []FileData `graphql:"nodes"`
-		} `graphql:"modFiles(modId: $modId, gameId: $gameId)"`
+func (c *Client) GetModFiles(ctx context.Context, gameDomain string, modID int) (*ModFileList, error) {
+	path := fmt.Sprintf("/v1/games/%s/mods/%d/files.json", gameDomain, modID)
+
+	var files ModFileList
+	if err := c.doRequest(ctx, http.MethodGet, path, &files); err != nil {
+		return nil, fmt.Errorf("getting mod files: %w", err)
 	}
 
-	variables := map[string]interface{}{
-		"gameId": graphql.String(gameID),
-		"modId":  graphql.Int(modID),
+	return &files, nil
+}
+
+// GetDownloadLinks fetches download URLs for a mod file
+func (c *Client) GetDownloadLinks(ctx context.Context, gameDomain string, modID, fileID int) ([]DownloadLink, error) {
+	path := fmt.Sprintf("/v1/games/%s/mods/%d/files/%d/download_link.json", gameDomain, modID, fileID)
+
+	var links []DownloadLink
+	if err := c.doRequest(ctx, http.MethodGet, path, &links); err != nil {
+		return nil, fmt.Errorf("getting download links: %w", err)
 	}
 
-	if err := c.gql.Query(ctx, &query, variables); err != nil {
-		return nil, fmt.Errorf("querying mod files: %w", err)
-	}
-
-	return query.ModFiles.Nodes, nil
+	return links, nil
 }

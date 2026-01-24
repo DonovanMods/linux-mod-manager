@@ -108,9 +108,8 @@ func modDataToDomain(data ModData, gameID string) domain.Mod {
 		Summary:      data.Summary,
 		Description:  data.Description,
 		GameID:       gameID,
-		Category:     data.Category.Name,
-		Downloads:    int64(data.ModDownloadCount),
+		Category:     strconv.Itoa(data.CategoryID),
 		Endorsements: int64(data.EndorsementCount),
-		UpdatedAt:    data.UpdatedAt,
+		UpdatedAt:    data.UpdatedTime,
 	}
 }
