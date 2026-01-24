@@ -75,6 +75,9 @@ lmm search "skyui" --game skyrim-se
 # Install a mod (interactive selection)
 lmm install "skyui" --game skyrim-se
 
+# Install multiple mods (select with 1,3-5 or 1..3 syntax)
+lmm install "stack" --game starrupture
+
 # Install by mod ID (for scripting)
 lmm install --id 12345 --game skyrim-se
 

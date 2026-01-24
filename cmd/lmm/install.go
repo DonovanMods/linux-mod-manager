@@ -123,29 +123,43 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Select the mod
+		// Select the mod(s)
+		var selectedMods []*domain.Mod
 		if len(mods) == 1 || installYes {
-			mod = &mods[0]
+			selectedMods = []*domain.Mod{&mods[0]}
 		} else {
 			// Show selection
-			for i, m := range mods {
-				if i >= 10 {
-					fmt.Printf("  ... and %d more\n", len(mods)-10)
-					break
-				}
+			maxDisplay := len(mods)
+			if maxDisplay > 10 {
+				maxDisplay = 10
+			}
+			for i := 0; i < maxDisplay; i++ {
+				m := mods[i]
 				installedMark := ""
 				if installedIDs[m.ID] {
 					installedMark = " [installed]"
 				}
 				fmt.Printf("  [%d] %s v%s by %s (ID: %s)%s\n", i+1, m.Name, m.Version, m.Author, m.ID, installedMark)
 			}
+			if len(mods) > 10 {
+				fmt.Printf("  ... and %d more\n", len(mods)-10)
+			}
 
-			selection, err := promptSelection("Select mod", 1, len(mods))
+			selections, err := promptMultiSelection("Select mod(s) (e.g., 1 or 1,3,5 or 1-3)", 1, len(mods))
 			if err != nil {
 				return err
 			}
-			mod = &mods[selection-1]
+			for _, sel := range selections {
+				selectedMods = append(selectedMods, &mods[sel-1])
+			}
 		}
+
+		// If multiple mods selected, install each one
+		if len(selectedMods) > 1 {
+			return installMultipleMods(ctx, service, game, selectedMods, profileName)
+		}
+
+		mod = selectedMods[0]
 	}
 
 	fmt.Printf("\nSelected: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
@@ -310,6 +324,33 @@ func promptSelectionWithDefault(prompt string, defaultChoice, max int) (int, err
 	return promptSelection(prompt, defaultChoice, max)
 }
 
+// promptMultiSelection prompts the user to select one or more numbers
+// Accepts formats like: "1", "1,3,5", "1-3", "1..3", "1,3-5"
+func promptMultiSelection(prompt string, defaultChoice, max int) ([]int, error) {
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Printf("\n%s [%d]: ", prompt, defaultChoice)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("reading input: %w", err)
+		}
+
+		input = strings.TrimSpace(input)
+		if input == "" {
+			return []int{defaultChoice}, nil
+		}
+
+		selections, err := parseRangeSelection(input, max)
+		if err != nil {
+			fmt.Printf("Invalid selection: %v\n", err)
+			continue
+		}
+
+		return selections, nil
+	}
+}
+
 // formatSize formats bytes to human-readable string
 func formatSize(bytes int64) string {
 	const (
@@ -362,6 +403,102 @@ func filterAndSortFiles(files []domain.DownloadableFile, showArchived bool) []do
 	return filtered
 }
 
+// installMultipleMods handles installing multiple mods sequentially
+func installMultipleMods(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
+	fmt.Printf("\nInstalling %d mod(s)...\n", len(mods))
+
+	var installed []string
+	var failed []string
+
+	for i, mod := range mods {
+		fmt.Printf("\n[%d/%d] Installing: %s v%s\n", i+1, len(mods), mod.Name, mod.Version)
+
+		// Get available files
+		files, err := service.GetModFiles(ctx, installSource, mod)
+		if err != nil {
+			fmt.Printf("  Error: failed to get mod files: %v\n", err)
+			failed = append(failed, mod.Name)
+			continue
+		}
+
+		// Filter and sort files
+		files = filterAndSortFiles(files, installShowArchived)
+
+		if len(files) == 0 {
+			fmt.Printf("  Error: no downloadable files available\n")
+			failed = append(failed, mod.Name)
+			continue
+		}
+
+		// Auto-select primary or first file for batch install
+		var selectedFile *domain.DownloadableFile
+		for i := range files {
+			if files[i].IsPrimary {
+				selectedFile = &files[i]
+				break
+			}
+		}
+		if selectedFile == nil {
+			selectedFile = &files[0]
+		}
+
+		fmt.Printf("  File: %s\n", selectedFile.FileName)
+
+		// Download the mod
+		progressFn := func(p core.DownloadProgress) {
+			if p.TotalBytes > 0 {
+				bar := progressBar(p.Percentage, 20)
+				fmt.Printf("\r  [%s] %.1f%%", bar, p.Percentage)
+			}
+		}
+
+		fileCount, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
+		if err != nil {
+			fmt.Println()
+			fmt.Printf("  Error: download failed: %v\n", err)
+			failed = append(failed, mod.Name)
+			continue
+		}
+		fmt.Println()
+
+		// Deploy to game directory
+		linker := service.GetLinker(service.GetDefaultLinkMethod())
+		installer := core.NewInstaller(service.Cache(), linker)
+
+		if err := installer.Install(ctx, game, mod, profileName); err != nil {
+			fmt.Printf("  Error: deployment failed: %v\n", err)
+			failed = append(failed, mod.Name)
+			continue
+		}
+
+		// Save to database
+		installedMod := &domain.InstalledMod{
+			Mod:          *mod,
+			ProfileName:  profileName,
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+		}
+
+		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+			fmt.Printf("  Error: failed to save mod: %v\n", err)
+			failed = append(failed, mod.Name)
+			continue
+		}
+
+		fmt.Printf("  ✓ Installed (%d files)\n", fileCount)
+		installed = append(installed, mod.Name)
+	}
+
+	// Summary
+	fmt.Printf("\n--- Summary ---\n")
+	fmt.Printf("Installed: %d\n", len(installed))
+	if len(failed) > 0 {
+		fmt.Printf("Failed: %d (%s)\n", len(failed), strings.Join(failed, ", "))
+	}
+
+	return nil
+}
+
 // fileCategoryPriority returns sort priority for file categories (lower = first)
 func fileCategoryPriority(category string) int {
 	switch strings.ToUpper(category) {
@@ -378,4 +515,91 @@ func fileCategoryPriority(category string) int {
 	default:
 		return 50
 	}
+}
+
+// parseRangeSelection parses a selection string like "1,3-5,8" or "1..3"
+// Returns sorted, unique slice of integers in range [1, max]
+func parseRangeSelection(input string, max int) ([]int, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil, fmt.Errorf("empty selection")
+	}
+
+	seen := make(map[int]bool)
+	var result []int
+
+	// Split by comma
+	parts := strings.Split(input, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// Check for range (either "-" or "..")
+		var rangeStart, rangeEnd int
+		var err error
+
+		if strings.Contains(part, "..") {
+			// Handle ".." range
+			rangeParts := strings.Split(part, "..")
+			if len(rangeParts) != 2 {
+				return nil, fmt.Errorf("invalid range: %s", part)
+			}
+			rangeStart, err = strconv.Atoi(strings.TrimSpace(rangeParts[0]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid number: %s", rangeParts[0])
+			}
+			rangeEnd, err = strconv.Atoi(strings.TrimSpace(rangeParts[1]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid number: %s", rangeParts[1])
+			}
+		} else if strings.Contains(part, "-") && !strings.HasPrefix(part, "-") {
+			// Handle "-" range (but not negative numbers)
+			rangeParts := strings.SplitN(part, "-", 2)
+			if len(rangeParts) != 2 {
+				return nil, fmt.Errorf("invalid range: %s", part)
+			}
+			rangeStart, err = strconv.Atoi(strings.TrimSpace(rangeParts[0]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid number: %s", rangeParts[0])
+			}
+			rangeEnd, err = strconv.Atoi(strings.TrimSpace(rangeParts[1]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid number: %s", rangeParts[1])
+			}
+		} else {
+			// Single number
+			n, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid number: %s", part)
+			}
+			rangeStart = n
+			rangeEnd = n
+		}
+
+		// Validate range
+		if rangeStart > rangeEnd {
+			return nil, fmt.Errorf("invalid range: start %d > end %d", rangeStart, rangeEnd)
+		}
+		if rangeStart < 1 || rangeEnd > max {
+			return nil, fmt.Errorf("selection out of range (1-%d): %s", max, part)
+		}
+
+		// Add to result
+		for i := rangeStart; i <= rangeEnd; i++ {
+			if !seen[i] {
+				seen[i] = true
+				result = append(result, i)
+			}
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no valid selections")
+	}
+
+	// Sort for consistent output
+	sort.Ints(result)
+	return result, nil
 }

@@ -199,3 +199,40 @@ func TestInstallCmd_ShowArchivedFlag(t *testing.T) {
 	assert.NotNil(t, flag)
 	assert.Equal(t, "false", flag.DefValue)
 }
+
+// TestParseRangeSelection tests parsing of range-style selections
+func TestParseRangeSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		max      int
+		expected []int
+		wantErr  bool
+	}{
+		{"single number", "3", 10, []int{3}, false},
+		{"comma separated", "1,3,5", 10, []int{1, 3, 5}, false},
+		{"dash range", "2-5", 10, []int{2, 3, 4, 5}, false},
+		{"double dot range", "2..5", 10, []int{2, 3, 4, 5}, false},
+		{"mixed", "1,3-5,8", 10, []int{1, 3, 4, 5, 8}, false},
+		{"with spaces", "1, 3, 5", 10, []int{1, 3, 5}, false},
+		{"out of range", "15", 10, nil, true},
+		{"invalid range", "5-3", 10, nil, true},
+		{"zero", "0", 10, nil, true},
+		{"negative", "-1", 10, nil, true},
+		{"empty", "", 10, nil, true},
+		{"non-numeric", "abc", 10, nil, true},
+		{"duplicate removal", "1,1,2", 10, []int{1, 2}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseRangeSelection(tt.input, tt.max)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}

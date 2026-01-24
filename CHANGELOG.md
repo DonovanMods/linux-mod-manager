@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-01-24
+
+### Added
+
+- **Multi-Select Install**: Select multiple mods from search results using range syntax
+  - `1,3,5` - Select specific mods by number
+  - `1-3` or `1..3` - Select a range of mods
+  - `1,3-5,8` - Mix both formats
+  - Each mod is installed sequentially with automatic file selection
+
 ## [0.5.2] - 2026-01-24
 
 ### Added
@@ -171,7 +181,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.4.0...v0.5.0
