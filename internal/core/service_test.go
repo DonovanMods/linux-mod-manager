@@ -146,3 +146,93 @@ func TestService_GetMod(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Test Mod", mod.Name)
 }
+
+func TestService_SaveSourceToken(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// Save a token
+	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	require.NoError(t, err)
+
+	// Verify it's saved
+	assert.True(t, svc.IsSourceAuthenticated("nexusmods"))
+}
+
+func TestService_DeleteSourceToken(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// Save a token
+	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	require.NoError(t, err)
+	assert.True(t, svc.IsSourceAuthenticated("nexusmods"))
+
+	// Delete it
+	err = svc.DeleteSourceToken("nexusmods")
+	require.NoError(t, err)
+	assert.False(t, svc.IsSourceAuthenticated("nexusmods"))
+}
+
+func TestService_IsSourceAuthenticated(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// Not authenticated initially
+	assert.False(t, svc.IsSourceAuthenticated("nexusmods"))
+
+	// Save a token
+	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	require.NoError(t, err)
+
+	// Now authenticated
+	assert.True(t, svc.IsSourceAuthenticated("nexusmods"))
+}
+
+func TestService_GetSourceToken(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// No token initially
+	token, err := svc.GetSourceToken("nexusmods")
+	require.NoError(t, err)
+	assert.Nil(t, token)
+
+	// Save a token
+	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	require.NoError(t, err)
+
+	// Get the token
+	token, err = svc.GetSourceToken("nexusmods")
+	require.NoError(t, err)
+	require.NotNil(t, token)
+	assert.Equal(t, "test-api-key", token.APIKey)
+}

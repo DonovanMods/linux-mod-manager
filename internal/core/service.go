@@ -190,3 +190,27 @@ func (s *Service) ConfigDir() string {
 func (s *Service) Registry() *source.Registry {
 	return s.registry
 }
+
+// SaveSourceToken saves an API token for a source
+func (s *Service) SaveSourceToken(sourceID, apiKey string) error {
+	return s.db.SaveToken(sourceID, apiKey)
+}
+
+// GetSourceToken retrieves an API token for a source
+func (s *Service) GetSourceToken(sourceID string) (*db.StoredToken, error) {
+	return s.db.GetToken(sourceID)
+}
+
+// DeleteSourceToken removes an API token for a source
+func (s *Service) DeleteSourceToken(sourceID string) error {
+	return s.db.DeleteToken(sourceID)
+}
+
+// IsSourceAuthenticated checks if a source has a stored API token
+func (s *Service) IsSourceAuthenticated(sourceID string) bool {
+	has, err := s.db.HasToken(sourceID)
+	if err != nil {
+		return false
+	}
+	return has
+}
