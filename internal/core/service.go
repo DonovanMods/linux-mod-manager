@@ -185,3 +185,8 @@ func (s *Service) DB() *db.DB {
 func (s *Service) ConfigDir() string {
 	return s.configDir
 }
+
+// Registry returns the source registry
+func (s *Service) Registry() *source.Registry {
+	return s.registry
+}
