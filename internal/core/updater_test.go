@@ -37,6 +37,9 @@ func (m *updateMockSource) GetMod(ctx context.Context, gameID, modID string) (*d
 func (m *updateMockSource) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
 	return nil, nil
 }
+func (m *updateMockSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, nil
+}
 func (m *updateMockSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	return "", nil
 }

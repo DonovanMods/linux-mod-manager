@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"lmm/internal/domain"
@@ -127,6 +128,90 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 	}
 
 	return src.GetMod(ctx, sourceGameID, modID)
+}
+
+// GetModFiles retrieves available download files for a mod
+func (s *Service) GetModFiles(ctx context.Context, sourceID string, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	src, err := s.registry.Get(sourceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return src.GetModFiles(ctx, mod)
+}
+
+// GetDownloadURL gets the download URL for a specific mod file
+func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *domain.Mod, fileID string) (string, error) {
+	src, err := s.registry.Get(sourceID)
+	if err != nil {
+		return "", err
+	}
+
+	return src.GetDownloadURL(ctx, mod, fileID)
+}
+
+// DownloadMod downloads a mod file, extracts it, and stores it in the cache
+// Returns the number of files extracted
+func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (int, error) {
+	// Check if already cached
+	if s.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		files, err := s.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+		if err != nil {
+			return 0, err
+		}
+		return len(files), nil
+	}
+
+	// Get download URL
+	url, err := s.GetDownloadURL(ctx, sourceID, mod, file.ID)
+	if err != nil {
+		return 0, fmt.Errorf("getting download URL: %w", err)
+	}
+
+	// Create temp directory for download
+	tempDir, err := os.MkdirTemp("", "lmm-download-*")
+	if err != nil {
+		return 0, fmt.Errorf("creating temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Download the file
+	archivePath := filepath.Join(tempDir, file.FileName)
+	downloader := NewDownloader(nil)
+	if err := downloader.Download(ctx, url, archivePath, progressFn); err != nil {
+		return 0, fmt.Errorf("downloading mod: %w", err)
+	}
+
+	// Extract to cache location
+	cachePath := s.cache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	extractor := NewExtractor()
+	if !extractor.CanExtract(file.FileName) {
+		// Not an archive - just copy to cache
+		if err := os.MkdirAll(cachePath, 0755); err != nil {
+			return 0, fmt.Errorf("creating cache directory: %w", err)
+		}
+		destPath := filepath.Join(cachePath, file.FileName)
+		content, err := os.ReadFile(archivePath)
+		if err != nil {
+			return 0, fmt.Errorf("reading downloaded file: %w", err)
+		}
+		if err := os.WriteFile(destPath, content, 0644); err != nil {
+			return 0, fmt.Errorf("writing to cache: %w", err)
+		}
+		return 1, nil
+	}
+
+	if err := extractor.Extract(archivePath, cachePath); err != nil {
+		return 0, fmt.Errorf("extracting mod: %w", err)
+	}
+
+	// Count extracted files
+	files, err := s.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if err != nil {
+		return 0, err
+	}
+
+	return len(files), nil
 }
 
 // GetGame retrieves a game by ID

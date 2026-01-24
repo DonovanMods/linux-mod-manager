@@ -7,8 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-01-23
+
 ### Added
 
+- **Mod Download**: Complete download pipeline for installing mods
+  - `lmm install "query"` - Search for mods by name and install interactively
+  - `lmm install --id <mod-id>` - Install directly by mod ID (for scripting)
+  - `lmm install -y` - Auto-select first/primary options (no prompts)
+  - Download progress bar with size tracking
+  - Archive extraction: ZIP (native Go), 7z/RAR (via system `7z` command)
+  - Mod file caching with version-aware storage
+  - Automatic deployment to game directory via symlinks
+- **NexusMods API**: File listing and download URL generation
+  - `GetModFiles()` - List available download files for a mod
+  - `GetDownloadURL()` - Get CDN download URL for a specific file
+- **Domain Types**: `DownloadableFile` type for files available from mod sources
+- **Core Components**:
+  - `Downloader` - HTTP file download with progress tracking and atomic writes
+  - `Extractor` - Archive extraction with zip-slip protection
 - **Authentication**: NexusMods API key authentication
   - `lmm auth login` - Authenticate with NexusMods using personal API key
   - `lmm auth logout` - Remove stored credentials
@@ -25,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CLI**: `lmm install` now accepts search query instead of mod ID (use `--id` for direct ID)
 - **NexusMods**: Search now uses GraphQL v2 API for proper server-side search (no auth required for basic searches)
 - **NexusMods**: REST API v1 still used for mod details, files, and downloads (requires API key)
 
@@ -93,5 +111,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dyoung522/linux-mod-manager/releases/tag/v0.1.0

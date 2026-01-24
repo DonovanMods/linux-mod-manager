@@ -39,6 +39,7 @@ type ModSource interface {
 	GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error)
 
 	// Downloads
+	GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error)
 	GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error)
 
 	// Updates

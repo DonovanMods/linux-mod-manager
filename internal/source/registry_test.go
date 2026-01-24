@@ -26,6 +26,9 @@ func (m *mockSource) GetMod(context.Context, string, string) (*domain.Mod, error
 func (m *mockSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
 	return nil, nil
 }
+func (m *mockSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, nil
+}
 func (m *mockSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
 	return "", nil
 }

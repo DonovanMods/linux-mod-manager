@@ -11,11 +11,23 @@ const (
 	UpdatePinned                     // Never update
 )
 
-// ModFile represents a single file within a mod
+// ModFile represents a single file within a mod archive (after extraction)
 type ModFile struct {
 	Path     string // Relative path within mod archive
 	Size     int64
 	Checksum string // SHA256
+}
+
+// DownloadableFile represents a file available for download from a mod source
+type DownloadableFile struct {
+	ID          string // Source-specific file ID
+	Name        string // Display name
+	FileName    string // Actual filename (e.g., "mod-1.0.zip")
+	Version     string // File version
+	Size        int64  // Size in bytes
+	IsPrimary   bool   // Whether this is the primary/main file
+	Category    string // Category: "MAIN", "OPTIONAL", "UPDATE", etc.
+	Description string // File description
 }
 
 // ModReference is a pointer to a mod (used in profiles, dependencies)

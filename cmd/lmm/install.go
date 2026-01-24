@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 
+	"lmm/internal/core"
 	"lmm/internal/domain"
 
 	"github.com/spf13/cobra"
@@ -14,20 +19,25 @@ var (
 	installSource  string
 	installProfile string
 	installVersion string
+	installModID   string
+	installFileID  string
+	installYes     bool
 )
 
 var installCmd = &cobra.Command{
-	Use:   "install <mod-id>",
+	Use:   "install <query>",
 	Short: "Install a mod",
 	Long: `Install a mod from the configured source.
 
-The mod will be added to the specified profile (or default profile if not specified).
+The mod will be searched for by name and added to the specified profile
+(or default profile if not specified).
 
 Examples:
-  lmm install 12345 --game skyrim-se
-  lmm install 12345 --game skyrim-se --profile survival
-  lmm install 12345 --game skyrim-se --source nexusmods --version 1.0.0`,
-	Args: cobra.ExactArgs(1),
+  lmm install "ore stack" --game starrupture
+  lmm install "skyui" --game skyrim-se --profile survival
+  lmm install --id 12345 --game skyrim-se
+  lmm install "mod name" -g skyrim-se -y  # Auto-select first match`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runInstall,
 }
 
@@ -35,6 +45,9 @@ func init() {
 	installCmd.Flags().StringVarP(&installSource, "source", "s", "nexusmods", "mod source")
 	installCmd.Flags().StringVarP(&installProfile, "profile", "p", "", "profile to install to (default: active profile)")
 	installCmd.Flags().StringVar(&installVersion, "version", "", "specific version to install (default: latest)")
+	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")
+	installCmd.Flags().StringVar(&installFileID, "file", "", "file ID (skips file selection)")
+	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-select first/primary option (no prompts)")
 
 	rootCmd.AddCommand(installCmd)
 }
@@ -44,7 +57,10 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	modID := args[0]
+	// Either query or --id is required
+	if len(args) == 0 && installModID == "" {
+		return fmt.Errorf("either a search query or --id is required")
+	}
 
 	service, err := initService()
 	if err != nil {
@@ -60,32 +76,167 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 
-	// Fetch mod info
-	if verbose {
-		fmt.Printf("Fetching mod %s from %s...\n", modID, installSource)
-	}
-
-	mod, err := service.GetMod(ctx, installSource, gameID, modID)
-	if err != nil {
-		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+	// Get the mod to install
+	var mod *domain.Mod
+	if installModID != "" {
+		// Direct ID - fetch mod directly
+		if verbose {
+			fmt.Printf("Fetching mod %s from %s...\n", installModID, installSource)
 		}
-		return fmt.Errorf("failed to fetch mod: %w", err)
+		mod, err = service.GetMod(ctx, installSource, gameID, installModID)
+		if err != nil {
+			if errors.Is(err, domain.ErrAuthRequired) {
+				return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+			}
+			return fmt.Errorf("failed to fetch mod: %w", err)
+		}
+	} else {
+		// Search for mod
+		query := args[0]
+		fmt.Printf("Searching for \"%s\"...\n\n", query)
+
+		mods, err := service.SearchMods(ctx, installSource, gameID, query)
+		if err != nil {
+			if errors.Is(err, domain.ErrAuthRequired) {
+				return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+			}
+			return fmt.Errorf("search failed: %w", err)
+		}
+
+		if len(mods) == 0 {
+			return fmt.Errorf("no mods found matching \"%s\"", query)
+		}
+
+		// Select the mod
+		if len(mods) == 1 || installYes {
+			mod = &mods[0]
+		} else {
+			// Show selection
+			for i, m := range mods {
+				if i >= 10 {
+					fmt.Printf("  ... and %d more\n", len(mods)-10)
+					break
+				}
+				fmt.Printf("  [%d] %s v%s by %s (ID: %s)\n", i+1, m.Name, m.Version, m.Author, m.ID)
+			}
+
+			selection, err := promptSelection("Select mod", 1, len(mods))
+			if err != nil {
+				return err
+			}
+			mod = &mods[selection-1]
+		}
 	}
 
-	fmt.Printf("Installing: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
+	fmt.Printf("\nSelected: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
 
-	// Determine profile
+	// Get available files
+	files, err := service.GetModFiles(ctx, installSource, mod)
+	if err != nil {
+		return fmt.Errorf("failed to get mod files: %w", err)
+	}
+
+	if len(files) == 0 {
+		return fmt.Errorf("no downloadable files available for this mod")
+	}
+
+	// Select file
+	var selectedFile *domain.DownloadableFile
+	if installFileID != "" {
+		// Direct file ID
+		for i := range files {
+			if files[i].ID == installFileID {
+				selectedFile = &files[i]
+				break
+			}
+		}
+		if selectedFile == nil {
+			return fmt.Errorf("file ID %s not found", installFileID)
+		}
+	} else if len(files) == 1 {
+		selectedFile = &files[0]
+	} else {
+		// Find primary file
+		var primaryFile *domain.DownloadableFile
+		for i := range files {
+			if files[i].IsPrimary {
+				primaryFile = &files[i]
+				break
+			}
+		}
+
+		if installYes && primaryFile != nil {
+			selectedFile = primaryFile
+		} else if installYes {
+			selectedFile = &files[0]
+		} else {
+			// Show file selection
+			fmt.Println("\nAvailable files:")
+			for i, f := range files {
+				sizeStr := formatSize(f.Size)
+				defaultMark := ""
+				if f.IsPrimary {
+					defaultMark = " <- default"
+				}
+				fmt.Printf("  [%d] %s (%s, %s)%s\n", i+1, f.FileName, f.Category, sizeStr, defaultMark)
+			}
+
+			defaultChoice := 1
+			if primaryFile != nil {
+				for i, f := range files {
+					if f.ID == primaryFile.ID {
+						defaultChoice = i + 1
+						break
+					}
+				}
+			}
+
+			selection, err := promptSelectionWithDefault("Select file", defaultChoice, len(files))
+			if err != nil {
+				return err
+			}
+			selectedFile = &files[selection-1]
+		}
+	}
+
+	fmt.Printf("\nFile: %s\n", selectedFile.FileName)
+
+	// Download the mod
+	fmt.Printf("\nDownloading %s...\n", selectedFile.FileName)
+
+	progressFn := func(p core.DownloadProgress) {
+		if p.TotalBytes > 0 {
+			bar := progressBar(p.Percentage, 30)
+			fmt.Printf("\r  [%s] %.1f%% (%s / %s)", bar, p.Percentage,
+				formatSize(p.Downloaded), formatSize(p.TotalBytes))
+		} else {
+			fmt.Printf("\r  Downloaded %s", formatSize(p.Downloaded))
+		}
+	}
+
+	fileCount, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
+	if err != nil {
+		fmt.Println() // newline after progress
+		return fmt.Errorf("download failed: %w", err)
+	}
+	fmt.Println() // newline after progress
+
+	fmt.Println("\nExtracting to cache...")
+
+	// Deploy to game directory
+	fmt.Println("Deploying to game directory...")
+
+	linker := service.GetLinker(service.GetDefaultLinkMethod())
+	installer := core.NewInstaller(service.Cache(), linker)
+
 	profileName := installProfile
 	if profileName == "" {
 		profileName = "default"
 	}
 
-	// Add to profile (actual download/deployment would happen here)
-	// For now, just record the intent
-	fmt.Printf("  Game: %s\n", game.Name)
-	fmt.Printf("  Profile: %s\n", profileName)
-	fmt.Printf("  Source: %s\n", installSource)
+	if err := installer.Install(ctx, game, mod, profileName); err != nil {
+		return fmt.Errorf("deployment failed: %w", err)
+	}
 
 	// Save to database
 	installedMod := &domain.InstalledMod{
@@ -99,8 +250,70 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save mod: %w", err)
 	}
 
-	fmt.Println("✓ Mod installed successfully")
-	fmt.Println("\nNote: Mod files need to be downloaded separately (download feature coming soon)")
+	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
+	fmt.Printf("  Files deployed: %d\n", fileCount)
 
 	return nil
+}
+
+// promptSelection prompts the user to select a number in range [1, max]
+func promptSelection(prompt string, defaultChoice, max int) (int, error) {
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Printf("\n%s [%d]: ", prompt, defaultChoice)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return 0, fmt.Errorf("reading input: %w", err)
+		}
+
+		input = strings.TrimSpace(input)
+		if input == "" {
+			return defaultChoice, nil
+		}
+
+		n, err := strconv.Atoi(input)
+		if err != nil || n < 1 || n > max {
+			fmt.Printf("Please enter a number between 1 and %d\n", max)
+			continue
+		}
+
+		return n, nil
+	}
+}
+
+// promptSelectionWithDefault is like promptSelection but shows the default
+func promptSelectionWithDefault(prompt string, defaultChoice, max int) (int, error) {
+	return promptSelection(prompt, defaultChoice, max)
+}
+
+// formatSize formats bytes to human-readable string
+func formatSize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/GB)
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
+// progressBar creates a progress bar string
+func progressBar(percentage float64, width int) string {
+	filled := int(percentage / 100 * float64(width))
+	if filled > width {
+		filled = width
+	}
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+	return bar
 }

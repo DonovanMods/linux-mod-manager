@@ -234,3 +234,95 @@ func TestClient_SearchMods_UsesGraphQL(t *testing.T) {
 	assert.Equal(t, "Ore Mod", mods[0].Name)
 	assert.Equal(t, "Author1", mods[0].Author)
 }
+
+func TestClient_GetModFiles(t *testing.T) {
+	mockResponse := ModFileList{
+		Files: []FileData{
+			{
+				FileID:       100,
+				Name:         "Main File",
+				FileName:     "test-mod-1-0.zip",
+				Version:      "1.0.0",
+				CategoryID:   1,
+				CategoryName: "MAIN",
+				IsPrimary:    true,
+				Size:         1234,
+				SizeKB:       1,
+				Description:  "Main installation file",
+			},
+			{
+				FileID:       101,
+				Name:         "Optional Patch",
+				FileName:     "test-mod-patch-1-0.zip",
+				Version:      "1.0.0",
+				CategoryID:   4,
+				CategoryName: "OPTIONAL",
+				IsPrimary:    false,
+				Size:         456,
+				SizeKB:       0,
+				Description:  "Optional quality improvements",
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/games/starrupture/mods/12345/files.json", r.URL.Path)
+		assert.Equal(t, "testapikey", r.Header.Get("apikey"))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.baseURL = server.URL
+
+	files, err := client.GetModFiles(context.Background(), "starrupture", 12345)
+	require.NoError(t, err)
+	require.NotNil(t, files)
+	assert.Len(t, files.Files, 2)
+
+	// Verify primary file
+	assert.Equal(t, 100, files.Files[0].FileID)
+	assert.Equal(t, "Main File", files.Files[0].Name)
+	assert.Equal(t, "test-mod-1-0.zip", files.Files[0].FileName)
+	assert.True(t, files.Files[0].IsPrimary)
+	assert.Equal(t, "MAIN", files.Files[0].CategoryName)
+
+	// Verify optional file
+	assert.Equal(t, 101, files.Files[1].FileID)
+	assert.False(t, files.Files[1].IsPrimary)
+}
+
+func TestClient_GetDownloadLinks(t *testing.T) {
+	mockResponse := []DownloadLink{
+		{
+			Name:      "Nexus CDN",
+			ShortName: "Nexus",
+			URI:       "https://cf-files.nexusmods.com/cdn/123/file.zip?key=abc&expires=123",
+		},
+		{
+			Name:      "Chicago",
+			ShortName: "Chicago",
+			URI:       "https://chicago.nexusmods.com/cdn/123/file.zip?key=abc&expires=123",
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/games/starrupture/mods/12345/files/100/download_link.json", r.URL.Path)
+		assert.Equal(t, "testapikey", r.Header.Get("apikey"))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.baseURL = server.URL
+
+	links, err := client.GetDownloadLinks(context.Background(), "starrupture", 12345, 100)
+	require.NoError(t, err)
+	assert.Len(t, links, 2)
+	assert.Equal(t, "Nexus CDN", links[0].Name)
+	assert.Contains(t, links[0].URI, "cf-files.nexusmods.com")
+}

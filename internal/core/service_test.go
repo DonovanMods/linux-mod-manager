@@ -50,6 +50,16 @@ func (m *mockSource) GetMod(ctx context.Context, gameID, modID string) (*domain.
 func (m *mockSource) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
 	return mod.Dependencies, nil
 }
+func (m *mockSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{
+			ID:        "1",
+			Name:      "Main File",
+			FileName:  mod.ID + ".zip",
+			IsPrimary: true,
+		},
+	}, nil
+}
 func (m *mockSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	return "http://example.com/download/" + mod.ID, nil
 }
@@ -235,4 +245,59 @@ func TestService_GetSourceToken(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.Equal(t, "test-api-key", token.APIKey)
+}
+
+func TestService_GetModFiles(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	mock := newMockSource("test")
+	mock.AddMod("skyrim", &domain.Mod{
+		ID:       "123",
+		SourceID: "test",
+		Name:     "Test Mod",
+		Version:  "1.0.0",
+		GameID:   "skyrim",
+	})
+	svc.RegisterSource(mock)
+
+	mod := &domain.Mod{
+		ID:       "123",
+		SourceID: "test",
+		GameID:   "skyrim",
+	}
+
+	files, err := svc.GetModFiles(context.Background(), "test", mod)
+	require.NoError(t, err)
+	assert.Len(t, files, 1)
+	assert.Equal(t, "Main File", files[0].Name)
+	assert.True(t, files[0].IsPrimary)
+}
+
+func TestService_GetModFiles_SourceNotFound(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	mod := &domain.Mod{
+		ID:       "123",
+		SourceID: "nonexistent",
+		GameID:   "skyrim",
+	}
+
+	_, err = svc.GetModFiles(context.Background(), "nonexistent", mod)
+	require.Error(t, err)
 }

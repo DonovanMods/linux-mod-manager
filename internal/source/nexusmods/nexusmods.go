@@ -101,10 +101,63 @@ func (n *NexusMods) GetDependencies(ctx context.Context, mod *domain.Mod) ([]dom
 	return nil, nil
 }
 
+// GetModFiles returns the available download files for a mod
+func (n *NexusMods) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	modID, err := strconv.Atoi(mod.ID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid mod ID: %w", err)
+	}
+
+	fileList, err := n.client.GetModFiles(ctx, mod.GameID, modID)
+	if err != nil {
+		return nil, fmt.Errorf("getting mod files: %w", err)
+	}
+
+	files := make([]domain.DownloadableFile, len(fileList.Files))
+	for i, f := range fileList.Files {
+		size := f.Size
+		if f.SizeInBytes != nil {
+			size = *f.SizeInBytes
+		}
+
+		files[i] = domain.DownloadableFile{
+			ID:          strconv.Itoa(f.FileID),
+			Name:        f.Name,
+			FileName:    f.FileName,
+			Version:     f.Version,
+			Size:        size,
+			IsPrimary:   f.IsPrimary,
+			Category:    f.CategoryName,
+			Description: f.Description,
+		}
+	}
+
+	return files, nil
+}
+
 // GetDownloadURL gets the download URL for a mod file
 func (n *NexusMods) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
-	// TODO: Implement download URL generation
-	return "", fmt.Errorf("download URLs not yet implemented")
+	modID, err := strconv.Atoi(mod.ID)
+	if err != nil {
+		return "", fmt.Errorf("invalid mod ID: %w", err)
+	}
+
+	fID, err := strconv.Atoi(fileID)
+	if err != nil {
+		return "", fmt.Errorf("invalid file ID: %w", err)
+	}
+
+	links, err := n.client.GetDownloadLinks(ctx, mod.GameID, modID, fID)
+	if err != nil {
+		return "", fmt.Errorf("getting download links: %w", err)
+	}
+
+	if len(links) == 0 {
+		return "", fmt.Errorf("no download links available")
+	}
+
+	// Return the first available CDN URL
+	return links[0].URI, nil
 }
 
 // CheckUpdates checks for available updates
