@@ -82,9 +82,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	w.Flush()
 
-	if verbose {
-		fmt.Printf("\nTotal: %d mod(s)\n", len(mods))
-	}
+	fmt.Printf("\nTotal: %d mod(s)\n", len(mods))
 
 	return nil
 }
