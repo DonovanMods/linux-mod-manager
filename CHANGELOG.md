@@ -22,12 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CLI**: NexusMods source now properly registered on startup (search was failing with "source not found")
 - **CLI**: Removed downloads column from search output (GraphQL doesn't return this data)
-- **TUI**: Game selection now works - games are selectable and navigating to mod browser functions correctly
 
 ### Changed
 
 - **NexusMods**: Search now uses GraphQL v2 API for proper server-side search (no auth required for basic searches)
 - **NexusMods**: REST API v1 still used for mod details, files, and downloads (requires API key)
+
+### Removed
+
+- **TUI**: Removed terminal UI to focus on CLI functionality first (see BACKLOG.md)
 
 ## [0.1.0] - 2026-01-23
 

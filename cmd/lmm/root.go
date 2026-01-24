@@ -7,7 +7,6 @@ import (
 
 	"lmm/internal/core"
 	"lmm/internal/source/nexusmods"
-	"lmm/internal/tui"
 
 	"github.com/spf13/cobra"
 )
@@ -26,23 +25,11 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "lmm",
 	Short: "Linux Mod Manager - Terminal-based mod manager for Linux",
-	Long: `lmm is a terminal-based mod manager for Linux that provides both TUI and CLI
-interfaces for searching, installing, updating, and managing game mods from
-various sources like NexusMods.
+	Long: `lmm is a terminal-based mod manager for Linux for searching, installing,
+updating, and managing game mods from various sources like NexusMods.
 
-Running lmm without arguments launches the interactive TUI.
-Use subcommands for CLI operations.`,
+Use subcommands for operations. Run 'lmm --help' for available commands.`,
 	Version: version,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// No subcommand - launch TUI
-		service, err := initService()
-		if err != nil {
-			return fmt.Errorf("initializing service: %w", err)
-		}
-		defer service.Close()
-
-		return tui.Run(service)
-	},
 }
 
 func init() {
