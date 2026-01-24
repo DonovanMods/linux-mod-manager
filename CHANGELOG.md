@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **CLI**: NexusMods source now properly registered on startup (search was failing with "source not found")
+- **CLI**: Removed downloads column from search output (GraphQL doesn't return this data)
 - **TUI**: Game selection now works - games are selectable and navigating to mod browser functions correctly
 
 ### Changed
