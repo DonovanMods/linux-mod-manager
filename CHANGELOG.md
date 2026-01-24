@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CLI**: NexusMods source now properly registered on startup (search was failing with "source not found")
+- **TUI**: Game selection now works - games are selectable and navigating to mod browser functions correctly
+- **NexusMods**: Refactored client from GraphQL API v2 to REST API v1 to fix schema mismatch errors
+
+### Changed
+
+- NexusMods search now uses the `latest_added` endpoint with client-side filtering (REST API v1 has no dedicated search endpoint)
+
 ## [0.1.0] - 2026-01-23
 
 ### Added
@@ -22,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ModSource` interface for abstracting mod repositories
 - Source registry for managing multiple mod sources
-- NexusMods GraphQL client with search and mod fetching
+- NexusMods REST API v1 client with mod fetching and browse functionality
 
 #### Mod Management
 
