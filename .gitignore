@@ -46,3 +46,6 @@ debug
 coverage.out
 coverage.html
 .envrc
+
+# Other files
+TODO.local.md
