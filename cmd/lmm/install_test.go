@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 
+	"lmm/internal/domain"
+
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
@@ -147,4 +149,53 @@ func TestProgressBar(t *testing.T) {
 		bar := progressBar(tt.percentage, tt.width)
 		assert.Equal(t, tt.width, len([]rune(bar)))
 	}
+}
+
+// TestFilterAndSortFiles tests file filtering and sorting
+func TestFilterAndSortFiles(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "1", FileName: "optional.zip", Category: "OPTIONAL"},
+		{ID: "2", FileName: "main.zip", Category: "MAIN"},
+		{ID: "3", FileName: "archived.zip", Category: "ARCHIVED"},
+		{ID: "4", FileName: "update.zip", Category: "UPDATE"},
+		{ID: "5", FileName: "main2.zip", Category: "MAIN"},
+		{ID: "6", FileName: "old.zip", Category: "OLD_VERSION"},
+	}
+
+	// Without archived
+	filtered := filterAndSortFiles(files, false)
+	assert.Len(t, filtered, 4) // excludes ARCHIVED and OLD_VERSION
+
+	// Check order: MAIN, MAIN, OPTIONAL, UPDATE
+	assert.Equal(t, "MAIN", filtered[0].Category)
+	assert.Equal(t, "MAIN", filtered[1].Category)
+	assert.Equal(t, "OPTIONAL", filtered[2].Category)
+	assert.Equal(t, "UPDATE", filtered[3].Category)
+
+	// With archived
+	withArchived := filterAndSortFiles(files, true)
+	assert.Len(t, withArchived, 6) // includes all
+
+	// ARCHIVED should be at the end
+	assert.Equal(t, "ARCHIVED", withArchived[4].Category)
+	assert.Equal(t, "OLD_VERSION", withArchived[5].Category)
+}
+
+// TestFileCategoryPriority tests category priority ordering
+func TestFileCategoryPriority(t *testing.T) {
+	assert.Less(t, fileCategoryPriority("MAIN"), fileCategoryPriority("OPTIONAL"))
+	assert.Less(t, fileCategoryPriority("OPTIONAL"), fileCategoryPriority("UPDATE"))
+	assert.Less(t, fileCategoryPriority("UPDATE"), fileCategoryPriority("MISCELLANEOUS"))
+	assert.Less(t, fileCategoryPriority("MISCELLANEOUS"), fileCategoryPriority("ARCHIVED"))
+
+	// Case insensitive
+	assert.Equal(t, fileCategoryPriority("main"), fileCategoryPriority("MAIN"))
+	assert.Equal(t, fileCategoryPriority("Main"), fileCategoryPriority("MAIN"))
+}
+
+// TestInstallCmd_ShowArchivedFlag tests the show-archived flag exists
+func TestInstallCmd_ShowArchivedFlag(t *testing.T) {
+	flag := installCmd.Flags().Lookup("show-archived")
+	assert.NotNil(t, flag)
+	assert.Equal(t, "false", flag.DefValue)
 }

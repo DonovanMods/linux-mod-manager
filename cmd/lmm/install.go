@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -16,12 +17,13 @@ import (
 )
 
 var (
-	installSource  string
-	installProfile string
-	installVersion string
-	installModID   string
-	installFileID  string
-	installYes     bool
+	installSource       string
+	installProfile      string
+	installVersion      string
+	installModID        string
+	installFileID       string
+	installYes          bool
+	installShowArchived bool
 )
 
 var installCmd = &cobra.Command{
@@ -48,6 +50,7 @@ func init() {
 	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")
 	installCmd.Flags().StringVar(&installFileID, "file", "", "file ID (skips file selection)")
 	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-select first/primary option (no prompts)")
+	installCmd.Flags().BoolVar(&installShowArchived, "show-archived", false, "show archived/old files")
 
 	rootCmd.AddCommand(installCmd)
 }
@@ -135,6 +138,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get mod files: %w", err)
 	}
+
+	// Filter and sort files
+	files = filterAndSortFiles(files, installShowArchived)
 
 	if len(files) == 0 {
 		return fmt.Errorf("no downloadable files available for this mod")
@@ -316,4 +322,43 @@ func progressBar(percentage float64, width int) string {
 
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 	return bar
+}
+
+// filterAndSortFiles filters out archived files (unless showArchived is true)
+// and sorts files by category: MAIN first, OPTIONAL second, others after
+func filterAndSortFiles(files []domain.DownloadableFile, showArchived bool) []domain.DownloadableFile {
+	// Filter out archived/old files unless requested
+	var filtered []domain.DownloadableFile
+	for _, f := range files {
+		category := strings.ToUpper(f.Category)
+		if !showArchived && (category == "ARCHIVED" || category == "OLD_VERSION" || category == "DELETED") {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+
+	// Sort by category priority: MAIN > OPTIONAL > UPDATE > MISCELLANEOUS > others
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return fileCategoryPriority(filtered[i].Category) < fileCategoryPriority(filtered[j].Category)
+	})
+
+	return filtered
+}
+
+// fileCategoryPriority returns sort priority for file categories (lower = first)
+func fileCategoryPriority(category string) int {
+	switch strings.ToUpper(category) {
+	case "MAIN":
+		return 0
+	case "OPTIONAL":
+		return 1
+	case "UPDATE":
+		return 2
+	case "MISCELLANEOUS":
+		return 3
+	case "ARCHIVED", "OLD_VERSION", "DELETED":
+		return 99
+	default:
+		return 50
+	}
 }
