@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"lmm/internal/domain"
@@ -84,26 +83,31 @@ func TestClient_GetLatestAdded(t *testing.T) {
 }
 
 func TestClient_SearchMods_FiltersByQuery(t *testing.T) {
-	// GetLatestAdded returns all mods, SearchMods filters them
-	mockResponse := []ModData{
-		{ModID: 1, Name: "OreStack Mod", Version: "1.0.0"},
-		{ModID: 2, Name: "Another Mod", Version: "1.0.0"},
-		{ModID: 3, Name: "OreStack Enhancer", Version: "1.0.0"},
-	}
+	// GraphQL returns filtered results from the server
+	graphqlResponse := `{
+		"data": {
+			"mods": {
+				"nodes": [
+					{"modId": 1, "name": "OreStack Mod", "summary": "", "version": "1.0.0", "uploader": {"name": "Author1"}},
+					{"modId": 3, "name": "OreStack Enhancer", "summary": "", "version": "1.0.0", "uploader": {"name": "Author2"}}
+				]
+			}
+		}
+	}`
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		w.Write([]byte(graphqlResponse))
 	}))
 	defer server.Close()
 
 	client := NewClient(nil, "testapikey")
-	client.baseURL = server.URL
+	client.graphqlURL = server.URL
 
-	// Search should filter results containing "orestack" (case-insensitive)
+	// Search returns results from GraphQL API
 	mods, err := client.SearchMods(context.Background(), "starrupture", "orestack", 10, 0)
 	require.NoError(t, err)
-	assert.Len(t, mods, 2) // Should match "OreStack Mod" and "OreStack Enhancer"
+	assert.Len(t, mods, 2)
 }
 
 func TestClient_SetAPIKey(t *testing.T) {
@@ -194,50 +198,39 @@ func TestClient_ReturnsAuthRequired_On401(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrAuthRequired)
 }
 
-func TestClient_SearchMods_CombinesMultipleEndpoints(t *testing.T) {
-	latestAdded := []ModData{
-		{ModID: 1, Name: "Ore Mod", Version: "1.0.0"},
-		{ModID: 2, Name: "Stone Mod", Version: "1.0.0"},
-	}
-	latestUpdated := []ModData{
-		{ModID: 3, Name: "OreStack", Version: "2.0.0"},
-		{ModID: 1, Name: "Ore Mod", Version: "1.0.0"}, // Duplicate
-	}
-	trending := []ModData{
-		{ModID: 4, Name: "Better Ores", Version: "1.0.0"},
-		{ModID: 5, Name: "UI Mod", Version: "1.0.0"},
-	}
+func TestClient_SearchMods_UsesGraphQL(t *testing.T) {
+	// Mock GraphQL response
+	graphqlResponse := `{
+		"data": {
+			"mods": {
+				"nodes": [
+					{"modId": 1, "name": "Ore Mod", "summary": "Test", "version": "1.0.0", "uploader": {"name": "Author1"}},
+					{"modId": 2, "name": "OreStack", "summary": "Stack", "version": "2.0.0", "uploader": {"name": "Author2"}},
+					{"modId": 3, "name": "Better Ores", "summary": "Better", "version": "1.5.0", "uploader": {"name": "Author3"}}
+				]
+			}
+		}
+	}`
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify it's a GraphQL request
+		assert.Equal(t, "/v2/graphql", r.URL.Path)
+		assert.Equal(t, "POST", r.Method)
+
 		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.Contains(r.URL.Path, "latest_added"):
-			json.NewEncoder(w).Encode(latestAdded)
-		case strings.Contains(r.URL.Path, "latest_updated"):
-			json.NewEncoder(w).Encode(latestUpdated)
-		case strings.Contains(r.URL.Path, "trending"):
-			json.NewEncoder(w).Encode(trending)
-		}
+		w.Write([]byte(graphqlResponse))
 	}))
 	defer server.Close()
 
 	client := NewClient(nil, "testapikey")
-	client.baseURL = server.URL
+	client.graphqlURL = server.URL + "/v2/graphql"
 
-	// Search for "ore" - should find mods from all endpoints (deduplicated)
 	mods, err := client.SearchMods(context.Background(), "starrupture", "ore", 10, 0)
 	require.NoError(t, err)
-
-	// Should find: "Ore Mod" (1), "OreStack" (3), "Better Ores" (4)
-	// Mod 1 should only appear once (deduplicated)
 	assert.Len(t, mods, 3)
 
-	// Verify all expected mods are present
-	names := make([]string, len(mods))
-	for i, m := range mods {
-		names[i] = m.Name
-	}
-	assert.Contains(t, names, "Ore Mod")
-	assert.Contains(t, names, "OreStack")
-	assert.Contains(t, names, "Better Ores")
+	// Verify mod data is parsed correctly
+	assert.Equal(t, 1, mods[0].ModID)
+	assert.Equal(t, "Ore Mod", mods[0].Name)
+	assert.Equal(t, "Author1", mods[0].Author)
 }

@@ -1,28 +1,30 @@
 package nexusmods
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"lmm/internal/domain"
 )
 
 const (
-	defaultBaseURL = "https://api.nexusmods.com"
-	oauthAuthorize = "https://www.nexusmods.com/oauth/authorize"
-	oauthToken     = "https://www.nexusmods.com/oauth/token"
+	defaultBaseURL    = "https://api.nexusmods.com"
+	defaultGraphQLURL = "https://api.nexusmods.com/v2/graphql"
+	oauthAuthorize    = "https://www.nexusmods.com/oauth/authorize"
+	oauthToken        = "https://www.nexusmods.com/oauth/token"
 )
 
-// Client wraps the NexusMods REST API v1
+// Client wraps the NexusMods REST API v1 and GraphQL v2 APIs
 type Client struct {
 	httpClient *http.Client
 	apiKey     string
 	baseURL    string
+	graphqlURL string
 }
 
 // NewClient creates a new NexusMods API client
@@ -35,6 +37,7 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 		httpClient: httpClient,
 		apiKey:     apiKey,
 		baseURL:    defaultBaseURL,
+		graphqlURL: defaultGraphQLURL,
 	}
 }
 
@@ -162,58 +165,116 @@ func (c *Client) GetTrending(ctx context.Context, gameDomain string) ([]ModData,
 	return mods, nil
 }
 
-// SearchMods searches for mods by fetching from multiple endpoints and filtering client-side.
-// Note: NexusMods REST API v1 doesn't have a dedicated search endpoint,
-// so we fetch mods from latest_added, latest_updated, and trending endpoints,
-// then deduplicate and filter by name.
+// graphqlSearchQuery is the GraphQL query for searching mods
+const graphqlSearchQuery = `
+query SearchMods($filter: ModsFilter, $count: Int, $offset: Int) {
+  mods(filter: $filter, count: $count, offset: $offset) {
+    nodes {
+      modId
+      name
+      summary
+      version
+      uploader { name }
+    }
+  }
+}`
+
+// graphqlRequest represents a GraphQL request payload
+type graphqlRequest struct {
+	Query     string                 `json:"query"`
+	Variables map[string]interface{} `json:"variables"`
+}
+
+// graphqlModsResponse represents the GraphQL response for mods search
+type graphqlModsResponse struct {
+	Data struct {
+		Mods struct {
+			Nodes []struct {
+				ModID    int    `json:"modId"`
+				Name     string `json:"name"`
+				Summary  string `json:"summary"`
+				Version  string `json:"version"`
+				Uploader struct {
+					Name string `json:"name"`
+				} `json:"uploader"`
+			} `json:"nodes"`
+		} `json:"mods"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+// SearchMods searches for mods using the NexusMods GraphQL v2 API.
 func (c *Client) SearchMods(ctx context.Context, gameDomain, query string, limit, offset int) ([]ModData, error) {
-	// Fetch from multiple endpoints to get a broader set of mods
-	var allMods []ModData
-	seen := make(map[int]bool)
+	if limit <= 0 {
+		limit = 20
+	}
 
-	// Helper to add mods while deduplicating
-	addMods := func(mods []ModData) {
-		for _, mod := range mods {
-			if !seen[mod.ModID] {
-				seen[mod.ModID] = true
-				allMods = append(allMods, mod)
-			}
+	// Build the filter for GraphQL query
+	filter := map[string]interface{}{
+		"gameDomainName": []map[string]interface{}{
+			{"value": gameDomain, "op": "EQUALS"},
+		},
+		"name": []map[string]interface{}{
+			{"value": query, "op": "WILDCARD"},
+		},
+	}
+
+	reqBody := graphqlRequest{
+		Query: graphqlSearchQuery,
+		Variables: map[string]interface{}{
+			"filter": filter,
+			"count":  limit,
+			"offset": offset,
+		},
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphqlURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("apikey", c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GraphQL error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var gqlResp graphqlModsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&gqlResp); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	if len(gqlResp.Errors) > 0 {
+		return nil, fmt.Errorf("GraphQL error: %s", gqlResp.Errors[0].Message)
+	}
+
+	// Convert GraphQL response to ModData
+	results := make([]ModData, len(gqlResp.Data.Mods.Nodes))
+	for i, node := range gqlResp.Data.Mods.Nodes {
+		results[i] = ModData{
+			ModID:   node.ModID,
+			Name:    node.Name,
+			Summary: node.Summary,
+			Version: node.Version,
+			Author:  node.Uploader.Name,
 		}
-	}
-
-	// Fetch latest added mods
-	if latestAdded, err := c.GetLatestAdded(ctx, gameDomain); err == nil {
-		addMods(latestAdded)
-	} else {
-		return nil, fmt.Errorf("fetching latest added mods: %w", err)
-	}
-
-	// Fetch latest updated mods
-	if latestUpdated, err := c.GetLatestUpdated(ctx, gameDomain); err == nil {
-		addMods(latestUpdated)
-	}
-
-	// Fetch trending mods
-	if trending, err := c.GetTrending(ctx, gameDomain); err == nil {
-		addMods(trending)
-	}
-
-	// Filter by query (case-insensitive substring match)
-	query = strings.ToLower(query)
-	var results []ModData
-	for _, mod := range allMods {
-		if strings.Contains(strings.ToLower(mod.Name), query) {
-			results = append(results, mod)
-		}
-	}
-
-	// Apply pagination
-	if offset >= len(results) {
-		return []ModData{}, nil
-	}
-	results = results[offset:]
-	if limit > 0 && len(results) > limit {
-		results = results[:limit]
 	}
 
 	return results, nil
