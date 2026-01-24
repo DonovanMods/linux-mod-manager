@@ -53,10 +53,11 @@ func (n *NexusMods) ValidateAPIKey(ctx context.Context, key string) error {
 	return n.client.ValidateAPIKey(ctx, key)
 }
 
-// ExchangeToken exchanges an OAuth code for tokens
+// ExchangeToken exchanges an OAuth code for tokens.
+// NexusMods uses API key authentication instead of OAuth.
+// Use SetAPIKey() or the NEXUSMODS_API_KEY environment variable.
 func (n *NexusMods) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
-	// TODO: Implement OAuth token exchange
-	return nil, fmt.Errorf("OAuth not yet implemented")
+	return nil, fmt.Errorf("NexusMods uses API key authentication, not OAuth")
 }
 
 // Search finds mods matching the query
@@ -96,10 +97,27 @@ func (n *NexusMods) GetMod(ctx context.Context, gameID, modID string) (*domain.M
 	return &mod, nil
 }
 
-// GetDependencies returns mod dependencies
+// GetDependencies returns mod dependencies from NexusMods
 func (n *NexusMods) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
-	// TODO: Implement dependency fetching from NexusMods
-	return nil, nil
+	modID, err := strconv.Atoi(mod.ID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid mod ID: %w", err)
+	}
+
+	requirements, err := n.client.GetModRequirements(ctx, mod.GameID, modID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching requirements: %w", err)
+	}
+
+	refs := make([]domain.ModReference, len(requirements))
+	for i, req := range requirements {
+		refs[i] = domain.ModReference{
+			SourceID: "nexusmods",
+			ModID:    strconv.Itoa(req.ModID),
+		}
+	}
+
+	return refs, nil
 }
 
 // GetModFiles returns the available download files for a mod

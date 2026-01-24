@@ -254,3 +254,77 @@ func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
 	assert.Len(t, updates, 2, "should find 2 mods with updates")
 	assert.Equal(t, 3, requestCount, "should make one API call per mod")
 }
+
+func TestNexusMods_GetDependencies(t *testing.T) {
+	// Mock GraphQL response for modRequirements query
+	mockResponse := map[string]interface{}{
+		"data": map[string]interface{}{
+			"modRequirements": map[string]interface{}{
+				"nexusRequirements": map[string]interface{}{
+					"nodes": []map[string]interface{}{
+						{
+							"modId":   999,
+							"modName": "Required Mod A",
+						},
+						{
+							"modId":   888,
+							"modName": "Required Mod B",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.graphqlURL = server.URL
+
+	mod := &domain.Mod{
+		ID:     "12345",
+		GameID: "skyrimspecialedition",
+	}
+
+	deps, err := nm.GetDependencies(context.Background(), mod)
+	require.NoError(t, err)
+	require.Len(t, deps, 2)
+	assert.Equal(t, "999", deps[0].ModID)
+	assert.Equal(t, "888", deps[1].ModID)
+	assert.Equal(t, "nexusmods", deps[0].SourceID)
+}
+
+func TestNexusMods_GetDependencies_NoDeps(t *testing.T) {
+	// Mock GraphQL response with no dependencies
+	mockResponse := map[string]interface{}{
+		"data": map[string]interface{}{
+			"modRequirements": map[string]interface{}{
+				"nexusRequirements": map[string]interface{}{
+					"nodes": []map[string]interface{}{},
+				},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(mockResponse)
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.graphqlURL = server.URL
+
+	mod := &domain.Mod{
+		ID:     "12345",
+		GameID: "skyrimspecialedition",
+	}
+
+	deps, err := nm.GetDependencies(context.Background(), mod)
+	require.NoError(t, err)
+	assert.Empty(t, deps)
+}

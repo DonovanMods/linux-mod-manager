@@ -179,6 +179,19 @@ query SearchMods($filter: ModsFilter, $count: Int, $offset: Int) {
   }
 }`
 
+// graphqlRequirementsQuery is the GraphQL query for mod dependencies
+const graphqlRequirementsQuery = `
+query ModRequirements($modId: Int!, $gameDomainName: String!) {
+  modRequirements(modId: $modId, gameDomainName: $gameDomainName) {
+    nexusRequirements {
+      nodes {
+        modId
+        modName
+      }
+    }
+  }
+}`
+
 // graphqlRequest represents a GraphQL request payload
 type graphqlRequest struct {
 	Query     string                 `json:"query"`
@@ -199,6 +212,23 @@ type graphqlModsResponse struct {
 				} `json:"uploader"`
 			} `json:"nodes"`
 		} `json:"mods"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+// graphqlRequirementsResponse represents the GraphQL response for mod requirements
+type graphqlRequirementsResponse struct {
+	Data struct {
+		ModRequirements struct {
+			NexusRequirements struct {
+				Nodes []struct {
+					ModID   int    `json:"modId"`
+					ModName string `json:"modName"`
+				} `json:"nodes"`
+			} `json:"nexusRequirements"`
+		} `json:"modRequirements"`
 	} `json:"data"`
 	Errors []struct {
 		Message string `json:"message"`
@@ -302,4 +332,68 @@ func (c *Client) GetDownloadLinks(ctx context.Context, gameDomain string, modID,
 	}
 
 	return links, nil
+}
+
+// ModRequirement represents a dependency returned from the GraphQL API
+type ModRequirement struct {
+	ModID   int
+	ModName string
+}
+
+// GetModRequirements fetches mod dependencies using the GraphQL API
+func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modID int) ([]ModRequirement, error) {
+	reqBody := graphqlRequest{
+		Query: graphqlRequirementsQuery,
+		Variables: map[string]interface{}{
+			"modId":          modID,
+			"gameDomainName": gameDomain,
+		},
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphqlURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("apikey", c.apiKey)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GraphQL error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var gqlResp graphqlRequirementsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&gqlResp); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	if len(gqlResp.Errors) > 0 {
+		return nil, fmt.Errorf("GraphQL error: %s", gqlResp.Errors[0].Message)
+	}
+
+	// Convert to ModRequirement slice
+	nodes := gqlResp.Data.ModRequirements.NexusRequirements.Nodes
+	requirements := make([]ModRequirement, len(nodes))
+	for i, node := range nodes {
+		requirements[i] = ModRequirement{
+			ModID:   node.ModID,
+			ModName: node.ModName,
+		}
+	}
+
+	return requirements, nil
 }
