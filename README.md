@@ -158,6 +158,8 @@ games:
 | `lmm update --all`                     | Apply all available updates      |
 | `lmm update --dry-run`                 | Preview what would update        |
 | `lmm update rollback <mod-id>`         | Rollback to previous version     |
+| `lmm mod enable <mod-id>`              | Enable a disabled mod            |
+| `lmm mod disable <mod-id>`             | Disable mod (keep in cache)      |
 | `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod      |
 | `lmm mod set-update <mod-id> --notify` | Notify only (default)            |
 | `lmm mod set-update <mod-id> --pin`    | Pin mod to current version       |

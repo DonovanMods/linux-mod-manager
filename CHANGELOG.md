@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-24
+
+### Added
+
+- **Mod Enable/Disable**: New commands to enable or disable mods without uninstalling
+  - `lmm mod enable <mod-id>` - Redeploy mod files from cache to game directory
+  - `lmm mod disable <mod-id>` - Remove mod files from game directory, keep in cache
+  - Disabled mods show as "no" in the ENABLED column of `lmm list`
+  - Re-enabling a mod does not require re-downloading
+
 ## [0.4.0] - 2026-01-24
 
 ### Added
@@ -149,7 +159,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.1.0...v0.2.0
