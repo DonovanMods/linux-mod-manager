@@ -48,24 +48,24 @@ type FileData struct {
 
 // ModFileList represents the response from the mod files endpoint
 type ModFileList struct {
-	Files       []FileData     `json:"files"`
-	FileUpdates []FileUpdate   `json:"file_updates"`
+	Files       []FileData   `json:"files"`
+	FileUpdates []FileUpdate `json:"file_updates"`
 }
 
 // FileUpdate represents file version relationships
 type FileUpdate struct {
-	OldFileID       int    `json:"old_file_id"`
-	NewFileID       int    `json:"new_file_id"`
-	OldFileName     string `json:"old_file_name"`
-	NewFileName     string `json:"new_file_name"`
-	UploadedTime    string `json:"uploaded_time"`
+	OldFileID    int    `json:"old_file_id"`
+	NewFileID    int    `json:"new_file_id"`
+	OldFileName  string `json:"old_file_name"`
+	NewFileName  string `json:"new_file_name"`
+	UploadedTime string `json:"uploaded_time"`
 }
 
 // UpdateEntry represents a mod update from the updated mods endpoint
 type UpdateEntry struct {
-	ModID              int   `json:"mod_id"`
-	LatestFileUpdate   int64 `json:"latest_file_update"`
-	LatestModActivity  int64 `json:"latest_mod_activity"`
+	ModID             int   `json:"mod_id"`
+	LatestFileUpdate  int64 `json:"latest_file_update"`
+	LatestModActivity int64 `json:"latest_mod_activity"`
 }
 
 // DownloadLink represents a download URL response

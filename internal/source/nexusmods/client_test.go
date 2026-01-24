@@ -136,15 +136,15 @@ func TestClient_IsAuthenticated(t *testing.T) {
 func TestClient_ValidateAPIKey_Success(t *testing.T) {
 	// Mock response for /v1/users/validate.json
 	mockResponse := map[string]interface{}{
-		"user_id":        12345,
-		"key":            "test-key",
-		"name":           "TestUser",
-		"is_premium":     false,
-		"is_supporter":   false,
-		"email":          "test@example.com",
-		"profile_url":    "https://www.nexusmods.com/users/12345",
-		"is_premium?":    false,
-		"is_supporter?":  false,
+		"user_id":       12345,
+		"key":           "test-key",
+		"name":          "TestUser",
+		"is_premium":    false,
+		"is_supporter":  false,
+		"email":         "test@example.com",
+		"profile_url":   "https://www.nexusmods.com/users/12345",
+		"is_premium?":   false,
+		"is_supporter?": false,
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
