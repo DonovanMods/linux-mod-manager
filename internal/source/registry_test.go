@@ -15,14 +15,20 @@ type mockSource struct {
 	id string
 }
 
-func (m *mockSource) ID() string                                                                 { return m.id }
-func (m *mockSource) Name() string                                                               { return "Mock" }
-func (m *mockSource) AuthURL() string                                                            { return "" }
-func (m *mockSource) ExchangeToken(context.Context, string) (*source.Token, error)               { return nil, nil }
-func (m *mockSource) Search(context.Context, source.SearchQuery) ([]domain.Mod, error)           { return nil, nil }
-func (m *mockSource) GetMod(context.Context, string, string) (*domain.Mod, error)                { return nil, nil }
-func (m *mockSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) { return nil, nil }
-func (m *mockSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error)        { return "", nil }
+func (m *mockSource) ID() string                                                   { return m.id }
+func (m *mockSource) Name() string                                                 { return "Mock" }
+func (m *mockSource) AuthURL() string                                              { return "" }
+func (m *mockSource) ExchangeToken(context.Context, string) (*source.Token, error) { return nil, nil }
+func (m *mockSource) Search(context.Context, source.SearchQuery) ([]domain.Mod, error) {
+	return nil, nil
+}
+func (m *mockSource) GetMod(context.Context, string, string) (*domain.Mod, error) { return nil, nil }
+func (m *mockSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, nil
+}
+func (m *mockSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", nil
+}
 func (m *mockSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
 	return nil, nil
 }

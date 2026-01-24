@@ -25,8 +25,8 @@ func newMockSource(id string) *mockSource {
 	}
 }
 
-func (m *mockSource) ID() string   { return m.id }
-func (m *mockSource) Name() string { return "Mock Source" }
+func (m *mockSource) ID() string      { return m.id }
+func (m *mockSource) Name() string    { return "Mock Source" }
 func (m *mockSource) AuthURL() string { return "" }
 func (m *mockSource) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
 	return nil, nil

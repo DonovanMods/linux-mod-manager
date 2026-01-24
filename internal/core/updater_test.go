@@ -19,8 +19,8 @@ type updateMockSource struct {
 	currentMod *domain.Mod
 }
 
-func (m *updateMockSource) ID() string   { return m.id }
-func (m *updateMockSource) Name() string { return "Update Mock" }
+func (m *updateMockSource) ID() string      { return m.id }
+func (m *updateMockSource) Name() string    { return "Update Mock" }
 func (m *updateMockSource) AuthURL() string { return "" }
 func (m *updateMockSource) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
 	return nil, nil
