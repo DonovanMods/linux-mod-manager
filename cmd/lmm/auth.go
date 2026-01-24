@@ -145,21 +145,42 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	sources := []string{"nexusmods"}
 
 	for _, sourceID := range sources {
+		// Check stored token first
 		token, err := service.GetSourceToken(sourceID)
 		if err != nil {
 			return fmt.Errorf("checking %s: %w", sourceID, err)
 		}
 
-		if token == nil {
-			fmt.Printf("%s: not authenticated\n", sourceID)
-		} else {
-			// Show masked key
+		if token != nil {
 			masked := maskAPIKey(token.APIKey)
 			fmt.Printf("%s: authenticated (key: %s)\n", sourceID, masked)
+			continue
 		}
+
+		// Check environment variable
+		envKey := getEnvKeyForSource(sourceID)
+		if envKey != "" {
+			if apiKey := os.Getenv(envKey); apiKey != "" {
+				masked := maskAPIKey(apiKey)
+				fmt.Printf("%s: authenticated via %s (key: %s)\n", sourceID, envKey, masked)
+				continue
+			}
+		}
+
+		fmt.Printf("%s: not authenticated\n", sourceID)
 	}
 
 	return nil
+}
+
+// getEnvKeyForSource returns the environment variable name for a source's API key
+func getEnvKeyForSource(sourceID string) string {
+	switch sourceID {
+	case "nexusmods":
+		return "NEXUSMODS_API_KEY"
+	default:
+		return ""
+	}
 }
 
 // readAPIKey prompts for and reads an API key from the terminal
