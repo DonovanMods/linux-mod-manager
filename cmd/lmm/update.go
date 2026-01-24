@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -102,6 +103,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	updater := core.NewUpdater(service.Registry())
 	updates, err := updater.CheckUpdates(ctx, installed)
 	if err != nil {
+		if errors.Is(err, domain.ErrAuthRequired) {
+			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+		}
 		return fmt.Errorf("failed to check updates: %w", err)
 	}
 

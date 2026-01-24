@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"lmm/internal/domain"
@@ -66,6 +67,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	mod, err := service.GetMod(ctx, installSource, gameID, modID)
 	if err != nil {
+		if errors.Is(err, domain.ErrAuthRequired) {
+			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+		}
 		return fmt.Errorf("failed to fetch mod: %w", err)
 	}
 

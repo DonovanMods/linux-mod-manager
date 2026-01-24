@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
+
+	"lmm/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -65,6 +68,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	mods, err := service.SearchMods(ctx, searchSource, gameID, query)
 	if err != nil {
+		if errors.Is(err, domain.ErrAuthRequired) {
+			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+		}
 		return fmt.Errorf("search failed: %w", err)
 	}
 
