@@ -301,3 +301,154 @@ func TestService_GetModFiles_SourceNotFound(t *testing.T) {
 	_, err = svc.GetModFiles(context.Background(), "nonexistent", mod)
 	require.Error(t, err)
 }
+
+func TestService_UpdateModVersion(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// Create an installed mod
+	installedMod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "123",
+			SourceID: "test",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}
+	err = svc.DB().SaveInstalledMod(installedMod)
+	require.NoError(t, err)
+
+	// Update the version
+	err = svc.UpdateModVersion("test", "123", "skyrim-se", "default", "2.0.0")
+	require.NoError(t, err)
+
+	// Verify the update
+	updated, err := svc.DB().GetInstalledMod("test", "123", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0.0", updated.Version)
+	assert.Equal(t, "1.0.0", updated.PreviousVersion)
+}
+
+func TestService_RollbackModVersion(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// Create an installed mod with previous version
+	installedMod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "123",
+			SourceID: "test",
+			Name:     "Test Mod",
+			Version:  "2.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName:     "default",
+		UpdatePolicy:    domain.UpdateNotify,
+		Enabled:         true,
+		PreviousVersion: "1.0.0",
+	}
+	err = svc.DB().SaveInstalledMod(installedMod)
+	require.NoError(t, err)
+
+	// Rollback the version
+	err = svc.RollbackModVersion("test", "123", "skyrim-se", "default")
+	require.NoError(t, err)
+
+	// Verify the rollback
+	rolledBack, err := svc.DB().GetInstalledMod("test", "123", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.0", rolledBack.Version)
+	assert.Equal(t, "2.0.0", rolledBack.PreviousVersion)
+}
+
+func TestService_RollbackModVersion_NoPreviousVersion(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// Create an installed mod without previous version
+	installedMod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "123",
+			SourceID: "test",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName: "default",
+	}
+	err = svc.DB().SaveInstalledMod(installedMod)
+	require.NoError(t, err)
+
+	// Rollback should fail
+	err = svc.RollbackModVersion("test", "123", "skyrim-se", "default")
+	require.Error(t, err)
+}
+
+func TestService_SetModUpdatePolicy(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// Create an installed mod
+	installedMod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "123",
+			SourceID: "test",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+	}
+	err = svc.DB().SaveInstalledMod(installedMod)
+	require.NoError(t, err)
+
+	// Change policy to auto
+	err = svc.SetModUpdatePolicy("test", "123", "skyrim-se", "default", domain.UpdateAuto)
+	require.NoError(t, err)
+
+	// Verify
+	updated, err := svc.DB().GetInstalledMod("test", "123", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateAuto, updated.UpdatePolicy)
+
+	// Change policy to pinned
+	err = svc.SetModUpdatePolicy("test", "123", "skyrim-se", "default", domain.UpdatePinned)
+	require.NoError(t, err)
+
+	updated, err = svc.DB().GetInstalledMod("test", "123", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdatePinned, updated.UpdatePolicy)
+}

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-01-23
+
+### Added
+
+- **Update Management**: Complete update workflow with policies and rollback
+  - `lmm update --game <game>` - Check all mods for updates, apply auto-updates
+  - `lmm update <mod-id> --game <game>` - Update specific mod
+  - `lmm update --dry-run` - Preview what would update
+  - `lmm update --all` - Apply all available updates (not just auto-updates)
+  - `lmm update rollback <mod-id>` - Rollback to previous version
+  - `lmm mod set-update <mod-id> --auto|--notify|--pin` - Set per-mod update policy
+- **Per-mod Update Policies**:
+  - `notify` (default) - Show available updates, require manual approval
+  - `auto` - Automatically apply updates when checking
+  - `pinned` - Never update this mod automatically
+- **Rollback Support**: Previous version preserved in cache after updates
+- **Database Migration V2**: Added `previous_version` column for rollback tracking
+
+### Changed
+
+- **CLI**: `lmm update` now shows update policy column in output
+- **CLI**: Auto-updates are applied immediately when checking for updates
+
 ## [0.2.0] - 2026-01-23
 
 ### Added
@@ -111,6 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dyoung522/linux-mod-manager/releases/tag/v0.1.0

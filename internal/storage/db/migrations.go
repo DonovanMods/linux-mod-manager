@@ -2,7 +2,7 @@ package db
 
 import "fmt"
 
-const currentVersion = 1
+const currentVersion = 2
 
 func (d *DB) migrate() error {
 	// Create migrations table if it doesn't exist
@@ -25,6 +25,7 @@ func (d *DB) migrate() error {
 	// Apply migrations
 	migrations := []func(*DB) error{
 		migrateV1,
+		migrateV2,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -79,4 +80,10 @@ func migrateV1(d *DB) error {
 	}
 
 	return nil
+}
+
+func migrateV2(d *DB) error {
+	// Add previous_version column for rollback support
+	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN previous_version TEXT`)
+	return err
 }

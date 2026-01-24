@@ -299,3 +299,23 @@ func (s *Service) IsSourceAuthenticated(sourceID string) bool {
 	}
 	return has
 }
+
+// UpdateModVersion updates the version of an installed mod, preserving the previous version for rollback
+func (s *Service) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion string) error {
+	return s.db.UpdateModVersion(sourceID, modID, gameID, profileName, newVersion)
+}
+
+// RollbackModVersion reverts a mod to its previous version
+func (s *Service) RollbackModVersion(sourceID, modID, gameID, profileName string) error {
+	return s.db.SwapModVersions(sourceID, modID, gameID, profileName)
+}
+
+// SetModUpdatePolicy sets the update policy for an installed mod
+func (s *Service) SetModUpdatePolicy(sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
+	return s.db.UpdateModPolicy(sourceID, modID, gameID, profileName, policy)
+}
+
+// GetInstalledMod retrieves a single installed mod
+func (s *Service) GetInstalledMod(sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
+	return s.db.GetInstalledMod(sourceID, modID, gameID, profileName)
+}

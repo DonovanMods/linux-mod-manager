@@ -58,10 +58,11 @@ type Mod struct {
 // InstalledMod tracks a mod installed in a profile
 type InstalledMod struct {
 	Mod
-	ProfileName  string
-	UpdatePolicy UpdatePolicy
-	InstalledAt  time.Time
-	Enabled      bool
+	ProfileName     string
+	UpdatePolicy    UpdatePolicy
+	InstalledAt     time.Time
+	Enabled         bool
+	PreviousVersion string // Version before last update (for rollback)
 }
 
 // Update represents an available update for an installed mod

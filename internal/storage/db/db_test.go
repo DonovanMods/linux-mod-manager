@@ -92,3 +92,140 @@ func TestInstalledMods_Delete(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, mods)
 }
+
+func TestMigrationV2_PreviousVersionColumn(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Verify previous_version column exists by querying it
+	var prevVersion interface{}
+	err = database.QueryRow(`
+		SELECT previous_version FROM installed_mods LIMIT 1
+	`).Scan(&prevVersion)
+	// This should not error on column not found - only on no rows
+	// which is expected since table is empty
+	assert.ErrorContains(t, err, "no rows")
+}
+
+func TestUpdateModVersion(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Create initial mod
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName: "default",
+	}
+	err = database.SaveInstalledMod(mod)
+	require.NoError(t, err)
+
+	// Update version
+	err = database.UpdateModVersion("nexusmods", "12345", "skyrim-se", "default", "2.0.0")
+	require.NoError(t, err)
+
+	// Retrieve and verify
+	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0.0", retrieved.Version)
+	assert.Equal(t, "1.0.0", retrieved.PreviousVersion)
+}
+
+func TestSwapModVersions(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Create mod with previous version
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "2.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName:     "default",
+		PreviousVersion: "1.0.0",
+	}
+	err = database.SaveInstalledMod(mod)
+	require.NoError(t, err)
+
+	// Swap versions (rollback)
+	err = database.SwapModVersions("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+
+	// Verify swap
+	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.0", retrieved.Version)
+	assert.Equal(t, "2.0.0", retrieved.PreviousVersion)
+}
+
+func TestSwapModVersions_NoPreviousVersion(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Create mod without previous version
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName: "default",
+	}
+	err = database.SaveInstalledMod(mod)
+	require.NoError(t, err)
+
+	// Swap should fail - no previous version
+	err = database.SwapModVersions("nexusmods", "12345", "skyrim-se", "default")
+	assert.Error(t, err)
+}
+
+func TestGetInstalledMod(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			Author:   "TestAuthor",
+			GameID:   "skyrim-se",
+		},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateAuto,
+		Enabled:      true,
+	}
+	err = database.SaveInstalledMod(mod)
+	require.NoError(t, err)
+
+	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, mod.ID, retrieved.ID)
+	assert.Equal(t, mod.Name, retrieved.Name)
+	assert.Equal(t, mod.UpdatePolicy, retrieved.UpdatePolicy)
+}
+
+func TestGetInstalledMod_NotFound(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	_, err = database.GetInstalledMod("nexusmods", "nonexistent", "skyrim-se", "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+}
