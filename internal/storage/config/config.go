@@ -45,6 +45,11 @@ func Load(configDir string) (*Config, error) {
 		cfg.DefaultLinkMethod = domain.ParseLinkMethod(cfg.LinkMethodStr)
 	}
 
+	// Expand ~ in cache path
+	if cfg.CachePath != "" {
+		cfg.CachePath = ExpandPath(cfg.CachePath)
+	}
+
 	return cfg, nil
 }
 

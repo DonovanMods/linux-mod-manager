@@ -291,7 +291,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	// Undeploy old version
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.Cache(), linker)
+	installer := core.NewInstaller(service.GetGameCache(game), linker)
 
 	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
 		// Log but continue - files may have been manually removed
@@ -355,7 +355,7 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if previous version exists in cache
-	if !service.Cache().Exists(game.ID, mod.SourceID, mod.ID, mod.PreviousVersion) {
+	if !service.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.PreviousVersion) {
 		return fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
 	}
 
@@ -366,7 +366,7 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	// Undeploy current version
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.Cache(), linker)
+	installer := core.NewInstaller(service.GetGameCache(game), linker)
 
 	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
 		if verbose {

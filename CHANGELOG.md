@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-01-24
+
+### Added
+
+- **Configurable Cache Path**: Set `cache_path` in `config.yaml` to store downloaded mods in a custom location
+  - Supports `~` expansion for home directory paths
+  - Useful for storing mods on a separate drive or faster storage
+  - Defaults to `~/.local/share/lmm/cache/` if not set
+- **Per-Game Cache Path**: Override the global cache path for individual games in `games.yaml`
+  - Set `cache_path` per game to store that game's mods in a custom location
+  - Priority: per-game `cache_path` > global `cache_path` > default
+
 ## [0.6.4] - 2026-01-24
 
 ### Added
@@ -240,7 +252,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.5...HEAD
+[0.6.5]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.1...v0.6.2

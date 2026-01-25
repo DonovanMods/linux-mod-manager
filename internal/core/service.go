@@ -153,9 +153,12 @@ func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *doma
 // DownloadMod downloads a mod file, extracts it, and stores it in the cache
 // Returns the number of files extracted
 func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (int, error) {
+	// Get game-specific cache
+	gameCache := s.GetGameCache(game)
+
 	// Check if already cached
-	if s.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-		files, err := s.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 		if err != nil {
 			return 0, err
 		}
@@ -183,7 +186,7 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 	}
 
 	// Extract to cache location
-	cachePath := s.cache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
 	extractor := NewExtractor()
 	if !extractor.CanExtract(file.FileName) {
 		// Not an archive - just copy to cache
@@ -206,7 +209,7 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 	}
 
 	// Count extracted files
-	files, err := s.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return 0, err
 	}
@@ -265,8 +268,26 @@ func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
 	return s.config.DefaultLinkMethod
 }
 
-// Cache returns the cache manager
+// Cache returns the default cache manager
 func (s *Service) Cache() *cache.Cache {
+	return s.cache
+}
+
+// GetGameCachePath returns the effective cache path for a game.
+// Uses the game's cache_path if configured, otherwise falls back to global cache.
+func (s *Service) GetGameCachePath(game *domain.Game) string {
+	if game.CachePath != "" {
+		return game.CachePath
+	}
+	return s.cacheDir
+}
+
+// GetGameCache returns a cache manager for the specified game.
+// Uses the game's cache_path if configured, otherwise uses the global cache.
+func (s *Service) GetGameCache(game *domain.Game) *cache.Cache {
+	if game.CachePath != "" {
+		return cache.New(game.CachePath)
+	}
 	return s.cache
 }
 

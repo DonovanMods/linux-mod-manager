@@ -121,7 +121,16 @@ Configuration files are stored in `~/.config/lmm/`:
 ```yaml
 default_link_method: symlink # Global default: symlink, hardlink, or copy
 default_game: skyrim-se # Optional, set via 'lmm game set-default'
+cache_path: ~/.local/share/lmm/cache # Optional, defaults to <data_dir>/cache
 ```
+
+The `cache_path` setting allows you to store downloaded mod files in a custom location. This is useful if you want to:
+
+- Store mods on a separate drive with more space
+- Share cached mods between multiple installations
+- Use a faster SSD for mod storage
+
+Paths support `~` expansion for the home directory.
 
 ### Games (`games.yaml`)
 
@@ -134,6 +143,7 @@ games:
     sources:
       nexusmods: "skyrimspecialedition"
     # link_method: symlink  # Optional: override default_link_method for this game
+    # cache_path: ~/skyrim-mods  # Optional: override global cache_path for this game
 
   starfield:
     name: "Starfield"
@@ -142,6 +152,7 @@ games:
     sources:
       nexusmods: "starfield"
     link_method: copy # This game requires file copies instead of symlinks
+    cache_path: /mnt/fast-ssd/starfield-mods # Store this game's mods on fast storage
 ```
 
 ### Deployment Methods
@@ -155,6 +166,16 @@ Mods can be deployed using three methods:
 | `copy`     | Full file copies (maximum compatibility, uses more disk space) |
 
 **Priority**: Per-game `link_method` in `games.yaml` takes precedence over `default_link_method` in `config.yaml`. If neither is set, defaults to `symlink`.
+
+### Cache Path Priority
+
+The mod cache location is determined by:
+
+1. Per-game `cache_path` in `games.yaml` (if set)
+2. Global `cache_path` in `config.yaml` (if set)
+3. Default: `~/.local/share/lmm/cache/`
+
+This allows you to store different games' mods on different drives (e.g., large games on HDD, frequently accessed games on SSD).
 
 ## CLI Reference
 
@@ -229,11 +250,13 @@ internal/
 
 ## File Locations
 
-| Type      | Path                        |
-| --------- | --------------------------- |
-| Config    | `~/.config/lmm/`            |
-| Database  | `~/.local/share/lmm/lmm.db` |
-| Mod Cache | `~/.local/share/lmm/cache/` |
+| Type      | Path                                  |
+| --------- | ------------------------------------- |
+| Config    | `~/.config/lmm/`                      |
+| Database  | `~/.local/share/lmm/lmm.db`           |
+| Mod Cache | `~/.local/share/lmm/cache/` (default) |
+
+The mod cache location can be customized via `cache_path` in `config.yaml`.
 
 ## Roadmap
 

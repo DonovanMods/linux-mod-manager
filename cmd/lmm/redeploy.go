@@ -85,7 +85,7 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 	lnk := linker.New(linkMethod)
-	installer := core.NewInstaller(service.Cache(), lnk)
+	installer := core.NewInstaller(service.GetGameCache(game), lnk)
 
 	// Get mods to redeploy
 	var modsToRedeploy []*domain.InstalledMod
@@ -127,7 +127,7 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 
 	for _, mod := range modsToRedeploy {
 		// Check if mod is in cache
-		if !service.Cache().Exists(gameID, mod.SourceID, mod.ID, mod.Version) {
+		if !service.GetGameCache(game).Exists(gameID, mod.SourceID, mod.ID, mod.Version) {
 			fmt.Printf("  ✗ %s - not in cache\n", mod.Name)
 			failed++
 			continue

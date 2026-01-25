@@ -265,7 +265,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.Cache(), linker)
+	installer := core.NewInstaller(service.GetGameCache(game), linker)
 
 	profileName := installProfile
 	if profileName == "" {
@@ -506,7 +506,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 
 		// Deploy to game directory
 		linker := service.GetLinker(linkMethod)
-		installer := core.NewInstaller(service.Cache(), linker)
+		installer := core.NewInstaller(service.GetGameCache(game), linker)
 
 		if err := installer.Install(ctx, game, mod, profileName); err != nil {
 			fmt.Printf("  Error: deployment failed: %v\n", err)

@@ -43,4 +43,5 @@ type Game struct {
 	SourceIDs          map[string]string // Map source to game ID, e.g., "nexusmods" -> "skyrimspecialedition"
 	LinkMethod         LinkMethod        // How to deploy mods
 	LinkMethodExplicit bool              // True if LinkMethod was explicitly set in config
+	CachePath          string            // Optional: custom cache path for this game's mods
 }

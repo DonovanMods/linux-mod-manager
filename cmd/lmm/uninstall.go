@@ -78,7 +78,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 
 	// Undeploy files from game directory
 	linker := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.Cache(), linker)
+	installer := core.NewInstaller(service.GetGameCache(game), linker)
 
 	if err := installer.Uninstall(ctx, game, &installedMod.Mod); err != nil {
 		// Warn but continue - files may have been manually removed
@@ -89,7 +89,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 
 	// Clean up cache unless --keep-cache is set
 	if !uninstallKeep {
-		if err := service.Cache().Delete(gameID, uninstallSource, modID, installedMod.Version); err != nil {
+		if err := service.GetGameCache(game).Delete(gameID, uninstallSource, modID, installedMod.Version); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to clean cache: %v\n", err)
 			}

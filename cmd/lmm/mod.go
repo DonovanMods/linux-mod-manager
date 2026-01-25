@@ -194,7 +194,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if mod is in cache
-	if !service.Cache().Exists(gameID, modSource, modID, mod.Version) {
+	if !service.GetGameCache(game).Exists(gameID, modSource, modID, mod.Version) {
 		return fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 
@@ -202,7 +202,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 
 	// Deploy mod files from cache
 	linker := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.Cache(), linker)
+	installer := core.NewInstaller(service.GetGameCache(game), linker)
 
 	if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
 		return fmt.Errorf("failed to deploy mod: %w", err)
@@ -256,7 +256,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 
 	// Undeploy mod files from game directory
 	linker := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.Cache(), linker)
+	installer := core.NewInstaller(service.GetGameCache(game), linker)
 
 	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
 		// Warn but continue - files may have been manually removed

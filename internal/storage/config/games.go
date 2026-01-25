@@ -12,8 +12,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// expandPath expands ~ to the user's home directory
-func expandPath(path string) string {
+// ExpandPath expands ~ to the user's home directory
+func ExpandPath(path string) string {
 	if path == "" {
 		return path
 	}
@@ -36,6 +36,7 @@ type GameConfig struct {
 	ModPath     string            `yaml:"mod_path"`
 	Sources     map[string]string `yaml:"sources"`
 	LinkMethod  string            `yaml:"link_method"`
+	CachePath   string            `yaml:"cache_path"`
 }
 
 // GamesFile is the top-level games.yaml structure
@@ -64,11 +65,12 @@ func LoadGames(configDir string) (map[string]*domain.Game, error) {
 		games[id] = &domain.Game{
 			ID:                 id,
 			Name:               cfg.Name,
-			InstallPath:        expandPath(cfg.InstallPath),
-			ModPath:            expandPath(cfg.ModPath),
+			InstallPath:        ExpandPath(cfg.InstallPath),
+			ModPath:            ExpandPath(cfg.ModPath),
 			SourceIDs:          cfg.Sources,
 			LinkMethod:         domain.ParseLinkMethod(cfg.LinkMethod),
 			LinkMethodExplicit: cfg.LinkMethod != "",
+			CachePath:          ExpandPath(cfg.CachePath),
 		}
 	}
 
@@ -96,6 +98,7 @@ func saveGames(configDir string, games map[string]*domain.Game) error {
 			InstallPath: game.InstallPath,
 			ModPath:     game.ModPath,
 			Sources:     game.SourceIDs,
+			CachePath:   game.CachePath,
 		}
 		// Only write link_method if explicitly set
 		if game.LinkMethodExplicit {

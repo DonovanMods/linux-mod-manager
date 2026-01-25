@@ -387,7 +387,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 	lnk := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.Cache(), lnk)
+	installer := core.NewInstaller(service.GetGameCache(game), lnk)
 
 	// Disable mods
 	for _, im := range toDisable {
@@ -636,7 +636,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	// Install missing mods
 	ctx := context.Background()
 	lnk := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.Cache(), lnk)
+	installer := core.NewInstaller(service.GetGameCache(game), lnk)
 
 	fmt.Println("\nInstalling missing mods...")
 	var installedCount, failedCount int
@@ -998,7 +998,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 	lnk := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.Cache(), lnk)
+	installer := core.NewInstaller(service.GetGameCache(game), lnk)
 
 	// Disable mods
 	for _, im := range toDisable {

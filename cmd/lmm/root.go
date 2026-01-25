@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	version = "0.6.4"
+	version = "0.6.5"
 
 	// Global flags
 	configDir string
@@ -110,7 +110,13 @@ func getServiceConfig() core.ServiceConfig {
 	if cfg.DataDir == "" {
 		cfg.DataDir = filepath.Join(homeDir, ".local", "share", "lmm")
 	}
-	cfg.CacheDir = filepath.Join(cfg.DataDir, "cache")
+
+	// Check config file for custom cache path
+	if appConfig, err := config.Load(cfg.ConfigDir); err == nil && appConfig.CachePath != "" {
+		cfg.CacheDir = appConfig.CachePath
+	} else {
+		cfg.CacheDir = filepath.Join(cfg.DataDir, "cache")
+	}
 
 	return cfg
 }

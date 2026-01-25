@@ -1,0 +1,6 @@
+# Allow duplicate headings in sibling sections (needed for changelogs)
+MD024:
+  siblings_only: true
+
+# Disable line length check (long lines are common in markdown)
+MD013: false
