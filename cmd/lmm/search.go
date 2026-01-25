@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	searchSource string
-	searchLimit  int
+	searchSource  string
+	searchLimit   int
+	searchProfile string
 )
 
 var searchCmd = &cobra.Command{
@@ -32,6 +33,7 @@ Examples:
 func init() {
 	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "nexusmods", "mod source to search")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "l", 10, "maximum number of results")
+	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
 
 	rootCmd.AddCommand(searchCmd)
 }
@@ -79,6 +81,19 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Get installed mods to mark already-installed ones
+	profileName := searchProfile
+	if profileName == "" {
+		profileName = "default"
+	}
+	installedMods, _ := service.GetInstalledMods(gameID, profileName)
+	installedIDs := make(map[string]bool)
+	for _, im := range installedMods {
+		if im.SourceID == searchSource {
+			installedIDs[im.ID] = true
+		}
+	}
+
 	// Limit results
 	if len(mods) > searchLimit {
 		mods = mods[:searchLimit]
@@ -86,15 +101,20 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Print results
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION")
-	fmt.Fprintln(w, "--\t----\t------\t-------")
+	fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\t")
+	fmt.Fprintln(w, "--\t----\t------\t-------\t")
 
 	for _, mod := range mods {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+		installedMark := ""
+		if installedIDs[mod.ID] {
+			installedMark = "[installed]"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			mod.ID,
 			truncate(mod.Name, 40),
 			truncate(mod.Author, 20),
 			mod.Version,
+			installedMark,
 		)
 	}
 	w.Flush()
