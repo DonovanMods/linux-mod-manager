@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-01-24
+
+### Added
+
+- **Enhanced Status Output**: More detailed game information in `lmm status`
+  - Shows installed mod count per game and total across all games
+  - Shows link method with indicator for per-game overrides
+  - Shows cache path with indicator for per-game vs global default
+  - Shows source mappings in verbose mode
+  - Summary view (`lmm status -v`) shows game ID, path, and link method columns
+  - `*` suffix indicates per-game overrides in summary view
+- **Cache Path in List**: `lmm list -v` shows cache path in verbose header
+
 ## [0.6.5] - 2026-01-24
 
 ### Added
@@ -252,7 +265,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.5...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.6...HEAD
+[0.6.6]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.2...v0.6.3

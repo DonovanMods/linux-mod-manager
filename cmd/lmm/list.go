@@ -55,7 +55,12 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	if verbose {
-		fmt.Printf("Installed mods in %s (profile: %s)\n\n", game.Name, profileName)
+		fmt.Printf("Installed mods in %s (profile: %s)\n", game.Name, profileName)
+		// Show cache path if overridden
+		if game.CachePath != "" {
+			fmt.Printf("Cache: %s\n", game.CachePath)
+		}
+		fmt.Println()
 	}
 
 	if len(mods) == 0 {
