@@ -287,8 +287,36 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save mod: %w", err)
 	}
 
+	// Add mod to current profile
+	pm := getProfileManager(service)
+	modRef := domain.ModReference{
+		SourceID: mod.SourceID,
+		ModID:    mod.ID,
+		Version:  mod.Version,
+	}
+
+	// Ensure profile exists, create if needed
+	if _, err := pm.Get(gameID, profileName); err != nil {
+		if err == domain.ErrProfileNotFound {
+			if _, err := pm.Create(gameID, profileName); err != nil {
+				// Log but don't fail - mod is installed
+				if verbose {
+					fmt.Printf("  Warning: could not create profile: %v\n", err)
+				}
+			}
+		}
+	}
+
+	if err := pm.AddMod(gameID, profileName, modRef); err != nil {
+		// Don't fail if already in profile (e.g., reinstall)
+		if verbose {
+			fmt.Printf("  Note: %v\n", err)
+		}
+	}
+
 	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
 	fmt.Printf("  Files deployed: %d\n", fileCount)
+	fmt.Printf("  Added to profile: %s\n", profileName)
 
 	return nil
 }
@@ -407,6 +435,16 @@ func filterAndSortFiles(files []domain.DownloadableFile, showArchived bool) []do
 func installMultipleMods(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
 	fmt.Printf("\nInstalling %d mod(s)...\n", len(mods))
 
+	// Get profile manager and ensure profile exists
+	pm := getProfileManager(service)
+	if _, err := pm.Get(game.ID, profileName); err != nil {
+		if err == domain.ErrProfileNotFound {
+			if _, err := pm.Create(game.ID, profileName); err != nil {
+				return fmt.Errorf("could not create profile: %w", err)
+			}
+		}
+	}
+
 	var installed []string
 	var failed []string
 
@@ -483,6 +521,19 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			fmt.Printf("  Error: failed to save mod: %v\n", err)
 			failed = append(failed, mod.Name)
 			continue
+		}
+
+		// Add to profile
+		modRef := domain.ModReference{
+			SourceID: mod.SourceID,
+			ModID:    mod.ID,
+			Version:  mod.Version,
+		}
+		if err := pm.AddMod(game.ID, profileName, modRef); err != nil {
+			// Don't fail if already in profile
+			if verbose {
+				fmt.Printf("  Note: %v\n", err)
+			}
 		}
 
 		fmt.Printf("  ✓ Installed (%d files)\n", fileCount)

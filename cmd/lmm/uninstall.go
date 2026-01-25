@@ -101,7 +101,17 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to remove mod record: %w", err)
 	}
 
+	// Remove from profile
+	pm := getProfileManager(service)
+	if err := pm.RemoveMod(gameID, profileName, uninstallSource, modID); err != nil {
+		// Don't fail if not in profile
+		if verbose {
+			fmt.Printf("  Note: %v\n", err)
+		}
+	}
+
 	fmt.Printf("✓ Uninstalled: %s\n", installedMod.Name)
+	fmt.Printf("  Removed from profile: %s\n", profileName)
 
 	if uninstallKeep {
 		fmt.Println("  Cache files preserved")

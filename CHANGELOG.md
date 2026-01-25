@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-01-24
+
+### Added
+
+- **Profile as Source of Truth**: Profiles now fully track mod state
+  - Installing a mod automatically adds it to the current profile
+  - Uninstalling a mod removes it from the current profile
+- **Profile Sync Command**: `lmm profile sync` updates profile YAML to match installed mods
+  - Use when profile gets out of sync or migrating from pre-profile installs
+- **Profile Apply Command**: `lmm profile apply` makes system match profile
+  - Installs missing mods, enables/disables as needed
+  - Use after manually editing a profile YAML
+- **Enhanced Profile Switch**: Switching profiles now installs missing mods
+  - Shows preview of changes (disable/enable/install)
+  - Prompts for confirmation before making changes
+- **Enhanced Profile Import**: Importing profiles can install missing mods
+  - `--force` flag to overwrite existing profiles
+  - `--no-install` flag to skip installing missing mods
+  - Shows preview of which mods need to be downloaded
+
+### Changed
+
+- Profile switch now shows detailed diff before switching
+- Profile import shows summary of installed vs missing mods
+
 ## [0.5.3] - 2026-01-24
 
 ### Added
@@ -175,7 +200,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.0...v0.5.2
 [0.5.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.4.0...v0.5.0

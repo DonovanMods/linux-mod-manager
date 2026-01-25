@@ -148,36 +148,39 @@ games:
 
 ### Commands
 
-| Command                                | Description                      |
-| -------------------------------------- | -------------------------------- |
-| `lmm search <query>`                   | Search for mods                  |
-| `lmm install <query>`                  | Search and install a mod         |
-| `lmm install --id <mod-id>`            | Install by mod ID                |
-| `lmm uninstall <mod-id>`               | Uninstall a mod                  |
-| `lmm list`                             | List installed mods              |
-| `lmm status`                           | Show current status              |
-| `lmm update`                           | Check for and apply auto-updates |
-| `lmm update <mod-id>`                  | Update a specific mod            |
-| `lmm update --all`                     | Apply all available updates      |
-| `lmm update --dry-run`                 | Preview what would update        |
-| `lmm update rollback <mod-id>`         | Rollback to previous version     |
-| `lmm mod enable <mod-id>`              | Enable a disabled mod            |
-| `lmm mod disable <mod-id>`             | Disable mod (keep in cache)      |
-| `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod      |
-| `lmm mod set-update <mod-id> --notify` | Notify only (default)            |
-| `lmm mod set-update <mod-id> --pin`    | Pin mod to current version       |
-| `lmm game set-default <game-id>`       | Set the default game             |
-| `lmm game show-default`                | Show current default game        |
-| `lmm game clear-default`               | Clear the default game setting   |
-| `lmm auth login`                       | Authenticate with NexusMods      |
-| `lmm auth logout`                      | Remove stored credentials        |
-| `lmm auth status`                      | Show authentication status       |
-| `lmm profile list`                     | List profiles                    |
-| `lmm profile create <name>`            | Create a profile                 |
-| `lmm profile switch <name>`            | Switch to a profile              |
-| `lmm profile delete <name>`            | Delete a profile                 |
-| `lmm profile export <name>`            | Export profile to YAML           |
-| `lmm profile import <file>`            | Import profile from YAML         |
+| Command                                | Description                                 |
+| -------------------------------------- | ------------------------------------------- |
+| `lmm search <query>`                   | Search for mods                             |
+| `lmm install <query>`                  | Search and install a mod                    |
+| `lmm install --id <mod-id>`            | Install by mod ID                           |
+| `lmm uninstall <mod-id>`               | Uninstall a mod                             |
+| `lmm list`                             | List installed mods                         |
+| `lmm status`                           | Show current status                         |
+| `lmm update`                           | Check for and apply auto-updates            |
+| `lmm update <mod-id>`                  | Update a specific mod                       |
+| `lmm update --all`                     | Apply all available updates                 |
+| `lmm update --dry-run`                 | Preview what would update                   |
+| `lmm update rollback <mod-id>`         | Rollback to previous version                |
+| `lmm mod enable <mod-id>`              | Enable a disabled mod                       |
+| `lmm mod disable <mod-id>`             | Disable mod (keep in cache)                 |
+| `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                 |
+| `lmm mod set-update <mod-id> --notify` | Notify only (default)                       |
+| `lmm mod set-update <mod-id> --pin`    | Pin mod to current version                  |
+| `lmm game set-default <game-id>`       | Set the default game                        |
+| `lmm game show-default`                | Show current default game                   |
+| `lmm game clear-default`               | Clear the default game setting              |
+| `lmm auth login`                       | Authenticate with NexusMods                 |
+| `lmm auth logout`                      | Remove stored credentials                   |
+| `lmm auth status`                      | Show authentication status                  |
+| `lmm profile list`                     | List profiles                               |
+| `lmm profile create <name>`            | Create a profile                            |
+| `lmm profile switch <name>`            | Switch to a profile (installs missing mods) |
+| `lmm profile delete <name>`            | Delete a profile                            |
+| `lmm profile export <name>`            | Export profile to YAML                      |
+| `lmm profile import <file>`            | Import profile from YAML                    |
+| `lmm profile import <file> --force`    | Import and overwrite existing               |
+| `lmm profile sync`                     | Update profile to match installed mods      |
+| `lmm profile apply`                    | Install/enable mods to match profile        |
 
 ## Architecture
 

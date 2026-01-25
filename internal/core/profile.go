@@ -289,6 +289,11 @@ func (pm *ProfileManager) Export(gameID, profileName string) ([]byte, error) {
 
 // Import imports a profile from portable format
 func (pm *ProfileManager) Import(data []byte) (*domain.Profile, error) {
+	return pm.ImportWithOptions(data, false)
+}
+
+// ImportWithOptions imports a profile with optional force overwrite
+func (pm *ProfileManager) ImportWithOptions(data []byte, force bool) (*domain.Profile, error) {
 	profile, err := config.ImportProfile(data)
 	if err != nil {
 		return nil, err
@@ -296,8 +301,8 @@ func (pm *ProfileManager) Import(data []byte) (*domain.Profile, error) {
 
 	// Check if profile already exists
 	_, existErr := config.LoadProfile(pm.configDir, profile.GameID, profile.Name)
-	if existErr == nil {
-		return nil, fmt.Errorf("profile already exists: %s", profile.Name)
+	if existErr == nil && !force {
+		return nil, fmt.Errorf("profile already exists: %s (use --force to overwrite)", profile.Name)
 	}
 
 	if err := config.SaveProfile(pm.configDir, profile); err != nil {
@@ -305,4 +310,9 @@ func (pm *ProfileManager) Import(data []byte) (*domain.Profile, error) {
 	}
 
 	return profile, nil
+}
+
+// ParseProfile parses profile data without saving (for preview)
+func (pm *ProfileManager) ParseProfile(data []byte) (*domain.Profile, error) {
+	return config.ImportProfile(data)
 }

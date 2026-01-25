@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"lmm/internal/core"
+	"lmm/internal/domain"
 	"lmm/internal/linker"
 
 	"github.com/spf13/cobra"
@@ -92,6 +95,42 @@ Examples:
 	RunE: runProfileImport,
 }
 
+var profileSyncCmd = &cobra.Command{
+	Use:   "sync [name]",
+	Short: "Sync profile to match installed mods",
+	Long: `Update the profile YAML to match currently installed/enabled mods in the database.
+
+Use this if the profile got out of sync, or to migrate from pre-profile installs.
+If no name is given, uses the current/default profile.
+
+Examples:
+  lmm profile sync --game skyrim-se
+  lmm profile sync survival --game skyrim-se`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runProfileSync,
+}
+
+var profileApplyCmd = &cobra.Command{
+	Use:   "apply [name]",
+	Short: "Apply profile to system",
+	Long: `Make the system match the profile by installing/enabling/disabling mods.
+
+Use this after manually editing a profile YAML to apply those changes.
+If no name is given, uses the current/default profile.
+
+Examples:
+  lmm profile apply --game skyrim-se
+  lmm profile apply survival --game skyrim-se`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runProfileApply,
+}
+
+var (
+	profileImportForce     bool
+	profileImportNoInstall bool
+	profileApplyYes        bool
+)
+
 func init() {
 	profileCmd.AddCommand(profileListCmd)
 	profileCmd.AddCommand(profileCreateCmd)
@@ -99,6 +138,15 @@ func init() {
 	profileCmd.AddCommand(profileSwitchCmd)
 	profileCmd.AddCommand(profileExportCmd)
 	profileCmd.AddCommand(profileImportCmd)
+	profileCmd.AddCommand(profileSyncCmd)
+	profileCmd.AddCommand(profileApplyCmd)
+
+	// Import flags
+	profileImportCmd.Flags().BoolVar(&profileImportForce, "force", false, "overwrite existing profile")
+	profileImportCmd.Flags().BoolVar(&profileImportNoInstall, "no-install", false, "skip installing missing mods")
+
+	// Apply flags
+	profileApplyCmd.Flags().BoolVarP(&profileApplyYes, "yes", "y", false, "auto-confirm changes")
 
 	rootCmd.AddCommand(profileCmd)
 }
@@ -199,7 +247,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	name := args[0]
+	targetName := args[0]
 
 	service, err := initService()
 	if err != nil {
@@ -213,17 +261,250 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 	}
 
 	pm := getProfileManager(service)
+
+	// Get target profile
+	targetProfile, err := pm.Get(gameID, targetName)
+	if err != nil {
+		return fmt.Errorf("profile not found: %s", targetName)
+	}
+
+	// Get current profile
+	currentProfile, err := pm.GetDefault(gameID)
+	var currentName string
+	if err != nil {
+		currentName = "default"
+	} else {
+		currentName = currentProfile.Name
+	}
+
+	if currentName == targetName {
+		fmt.Printf("Already on profile: %s\n", targetName)
+		return nil
+	}
+
+	// Get installed mods for current profile
+	currentMods, _ := service.GetInstalledMods(gameID, currentName)
+
+	// Build lookup of current enabled mods
+	currentEnabled := make(map[string]*domain.InstalledMod)
+	for i := range currentMods {
+		if currentMods[i].Enabled {
+			key := currentMods[i].SourceID + ":" + currentMods[i].ID
+			currentEnabled[key] = &currentMods[i]
+		}
+	}
+
+	// Build set of target profile mod keys
+	targetKeys := make(map[string]domain.ModReference)
+	for _, mr := range targetProfile.Mods {
+		key := mr.SourceID + ":" + mr.ModID
+		targetKeys[key] = mr
+	}
+
+	// Get all installed mods (any profile) to check what's available
+	allInstalled := make(map[string]*domain.InstalledMod)
+	allMods, _ := service.GetInstalledMods(gameID, targetName)
+	for i := range allMods {
+		key := allMods[i].SourceID + ":" + allMods[i].ID
+		allInstalled[key] = &allMods[i]
+	}
+	// Also add from current profile
+	for i := range currentMods {
+		key := currentMods[i].SourceID + ":" + currentMods[i].ID
+		allInstalled[key] = &currentMods[i]
+	}
+
+	// Calculate differences
+	var toDisable []*domain.InstalledMod
+	var toEnable []*domain.InstalledMod
+	var toInstall []domain.ModReference
+
+	// Mods enabled in current profile but not in target - disable
+	for key, im := range currentEnabled {
+		if _, inTarget := targetKeys[key]; !inTarget {
+			toDisable = append(toDisable, im)
+		}
+	}
+
+	// Mods in target profile
+	for key, ref := range targetKeys {
+		if im, installed := allInstalled[key]; installed {
+			// Already installed - check if enabled
+			if !im.Enabled {
+				toEnable = append(toEnable, im)
+			} else if _, wasCurrent := currentEnabled[key]; !wasCurrent {
+				// Was installed but not in current profile's enabled set
+				toEnable = append(toEnable, im)
+			}
+		} else {
+			// Not installed at all
+			toInstall = append(toInstall, ref)
+		}
+	}
+
+	// Show changes
+	fmt.Printf("Switching to profile: %s\n\n", targetName)
+
+	if len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 {
+		// No mod changes, just switch the default
+		if err := pm.SetDefault(gameID, targetName); err != nil {
+			return fmt.Errorf("setting default profile: %w", err)
+		}
+		fmt.Printf("✓ Switched to profile: %s\n", targetName)
+		return nil
+	}
+
+	if len(toDisable) > 0 {
+		fmt.Printf("Will disable %d mod(s):\n", len(toDisable))
+		for _, im := range toDisable {
+			fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+		}
+	}
+
+	if len(toEnable) > 0 {
+		fmt.Printf("Will enable %d mod(s):\n", len(toEnable))
+		for _, im := range toEnable {
+			fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
+		}
+	}
+
+	if len(toInstall) > 0 {
+		fmt.Printf("Will install %d mod(s):\n", len(toInstall))
+		for _, ref := range toInstall {
+			fmt.Printf("  ↓ %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+		}
+	}
+
+	// Confirm
+	fmt.Print("\nProceed? [Y/n]: ")
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(strings.ToLower(input))
+	if input != "" && input != "y" && input != "yes" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
 	ctx := context.Background()
+	lnk := service.GetLinker(game.LinkMethod)
+	installer := core.NewInstaller(service.Cache(), lnk)
 
-	if verbose {
-		fmt.Printf("Switching to profile: %s\n", name)
+	// Disable mods
+	for _, im := range toDisable {
+		if err := installer.Uninstall(ctx, game, &im.Mod); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
+			}
+		}
+		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, currentName, false); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
+			}
+		}
+		fmt.Printf("  ✓ Disabled: %s\n", im.Name)
 	}
 
-	if err := pm.Switch(ctx, game, name); err != nil {
-		return fmt.Errorf("switching profile: %w", err)
+	// Enable mods
+	for _, im := range toEnable {
+		if err := installer.Install(ctx, game, &im.Mod, targetName); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: failed to deploy %s: %v\n", im.Name, err)
+			}
+			continue
+		}
+		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, targetName, true); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
+			}
+		}
+		fmt.Printf("  ✓ Enabled: %s\n", im.Name)
 	}
 
-	fmt.Printf("✓ Switched to profile: %s\n", name)
+	// Install missing mods
+	if len(toInstall) > 0 {
+		fmt.Println("\nInstalling missing mods...")
+		for _, ref := range toInstall {
+			fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
+
+			// Fetch mod details
+			mod, err := service.GetMod(ctx, ref.SourceID, gameID, ref.ModID)
+			if err != nil {
+				fmt.Printf("    Error: failed to fetch mod: %v\n", err)
+				continue
+			}
+
+			// Get files
+			files, err := service.GetModFiles(ctx, ref.SourceID, mod)
+			if err != nil {
+				fmt.Printf("    Error: failed to get files: %v\n", err)
+				continue
+			}
+
+			if len(files) == 0 {
+				fmt.Printf("    Error: no downloadable files\n")
+				continue
+			}
+
+			// Select primary file
+			var selectedFile *domain.DownloadableFile
+			for i := range files {
+				if files[i].IsPrimary {
+					selectedFile = &files[i]
+					break
+				}
+			}
+			if selectedFile == nil {
+				selectedFile = &files[0]
+			}
+
+			// Download
+			progressFn := func(p core.DownloadProgress) {
+				if p.TotalBytes > 0 {
+					fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
+				}
+			}
+
+			_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
+			if err != nil {
+				fmt.Println()
+				fmt.Printf("    Error: download failed: %v\n", err)
+				continue
+			}
+			fmt.Println()
+
+			// Deploy
+			if err := installer.Install(ctx, game, mod, targetName); err != nil {
+				fmt.Printf("    Error: deploy failed: %v\n", err)
+				continue
+			}
+
+			// Save to DB
+			installedMod := &domain.InstalledMod{
+				Mod:          *mod,
+				ProfileName:  targetName,
+				UpdatePolicy: domain.UpdateNotify,
+				Enabled:      true,
+			}
+			if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+				fmt.Printf("    Error: save failed: %v\n", err)
+				continue
+			}
+
+			// Add to profile
+			if err := pm.AddMod(gameID, targetName, ref); err != nil {
+				// Ignore if already in profile
+			}
+
+			fmt.Printf("    ✓ Installed: %s\n", mod.Name)
+		}
+	}
+
+	// Set new profile as default
+	if err := pm.SetDefault(gameID, targetName); err != nil {
+		return fmt.Errorf("setting default profile: %w", err)
+	}
+
+	fmt.Printf("\n✓ Switched to profile: %s\n", targetName)
 	return nil
 }
 
@@ -269,13 +550,561 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	}
 	defer service.Close()
 
+	game, err := service.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+
 	pm := getProfileManager(service)
 
-	profile, err := pm.Import(data)
+	// Parse profile first to preview
+	profile, err := pm.ParseProfile(data)
+	if err != nil {
+		return fmt.Errorf("parsing profile: %w", err)
+	}
+
+	// Check what mods are already installed
+	installedMods, _ := service.GetInstalledMods(gameID, profile.Name)
+	installedKeys := make(map[string]bool)
+	for _, im := range installedMods {
+		key := im.SourceID + ":" + im.ID
+		installedKeys[key] = true
+	}
+
+	// Also check mods from any profile (might be installed under different profile)
+	allProfiles, _ := pm.List(gameID)
+	for _, p := range allProfiles {
+		mods, _ := service.GetInstalledMods(gameID, p.Name)
+		for _, im := range mods {
+			key := im.SourceID + ":" + im.ID
+			installedKeys[key] = true
+		}
+	}
+
+	// Categorize mods
+	var installed []domain.ModReference
+	var missing []domain.ModReference
+
+	for _, ref := range profile.Mods {
+		key := ref.SourceID + ":" + ref.ModID
+		if installedKeys[key] {
+			installed = append(installed, ref)
+		} else {
+			missing = append(missing, ref)
+		}
+	}
+
+	// Show summary
+	fmt.Printf("Importing profile: %s\n\n", profile.Name)
+	fmt.Printf("Found %d mod(s) in profile.\n", len(profile.Mods))
+	if len(installed) > 0 {
+		fmt.Printf("  ✓ %d already installed\n", len(installed))
+	}
+	if len(missing) > 0 {
+		fmt.Printf("  ⚠ %d need to be downloaded:\n", len(missing))
+		for _, ref := range missing {
+			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+		}
+	}
+
+	// Save the profile
+	profile, err = pm.ImportWithOptions(data, profileImportForce)
 	if err != nil {
 		return fmt.Errorf("importing profile: %w", err)
 	}
 
-	fmt.Printf("✓ Imported profile: %s\n", profile.Name)
+	fmt.Printf("\n✓ Imported profile: %s\n", profile.Name)
+
+	// If no missing mods or --no-install, we're done
+	if len(missing) == 0 || profileImportNoInstall {
+		if len(missing) > 0 {
+			fmt.Printf("\nSkipped installing %d missing mod(s). Use 'lmm profile apply %s' to install them later.\n", len(missing), profile.Name)
+		}
+		return nil
+	}
+
+	// Ask to install missing mods
+	fmt.Print("\nDownload and install missing mods? [Y/n]: ")
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(strings.ToLower(input))
+	if input != "" && input != "y" && input != "yes" {
+		fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", profile.Name)
+		return nil
+	}
+
+	// Install missing mods
+	ctx := context.Background()
+	lnk := service.GetLinker(game.LinkMethod)
+	installer := core.NewInstaller(service.Cache(), lnk)
+
+	fmt.Println("\nInstalling missing mods...")
+	var installedCount, failedCount int
+
+	for _, ref := range missing {
+		fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
+
+		// Fetch mod details
+		mod, err := service.GetMod(ctx, ref.SourceID, gameID, ref.ModID)
+		if err != nil {
+			fmt.Printf("    Error: failed to fetch mod: %v\n", err)
+			failedCount++
+			continue
+		}
+
+		// Get files
+		files, err := service.GetModFiles(ctx, ref.SourceID, mod)
+		if err != nil {
+			fmt.Printf("    Error: failed to get files: %v\n", err)
+			failedCount++
+			continue
+		}
+
+		if len(files) == 0 {
+			fmt.Printf("    Error: no downloadable files\n")
+			failedCount++
+			continue
+		}
+
+		// Select primary file
+		var selectedFile *domain.DownloadableFile
+		for i := range files {
+			if files[i].IsPrimary {
+				selectedFile = &files[i]
+				break
+			}
+		}
+		if selectedFile == nil {
+			selectedFile = &files[0]
+		}
+
+		// Download
+		progressFn := func(p core.DownloadProgress) {
+			if p.TotalBytes > 0 {
+				fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
+			}
+		}
+
+		_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
+		if err != nil {
+			fmt.Println()
+			fmt.Printf("    Error: download failed: %v\n", err)
+			failedCount++
+			continue
+		}
+		fmt.Println()
+
+		// Deploy
+		if err := installer.Install(ctx, game, mod, profile.Name); err != nil {
+			fmt.Printf("    Error: deploy failed: %v\n", err)
+			failedCount++
+			continue
+		}
+
+		// Save to DB
+		installedMod := &domain.InstalledMod{
+			Mod:          *mod,
+			ProfileName:  profile.Name,
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+		}
+		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+			fmt.Printf("    Error: save failed: %v\n", err)
+			failedCount++
+			continue
+		}
+
+		fmt.Printf("    ✓ Installed: %s\n", mod.Name)
+		installedCount++
+	}
+
+	fmt.Printf("\n--- Summary ---\n")
+	fmt.Printf("Installed: %d\n", installedCount)
+	if failedCount > 0 {
+		fmt.Printf("Failed: %d\n", failedCount)
+	}
+
+	return nil
+}
+
+func runProfileSync(cmd *cobra.Command, args []string) error {
+	if err := requireGame(cmd); err != nil {
+		return err
+	}
+
+	service, err := initService()
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer service.Close()
+
+	pm := getProfileManager(service)
+
+	// Determine profile name
+	var profileName string
+	if len(args) > 0 {
+		profileName = args[0]
+	} else {
+		defaultProfile, err := pm.GetDefault(gameID)
+		if err != nil {
+			profileName = "default"
+		} else {
+			profileName = defaultProfile.Name
+		}
+	}
+
+	// Get current profile
+	profile, err := pm.Get(gameID, profileName)
+	if err != nil {
+		if err == domain.ErrProfileNotFound {
+			// Create profile if it doesn't exist
+			profile, err = pm.Create(gameID, profileName)
+			if err != nil {
+				return fmt.Errorf("creating profile: %w", err)
+			}
+		} else {
+			return fmt.Errorf("loading profile: %w", err)
+		}
+	}
+
+	// Get installed mods from database
+	installedMods, err := service.GetInstalledMods(gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("getting installed mods: %w", err)
+	}
+
+	// Build set of installed mod references
+	installedRefs := make(map[string]domain.ModReference)
+	for _, im := range installedMods {
+		if im.Enabled {
+			key := im.SourceID + ":" + im.ID
+			installedRefs[key] = domain.ModReference{
+				SourceID: im.SourceID,
+				ModID:    im.ID,
+				Version:  im.Version,
+			}
+		}
+	}
+
+	// Build set of profile mod references
+	profileRefs := make(map[string]domain.ModReference)
+	for _, mr := range profile.Mods {
+		key := mr.SourceID + ":" + mr.ModID
+		profileRefs[key] = mr
+	}
+
+	// Calculate differences
+	var toAdd []domain.ModReference
+	var toRemove []domain.ModReference
+
+	// Mods in DB but not in profile
+	for key, ref := range installedRefs {
+		if _, exists := profileRefs[key]; !exists {
+			toAdd = append(toAdd, ref)
+		}
+	}
+
+	// Mods in profile but not in DB (or disabled)
+	for key, ref := range profileRefs {
+		if _, exists := installedRefs[key]; !exists {
+			toRemove = append(toRemove, ref)
+		}
+	}
+
+	// Show changes
+	if len(toAdd) == 0 && len(toRemove) == 0 {
+		fmt.Printf("Profile %s is already in sync.\n", profileName)
+		return nil
+	}
+
+	fmt.Printf("Syncing profile: %s\n\n", profileName)
+
+	if len(toAdd) > 0 {
+		fmt.Println("Will add to profile:")
+		for _, ref := range toAdd {
+			// Try to get mod name from DB
+			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, gameID, profileName)
+			if mod != nil {
+				fmt.Printf("  + %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
+			} else {
+				fmt.Printf("  + %s:%s\n", ref.SourceID, ref.ModID)
+			}
+		}
+	}
+
+	if len(toRemove) > 0 {
+		fmt.Println("Will remove from profile:")
+		for _, ref := range toRemove {
+			fmt.Printf("  - %s:%s\n", ref.SourceID, ref.ModID)
+		}
+	}
+
+	// Confirm
+	fmt.Print("\nProceed? [Y/n]: ")
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(strings.ToLower(input))
+	if input != "" && input != "y" && input != "yes" {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
+	// Apply changes
+	for _, ref := range toAdd {
+		if err := pm.AddMod(gameID, profileName, ref); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: %v\n", err)
+			}
+		}
+	}
+
+	for _, ref := range toRemove {
+		if err := pm.RemoveMod(gameID, profileName, ref.SourceID, ref.ModID); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: %v\n", err)
+			}
+		}
+	}
+
+	fmt.Printf("✓ Synced profile: %s\n", profileName)
+	return nil
+}
+
+func runProfileApply(cmd *cobra.Command, args []string) error {
+	if err := requireGame(cmd); err != nil {
+		return err
+	}
+
+	service, err := initService()
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer service.Close()
+
+	game, err := service.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	pm := getProfileManager(service)
+
+	// Determine profile name
+	var profileName string
+	if len(args) > 0 {
+		profileName = args[0]
+	} else {
+		defaultProfile, err := pm.GetDefault(gameID)
+		if err != nil {
+			profileName = "default"
+		} else {
+			profileName = defaultProfile.Name
+		}
+	}
+
+	// Get the profile
+	profile, err := pm.Get(gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("profile not found: %s", profileName)
+	}
+
+	// Get installed mods from database
+	installedMods, err := service.GetInstalledMods(gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("getting installed mods: %w", err)
+	}
+
+	// Build lookup of installed mods
+	installedByKey := make(map[string]*domain.InstalledMod)
+	for i := range installedMods {
+		key := installedMods[i].SourceID + ":" + installedMods[i].ID
+		installedByKey[key] = &installedMods[i]
+	}
+
+	// Build set of profile mod keys
+	profileKeys := make(map[string]domain.ModReference)
+	for _, mr := range profile.Mods {
+		key := mr.SourceID + ":" + mr.ModID
+		profileKeys[key] = mr
+	}
+
+	// Calculate differences
+	var toDisable []*domain.InstalledMod
+	var toEnable []*domain.InstalledMod
+	var toInstall []domain.ModReference
+
+	// Check installed mods against profile
+	for key, im := range installedByKey {
+		if _, inProfile := profileKeys[key]; !inProfile {
+			// Installed but not in profile - disable it
+			if im.Enabled {
+				toDisable = append(toDisable, im)
+			}
+		} else {
+			// In profile - make sure it's enabled
+			if !im.Enabled {
+				toEnable = append(toEnable, im)
+			}
+		}
+	}
+
+	// Check profile mods against installed
+	for key, ref := range profileKeys {
+		if _, installed := installedByKey[key]; !installed {
+			// In profile but not installed
+			toInstall = append(toInstall, ref)
+		}
+	}
+
+	// Show changes
+	if len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 {
+		fmt.Printf("System already matches profile %s.\n", profileName)
+		return nil
+	}
+
+	fmt.Printf("Applying profile: %s\n\n", profileName)
+
+	if len(toDisable) > 0 {
+		fmt.Printf("Will disable %d mod(s):\n", len(toDisable))
+		for _, im := range toDisable {
+			fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+		}
+	}
+
+	if len(toEnable) > 0 {
+		fmt.Printf("Will enable %d mod(s):\n", len(toEnable))
+		for _, im := range toEnable {
+			fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
+		}
+	}
+
+	if len(toInstall) > 0 {
+		fmt.Printf("Will install %d mod(s):\n", len(toInstall))
+		for _, ref := range toInstall {
+			fmt.Printf("  ↓ %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+		}
+	}
+
+	// Confirm unless --yes
+	if !profileApplyYes {
+		fmt.Print("\nProceed? [Y/n]: ")
+		reader := bufio.NewReader(os.Stdin)
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+		if input != "" && input != "y" && input != "yes" {
+			fmt.Println("Cancelled.")
+			return nil
+		}
+	}
+
+	ctx := context.Background()
+	lnk := service.GetLinker(game.LinkMethod)
+	installer := core.NewInstaller(service.Cache(), lnk)
+
+	// Disable mods
+	for _, im := range toDisable {
+		if err := installer.Uninstall(ctx, game, &im.Mod); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
+			}
+		}
+		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, profileName, false); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
+			}
+		}
+		fmt.Printf("  ✓ Disabled: %s\n", im.Name)
+	}
+
+	// Enable mods
+	for _, im := range toEnable {
+		if err := installer.Install(ctx, game, &im.Mod, profileName); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: failed to deploy %s: %v\n", im.Name, err)
+			}
+			continue
+		}
+		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, profileName, true); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
+			}
+		}
+		fmt.Printf("  ✓ Enabled: %s\n", im.Name)
+	}
+
+	// Install missing mods
+	if len(toInstall) > 0 {
+		fmt.Println("\nInstalling missing mods...")
+		for _, ref := range toInstall {
+			fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
+
+			// Fetch mod details
+			mod, err := service.GetMod(ctx, ref.SourceID, gameID, ref.ModID)
+			if err != nil {
+				fmt.Printf("    Error: failed to fetch mod: %v\n", err)
+				continue
+			}
+
+			// Get files
+			files, err := service.GetModFiles(ctx, ref.SourceID, mod)
+			if err != nil {
+				fmt.Printf("    Error: failed to get files: %v\n", err)
+				continue
+			}
+
+			if len(files) == 0 {
+				fmt.Printf("    Error: no downloadable files\n")
+				continue
+			}
+
+			// Select primary file
+			var selectedFile *domain.DownloadableFile
+			for i := range files {
+				if files[i].IsPrimary {
+					selectedFile = &files[i]
+					break
+				}
+			}
+			if selectedFile == nil {
+				selectedFile = &files[0]
+			}
+
+			// Download
+			progressFn := func(p core.DownloadProgress) {
+				if p.TotalBytes > 0 {
+					fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
+				}
+			}
+
+			_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
+			if err != nil {
+				fmt.Println()
+				fmt.Printf("    Error: download failed: %v\n", err)
+				continue
+			}
+			fmt.Println()
+
+			// Deploy
+			if err := installer.Install(ctx, game, mod, profileName); err != nil {
+				fmt.Printf("    Error: deploy failed: %v\n", err)
+				continue
+			}
+
+			// Save to DB
+			installedMod := &domain.InstalledMod{
+				Mod:          *mod,
+				ProfileName:  profileName,
+				UpdatePolicy: domain.UpdateNotify,
+				Enabled:      true,
+			}
+			if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+				fmt.Printf("    Error: save failed: %v\n", err)
+				continue
+			}
+
+			fmt.Printf("    ✓ Installed: %s\n", mod.Name)
+		}
+	}
+
+	fmt.Printf("\n✓ Applied profile: %s\n", profileName)
 	return nil
 }
