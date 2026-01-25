@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-01-24
+
+### Added
+
+- **Deployment Method Tracking**: `lmm list` now shows a DEPLOY column indicating how each mod was deployed (symlink, hardlink, or copy)
+  - Link method is saved per-mod when installing, updating, or redeploying
+  - Helps identify which mods use which deployment strategy
+
+### Changed
+
+- Database schema V3: Added `link_method` column to track deployment method per mod
+
 ## [0.6.2] - 2026-01-24
 
 ### Fixed
@@ -220,7 +232,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.3...v0.6.0

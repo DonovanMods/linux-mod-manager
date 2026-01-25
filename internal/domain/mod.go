@@ -62,7 +62,8 @@ type InstalledMod struct {
 	UpdatePolicy    UpdatePolicy
 	InstalledAt     time.Time
 	Enabled         bool
-	PreviousVersion string // Version before last update (for rollback)
+	PreviousVersion string     // Version before last update (for rollback)
+	LinkMethod      LinkMethod // How the mod was deployed (symlink, hardlink, copy)
 }
 
 // Update represents an available update for an installed mod

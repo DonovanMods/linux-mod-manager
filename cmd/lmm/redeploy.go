@@ -147,6 +147,13 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
+		// Update the link method in database
+		if err := service.SetModLinkMethod(mod.SourceID, mod.ID, gameID, profileName, linkMethod); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: could not update link method: %v\n", err)
+			}
+		}
+
 		fmt.Printf("  ✓ %s\n", mod.Name)
 		succeeded++
 	}

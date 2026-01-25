@@ -64,20 +64,21 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tVERSION\tSOURCE\tENABLED")
-	fmt.Fprintln(w, "--\t----\t-------\t------\t-------")
+	fmt.Fprintln(w, "ID\tNAME\tVERSION\tSOURCE\tENABLED\tDEPLOY")
+	fmt.Fprintln(w, "--\t----\t-------\t------\t-------\t------")
 
 	for _, mod := range mods {
 		enabled := "yes"
 		if !mod.Enabled {
 			enabled = "no"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			mod.ID,
 			truncate(mod.Name, 40),
 			mod.Version,
 			mod.SourceID,
 			enabled,
+			mod.LinkMethod.String(),
 		)
 	}
 	w.Flush()

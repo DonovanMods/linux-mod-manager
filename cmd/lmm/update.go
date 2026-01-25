@@ -289,7 +289,8 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	// Undeploy old version
-	linker := service.GetLinker(service.GetGameLinkMethod(game))
+	linkMethod := service.GetGameLinkMethod(game)
+	linker := service.GetLinker(linkMethod)
 	installer := core.NewInstaller(service.Cache(), linker)
 
 	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
@@ -307,6 +308,13 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	// Update database (preserves previous version for rollback)
 	if err := service.UpdateModVersion(mod.SourceID, mod.ID, game.ID, profileName, newVersion); err != nil {
 		return fmt.Errorf("updating database: %w", err)
+	}
+
+	// Update the link method used for deployment
+	if err := service.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
+		if verbose {
+			fmt.Printf("  Warning: could not update link method: %v\n", err)
+		}
 	}
 
 	return nil
@@ -356,7 +364,8 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Undeploy current version
-	linker := service.GetLinker(service.GetGameLinkMethod(game))
+	linkMethod := service.GetGameLinkMethod(game)
+	linker := service.GetLinker(linkMethod)
 	installer := core.NewInstaller(service.Cache(), linker)
 
 	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
@@ -375,6 +384,13 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	// Swap versions in database
 	if err := service.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName); err != nil {
 		return fmt.Errorf("updating database: %w", err)
+	}
+
+	// Update the link method used for deployment
+	if err := service.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
+		if verbose {
+			fmt.Printf("  Warning: could not update link method: %v\n", err)
+		}
 	}
 
 	fmt.Printf("\n✓ Rolled back: %s %s → %s\n", mod.Name, mod.Version, mod.PreviousVersion)

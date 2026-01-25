@@ -263,7 +263,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	// Deploy to game directory
 	fmt.Println("Deploying to game directory...")
 
-	linker := service.GetLinker(service.GetGameLinkMethod(game))
+	linkMethod := service.GetGameLinkMethod(game)
+	linker := service.GetLinker(linkMethod)
 	installer := core.NewInstaller(service.Cache(), linker)
 
 	profileName := installProfile
@@ -281,6 +282,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		ProfileName:  profileName,
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
+		LinkMethod:   linkMethod,
 	}
 
 	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
@@ -445,6 +447,9 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		}
 	}
 
+	// Get link method for this game
+	linkMethod := service.GetGameLinkMethod(game)
+
 	var installed []string
 	var failed []string
 
@@ -500,7 +505,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		fmt.Println()
 
 		// Deploy to game directory
-		linker := service.GetLinker(service.GetGameLinkMethod(game))
+		linker := service.GetLinker(linkMethod)
 		installer := core.NewInstaller(service.Cache(), linker)
 
 		if err := installer.Install(ctx, game, mod, profileName); err != nil {
@@ -515,6 +520,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			ProfileName:  profileName,
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      true,
+			LinkMethod:   linkMethod,
 		}
 
 		if err := service.DB().SaveInstalledMod(installedMod); err != nil {

@@ -2,7 +2,7 @@ package db
 
 import "fmt"
 
-const currentVersion = 2
+const currentVersion = 3
 
 func (d *DB) migrate() error {
 	// Create migrations table if it doesn't exist
@@ -26,6 +26,7 @@ func (d *DB) migrate() error {
 	migrations := []func(*DB) error{
 		migrateV1,
 		migrateV2,
+		migrateV3,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -85,5 +86,12 @@ func migrateV1(d *DB) error {
 func migrateV2(d *DB) error {
 	// Add previous_version column for rollback support
 	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN previous_version TEXT`)
+	return err
+}
+
+func migrateV3(d *DB) error {
+	// Add link_method column to track deployment method per mod
+	// Default 0 = symlink (LinkSymlink)
+	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN link_method INTEGER DEFAULT 0`)
 	return err
 }
