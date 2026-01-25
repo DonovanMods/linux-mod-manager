@@ -256,6 +256,15 @@ func (s *Service) GetDefaultLinkMethod() domain.LinkMethod {
 	return s.config.DefaultLinkMethod
 }
 
+// GetGameLinkMethod returns the effective link method for a game.
+// Uses the game's explicit setting if configured, otherwise falls back to global default.
+func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
+	if game.LinkMethodExplicit {
+		return game.LinkMethod
+	}
+	return s.config.DefaultLinkMethod
+}
+
 // Cache returns the cache manager
 func (s *Service) Cache() *cache.Cache {
 	return s.cache

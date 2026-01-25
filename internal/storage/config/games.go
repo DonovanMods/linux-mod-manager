@@ -62,12 +62,13 @@ func LoadGames(configDir string) (map[string]*domain.Game, error) {
 	games := make(map[string]*domain.Game)
 	for id, cfg := range gamesFile.Games {
 		games[id] = &domain.Game{
-			ID:          id,
-			Name:        cfg.Name,
-			InstallPath: expandPath(cfg.InstallPath),
-			ModPath:     expandPath(cfg.ModPath),
-			SourceIDs:   cfg.Sources,
-			LinkMethod:  domain.ParseLinkMethod(cfg.LinkMethod),
+			ID:                 id,
+			Name:               cfg.Name,
+			InstallPath:        expandPath(cfg.InstallPath),
+			ModPath:            expandPath(cfg.ModPath),
+			SourceIDs:          cfg.Sources,
+			LinkMethod:         domain.ParseLinkMethod(cfg.LinkMethod),
+			LinkMethodExplicit: cfg.LinkMethod != "",
 		}
 	}
 
@@ -90,13 +91,17 @@ func saveGames(configDir string, games map[string]*domain.Game) error {
 	gamesFile := GamesFile{Games: make(map[string]GameConfig)}
 
 	for id, game := range games {
-		gamesFile.Games[id] = GameConfig{
+		cfg := GameConfig{
 			Name:        game.Name,
 			InstallPath: game.InstallPath,
 			ModPath:     game.ModPath,
 			Sources:     game.SourceIDs,
-			LinkMethod:  game.LinkMethod.String(),
 		}
+		// Only write link_method if explicitly set
+		if game.LinkMethodExplicit {
+			cfg.LinkMethod = game.LinkMethod.String()
+		}
+		gamesFile.Games[id] = cfg
 	}
 
 	data, err := yaml.Marshal(&gamesFile)

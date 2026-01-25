@@ -80,7 +80,7 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("invalid link method: %s (use: symlink, hardlink, or copy)", redeployMethod)
 		}
 	} else {
-		linkMethod = game.LinkMethod
+		linkMethod = service.GetGameLinkMethod(game)
 	}
 
 	ctx := context.Background()

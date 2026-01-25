@@ -289,7 +289,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	// Undeploy old version
-	linker := service.GetLinker(service.GetDefaultLinkMethod())
+	linker := service.GetLinker(service.GetGameLinkMethod(game))
 	installer := core.NewInstaller(service.Cache(), linker)
 
 	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
@@ -356,7 +356,7 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Undeploy current version
-	linker := service.GetLinker(service.GetDefaultLinkMethod())
+	linker := service.GetLinker(service.GetGameLinkMethod(game))
 	installer := core.NewInstaller(service.Cache(), linker)
 
 	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {

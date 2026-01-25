@@ -36,10 +36,11 @@ func ParseLinkMethod(s string) LinkMethod {
 
 // Game represents a moddable game
 type Game struct {
-	ID          string            // Unique slug, e.g., "skyrim-se"
-	Name        string            // Display name
-	InstallPath string            // Game installation directory
-	ModPath     string            // Where mods should be deployed
-	SourceIDs   map[string]string // Map source to game ID, e.g., "nexusmods" -> "skyrimspecialedition"
-	LinkMethod  LinkMethod        // How to deploy mods
+	ID                 string            // Unique slug, e.g., "skyrim-se"
+	Name               string            // Display name
+	InstallPath        string            // Game installation directory
+	ModPath            string            // Where mods should be deployed
+	SourceIDs          map[string]string // Map source to game ID, e.g., "nexusmods" -> "skyrimspecialedition"
+	LinkMethod         LinkMethod        // How to deploy mods
+	LinkMethodExplicit bool              // True if LinkMethod was explicitly set in config
 }

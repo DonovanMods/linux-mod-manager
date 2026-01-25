@@ -119,8 +119,8 @@ Configuration files are stored in `~/.config/lmm/`:
 ### Main Config (`config.yaml`)
 
 ```yaml
-default_link_method: symlink # symlink, hardlink, or copy
-default_game: skyrim-se # optional, set via 'lmm game set-default'
+default_link_method: symlink # Global default: symlink, hardlink, or copy
+default_game: skyrim-se # Optional, set via 'lmm game set-default'
 ```
 
 ### Games (`games.yaml`)
@@ -131,9 +131,30 @@ games:
     name: "Skyrim Special Edition"
     install_path: "/path/to/skyrim"
     mod_path: "/path/to/skyrim/Data"
-    source_ids:
+    sources:
       nexusmods: "skyrimspecialedition"
+    # link_method: symlink  # Optional: override default_link_method for this game
+
+  starfield:
+    name: "Starfield"
+    install_path: "/path/to/starfield"
+    mod_path: "/path/to/starfield/Data"
+    sources:
+      nexusmods: "starfield"
+    link_method: copy # This game requires file copies instead of symlinks
 ```
+
+### Deployment Methods
+
+Mods can be deployed using three methods:
+
+| Method     | Description                                                    |
+| ---------- | -------------------------------------------------------------- |
+| `symlink`  | Symbolic links to cached files (default, space efficient)      |
+| `hardlink` | Hard links (transparent to games, requires same filesystem)    |
+| `copy`     | Full file copies (maximum compatibility, uses more disk space) |
+
+**Priority**: Per-game `link_method` in `games.yaml` takes precedence over `default_link_method` in `config.yaml`. If neither is set, defaults to `symlink`.
 
 ## CLI Reference
 
