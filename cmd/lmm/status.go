@@ -7,6 +7,7 @@ import (
 
 	"lmm/internal/core"
 	"lmm/internal/linker"
+	"lmm/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -46,7 +47,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return showGameStatus(service, gameID)
 	}
 
-	// Otherwise show summary of all games
+	// Load config to check for default game
+	cfg, _ := config.Load(service.ConfigDir())
+
+	// Show summary of all games
 	fmt.Println("Configured Games:")
 	fmt.Println()
 
@@ -75,6 +79,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			totalMods += modCount
 		}
 
+		// Mark default game
+		gameName := game.Name
+		if cfg != nil && cfg.DefaultGame == game.ID {
+			gameName += " (default)"
+		}
+
 		if verbose {
 			linkMethod := service.GetGameLinkMethod(game)
 			linkStr := linkMethod.String()
@@ -82,7 +92,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				linkStr += "*" // Indicate per-game override
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\n",
-				game.Name,
+				gameName,
 				game.ID,
 				truncate(game.InstallPath, 30),
 				linkStr,
@@ -91,7 +101,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			)
 		} else {
 			fmt.Fprintf(w, "%s\t%s\t%d\t%d\n",
-				game.Name,
+				gameName,
 				truncate(game.InstallPath, 40),
 				modCount,
 				len(profiles),

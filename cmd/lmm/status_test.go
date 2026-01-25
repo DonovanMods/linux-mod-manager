@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"testing"
 
+	"lmm/internal/storage/config"
+
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestStatusCmd_FullStructure tests the status command structure in detail
@@ -83,4 +86,29 @@ func TestStatusCmd_AcceptsGameFlag(t *testing.T) {
 	err := testRoot.Execute()
 	assert.NoError(t, err)
 	assert.Equal(t, "test-game", gameID)
+}
+
+// TestStatusCmd_ShowsDefaultGame tests that status runs when default game is set
+func TestStatusCmd_ShowsDefaultGame(t *testing.T) {
+	// Use temp directories
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameID = ""
+
+	// Set up a default game in config
+	cfg := &config.Config{DefaultGame: "my-default-game"}
+	err := cfg.Save(configDir)
+	require.NoError(t, err)
+
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(statusCmd)
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"status"})
+
+	// Command succeeds (note: default game is only shown when games are configured)
+	err = cmd.Execute()
+	assert.NoError(t, err)
 }
