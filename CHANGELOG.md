@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-01-24
+
+### Added
+
+- **Redeploy Command**: `lmm redeploy` to re-deploy mods from cache to game directory
+  - Re-deploy all enabled mods: `lmm redeploy`
+  - Re-deploy specific mod: `lmm redeploy <mod-id>`
+  - `--method` flag to try different link methods (symlink, hardlink, copy)
+  - Useful when changing deployment methods or refreshing mod files
+
 ## [0.6.0] - 2026-01-24
 
 ### Added
@@ -200,7 +210,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.0...v0.5.2

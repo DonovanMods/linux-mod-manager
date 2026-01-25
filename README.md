@@ -181,6 +181,9 @@ games:
 | `lmm profile import <file> --force`    | Import and overwrite existing               |
 | `lmm profile sync`                     | Update profile to match installed mods      |
 | `lmm profile apply`                    | Install/enable mods to match profile        |
+| `lmm redeploy`                         | Re-deploy all enabled mods from cache       |
+| `lmm redeploy <mod-id>`                | Re-deploy specific mod from cache           |
+| `lmm redeploy --method hardlink`       | Re-deploy using different link method       |
 
 ## Architecture
 
