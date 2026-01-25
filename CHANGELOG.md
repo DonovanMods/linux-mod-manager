@@ -23,12 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Install Command**: Search results now show `[installed]` marker for mods already in your profile
 
-## [0.5.1] - 2026-01-24
-
-### Changed
-
-- **List Command**: Mod count is now always displayed, not just in verbose mode
-
 ## [0.5.0] - 2026-01-24
 
 ### Added
@@ -183,8 +177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.3...HEAD
 [0.5.3]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.2...v0.5.3
-[0.5.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.1...v0.5.2
-[0.5.1]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.0...v0.5.1
+[0.5.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.0...v0.5.2
 [0.5.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.2.0...v0.3.0
