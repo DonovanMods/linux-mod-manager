@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"lmm/internal/domain"
-	"lmm/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -1,6 +1,6 @@
 package linker
 
-import "lmm/internal/domain"
+import "github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 // Linker deploys and undeploys mod files to game directories
 type Linker interface {

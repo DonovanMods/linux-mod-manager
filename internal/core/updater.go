@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"lmm/internal/domain"
-	"lmm/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 )
 
 // Updater checks for and applies mod updates

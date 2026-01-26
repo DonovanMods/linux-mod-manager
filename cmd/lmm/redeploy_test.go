@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"lmm/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"

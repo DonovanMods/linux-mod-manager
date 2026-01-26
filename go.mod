@@ -1,4 +1,4 @@
-module lmm
+module github.com/DonovanMods/linux-mod-manager
 
 go 1.25.6
 

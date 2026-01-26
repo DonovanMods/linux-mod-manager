@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lmm/internal/domain"
-	"lmm/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

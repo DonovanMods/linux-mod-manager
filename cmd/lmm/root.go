@@ -5,15 +5,15 @@ import (
 	"os"
 	"path/filepath"
 
-	"lmm/internal/core"
-	"lmm/internal/source/nexusmods"
-	"lmm/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
 
 var (
-	version = "0.6.7"
+	version = "0.6.8"
 
 	// Global flags
 	configDir string

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lmm/internal/domain"
-	"lmm/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

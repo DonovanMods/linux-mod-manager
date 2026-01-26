@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lmm/internal/core"
-	"lmm/internal/domain"
-	"lmm/internal/linker"
-	"lmm/internal/storage/cache"
-	"lmm/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"lmm/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )

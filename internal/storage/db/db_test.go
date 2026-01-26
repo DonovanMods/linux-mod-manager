@@ -3,8 +3,8 @@ package db_test
 import (
 	"testing"
 
-	"lmm/internal/domain"
-	"lmm/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

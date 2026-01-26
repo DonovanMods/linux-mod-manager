@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lmm/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

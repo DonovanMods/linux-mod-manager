@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"lmm/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
 // SymlinkLinker deploys mods using symbolic links

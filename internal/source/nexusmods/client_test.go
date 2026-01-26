@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"lmm/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

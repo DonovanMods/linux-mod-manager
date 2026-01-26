@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"lmm/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 
 	"github.com/spf13/cobra"
 )

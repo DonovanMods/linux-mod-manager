@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"lmm/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"gopkg.in/yaml.v3"
 )

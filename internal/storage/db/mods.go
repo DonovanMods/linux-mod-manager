@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"lmm/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
 // SaveInstalledMod inserts or updates an installed mod record

@@ -7,12 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-01-25
+
 ### Added
 
 - **GitHub Releases**: Automated release builds via GitHub Actions and GoReleaser
   - Creates Linux amd64 and arm64 binaries on tag push
   - Archives include README, LICENSE, and CHANGELOG
   - Checksums provided for verification
+- **Go Install Support**: `go install github.com/DonovanMods/linux-mod-manager/cmd/lmm@latest`
+
+### Changed
+
+- **Module Path**: Changed from `lmm` to `github.com/DonovanMods/linux-mod-manager` to enable go install
 
 ## [0.6.7] - 2026-01-24
 
@@ -278,19 +285,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.7...HEAD
-[0.6.7]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.6...v0.6.7
-[0.6.6]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.5...v0.6.6
-[0.6.5]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.4...v0.6.5
-[0.6.4]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.3...v0.6.4
-[0.6.3]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.2...v0.6.3
-[0.6.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.1...v0.6.2
-[0.6.1]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.0...v0.6.1
-[0.6.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.3...v0.6.0
-[0.5.3]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.2...v0.5.3
-[0.5.2]: https://github.com/dyoung522/linux-mod-manager/compare/v0.5.0...v0.5.2
-[0.5.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/dyoung522/linux-mod-manager/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/dyoung522/linux-mod-manager/releases/tag/v0.1.0
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.8...HEAD
+[0.6.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.7...v0.6.8
+[0.6.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.6...v0.6.7
+[0.6.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.5...v0.6.6
+[0.6.5]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.4...v0.6.5
+[0.6.4]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.3...v0.6.4
+[0.6.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.5.3...v0.6.0
+[0.5.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.5.0...v0.5.2
+[0.5.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/DonovanMods/linux-mod-manager/releases/tag/v0.1.0

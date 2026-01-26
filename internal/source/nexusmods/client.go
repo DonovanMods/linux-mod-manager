@@ -9,7 +9,7 @@ import (
 	"io"
 	"net/http"
 
-	"lmm/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
 const (

@@ -5,9 +5,9 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"lmm/internal/core"
-	"lmm/internal/linker"
-	"lmm/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )

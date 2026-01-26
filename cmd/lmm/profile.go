@@ -8,9 +8,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"lmm/internal/core"
-	"lmm/internal/domain"
-	"lmm/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 
 	"github.com/spf13/cobra"
 )

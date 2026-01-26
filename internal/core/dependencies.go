@@ -3,7 +3,7 @@ package core
 import (
 	"fmt"
 
-	"lmm/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
 // DependencyResolver resolves mod dependencies and detects cycles

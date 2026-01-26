@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"lmm/internal/domain"
-	"lmm/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 )
 
 // NexusMods implements the ModSource interface

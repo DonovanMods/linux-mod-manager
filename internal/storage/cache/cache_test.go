@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"lmm/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

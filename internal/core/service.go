@@ -6,12 +6,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"lmm/internal/domain"
-	"lmm/internal/linker"
-	"lmm/internal/source"
-	"lmm/internal/storage/cache"
-	"lmm/internal/storage/config"
-	"lmm/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 )
 
 // ServiceConfig holds configuration for the core service

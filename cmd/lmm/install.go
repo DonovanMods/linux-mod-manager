@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"lmm/internal/core"
-	"lmm/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
 )

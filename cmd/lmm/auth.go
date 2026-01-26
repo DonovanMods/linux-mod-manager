@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"lmm/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
