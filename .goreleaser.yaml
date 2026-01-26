@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: lmm
+
+before:
+  hooks:
+    - go mod tidy
+    - go fmt ./...
+    - go vet ./...
+
+builds:
+  - id: lmm
+    main: ./cmd/lmm
+    binary: lmm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: lmm
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native
+
+release:
+  github:
+    owner: dyoung522
+    name: linux-mod-manager
+  draft: false
+  prerelease: auto
+  name_template: v{{ .Version }}

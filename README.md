@@ -14,6 +14,20 @@ A terminal-based mod manager for Linux that provides a CLI interface for searchi
 
 ## Installation
 
+### From GitHub Releases
+
+Download the latest release for your architecture from the [Releases page](https://github.com/dyoung522/linux-mod-manager/releases):
+
+- `lmm_<version>_linux_amd64.tar.gz` - 64-bit x86
+- `lmm_<version>_linux_arm64.tar.gz` - 64-bit ARM
+
+Extract and install:
+
+```bash
+tar -xzf lmm_*.tar.gz
+sudo mv lmm /usr/local/bin/
+```
+
 ### From Source
 
 Requires Go 1.21 or later.

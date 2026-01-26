@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **GitHub Releases**: Automated release builds via GitHub Actions and GoReleaser
+  - Creates Linux amd64 and arm64 binaries on tag push
+  - Archives include README, LICENSE, and CHANGELOG
+  - Checksums provided for verification
+
 ## [0.6.7] - 2026-01-24
 
 ### Added
@@ -271,7 +278,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.6...HEAD
+[Unreleased]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.7...HEAD
+[0.6.7]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/dyoung522/linux-mod-manager/compare/v0.6.3...v0.6.4

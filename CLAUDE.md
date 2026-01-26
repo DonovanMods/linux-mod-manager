@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Workflow
+
+**Work is tracked via GitHub Issues.** All development tasks should reference or originate from a GitHub issue. When starting work, check for relevant open issues first.
+
 ## Before Development
 
 **ALWAYS run `/dev-init` at the start of every new session.** This skill reads the required directive files and ensures consistent development practices.
