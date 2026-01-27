@@ -350,6 +350,11 @@ func (s *Service) SetModLinkMethod(sourceID, modID, gameID, profileName string, 
 	return s.db.SetModLinkMethod(sourceID, modID, gameID, profileName, linkMethod)
 }
 
+// SetModFileIDs updates the file IDs for an installed mod
+func (s *Service) SetModFileIDs(sourceID, modID, gameID, profileName string, fileIDs []string) error {
+	return s.db.SetModFileIDs(sourceID, modID, gameID, profileName, fileIDs)
+}
+
 // GetInstalledMod retrieves a single installed mod
 func (s *Service) GetInstalledMod(sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
 	return s.db.GetInstalledMod(sourceID, modID, gameID, profileName)

@@ -253,6 +253,34 @@ func (d *DB) SetModLinkMethod(sourceID, modID, gameID, profileName string, linkM
 	return nil
 }
 
+// SetModFileIDs updates the file IDs for an installed mod
+func (d *DB) SetModFileIDs(sourceID, modID, gameID, profileName string, fileIDs []string) error {
+	// First delete existing file IDs for this mod
+	_, err := d.Exec(`
+		DELETE FROM installed_mod_files
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("clearing mod file IDs: %w", err)
+	}
+
+	// Insert new file IDs
+	for _, fileID := range fileIDs {
+		if fileID == "" {
+			continue
+		}
+		_, err = d.Exec(`
+			INSERT INTO installed_mod_files (source_id, mod_id, game_id, profile_name, file_id)
+			VALUES (?, ?, ?, ?, ?)
+		`, sourceID, modID, gameID, profileName, fileID)
+		if err != nil {
+			return fmt.Errorf("saving mod file ID: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // SwapModVersions swaps version and previous_version (for rollback)
 func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error {
 	// First check if previous_version exists

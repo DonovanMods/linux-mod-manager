@@ -261,17 +261,8 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		return fmt.Errorf("no downloadable files available")
 	}
 
-	// Select the primary file or first available
-	var selectedFile *domain.DownloadableFile
-	for i := range files {
-		if files[i].IsPrimary {
-			selectedFile = &files[i]
-			break
-		}
-	}
-	if selectedFile == nil {
-		selectedFile = &files[0]
-	}
+	// Try to use the same file IDs as before, or fall back to primary
+	filesToDownload, _ := selectFilesToDownload(files, mod.FileIDs)
 
 	// Download the new version
 	progressFn := func(p core.DownloadProgress) {
@@ -280,9 +271,13 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		}
 	}
 
-	_, err = service.DownloadMod(ctx, mod.SourceID, game, newMod, selectedFile, progressFn)
-	if err != nil {
-		return fmt.Errorf("downloading update: %w", err)
+	var downloadedFileIDs []string
+	for _, selectedFile := range filesToDownload {
+		_, err = service.DownloadMod(ctx, mod.SourceID, game, newMod, selectedFile, progressFn)
+		if err != nil {
+			return fmt.Errorf("downloading update: %w", err)
+		}
+		downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
 	}
 	if verbose {
 		fmt.Println()
@@ -314,6 +309,28 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	if err := service.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
 		if verbose {
 			fmt.Printf("  Warning: could not update link method: %v\n", err)
+		}
+	}
+
+	// Update FileIDs in database
+	if err := service.SetModFileIDs(mod.SourceID, mod.ID, game.ID, profileName, downloadedFileIDs); err != nil {
+		if verbose {
+			fmt.Printf("  Warning: could not update file IDs: %v\n", err)
+		}
+	}
+
+	// Update the profile entry with new version and FileIDs
+	pm := getProfileManager(service)
+	modRef := domain.ModReference{
+		SourceID: mod.SourceID,
+		ModID:    mod.ID,
+		Version:  newVersion,
+		FileIDs:  downloadedFileIDs,
+	}
+	_ = pm.RemoveMod(game.ID, profileName, mod.SourceID, mod.ID)
+	if err := pm.AddMod(game.ID, profileName, modRef); err != nil {
+		if verbose {
+			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}
 	}
 

@@ -502,9 +502,18 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
-			// Add to profile
-			if err := pm.AddMod(gameID, targetName, ref); err != nil {
-				// Ignore if already in profile
+			// Update profile with actual downloaded FileIDs
+			modRef := domain.ModReference{
+				SourceID: mod.SourceID,
+				ModID:    mod.ID,
+				Version:  mod.Version,
+				FileIDs:  downloadedFileIDs,
+			}
+			_ = pm.RemoveMod(gameID, targetName, mod.SourceID, mod.ID)
+			if err := pm.AddMod(gameID, targetName, modRef); err != nil {
+				if verbose {
+					fmt.Printf("    Warning: could not update profile: %v\n", err)
+				}
 			}
 
 			fmt.Printf("    ✓ Installed: %s\n", mod.Name)
@@ -763,6 +772,20 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 			fmt.Printf("    Error: save failed: %v\n", err)
 			failedCount++
 			continue
+		}
+
+		// Update profile with actual downloaded FileIDs
+		modRef := domain.ModReference{
+			SourceID: mod.SourceID,
+			ModID:    mod.ID,
+			Version:  mod.Version,
+			FileIDs:  downloadedFileIDs,
+		}
+		_ = pm.RemoveMod(gameID, profile.Name, mod.SourceID, mod.ID)
+		if err := pm.AddMod(gameID, profile.Name, modRef); err != nil {
+			if verbose {
+				fmt.Printf("    Warning: could not update profile: %v\n", err)
+			}
 		}
 
 		fmt.Printf("    ✓ Installed: %s\n", mod.Name)
@@ -1211,6 +1234,20 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 			if err := service.DB().SaveInstalledMod(installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
 				continue
+			}
+
+			// Update profile with actual downloaded FileIDs
+			modRef := domain.ModReference{
+				SourceID: mod.SourceID,
+				ModID:    mod.ID,
+				Version:  mod.Version,
+				FileIDs:  downloadedFileIDs,
+			}
+			_ = pm.RemoveMod(gameID, profileName, mod.SourceID, mod.ID)
+			if err := pm.AddMod(gameID, profileName, modRef); err != nil {
+				if verbose {
+					fmt.Printf("    Warning: could not update profile: %v\n", err)
+				}
 			}
 
 			fmt.Printf("    ✓ Installed: %s\n", mod.Name)

@@ -330,12 +330,13 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save mod: %w", err)
 	}
 
-	// Add mod to current profile
+	// Add mod to current profile (with FileIDs)
 	pm := getProfileManager(service)
 	modRef := domain.ModReference{
 		SourceID: mod.SourceID,
 		ModID:    mod.ID,
 		Version:  mod.Version,
+		FileIDs:  downloadedFileIDs,
 	}
 
 	// Ensure profile exists, create if needed
@@ -350,10 +351,11 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Remove existing entry first (for reinstalls), then add with updated FileIDs
+	_ = pm.RemoveMod(gameID, profileName, mod.SourceID, mod.ID) // Ignore error if not found
 	if err := pm.AddMod(gameID, profileName, modRef); err != nil {
-		// Don't fail if already in profile (e.g., reinstall)
 		if verbose {
-			fmt.Printf("  Note: %v\n", err)
+			fmt.Printf("  Warning: could not add to profile: %v\n", err)
 		}
 	}
 
@@ -587,16 +589,18 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			continue
 		}
 
-		// Add to profile
+		// Add to profile (with FileIDs)
 		modRef := domain.ModReference{
 			SourceID: mod.SourceID,
 			ModID:    mod.ID,
 			Version:  mod.Version,
+			FileIDs:  []string{selectedFile.ID},
 		}
+		// Remove existing entry first (for reinstalls), then add with updated FileIDs
+		_ = pm.RemoveMod(game.ID, profileName, mod.SourceID, mod.ID)
 		if err := pm.AddMod(game.ID, profileName, modRef); err != nil {
-			// Don't fail if already in profile
 			if verbose {
-				fmt.Printf("  Note: %v\n", err)
+				fmt.Printf("  Warning: could not add to profile: %v\n", err)
 			}
 		}
 

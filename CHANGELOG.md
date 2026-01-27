@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Profile Sync FileIDs**: `lmm profile sync` now updates FileIDs for existing mods that are missing them
+- **Auto-Sync FileIDs on Install**: Profile now automatically updated with FileIDs when mods are installed
+- **Auto-Sync FileIDs on Update**: `lmm update` now tracks and preserves file selections when updating mods
+  - Attempts to download the same file types as before (using stored FileIDs)
+  - Updates both database and profile with new FileIDs
+- **Profile Switch/Import/Apply FileIDs**: All profile operations now auto-sync FileIDs after installing mods
 
 ## [0.7.1] - 2026-01-27
 
