@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-01-27
+
+### Fixed
+
+- **FileIDs Persistence**: FileIDs were not being written to profile YAML files
+  - Added `file_ids` field to profile config format
+  - Profile save/load now properly handles FileIDs
+
 ## [0.7.3] - 2026-01-27
 
 ### Added
@@ -336,7 +344,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.0...v0.7.1
