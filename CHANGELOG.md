@@ -7,16 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.2] - 2026-01-27
+## [0.7.3] - 2026-01-27
 
-### Fixed
+### Added
 
-- **Profile Sync FileIDs**: `lmm profile sync` now updates FileIDs for existing mods that are missing them
-- **Auto-Sync FileIDs on Install**: Profile now automatically updated with FileIDs when mods are installed
-- **Auto-Sync FileIDs on Update**: `lmm update` now tracks and preserves file selections when updating mods
-  - Attempts to download the same file types as before (using stored FileIDs)
-  - Updates both database and profile with new FileIDs
-- **Profile Switch/Import/Apply FileIDs**: All profile operations now auto-sync FileIDs after installing mods
+- **Auto-Sync FileIDs**: Profile YAML now automatically stays in sync with actual file selections
+  - Install: Profile updated with downloaded FileIDs
+  - Update: Preserves file selections, updates both DB and profile
+  - Profile switch/import/apply: Auto-sync FileIDs after installing mods
+  - Profile sync: Updates FileIDs for existing mods that are missing them
 
 ## [0.7.1] - 2026-01-27
 
@@ -337,7 +336,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.9...v0.7.0
