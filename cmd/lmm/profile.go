@@ -833,6 +833,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 				SourceID: im.SourceID,
 				ModID:    im.ID,
 				Version:  im.Version,
+				FileIDs:  im.FileIDs,
 			}
 		}
 	}
@@ -847,11 +848,15 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 	// Calculate differences
 	var toAdd []domain.ModReference
 	var toRemove []domain.ModReference
+	var toUpdate []domain.ModReference // Mods that need FileIDs updated
 
 	// Mods in DB but not in profile
 	for key, ref := range installedRefs {
-		if _, exists := profileRefs[key]; !exists {
+		if profileRef, exists := profileRefs[key]; !exists {
 			toAdd = append(toAdd, ref)
+		} else if len(ref.FileIDs) > 0 && len(profileRef.FileIDs) == 0 {
+			// Mod exists in both but profile is missing FileIDs
+			toUpdate = append(toUpdate, ref)
 		}
 	}
 
@@ -863,7 +868,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 	}
 
 	// Show changes
-	if len(toAdd) == 0 && len(toRemove) == 0 {
+	if len(toAdd) == 0 && len(toRemove) == 0 && len(toUpdate) == 0 {
 		fmt.Printf("Profile %s is already in sync.\n", profileName)
 		return nil
 	}
@@ -890,6 +895,18 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if len(toUpdate) > 0 {
+		fmt.Println("Will update FileIDs for:")
+		for _, ref := range toUpdate {
+			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, gameID, profileName)
+			if mod != nil {
+				fmt.Printf("  ~ %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
+			} else {
+				fmt.Printf("  ~ %s:%s\n", ref.SourceID, ref.ModID)
+			}
+		}
+	}
+
 	// Confirm
 	fmt.Print("\nProceed? [Y/n]: ")
 	reader := bufio.NewReader(os.Stdin)
@@ -913,6 +930,23 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 		if err := pm.RemoveMod(gameID, profileName, ref.SourceID, ref.ModID); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: %v\n", err)
+			}
+		}
+	}
+
+	// Update mods with FileIDs (remove and re-add with updated FileIDs)
+	for _, ref := range toUpdate {
+		// Remove old entry
+		if err := pm.RemoveMod(gameID, profileName, ref.SourceID, ref.ModID); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: could not remove %s:%s: %v\n", ref.SourceID, ref.ModID, err)
+			}
+			continue
+		}
+		// Add back with FileIDs
+		if err := pm.AddMod(gameID, profileName, ref); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: could not add %s:%s: %v\n", ref.SourceID, ref.ModID, err)
 			}
 		}
 	}

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `lmm profile export` now includes FileIDs for each mod in the exported YAML
   - `lmm profile import` uses FileIDs from the imported profile to restore exact file selections
   - `lmm profile apply` and `lmm profile switch` also respect FileIDs for new installs and re-downloads
+  - `lmm profile sync` now updates FileIDs for existing mods that are missing them
 
 ## [0.7.0] - 2026-01-26
 
