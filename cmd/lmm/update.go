@@ -327,8 +327,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		Version:  newVersion,
 		FileIDs:  downloadedFileIDs,
 	}
-	_ = pm.RemoveMod(game.ID, profileName, mod.SourceID, mod.ID)
-	if err := pm.AddMod(game.ID, profileName, modRef); err != nil {
+	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		if verbose {
 			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}

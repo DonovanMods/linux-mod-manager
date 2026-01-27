@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-01-27
+
+### Added
+
+- **UpsertMod API**: New `ProfileManager.UpsertMod()` method for atomic add-or-update operations
+  - Updates mod in place if it exists (preserves load order position)
+  - Appends to end if mod is new
+  - Single save operation instead of two
+  - Replaces error-prone `RemoveMod` + `AddMod` pattern
+
+### Changed
+
+- **Profile Operations**: Install, update, sync, switch, apply, and import now use `UpsertMod`
+  - More reliable FileID updates during re-installs
+  - Cleaner code with centralized profile modification logic
+
 ## [0.7.4] - 2026-01-27
 
 ### Fixed
@@ -344,7 +360,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.5...HEAD
+[0.7.5]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.1...v0.7.2

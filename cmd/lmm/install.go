@@ -351,11 +351,10 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Remove existing entry first (for reinstalls), then add with updated FileIDs
-	_ = pm.RemoveMod(gameID, profileName, mod.SourceID, mod.ID) // Ignore error if not found
-	if err := pm.AddMod(gameID, profileName, modRef); err != nil {
+	// Add or update mod in profile (handles both new installs and re-installs)
+	if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
 		if verbose {
-			fmt.Printf("  Warning: could not add to profile: %v\n", err)
+			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}
 	}
 
@@ -589,18 +588,16 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			continue
 		}
 
-		// Add to profile (with FileIDs)
+		// Add or update mod in profile (with FileIDs)
 		modRef := domain.ModReference{
 			SourceID: mod.SourceID,
 			ModID:    mod.ID,
 			Version:  mod.Version,
 			FileIDs:  []string{selectedFile.ID},
 		}
-		// Remove existing entry first (for reinstalls), then add with updated FileIDs
-		_ = pm.RemoveMod(game.ID, profileName, mod.SourceID, mod.ID)
-		if err := pm.AddMod(game.ID, profileName, modRef); err != nil {
+		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 			if verbose {
-				fmt.Printf("  Warning: could not add to profile: %v\n", err)
+				fmt.Printf("  Warning: could not update profile: %v\n", err)
 			}
 		}
 

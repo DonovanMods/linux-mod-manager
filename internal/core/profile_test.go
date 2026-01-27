@@ -277,3 +277,72 @@ func TestProfileManager_ExportImport(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "original", profile.Name)
 }
+
+func TestProfileManager_UpsertMod(t *testing.T) {
+	dir := t.TempDir()
+
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	cacheDir := filepath.Join(dir, "cache")
+	modCache := cache.New(cacheDir)
+	lnk := linker.NewSymlink()
+
+	pm := core.NewProfileManager(dir, database, modCache, lnk)
+
+	// Create a profile
+	_, err = pm.Create("skyrim-se", "test")
+	require.NoError(t, err)
+
+	// Upsert a new mod (should add it)
+	modRef := domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "1.0.0",
+		FileIDs:  []string{"100"},
+	}
+	err = pm.UpsertMod("skyrim-se", "test", modRef)
+	require.NoError(t, err)
+
+	profile, err := pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "12345", profile.Mods[0].ModID)
+	assert.Equal(t, "1.0.0", profile.Mods[0].Version)
+	assert.Equal(t, []string{"100"}, profile.Mods[0].FileIDs)
+
+	// Upsert the same mod with updated version and FileIDs (should update in place)
+	modRef2 := domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "2.0.0",
+		FileIDs:  []string{"200", "201"},
+	}
+	err = pm.UpsertMod("skyrim-se", "test", modRef2)
+	require.NoError(t, err)
+
+	profile, err = pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1) // Should still be 1 mod, not 2
+	assert.Equal(t, "12345", profile.Mods[0].ModID)
+	assert.Equal(t, "2.0.0", profile.Mods[0].Version)
+	assert.Equal(t, []string{"200", "201"}, profile.Mods[0].FileIDs)
+
+	// Upsert a different mod (should add it)
+	modRef3 := domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "67890",
+		Version:  "1.0.0",
+		FileIDs:  []string{"300"},
+	}
+	err = pm.UpsertMod("skyrim-se", "test", modRef3)
+	require.NoError(t, err)
+
+	profile, err = pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 2) // Now should be 2 mods
+	// First mod should still be in position 0
+	assert.Equal(t, "12345", profile.Mods[0].ModID)
+	assert.Equal(t, "67890", profile.Mods[1].ModID)
+}

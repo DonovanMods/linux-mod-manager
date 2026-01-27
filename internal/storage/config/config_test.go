@@ -144,6 +144,43 @@ func TestSaveProfile(t *testing.T) {
 	assert.Equal(t, profile.Name, loaded.Name)
 }
 
+func TestSaveProfile_WithFileIDs(t *testing.T) {
+	dir := t.TempDir()
+
+	profile := &domain.Profile{
+		Name:   "test-profile",
+		GameID: "skyrim-se",
+		Mods: []domain.ModReference{
+			{SourceID: "nexusmods", ModID: "111", Version: "1.0", FileIDs: []string{"12345", "67890"}},
+			{SourceID: "nexusmods", ModID: "222", Version: "2.0", FileIDs: []string{"99999"}},
+		},
+		LinkMethod: domain.LinkSymlink,
+	}
+
+	err := config.SaveProfile(dir, profile)
+	require.NoError(t, err)
+
+	// Read the raw file to verify FileIDs are in the YAML
+	profilePath := filepath.Join(dir, "games", "skyrim-se", "profiles", "test-profile.yaml")
+	data, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	t.Logf("Raw YAML:\n%s", string(data))
+
+	// Verify file_ids appears in the raw YAML
+	assert.Contains(t, string(data), "file_ids:")
+	assert.Contains(t, string(data), "12345")
+	assert.Contains(t, string(data), "67890")
+	assert.Contains(t, string(data), "99999")
+
+	// Load and verify FileIDs are preserved
+	loaded, err := config.LoadProfile(dir, "skyrim-se", "test-profile")
+	require.NoError(t, err)
+	assert.Equal(t, profile.Name, loaded.Name)
+	require.Len(t, loaded.Mods, 2)
+	assert.Equal(t, []string{"12345", "67890"}, loaded.Mods[0].FileIDs)
+	assert.Equal(t, []string{"99999"}, loaded.Mods[1].FileIDs)
+}
+
 func TestLoadGames_ExpandsTilde(t *testing.T) {
 	dir := t.TempDir()
 	gamesPath := filepath.Join(dir, "games.yaml")

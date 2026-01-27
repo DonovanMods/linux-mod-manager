@@ -150,6 +150,35 @@ func (pm *ProfileManager) AddMod(gameID, profileName string, mod domain.ModRefer
 	return config.SaveProfile(pm.configDir, profile)
 }
 
+// UpsertMod adds or updates a mod reference in a profile.
+// If the mod exists, it updates Version and FileIDs while preserving position.
+// If the mod doesn't exist, it appends to the end.
+// This is the preferred method for install/update operations.
+func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModReference) error {
+	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
+	if err != nil {
+		return err
+	}
+
+	// Look for existing mod and update in place
+	found := false
+	for i := range profile.Mods {
+		if profile.Mods[i].SourceID == mod.SourceID && profile.Mods[i].ModID == mod.ModID {
+			profile.Mods[i].Version = mod.Version
+			profile.Mods[i].FileIDs = mod.FileIDs
+			found = true
+			break
+		}
+	}
+
+	// If not found, append
+	if !found {
+		profile.Mods = append(profile.Mods, mod)
+	}
+
+	return config.SaveProfile(pm.configDir, profile)
+}
+
 // RemoveMod removes a mod reference from a profile
 func (pm *ProfileManager) RemoveMod(gameID, profileName, sourceID, modID string) error {
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)

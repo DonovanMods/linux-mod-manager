@@ -509,8 +509,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				Version:  mod.Version,
 				FileIDs:  downloadedFileIDs,
 			}
-			_ = pm.RemoveMod(gameID, targetName, mod.SourceID, mod.ID)
-			if err := pm.AddMod(gameID, targetName, modRef); err != nil {
+			if err := pm.UpsertMod(gameID, targetName, modRef); err != nil {
 				if verbose {
 					fmt.Printf("    Warning: could not update profile: %v\n", err)
 				}
@@ -781,8 +780,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 			Version:  mod.Version,
 			FileIDs:  downloadedFileIDs,
 		}
-		_ = pm.RemoveMod(gameID, profile.Name, mod.SourceID, mod.ID)
-		if err := pm.AddMod(gameID, profile.Name, modRef); err != nil {
+		if err := pm.UpsertMod(gameID, profile.Name, modRef); err != nil {
 			if verbose {
 				fmt.Printf("    Warning: could not update profile: %v\n", err)
 			}
@@ -957,19 +955,11 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Update mods with FileIDs (remove and re-add with updated FileIDs)
+	// Update mods with FileIDs
 	for _, ref := range toUpdate {
-		// Remove old entry
-		if err := pm.RemoveMod(gameID, profileName, ref.SourceID, ref.ModID); err != nil {
+		if err := pm.UpsertMod(gameID, profileName, ref); err != nil {
 			if verbose {
-				fmt.Printf("  Warning: could not remove %s:%s: %v\n", ref.SourceID, ref.ModID, err)
-			}
-			continue
-		}
-		// Add back with FileIDs
-		if err := pm.AddMod(gameID, profileName, ref); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: could not add %s:%s: %v\n", ref.SourceID, ref.ModID, err)
+				fmt.Printf("  Warning: could not update %s:%s: %v\n", ref.SourceID, ref.ModID, err)
 			}
 		}
 	}
@@ -1243,8 +1233,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				Version:  mod.Version,
 				FileIDs:  downloadedFileIDs,
 			}
-			_ = pm.RemoveMod(gameID, profileName, mod.SourceID, mod.ID)
-			if err := pm.AddMod(gameID, profileName, modRef); err != nil {
+			if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
 				if verbose {
 					fmt.Printf("    Warning: could not update profile: %v\n", err)
 				}
