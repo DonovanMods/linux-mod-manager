@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-01-26
+
+### Added
+
+- **Cache-Missing Re-download**: Mods that exist in the database but are missing from cache are now automatically re-downloaded
+  - `lmm profile import` - Shows "cache missing" category separately, re-downloads as needed
+  - `lmm profile apply` - Detects cache-missing mods when enabling, triggers download
+  - `lmm profile switch` - Detects cache-missing mods, triggers download
+  - `lmm redeploy` - Re-downloads from source instead of failing when cache is missing
+  - Useful when cache directory changes, files are deleted, or profile is imported on a new machine
+
 ## [0.6.8] - 2026-01-25
 
 ### Added
@@ -285,7 +296,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.8...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.9...HEAD
+[0.6.9]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.5...v0.6.6
