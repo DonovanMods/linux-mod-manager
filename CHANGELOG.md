@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-01-27
+
+### Fixed
+
+- **Profile Sync FileIDs**: `lmm profile sync` now updates FileIDs for existing mods that are missing them
+
 ## [0.7.1] - 2026-01-27
 
 ### Fixed
@@ -17,7 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `lmm profile export` now includes FileIDs for each mod in the exported YAML
   - `lmm profile import` uses FileIDs from the imported profile to restore exact file selections
   - `lmm profile apply` and `lmm profile switch` also respect FileIDs for new installs and re-downloads
-  - `lmm profile sync` now updates FileIDs for existing mods that are missing them
 
 ## [0.7.0] - 2026-01-26
 
@@ -327,7 +332,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.9...v0.7.0
 [0.6.9]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.8...v0.6.9
