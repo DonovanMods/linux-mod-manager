@@ -284,6 +284,25 @@ func (pm *ProfileManager) Export(gameID, profileName string) ([]byte, error) {
 		return nil, err
 	}
 
+	// Get installed mods to populate FileIDs
+	installedMods, err := pm.db.GetInstalledMods(gameID, profileName)
+	if err == nil {
+		// Build lookup map of installed mods by source:mod key
+		installedMap := make(map[string]*domain.InstalledMod)
+		for i := range installedMods {
+			key := installedMods[i].SourceID + ":" + installedMods[i].ID
+			installedMap[key] = &installedMods[i]
+		}
+
+		// Populate FileIDs in profile mods
+		for i := range profile.Mods {
+			key := profile.Mods[i].SourceID + ":" + profile.Mods[i].ModID
+			if installed, ok := installedMap[key]; ok {
+				profile.Mods[i].FileIDs = installed.FileIDs
+			}
+		}
+	}
+
 	return config.ExportProfile(profile)
 }
 

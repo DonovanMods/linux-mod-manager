@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-01-27
+
+### Fixed
+
+- **Re-install Cleanup**: When re-installing a mod (e.g., to change file selection), old files are now properly removed from the game directory before installing new files
+- **Cache Cleanup**: Old cache is deleted before downloading new files during re-install, ensuring a clean slate
+- **Profile Export/Import FileIDs**: File IDs are now preserved when exporting and importing profiles
+  - `lmm profile export` now includes FileIDs for each mod in the exported YAML
+  - `lmm profile import` uses FileIDs from the imported profile to restore exact file selections
+  - `lmm profile apply` and `lmm profile switch` also respect FileIDs for new installs and re-downloads
+
 ## [0.7.0] - 2026-01-26
 
 ### Added
@@ -315,7 +326,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.9...v0.7.0
 [0.6.9]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.7...v0.6.8

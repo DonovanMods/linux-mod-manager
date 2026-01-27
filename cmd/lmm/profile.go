@@ -332,8 +332,10 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 		if im, installed := allInstalled[key]; installed {
 			// Already installed - check if cache exists
 			if !service.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version) {
-				// Cache missing - need to re-download
-				toInstall = append(toInstall, ref)
+				// Cache missing - need to re-download, preserve FileIDs from installed mod
+				refWithFileIDs := ref
+				refWithFileIDs.FileIDs = im.FileIDs
+				toInstall = append(toInstall, refWithFileIDs)
 				needsRedownloadSet[key] = true
 			} else if !im.Enabled {
 				toEnable = append(toEnable, im)
@@ -450,16 +452,9 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
-			// Select files to download - use stored FileIDs for re-downloads
-			key := ref.SourceID + ":" + ref.ModID
-			var storedFileIDs []string
-			if needsRedownloadSet[key] {
-				if im, ok := allInstalled[key]; ok {
-					storedFileIDs = im.FileIDs
-				}
-			}
-			filesToDownload, usedFallback := selectFilesToDownload(files, storedFileIDs)
-			if usedFallback {
+			// Select files to download - use FileIDs from ref (populated for re-downloads from installed mod, or from profile for new installs)
+			filesToDownload, usedFallback := selectFilesToDownload(files, ref.FileIDs)
+			if usedFallback && len(ref.FileIDs) > 0 {
 				fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 			}
 
@@ -706,16 +701,20 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Select files to download - use stored FileIDs for re-downloads
+		// Select files to download - use stored FileIDs for re-downloads, or profile FileIDs for new installs
 		key := ref.SourceID + ":" + ref.ModID
-		var storedFileIDs []string
+		var fileIDsToUse []string
 		if needsRedownloadSet[key] {
+			// Re-download: use DB-stored FileIDs
 			if info, ok := installedData[key]; ok {
-				storedFileIDs = info.FileIDs
+				fileIDsToUse = info.FileIDs
 			}
+		} else if len(ref.FileIDs) > 0 {
+			// New install: use FileIDs from imported profile
+			fileIDsToUse = ref.FileIDs
 		}
-		filesToDownload, usedFallback := selectFilesToDownload(files, storedFileIDs)
-		if usedFallback {
+		filesToDownload, usedFallback := selectFilesToDownload(files, fileIDsToUse)
+		if usedFallback && len(fileIDsToUse) > 0 {
 			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 		}
 
@@ -1004,6 +1003,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 						SourceID: im.SourceID,
 						ModID:    im.ID,
 						Version:  im.Version,
+						FileIDs:  im.FileIDs,
 					})
 					needsRedownloadSet[key] = true
 				}
@@ -1120,16 +1120,18 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
-			// Select files to download - use stored FileIDs for re-downloads
+			// Select files to download - use stored FileIDs for re-downloads, or profile FileIDs for new installs
 			key := ref.SourceID + ":" + ref.ModID
-			var storedFileIDs []string
+			var fileIDsToUse []string
 			if needsRedownloadSet[key] {
-				if im, ok := installedByKey[key]; ok {
-					storedFileIDs = im.FileIDs
-				}
+				// Re-download: use DB-stored FileIDs (from ref, which was populated from im.FileIDs)
+				fileIDsToUse = ref.FileIDs
+			} else if len(ref.FileIDs) > 0 {
+				// New install: use FileIDs from profile
+				fileIDsToUse = ref.FileIDs
 			}
-			filesToDownload, usedFallback := selectFilesToDownload(files, storedFileIDs)
-			if usedFallback {
+			filesToDownload, usedFallback := selectFilesToDownload(files, fileIDsToUse)
+			if usedFallback && len(fileIDsToUse) > 0 {
 				fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 			}
 

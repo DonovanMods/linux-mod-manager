@@ -32,9 +32,10 @@ type DownloadableFile struct {
 
 // ModReference is a pointer to a mod (used in profiles, dependencies)
 type ModReference struct {
-	SourceID string `yaml:"source_id"` // "nexusmods", "curseforge", etc.
-	ModID    string `yaml:"mod_id"`    // Source-specific identifier
-	Version  string `yaml:"version"`   // Empty string means "latest"
+	SourceID string   `yaml:"source_id"`          // "nexusmods", "curseforge", etc.
+	ModID    string   `yaml:"mod_id"`             // Source-specific identifier
+	Version  string   `yaml:"version"`            // Empty string means "latest"
+	FileIDs  []string `yaml:"file_ids,omitempty"` // Source-specific file IDs that were installed
 }
 
 // Mod represents a mod from any source

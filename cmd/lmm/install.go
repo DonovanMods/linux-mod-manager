@@ -247,6 +247,35 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Determine profile name early - needed for checking existing installation
+	profileName := installProfile
+	if profileName == "" {
+		profileName = "default"
+	}
+
+	// Set up installer
+	linkMethod := service.GetGameLinkMethod(game)
+	linker := service.GetLinker(linkMethod)
+	installer := core.NewInstaller(service.GetGameCache(game), linker)
+
+	// Check if mod is already installed - if so, uninstall old files first
+	existingMod, err := service.GetInstalledMod(installSource, mod.ID, gameID, profileName)
+	if err == nil && existingMod != nil {
+		fmt.Println("\nRemoving previous installation...")
+		// Uninstall using the OLD version info to remove correct files
+		if err := installer.Uninstall(ctx, game, &existingMod.Mod); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: could not remove old files: %v\n", err)
+			}
+		}
+		// Delete old cache for this mod/version to ensure clean slate
+		if err := service.GetGameCache(game).Delete(gameID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: could not clear old cache: %v\n", err)
+			}
+		}
+	}
+
 	// Download each selected file
 	var totalFileCount int
 	var downloadedFileIDs []string
@@ -282,15 +311,6 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// Deploy to game directory
 	fmt.Println("Deploying to game directory...")
-
-	linkMethod := service.GetGameLinkMethod(game)
-	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker)
-
-	profileName := installProfile
-	if profileName == "" {
-		profileName = "default"
-	}
 
 	if err := installer.Install(ctx, game, mod, profileName); err != nil {
 		return fmt.Errorf("deployment failed: %w", err)
@@ -477,6 +497,26 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 	for i, mod := range mods {
 		fmt.Printf("\n[%d/%d] Installing: %s v%s\n", i+1, len(mods), mod.Name, mod.Version)
 
+		// Set up installer
+		linker := service.GetLinker(linkMethod)
+		installer := core.NewInstaller(service.GetGameCache(game), linker)
+
+		// Check if mod is already installed - if so, uninstall old files first
+		existingMod, err := service.GetInstalledMod(installSource, mod.ID, game.ID, profileName)
+		if err == nil && existingMod != nil {
+			fmt.Printf("  Removing previous installation...\n")
+			if err := installer.Uninstall(ctx, game, &existingMod.Mod); err != nil {
+				if verbose {
+					fmt.Printf("  Warning: could not remove old files: %v\n", err)
+				}
+			}
+			if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil {
+				if verbose {
+					fmt.Printf("  Warning: could not clear old cache: %v\n", err)
+				}
+			}
+		}
+
 		// Get available files
 		files, err := service.GetModFiles(ctx, installSource, mod)
 		if err != nil {
@@ -524,10 +564,6 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			continue
 		}
 		fmt.Println()
-
-		// Deploy to game directory
-		linker := service.GetLinker(linkMethod)
-		installer := core.NewInstaller(service.GetGameCache(game), linker)
 
 		if err := installer.Install(ctx, game, mod, profileName); err != nil {
 			fmt.Printf("  Error: deployment failed: %v\n", err)
