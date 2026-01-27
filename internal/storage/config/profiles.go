@@ -23,9 +23,10 @@ type ProfileConfig struct {
 
 // ModReferenceConfig is the YAML representation of a mod reference
 type ModReferenceConfig struct {
-	SourceID string `yaml:"source_id"`
-	ModID    string `yaml:"mod_id"`
-	Version  string `yaml:"version,omitempty"`
+	SourceID string   `yaml:"source_id"`
+	ModID    string   `yaml:"mod_id"`
+	Version  string   `yaml:"version,omitempty"`
+	FileIDs  []string `yaml:"file_ids,omitempty"`
 }
 
 // LoadProfile reads a profile from disk
@@ -57,6 +58,7 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 			SourceID: m.SourceID,
 			ModID:    m.ModID,
 			Version:  m.Version,
+			FileIDs:  m.FileIDs,
 		}
 	}
 
@@ -78,6 +80,7 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 			SourceID: m.SourceID,
 			ModID:    m.ModID,
 			Version:  m.Version,
+			FileIDs:  m.FileIDs,
 		}
 	}
 
