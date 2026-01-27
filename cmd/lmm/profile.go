@@ -318,6 +318,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 	var toDisable []*domain.InstalledMod
 	var toEnable []*domain.InstalledMod
 	var toInstall []domain.ModReference
+	needsRedownloadSet := make(map[string]bool) // Track which mods are re-downloads
 
 	// Mods enabled in current profile but not in target - disable
 	for key, im := range currentEnabled {
@@ -333,6 +334,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 			if !service.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version) {
 				// Cache missing - need to re-download
 				toInstall = append(toInstall, ref)
+				needsRedownloadSet[key] = true
 			} else if !im.Enabled {
 				toEnable = append(toEnable, im)
 			} else if _, wasCurrent := currentEnabled[key]; !wasCurrent {
@@ -448,23 +450,43 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
-			// Select primary file
-			selectedFile := selectPrimaryFile(files)
+			// Select files to download - use stored FileIDs for re-downloads
+			key := ref.SourceID + ":" + ref.ModID
+			var storedFileIDs []string
+			if needsRedownloadSet[key] {
+				if im, ok := allInstalled[key]; ok {
+					storedFileIDs = im.FileIDs
+				}
+			}
+			filesToDownload, usedFallback := selectFilesToDownload(files, storedFileIDs)
+			if usedFallback {
+				fmt.Printf("    Warning: stored file IDs not found, using primary\n")
+			}
 
-			// Download
+			// Download each file
 			progressFn := func(p core.DownloadProgress) {
 				if p.TotalBytes > 0 {
 					fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
 				}
 			}
 
-			_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
-			if err != nil {
-				fmt.Println()
-				fmt.Printf("    Error: download failed: %v\n", err)
-				continue
+			var downloadedFileIDs []string
+			downloadFailed := false
+			for _, selectedFile := range filesToDownload {
+				_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
+				if err != nil {
+					fmt.Println()
+					fmt.Printf("    Error: download failed: %v\n", err)
+					downloadFailed = true
+					break
+				}
+				downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
 			}
 			fmt.Println()
+
+			if downloadFailed {
+				continue
+			}
 
 			// Deploy
 			if err := installer.Install(ctx, game, mod, targetName); err != nil {
@@ -478,6 +500,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				ProfileName:  targetName,
 				UpdatePolicy: domain.UpdateNotify,
 				Enabled:      true,
+				FileIDs:      downloadedFileIDs,
 			}
 			if err := service.DB().SaveInstalledMod(installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
@@ -557,12 +580,16 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parsing profile: %w", err)
 	}
 
-	// Check what mods are already installed (track version for cache check)
+	// Check what mods are already installed (track version and FileIDs for cache check)
+	type installedInfo struct {
+		Version string
+		FileIDs []string
+	}
 	installedMods, _ := service.GetInstalledMods(gameID, profile.Name)
-	installedVersions := make(map[string]string) // key -> version
+	installedData := make(map[string]installedInfo) // key -> version and file IDs
 	for _, im := range installedMods {
 		key := im.SourceID + ":" + im.ID
-		installedVersions[key] = im.Version
+		installedData[key] = installedInfo{Version: im.Version, FileIDs: im.FileIDs}
 	}
 
 	// Also check mods from any profile (might be installed under different profile)
@@ -571,8 +598,8 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		mods, _ := service.GetInstalledMods(gameID, p.Name)
 		for _, im := range mods {
 			key := im.SourceID + ":" + im.ID
-			if _, exists := installedVersions[key]; !exists {
-				installedVersions[key] = im.Version
+			if _, exists := installedData[key]; !exists {
+				installedData[key] = installedInfo{Version: im.Version, FileIDs: im.FileIDs}
 			}
 		}
 	}
@@ -581,15 +608,17 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	var installed []domain.ModReference
 	var needsRedownload []domain.ModReference
 	var missing []domain.ModReference
+	needsRedownloadSet := make(map[string]bool) // Track which mods need re-download
 
 	for _, ref := range profile.Mods {
 		key := ref.SourceID + ":" + ref.ModID
-		if version, inDB := installedVersions[key]; inDB {
+		if info, inDB := installedData[key]; inDB {
 			// In DB - but does cache exist?
-			if service.GetGameCache(game).Exists(game.ID, ref.SourceID, ref.ModID, version) {
+			if service.GetGameCache(game).Exists(game.ID, ref.SourceID, ref.ModID, info.Version) {
 				installed = append(installed, ref)
 			} else {
 				needsRedownload = append(needsRedownload, ref)
+				needsRedownloadSet[key] = true
 			}
 		} else {
 			missing = append(missing, ref)
@@ -677,24 +706,44 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Select primary file
-		selectedFile := selectPrimaryFile(files)
+		// Select files to download - use stored FileIDs for re-downloads
+		key := ref.SourceID + ":" + ref.ModID
+		var storedFileIDs []string
+		if needsRedownloadSet[key] {
+			if info, ok := installedData[key]; ok {
+				storedFileIDs = info.FileIDs
+			}
+		}
+		filesToDownload, usedFallback := selectFilesToDownload(files, storedFileIDs)
+		if usedFallback {
+			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
+		}
 
-		// Download
+		// Download each file
 		progressFn := func(p core.DownloadProgress) {
 			if p.TotalBytes > 0 {
 				fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
 			}
 		}
 
-		_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
-		if err != nil {
-			fmt.Println()
-			fmt.Printf("    Error: download failed: %v\n", err)
+		var downloadedFileIDs []string
+		downloadFailed := false
+		for _, selectedFile := range filesToDownload {
+			_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
+			if err != nil {
+				fmt.Println()
+				fmt.Printf("    Error: download failed: %v\n", err)
+				downloadFailed = true
+				break
+			}
+			downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
+		}
+		fmt.Println()
+
+		if downloadFailed {
 			failedCount++
 			continue
 		}
-		fmt.Println()
 
 		// Deploy
 		if err := installer.Install(ctx, game, mod, profile.Name); err != nil {
@@ -709,6 +758,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 			ProfileName:  profile.Name,
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      true,
+			FileIDs:      downloadedFileIDs,
 		}
 		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
 			fmt.Printf("    Error: save failed: %v\n", err)
@@ -933,6 +983,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 	var toDisable []*domain.InstalledMod
 	var toEnable []*domain.InstalledMod
 	var toInstall []domain.ModReference
+	needsRedownloadSet := make(map[string]bool) // Track which mods are re-downloads
 
 	// Check installed mods against profile
 	for key, im := range installedByKey {
@@ -954,6 +1005,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 						ModID:    im.ID,
 						Version:  im.Version,
 					})
+					needsRedownloadSet[key] = true
 				}
 			}
 		}
@@ -1068,23 +1120,43 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
-			// Select primary file
-			selectedFile := selectPrimaryFile(files)
+			// Select files to download - use stored FileIDs for re-downloads
+			key := ref.SourceID + ":" + ref.ModID
+			var storedFileIDs []string
+			if needsRedownloadSet[key] {
+				if im, ok := installedByKey[key]; ok {
+					storedFileIDs = im.FileIDs
+				}
+			}
+			filesToDownload, usedFallback := selectFilesToDownload(files, storedFileIDs)
+			if usedFallback {
+				fmt.Printf("    Warning: stored file IDs not found, using primary\n")
+			}
 
-			// Download
+			// Download each file
 			progressFn := func(p core.DownloadProgress) {
 				if p.TotalBytes > 0 {
 					fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
 				}
 			}
 
-			_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
-			if err != nil {
-				fmt.Println()
-				fmt.Printf("    Error: download failed: %v\n", err)
-				continue
+			var downloadedFileIDs []string
+			downloadFailed := false
+			for _, selectedFile := range filesToDownload {
+				_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
+				if err != nil {
+					fmt.Println()
+					fmt.Printf("    Error: download failed: %v\n", err)
+					downloadFailed = true
+					break
+				}
+				downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
 			}
 			fmt.Println()
+
+			if downloadFailed {
+				continue
+			}
 
 			// Deploy
 			if err := installer.Install(ctx, game, mod, profileName); err != nil {
@@ -1098,6 +1170,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				ProfileName:  profileName,
 				UpdatePolicy: domain.UpdateNotify,
 				Enabled:      true,
+				FileIDs:      downloadedFileIDs,
 			}
 			if err := service.DB().SaveInstalledMod(installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
@@ -1124,4 +1197,20 @@ func selectPrimaryFile(files []domain.DownloadableFile) *domain.DownloadableFile
 		}
 	}
 	return &files[0]
+}
+
+// selectFilesToDownload picks files to download based on stored FileIDs (for re-downloads)
+// or primary file (for fresh installs). Returns files to download and whether a fallback was used.
+func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, bool) {
+	if len(storedFileIDs) > 0 {
+		// Try to use stored file IDs
+		found := findFilesByIDs(files, storedFileIDs)
+		if len(found) > 0 {
+			return found, false
+		}
+		// Fallback to primary
+		return []*domain.DownloadableFile{selectPrimaryFile(files)}, true
+	}
+	// Fresh install: use primary file
+	return []*domain.DownloadableFile{selectPrimaryFile(files)}, false
 }

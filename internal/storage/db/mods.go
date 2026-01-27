@@ -29,6 +29,31 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 	if err != nil {
 		return fmt.Errorf("saving installed mod: %w", err)
 	}
+
+	// Save file IDs to separate table
+	// First delete existing file IDs for this mod
+	_, err = d.Exec(`
+		DELETE FROM installed_mod_files
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName)
+	if err != nil {
+		return fmt.Errorf("clearing mod file IDs: %w", err)
+	}
+
+	// Insert new file IDs
+	for _, fileID := range mod.FileIDs {
+		if fileID == "" {
+			continue
+		}
+		_, err = d.Exec(`
+			INSERT INTO installed_mod_files (source_id, mod_id, game_id, profile_name, file_id)
+			VALUES (?, ?, ?, ?, ?)
+		`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, fileID)
+		if err != nil {
+			return fmt.Errorf("saving mod file ID: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -63,7 +88,20 @@ func (d *DB) GetInstalledMods(gameID, profileName string) ([]domain.InstalledMod
 		mods = append(mods, mod)
 	}
 
-	return mods, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Fetch file IDs for each mod
+	for i := range mods {
+		fileIDs, err := d.GetModFileIDs(mods[i].SourceID, mods[i].ID, gameID, profileName)
+		if err != nil {
+			return nil, fmt.Errorf("getting file IDs for %s: %w", mods[i].ID, err)
+		}
+		mods[i].FileIDs = fileIDs
+	}
+
+	return mods, nil
 }
 
 // DeleteInstalledMod removes an installed mod record
@@ -145,7 +183,37 @@ func (d *DB) GetInstalledMod(sourceID, modID, gameID, profileName string) (*doma
 		mod.PreviousVersion = *prevVersion
 	}
 
+	// Fetch file IDs
+	fileIDs, err := d.GetModFileIDs(sourceID, modID, gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("getting file IDs: %w", err)
+	}
+	mod.FileIDs = fileIDs
+
 	return &mod, nil
+}
+
+// GetModFileIDs retrieves the file IDs for an installed mod
+func (d *DB) GetModFileIDs(sourceID, modID, gameID, profileName string) ([]string, error) {
+	rows, err := d.Query(`
+		SELECT file_id FROM installed_mod_files
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("querying mod file IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var fileIDs []string
+	for rows.Next() {
+		var fileID string
+		if err := rows.Scan(&fileID); err != nil {
+			return nil, fmt.Errorf("scanning file ID: %w", err)
+		}
+		fileIDs = append(fileIDs, fileID)
+	}
+
+	return fileIDs, rows.Err()
 }
 
 // UpdateModVersion updates a mod's version, preserving the previous version for rollback

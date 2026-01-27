@@ -2,7 +2,7 @@ package db
 
 import "fmt"
 
-const currentVersion = 3
+const currentVersion = 4
 
 func (d *DB) migrate() error {
 	// Create migrations table if it doesn't exist
@@ -27,6 +27,7 @@ func (d *DB) migrate() error {
 		migrateV1,
 		migrateV2,
 		migrateV3,
+		migrateV4,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -93,5 +94,24 @@ func migrateV3(d *DB) error {
 	// Add link_method column to track deployment method per mod
 	// Default 0 = symlink (LinkSymlink)
 	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN link_method INTEGER DEFAULT 0`)
+	return err
+}
+
+func migrateV4(d *DB) error {
+	// Create table to track which source files were downloaded for each installed mod
+	// Supports multiple files per mod (e.g., MAIN + OPTIONAL files)
+	_, err := d.Exec(`
+		CREATE TABLE IF NOT EXISTS installed_mod_files (
+			source_id TEXT NOT NULL,
+			mod_id TEXT NOT NULL,
+			game_id TEXT NOT NULL,
+			profile_name TEXT NOT NULL,
+			file_id TEXT NOT NULL,
+			PRIMARY KEY(source_id, mod_id, game_id, profile_name, file_id),
+			FOREIGN KEY(source_id, mod_id, game_id, profile_name)
+				REFERENCES installed_mods(source_id, mod_id, game_id, profile_name)
+				ON DELETE CASCADE
+		)
+	`)
 	return err
 }

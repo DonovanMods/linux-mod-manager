@@ -34,11 +34,15 @@ var installCmd = &cobra.Command{
 The mod will be searched for by name and added to the specified profile
 (or default profile if not specified).
 
+When selecting files, you can choose multiple files (e.g., main + optional patches)
+using comma-separated values or ranges: 1,3,5 or 1-3 or 1,3-5
+
 Examples:
   lmm install "ore stack" --game starrupture
   lmm install "skyui" --game skyrim-se --profile survival
   lmm install --id 12345 --game skyrim-se
-  lmm install "mod name" -g skyrim-se -y  # Auto-select first match`,
+  lmm install "mod name" -g skyrim-se -y  # Auto-select first match
+  lmm install --id 12345 --file 456,789 -g skyrim-se  # Install specific files`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runInstall,
 }
@@ -48,7 +52,7 @@ func init() {
 	installCmd.Flags().StringVarP(&installProfile, "profile", "p", "", "profile to install to (default: active profile)")
 	installCmd.Flags().StringVar(&installVersion, "version", "", "specific version to install (default: latest)")
 	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")
-	installCmd.Flags().StringVar(&installFileID, "file", "", "file ID (skips file selection)")
+	installCmd.Flags().StringVar(&installFileID, "file", "", "file ID(s), comma-separated (skips file selection)")
 	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-select first/primary option (no prompts)")
 	installCmd.Flags().BoolVar(&installShowArchived, "show-archived", false, "show archived/old files")
 
@@ -177,37 +181,42 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no downloadable files available for this mod")
 	}
 
-	// Select file
-	var selectedFile *domain.DownloadableFile
+	// Select file(s)
+	var selectedFiles []*domain.DownloadableFile
 	if installFileID != "" {
-		// Direct file ID
-		for i := range files {
-			if files[i].ID == installFileID {
-				selectedFile = &files[i]
-				break
+		// Direct file ID (can be comma-separated)
+		fileIDs := strings.Split(installFileID, ",")
+		for _, fid := range fileIDs {
+			fid = strings.TrimSpace(fid)
+			found := false
+			for i := range files {
+				if files[i].ID == fid {
+					selectedFiles = append(selectedFiles, &files[i])
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("file ID %s not found", fid)
 			}
 		}
-		if selectedFile == nil {
-			return fmt.Errorf("file ID %s not found", installFileID)
-		}
 	} else if len(files) == 1 {
-		selectedFile = &files[0]
+		selectedFiles = []*domain.DownloadableFile{&files[0]}
 	} else {
-		// Find primary file
-		var primaryFile *domain.DownloadableFile
+		// Find primary file index for default
+		defaultChoice := 1
 		for i := range files {
 			if files[i].IsPrimary {
-				primaryFile = &files[i]
+				defaultChoice = i + 1
 				break
 			}
 		}
 
-		if installYes && primaryFile != nil {
-			selectedFile = primaryFile
-		} else if installYes {
-			selectedFile = &files[0]
+		if installYes {
+			// Auto-select primary or first file
+			selectedFiles = []*domain.DownloadableFile{&files[defaultChoice-1]}
 		} else {
-			// Show file selection
+			// Show file selection with multi-select support
 			fmt.Println("\nAvailable files:")
 			for i, f := range files {
 				sizeStr := formatSize(f.Size)
@@ -218,45 +227,56 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  [%d] %s (%s, %s)%s\n", i+1, f.FileName, f.Category, sizeStr, defaultMark)
 			}
 
-			defaultChoice := 1
-			if primaryFile != nil {
-				for i, f := range files {
-					if f.ID == primaryFile.ID {
-						defaultChoice = i + 1
-						break
-					}
-				}
-			}
-
-			selection, err := promptSelectionWithDefault("Select file", defaultChoice, len(files))
+			selections, err := promptMultiSelection("Select file(s) (e.g., 1 or 1,3 or 1-3)", defaultChoice, len(files))
 			if err != nil {
 				return err
 			}
-			selectedFile = &files[selection-1]
+			for _, sel := range selections {
+				selectedFiles = append(selectedFiles, &files[sel-1])
+			}
 		}
 	}
 
-	fmt.Printf("\nFile: %s\n", selectedFile.FileName)
+	// Show selected files
+	if len(selectedFiles) == 1 {
+		fmt.Printf("\nFile: %s\n", selectedFiles[0].FileName)
+	} else {
+		fmt.Printf("\nFiles (%d):\n", len(selectedFiles))
+		for _, f := range selectedFiles {
+			fmt.Printf("  - %s\n", f.FileName)
+		}
+	}
 
-	// Download the mod
-	fmt.Printf("\nDownloading %s...\n", selectedFile.FileName)
+	// Download each selected file
+	var totalFileCount int
+	var downloadedFileIDs []string
 
-	progressFn := func(p core.DownloadProgress) {
-		if p.TotalBytes > 0 {
-			bar := progressBar(p.Percentage, 30)
-			fmt.Printf("\r  [%s] %.1f%% (%s / %s)", bar, p.Percentage,
-				formatSize(p.Downloaded), formatSize(p.TotalBytes))
+	for i, selectedFile := range selectedFiles {
+		if len(selectedFiles) > 1 {
+			fmt.Printf("\n[%d/%d] Downloading %s...\n", i+1, len(selectedFiles), selectedFile.FileName)
 		} else {
-			fmt.Printf("\r  Downloaded %s", formatSize(p.Downloaded))
+			fmt.Printf("\nDownloading %s...\n", selectedFile.FileName)
 		}
-	}
 
-	fileCount, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
-	if err != nil {
+		progressFn := func(p core.DownloadProgress) {
+			if p.TotalBytes > 0 {
+				bar := progressBar(p.Percentage, 30)
+				fmt.Printf("\r  [%s] %.1f%% (%s / %s)", bar, p.Percentage,
+					formatSize(p.Downloaded), formatSize(p.TotalBytes))
+			} else {
+				fmt.Printf("\r  Downloaded %s", formatSize(p.Downloaded))
+			}
+		}
+
+		fileCount, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
+		if err != nil {
+			fmt.Println() // newline after progress
+			return fmt.Errorf("download failed: %w", err)
+		}
 		fmt.Println() // newline after progress
-		return fmt.Errorf("download failed: %w", err)
+		totalFileCount += fileCount
+		downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
 	}
-	fmt.Println() // newline after progress
 
 	fmt.Println("\nExtracting to cache...")
 
@@ -283,6 +303,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 		LinkMethod:   linkMethod,
+		FileIDs:      downloadedFileIDs,
 	}
 
 	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
@@ -317,7 +338,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
-	fmt.Printf("  Files deployed: %d\n", fileCount)
+	fmt.Printf("  Files deployed: %d\n", totalFileCount)
 	fmt.Printf("  Added to profile: %s\n", profileName)
 
 	return nil
@@ -521,6 +542,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      true,
 			LinkMethod:   linkMethod,
+			FileIDs:      []string{selectedFile.ID},
 		}
 
 		if err := service.DB().SaveInstalledMod(installedMod); err != nil {

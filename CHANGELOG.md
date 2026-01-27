@@ -7,16 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.9] - 2026-01-26
+## [0.7.0] - 2026-01-26
 
 ### Added
 
+- **Multi-File Install**: `lmm install` now supports selecting multiple files per mod
+  - Select files like mods: `1,3,5` or `1-3` or `1,3-5`
+  - Useful for mods with main file + optional patches or multiple optional files
+  - `--file` flag accepts comma-separated file IDs for scripting
+- **File ID Tracking**: Mods now track which specific file(s) were downloaded from the source
+  - When re-downloading (cache missing), restores the exact file(s) the user originally installed
+  - Supports multiple files per mod (e.g., main file + optional patches)
+  - New database table `installed_mod_files` stores file IDs per mod
+  - Falls back to primary file if stored IDs are no longer available on the source
 - **Cache-Missing Re-download**: Mods that exist in the database but are missing from cache are now automatically re-downloaded
   - `lmm profile import` - Shows "cache missing" category separately, re-downloads as needed
   - `lmm profile apply` - Detects cache-missing mods when enabling, triggers download
   - `lmm profile switch` - Detects cache-missing mods, triggers download
   - `lmm redeploy` - Re-downloads from source instead of failing when cache is missing
   - Useful when cache directory changes, files are deleted, or profile is imported on a new machine
+
+### Changed
+
+- **Database Schema**: Migration V4 adds `installed_mod_files` table for tracking downloaded file IDs
+
+## [0.6.9] - 2026-01-26
+
+### Added
+
+- **Cache-Missing Re-download** (superseded by 0.7.0): Initial implementation without file ID tracking
 
 ## [0.6.8] - 2026-01-25
 
@@ -296,7 +315,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.9...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.9...v0.7.0
 [0.6.9]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.6.6...v0.6.7

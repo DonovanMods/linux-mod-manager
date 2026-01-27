@@ -146,24 +146,35 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
-			// Select primary file
-			selectedFile := selectPrimaryFile(files)
-
-			// Download to cache
-			progressFn := func(p core.DownloadProgress) {
-				if p.TotalBytes > 0 {
-					fmt.Printf("\r  ⬇ %s: %.1f%%", mod.Name, p.Percentage)
-				}
+			// Find files to download - use stored FileIDs or fall back to primary
+			filesToDownload, usedFallback := selectFilesToDownload(files, mod.FileIDs)
+			if usedFallback {
+				fmt.Printf("  ⚠ %s - stored file IDs not found, using primary\n", mod.Name)
 			}
 
-			_, err = service.DownloadMod(ctx, mod.SourceID, game, fetchedMod, selectedFile, progressFn)
-			if err != nil {
-				fmt.Println()
-				fmt.Printf("  ✗ %s - download failed: %v\n", mod.Name, err)
+			// Download each file
+			downloadFailed := false
+			for _, selectedFile := range filesToDownload {
+				progressFn := func(p core.DownloadProgress) {
+					if p.TotalBytes > 0 {
+						fmt.Printf("\r  ⬇ %s: %.1f%%", mod.Name, p.Percentage)
+					}
+				}
+
+				_, err = service.DownloadMod(ctx, mod.SourceID, game, fetchedMod, selectedFile, progressFn)
+				if err != nil {
+					fmt.Println()
+					fmt.Printf("  ✗ %s - download failed: %v\n", mod.Name, err)
+					downloadFailed = true
+					break
+				}
+			}
+			fmt.Println() // Clear progress line
+
+			if downloadFailed {
 				failed++
 				continue
 			}
-			fmt.Println() // Clear progress line
 		}
 
 		// Undeploy first (remove old links/files)
@@ -216,4 +227,20 @@ func linkMethodName(method domain.LinkMethod) string {
 	default:
 		return "unknown"
 	}
+}
+
+// findFilesByIDs finds downloadable files matching the given IDs
+func findFilesByIDs(files []domain.DownloadableFile, fileIDs []string) []*domain.DownloadableFile {
+	idSet := make(map[string]bool)
+	for _, id := range fileIDs {
+		idSet[id] = true
+	}
+
+	var result []*domain.DownloadableFile
+	for i := range files {
+		if idSet[files[i].ID] {
+			result = append(result, &files[i])
+		}
+	}
+	return result
 }

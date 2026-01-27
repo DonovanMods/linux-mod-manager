@@ -64,6 +64,7 @@ type InstalledMod struct {
 	Enabled         bool
 	PreviousVersion string     // Version before last update (for rollback)
 	LinkMethod      LinkMethod // How the mod was deployed (symlink, hardlink, copy)
+	FileIDs         []string   // Source-specific file IDs that were downloaded
 }
 
 // Update represents an available update for an installed mod

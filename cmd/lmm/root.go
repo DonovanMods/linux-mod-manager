@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	version = "0.6.9"
+	version = "0.7.0"
 
 	// Global flags
 	configDir string
