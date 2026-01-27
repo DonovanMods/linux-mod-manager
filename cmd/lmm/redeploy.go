@@ -128,9 +128,42 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 	for _, mod := range modsToRedeploy {
 		// Check if mod is in cache
 		if !service.GetGameCache(game).Exists(gameID, mod.SourceID, mod.ID, mod.Version) {
-			fmt.Printf("  ✗ %s - not in cache\n", mod.Name)
-			failed++
-			continue
+			fmt.Printf("  ⚠ %s - cache missing, re-downloading...\n", mod.Name)
+
+			// Fetch mod info from source
+			fetchedMod, err := service.GetMod(ctx, mod.SourceID, gameID, mod.ID)
+			if err != nil {
+				fmt.Printf("  ✗ %s - failed to fetch: %v\n", mod.Name, err)
+				failed++
+				continue
+			}
+
+			// Get available files
+			files, err := service.GetModFiles(ctx, mod.SourceID, fetchedMod)
+			if err != nil || len(files) == 0 {
+				fmt.Printf("  ✗ %s - no files available\n", mod.Name)
+				failed++
+				continue
+			}
+
+			// Select primary file
+			selectedFile := selectPrimaryFile(files)
+
+			// Download to cache
+			progressFn := func(p core.DownloadProgress) {
+				if p.TotalBytes > 0 {
+					fmt.Printf("\r  ⬇ %s: %.1f%%", mod.Name, p.Percentage)
+				}
+			}
+
+			_, err = service.DownloadMod(ctx, mod.SourceID, game, fetchedMod, selectedFile, progressFn)
+			if err != nil {
+				fmt.Println()
+				fmt.Printf("  ✗ %s - download failed: %v\n", mod.Name, err)
+				failed++
+				continue
+			}
+			fmt.Println() // Clear progress line
 		}
 
 		// Undeploy first (remove old links/files)

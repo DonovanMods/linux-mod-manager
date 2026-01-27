@@ -329,8 +329,11 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 	// Mods in target profile
 	for key, ref := range targetKeys {
 		if im, installed := allInstalled[key]; installed {
-			// Already installed - check if enabled
-			if !im.Enabled {
+			// Already installed - check if cache exists
+			if !service.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version) {
+				// Cache missing - need to re-download
+				toInstall = append(toInstall, ref)
+			} else if !im.Enabled {
 				toEnable = append(toEnable, im)
 			} else if _, wasCurrent := currentEnabled[key]; !wasCurrent {
 				// Was installed but not in current profile's enabled set
@@ -446,16 +449,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 			}
 
 			// Select primary file
-			var selectedFile *domain.DownloadableFile
-			for i := range files {
-				if files[i].IsPrimary {
-					selectedFile = &files[i]
-					break
-				}
-			}
-			if selectedFile == nil {
-				selectedFile = &files[0]
-			}
+			selectedFile := selectPrimaryFile(files)
 
 			// Download
 			progressFn := func(p core.DownloadProgress) {
@@ -563,12 +557,12 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parsing profile: %w", err)
 	}
 
-	// Check what mods are already installed
+	// Check what mods are already installed (track version for cache check)
 	installedMods, _ := service.GetInstalledMods(gameID, profile.Name)
-	installedKeys := make(map[string]bool)
+	installedVersions := make(map[string]string) // key -> version
 	for _, im := range installedMods {
 		key := im.SourceID + ":" + im.ID
-		installedKeys[key] = true
+		installedVersions[key] = im.Version
 	}
 
 	// Also check mods from any profile (might be installed under different profile)
@@ -577,18 +571,26 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		mods, _ := service.GetInstalledMods(gameID, p.Name)
 		for _, im := range mods {
 			key := im.SourceID + ":" + im.ID
-			installedKeys[key] = true
+			if _, exists := installedVersions[key]; !exists {
+				installedVersions[key] = im.Version
+			}
 		}
 	}
 
-	// Categorize mods
+	// Categorize mods - check both DB and cache
 	var installed []domain.ModReference
+	var needsRedownload []domain.ModReference
 	var missing []domain.ModReference
 
 	for _, ref := range profile.Mods {
 		key := ref.SourceID + ":" + ref.ModID
-		if installedKeys[key] {
-			installed = append(installed, ref)
+		if version, inDB := installedVersions[key]; inDB {
+			// In DB - but does cache exist?
+			if service.GetGameCache(game).Exists(game.ID, ref.SourceID, ref.ModID, version) {
+				installed = append(installed, ref)
+			} else {
+				needsRedownload = append(needsRedownload, ref)
+			}
 		} else {
 			missing = append(missing, ref)
 		}
@@ -600,8 +602,14 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	if len(installed) > 0 {
 		fmt.Printf("  ✓ %d already installed\n", len(installed))
 	}
+	if len(needsRedownload) > 0 {
+		fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(needsRedownload))
+		for _, ref := range needsRedownload {
+			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+		}
+	}
 	if len(missing) > 0 {
-		fmt.Printf("  ⚠ %d need to be downloaded:\n", len(missing))
+		fmt.Printf("  ↓ %d need to be downloaded:\n", len(missing))
 		for _, ref := range missing {
 			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
 		}
@@ -615,16 +623,19 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\n✓ Imported profile: %s\n", profile.Name)
 
-	// If no missing mods or --no-install, we're done
-	if len(missing) == 0 || profileImportNoInstall {
-		if len(missing) > 0 {
-			fmt.Printf("\nSkipped installing %d missing mod(s). Use 'lmm profile apply %s' to install them later.\n", len(missing), profile.Name)
+	// Combine for download loop
+	toDownload := append(needsRedownload, missing...)
+
+	// If nothing to download or --no-install, we're done
+	if len(toDownload) == 0 || profileImportNoInstall {
+		if len(toDownload) > 0 {
+			fmt.Printf("\nSkipped installing %d mod(s). Use 'lmm profile apply %s' to install them later.\n", len(toDownload), profile.Name)
 		}
 		return nil
 	}
 
 	// Ask to install missing mods
-	fmt.Print("\nDownload and install missing mods? [Y/n]: ")
+	fmt.Print("\nDownload and install mods? [Y/n]: ")
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(strings.ToLower(input))
@@ -633,15 +644,15 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Install missing mods
+	// Download and install mods
 	ctx := context.Background()
 	lnk := service.GetLinker(game.LinkMethod)
 	installer := core.NewInstaller(service.GetGameCache(game), lnk)
 
-	fmt.Println("\nInstalling missing mods...")
+	fmt.Println("\nDownloading and installing mods...")
 	var installedCount, failedCount int
 
-	for _, ref := range missing {
+	for _, ref := range toDownload {
 		fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
 
 		// Fetch mod details
@@ -667,16 +678,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		}
 
 		// Select primary file
-		var selectedFile *domain.DownloadableFile
-		for i := range files {
-			if files[i].IsPrimary {
-				selectedFile = &files[i]
-				break
-			}
-		}
-		if selectedFile == nil {
-			selectedFile = &files[0]
-		}
+		selectedFile := selectPrimaryFile(files)
 
 		// Download
 		progressFn := func(p core.DownloadProgress) {
@@ -942,7 +944,17 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 		} else {
 			// In profile - make sure it's enabled
 			if !im.Enabled {
-				toEnable = append(toEnable, im)
+				// Check if cache exists before adding to toEnable
+				if service.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version) {
+					toEnable = append(toEnable, im)
+				} else {
+					// Cache missing - need to re-download
+					toInstall = append(toInstall, domain.ModReference{
+						SourceID: im.SourceID,
+						ModID:    im.ID,
+						Version:  im.Version,
+					})
+				}
 			}
 		}
 	}
@@ -1057,16 +1069,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 			}
 
 			// Select primary file
-			var selectedFile *domain.DownloadableFile
-			for i := range files {
-				if files[i].IsPrimary {
-					selectedFile = &files[i]
-					break
-				}
-			}
-			if selectedFile == nil {
-				selectedFile = &files[0]
-			}
+			selectedFile := selectPrimaryFile(files)
 
 			// Download
 			progressFn := func(p core.DownloadProgress) {
@@ -1107,4 +1110,18 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\n✓ Applied profile: %s\n", profileName)
 	return nil
+}
+
+// selectPrimaryFile returns the primary file from a list of downloadable files,
+// or the first file if no primary is marked. Returns nil for empty slice.
+func selectPrimaryFile(files []domain.DownloadableFile) *domain.DownloadableFile {
+	if len(files) == 0 {
+		return nil
+	}
+	for i := range files {
+		if files[i].IsPrimary {
+			return &files[i]
+		}
+	}
+	return &files[0]
 }
