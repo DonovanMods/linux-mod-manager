@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-01-28
+
+### Fixed
+
+- **Multi-File Install**: When installing multiple files from the same mod, only the first file was being downloaded and extracted. The remaining files were skipped because the cache directory already existed. Now all selected files are properly downloaded and extracted to the cache.
+
 ## [0.7.5] - 2026-01-27
 
 ### Added
@@ -360,7 +366,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.2...v0.7.3
