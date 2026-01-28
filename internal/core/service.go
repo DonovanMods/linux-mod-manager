@@ -151,19 +151,16 @@ func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *doma
 }
 
 // DownloadMod downloads a mod file, extracts it, and stores it in the cache
-// Returns the number of files extracted
+// Returns the number of files extracted from this specific download.
+// Multiple files from the same mod can be downloaded to the same cache location.
 func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (int, error) {
 	// Get game-specific cache
 	gameCache := s.GetGameCache(game)
 
-	// Check if already cached
-	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-		files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
-		if err != nil {
-			return 0, err
-		}
-		return len(files), nil
-	}
+	// Note: We intentionally do NOT check if cache exists here.
+	// A mod can have multiple downloadable files (e.g., main mod + optional patches),
+	// and each file should be downloaded and extracted to the cache.
+	// The cache directory may already exist from a previous file download.
 
 	// Get download URL
 	url, err := s.GetDownloadURL(ctx, sourceID, mod, file.ID)

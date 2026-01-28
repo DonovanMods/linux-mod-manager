@@ -2,6 +2,10 @@ package core_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -451,4 +455,135 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 	updated, err = svc.DB().GetInstalledMod("test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdatePinned, updated.UpdatePolicy)
+}
+
+func TestService_DownloadMod_MultipleFiles(t *testing.T) {
+	// This test verifies that downloading multiple files for the same mod
+	// correctly adds all files to the cache (not just the first one).
+
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// Create a mock source that can provide download URLs
+	mock := newMockSourceWithDownloads("test")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	// Create a game config
+	gameDir := t.TempDir()
+	game := &domain.Game{
+		ID:      "testgame",
+		Name:    "Test Game",
+		ModPath: gameDir,
+	}
+	err = svc.AddGame(game)
+	require.NoError(t, err)
+
+	// Create a mod
+	mod := &domain.Mod{
+		ID:       "123",
+		SourceID: "test",
+		Name:     "Multi-File Mod",
+		Version:  "1.0.0",
+		GameID:   "testgame",
+	}
+
+	// Define two files for the same mod
+	file1 := &domain.DownloadableFile{
+		ID:       "file1",
+		Name:     "File One",
+		FileName: "file1.zip",
+	}
+	file2 := &domain.DownloadableFile{
+		ID:       "file2",
+		Name:     "File Two",
+		FileName: "file2.zip",
+	}
+
+	// Register the files with our mock - use temp dirs to create zip files
+	tmpDir := t.TempDir()
+	zip1Path := createTestZip(t, tmpDir, map[string]string{"file1_content.txt": "content from file 1"})
+	zip1Content, err := os.ReadFile(zip1Path)
+	require.NoError(t, err)
+
+	tmpDir2 := t.TempDir()
+	zip2Path := createTestZip(t, tmpDir2, map[string]string{"file2_content.txt": "content from file 2"})
+	zip2Content, err := os.ReadFile(zip2Path)
+	require.NoError(t, err)
+
+	mock.AddDownload(file1.ID, zip1Content)
+	mock.AddDownload(file2.ID, zip2Content)
+
+	ctx := context.Background()
+
+	// Download first file
+	count1, err := svc.DownloadMod(ctx, "test", game, mod, file1, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count1, "First download should extract 1 file")
+
+	// Download second file - previously bugged: returned early because cache dir existed
+	count2, err := svc.DownloadMod(ctx, "test", game, mod, file2, nil)
+	require.NoError(t, err)
+	// Returns total files in cache after extraction (1 from first + 1 from second = 2)
+	assert.Equal(t, 2, count2, "After second download, cache should have 2 files total")
+
+	// Verify both files are in the cache
+	gameCache := svc.GetGameCache(game)
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+
+	// Should have 2 files total
+	assert.Len(t, files, 2, "Cache should contain files from both downloads")
+
+	// Verify both expected files are present
+	fileNames := make(map[string]bool)
+	for _, f := range files {
+		fileNames[f] = true
+	}
+	assert.True(t, fileNames["file1_content.txt"], "Cache should contain file1_content.txt")
+	assert.True(t, fileNames["file2_content.txt"], "Cache should contain file2_content.txt")
+}
+
+// mockSourceWithDownloads extends mockSource with download URL support
+type mockSourceWithDownloads struct {
+	*mockSource
+	downloads map[string][]byte // fileID -> zip content
+	server    *httptest.Server
+}
+
+func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
+	m := &mockSourceWithDownloads{
+		mockSource: newMockSource(id),
+		downloads:  make(map[string][]byte),
+	}
+	// Create test server that serves our downloads
+	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fileID := filepath.Base(r.URL.Path)
+		if content, ok := m.downloads[fileID]; ok {
+			w.Header().Set("Content-Type", "application/zip")
+			w.Write(content)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	return m
+}
+
+func (m *mockSourceWithDownloads) AddDownload(fileID string, content []byte) {
+	m.downloads[fileID] = content
+}
+
+func (m *mockSourceWithDownloads) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	return m.server.URL + "/" + fileID, nil
+}
+
+func (m *mockSourceWithDownloads) Close() {
+	m.server.Close()
 }
