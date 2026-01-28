@@ -15,6 +15,7 @@ var (
 	redeploySource  string
 	redeployProfile string
 	redeployMethod  string
+	redeployPurge   bool
 )
 
 var redeployCmd = &cobra.Command{
@@ -28,9 +29,13 @@ or if mod files need to be refreshed.
 Without a mod ID, re-deploys all enabled mods in the current profile.
 With a mod ID, re-deploys only that specific mod.
 
+Use --purge to remove all deployed mods before re-deploying. This ensures
+a clean slate, useful when mods have gotten out of sync.
+
 Examples:
   lmm redeploy --game skyrim-se
   lmm redeploy --game skyrim-se --method hardlink
+  lmm redeploy --game skyrim-se --purge
   lmm redeploy 12345 --game skyrim-se
   lmm redeploy 12345 --game skyrim-se --method copy`,
 	Args: cobra.MaximumNArgs(1),
@@ -41,6 +46,7 @@ func init() {
 	redeployCmd.Flags().StringVarP(&redeploySource, "source", "s", "nexusmods", "mod source")
 	redeployCmd.Flags().StringVarP(&redeployProfile, "profile", "p", "", "profile (default: active profile)")
 	redeployCmd.Flags().StringVarP(&redeployMethod, "method", "m", "", "link method: symlink, hardlink, or copy (default: game's configured method)")
+	redeployCmd.Flags().BoolVar(&redeployPurge, "purge", false, "purge all deployed mods before re-deploying")
 
 	rootCmd.AddCommand(redeployCmd)
 }
@@ -66,6 +72,15 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 		profileName = "default"
 	}
 
+	ctx := context.Background()
+
+	// If --purge flag is set, purge all deployed mods first
+	if redeployPurge {
+		if err := purgeDeployedMods(ctx, service, game, profileName); err != nil {
+			return fmt.Errorf("purging mods: %w", err)
+		}
+	}
+
 	// Determine link method
 	var linkMethod domain.LinkMethod
 	if redeployMethod != "" {
@@ -83,7 +98,6 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 		linkMethod = service.GetGameLinkMethod(game)
 	}
 
-	ctx := context.Background()
 	lnk := linker.New(linkMethod)
 	installer := core.NewInstaller(service.GetGameCache(game), lnk)
 

@@ -19,6 +19,14 @@ func TestRedeployCmd_Structure(t *testing.T) {
 	assert.NotNil(t, redeployCmd.Flags().Lookup("source"))
 	assert.NotNil(t, redeployCmd.Flags().Lookup("profile"))
 	assert.NotNil(t, redeployCmd.Flags().Lookup("method"))
+	assert.NotNil(t, redeployCmd.Flags().Lookup("purge"))
+}
+
+func TestRedeployCmd_PurgeFlag(t *testing.T) {
+	purgeFlag := redeployCmd.Flags().Lookup("purge")
+	assert.NotNil(t, purgeFlag)
+	assert.Equal(t, "false", purgeFlag.DefValue)
+	assert.Equal(t, "bool", purgeFlag.Value.Type())
 }
 
 func TestRedeployCmd_NoGame(t *testing.T) {

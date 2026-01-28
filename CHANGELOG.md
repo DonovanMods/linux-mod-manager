@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Purge Command**: `lmm purge` removes all deployed mods from a game directory
+  - Resets the game directory back to its pre-modded state
+  - `--keep-records` flag preserves database entries (just undeploys files)
+  - `--yes` flag skips confirmation prompt
+  - Useful when mods get out of sync or you want to start fresh
+- **Redeploy Purge Flag**: `lmm redeploy --purge` clears all deployed mods before redeploying
+  - Ensures a clean slate before redeploying mods
+  - Useful for switching deployment methods or fixing sync issues
+
 ## [0.7.6] - 2026-01-28
 
 ### Fixed
