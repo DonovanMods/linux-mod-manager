@@ -47,7 +47,7 @@ var modEnableCmd = &cobra.Command{
 	Short: "Enable a disabled mod",
 	Long: `Enable a mod that was previously disabled.
 
-This redeploys the mod files from the cache to the game directory.
+This deploys the mod files from the cache to the game directory.
 The mod must already be installed and in the cache.
 
 Examples:

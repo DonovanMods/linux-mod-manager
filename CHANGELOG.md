@@ -7,16 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-01-28
+
 ### Added
 
 - **Purge Command**: `lmm purge` removes all deployed mods from a game directory
   - Resets the game directory back to its pre-modded state
-  - `--keep-records` flag preserves database entries (just undeploys files)
+  - Mod records are preserved by default; use `lmm deploy` to restore
+  - `--uninstall` flag also removes mod records from database
   - `--yes` flag skips confirmation prompt
   - Useful when mods get out of sync or you want to start fresh
-- **Redeploy Purge Flag**: `lmm redeploy --purge` clears all deployed mods before redeploying
-  - Ensures a clean slate before redeploying mods
+- **Deploy Purge Flag**: `lmm deploy --purge` clears all deployed mods before deploying
+  - Ensures a clean slate before deploying mods
   - Useful for switching deployment methods or fixing sync issues
+- **Renamed Command**: `lmm redeploy` is now `lmm deploy`
 
 ## [0.7.6] - 2026-01-28
 
@@ -377,7 +381,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.6...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.7...HEAD
+[0.7.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.3...v0.7.4

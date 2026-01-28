@@ -19,7 +19,7 @@ func TestPurgeCmd_Structure(t *testing.T) {
 
 	// Check flags exist
 	assert.NotNil(t, purgeCmd.Flags().Lookup("profile"))
-	assert.NotNil(t, purgeCmd.Flags().Lookup("keep-records"))
+	assert.NotNil(t, purgeCmd.Flags().Lookup("uninstall"))
 	assert.NotNil(t, purgeCmd.Flags().Lookup("yes"))
 }
 
@@ -47,8 +47,8 @@ func TestPurgeCmd_DefaultFlags(t *testing.T) {
 	profileFlag := purgeCmd.Flags().Lookup("profile")
 	assert.Equal(t, "", profileFlag.DefValue)
 
-	keepRecordsFlag := purgeCmd.Flags().Lookup("keep-records")
-	assert.Equal(t, "false", keepRecordsFlag.DefValue)
+	uninstallFlag := purgeCmd.Flags().Lookup("uninstall")
+	assert.Equal(t, "false", uninstallFlag.DefValue)
 
 	yesFlag := purgeCmd.Flags().Lookup("yes")
 	assert.Equal(t, "false", yesFlag.DefValue)
@@ -102,7 +102,7 @@ func TestPurgeCmd_NoModsToPurge(t *testing.T) {
 	gameID = "test-game"
 	purgeYes = true
 	purgeProfile = ""
-	purgeKeepRecords = false
+	purgeUninstall = false
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(purgeCmd)

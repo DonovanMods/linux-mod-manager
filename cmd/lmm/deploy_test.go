@@ -10,35 +10,36 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRedeployCmd_Structure(t *testing.T) {
-	assert.Equal(t, "redeploy [mod-id]", redeployCmd.Use)
-	assert.NotEmpty(t, redeployCmd.Short)
-	assert.NotEmpty(t, redeployCmd.Long)
+func TestDeployCmd_Structure(t *testing.T) {
+	assert.Equal(t, "deploy [mod-id]", deployCmd.Use)
+	assert.NotEmpty(t, deployCmd.Short)
+	assert.NotEmpty(t, deployCmd.Long)
 
 	// Check flags exist
-	assert.NotNil(t, redeployCmd.Flags().Lookup("source"))
-	assert.NotNil(t, redeployCmd.Flags().Lookup("profile"))
-	assert.NotNil(t, redeployCmd.Flags().Lookup("method"))
-	assert.NotNil(t, redeployCmd.Flags().Lookup("purge"))
+	assert.NotNil(t, deployCmd.Flags().Lookup("source"))
+	assert.NotNil(t, deployCmd.Flags().Lookup("profile"))
+	assert.NotNil(t, deployCmd.Flags().Lookup("method"))
+	assert.NotNil(t, deployCmd.Flags().Lookup("purge"))
 }
 
-func TestRedeployCmd_PurgeFlag(t *testing.T) {
-	purgeFlag := redeployCmd.Flags().Lookup("purge")
+func TestDeployCmd_PurgeFlag(t *testing.T) {
+	purgeFlag := deployCmd.Flags().Lookup("purge")
 	assert.NotNil(t, purgeFlag)
 	assert.Equal(t, "false", purgeFlag.DefValue)
 	assert.Equal(t, "bool", purgeFlag.Value.Type())
 }
 
-func TestRedeployCmd_NoGame(t *testing.T) {
+func TestDeployCmd_NoGame(t *testing.T) {
 	gameID = ""
+	configDir = t.TempDir()
 
 	cmd := &cobra.Command{Use: "test"}
-	cmd.AddCommand(redeployCmd)
+	cmd.AddCommand(deployCmd)
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"redeploy"})
+	cmd.SetArgs([]string{"deploy"})
 
 	err := cmd.Execute()
 	assert.Error(t, err)
