@@ -82,14 +82,18 @@ func runGameSetDefault(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load config
-	cfg, err := config.Load(getServiceConfig().ConfigDir)
+	svcCfg, err := getServiceConfig()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(svcCfg.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
 	// Update and save
 	cfg.DefaultGame = newDefault
-	if err := cfg.Save(getServiceConfig().ConfigDir); err != nil {
+	if err := cfg.Save(svcCfg.ConfigDir); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
@@ -98,7 +102,11 @@ func runGameSetDefault(cmd *cobra.Command, args []string) error {
 }
 
 func runGameShowDefault(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(getServiceConfig().ConfigDir)
+	svcCfg, err := getServiceConfig()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(svcCfg.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
@@ -124,7 +132,11 @@ func runGameShowDefault(cmd *cobra.Command, args []string) error {
 }
 
 func runGameClearDefault(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(getServiceConfig().ConfigDir)
+	svcCfg, err := getServiceConfig()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(svcCfg.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
@@ -136,7 +148,7 @@ func runGameClearDefault(cmd *cobra.Command, args []string) error {
 
 	oldDefault := cfg.DefaultGame
 	cfg.DefaultGame = ""
-	if err := cfg.Save(getServiceConfig().ConfigDir); err != nil {
+	if err := cfg.Save(svcCfg.ConfigDir); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
@@ -146,8 +158,11 @@ func runGameClearDefault(cmd *cobra.Command, args []string) error {
 
 func runGameDetect(cmd *cobra.Command, args []string) error {
 	cmd.Println("Scanning Steam libraries...")
-	configDir := getServiceConfig().ConfigDir
-	games, err := steam.DetectGames(configDir)
+	svcCfg, err := getServiceConfig()
+	if err != nil {
+		return err
+	}
+	games, err := steam.DetectGames(svcCfg.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("detecting games: %w", err)
 	}
@@ -196,7 +211,7 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 			SourceIDs:   map[string]string{"nexusmods": g.NexusID},
 			LinkMethod:  domain.LinkSymlink,
 		}
-		if err := config.SaveGame(configDir, game); err != nil {
+		if err := config.SaveGame(svcCfg.ConfigDir, game); err != nil {
 			return fmt.Errorf("saving game %s: %w", g.Slug, err)
 		}
 		defaultProfile := &domain.Profile{
@@ -206,7 +221,7 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 			LinkMethod: domain.LinkSymlink,
 			IsDefault:  true,
 		}
-		if err := config.SaveProfile(configDir, defaultProfile); err != nil {
+		if err := config.SaveProfile(svcCfg.ConfigDir, defaultProfile); err != nil {
 			return fmt.Errorf("creating default profile for %s: %w", g.Slug, err)
 		}
 		cmd.Printf("Added: %s (%s)\n", g.Name, g.Slug)

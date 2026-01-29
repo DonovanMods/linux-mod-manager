@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -86,12 +88,14 @@ func runPurge(cmd *cobra.Command, args []string) error {
 			fmt.Println("Mod records will be preserved. Use 'lmm deploy' to restore.")
 		}
 		fmt.Print("\nContinue? [y/N] ")
-
-		var response string
-		fmt.Scanln(&response)
-		if response != "y" && response != "Y" {
-			fmt.Println("Aborted.")
-			return nil
+		reader := bufio.NewReader(os.Stdin)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("reading input: %w", err)
+		}
+		response := strings.TrimSpace(strings.ToLower(line))
+		if response != "y" && response != "yes" {
+			return ErrCancelled
 		}
 	}
 

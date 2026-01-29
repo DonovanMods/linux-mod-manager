@@ -76,7 +76,10 @@ func Execute() {
 
 // initService creates and initializes the core service
 func initService() (*core.Service, error) {
-	cfg := getServiceConfig()
+	cfg, err := getServiceConfig()
+	if err != nil {
+		return nil, err
+	}
 
 	// Ensure directories exist
 	if err := os.MkdirAll(cfg.ConfigDir, 0755); err != nil {
@@ -119,9 +122,13 @@ func getNexusModsAPIKey(svc *core.Service) string {
 	return token.APIKey
 }
 
-// getServiceConfig returns the service configuration with defaults
-func getServiceConfig() core.ServiceConfig {
-	homeDir, _ := os.UserHomeDir()
+// getServiceConfig returns the service configuration with defaults.
+// Returns an error if UserHomeDir fails and defaults are needed.
+func getServiceConfig() (core.ServiceConfig, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return core.ServiceConfig{}, fmt.Errorf("home directory: %w", err)
+	}
 
 	cfg := core.ServiceConfig{
 		ConfigDir: configDir,
@@ -144,7 +151,7 @@ func getServiceConfig() core.ServiceConfig {
 		cfg.CacheDir = filepath.Join(cfg.DataDir, "cache")
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 // requireGame ensures a game is specified, checking config for default if not provided
@@ -153,8 +160,11 @@ func requireGame(cmd *cobra.Command) error {
 		return nil
 	}
 
-	// Check config for default game
-	cfg, err := config.Load(getServiceConfig().ConfigDir)
+	svcCfg, err := getServiceConfig()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(svcCfg.ConfigDir)
 	if err == nil && cfg.DefaultGame != "" {
 		gameID = cfg.DefaultGame
 		if verbose {
