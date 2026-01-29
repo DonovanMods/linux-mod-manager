@@ -273,6 +273,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	// Download each selected file
 	var totalFileCount int
 	var downloadedFileIDs []string
+	fileChecksums := make(map[string]string) // fileID -> checksum
 
 	for i, selectedFile := range selectedFiles {
 		if len(selectedFiles) > 1 {
@@ -297,6 +298,17 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("download failed: %w", err)
 		}
 		fmt.Println() // newline after progress
+
+		// Display checksum (truncated for readability)
+		if downloadResult.Checksum != "" {
+			displayChecksum := downloadResult.Checksum
+			if len(displayChecksum) > 12 {
+				displayChecksum = displayChecksum[:12] + "..."
+			}
+			fmt.Printf("  Checksum: %s\n", displayChecksum)
+			fileChecksums[selectedFile.ID] = downloadResult.Checksum
+		}
+
 		totalFileCount += downloadResult.FilesExtracted
 		downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
 	}
@@ -323,6 +335,15 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
 		return fmt.Errorf("failed to save mod: %w", err)
+	}
+
+	// Store checksums in database
+	for fileID, checksum := range fileChecksums {
+		if err := service.DB().SaveFileChecksum(
+			installSource, mod.ID, game.ID, profileName, fileID, checksum,
+		); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save checksum for file %s: %v\n", fileID, err)
+		}
 	}
 
 	// Add mod to current profile (with FileIDs)
@@ -556,6 +577,15 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		}
 		fmt.Println()
 
+		// Display checksum (truncated for readability)
+		if downloadResult.Checksum != "" {
+			displayChecksum := downloadResult.Checksum
+			if len(displayChecksum) > 12 {
+				displayChecksum = displayChecksum[:12] + "..."
+			}
+			fmt.Printf("  Checksum: %s\n", displayChecksum)
+		}
+
 		if err := installer.Install(ctx, game, mod, profileName); err != nil {
 			fmt.Printf("  Error: deployment failed: %v\n", err)
 			failed = append(failed, mod.Name)
@@ -577,6 +607,15 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			fmt.Printf("  Error: failed to save mod: %v\n", err)
 			failed = append(failed, mod.Name)
 			continue
+		}
+
+		// Store checksum in database
+		if downloadResult.Checksum != "" {
+			if err := service.DB().SaveFileChecksum(
+				installSource, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to save checksum: %v\n", err)
+			}
 		}
 
 		// Add or update mod in profile (with FileIDs)
