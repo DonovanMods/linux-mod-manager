@@ -71,6 +71,21 @@ Examples:
 	RunE: runModDisable,
 }
 
+var modFilesCmd = &cobra.Command{
+	Use:   "files <mod-id>",
+	Short: "List files deployed by a mod",
+	Long: `Show all files that a mod has deployed to the game directory.
+
+This helps identify which files a mod owns, useful for debugging
+conflicts or understanding mod contents.
+
+Examples:
+  lmm mod files 12345 --game skyrim-se
+  lmm mod files 12345 --game skyrim-se --profile survival`,
+	Args: cobra.ExactArgs(1),
+	RunE: runModFiles,
+}
+
 func init() {
 	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "nexusmods", "mod source")
 	modCmd.PersistentFlags().StringVarP(&modProfile, "profile", "p", "", "profile (default: active profile)")
@@ -82,6 +97,7 @@ func init() {
 	modCmd.AddCommand(modSetUpdateCmd)
 	modCmd.AddCommand(modEnableCmd)
 	modCmd.AddCommand(modDisableCmd)
+	modCmd.AddCommand(modFilesCmd)
 	rootCmd.AddCommand(modCmd)
 }
 
@@ -259,5 +275,47 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Disabled: %s (files removed from game, kept in cache)\n", mod.Name)
+	return nil
+}
+
+func runModFiles(cmd *cobra.Command, args []string) error {
+	if err := requireGame(cmd); err != nil {
+		return err
+	}
+
+	modID := args[0]
+	profileName := profileOrDefault(modProfile)
+
+	svc, err := initService()
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer svc.Close()
+
+	// Get mod info for display
+	mod, err := svc.GetInstalledMod(modSource, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("mod not found: %s", modID)
+	}
+
+	// Get deployed files from database
+	files, err := svc.DB().GetDeployedFilesForMod(gameID, profileName, modSource, modID)
+	if err != nil {
+		return fmt.Errorf("getting deployed files: %w", err)
+	}
+
+	fmt.Printf("Files deployed by %s (%s):\n\n", mod.Name, modID)
+
+	if len(files) == 0 {
+		fmt.Println("  No deployed files tracked.")
+		fmt.Println("  (Files are tracked on install; existing mods may need to be redeployed)")
+		return nil
+	}
+
+	for _, f := range files {
+		fmt.Printf("  %s\n", f)
+	}
+	fmt.Printf("\nTotal: %d file(s)\n", len(files))
+
 	return nil
 }
