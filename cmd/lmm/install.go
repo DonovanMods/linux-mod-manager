@@ -16,6 +16,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// installPlan contains the ordered list of mods to install
+type installPlan struct {
+	mods    []*domain.Mod // In install order (dependencies first, target last)
+	missing []string      // Dependencies that couldn't be fetched (warning only)
+}
+
 var (
 	installSource       string
 	installProfile      string
