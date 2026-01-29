@@ -249,11 +249,13 @@ func (pm *ProfileManager) Switch(ctx context.Context, game *domain.Game, newProf
 		switchErrors = append(switchErrors, fmt.Errorf("apply overrides: %w", err))
 	}
 
-	if err := pm.SetDefault(game.ID, newProfileName); err != nil {
-		return err
-	}
+	// Only set as default if all operations succeeded (atomicity)
 	if len(switchErrors) > 0 {
-		return fmt.Errorf("profile switch completed with errors: %w", errors.Join(switchErrors...))
+		return fmt.Errorf("profile switch failed: %w", errors.Join(switchErrors...))
+	}
+
+	if err := pm.SetDefault(game.ID, newProfileName); err != nil {
+		return fmt.Errorf("set default profile: %w", err)
 	}
 	return nil
 }

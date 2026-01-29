@@ -235,6 +235,57 @@ func TestClient_SearchMods_UsesGraphQL(t *testing.T) {
 	assert.Equal(t, "Author1", mods[0].Author)
 }
 
+func TestClient_SearchMods_MultipleTagsAllIncluded(t *testing.T) {
+	// Verify that all tags are included in the GraphQL filter (not just the first)
+	graphqlResponse := `{
+		"data": {
+			"mods": {
+				"nodes": [
+					{"modId": 1, "name": "Tagged Mod", "summary": "Test", "version": "1.0.0", "uploader": {"name": "Author1"}}
+				]
+			}
+		}
+	}`
+
+	var receivedFilter map[string]interface{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Parse the GraphQL request to verify tag filters
+		var req graphqlRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			if filter, ok := req.Variables["filter"].(map[string]interface{}); ok {
+				receivedFilter = filter
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(graphqlResponse))
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.graphqlURL = server.URL
+
+	// Search with multiple tags
+	_, err := client.SearchMods(context.Background(), "skyrimspecialedition", "armor", "", []string{"armor", "clothing", "hdt"}, 10, 0)
+	require.NoError(t, err)
+
+	// Verify all tags are in the filter
+	require.NotNil(t, receivedFilter, "filter should be set")
+	tagNames, ok := receivedFilter["tagNames"].([]interface{})
+	require.True(t, ok, "tagNames should be an array")
+	require.Len(t, tagNames, 3, "all 3 tags should be included, not just the first")
+
+	// Verify each tag is present
+	expectedTags := []string{"armor", "clothing", "hdt"}
+	for i, tag := range tagNames {
+		tagMap, ok := tag.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, expectedTags[i], tagMap["value"])
+		assert.Equal(t, "EQUALS", tagMap["op"])
+	}
+}
+
 func TestClient_GetModFiles(t *testing.T) {
 	mockResponse := ModFileList{
 		Files: []FileData{

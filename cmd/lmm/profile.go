@@ -146,6 +146,7 @@ var (
 	profileImportForce     bool
 	profileImportNoInstall bool
 	profileApplyYes        bool
+	profileReorderProfile  string
 )
 
 func init() {
@@ -165,6 +166,9 @@ func init() {
 
 	// Apply flags
 	profileApplyCmd.Flags().BoolVarP(&profileApplyYes, "yes", "y", false, "auto-confirm changes")
+
+	// Reorder flags
+	profileReorderCmd.Flags().StringVarP(&profileReorderProfile, "profile", "p", "", "profile (default: default)")
 
 	rootCmd.AddCommand(profileCmd)
 }
@@ -1009,7 +1013,7 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	profileName := profileOrDefault(listProfile)
+	profileName := profileOrDefault(profileReorderProfile)
 	profile, err := config.LoadProfile(service.ConfigDir(), gameID, profileName)
 	if err != nil {
 		return fmt.Errorf("loading profile: %w", err)
@@ -1044,19 +1048,43 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Set new order: args are mod IDs in desired order (first = lowest priority)
-	byModID := make(map[string]domain.ModReference)
+	// Set new order: args are mod IDs (or "source:modid") in desired order (first = lowest priority).
+	// Key by sourceID:modID so mods from different sources with the same ModID are not overwritten.
+	byKey := make(map[string]domain.ModReference)
 	for _, ref := range profile.Mods {
-		byModID[ref.ModID] = ref
+		key := ref.SourceID + ":" + ref.ModID
+		byKey[key] = ref
 	}
 	var newRefs []domain.ModReference
 	seen := make(map[string]bool)
 	for _, id := range args {
-		ref, ok := byModID[id]
-		if !ok {
-			return fmt.Errorf("mod %s not in profile", id)
+		var ref domain.ModReference
+		var key string
+		if strings.Contains(id, ":") {
+			key = id
+			var ok bool
+			ref, ok = byKey[key]
+			if !ok {
+				return fmt.Errorf("mod %s not in profile", id)
+			}
+		} else {
+			// Look up by ModID only; ambiguous if multiple sources have this ModID
+			var matches []string
+			for k, r := range byKey {
+				if r.ModID == id {
+					matches = append(matches, k)
+				}
+			}
+			switch len(matches) {
+			case 0:
+				return fmt.Errorf("mod %s not in profile", id)
+			case 1:
+				key = matches[0]
+				ref = byKey[key]
+			default:
+				return fmt.Errorf("ambiguous mod id %s (use source:modid): %s", id, strings.Join(matches, ", "))
+			}
 		}
-		key := ref.SourceID + ":" + ref.ModID
 		if seen[key] {
 			continue
 		}
@@ -1391,8 +1419,16 @@ func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []stri
 			return found, false, nil
 		}
 		// Fallback to primary
-		return []*domain.DownloadableFile{selectPrimaryFile(files)}, true, nil
+		p := selectPrimaryFile(files)
+		if p == nil {
+			return nil, false, errNoDownloadableFiles
+		}
+		return []*domain.DownloadableFile{p}, true, nil
 	}
 	// Fresh install: use primary file
-	return []*domain.DownloadableFile{selectPrimaryFile(files)}, false, nil
+	p := selectPrimaryFile(files)
+	if p == nil {
+		return nil, false, errNoDownloadableFiles
+	}
+	return []*domain.DownloadableFile{p}, false, nil
 }

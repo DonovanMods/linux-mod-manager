@@ -29,8 +29,9 @@ func NewInstaller(cache *cache.Cache, linker linker.Linker, database *db.DB) *In
 }
 
 // Install deploys a mod to the game directory. If DB tracking is enabled and a
-// SaveDeployedFile fails after some files are deployed, deployed files are
-// undeployed (rollback) so filesystem and DB stay consistent.
+// SaveDeployedFile fails, only the file that failed to track is rolled back so
+// the filesystem stays consistent with the database (previously deployed+tracked
+// files are left in place).
 func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
 	// Check if mod is cached
 	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
@@ -55,16 +56,26 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		dstPath := filepath.Join(game.ModPath, file)
 
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
-			rollbackDeploy(i.linker, game.ModPath, deployed)
-			return fmt.Errorf("deploying %s: %w", file, err)
+			if rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed); rollbackErr != nil {
+				err = fmt.Errorf("deploying %s: %w; rollback failed (some files may remain deployed): %v", file, err, rollbackErr)
+			} else {
+				err = fmt.Errorf("deploying %s: %w", file, err)
+			}
+			if i.db != nil {
+				_ = i.db.DeleteDeployedFiles(game.ID, profileName, mod.SourceID, mod.ID)
+			}
+			return err
 		}
 		deployed = append(deployed, file)
 
 		// Track file ownership in database (for conflict detection)
 		if i.db != nil {
 			if err := i.db.SaveDeployedFile(game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
-				rollbackDeploy(i.linker, game.ModPath, deployed)
-				_ = i.db.DeleteDeployedFiles(game.ID, profileName, mod.SourceID, mod.ID)
+				// Roll back only the file that failed to track; leave previously
+				// deployed+tracked files and DB records intact.
+				if rollbackErr := rollbackDeploy(i.linker, game.ModPath, []string{file}); rollbackErr != nil {
+					return fmt.Errorf("tracking deployed file %s: %w; rollback failed (file may remain deployed but untracked): %v", file, err, rollbackErr)
+				}
 				return fmt.Errorf("tracking deployed file %s: %w", file, err)
 			}
 		}
@@ -74,11 +85,16 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 }
 
 // rollbackDeploy undeploys the given relative paths under modPath (reverse order).
-func rollbackDeploy(lnk linker.Linker, modPath string, relativePaths []string) {
+// Returns the first Undeploy error encountered, if any.
+func rollbackDeploy(lnk linker.Linker, modPath string, relativePaths []string) error {
+	var firstErr error
 	for j := len(relativePaths) - 1; j >= 0; j-- {
 		dstPath := filepath.Join(modPath, relativePaths[j])
-		_ = lnk.Undeploy(dstPath)
+		if err := lnk.Undeploy(dstPath); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
+	return firstErr
 }
 
 // Uninstall removes a mod from the game directory

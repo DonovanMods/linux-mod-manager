@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -337,6 +338,57 @@ games:
 	content, err := os.ReadFile(pluginPath)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("plugin"), content)
+}
+
+// failingLinker fails Deploy after a number of successful calls (for rollback tests).
+type failingLinker struct {
+	linker.Linker
+	deployCount int
+	failAfter   int
+}
+
+func (f *failingLinker) Deploy(src, dst string) error {
+	f.deployCount++
+	if f.deployCount > f.failAfter {
+		return fmt.Errorf("simulated deploy failure")
+	}
+	return f.Linker.Deploy(src, dst)
+}
+
+func TestInstaller_Install_DeployFailureRollsBackAndClearsDB(t *testing.T) {
+	// When Deploy fails after some files are deployed, roll back all deployed
+	// files and clear DB records so disk and DB stay consistent.
+	tempDir := t.TempDir()
+	gameDir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	modCache := cache.New(tempDir)
+	require.NoError(t, modCache.Store("g", "src", "1", "v1", "a.esp", []byte("a")))
+	require.NoError(t, modCache.Store("g", "src", "1", "v1", "b.esp", []byte("b")))
+
+	realLnk := linker.New(domain.LinkSymlink)
+	lnk := &failingLinker{Linker: realLnk, failAfter: 1}
+	inst := core.NewInstaller(modCache, lnk, database)
+
+	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	mod := &domain.Mod{ID: "1", SourceID: "src", Version: "v1", GameID: "g"}
+
+	err = inst.Install(context.Background(), game, mod, "default")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deploying b.esp")
+
+	// All deployed files should have been rolled back
+	_, err = os.Lstat(filepath.Join(gameDir, "a.esp"))
+	assert.True(t, os.IsNotExist(err), "a.esp should have been rolled back")
+	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.True(t, os.IsNotExist(err), "b.esp should not exist")
+
+	// DB should have no records for this mod
+	paths, err := database.GetDeployedFilesForMod("g", "default", "src", "1")
+	require.NoError(t, err)
+	assert.Empty(t, paths, "DB should have no deployed file records for this mod")
 }
 
 func TestGetConflicts(t *testing.T) {

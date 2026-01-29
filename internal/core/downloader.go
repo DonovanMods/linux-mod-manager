@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	defaultMaxAttempts   = 3
-	defaultInitialBackoff = time.Second
+	defaultMaxAttempts       = 3
+	defaultInitialBackoff    = time.Second
 	defaultBackoffMultiplier = 2
 )
 
@@ -59,7 +59,9 @@ func isRetryableHTTP(statusCode int) bool {
 		(statusCode >= 500 && statusCode < 600)
 }
 
-// isRetryableNet returns true for network errors that are typically transient.
+// isRetryableNet returns true only for network errors that are typically transient
+// (timeouts, temporary failures). Non-transient errors (e.g. permission denied,
+// connection refused, DNS failure) return false so the caller fails fast instead of retrying.
 func isRetryableNet(err error) bool {
 	if err == nil {
 		return false
@@ -72,8 +74,8 @@ func isRetryableNet(err error) bool {
 	if ok := errors.As(err, &netErr); ok && (netErr.Timeout() || netErr.Temporary()) {
 		return true
 	}
-	// Retry on generic connection errors (e.g. connection refused, reset)
-	return true
+	// Only retry on known-transient net errors; unknown errors (incl. permission, IO) fail fast
+	return false
 }
 
 // Download fetches a file from the URL and saves it to destPath, with retries on transient

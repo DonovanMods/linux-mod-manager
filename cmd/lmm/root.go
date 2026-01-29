@@ -64,15 +64,47 @@ func colorEnabled() bool {
 	return true
 }
 
+const (
+	ansiReset  = "\033[0m"
+	ansiGreen  = "\033[32m"
+	ansiRed    = "\033[31m"
+	ansiYellow = "\033[33m"
+)
+
+// colorGreen returns s with green ANSI when color is enabled, otherwise s.
+func colorGreen(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiGreen + s + ansiReset
+}
+
+// colorRed returns s with red ANSI when color is enabled, otherwise s.
+func colorRed(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiRed + s + ansiReset
+}
+
+// colorYellow returns s with yellow ANSI when color is enabled, otherwise s.
+func colorYellow(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiYellow + s + ansiReset
+}
+
 // Execute runs the root command. Exit codes: 0 = success, 1 = error, 2 = user cancelled.
 // When --json is set and an error occurs, prints {"error":"..."} to stdout before exiting.
+// Cancellation (ErrCancelled) exits with code 2 without printing JSON, since it is a user action, not an error.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		if jsonOutput {
-			fmt.Printf(`{"error":%q}`+"\n", err.Error())
-		}
 		if errors.Is(err, ErrCancelled) {
 			os.Exit(2)
+		}
+		if jsonOutput {
+			fmt.Printf(`{"error":%q}`+"\n", err.Error())
 		}
 		os.Exit(1)
 	}

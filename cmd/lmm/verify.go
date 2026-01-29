@@ -178,7 +178,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 			if jsonOutput {
 				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing"})
 			} else {
-				fmt.Printf("X %s (%s) - MISSING (version %s not in cache)\n", mod.Name, f.FileID, mod.Version)
+				fmt.Printf("%s %s (%s) - MISSING (version %s not in cache)\n", colorRed("X"), mod.Name, f.FileID, mod.Version)
 			}
 			issues++
 			if verifyFix && mod.SourceID != domain.SourceLocal {
@@ -188,7 +188,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 					}
 				} else {
 					if !jsonOutput {
-						fmt.Printf("  Re-downloaded OK\n")
+						fmt.Printf("  %s\n", colorGreen("Re-downloaded OK"))
 					}
 					issues--
 				}
@@ -201,7 +201,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 			if jsonOutput {
 				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"})
 			} else {
-				fmt.Printf("? %s (%s) - NO CHECKSUM\n", mod.Name, f.FileID)
+				fmt.Printf("%s %s (%s) - NO CHECKSUM\n", colorYellow("?"), mod.Name, f.FileID)
 			}
 			warnings++
 			continue
@@ -211,7 +211,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		if jsonOutput {
 			jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"})
 		} else {
-			fmt.Printf("+ %s (%s) - OK\n", mod.Name, f.FileID)
+			fmt.Printf("%s %s (%s) - %s\n", colorGreen("+"), mod.Name, f.FileID, colorGreen("OK"))
 		}
 	}
 
@@ -235,7 +235,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 			fmt.Println("Run with --fix to re-download missing files.")
 		}
 	} else {
-		fmt.Println("All files verified OK.")
+		fmt.Println(colorGreen("All files verified OK."))
 	}
 
 	return nil

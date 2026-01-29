@@ -263,10 +263,12 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 		}
 	}
 	if len(tags) > 0 {
-		// NexusMods GraphQL may support tag filter; pass first tag for now
-		filter["tagNames"] = []map[string]interface{}{
-			{"value": tags[0], "op": "EQUALS"},
+		// Build filter entries for all tags (ANDed - mod must have all specified tags)
+		tagFilters := make([]map[string]interface{}, len(tags))
+		for i, tag := range tags {
+			tagFilters[i] = map[string]interface{}{"value": tag, "op": "EQUALS"}
 		}
+		filter["tagNames"] = tagFilters
 	}
 
 	reqBody := graphqlRequest{

@@ -204,12 +204,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 		// Check if mod is in cache
 		if !service.GetGameCache(game).Exists(gameID, mod.SourceID, mod.ID, mod.Version) {
-			fmt.Printf("  ⚠ %s - cache missing, re-downloading...\n", mod.Name)
+			fmt.Printf("  %s %s - cache missing, re-downloading...\n", colorYellow("⚠"), mod.Name)
 
 			// Fetch mod info from source
 			fetchedMod, err := service.GetMod(ctx, mod.SourceID, gameID, mod.ID)
 			if err != nil {
-				fmt.Printf("  ✗ %s - failed to fetch: %v\n", mod.Name, err)
+				fmt.Printf("  %s %s - failed to fetch: %v\n", colorRed("✗"), mod.Name, err)
 				failed++
 				continue
 			}
@@ -217,7 +217,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			// Get available files
 			files, err := service.GetModFiles(ctx, mod.SourceID, fetchedMod)
 			if err != nil || len(files) == 0 {
-				fmt.Printf("  ✗ %s - no files available\n", mod.Name)
+				fmt.Printf("  %s %s - no files available\n", colorRed("✗"), mod.Name)
 				failed++
 				continue
 			}
@@ -225,12 +225,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			// Find files to download - use stored FileIDs or fall back to primary
 			filesToDownload, usedFallback, err := selectFilesToDownload(files, mod.FileIDs)
 			if err != nil {
-				fmt.Printf("  ✗ %s - %v\n", mod.Name, err)
+				fmt.Printf("  %s %s - %v\n", colorRed("✗"), mod.Name, err)
 				failed++
 				continue
 			}
 			if usedFallback {
-				fmt.Printf("  ⚠ %s - stored file IDs not found, using primary\n", mod.Name)
+				fmt.Printf("  %s %s - stored file IDs not found, using primary\n", colorYellow("⚠"), mod.Name)
 			}
 
 			// Download each file
@@ -245,7 +245,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 				_, err = service.DownloadMod(ctx, mod.SourceID, game, fetchedMod, selectedFile, progressFn)
 				if err != nil {
 					fmt.Println()
-					fmt.Printf("  ✗ %s - download failed: %v\n", mod.Name, err)
+					fmt.Printf("  %s %s - download failed: %v\n", colorRed("✗"), mod.Name, err)
 					downloadFailed = true
 					break
 				}
@@ -267,7 +267,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 		// Redeploy with new method
 		if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
-			fmt.Printf("  ✗ %s - %v\n", mod.Name, err)
+			fmt.Printf("  %s %s - %v\n", colorRed("✗"), mod.Name, err)
 			failed++
 			continue
 		}
@@ -286,7 +286,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		fmt.Printf("  ✓ %s\n", mod.Name)
+		fmt.Printf("  %s %s\n", colorGreen("✓"), mod.Name)
 		succeeded++
 
 		// Run install.after_each hook
