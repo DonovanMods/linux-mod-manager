@@ -165,6 +165,37 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Set up hooks
+	hookRunner := getHookRunner(service)
+	resolvedHooks := getResolvedHooks(service, game, profileName)
+	hookCtx := makeHookContext(game)
+	var hookErrors []error
+
+	// Run install.before_all hook (for single mod import)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
+		hookCtx.HookName = "install.before_all"
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
+			if !importForce {
+				return fmt.Errorf("install.before_all hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
+		}
+	}
+
+	// Run install.before_each hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
+		hookCtx.HookName = "install.before_each"
+		hookCtx.ModID = result.Mod.ID
+		hookCtx.ModName = result.Mod.Name
+		hookCtx.ModVersion = result.Mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
+			if !importForce {
+				return fmt.Errorf("install.before_each hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: install.before_each hook failed (forced): %v\n", err)
+		}
+	}
+
 	// Deploy to game directory
 	fmt.Println("\nDeploying to game directory...")
 
@@ -213,6 +244,31 @@ func runImport(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}
 	}
+
+	// Run install.after_each hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
+		hookCtx.HookName = "install.after_each"
+		hookCtx.ModID = result.Mod.ID
+		hookCtx.ModName = result.Mod.Name
+		hookCtx.ModVersion = result.Mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed: %w", err))
+		}
+	}
+
+	// Run install.after_all hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
+		hookCtx.HookName = "install.after_all"
+		hookCtx.ModID = ""
+		hookCtx.ModName = ""
+		hookCtx.ModVersion = ""
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
+		}
+	}
+
+	// Print hook warnings
+	printHookWarnings(hookErrors)
 
 	fmt.Printf("\n✓ Imported: %s\n", result.Mod.Name)
 	fmt.Printf("  Files deployed: %d\n", result.FilesExtracted)
