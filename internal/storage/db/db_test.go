@@ -297,3 +297,17 @@ func TestMigrationV5_DeployedColumn(t *testing.T) {
 	// This should not error on column not found - only on no rows
 	assert.ErrorContains(t, err, "no rows")
 }
+
+func TestMigrationV6_ChecksumColumn(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Verify checksum column exists by querying it
+	var checksum interface{}
+	err = database.QueryRow(`
+		SELECT checksum FROM installed_mod_files LIMIT 1
+	`).Scan(&checksum)
+	// This should not error on column not found - only on no rows
+	assert.ErrorContains(t, err, "no rows")
+}
