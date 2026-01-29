@@ -11,8 +11,8 @@ import (
 var conflictsProfile string
 
 type conflictsJSONOutput struct {
-	GameID    string        `json:"game_id"`
-	Profile   string        `json:"profile"`
+	GameID    string         `json:"game_id"`
+	Profile   string         `json:"profile"`
 	Conflicts []conflictJSON `json:"conflicts"`
 }
 

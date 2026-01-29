@@ -54,14 +54,14 @@ Scripts receive environment variables: `LMM_GAME_ID`, `LMM_GAME_PATH`, `LMM_MOD_
 
 Profiles are stored under `~/.config/lmm/games/<game-id>/profiles/<name>.yaml`.
 
-| Option        | Type   | Description                                                         |
-| ------------- | ------ | ------------------------------------------------------------------- |
-| `name`        | string | Profile name                                                        |
-| `game_id`     | string | Game this profile belongs to                                        |
-| `mods`        | list   | Mod references (source_id, mod_id, version, file_ids) in load order |
-| `link_method` | string | Optional override (symlink, hardlink, copy)                         |
-| `is_default`  | bool   | Whether this is the default profile for the game                    |
-| `hooks`       | object | Optional profile-level hook overrides (same structure as game hooks) |
+| Option        | Type   | Description                                                                                                             |
+| ------------- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `name`        | string | Profile name                                                                                                            |
+| `game_id`     | string | Game this profile belongs to                                                                                            |
+| `mods`        | list   | Mod references (source_id, mod_id, version, file_ids) in load order                                                     |
+| `link_method` | string | Optional override (symlink, hardlink, copy)                                                                             |
+| `is_default`  | bool   | Whether this is the default profile for the game                                                                        |
+| `hooks`       | object | Optional profile-level hook overrides (same structure as game hooks)                                                    |
 | `overrides`   | map    | Optional config overrides: path (relative to game install) → file content (INI tweaks, etc.). Applied on switch/deploy. |
 
 ### Portable export format

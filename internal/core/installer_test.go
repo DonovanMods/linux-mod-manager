@@ -362,7 +362,7 @@ func TestInstaller_Install_DeployFailureRollsBackAndClearsDB(t *testing.T) {
 	gameDir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	modCache := cache.New(tempDir)
 	require.NoError(t, modCache.Store("g", "src", "1", "v1", "a.esp", []byte("a")))
@@ -396,7 +396,7 @@ func TestGetConflicts(t *testing.T) {
 	tempDir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	c := cache.New(tempDir)
 	lnk := linker.New(domain.LinkSymlink)
@@ -436,7 +436,7 @@ func TestGetConflicts_ReinstallSelf(t *testing.T) {
 	tempDir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	c := cache.New(tempDir)
 	lnk := linker.New(domain.LinkSymlink)

@@ -163,10 +163,10 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		out := updateJSONOutput{GameID: gameID, Profile: profileName, Updates: make([]updateModJSON, len(updates))}
 		for i, u := range updates {
 			out.Updates[i] = updateModJSON{
-				ModID:       u.InstalledMod.ID,
-				Name:        u.InstalledMod.Name,
-				Current:     u.InstalledMod.Version,
-				Available:   u.NewVersion,
+				ModID:        u.InstalledMod.ID,
+				Name:         u.InstalledMod.Name,
+				Current:      u.InstalledMod.Version,
+				Available:    u.NewVersion,
 				UpdatePolicy: policyToString(u.InstalledMod.UpdatePolicy),
 			}
 		}

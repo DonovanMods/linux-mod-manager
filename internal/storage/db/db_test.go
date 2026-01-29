@@ -13,7 +13,7 @@ import (
 func TestNew_CreatesDatabase(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	assert.NotNil(t, database)
 }
@@ -21,7 +21,7 @@ func TestNew_CreatesDatabase(t *testing.T) {
 func TestNew_RunsMigrations(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Verify v1 tables exist
 	var count int
@@ -39,7 +39,7 @@ func TestNew_RunsMigrations(t *testing.T) {
 func TestNew_AppliesAllMigrations(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// v4: installed_mod_files
 	var count int
@@ -68,7 +68,7 @@ func TestNew_AppliesAllMigrations(t *testing.T) {
 func TestInstalledMods_SaveAndGet(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	mod := &domain.InstalledMod{
 		Mod: domain.Mod{
@@ -99,7 +99,7 @@ func TestInstalledMods_SaveAndGet(t *testing.T) {
 func TestInstalledMods_Delete(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	mod := &domain.InstalledMod{
 		Mod: domain.Mod{
@@ -126,7 +126,7 @@ func TestInstalledMods_Delete(t *testing.T) {
 func TestMigrationV2_PreviousVersionColumn(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Verify previous_version column exists by querying it
 	var prevVersion interface{}
@@ -141,7 +141,7 @@ func TestMigrationV2_PreviousVersionColumn(t *testing.T) {
 func TestUpdateModVersion(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Create initial mod
 	mod := &domain.InstalledMod{
@@ -171,7 +171,7 @@ func TestUpdateModVersion(t *testing.T) {
 func TestSwapModVersions(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Create mod with previous version
 	mod := &domain.InstalledMod{
@@ -202,7 +202,7 @@ func TestSwapModVersions(t *testing.T) {
 func TestSwapModVersions_NoPreviousVersion(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Create mod without previous version
 	mod := &domain.InstalledMod{
@@ -226,7 +226,7 @@ func TestSwapModVersions_NoPreviousVersion(t *testing.T) {
 func TestGetInstalledMod(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	mod := &domain.InstalledMod{
 		Mod: domain.Mod{
@@ -254,7 +254,7 @@ func TestGetInstalledMod(t *testing.T) {
 func TestGetInstalledMod_NotFound(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	_, err = database.GetInstalledMod("nexusmods", "nonexistent", "skyrim-se", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
@@ -263,7 +263,7 @@ func TestGetInstalledMod_NotFound(t *testing.T) {
 func TestSetModDeployed(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Create a deployed mod
 	mod := &domain.InstalledMod{
@@ -308,7 +308,7 @@ func TestSetModDeployed(t *testing.T) {
 func TestSetModDeployed_NotFound(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	err = database.SetModDeployed("nexusmods", "nonexistent", "skyrim-se", "default", false)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
@@ -317,7 +317,7 @@ func TestSetModDeployed_NotFound(t *testing.T) {
 func TestMigrationV5_DeployedColumn(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Verify deployed column exists by querying it
 	var deployed interface{}
@@ -331,7 +331,7 @@ func TestMigrationV5_DeployedColumn(t *testing.T) {
 func TestMigrationV6_ChecksumColumn(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Verify checksum column exists by querying it
 	var checksum interface{}
@@ -345,7 +345,7 @@ func TestMigrationV6_ChecksumColumn(t *testing.T) {
 func TestSaveFileChecksum(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Create a mod first
 	mod := &domain.InstalledMod{
@@ -375,7 +375,7 @@ func TestSaveFileChecksum(t *testing.T) {
 func TestGetFileChecksum_NotFound(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	checksum, err := database.GetFileChecksum("nexusmods", "nonexistent", "skyrim-se", "default", "99999")
 	require.NoError(t, err)
@@ -385,7 +385,7 @@ func TestGetFileChecksum_NotFound(t *testing.T) {
 func TestGetFilesWithChecksums(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Create a mod with multiple files
 	mod := &domain.InstalledMod{
@@ -425,7 +425,7 @@ func TestGetFilesWithChecksums(t *testing.T) {
 func TestMigrationV7_DeployedFilesTable(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Verify deployed_files table exists
 	var tableName string

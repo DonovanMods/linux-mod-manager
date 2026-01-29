@@ -1042,9 +1042,9 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 			if name == "" {
 				name = "(unknown)"
 			}
-			fmt.Fprintf(w, "%d\t%s\t%s\n", i+1, ref.ModID, name)
+			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", i+1, ref.ModID, name)
 		}
-		w.Flush()
+		_ = w.Flush()
 		return nil
 	}
 

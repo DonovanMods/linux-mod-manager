@@ -14,6 +14,9 @@
 .go-cache/
 .go-mod/
 
+# Trunk linter cache (project-local when using make check)
+.trunk-cache/
+
 # Go workspace
 go.work
 go.work.sum

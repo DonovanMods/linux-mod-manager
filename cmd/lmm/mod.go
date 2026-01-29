@@ -349,7 +349,7 @@ func runModShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer svc.Close()
+	defer func() { _ = svc.Close() }()
 
 	ctx := context.Background()
 	mod, err := svc.GetMod(ctx, modSource, gameID, modID)

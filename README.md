@@ -195,22 +195,22 @@ This allows you to store different games' mods on different drives (e.g., large 
 
 ### Global Flags
 
-| Flag        | Short | Description                                              |
-| ----------- | ----- | -------------------------------------------------------- |
-| `--game`    | `-g`  | Game ID (optional if default set via `game set-default`) |
-| `--verbose` | `-v`  | Enable verbose output                                    |
-| `--config`  |       | Custom config directory                                  |
-| `--data`    |       | Custom data directory                                    |
-| `--json`    |       | Output in JSON (list, status, search, update, conflicts, verify, mod show); errors print `{"error":"..."}` |
-| `--no-hooks`|       | Disable all hooks at runtime                             |
-| `--no-color`|       | Disable colored output (respects NO_COLOR env)          |
+| Flag         | Short | Description                                                                                                |
+| ------------ | ----- | ---------------------------------------------------------------------------------------------------------- |
+| `--game`     | `-g`  | Game ID (optional if default set via `game set-default`)                                                   |
+| `--verbose`  | `-v`  | Enable verbose output                                                                                      |
+| `--config`   |       | Custom config directory                                                                                    |
+| `--data`     |       | Custom data directory                                                                                      |
+| `--json`     |       | Output in JSON (list, status, search, update, conflicts, verify, mod show); errors print `{"error":"..."}` |
+| `--no-hooks` |       | Disable all hooks at runtime                                                                               |
+| `--no-color` |       | Disable colored output (respects NO_COLOR env)                                                             |
 
 ### Commands
 
 | Command                                | Description                                 |
 | -------------------------------------- | ------------------------------------------- |
 | `lmm search <query>`                   | Search for mods                             |
-| `lmm search <query> --category ID`     | Filter by NexusMods category                 |
+| `lmm search <query> --category ID`     | Filter by NexusMods category                |
 | `lmm search <query> --tag TAG`         | Filter by tag (repeat for multiple)         |
 | `lmm install <query>`                  | Search and install a mod                    |
 | `lmm install --id <mod-id>`            | Install by mod ID                           |
@@ -244,8 +244,8 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm profile delete <name>`            | Delete a profile                            |
 | `lmm profile export <name>`            | Export profile to YAML                      |
 | `lmm profile import <file>`            | Import profile from YAML                    |
-| `lmm profile import <file> --force`   | Import and overwrite existing               |
-| `lmm profile reorder [mod-id ...]`    | Show or set load order                      |
+| `lmm profile import <file> --force`    | Import and overwrite existing               |
+| `lmm profile reorder [mod-id ...]`     | Show or set load order                      |
 | `lmm profile sync`                     | Update profile to match installed mods      |
 | `lmm profile apply`                    | Install/enable mods to match profile        |
 | `lmm deploy`                           | Deploy all enabled mods from cache          |
@@ -253,7 +253,7 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm deploy --method hardlink`         | Deploy using different link method          |
 | `lmm deploy --purge`                   | Purge then deploy all mods                  |
 | `lmm purge`                            | Remove all mods from game directory         |
-| `lmm conflicts`                       | Show file conflicts in current profile      |
+| `lmm conflicts`                        | Show file conflicts in current profile      |
 
 ### Update check behavior
 

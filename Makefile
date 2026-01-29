@@ -8,6 +8,8 @@ VERSION := $(shell grep 'version = ' cmd/lmm/root.go | cut -d'"' -f2)
 LDFLAGS := -ldflags "-s -w"
 # Project-local Go cache so tests run in sandboxed environments (e.g. CI, Cursor)
 GOCACHE_LOCAL := $(CURDIR)/.go-mod/cache
+# Trunk cache under project for sandbox-friendly lint
+TRUNK_CACHE_LOCAL := $(CURDIR)/.trunk-cache
 
 # Default target
 all: build
@@ -45,21 +47,21 @@ coverage:
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
-## fmt: Format code
+## fmt: Format code (uses project GOCACHE for sandbox-friendly runs)
 fmt:
-	@go fmt ./...
+	@GOCACHE=$(GOCACHE_LOCAL) go fmt ./...
 
-## vet: Vet code
+## vet: Vet code (uses project GOCACHE for sandbox-friendly runs)
 vet:
-	@go vet ./...
+	@GOCACHE=$(GOCACHE_LOCAL) go vet ./...
 
-## lint: Run linter (trunk)
+## lint: Run linter (trunk, uses project cache for sandbox-friendly runs)
 lint:
-	@trunk check
+	@XDG_CACHE_HOME=$(TRUNK_CACHE_LOCAL) trunk check
 
 ## lint-fix: Run linter and fix issues
 lint-fix:
-	@trunk fmt
+	@XDG_CACHE_HOME=$(TRUNK_CACHE_LOCAL) trunk fmt
 
 ## check: Run fmt, vet, and tests
 check: fmt lint vet test

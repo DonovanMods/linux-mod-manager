@@ -71,7 +71,7 @@ func isRetryableNet(err error) bool {
 		return false
 	}
 	var netErr net.Error
-	if ok := errors.As(err, &netErr); ok && (netErr.Timeout() || netErr.Temporary()) {
+	if ok := errors.As(err, &netErr); ok && netErr.Timeout() {
 		return true
 	}
 	// Only retry on known-transient net errors; unknown errors (incl. permission, IO) fail fast
@@ -158,11 +158,11 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, pro
 	if err != nil {
 		return nil, fmt.Errorf("creating file: %w", err)
 	}
-	var removeTemp bool = true
+	removeTemp := true
 	defer func() {
-		file.Close()
+		_ = file.Close()
 		if removeTemp {
-			os.Remove(tempPath)
+			_ = os.Remove(tempPath)
 		}
 	}()
 
