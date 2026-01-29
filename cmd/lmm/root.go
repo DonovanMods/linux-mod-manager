@@ -20,6 +20,7 @@ var (
 	dataDir   string
 	gameID    string
 	verbose   bool
+	noHooks   bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -39,6 +40,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&dataDir, "data", "", "data directory (default: ~/.local/share/lmm)")
 	rootCmd.PersistentFlags().StringVarP(&gameID, "game", "g", "", "game ID to operate on")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
 }
 
 // Execute runs the root command
