@@ -963,3 +963,170 @@ func showInstallPlan(plan *installPlan, targetModID string) {
 		}
 	}
 }
+
+// installModsWithDeps installs multiple mods in order (dependencies first)
+func installModsWithDeps(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
+	fmt.Printf("\nInstalling %d mod(s)...\n", len(mods))
+
+	// Get profile manager and ensure profile exists
+	pm := getProfileManager(service)
+	if _, err := pm.Get(game.ID, profileName); err != nil {
+		if err == domain.ErrProfileNotFound {
+			if _, err := pm.Create(game.ID, profileName); err != nil {
+				return fmt.Errorf("could not create profile: %w", err)
+			}
+		}
+	}
+
+	// Get link method for this game
+	linkMethod := service.GetGameLinkMethod(game)
+
+	var installed []string
+	var failed []string
+
+	for i, mod := range mods {
+		fmt.Printf("\n[%d/%d] Installing: %s v%s\n", i+1, len(mods), mod.Name, mod.Version)
+
+		// Set up installer
+		linker := service.GetLinker(linkMethod)
+		installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+
+		// Check if mod is already installed - if so, uninstall old files first
+		existingMod, err := service.GetInstalledMod(mod.SourceID, mod.ID, game.ID, profileName)
+		if err == nil && existingMod != nil {
+			fmt.Printf("  Removing previous installation...\n")
+			if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil {
+				if verbose {
+					fmt.Printf("  Warning: could not remove old files: %v\n", err)
+				}
+			}
+			if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil {
+				if verbose {
+					fmt.Printf("  Warning: could not clear old cache: %v\n", err)
+				}
+			}
+		}
+
+		// Get available files
+		files, err := service.GetModFiles(ctx, mod.SourceID, mod)
+		if err != nil {
+			fmt.Printf("  Error: failed to get mod files: %v\n", err)
+			failed = append(failed, mod.Name)
+			continue
+		}
+
+		// Filter and sort files
+		files = filterAndSortFiles(files, installShowArchived)
+
+		if len(files) == 0 {
+			fmt.Printf("  Error: no downloadable files available\n")
+			failed = append(failed, mod.Name)
+			continue
+		}
+
+		// Auto-select primary or first file
+		var selectedFile *domain.DownloadableFile
+		for j := range files {
+			if files[j].IsPrimary {
+				selectedFile = &files[j]
+				break
+			}
+		}
+		if selectedFile == nil {
+			selectedFile = &files[0]
+		}
+
+		fmt.Printf("  File: %s\n", selectedFile.FileName)
+
+		// Download the mod
+		progressFn := func(p core.DownloadProgress) {
+			if p.TotalBytes > 0 {
+				bar := progressBar(p.Percentage, 20)
+				fmt.Printf("\r  [%s] %.1f%%", bar, p.Percentage)
+			}
+		}
+
+		downloadResult, err := service.DownloadMod(ctx, mod.SourceID, game, mod, selectedFile, progressFn)
+		if err != nil {
+			fmt.Println()
+			fmt.Printf("  Error: download failed: %v\n", err)
+			failed = append(failed, mod.Name)
+			continue
+		}
+		fmt.Println()
+
+		// Display checksum unless --skip-verify
+		if !skipVerify && downloadResult.Checksum != "" {
+			displayChecksum := downloadResult.Checksum
+			if len(displayChecksum) > 12 {
+				displayChecksum = displayChecksum[:12] + "..."
+			}
+			fmt.Printf("  Checksum: %s\n", displayChecksum)
+		}
+
+		// Check for conflicts (unless --force)
+		if !installForce {
+			conflicts, err := installer.GetConflicts(ctx, game, mod, profileName)
+			if err == nil && len(conflicts) > 0 {
+				fmt.Printf("  ⚠ %d file conflict(s) - will overwrite\n", len(conflicts))
+			}
+		}
+
+		if err := installer.Install(ctx, game, mod, profileName); err != nil {
+			fmt.Printf("  Error: deployment failed: %v\n", err)
+			failed = append(failed, mod.Name)
+			continue
+		}
+
+		// Save to database
+		installedMod := &domain.InstalledMod{
+			Mod:          *mod,
+			ProfileName:  profileName,
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+			Deployed:     true,
+			LinkMethod:   linkMethod,
+			FileIDs:      []string{selectedFile.ID},
+		}
+
+		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+			fmt.Printf("  Error: failed to save mod: %v\n", err)
+			failed = append(failed, mod.Name)
+			continue
+		}
+
+		// Store checksum in database
+		if !skipVerify && downloadResult.Checksum != "" {
+			if err := service.DB().SaveFileChecksum(
+				mod.SourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum,
+			); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to save checksum: %v\n", err)
+			}
+		}
+
+		// Add to profile
+		modRef := domain.ModReference{
+			SourceID: mod.SourceID,
+			ModID:    mod.ID,
+			Version:  mod.Version,
+			FileIDs:  []string{selectedFile.ID},
+		}
+		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+			if verbose {
+				fmt.Printf("  Warning: could not update profile: %v\n", err)
+			}
+		}
+
+		fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
+		installed = append(installed, mod.Name)
+	}
+
+	// Summary
+	fmt.Printf("\n--- Summary ---\n")
+	fmt.Printf("Installed: %d\n", len(installed))
+	if len(failed) > 0 {
+		fmt.Printf("Failed: %d (%s)\n", len(failed), strings.Join(failed, ", "))
+	}
+
+	return nil
+}
