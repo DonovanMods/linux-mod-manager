@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -129,4 +130,121 @@ echo "HOOK=$LMM_HOOK"
 	assert.Contains(t, result.Stdout, "MOD_ID=12345")
 	assert.Contains(t, result.Stdout, "MOD_NAME=SkyUI")
 	assert.Contains(t, result.Stdout, "HOOK=install.after_each")
+}
+
+func TestResolveHooks_GameOnlyHooks(t *testing.T) {
+	game := &domain.Game{
+		ID: "skyrim-se",
+		Hooks: domain.GameHooks{
+			Install: domain.HookConfig{
+				BeforeAll:  "/scripts/install_before.sh",
+				BeforeEach: "/scripts/install_before_each.sh",
+				AfterEach:  "/scripts/install_after_each.sh",
+				AfterAll:   "/scripts/install_after.sh",
+			},
+			Uninstall: domain.HookConfig{
+				BeforeAll: "/scripts/uninstall_before.sh",
+				AfterAll:  "/scripts/uninstall_after.sh",
+			},
+		},
+	}
+
+	resolved := ResolveHooks(game, nil)
+
+	require.NotNil(t, resolved)
+	assert.Equal(t, "/scripts/install_before.sh", resolved.Install.BeforeAll)
+	assert.Equal(t, "/scripts/install_before_each.sh", resolved.Install.BeforeEach)
+	assert.Equal(t, "/scripts/install_after_each.sh", resolved.Install.AfterEach)
+	assert.Equal(t, "/scripts/install_after.sh", resolved.Install.AfterAll)
+	assert.Equal(t, "/scripts/uninstall_before.sh", resolved.Uninstall.BeforeAll)
+	assert.Equal(t, "/scripts/uninstall_after.sh", resolved.Uninstall.AfterAll)
+	assert.Empty(t, resolved.Uninstall.BeforeEach)
+	assert.Empty(t, resolved.Uninstall.AfterEach)
+}
+
+func TestResolveHooks_ProfileOverride(t *testing.T) {
+	game := &domain.Game{
+		ID: "skyrim-se",
+		Hooks: domain.GameHooks{
+			Install: domain.HookConfig{
+				BeforeAll: "/game/scripts/install_before.sh",
+				AfterAll:  "/game/scripts/install_after.sh",
+			},
+		},
+	}
+
+	profile := &domain.Profile{
+		Name:   "modded",
+		GameID: "skyrim-se",
+		Hooks: domain.GameHooks{
+			Install: domain.HookConfig{
+				BeforeAll: "/profile/scripts/install_before.sh", // Override
+			},
+		},
+		HooksExplicit: domain.GameHooksExplicit{
+			Install: domain.HookExplicitFlags{
+				BeforeAll: true, // Only BeforeAll was explicitly set
+			},
+		},
+	}
+
+	resolved := ResolveHooks(game, profile)
+
+	require.NotNil(t, resolved)
+	// BeforeAll should be overridden by profile
+	assert.Equal(t, "/profile/scripts/install_before.sh", resolved.Install.BeforeAll)
+	// AfterAll should inherit from game (not explicitly set in profile)
+	assert.Equal(t, "/game/scripts/install_after.sh", resolved.Install.AfterAll)
+}
+
+func TestResolveHooks_ProfileDisable(t *testing.T) {
+	game := &domain.Game{
+		ID: "skyrim-se",
+		Hooks: domain.GameHooks{
+			Install: domain.HookConfig{
+				BeforeAll:  "/scripts/install_before.sh",
+				BeforeEach: "/scripts/install_before_each.sh",
+				AfterEach:  "/scripts/install_after_each.sh",
+				AfterAll:   "/scripts/install_after.sh",
+			},
+		},
+	}
+
+	profile := &domain.Profile{
+		Name:   "vanilla",
+		GameID: "skyrim-se",
+		Hooks: domain.GameHooks{
+			Install: domain.HookConfig{
+				BeforeAll: "", // Explicitly set to empty to disable
+				AfterAll:  "", // Explicitly set to empty to disable
+			},
+		},
+		HooksExplicit: domain.GameHooksExplicit{
+			Install: domain.HookExplicitFlags{
+				BeforeAll: true, // Explicitly disabled
+				AfterAll:  true, // Explicitly disabled
+			},
+		},
+	}
+
+	resolved := ResolveHooks(game, profile)
+
+	require.NotNil(t, resolved)
+	// BeforeAll and AfterAll should be empty (disabled by profile)
+	assert.Empty(t, resolved.Install.BeforeAll)
+	assert.Empty(t, resolved.Install.AfterAll)
+	// BeforeEach and AfterEach should inherit from game (not explicitly set)
+	assert.Equal(t, "/scripts/install_before_each.sh", resolved.Install.BeforeEach)
+	assert.Equal(t, "/scripts/install_after_each.sh", resolved.Install.AfterEach)
+}
+
+func TestResolveHooks_NilGame(t *testing.T) {
+	profile := &domain.Profile{
+		Name:   "test",
+		GameID: "test-game",
+	}
+
+	resolved := ResolveHooks(nil, profile)
+
+	assert.Nil(t, resolved)
 }
