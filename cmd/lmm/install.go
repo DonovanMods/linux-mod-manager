@@ -327,6 +327,37 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Set up hooks
+	hookRunner := getHookRunner(service)
+	resolvedHooks := getResolvedHooks(service, game, profileName)
+	hookCtx := makeHookContext(game)
+	var hookErrors []error
+
+	// Run install.before_all hook (for single mod, this also serves as before_each)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
+		hookCtx.HookName = "install.before_all"
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
+			if !installForce {
+				return fmt.Errorf("install.before_all hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
+		}
+	}
+
+	// Run install.before_each hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
+		hookCtx.HookName = "install.before_each"
+		hookCtx.ModID = mod.ID
+		hookCtx.ModName = mod.Name
+		hookCtx.ModVersion = mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
+			if !installForce {
+				return fmt.Errorf("install.before_each hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: install.before_each hook failed (forced): %v\n", err)
+		}
+	}
+
 	// Set up installer
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
@@ -503,6 +534,31 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Run install.after_each hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
+		hookCtx.HookName = "install.after_each"
+		hookCtx.ModID = mod.ID
+		hookCtx.ModName = mod.Name
+		hookCtx.ModVersion = mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed: %w", err))
+		}
+	}
+
+	// Run install.after_all hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
+		hookCtx.HookName = "install.after_all"
+		hookCtx.ModID = ""
+		hookCtx.ModName = ""
+		hookCtx.ModVersion = ""
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
+		}
+	}
+
+	// Print hook warnings
+	printHookWarnings(hookErrors)
+
 	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
 	fmt.Printf("  Files deployed: %d\n", totalFileCount)
 	fmt.Printf("  Added to profile: %s\n", profileName)
@@ -632,11 +688,41 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 	// Get link method for this game
 	linkMethod := service.GetGameLinkMethod(game)
 
+	// Set up hooks
+	hookRunner := getHookRunner(service)
+	resolvedHooks := getResolvedHooks(service, game, profileName)
+	hookCtx := makeHookContext(game)
+
+	// Run install.before_all hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
+		hookCtx.HookName = "install.before_all"
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
+			if !installForce {
+				return fmt.Errorf("install.before_all hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
+		}
+	}
+
 	var installed []string
 	var failed []string
+	var hookErrors []error
 
 	for i, mod := range mods {
 		fmt.Printf("\n[%d/%d] Installing: %s v%s\n", i+1, len(mods), mod.Name, mod.Version)
+
+		// Run install.before_each hook
+		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
+			hookCtx.HookName = "install.before_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
+				fmt.Printf("  Skipped: install.before_each hook failed: %v\n", err)
+				failed = append(failed, mod.Name)
+				continue
+			}
+		}
 
 		// Set up installer
 		linker := service.GetLinker(linkMethod)
@@ -762,7 +848,32 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 
 		fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
 		installed = append(installed, mod.Name)
+
+		// Run install.after_each hook
+		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
+			hookCtx.HookName = "install.after_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
+				hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed for %s: %w", mod.ID, err))
+			}
+		}
 	}
+
+	// Run install.after_all hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
+		hookCtx.HookName = "install.after_all"
+		hookCtx.ModID = ""
+		hookCtx.ModName = ""
+		hookCtx.ModVersion = ""
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
+		}
+	}
+
+	// Print hook warnings
+	printHookWarnings(hookErrors)
 
 	// Summary
 	fmt.Printf("\n--- Summary ---\n")
@@ -983,11 +1094,41 @@ func installModsWithDeps(ctx context.Context, service *core.Service, game *domai
 	// Get link method for this game
 	linkMethod := service.GetGameLinkMethod(game)
 
+	// Set up hooks
+	hookRunner := getHookRunner(service)
+	resolvedHooks := getResolvedHooks(service, game, profileName)
+	hookCtx := makeHookContext(game)
+
+	// Run install.before_all hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
+		hookCtx.HookName = "install.before_all"
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
+			if !installForce {
+				return fmt.Errorf("install.before_all hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
+		}
+	}
+
 	var installed []string
 	var failed []string
+	var hookErrors []error
 
 	for i, mod := range mods {
 		fmt.Printf("\n[%d/%d] Installing: %s v%s\n", i+1, len(mods), mod.Name, mod.Version)
+
+		// Run install.before_each hook
+		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
+			hookCtx.HookName = "install.before_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
+				fmt.Printf("  Skipped: install.before_each hook failed: %v\n", err)
+				failed = append(failed, mod.Name)
+				continue
+			}
+		}
 
 		// Set up installer
 		linker := service.GetLinker(linkMethod)
@@ -1121,7 +1262,32 @@ func installModsWithDeps(ctx context.Context, service *core.Service, game *domai
 
 		fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
 		installed = append(installed, mod.Name)
+
+		// Run install.after_each hook
+		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
+			hookCtx.HookName = "install.after_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
+				hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed for %s: %w", mod.ID, err))
+			}
+		}
 	}
+
+	// Run install.after_all hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
+		hookCtx.HookName = "install.after_all"
+		hookCtx.ModID = ""
+		hookCtx.ModName = ""
+		hookCtx.ModVersion = ""
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
+		}
+	}
+
+	// Print hook warnings
+	printHookWarnings(hookErrors)
 
 	// Summary
 	fmt.Printf("\n--- Summary ---\n")
