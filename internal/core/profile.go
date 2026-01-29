@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -224,14 +225,14 @@ func (pm *ProfileManager) Switch(ctx context.Context, game *domain.Game, newProf
 		return fmt.Errorf("loading new profile: %w", err)
 	}
 
+	var switchErrors []error
+
 	// Get current default profile to undeploy its mods
 	currentProfile, err := pm.GetDefault(game.ID)
 	if err == nil && currentProfile.Name != newProfileName {
-		// Undeploy current profile's mods
 		for _, modRef := range currentProfile.Mods {
 			if err := pm.undeployModRef(ctx, game, modRef); err != nil {
-				// Log but continue - try to undeploy as much as possible
-				continue
+				switchErrors = append(switchErrors, fmt.Errorf("undeploy %s:%s: %w", modRef.SourceID, modRef.ModID, err))
 			}
 		}
 	}
@@ -239,13 +240,17 @@ func (pm *ProfileManager) Switch(ctx context.Context, game *domain.Game, newProf
 	// Deploy mods for the new profile
 	for _, modRef := range newProfile.Mods {
 		if err := pm.deployMod(ctx, game, modRef); err != nil {
-			// Log but continue - deploy as much as possible
-			continue
+			switchErrors = append(switchErrors, fmt.Errorf("deploy %s:%s: %w", modRef.SourceID, modRef.ModID, err))
 		}
 	}
 
-	// Set new profile as default
-	return pm.SetDefault(game.ID, newProfileName)
+	if err := pm.SetDefault(game.ID, newProfileName); err != nil {
+		return err
+	}
+	if len(switchErrors) > 0 {
+		return fmt.Errorf("profile switch completed with errors: %w", errors.Join(switchErrors...))
+	}
+	return nil
 }
 
 // deployMod deploys a single mod to the game directory
@@ -288,7 +293,7 @@ func (pm *ProfileManager) undeployModRef(ctx context.Context, game *domain.Game,
 		return fmt.Errorf("listing cached files: %w", err)
 	}
 
-	// Undeploy each file
+	var errs []error
 	for _, file := range files {
 		select {
 		case <-ctx.Done():
@@ -298,11 +303,12 @@ func (pm *ProfileManager) undeployModRef(ctx context.Context, game *domain.Game,
 
 		dstPath := filepath.Join(game.ModPath, file)
 		if err := pm.linker.Undeploy(dstPath); err != nil {
-			// Log but continue
-			continue
+			errs = append(errs, fmt.Errorf("%s: %w", file, err))
 		}
 	}
-
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 

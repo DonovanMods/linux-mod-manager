@@ -98,7 +98,9 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	}
 
 	// Remove existing cache if present (re-import case)
-	os.RemoveAll(cachePath)
+	if err := os.RemoveAll(cachePath); err != nil {
+		return nil, fmt.Errorf("removing existing cache for re-import: %w", err)
+	}
 
 	if err := os.Rename(extractedPath, cachePath); err != nil {
 		// If rename fails (cross-device), fall back to copy
