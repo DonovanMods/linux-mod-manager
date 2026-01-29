@@ -12,6 +12,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ProfileHookConfigYAML uses pointers to distinguish "not set" from "set to empty"
+type ProfileHookConfigYAML struct {
+	BeforeAll  *string `yaml:"before_all"`
+	BeforeEach *string `yaml:"before_each"`
+	AfterEach  *string `yaml:"after_each"`
+	AfterAll   *string `yaml:"after_all"`
+}
+
+// ProfileHooksYAML is the YAML representation of profile hooks
+type ProfileHooksYAML struct {
+	Install   ProfileHookConfigYAML `yaml:"install"`
+	Uninstall ProfileHookConfigYAML `yaml:"uninstall"`
+}
+
 // ProfileConfig is the YAML representation of a profile
 type ProfileConfig struct {
 	Name       string               `yaml:"name"`
@@ -19,6 +33,7 @@ type ProfileConfig struct {
 	Mods       []ModReferenceConfig `yaml:"mods"`
 	LinkMethod string               `yaml:"link_method,omitempty"`
 	IsDefault  bool                 `yaml:"is_default,omitempty"`
+	Hooks      ProfileHooksYAML     `yaml:"hooks,omitempty"`
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference
@@ -27,6 +42,50 @@ type ModReferenceConfig struct {
 	ModID    string   `yaml:"mod_id"`
 	Version  string   `yaml:"version,omitempty"`
 	FileIDs  []string `yaml:"file_ids,omitempty"`
+}
+
+// parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
+func parseProfileHooks(yaml ProfileHooksYAML) (domain.GameHooks, domain.GameHooksExplicit) {
+	hooks := domain.GameHooks{}
+	explicit := domain.GameHooksExplicit{}
+
+	// Install hooks
+	if yaml.Install.BeforeAll != nil {
+		hooks.Install.BeforeAll = ExpandPath(*yaml.Install.BeforeAll)
+		explicit.Install.BeforeAll = true
+	}
+	if yaml.Install.BeforeEach != nil {
+		hooks.Install.BeforeEach = ExpandPath(*yaml.Install.BeforeEach)
+		explicit.Install.BeforeEach = true
+	}
+	if yaml.Install.AfterEach != nil {
+		hooks.Install.AfterEach = ExpandPath(*yaml.Install.AfterEach)
+		explicit.Install.AfterEach = true
+	}
+	if yaml.Install.AfterAll != nil {
+		hooks.Install.AfterAll = ExpandPath(*yaml.Install.AfterAll)
+		explicit.Install.AfterAll = true
+	}
+
+	// Uninstall hooks
+	if yaml.Uninstall.BeforeAll != nil {
+		hooks.Uninstall.BeforeAll = ExpandPath(*yaml.Uninstall.BeforeAll)
+		explicit.Uninstall.BeforeAll = true
+	}
+	if yaml.Uninstall.BeforeEach != nil {
+		hooks.Uninstall.BeforeEach = ExpandPath(*yaml.Uninstall.BeforeEach)
+		explicit.Uninstall.BeforeEach = true
+	}
+	if yaml.Uninstall.AfterEach != nil {
+		hooks.Uninstall.AfterEach = ExpandPath(*yaml.Uninstall.AfterEach)
+		explicit.Uninstall.AfterEach = true
+	}
+	if yaml.Uninstall.AfterAll != nil {
+		hooks.Uninstall.AfterAll = ExpandPath(*yaml.Uninstall.AfterAll)
+		explicit.Uninstall.AfterAll = true
+	}
+
+	return hooks, explicit
 }
 
 // LoadProfile reads a profile from disk
@@ -61,6 +120,8 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 			FileIDs:  m.FileIDs,
 		}
 	}
+
+	profile.Hooks, profile.HooksExplicit = parseProfileHooks(cfg.Hooks)
 
 	return profile, nil
 }
