@@ -29,8 +29,9 @@ type Profile struct {
 
 // ExportedProfile is the YAML-serializable format for sharing
 type ExportedProfile struct {
-	Name       string         `yaml:"name"`
-	GameID     string         `yaml:"game_id"`
-	Mods       []ModReference `yaml:"mods"`
-	LinkMethod string         `yaml:"link_method,omitempty"`
+	Name       string            `yaml:"name"`
+	GameID     string            `yaml:"game_id"`
+	Mods       []ModReference    `yaml:"mods"`
+	LinkMethod string            `yaml:"link_method,omitempty"`
+	Overrides  map[string]string `yaml:"overrides,omitempty"` // path (relative to game install) -> file content
 }

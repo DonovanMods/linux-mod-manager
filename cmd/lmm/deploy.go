@@ -8,6 +8,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -308,6 +309,13 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		hookCtx.ModVersion = ""
 		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
 			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
+		}
+	}
+
+	// Apply profile overrides (INI tweaks, etc.)
+	if profile, err := config.LoadProfile(service.ConfigDir(), gameID, profileName); err == nil && len(profile.Overrides) > 0 {
+		if err := core.ApplyProfileOverrides(game, profile); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: applying profile overrides: %v\n", err)
 		}
 	}
 

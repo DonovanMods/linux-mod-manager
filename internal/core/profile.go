@@ -244,6 +244,11 @@ func (pm *ProfileManager) Switch(ctx context.Context, game *domain.Game, newProf
 		}
 	}
 
+	// Apply profile overrides (INI tweaks, etc.)
+	if err := ApplyProfileOverrides(game, newProfile); err != nil {
+		switchErrors = append(switchErrors, fmt.Errorf("apply overrides: %w", err))
+	}
+
 	if err := pm.SetDefault(game.ID, newProfileName); err != nil {
 		return err
 	}

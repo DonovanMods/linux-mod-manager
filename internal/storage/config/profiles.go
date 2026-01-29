@@ -34,6 +34,7 @@ type ProfileConfig struct {
 	LinkMethod string               `yaml:"link_method,omitempty"`
 	IsDefault  bool                 `yaml:"is_default,omitempty"`
 	Hooks      ProfileHooksYAML     `yaml:"hooks,omitempty"`
+	Overrides  map[string]string    `yaml:"overrides,omitempty"` // path (relative to game install) -> file content (INI tweaks, etc.)
 }
 
 // ModReferenceConfig is the YAML representation of a mod reference
@@ -123,6 +124,13 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 
 	profile.Hooks, profile.HooksExplicit = parseProfileHooks(cfg.Hooks)
 
+	if len(cfg.Overrides) > 0 {
+		profile.Overrides = make(map[string][]byte)
+		for path, content := range cfg.Overrides {
+			profile.Overrides[path] = []byte(content)
+		}
+	}
+
 	return profile, nil
 }
 
@@ -142,6 +150,13 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 			ModID:    m.ModID,
 			Version:  m.Version,
 			FileIDs:  m.FileIDs,
+		}
+	}
+
+	if len(profile.Overrides) > 0 {
+		cfg.Overrides = make(map[string]string)
+		for path, content := range profile.Overrides {
+			cfg.Overrides[path] = string(content)
 		}
 	}
 
@@ -208,6 +223,12 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 		Mods:       profile.Mods,
 		LinkMethod: profile.LinkMethod.String(),
 	}
+	if len(profile.Overrides) > 0 {
+		exported.Overrides = make(map[string]string)
+		for path, content := range profile.Overrides {
+			exported.Overrides[path] = string(content)
+		}
+	}
 
 	data, err := yaml.Marshal(&exported)
 	if err != nil {
@@ -224,10 +245,17 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		return nil, fmt.Errorf("parsing exported profile: %w", err)
 	}
 
-	return &domain.Profile{
+	p := &domain.Profile{
 		Name:       exported.Name,
 		GameID:     exported.GameID,
 		Mods:       exported.Mods,
 		LinkMethod: domain.ParseLinkMethod(exported.LinkMethod),
-	}, nil
+	}
+	if len(exported.Overrides) > 0 {
+		p.Overrides = make(map[string][]byte)
+		for path, content := range exported.Overrides {
+			p.Overrides[path] = []byte(content)
+		}
+	}
+	return p, nil
 }
