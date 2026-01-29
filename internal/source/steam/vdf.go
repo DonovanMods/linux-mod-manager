@@ -22,13 +22,16 @@ func ParseVDF(r io.Reader) (VDFMap, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("reading vdf: %w", err)
 	}
-	if len(tokens) < 2 {
+	if len(tokens) == 0 {
 		return VDFMap{}, nil
 	}
 	pos := 0
 	root := make(VDFMap)
 	key := tokens[pos]
 	pos++
+	if pos >= len(tokens) {
+		return nil, fmt.Errorf("vdf: unexpected end after key %q", key)
+	}
 	if tokens[pos] == "{" {
 		pos++
 		inner, err := parseVDFObject(tokens, &pos)

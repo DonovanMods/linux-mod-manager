@@ -90,3 +90,11 @@ func TestParseAppManifest(t *testing.T) {
 	assert.Equal(t, "Skyrim Special Edition", m.Name)
 	assert.Equal(t, "Skyrim Special Edition", m.InstallDir)
 }
+
+func TestParseVDF_MalformedNoValue(t *testing.T) {
+	// Single key with no value (would panic before bounds check)
+	vdf := `"libraryfolders"`
+	_, err := ParseVDF(strings.NewReader(vdf))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected end after key")
+}
