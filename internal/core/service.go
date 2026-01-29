@@ -98,13 +98,12 @@ func (s *Service) ListSources() []source.ModSource {
 }
 
 // SearchMods searches for mods in a source
-func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string) ([]domain.Mod, error) {
+func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string, category string, tags []string) ([]domain.Mod, error) {
 	src, err := s.registry.Get(sourceID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get the source-specific game ID if we have a game configured
 	sourceGameID := gameID
 	if game, ok := s.games[gameID]; ok {
 		if id, ok := game.SourceIDs[sourceID]; ok {
@@ -113,8 +112,10 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 	}
 
 	return src.Search(ctx, source.SearchQuery{
-		GameID: sourceGameID,
-		Query:  query,
+		GameID:   sourceGameID,
+		Query:    query,
+		Category: category,
+		Tags:     tags,
 	})
 }
 

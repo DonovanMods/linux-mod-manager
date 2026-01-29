@@ -105,7 +105,7 @@ func TestClient_SearchMods_FiltersByQuery(t *testing.T) {
 	client.graphqlURL = server.URL
 
 	// Search returns results from GraphQL API
-	mods, err := client.SearchMods(context.Background(), "starrupture", "orestack", 10, 0)
+	mods, err := client.SearchMods(context.Background(), "starrupture", "orestack", "", nil, 10, 0)
 	require.NoError(t, err)
 	assert.Len(t, mods, 2)
 }
@@ -225,7 +225,7 @@ func TestClient_SearchMods_UsesGraphQL(t *testing.T) {
 	client := NewClient(nil, "testapikey")
 	client.graphqlURL = server.URL + "/v2/graphql"
 
-	mods, err := client.SearchMods(context.Background(), "starrupture", "ore", 10, 0)
+	mods, err := client.SearchMods(context.Background(), "starrupture", "ore", "", nil, 10, 0)
 	require.NoError(t, err)
 	assert.Len(t, mods, 3)
 

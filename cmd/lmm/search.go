@@ -14,9 +14,11 @@ import (
 )
 
 var (
-	searchSource  string
-	searchLimit   int
-	searchProfile string
+	searchSource   string
+	searchLimit    int
+	searchProfile  string
+	searchCategory string
+	searchTags     []string
 )
 
 type searchJSONOutput struct {
@@ -49,6 +51,8 @@ func init() {
 	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "nexusmods", "mod source to search")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "l", 10, "maximum number of results")
 	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
+	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (source-specific ID or name)")
+	searchCmd.Flags().StringSliceVar(&searchTags, "tag", nil, "filter by tag (repeatable; source-specific)")
 
 	rootCmd.AddCommand(searchCmd)
 }
@@ -83,7 +87,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	mods, err := service.SearchMods(ctx, searchSource, gameID, query)
+	mods, err := service.SearchMods(ctx, searchSource, gameID, query, searchCategory, searchTags)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")

@@ -136,7 +136,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		query := args[0]
 		fmt.Printf("Searching for \"%s\"...\n\n", query)
 
-		mods, err := service.SearchMods(ctx, installSource, gameID, query)
+		mods, err := service.SearchMods(ctx, installSource, gameID, query, "", nil)
 		if err != nil {
 			if errors.Is(err, domain.ErrAuthRequired) {
 				return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")

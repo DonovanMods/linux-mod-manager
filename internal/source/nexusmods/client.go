@@ -243,12 +243,12 @@ type graphqlRequirementsResponse struct {
 }
 
 // SearchMods searches for mods using the NexusMods GraphQL v2 API.
-func (c *Client) SearchMods(ctx context.Context, gameDomain, query string, limit, offset int) ([]ModData, error) {
+// category and tags are optional filters (source-specific; NexusMods may support categoryId and tag names).
+func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category string, tags []string, limit, offset int) ([]ModData, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 
-	// Build the filter for GraphQL query
 	filter := map[string]interface{}{
 		"gameDomainName": []map[string]interface{}{
 			{"value": gameDomain, "op": "EQUALS"},
@@ -256,6 +256,17 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query string, limit
 		"name": []map[string]interface{}{
 			{"value": query, "op": "WILDCARD"},
 		},
+	}
+	if category != "" {
+		filter["categoryId"] = []map[string]interface{}{
+			{"value": category, "op": "EQUALS"},
+		}
+	}
+	if len(tags) > 0 {
+		// NexusMods GraphQL may support tag filter; pass first tag for now
+		filter["tagNames"] = []map[string]interface{}{
+			{"value": tags[0], "op": "EQUALS"},
+		}
 	}
 
 	reqBody := graphqlRequest{

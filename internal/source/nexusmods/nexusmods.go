@@ -69,7 +69,7 @@ func (n *NexusMods) Search(ctx context.Context, query source.SearchQuery) ([]dom
 	}
 	offset := query.Page * pageSize
 
-	results, err := n.client.SearchMods(ctx, query.GameID, query.Query, pageSize, offset)
+	results, err := n.client.SearchMods(ctx, query.GameID, query.Query, query.Category, query.Tags, pageSize, offset)
 	if err != nil {
 		return nil, err
 	}

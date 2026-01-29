@@ -129,7 +129,7 @@ func TestService_SearchMods(t *testing.T) {
 	})
 	svc.RegisterSource(mock)
 
-	results, err := svc.SearchMods(context.Background(), "test", "skyrim", "test")
+	results, err := svc.SearchMods(context.Background(), "test", "skyrim", "test", "", nil)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, "Test Mod", results[0].Name)

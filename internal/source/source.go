@@ -18,7 +18,8 @@ type Token struct {
 type SearchQuery struct {
 	GameID   string
 	Query    string
-	Category string
+	Category string   // Optional category filter (source-specific: ID or name)
+	Tags     []string // Optional tag filters (source-specific)
 	Page     int
 	PageSize int
 }
