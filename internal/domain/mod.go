@@ -2,6 +2,9 @@ package domain
 
 import "time"
 
+// SourceLocal is the source ID for mods imported from local files
+const SourceLocal = "local"
+
 // UpdatePolicy determines how a mod handles updates
 type UpdatePolicy int
 
