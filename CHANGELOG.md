@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-01-28
+
+### Added
+
+- **Conflict Detection**: Warns when installing mods that overwrite files from existing mods
+  - Tracks file ownership in database (per profile)
+  - Shows conflicts before install with prompt to continue or cancel
+  - `--force` flag to skip conflict prompts: `lmm install --force`
+  - Database migration V7 adds `deployed_files` table
+- **Mod Files Command**: `lmm mod files <mod-id>` lists all files deployed by a mod
+  - Useful for debugging and understanding mod contents
+  - Shows files tracked in database (mods installed with 0.9.0+)
+- **Conflicts Command**: `lmm conflicts` shows all file conflicts in current profile
+  - Lists each conflicting file path
+  - Shows which mod owns the file vs which mods also want it
+  - Helps identify and resolve mod conflicts
+
+### Changed
+
+- Installer now tracks deployed files per mod in database
+- Uninstall now removes file tracking records
+
 ## [0.8.0] - 2026-01-28
 
 ### Added
@@ -420,7 +442,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.8...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.8...v0.8.0
 [0.7.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.5...v0.7.6
