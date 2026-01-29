@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -159,6 +161,28 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\n%d update(s) available.\n", len(updates))
 
+	// Show changelogs where available
+	var withChangelog []domain.Update
+	for _, u := range updates {
+		if u.Changelog != "" {
+			withChangelog = append(withChangelog, u)
+		}
+	}
+	if len(withChangelog) > 0 {
+		fmt.Println("\nChangelogs:")
+		for _, u := range withChangelog {
+			cl := stripHTMLForTerminal(u.Changelog)
+			const maxChangelog = 800
+			if len(cl) > maxChangelog {
+				cl = cl[:maxChangelog] + "\n..."
+			}
+			fmt.Printf("\n  %s (%s → %s):\n", u.InstalledMod.Name, u.InstalledMod.Version, u.NewVersion)
+			for _, line := range strings.Split(strings.TrimSpace(cl), "\n") {
+				fmt.Printf("    %s\n", line)
+			}
+		}
+	}
+
 	// Dry run mode - just show what would happen
 	if updateDryRun {
 		if len(autoUpdates) > 0 {
@@ -227,6 +251,18 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	oldVersion := mod.Version
 	newVersion := update.NewVersion
 	fmt.Printf("Updating %s %s → %s...\n", mod.Name, oldVersion, newVersion)
+	if update.Changelog != "" {
+		cl := stripHTMLForTerminal(update.Changelog)
+		const maxChangelog = 500
+		if len(cl) > maxChangelog {
+			cl = cl[:maxChangelog] + "..."
+		}
+		fmt.Println("Changelog:")
+		for _, line := range strings.Split(strings.TrimSpace(cl), "\n") {
+			fmt.Printf("  %s\n", line)
+		}
+		fmt.Println()
+	}
 
 	if updateDryRun {
 		fmt.Println("(dry-run: no changes applied)")
@@ -544,4 +580,19 @@ func policyToString(policy domain.UpdatePolicy) string {
 	default:
 		return "notify"
 	}
+}
+
+// stripHTMLForTerminal removes HTML tags for readable terminal output.
+func stripHTMLForTerminal(html string) string {
+	// Replace block/line breaks with newlines
+	html = regexp.MustCompile(`(?i)<br\s*/?>|</p>|<p[^>]*>`).ReplaceAllString(html, "\n")
+	// Remove remaining tags
+	html = regexp.MustCompile(`<[^>]*>`).ReplaceAllString(html, "")
+	// Decode common entities
+	html = strings.ReplaceAll(html, "&nbsp;", " ")
+	html = strings.ReplaceAll(html, "&amp;", "&")
+	html = strings.ReplaceAll(html, "&lt;", "<")
+	html = strings.ReplaceAll(html, "&gt;", ">")
+	html = strings.ReplaceAll(html, "&quot;", "\"")
+	return strings.TrimSpace(html)
 }

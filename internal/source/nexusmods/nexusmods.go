@@ -202,10 +202,25 @@ func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.Install
 
 		// Compare versions
 		if isNewerVersion(inst.Version, remoteMod.Version) {
+			changelog := ""
+			if modID, err := strconv.Atoi(inst.ID); err == nil {
+				if fileList, err := n.client.GetModFiles(ctx, inst.GameID, modID); err == nil && len(fileList.Files) > 0 {
+					// Prefer primary file changelog; otherwise first file
+					for _, f := range fileList.Files {
+						if f.IsPrimary && f.Changelog != "" {
+							changelog = f.Changelog
+							break
+						}
+						if changelog == "" && f.Changelog != "" {
+							changelog = f.Changelog
+						}
+					}
+				}
+			}
 			updates = append(updates, domain.Update{
 				InstalledMod: inst,
 				NewVersion:   remoteMod.Version,
-				Changelog:    "", // Could fetch from mod files if needed
+				Changelog:    changelog,
 			})
 		}
 	}
