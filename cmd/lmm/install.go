@@ -26,6 +26,7 @@ var (
 	installShowArchived bool
 	skipVerify          bool
 	installForce        bool
+	installNoDeps       bool
 )
 
 var installCmd = &cobra.Command{
@@ -59,6 +60,7 @@ func init() {
 	installCmd.Flags().BoolVar(&installShowArchived, "show-archived", false, "show archived/old files")
 	installCmd.Flags().BoolVar(&skipVerify, "skip-verify", false, "skip checksum storage and display")
 	installCmd.Flags().BoolVarP(&installForce, "force", "f", false, "install without conflict prompts")
+	installCmd.Flags().BoolVar(&installNoDeps, "no-deps", false, "skip automatic dependency installation")
 
 	rootCmd.AddCommand(installCmd)
 }
