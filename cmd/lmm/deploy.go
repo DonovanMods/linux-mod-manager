@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -17,6 +18,7 @@ var (
 	deployMethod  string
 	deployPurge   bool
 	deployAll     bool
+	deployForce   bool
 )
 
 var deployCmd = &cobra.Command{
@@ -52,6 +54,7 @@ func init() {
 	deployCmd.Flags().StringVarP(&deployMethod, "method", "m", "", "link method: symlink, hardlink, or copy (default: game's configured method)")
 	deployCmd.Flags().BoolVar(&deployPurge, "purge", false, "purge all deployed mods before deploying")
 	deployCmd.Flags().BoolVarP(&deployAll, "all", "a", false, "deploy all mods including disabled ones")
+	deployCmd.Flags().BoolVarP(&deployForce, "force", "f", false, "continue even if hooks fail")
 
 	rootCmd.AddCommand(deployCmd)
 }
@@ -92,7 +95,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		if err := purgeDeployedMods(ctx, service, game, profileName); err != nil {
+		if err := purgeDeployedMods(ctx, service, game, profileName, deployForce); err != nil {
 			return fmt.Errorf("purging mods: %w", err)
 		}
 	}
@@ -166,12 +169,41 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Set up hooks for deploy phase (uses install hooks)
+	hookRunner := getHookRunner(service)
+	resolvedHooks := getResolvedHooks(service, game, profileName)
+	hookCtx := makeHookContext(game)
+	var hookErrors []error
+
+	// Run install.before_all hook (for deploy phase)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
+		hookCtx.HookName = "install.before_all"
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
+			if !deployForce {
+				return fmt.Errorf("install.before_all hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
+		}
+	}
+
 	methodName := linkMethod.String()
 	fmt.Printf("Deploying %d mod(s) using %s...\n\n", len(modsToDeploy), methodName)
 
 	var succeeded, failed int
 
 	for _, mod := range modsToDeploy {
+		// Run install.before_each hook
+		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
+			hookCtx.HookName = "install.before_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
+				fmt.Printf("  Skipped: install.before_each hook failed: %v\n", err)
+				failed++
+				continue // Skip this mod, continue with others
+			}
+		}
 		// Check if mod is in cache
 		if !service.GetGameCache(game).Exists(gameID, mod.SourceID, mod.ID, mod.Version) {
 			fmt.Printf("  ⚠ %s - cache missing, re-downloading...\n", mod.Name)
@@ -253,7 +285,32 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("  ✓ %s\n", mod.Name)
 		succeeded++
+
+		// Run install.after_each hook
+		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
+			hookCtx.HookName = "install.after_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
+				hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed for %s: %w", mod.ID, err))
+			}
+		}
 	}
+
+	// Run install.after_all hook (for deploy phase)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
+		hookCtx.HookName = "install.after_all"
+		hookCtx.ModID = ""
+		hookCtx.ModName = ""
+		hookCtx.ModVersion = ""
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
+		}
+	}
+
+	// Print hook warnings
+	printHookWarnings(hookErrors)
 
 	fmt.Printf("\nDeployed: %d", succeeded)
 	if failed > 0 {
