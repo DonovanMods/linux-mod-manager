@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-01-28
+
+### Added
+
+- **Checksum Verification**: MD5 checksums are calculated during download and stored
+  - Checksums computed during download using TeeReader (zero extra I/O)
+  - Stored per-file in database for integrity verification
+  - Displayed after each file download (truncated for readability)
+  - `--skip-verify` flag on install to skip checksum storage
+- **Verify Command**: `lmm verify` checks integrity of cached mod files
+  - Verifies all cached mods: `lmm verify --game skyrim-se`
+  - Verify specific mod: `lmm verify 12345 --game skyrim-se`
+  - Shows OK, MISSING, or NO CHECKSUM status for each file
+  - `--fix` flag placeholder for future re-download functionality
+
+### Changed
+
+- Database schema V6: Added `checksum` column to `installed_mod_files` table
+- `DownloadMod` now returns `DownloadModResult` with checksum information
+
 ## [0.7.8] - 2026-01-28
 
 ### Added
