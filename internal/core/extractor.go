@@ -2,12 +2,14 @@ package core
 
 import (
 	"archive/zip"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Extractor handles archive extraction for mod files
@@ -141,21 +143,27 @@ func (e *Extractor) sanitizePath(destDir, filePath string) (string, error) {
 	return destPath, nil
 }
 
-// extract7z extracts archives using the system 7z command
-// This handles .7z and .rar files
+// extract7zTimeout is the maximum time allowed for 7z extraction (corrupted archives or hangs).
+const extract7zTimeout = 5 * time.Minute
+
+// extract7z extracts archives using the system 7z command.
+// This handles .7z and .rar files. A timeout prevents hangs on corrupted archives.
 func (e *Extractor) extract7z(archivePath, destDir string) error {
-	// Check if 7z is available
 	_, err := exec.LookPath("7z")
 	if err != nil {
 		return fmt.Errorf("7z command not found: install p7zip-full to extract .7z and .rar files")
 	}
 
-	// Run 7z extraction
-	// -y: assume yes to all queries
-	// -o: output directory (no space between -o and path)
-	cmd := exec.Command("7z", "x", "-y", "-o"+destDir, archivePath)
+	ctx, cancel := context.WithTimeout(context.Background(), extract7zTimeout)
+	defer cancel()
+
+	// -y: assume yes to all queries; -o: output directory (no space between -o and path)
+	cmd := exec.CommandContext(ctx, "7z", "x", "-y", "-o"+destDir, archivePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("7z extraction timed out after %v", extract7zTimeout)
+		}
 		return fmt.Errorf("7z extraction failed: %w\nOutput: %s", err, string(output))
 	}
 
