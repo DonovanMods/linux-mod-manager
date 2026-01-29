@@ -223,18 +223,20 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	}
 
 	update := updates[0]
-	fmt.Printf("Updating %s %s → %s...\n", mod.Name, mod.Version, update.NewVersion)
+	oldVersion := mod.Version
+	newVersion := update.NewVersion
+	fmt.Printf("Updating %s %s → %s...\n", mod.Name, oldVersion, newVersion)
 
 	if updateDryRun {
 		fmt.Println("(dry-run: no changes applied)")
 		return nil
 	}
 
-	if err := applyUpdate(ctx, service, game, mod, update.NewVersion, profileName); err != nil {
+	if err := applyUpdate(ctx, service, game, mod, newVersion, profileName); err != nil {
 		return err
 	}
 
-	fmt.Printf("\n✓ Updated: %s %s → %s\n", mod.Name, mod.Version, update.NewVersion)
+	fmt.Printf("\n✓ Updated: %s %s → %s\n", mod.Name, oldVersion, newVersion)
 	fmt.Println("  Previous version preserved for rollback")
 	return nil
 }

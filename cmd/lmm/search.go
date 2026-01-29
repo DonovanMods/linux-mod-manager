@@ -114,7 +114,8 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Limit results
+	// Capture total count before limiting for "Showing X of Y"
+	totalResults := len(mods)
 	if len(mods) > searchLimit {
 		mods = mods[:searchLimit]
 	}
@@ -159,7 +160,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	w.Flush()
 
 	if verbose {
-		fmt.Printf("\nShowing %d of %d results.\n", len(mods), len(mods))
+		fmt.Printf("\nShowing %d of %d results.\n", len(mods), totalResults)
 	}
 
 	return nil
