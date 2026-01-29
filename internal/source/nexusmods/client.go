@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
@@ -74,7 +75,10 @@ func (c *Client) ValidateAPIKey(ctx context.Context, key string) error {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
+		}
 		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -106,7 +110,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
+		}
 		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -282,7 +289,10 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query string, limit
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("GraphQL error (status %d); reading body: %w", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("GraphQL error (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -292,7 +302,11 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query string, limit
 	}
 
 	if len(gqlResp.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL error: %s", gqlResp.Errors[0].Message)
+		var msgs []string
+		for _, e := range gqlResp.Errors {
+			msgs = append(msgs, e.Message)
+		}
+		return nil, fmt.Errorf("GraphQL errors: %s", strings.Join(msgs, "; "))
 	}
 
 	// Convert GraphQL response to ModData
@@ -372,7 +386,10 @@ func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modI
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("GraphQL error (status %d); reading body: %w", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("GraphQL error (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -382,7 +399,11 @@ func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modI
 	}
 
 	if len(gqlResp.Errors) > 0 {
-		return nil, fmt.Errorf("GraphQL error: %s", gqlResp.Errors[0].Message)
+		var msgs []string
+		for _, e := range gqlResp.Errors {
+			msgs = append(msgs, e.Message)
+		}
+		return nil, fmt.Errorf("GraphQL errors: %s", strings.Join(msgs, "; "))
 	}
 
 	// Convert to ModRequirement slice
