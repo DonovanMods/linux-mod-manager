@@ -2,7 +2,7 @@ package db
 
 import "fmt"
 
-const currentVersion = 6
+const currentVersion = 7
 
 func (d *DB) migrate() error {
 	// Create migrations table if it doesn't exist
@@ -30,6 +30,7 @@ func (d *DB) migrate() error {
 		migrateV4,
 		migrateV5,
 		migrateV6,
+		migrateV7,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -130,5 +131,22 @@ func migrateV5(d *DB) error {
 func migrateV6(d *DB) error {
 	// Add checksum column for cache integrity verification
 	_, err := d.Exec(`ALTER TABLE installed_mod_files ADD COLUMN checksum TEXT`)
+	return err
+}
+
+func migrateV7(d *DB) error {
+	// Create table to track which mod owns each deployed file
+	// Used for conflict detection when installing mods
+	_, err := d.Exec(`
+		CREATE TABLE deployed_files (
+			game_id TEXT NOT NULL,
+			profile_name TEXT NOT NULL,
+			relative_path TEXT NOT NULL,
+			source_id TEXT NOT NULL,
+			mod_id TEXT NOT NULL,
+			deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (game_id, profile_name, relative_path)
+		)
+	`)
 	return err
 }

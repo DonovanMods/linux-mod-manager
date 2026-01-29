@@ -391,3 +391,35 @@ func TestGetFilesWithChecksums(t *testing.T) {
 	assert.Equal(t, "hash111", checksumMap["111"])
 	assert.Equal(t, "hash222", checksumMap["222"])
 }
+
+func TestMigrationV7_DeployedFilesTable(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Verify deployed_files table exists
+	var tableName string
+	err = database.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type='table' AND name='deployed_files'
+	`).Scan(&tableName)
+	require.NoError(t, err)
+	assert.Equal(t, "deployed_files", tableName)
+
+	// Verify we can insert and query
+	_, err = database.Exec(`
+		INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id)
+		VALUES ('skyrim-se', 'default', 'meshes/test.nif', 'nexusmods', '12345')
+	`)
+	require.NoError(t, err)
+
+	var path, sourceID, modID string
+	err = database.QueryRow(`
+		SELECT relative_path, source_id, mod_id FROM deployed_files
+		WHERE game_id = 'skyrim-se' AND profile_name = 'default'
+	`).Scan(&path, &sourceID, &modID)
+	require.NoError(t, err)
+	assert.Equal(t, "meshes/test.nif", path)
+	assert.Equal(t, "nexusmods", sourceID)
+	assert.Equal(t, "12345", modID)
+}
