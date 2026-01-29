@@ -1,0 +1,20 @@
+.\" Man page for lmm status
+.TH LMM-STATUS 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm status \- Show current status
+.SH SYNOPSIS
+.B lmm status
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+Show configured games, active profiles, and mod counts. With \fB--game\fR, show
+details for a single game (paths, profiles, mod counts).
+.SH OPTIONS
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Show status for a specific game only.
+.TP
+.BR \-\-json
+Output as JSON.
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-list (1).

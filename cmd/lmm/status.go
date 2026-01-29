@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
@@ -37,6 +39,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	games := service.ListGames()
 
 	if len(games) == 0 {
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(statusJSONOutput{Games: []statusGameJSON{}}); err != nil {
+				return fmt.Errorf("encoding json: %w", err)
+			}
+			return nil
+		}
 		fmt.Println("No games configured.")
 		fmt.Println("\nUse 'lmm game add' to add a game.")
 		return nil
@@ -44,7 +54,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	// If a specific game is requested, show details for that game
 	if gameID != "" {
+		if jsonOutput {
+			return showGameStatusJSON(service, gameID)
+		}
 		return showGameStatus(service, gameID)
+	}
+
+	if jsonOutput {
+		return outputStatusJSON(service, games)
 	}
 
 	// Load config to check for default game
@@ -119,6 +136,115 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\nTotal: %d game(s), %d mod(s) installed\n", len(games), totalMods)
 
 	return nil
+}
+
+type statusJSONOutput struct {
+	Games []statusGameJSON `json:"games"`
+}
+
+type statusGameJSON struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	InstallPath string   `json:"install_path"`
+	ModPath     string   `json:"mod_path"`
+	LinkMethod  string   `json:"link_method"`
+	Profiles    []string `json:"profiles"`
+	ModCount    int      `json:"mod_count"`
+	IsDefault   bool     `json:"is_default,omitempty"`
+}
+
+func outputStatusJSON(service *core.Service, games []*domain.Game) error {
+	cfg, _ := config.Load(service.ConfigDir())
+	lnk := linker.New(service.GetDefaultLinkMethod())
+	pm := core.NewProfileManager(service.ConfigDir(), service.DB(), service.Cache(), lnk)
+
+	out := statusJSONOutput{Games: make([]statusGameJSON, 0, len(games))}
+	for _, game := range games {
+		profiles, _ := pm.List(game.ID)
+		profileNames := make([]string, len(profiles))
+		for i, p := range profiles {
+			profileNames[i] = p.Name
+		}
+		var modCount int
+		if defaultProfile, err := pm.GetDefault(game.ID); err == nil {
+			mods, _ := service.GetInstalledMods(game.ID, defaultProfile.Name)
+			modCount = len(mods)
+		}
+		linkMethod := service.GetGameLinkMethod(game)
+		isDefault := cfg != nil && cfg.DefaultGame == game.ID
+		out.Games = append(out.Games, statusGameJSON{
+			ID:          game.ID,
+			Name:        game.Name,
+			InstallPath: game.InstallPath,
+			ModPath:     game.ModPath,
+			LinkMethod:  linkMethod.String(),
+			Profiles:    profileNames,
+			ModCount:    modCount,
+			IsDefault:   isDefault,
+		})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
+func showGameStatusJSON(service *core.Service, gameID string) error {
+	game, err := service.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+	lnk := linker.New(service.GetDefaultLinkMethod())
+	pm := core.NewProfileManager(service.ConfigDir(), service.DB(), service.Cache(), lnk)
+	profiles, _ := pm.List(gameID)
+	profileList := make([]statusProfileJSON, len(profiles))
+	for i, p := range profiles {
+		profileList[i] = statusProfileJSON{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault}
+	}
+	linkMethod := service.GetGameLinkMethod(game)
+	cachePath := service.GetGameCachePath(game)
+	out := statusGameDetailJSON{
+		ID:          game.ID,
+		Name:        game.Name,
+		InstallPath: game.InstallPath,
+		ModPath:     game.ModPath,
+		LinkMethod:  linkMethod.String(),
+		CachePath:   cachePath,
+		Profiles:    profileList,
+	}
+	if defaultProfile, err := pm.GetDefault(gameID); err == nil {
+		mods, _ := service.GetInstalledMods(gameID, defaultProfile.Name)
+		out.ActiveProfile = defaultProfile.Name
+		out.InstalledModCount = len(mods)
+		var enabled int
+		for _, m := range mods {
+			if m.Enabled {
+				enabled++
+			}
+		}
+		out.EnabledModCount = enabled
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
+type statusGameDetailJSON struct {
+	ID                string              `json:"id"`
+	Name              string              `json:"name"`
+	InstallPath       string              `json:"install_path"`
+	ModPath           string              `json:"mod_path"`
+	LinkMethod        string              `json:"link_method"`
+	CachePath         string              `json:"cache_path"`
+	Profiles          []statusProfileJSON `json:"profiles"`
+	ActiveProfile     string              `json:"active_profile,omitempty"`
+	InstalledModCount int                 `json:"installed_mod_count,omitempty"`
+	EnabledModCount   int                 `json:"enabled_mod_count,omitempty"`
+}
+
+type statusProfileJSON struct {
+	Name      string `json:"name"`
+	ModCount  int    `json:"mod_count"`
+	IsDefault bool   `json:"is_default"`
 }
 
 func showGameStatus(service *core.Service, gameID string) error {

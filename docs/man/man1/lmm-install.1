@@ -1,0 +1,40 @@
+.\" Man page for lmm install
+.TH LMM-INSTALL 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm install \- Install a mod
+.SH SYNOPSIS
+.B lmm install
+\fIMOD_QUERY\fR [\fIOPTIONS\fR]
+.SH DESCRIPTION
+Search for a mod by name or ID, resolve dependencies, and install it into the
+specified game and profile.
+.SH OPTIONS
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Game ID (required unless default is set).
+.TP
+.BR \-p ", " \-\-profile\fR=NAME
+Profile name (default: default).
+.TP
+.BR \-\-no-deps
+Do not install dependencies.
+.TP
+.BR \-y ", " \-\-yes
+Auto-confirm dependency installation.
+.TP
+.BR \-\-force
+Continue despite conflicts or hook failures.
+.TP
+.BR \-\-skip-verify
+Skip checksum verification on install.
+.SH EXAMPLES
+.TP
+.B lmm install skyui \-\-game skyrim-se
+Install SkyUI for Skyrim SE.
+.TP
+.B lmm install 12604 \-\-game skyrim-se \-\-profile survival
+Install mod 12604 into profile "survival".
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-uninstall (1),
+.BR lmm-list (1).

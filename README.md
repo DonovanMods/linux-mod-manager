@@ -274,6 +274,12 @@ internal/
 
 The mod cache location can be customized via `cache_path` in `config.yaml`.
 
+## Documentation
+
+- **[Configuration reference](docs/configuration.md)** – All options for `config.yaml` and `games.yaml` (including hooks, link method, sources).
+- **Man pages** – In `docs/man/man1/`: `lmm(1)`, `lmm-install(1)`, `lmm-list(1)`, `lmm-search(1)`, `lmm-status(1)`, `lmm-verify(1)`, `lmm-game(1)`. View with `man -l docs/man/man1/lmm.1` or install to your man path.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** – How to build, test, and submit changes.
+
 ## Roadmap
 
 - [x] NexusMods authentication and downloads

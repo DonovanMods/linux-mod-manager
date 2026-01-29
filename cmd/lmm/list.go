@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -10,6 +11,22 @@ import (
 )
 
 var listProfile string
+
+type listJSONOutput struct {
+	GameID  string        `json:"game_id"`
+	Profile string        `json:"profile"`
+	Mods    []listModJSON `json:"mods"`
+}
+
+type listModJSON struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Source   string `json:"source"`
+	Enabled  bool   `json:"enabled"`
+	Deployed bool   `json:"deployed"`
+	Method   string `json:"link_method"`
+}
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -50,6 +67,31 @@ func runList(cmd *cobra.Command, args []string) error {
 	mods, err := service.GetInstalledMods(gameID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
+	}
+
+	if jsonOutput {
+		out := listJSONOutput{GameID: gameID, Profile: profileName, Mods: make([]listModJSON, len(mods))}
+		for i, mod := range mods {
+			sourceDisplay := mod.SourceID
+			if mod.SourceID == domain.SourceLocal {
+				sourceDisplay = "local"
+			}
+			out.Mods[i] = listModJSON{
+				ID:       mod.ID,
+				Name:     mod.Name,
+				Version:  mod.Version,
+				Source:   sourceDisplay,
+				Enabled:  mod.Enabled,
+				Deployed: mod.Deployed,
+				Method:   mod.LinkMethod.String(),
+			}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			return fmt.Errorf("encoding json: %w", err)
+		}
+		return nil
 	}
 
 	if verbose {

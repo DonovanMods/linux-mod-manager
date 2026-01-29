@@ -1,0 +1,97 @@
+.\" Man page for lmm
+.TH LMM 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm \- Linux Mod Manager \- terminal-based mod manager for Linux
+.SH SYNOPSIS
+.B lmm
+[\fIOPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR]
+.SH DESCRIPTION
+.B lmm
+is a terminal-based mod manager for Linux. It provides a CLI for searching,
+installing, updating, and managing game mods from sources like NexusMods.
+.SH GLOBAL OPTIONS
+.TP
+.BR \-\-config\fR=DIR
+Config directory (default: ~/.config/lmm).
+.TP
+.BR \-\-data\fR=DIR
+Data directory (default: ~/.local/share/lmm).
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Game ID to operate on (or set default with \fBlmm game set-default\fR).
+.TP
+.BR \-v ", " \-\-verbose
+Verbose output.
+.TP
+.BR \-\-no-hooks
+Disable all hooks.
+.TP
+.BR \-\-json
+Output in JSON format (for list, status, search).
+.TP
+.BR \-\-no-color
+Disable colored output (also respects NO_COLOR env).
+.SH COMMANDS
+.TP
+.B auth
+Authenticate with mod sources (e.g. NexusMods).
+.TP
+.B game
+Game management (set-default, show-default, clear-default, detect).
+.TP
+.B search
+Search for mods.
+.TP
+.B install
+Install a mod.
+.TP
+.B list
+List installed mods.
+.TP
+.B uninstall
+Uninstall a mod.
+.TP
+.B update
+Check and apply mod updates.
+.TP
+.B profile
+Manage profiles (create, switch, export, import, list).
+.TP
+.B deploy
+Deploy mods to game directory.
+.TP
+.B purge
+Remove deployed mods from game directory.
+.TP
+.B verify
+Verify cached mod file integrity.
+.TP
+.B conflicts
+Show file conflicts in the current profile.
+.TP
+.B status
+Show configured games and status.
+.SH EXIT CODES
+0 success, 1 error, 2 user cancelled.
+.SH FILES
+.TP
+~/.config/lmm/config.yaml
+Global configuration.
+.TP
+~/.config/lmm/games.yaml
+Game definitions.
+.TP
+~/.local/share/lmm/lmm.db
+Database (metadata, tokens).
+.TP
+~/.local/share/lmm/cache/
+Mod file cache.
+.SH SEE ALSO
+.BR lmm-install (1),
+.BR lmm-list (1),
+.BR lmm-search (1),
+.BR lmm-status (1),
+.BR lmm-verify (1),
+.BR lmm-game (1).
+.PP
+Full documentation: https://github.com/DonovanMods/linux-mod-manager

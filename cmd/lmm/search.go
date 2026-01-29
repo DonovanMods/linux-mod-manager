@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +18,20 @@ var (
 	searchLimit   int
 	searchProfile string
 )
+
+type searchJSONOutput struct {
+	GameID string          `json:"game_id"`
+	Query  string          `json:"query"`
+	Mods   []searchModJSON `json:"mods"`
+}
+
+type searchModJSON struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Author    string `json:"author"`
+	Version   string `json:"version"`
+	Installed bool   `json:"installed"`
+}
 
 var searchCmd = &cobra.Command{
 	Use:   "search <query>",
@@ -77,6 +92,14 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(mods) == 0 {
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(searchJSONOutput{GameID: gameID, Query: query, Mods: []searchModJSON{}}); err != nil {
+				return fmt.Errorf("encoding json: %w", err)
+			}
+			return nil
+		}
 		fmt.Println("No mods found.")
 		return nil
 	}
@@ -94,6 +117,25 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	// Limit results
 	if len(mods) > searchLimit {
 		mods = mods[:searchLimit]
+	}
+
+	if jsonOutput {
+		out := searchJSONOutput{GameID: gameID, Query: query, Mods: make([]searchModJSON, len(mods))}
+		for i, mod := range mods {
+			out.Mods[i] = searchModJSON{
+				ID:        mod.ID,
+				Name:      mod.Name,
+				Author:    mod.Author,
+				Version:   mod.Version,
+				Installed: installedIDs[mod.ID],
+			}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			return fmt.Errorf("encoding json: %w", err)
+		}
+		return nil
 	}
 
 	// Print results

@@ -1,0 +1,26 @@
+.\" Man page for lmm game
+.TH LMM-GAME 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm game \- Game management commands
+.SH SYNOPSIS
+.B lmm game
+\fISUBCOMMAND\fR [\fIARGS\fR]
+.SH DESCRIPTION
+Manage game configuration and default game selection.
+.SH SUBCOMMANDS
+.TP
+.B set-default \fIGAME_ID\fR
+Set the default game so \fB--game\fR is not needed for every command.
+.TP
+.B show-default
+Show the current default game.
+.TP
+.B clear-default
+Clear the default game.
+.TP
+.B detect
+Scan Steam libraries for known moddable games and optionally add them to
+\fIgames.yaml\fR. Prompts for which games to add (e.g. 1,2 or all or none).
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-status (1).

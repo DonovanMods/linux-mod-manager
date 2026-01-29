@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -28,7 +32,7 @@ Examples:
 }
 
 func init() {
-	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Re-download missing files (not yet implemented)")
+	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Re-download missing or corrupted files")
 	verifyCmd.Flags().StringVarP(&verifyProfile, "profile", "p", "", "profile to verify (default: default)")
 
 	rootCmd.AddCommand(verifyCmd)
@@ -96,8 +100,13 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		if !cacheExists {
 			fmt.Printf("X %s (%s) - MISSING\n", mod.Name, f.FileID)
 			issues++
-			if verifyFix {
-				fmt.Println("  (Re-download not yet implemented)")
+			if verifyFix && mod.SourceID != domain.SourceLocal {
+				if err := redownloadModFile(cmd, svc, game, profile, mod, f.FileID); err != nil {
+					fmt.Printf("  Re-download failed: %v\n", err)
+				} else {
+					fmt.Printf("  Re-downloaded OK\n")
+					issues--
+				}
 			}
 			continue
 		}
@@ -129,5 +138,34 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		fmt.Println("All files verified OK.")
 	}
 
+	return nil
+}
+
+// redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
+func redownloadModFile(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, fileID string) error {
+	ctx := context.Background()
+	files, err := svc.GetModFiles(ctx, mod.SourceID, &mod.Mod)
+	if err != nil {
+		return fmt.Errorf("getting mod files: %w", err)
+	}
+	var downloadFile *domain.DownloadableFile
+	for i := range files {
+		if files[i].ID == fileID {
+			downloadFile = &files[i]
+			break
+		}
+	}
+	if downloadFile == nil {
+		return fmt.Errorf("file %s not found in mod", fileID)
+	}
+	result, err := svc.DownloadMod(ctx, mod.SourceID, game, &mod.Mod, downloadFile, nil)
+	if err != nil {
+		return err
+	}
+	if result.Checksum != "" {
+		if err := svc.DB().SaveFileChecksum(mod.SourceID, mod.ID, game.ID, profile, fileID, result.Checksum); err != nil {
+			return fmt.Errorf("saving checksum: %w", err)
+		}
+	}
 	return nil
 }

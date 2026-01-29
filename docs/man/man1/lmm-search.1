@@ -1,0 +1,25 @@
+.\" Man page for lmm search
+.TH LMM-SEARCH 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm search \- Search for mods
+.SH SYNOPSIS
+.B lmm search
+\fIQUERY\fR [\fIOPTIONS\fR]
+.SH DESCRIPTION
+Search for mods in the configured sources (e.g. NexusMods) for the given game.
+.SH OPTIONS
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Game ID (required unless default is set).
+.TP
+.BR \-s ", " \-\-source\fR=ID
+Mod source (default: nexusmods).
+.TP
+.BR \-l ", " \-\-limit\fR=N
+Maximum number of results (default: 10).
+.TP
+.BR \-\-json
+Output as JSON.
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-install (1).

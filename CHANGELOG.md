@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-01-29
+
+### Added
+
+- **Steam game auto-detection**: `lmm game detect` scans Steam libraries and offers to add known moddable games to `games.yaml`
+  - Parses `libraryfolders.vdf` and `appmanifest_*.acf`
+  - Known games map for Skyrim SE, Starfield, Fallout 4, Elden Ring, Witcher 3, and others
+  - Prompts to add selected games (e.g. 1,2 or all or none); creates default profile per game
+- **JSON output**: `--json` flag on `list`, `status`, and `search` for scriptable output
+- **CLI polish**: Exit codes 0=success, 1=error, 2=user cancelled; `--no-color` and `NO_COLOR` env support; `ErrCancelled` for cancelled operations
+- **Verify --fix**: `lmm verify --fix --game <id>` re-downloads missing cached mod files and updates checksums (skips local mods)
+- **Documentation**: Man pages (`docs/man/man1/`), configuration reference (`docs/configuration.md`), CONTRIBUTING.md
+
+### Changed
+
+- Verify command `--fix` now implements re-download for missing files (was placeholder)
+
 ## [0.12.0] - 2026-01-29
 
 ### Added
@@ -491,7 +508,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.12.0...v1.0.0
 [0.12.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.9.0...v0.10.0

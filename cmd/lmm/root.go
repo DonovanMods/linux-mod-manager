@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,15 +13,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ErrCancelled is returned when the user cancels an operation (e.g. prompt declined).
+// When returned from a command, Execute exits with code 2.
+var ErrCancelled = errors.New("cancelled")
+
 var (
-	version = "0.12.0"
+	version = "1.0.0"
 
 	// Global flags
-	configDir string
-	dataDir   string
-	gameID    string
-	verbose   bool
-	noHooks   bool
+	configDir  string
+	dataDir    string
+	gameID     string
+	verbose    bool
+	noHooks    bool
+	jsonOutput bool
+	noColor    bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -41,11 +48,28 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&gameID, "game", "g", "", "game ID to operate on")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search)")
+	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
 }
 
-// Execute runs the root command
+// colorEnabled returns true if colored output should be used (respects --no-color and NO_COLOR env).
+// NO_COLOR: if set (any value), color is disabled per https://no-color.org
+func colorEnabled() bool {
+	if noColor {
+		return false
+	}
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	return true
+}
+
+// Execute runs the root command. Exit codes: 0 = success, 1 = error, 2 = user cancelled.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		if errors.Is(err, ErrCancelled) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }

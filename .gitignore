@@ -1,4 +1,4 @@
-# Claude Code
+# AI assistant files
 .claude/
 
 # Go build artifacts
@@ -9,6 +9,10 @@
 *.dylib
 *.test
 *.out
+
+# Go cache and module directories
+.go-cache/
+.go-mod/
 
 # Go workspace
 go.work

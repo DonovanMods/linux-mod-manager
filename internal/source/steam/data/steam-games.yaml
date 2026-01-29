@@ -1,0 +1,63 @@
+# Steam App ID -> lmm game info for "lmm game detect".
+# Add or override entries in ~/.config/lmm/steam-games.yaml without rebuilding.
+# Keys are Steam App IDs (strings). mod_path is relative to game install (empty = game root).
+"489830":
+  slug: skyrim-se
+  name: Skyrim Special Edition
+  nexus_id: skyrimspecialedition
+  mod_path: Data
+"1716740":
+  slug: starfield
+  name: Starfield
+  nexus_id: starfield
+  mod_path: Data
+"377160":
+  slug: fallout4
+  name: Fallout 4
+  nexus_id: fallout4
+  mod_path: Data
+"22380":
+  slug: fallout3
+  name: Fallout 3
+  nexus_id: fallout3
+  mod_path: Data
+"72850":
+  slug: skyrim
+  name: "The Elder Scrolls V: Skyrim"
+  nexus_id: skyrim
+  mod_path: Data
+"1245620":
+  slug: elden-ring
+  name: Elden Ring
+  nexus_id: eldenring
+  mod_path: game
+"292030":
+  slug: witcher3
+  name: "The Witcher 3: Wild Hunt"
+  nexus_id: witcher3
+  mod_path: mods
+"261550":
+  slug: xcom2
+  name: XCOM 2
+  nexus_id: xcom2
+  mod_path: XComGame
+"394360":
+  slug: hearts-of-iron-iv
+  name: Hearts of Iron IV
+  nexus_id: heartsofironiv
+  mod_path: ""
+"236850":
+  slug: euro-truck-simulator-2
+  name: Euro Truck Simulator 2
+  nexus_id: eurotrucksimulator2
+  mod_path: ""
+"1086940":
+  slug: baldurs-gate-3
+  name: Baldur's Gate 3
+  nexus_id: baldursgate3
+  mod_path: Data
+"1938090":
+  slug: call-of-duty-black-ops-6
+  name: "Call of Duty: Black Ops 6"
+  nexus_id: callofdutyblackops6
+  mod_path: ""
