@@ -135,8 +135,8 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 		modsToDeploy = append(modsToDeploy, mod)
 	} else {
-		// Get mods from profile
-		mods, err := service.GetInstalledMods(gameID, profileName)
+		// Get mods in profile load order (first = lowest priority)
+		mods, err := service.GetInstalledModsInProfileOrder(gameID, profileName)
 		if err != nil {
 			return fmt.Errorf("getting installed mods: %w", err)
 		}
@@ -144,13 +144,10 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		for i := range mods {
 			shouldDeploy := false
 			if deployAll {
-				// --all: deploy everything
 				shouldDeploy = true
 			} else if enabledBeforePurge != nil {
-				// --purge: deploy mods that were enabled before purge
 				shouldDeploy = enabledBeforePurge[mods[i].SourceID+":"+mods[i].ID]
 			} else {
-				// Default: deploy only currently enabled mods
 				shouldDeploy = mods[i].Enabled
 			}
 

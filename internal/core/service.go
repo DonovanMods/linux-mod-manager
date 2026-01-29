@@ -254,9 +254,35 @@ func (s *Service) AddGame(game *domain.Game) error {
 	return nil
 }
 
-// GetInstalledMods returns all installed mods for a game/profile
+// GetInstalledMods returns all installed mods for a game/profile (DB order: installed_at).
 func (s *Service) GetInstalledMods(gameID, profileName string) ([]domain.InstalledMod, error) {
 	return s.db.GetInstalledMods(gameID, profileName)
+}
+
+// GetInstalledModsInProfileOrder returns installed mods in profile load order (first = lowest priority).
+// Mods not present in the profile are omitted. Use this for deploy/switch so deployment order matches load order.
+func (s *Service) GetInstalledModsInProfileOrder(gameID, profileName string) ([]domain.InstalledMod, error) {
+	profile, err := config.LoadProfile(s.configDir, gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("loading profile: %w", err)
+	}
+	all, err := s.db.GetInstalledMods(gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	byKey := make(map[string]*domain.InstalledMod)
+	for i := range all {
+		key := all[i].SourceID + ":" + all[i].ID
+		byKey[key] = &all[i]
+	}
+	var ordered []domain.InstalledMod
+	for _, ref := range profile.Mods {
+		key := ref.SourceID + ":" + ref.ModID
+		if m, ok := byKey[key]; ok {
+			ordered = append(ordered, *m)
+		}
+	}
+	return ordered, nil
 }
 
 // GetLinker returns a linker for the given method

@@ -11,6 +11,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -110,6 +111,22 @@ Examples:
 	RunE: runProfileSync,
 }
 
+var profileReorderCmd = &cobra.Command{
+	Use:   "reorder [mod-id ...]",
+	Short: "View or change load order",
+	Long: `View or change the load order of mods in a profile (first = lowest priority).
+
+With no arguments, prints the current load order.
+With mod IDs as arguments, sets the new order (first ID = lowest priority).
+Mods not listed are appended at the end.
+
+Examples:
+  lmm profile reorder --game skyrim-se
+  lmm profile reorder 12345 67890 11111 --game skyrim-se`,
+	Args: cobra.ArbitraryArgs,
+	RunE: runProfileReorder,
+}
+
 var profileApplyCmd = &cobra.Command{
 	Use:   "apply [name]",
 	Short: "Apply profile to system",
@@ -139,6 +156,7 @@ func init() {
 	profileCmd.AddCommand(profileExportCmd)
 	profileCmd.AddCommand(profileImportCmd)
 	profileCmd.AddCommand(profileSyncCmd)
+	profileCmd.AddCommand(profileReorderCmd)
 	profileCmd.AddCommand(profileApplyCmd)
 
 	// Import flags
@@ -972,6 +990,91 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Synced profile: %s\n", profileName)
+	return nil
+}
+
+func runProfileReorder(cmd *cobra.Command, args []string) error {
+	if err := requireGame(cmd); err != nil {
+		return err
+	}
+
+	service, err := initService()
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer service.Close()
+
+	_, err = service.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	profileName := profileOrDefault(listProfile)
+	profile, err := config.LoadProfile(service.ConfigDir(), gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("loading profile: %w", err)
+	}
+
+	pm := getProfileManager(service)
+
+	if len(args) == 0 {
+		// Show current load order
+		if len(profile.Mods) == 0 {
+			fmt.Printf("No mods in profile %s.\n", profileName)
+			return nil
+		}
+		installed, _ := service.GetInstalledMods(gameID, profileName)
+		nameByKey := make(map[string]string)
+		for i := range installed {
+			key := installed[i].SourceID + ":" + installed[i].ID
+			nameByKey[key] = installed[i].Name
+		}
+		fmt.Printf("Load order for %s (first = lowest priority):\n", profileName)
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "#\tMOD_ID\tNAME")
+		for i, ref := range profile.Mods {
+			key := ref.SourceID + ":" + ref.ModID
+			name := nameByKey[key]
+			if name == "" {
+				name = "(unknown)"
+			}
+			fmt.Fprintf(w, "%d\t%s\t%s\n", i+1, ref.ModID, name)
+		}
+		w.Flush()
+		return nil
+	}
+
+	// Set new order: args are mod IDs in desired order (first = lowest priority)
+	byModID := make(map[string]domain.ModReference)
+	for _, ref := range profile.Mods {
+		byModID[ref.ModID] = ref
+	}
+	var newRefs []domain.ModReference
+	seen := make(map[string]bool)
+	for _, id := range args {
+		ref, ok := byModID[id]
+		if !ok {
+			return fmt.Errorf("mod %s not in profile", id)
+		}
+		key := ref.SourceID + ":" + ref.ModID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		newRefs = append(newRefs, ref)
+	}
+	// Append mods not mentioned in args (unchanged relative order)
+	for _, ref := range profile.Mods {
+		key := ref.SourceID + ":" + ref.ModID
+		if !seen[key] {
+			newRefs = append(newRefs, ref)
+		}
+	}
+
+	if err := pm.ReorderMods(gameID, profileName, newRefs); err != nil {
+		return fmt.Errorf("reordering: %w", err)
+	}
+	fmt.Printf("✓ Load order updated for profile %s.\n", profileName)
 	return nil
 }
 
