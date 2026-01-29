@@ -125,6 +125,52 @@ func (i *Installer) IsInstalled(game *domain.Game, mod *domain.Mod) (bool, error
 	return i.linker.IsDeployed(dstPath)
 }
 
+// Conflict represents a file that would be overwritten by installing a mod
+type Conflict struct {
+	RelativePath    string
+	CurrentSourceID string
+	CurrentModID    string
+}
+
+// GetConflicts checks if installing a mod would overwrite files from other mods.
+// Returns conflicts for files owned by OTHER mods (not the mod being installed).
+func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]Conflict, error) {
+	if i.db == nil {
+		return nil, nil
+	}
+
+	// Check if mod is cached
+	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		return nil, fmt.Errorf("mod not in cache: %s/%s@%s", mod.SourceID, mod.ID, mod.Version)
+	}
+
+	// Get list of files in the cached mod
+	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if err != nil {
+		return nil, fmt.Errorf("listing cached files: %w", err)
+	}
+
+	// Check for conflicts
+	dbConflicts, err := i.db.CheckFileConflicts(game.ID, profileName, files)
+	if err != nil {
+		return nil, fmt.Errorf("checking conflicts: %w", err)
+	}
+
+	// Filter out conflicts with self (re-installing same mod)
+	var conflicts []Conflict
+	for _, c := range dbConflicts {
+		if c.SourceID != mod.SourceID || c.ModID != mod.ID {
+			conflicts = append(conflicts, Conflict{
+				RelativePath:    c.RelativePath,
+				CurrentSourceID: c.SourceID,
+				CurrentModID:    c.ModID,
+			})
+		}
+	}
+
+	return conflicts, nil
+}
+
 // GetDeployedFiles returns the list of files deployed for a mod
 func (i *Installer) GetDeployedFiles(game *domain.Game, mod *domain.Mod) ([]string, error) {
 	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {

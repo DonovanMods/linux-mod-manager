@@ -11,6 +11,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -301,4 +302,95 @@ games:
 	content, err := os.ReadFile(pluginPath)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("plugin"), content)
+}
+
+func TestGetConflicts(t *testing.T) {
+	// Setup test with in-memory DB and temp cache
+	tempDir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	c := cache.New(tempDir)
+	lnk := linker.New(domain.LinkSymlink)
+	inst := core.NewInstaller(c, lnk, database)
+
+	game := &domain.Game{ID: "test-game", ModPath: filepath.Join(tempDir, "mods")}
+	err = os.MkdirAll(game.ModPath, 0755)
+	require.NoError(t, err)
+
+	// Create cached mod files for mod A
+	err = c.Store(game.ID, "nexusmods", "111", "1.0", "shared.txt", []byte("a"))
+	require.NoError(t, err)
+
+	// Deploy mod A
+	modA := &domain.Mod{SourceID: "nexusmods", ID: "111", Version: "1.0", GameID: game.ID}
+	err = inst.Install(context.Background(), game, modA, "default")
+	require.NoError(t, err)
+
+	// Create cached mod files for mod B (with overlapping file)
+	err = c.Store(game.ID, "nexusmods", "222", "1.0", "shared.txt", []byte("b"))
+	require.NoError(t, err)
+	err = c.Store(game.ID, "nexusmods", "222", "1.0", "unique.txt", []byte("b"))
+	require.NoError(t, err)
+
+	// Check conflicts for mod B
+	modB := &domain.Mod{SourceID: "nexusmods", ID: "222", Version: "1.0", GameID: game.ID}
+	conflicts, err := inst.GetConflicts(context.Background(), game, modB, "default")
+	require.NoError(t, err)
+
+	assert.Len(t, conflicts, 1)
+	assert.Equal(t, "shared.txt", conflicts[0].RelativePath)
+	assert.Equal(t, "111", conflicts[0].CurrentModID)
+}
+
+func TestGetConflicts_ReinstallSelf(t *testing.T) {
+	// Setup
+	tempDir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	c := cache.New(tempDir)
+	lnk := linker.New(domain.LinkSymlink)
+	inst := core.NewInstaller(c, lnk, database)
+
+	game := &domain.Game{ID: "test-game", ModPath: filepath.Join(tempDir, "mods")}
+	err = os.MkdirAll(game.ModPath, 0755)
+	require.NoError(t, err)
+
+	// Create and deploy mod A
+	err = c.Store(game.ID, "nexusmods", "111", "1.0", "file.txt", []byte("a"))
+	require.NoError(t, err)
+
+	modA := &domain.Mod{SourceID: "nexusmods", ID: "111", Version: "1.0", GameID: game.ID}
+	err = inst.Install(context.Background(), game, modA, "default")
+	require.NoError(t, err)
+
+	// Check conflicts for same mod (re-install) - should be empty
+	conflicts, err := inst.GetConflicts(context.Background(), game, modA, "default")
+	require.NoError(t, err)
+	assert.Empty(t, conflicts)
+}
+
+func TestGetConflicts_NoDatabase(t *testing.T) {
+	// Setup without database
+	tempDir := t.TempDir()
+	c := cache.New(tempDir)
+	lnk := linker.New(domain.LinkSymlink)
+	inst := core.NewInstaller(c, lnk, nil) // nil DB
+
+	game := &domain.Game{ID: "test-game", ModPath: filepath.Join(tempDir, "mods")}
+	err := os.MkdirAll(game.ModPath, 0755)
+	require.NoError(t, err)
+
+	err = c.Store(game.ID, "nexusmods", "111", "1.0", "file.txt", []byte("a"))
+	require.NoError(t, err)
+
+	modA := &domain.Mod{SourceID: "nexusmods", ID: "111", Version: "1.0", GameID: game.ID}
+
+	// With nil DB, GetConflicts should return nil, nil
+	conflicts, err := inst.GetConflicts(context.Background(), game, modA, "default")
+	require.NoError(t, err)
+	assert.Nil(t, conflicts)
 }
