@@ -5,6 +5,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -78,11 +79,15 @@ func runList(cmd *cobra.Command, args []string) error {
 		if !mod.Deployed {
 			deployed = "no"
 		}
+		sourceDisplay := mod.SourceID
+		if mod.SourceID == domain.SourceLocal {
+			sourceDisplay = "(local)"
+		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			mod.ID,
 			truncate(mod.Name, 40),
 			mod.Version,
-			mod.SourceID,
+			sourceDisplay,
 			enabled,
 			deployed,
 			mod.LinkMethod.String(),
