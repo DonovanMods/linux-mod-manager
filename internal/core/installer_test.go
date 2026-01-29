@@ -145,6 +145,41 @@ func TestInstaller_IsInstalled(t *testing.T) {
 	assert.True(t, installed)
 }
 
+func TestInstaller_IsInstalled_PartialInstallReturnsFalse(t *testing.T) {
+	cacheDir := t.TempDir()
+	gameDir := t.TempDir()
+
+	modCache := cache.New(cacheDir)
+	require.NoError(t, modCache.Store("skyrim", "test", "123", "1.0.0", "a.esp", []byte("a")))
+	require.NoError(t, modCache.Store("skyrim", "test", "123", "1.0.0", "b.esp", []byte("b")))
+
+	game := &domain.Game{
+		ID:         "skyrim",
+		Name:       "Skyrim",
+		ModPath:    gameDir,
+		LinkMethod: domain.LinkSymlink,
+	}
+	mod := &domain.Mod{
+		ID:       "123",
+		SourceID: "test",
+		Name:     "Test Mod",
+		Version:  "1.0.0",
+		GameID:   "skyrim",
+	}
+	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
+
+	// Deploy only one file (partial install)
+	aSrc := modCache.GetFilePath("skyrim", "test", "123", "1.0.0", "a.esp")
+	aDst := filepath.Join(gameDir, "a.esp")
+	require.NoError(t, os.MkdirAll(filepath.Dir(aDst), 0755))
+	require.NoError(t, os.Symlink(aSrc, aDst))
+
+	// IsInstalled must return false when not all files are deployed
+	installed, err := installer.IsInstalled(game, mod)
+	require.NoError(t, err)
+	assert.False(t, installed, "partial install should not report as installed")
+}
+
 func TestInstaller_Install_VerifyFilesInModPath(t *testing.T) {
 	// This test verifies that files are actually deployed to game.ModPath
 	cacheDir := t.TempDir()

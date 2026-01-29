@@ -28,7 +28,9 @@ func NewInstaller(cache *cache.Cache, linker linker.Linker, database *db.DB) *In
 	}
 }
 
-// Install deploys a mod to the game directory
+// Install deploys a mod to the game directory. If DB tracking is enabled and a
+// SaveDeployedFile fails after some files are deployed, deployed files are
+// undeployed (rollback) so filesystem and DB stay consistent.
 func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
 	// Check if mod is cached
 	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
@@ -41,7 +43,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		return fmt.Errorf("listing cached files: %w", err)
 	}
 
-	// Deploy each file
+	var deployed []string
 	for _, file := range files {
 		select {
 		case <-ctx.Done():
@@ -53,18 +55,29 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		dstPath := filepath.Join(game.ModPath, file)
 
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
+			rollbackDeploy(i.linker, game.ModPath, deployed)
 			return fmt.Errorf("deploying %s: %w", file, err)
 		}
+		deployed = append(deployed, file)
 
 		// Track file ownership in database (for conflict detection)
 		if i.db != nil {
 			if err := i.db.SaveDeployedFile(game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
+				rollbackDeploy(i.linker, game.ModPath, deployed)
 				return fmt.Errorf("tracking deployed file %s: %w", file, err)
 			}
 		}
 	}
 
 	return nil
+}
+
+// rollbackDeploy undeploys the given relative paths under modPath (reverse order).
+func rollbackDeploy(lnk linker.Linker, modPath string, relativePaths []string) {
+	for j := len(relativePaths) - 1; j >= 0; j-- {
+		dstPath := filepath.Join(modPath, relativePaths[j])
+		_ = lnk.Undeploy(dstPath)
+	}
 }
 
 // Uninstall removes a mod from the game directory
@@ -103,7 +116,8 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 	return nil
 }
 
-// IsInstalled checks if a mod is currently deployed
+// IsInstalled checks if a mod is currently deployed. Returns true only if every
+// cached file is deployed (partial installs report as not installed).
 func (i *Installer) IsInstalled(game *domain.Game, mod *domain.Mod) (bool, error) {
 	// Check if mod is cached first
 	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
@@ -120,9 +134,18 @@ func (i *Installer) IsInstalled(game *domain.Game, mod *domain.Mod) (bool, error
 		return false, nil
 	}
 
-	// Check if the first file is deployed
-	dstPath := filepath.Join(game.ModPath, files[0])
-	return i.linker.IsDeployed(dstPath)
+	// Consider installed only if all files are deployed
+	for _, file := range files {
+		dstPath := filepath.Join(game.ModPath, file)
+		deployed, err := i.linker.IsDeployed(dstPath)
+		if err != nil {
+			return false, err
+		}
+		if !deployed {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // Conflict represents a file that would be overwritten by installing a mod
