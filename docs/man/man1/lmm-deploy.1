@@ -1,0 +1,38 @@
+.\" Man page for lmm deploy
+.TH LMM-DEPLOY 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm deploy \- Deploy mods from cache to game directory
+.SH SYNOPSIS
+.B lmm deploy
+[\fIMOD_ID\fR] [\fIOPTIONS\fR]
+.SH DESCRIPTION
+Deploy enabled mods from the cache to the game directory using the configured
+link method (symlink, hardlink, or copy). Respects profile load order.
+Without a mod ID, deploys all enabled mods in the profile; with a mod ID,
+deploys only that mod. Use \fB--purge\fR to remove all deployed mods first
+then deploy (clean slate). Use \fB--all\fR to deploy disabled mods too.
+Profile overrides (INI tweaks) are applied after deployment.
+.SH OPTIONS
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Game ID (required unless default is set).
+.TP
+.BR \-p ", " \-\-profile\fR=NAME
+Profile (default: active profile).
+.TP
+.BR \-m ", " \-\-method\fR=METHOD
+Link method: symlink, hardlink, or copy (overrides game default for this run).
+.TP
+.B \-\-purge
+Remove all deployed mods before deploying.
+.TP
+.BR \-a ", " \-\-all
+Deploy all mods including disabled ones.
+.TP
+.B \-\-force
+Continue even if hooks fail.
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-purge (1),
+.BR lmm-profile (1),
+.BR lmm-install (1).

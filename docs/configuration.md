@@ -59,8 +59,23 @@ Profiles are stored under `~/.config/lmm/games/<game-id>/profiles/<name>.yaml`.
 | `name`        | string | Profile name                                                        |
 | `game_id`     | string | Game this profile belongs to                                        |
 | `mods`        | list   | Mod references (source_id, mod_id, version, file_ids) in load order |
-| `link_method` | string | Optional override                                                   |
+| `link_method` | string | Optional override (symlink, hardlink, copy)                         |
 | `is_default`  | bool   | Whether this is the default profile for the game                    |
+| `hooks`       | object | Optional profile-level hook overrides (same structure as game hooks) |
+| `overrides`   | map    | Optional config overrides: path (relative to game install) → file content (INI tweaks, etc.). Applied on switch/deploy. |
+
+### Portable export format
+
+`lmm profile export <name>` writes a portable YAML format suitable for sharing or backup. The same format is accepted by `lmm profile import <file>`.
+
+Exported YAML includes:
+
+- **name**, **game_id** – Profile identifier and game.
+- **mods** – List of mod references in load order; each has `source_id`, `mod_id`, optional `version`, optional `file_ids`.
+- **link_method** – Optional: symlink, hardlink, or copy.
+- **overrides** – Optional map of relative paths (under game install) to file contents (e.g. INI tweaks). Applied when switching to the profile or deploying.
+
+Import preserves load order, link method, and overrides; missing mods can be installed when you switch to or apply the profile.
 
 ## steam-games.yaml (optional)
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,6 +23,20 @@ var (
 	updateDryRun  bool
 	updateForce   bool
 )
+
+type updateJSONOutput struct {
+	GameID  string          `json:"game_id"`
+	Profile string          `json:"profile"`
+	Updates []updateModJSON `json:"updates"`
+}
+
+type updateModJSON struct {
+	ModID        string `json:"mod_id"`
+	Name         string `json:"name"`
+	Current      string `json:"current_version"`
+	Available    string `json:"available_version"`
+	UpdatePolicy string `json:"update_policy"`
+}
 
 var updateCmd = &cobra.Command{
 	Use:   "update [mod-id]",
@@ -134,7 +149,30 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(updates) == 0 {
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(updateJSONOutput{GameID: gameID, Profile: profileName, Updates: []updateModJSON{}})
+			return nil
+		}
 		fmt.Println("All mods are up to date.")
+		return nil
+	}
+
+	if jsonOutput {
+		out := updateJSONOutput{GameID: gameID, Profile: profileName, Updates: make([]updateModJSON, len(updates))}
+		for i, u := range updates {
+			out.Updates[i] = updateModJSON{
+				ModID:       u.InstalledMod.ID,
+				Name:        u.InstalledMod.Name,
+				Current:     u.InstalledMod.Version,
+				Available:   u.NewVersion,
+				UpdatePolicy: policyToString(u.InstalledMod.UpdatePolicy),
+			}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(out)
 		return nil
 	}
 

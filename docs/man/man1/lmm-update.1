@@ -1,0 +1,42 @@
+.\" Man page for lmm update
+.TH LMM-UPDATE 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm update \- Check for and apply mod updates
+.SH SYNOPSIS
+.B lmm update
+[\fIMOD_ID\fR] [\fIOPTIONS\fR]
+.PP
+.B lmm update rollback
+\fIMOD_ID\fR [\fIOPTIONS\fR]
+.SH DESCRIPTION
+Check installed mods for updates from the source (e.g. NexusMods). Without a mod ID,
+checks all installed mods; with a mod ID, updates only that mod. Update policies
+(notify, auto, pinned) control whether updates are applied automatically.
+Changelogs are shown when available.
+.SH OPTIONS
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Game ID (required unless default is set).
+.TP
+.BR \-p ", " \-\-profile\fR=NAME
+Profile to check (default: active profile).
+.TP
+.B \-\-all
+Apply all available updates (for mods with auto or notify policy).
+.TP
+.B \-\-dry-run
+Show what would update without applying.
+.TP
+.B \-\-force
+Continue even if hooks fail.
+.TP
+.B \-\-json
+Output available updates in JSON (game_id, profile, updates array).
+.SH SUBCOMMAND
+.TP
+.B rollback \fIMOD_ID\fR
+Revert a mod to its previous version. The previous version must still be in the cache.
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-install (1),
+.BR lmm-mod (1).

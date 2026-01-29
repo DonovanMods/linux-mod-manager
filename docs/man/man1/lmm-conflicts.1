@@ -1,0 +1,27 @@
+.\" Man page for lmm conflicts
+.TH LMM-CONFLICTS 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm conflicts \- Show file conflicts in the current profile
+.SH SYNOPSIS
+.B lmm conflicts
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+Display all file conflicts in the current profile. A conflict occurs when
+multiple mods deploy the same file path; the "owner" is the mod whose file
+is currently deployed.
+File tracking requires mods to be installed/deployed with lmm 0.9.0+.
+Older mods may need to be redeployed to track their files.
+.SH OPTIONS
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Game ID (required unless default is set).
+.TP
+.BR \-p ", " \-\-profile\fR=NAME
+Profile (default: default).
+.TP
+.B \-\-json
+Output conflicts in JSON (game_id, profile, conflicts array with path, owner, also_in).
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-list (1),
+.BR lmm-deploy (1).

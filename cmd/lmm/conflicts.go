@@ -1,12 +1,26 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 )
 
 var conflictsProfile string
+
+type conflictsJSONOutput struct {
+	GameID    string        `json:"game_id"`
+	Profile   string        `json:"profile"`
+	Conflicts []conflictJSON `json:"conflicts"`
+}
+
+type conflictJSON struct {
+	Path   string   `json:"path"`
+	Owner  string   `json:"owner"`
+	AlsoIn []string `json:"also_in"`
+}
 
 var conflictsCmd = &cobra.Command{
 	Use:   "conflicts",
@@ -51,6 +65,12 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(mods) == 0 {
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: []conflictJSON{}})
+			return nil
+		}
 		fmt.Println("No installed mods.")
 		return nil
 	}
@@ -113,7 +133,36 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(conflicts) == 0 {
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: []conflictJSON{}})
+			return nil
+		}
 		fmt.Println("No conflicts found.")
+		return nil
+	}
+
+	if jsonOutput {
+		out := conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: make([]conflictJSON, len(conflicts))}
+		for i, c := range conflicts {
+			ownerName := modNames[c.ownerKey]
+			if ownerName == "" {
+				ownerName = c.ownerKey
+			}
+			othersNames := make([]string, len(c.others))
+			for j, k := range c.others {
+				if n := modNames[k]; n != "" {
+					othersNames[j] = n
+				} else {
+					othersNames[j] = k
+				}
+			}
+			out.Conflicts[i] = conflictJSON{Path: c.path, Owner: ownerName, AlsoIn: othersNames}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(out)
 		return nil
 	}
 

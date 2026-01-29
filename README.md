@@ -201,16 +201,22 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `--verbose` | `-v`  | Enable verbose output                                    |
 | `--config`  |       | Custom config directory                                  |
 | `--data`    |       | Custom data directory                                    |
+| `--json`    |       | Output in JSON (list, status, search, update, conflicts, verify, mod show); errors print `{"error":"..."}` |
+| `--no-hooks`|       | Disable all hooks at runtime                             |
+| `--no-color`|       | Disable colored output (respects NO_COLOR env)          |
 
 ### Commands
 
 | Command                                | Description                                 |
 | -------------------------------------- | ------------------------------------------- |
 | `lmm search <query>`                   | Search for mods                             |
+| `lmm search <query> --category ID`     | Filter by NexusMods category                 |
+| `lmm search <query> --tag TAG`         | Filter by tag (repeat for multiple)         |
 | `lmm install <query>`                  | Search and install a mod                    |
 | `lmm install --id <mod-id>`            | Install by mod ID                           |
 | `lmm uninstall <mod-id>`               | Uninstall a mod                             |
 | `lmm list`                             | List installed mods                         |
+| `lmm list --profiles`                  | List profiles for the game                  |
 | `lmm status`                           | Show current status                         |
 | `lmm update`                           | Check for and apply auto-updates            |
 | `lmm update <mod-id>`                  | Update a specific mod                       |
@@ -224,6 +230,8 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                 |
 | `lmm mod set-update <mod-id> --notify` | Notify only (default)                       |
 | `lmm mod set-update <mod-id> --pin`    | Pin mod to current version                  |
+| `lmm mod show <mod-id>`                | Show mod details (description, image, etc.) |
+| `lmm mod files <mod-id>`               | List files deployed by mod                  |
 | `lmm game set-default <game-id>`       | Set the default game                        |
 | `lmm game show-default`                | Show current default game                   |
 | `lmm game clear-default`               | Clear the default game setting              |
@@ -236,7 +244,8 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm profile delete <name>`            | Delete a profile                            |
 | `lmm profile export <name>`            | Export profile to YAML                      |
 | `lmm profile import <file>`            | Import profile from YAML                    |
-| `lmm profile import <file> --force`    | Import and overwrite existing               |
+| `lmm profile import <file> --force`   | Import and overwrite existing               |
+| `lmm profile reorder [mod-id ...]`    | Show or set load order                      |
 | `lmm profile sync`                     | Update profile to match installed mods      |
 | `lmm profile apply`                    | Install/enable mods to match profile        |
 | `lmm deploy`                           | Deploy all enabled mods from cache          |
@@ -244,6 +253,7 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm deploy --method hardlink`         | Deploy using different link method          |
 | `lmm deploy --purge`                   | Purge then deploy all mods                  |
 | `lmm purge`                            | Remove all mods from game directory         |
+| `lmm conflicts`                       | Show file conflicts in current profile      |
 
 ### Update check behavior
 
@@ -291,7 +301,7 @@ The mod cache location can be customized via `cache_path` in `config.yaml`.
 ## Documentation
 
 - **[Configuration reference](docs/configuration.md)** – All options for `config.yaml` and `games.yaml` (including hooks, link method, sources).
-- **Man pages** – In `docs/man/man1/`: `lmm(1)`, `lmm-install(1)`, `lmm-list(1)`, `lmm-search(1)`, `lmm-status(1)`, `lmm-verify(1)`, `lmm-game(1)`. View with `man -l docs/man/man1/lmm.1` or install to your man path.
+- **Man pages** – In `docs/man/man1/`: `lmm(1)`, `lmm-install(1)`, `lmm-list(1)`, `lmm-search(1)`, `lmm-status(1)`, `lmm-verify(1)`, `lmm-game(1)`, `lmm-profile(1)`, `lmm-update(1)`, `lmm-mod(1)`, `lmm-conflicts(1)`, `lmm-deploy(1)`, `lmm-purge(1)`. View with `man -l docs/man/man1/lmm.1` or install to your man path.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** – How to build, test, and submit changes.
 
 ## Roadmap
@@ -300,12 +310,12 @@ The mod cache location can be customized via `cache_path` in `config.yaml`.
 - [x] Update management with policies and rollback
 - [x] Default game setting (avoid --game on every command)
 - [x] Mod dependency detection from NexusMods
+- [x] Conflict detection (file conflicts, circular dependency warnings)
+- [x] Mod file verification (checksums, --fix re-download)
 - [ ] Automatic dependency installation
 - [ ] Interactive TUI (Bubble Tea) - see BACKLOG.md
 - [ ] Additional mod sources (CurseForge, ESOUI)
-- [ ] Conflict detection and resolution
-- [ ] Game auto-detection (Steam, Lutris, Heroic)
-- [ ] Mod file verification (checksums)
+- [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
 - [ ] Backup and restore
 
 ## Development

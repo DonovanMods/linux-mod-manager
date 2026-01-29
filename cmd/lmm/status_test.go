@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
@@ -111,4 +112,20 @@ func TestStatusCmd_ShowsDefaultGame(t *testing.T) {
 	// Command succeeds (note: default game is only shown when games are configured)
 	err = cmd.Execute()
 	assert.NoError(t, err)
+}
+
+// TestStatusCmd_JSONOutput verifies status --json output structure (JSON contract / E2E shape).
+// Encodes the same struct used by status --json and asserts round-trip and expected keys.
+func TestStatusCmd_JSONOutput(t *testing.T) {
+	out := statusJSONOutput{Games: []statusGameJSON{}}
+	data, err := json.Marshal(out)
+	require.NoError(t, err)
+
+	var decoded struct {
+		Games []interface{} `json:"games"`
+	}
+	err = json.Unmarshal(data, &decoded)
+	require.NoError(t, err, "status JSON output must be valid JSON with 'games' key")
+	assert.NotNil(t, decoded.Games)
+	assert.Len(t, decoded.Games, 0)
 }

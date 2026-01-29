@@ -48,7 +48,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&gameID, "game", "g", "", "game ID to operate on")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
-	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search)")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search, update, conflicts, verify)")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
 }
 
@@ -65,8 +65,12 @@ func colorEnabled() bool {
 }
 
 // Execute runs the root command. Exit codes: 0 = success, 1 = error, 2 = user cancelled.
+// When --json is set and an error occurs, prints {"error":"..."} to stdout before exiting.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		if jsonOutput {
+			fmt.Printf(`{"error":%q}`+"\n", err.Error())
+		}
 		if errors.Is(err, ErrCancelled) {
 			os.Exit(2)
 		}

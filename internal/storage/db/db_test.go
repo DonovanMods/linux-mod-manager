@@ -23,7 +23,7 @@ func TestNew_RunsMigrations(t *testing.T) {
 	require.NoError(t, err)
 	defer database.Close()
 
-	// Verify tables exist by querying them
+	// Verify v1 tables exist
 	var count int
 	err = database.QueryRow("SELECT COUNT(*) FROM installed_mods").Scan(&count)
 	assert.NoError(t, err)
@@ -33,6 +33,36 @@ func TestNew_RunsMigrations(t *testing.T) {
 
 	err = database.QueryRow("SELECT COUNT(*) FROM auth_tokens").Scan(&count)
 	assert.NoError(t, err)
+}
+
+// TestNew_AppliesAllMigrations verifies migrations v4–v7 are applied (installed_mod_files, deployed, checksum, deployed_files).
+func TestNew_AppliesAllMigrations(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// v4: installed_mod_files
+	var count int
+	err = database.QueryRow("SELECT COUNT(*) FROM installed_mod_files").Scan(&count)
+	assert.NoError(t, err)
+
+	// v5: deployed column on installed_mods
+	_, err = database.Exec("SELECT deployed FROM installed_mods LIMIT 1")
+	assert.NoError(t, err)
+
+	// v6: checksum column on installed_mod_files
+	_, err = database.Exec("SELECT checksum FROM installed_mod_files LIMIT 1")
+	assert.NoError(t, err)
+
+	// v7: deployed_files table
+	err = database.QueryRow("SELECT COUNT(*) FROM deployed_files").Scan(&count)
+	assert.NoError(t, err)
+
+	// schema_migrations should record current version
+	var version int
+	err = database.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version)
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, version, 7, "schema_migrations should have at least version 7")
 }
 
 func TestInstalledMods_SaveAndGet(t *testing.T) {

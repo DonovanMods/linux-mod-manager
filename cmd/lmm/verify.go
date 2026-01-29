@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -15,6 +17,21 @@ var (
 	verifyFix     bool
 	verifyProfile string
 )
+
+type verifyJSONOutput struct {
+	GameID   string           `json:"game_id"`
+	Profile  string           `json:"profile"`
+	Files    []verifyFileJSON `json:"files"`
+	Issues   int              `json:"issues"`
+	Warnings int              `json:"warnings"`
+}
+
+type verifyFileJSON struct {
+	ModID   string `json:"mod_id"`
+	ModName string `json:"mod_name"`
+	FileID  string `json:"file_id"`
+	Status  string `json:"status"` // ok, missing, no_checksum, file_count_mismatch, skipped
+}
 
 var verifyCmd = &cobra.Command{
 	Use:   "verify [mod-id]",
@@ -64,6 +81,12 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(files) == 0 {
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: []verifyFileJSON{}, Issues: 0, Warnings: 0})
+			return nil
+		}
 		fmt.Println("No installed mods to verify.")
 		return nil
 	}
@@ -87,9 +110,12 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	gameCache := svc.GetGameCache(game)
 	var issues, warnings int
 	var checked int
+	var jsonFiles []verifyFileJSON
 
-	fmt.Println("Verifying cached mods...")
-	fmt.Println()
+	if !jsonOutput {
+		fmt.Println("Verifying cached mods...")
+		fmt.Println()
+	}
 
 	// Per-mod file-count mismatch: report when cache exists but has 0 files (expected > 0)
 	reportedMismatch := make(map[string]bool)
@@ -116,7 +142,11 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		actualCount := len(cachedFiles)
 		if expectedCount > 0 && actualCount == 0 {
 			if !reportedMismatch[key] {
-				fmt.Printf("! %s - FILE COUNT MISMATCH (expected content from %d download(s), cache has 0 files)\n", mod.Name, expectedCount)
+				if jsonOutput {
+					jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: "", Status: "file_count_mismatch"})
+				} else {
+					fmt.Printf("! %s - FILE COUNT MISMATCH (expected content from %d download(s), cache has 0 files)\n", mod.Name, expectedCount)
+				}
 				reportedMismatch[key] = true
 				warnings++
 			}
@@ -132,7 +162,11 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		// Get mod info for display (version used for cache path)
 		mod, err := svc.GetInstalledMod(f.SourceID, f.ModID, game.ID, profile)
 		if err != nil {
-			fmt.Printf("? Unknown mod %s - SKIPPED\n", f.ModID)
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: f.ModID, ModName: "", FileID: f.FileID, Status: "skipped"})
+			} else {
+				fmt.Printf("? Unknown mod %s - SKIPPED\n", f.ModID)
+			}
 			warnings++
 			continue
 		}
@@ -141,13 +175,21 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		cacheExists := gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version)
 
 		if !cacheExists {
-			fmt.Printf("X %s (%s) - MISSING (version %s not in cache)\n", mod.Name, f.FileID, mod.Version)
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing"})
+			} else {
+				fmt.Printf("X %s (%s) - MISSING (version %s not in cache)\n", mod.Name, f.FileID, mod.Version)
+			}
 			issues++
 			if verifyFix && mod.SourceID != domain.SourceLocal {
 				if err := redownloadModFile(cmd, svc, game, profile, mod, f.FileID); err != nil {
-					fmt.Printf("  Re-download failed: %v\n", err)
+					if !jsonOutput {
+						fmt.Printf("  Re-download failed: %v\n", err)
+					}
 				} else {
-					fmt.Printf("  Re-downloaded OK\n")
+					if !jsonOutput {
+						fmt.Printf("  Re-downloaded OK\n")
+					}
 					issues--
 				}
 			}
@@ -156,13 +198,28 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 		// Check if checksum stored
 		if f.Checksum == "" {
-			fmt.Printf("? %s (%s) - NO CHECKSUM\n", mod.Name, f.FileID)
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"})
+			} else {
+				fmt.Printf("? %s (%s) - NO CHECKSUM\n", mod.Name, f.FileID)
+			}
 			warnings++
 			continue
 		}
 
 		// Cache exists and checksum stored - consider OK
-		fmt.Printf("+ %s (%s) - OK\n", mod.Name, f.FileID)
+		if jsonOutput {
+			jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"})
+		} else {
+			fmt.Printf("+ %s (%s) - OK\n", mod.Name, f.FileID)
+		}
+	}
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: jsonFiles, Issues: issues, Warnings: warnings})
+		return nil
 	}
 
 	fmt.Println()

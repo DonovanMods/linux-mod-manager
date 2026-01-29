@@ -138,6 +138,34 @@ func TestExtractor_Extract_InvalidZip(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestExtractor_Extract_TruncatedZip verifies corrupt/truncated zip returns error (error-path test).
+func TestExtractor_Extract_TruncatedZip(t *testing.T) {
+	srcDir := t.TempDir()
+	destDir := t.TempDir()
+
+	// Create a zip that has valid local header but is truncated (no central directory / truncated content)
+	zipPath := filepath.Join(srcDir, "truncated.zip")
+	f, err := os.Create(zipPath)
+	require.NoError(t, err)
+	w := zip.NewWriter(f)
+	fw, err := w.Create("file.txt")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte("content"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	require.NoError(t, f.Sync())
+	// Truncate file to simulate corrupt download (remove central directory)
+	info, err := f.Stat()
+	require.NoError(t, err)
+	err = f.Truncate(info.Size() / 2)
+	require.NoError(t, err)
+	f.Close()
+
+	extractor := core.NewExtractor()
+	err = extractor.Extract(zipPath, destDir)
+	require.Error(t, err)
+}
+
 func TestExtractor_CanExtract(t *testing.T) {
 	extractor := core.NewExtractor()
 

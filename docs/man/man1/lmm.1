@@ -27,7 +27,7 @@ Verbose output.
 Disable all hooks.
 .TP
 .BR \-\-json
-Output in JSON format (for list, status, search).
+Output in JSON format (list, status, search, update, conflicts, verify, mod show). On error with \fB--json\fR, prints \fB{"error":"..."}\fR to stdout.
 .TP
 .BR \-\-no-color
 Disable colored output (also respects NO_COLOR env).
@@ -92,6 +92,12 @@ Mod file cache.
 .BR lmm-search (1),
 .BR lmm-status (1),
 .BR lmm-verify (1),
-.BR lmm-game (1).
+.BR lmm-game (1),
+.BR lmm-profile (1),
+.BR lmm-update (1),
+.BR lmm-mod (1),
+.BR lmm-conflicts (1),
+.BR lmm-deploy (1),
+.BR lmm-purge (1).
 .PP
 Full documentation: https://github.com/DonovanMods/linux-mod-manager

@@ -1,0 +1,32 @@
+.\" Man page for lmm purge
+.TH LMM-PURGE 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm purge \- Remove all deployed mods from game directory
+.SH SYNOPSIS
+.B lmm purge
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+Remove all deployed mod files from the game directory for the given game and
+profile. Mod records and cached files are preserved by default; use
+\fB--uninstall\fR to also remove mod records from the database. Use
+\fB--yes\fR to skip the confirmation prompt.
+.SH OPTIONS
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Game ID (required unless default is set).
+.TP
+.BR \-p ", " \-\-profile\fR=NAME
+Profile to purge (default: default).
+.TP
+.B \-\-uninstall
+Also remove mod records (like uninstalling each mod).
+.TP
+.BR \-y ", " \-\-yes
+Skip confirmation prompt.
+.TP
+.B \-\-force
+Continue even if hooks fail.
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-deploy (1),
+.BR lmm-profile (1).

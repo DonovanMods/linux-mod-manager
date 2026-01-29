@@ -1,0 +1,48 @@
+.\" Man page for lmm profile
+.TH LMM-PROFILE 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm profile \- Manage profiles (create, switch, export, import, list, reorder)
+.SH SYNOPSIS
+.B lmm profile
+\fICOMMAND\fR [\fIARGS\fR]
+.SH DESCRIPTION
+Profiles let you maintain multiple mod configurations per game (e.g. vanilla-plus,
+survival, graphics-only). Each profile has its own load order, link method, and
+optional configuration overrides (INI tweaks) applied on switch/deploy.
+.SH SUBCOMMANDS
+.TP
+.B list
+List profiles for the game. Shows which profile is default.
+.TP
+.B create \fINAME\fR
+Create a new profile.
+.TP
+.B switch \fINAME\fR
+Switch to a profile: undeploy current profile's mods, deploy the new profile's mods, apply overrides.
+.TP
+.B delete \fINAME\fR
+Delete a profile (mod records and cache are unaffected).
+.TP
+.B export \fINAME\fR
+Export profile to YAML (load order, overrides, link method). Write to stdout or a file with \fB>\fR.
+.TP
+.B import \fIFILE\fR
+Import a profile from YAML. Use \fB--force\fR to overwrite an existing profile.
+.TP
+.B reorder [\fIMOD_ID\fR ...]
+Show or set load order. With no arguments, prints current order. With mod IDs, sets order (first = lowest priority).
+.TP
+.B sync
+Update profile YAML to match currently installed mods (add/remove mods).
+.TP
+.B apply
+Install and enable mods to match the profile (deploy missing mods).
+.SH OPTIONS (global)
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Game ID (required unless default is set).
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-list (1),
+.BR lmm-deploy (1),
+.BR lmm-install (1).

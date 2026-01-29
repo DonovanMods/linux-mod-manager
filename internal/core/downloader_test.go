@@ -153,6 +153,25 @@ func TestDownloader_Download_RetriesOnTransientError(t *testing.T) {
 	assert.Equal(t, 3, attempt)
 }
 
+// TestDownloader_Download_RetriesExhausted verifies that when all retries fail (e.g. server always 5xx), download returns error.
+func TestDownloader_Download_RetriesExhausted(t *testing.T) {
+	attempt := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	downloader := core.NewDownloader(nil)
+	destPath := filepath.Join(t.TempDir(), "test.txt")
+
+	_, err := downloader.Download(context.Background(), server.URL, destPath, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "503")
+	// Should have tried defaultMaxAttempts (3) times
+	assert.GreaterOrEqual(t, attempt, 3)
+}
+
 func TestDownloader_Download_CreatesDirectories(t *testing.T) {
 	content := []byte("test content")
 

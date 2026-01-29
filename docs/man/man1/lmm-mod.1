@@ -1,0 +1,47 @@
+.\" Man page for lmm mod
+.TH LMM-MOD 1 "2026-01-29" "lmm" "User Commands"
+.SH NAME
+lmm mod \- Enable, disable, or configure installed mods; show mod details
+.SH SYNOPSIS
+.B lmm mod
+\fICOMMAND\fR \fIMOD_ID\fR [\fIOPTIONS\fR]
+.PP
+.B lmm mod show
+\fIMOD_ID\fR [\fIOPTIONS\fR]
+.PP
+.B lmm mod files
+\fIMOD_ID\fR [\fIOPTIONS\fR]
+.SH DESCRIPTION
+Manage installed mods: enable/disable deployment, set update policy, view mod
+details (name, description, image, version), or list deployed files.
+.SH SUBCOMMANDS
+.TP
+.B enable \fIMOD_ID\fR
+Enable a disabled mod (include in deploy).
+.TP
+.B disable \fIMOD_ID\fR
+Disable a mod (keep in cache, exclude from deploy).
+.TP
+.B set-update \fIMOD_ID\fR \fB--auto\fR|\fB--notify\fR|\fB--pin\fR
+Set update policy: auto (apply when checking), notify (show only), pin (ignore updates).
+.TP
+.B show \fIMOD_ID\fR
+Show mod details: name, author, version, summary, description, image URL. Use \fB--json\fR for scriptable output.
+.TP
+.B files \fIMOD_ID\fR
+List files deployed by the mod in the game directory.
+.SH OPTIONS (global)
+.TP
+.BR \-g ", " \-\-game\fR=ID
+Game ID (required unless default is set).
+.TP
+.BR \-p ", " \-\-profile\fR=NAME
+Profile (default: default).
+.TP
+.B \-\-json
+For \fBmod show\fR only: output in JSON.
+.SH SEE ALSO
+.BR lmm (1),
+.BR lmm-list (1),
+.BR lmm-update (1),
+.BR lmm-deploy (1).
