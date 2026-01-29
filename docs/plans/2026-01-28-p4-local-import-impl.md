@@ -1,4 +1,4 @@
-# P3 Local Mod Import Implementation Plan
+# P4 Local Mod Import Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 

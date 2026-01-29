@@ -1,7 +1,7 @@
-# P3 Local Mod Import Design
+# P4 Local Mod Import Design
 
 **Date**: 2026-01-28
-**Priority**: P3 (after Checksum Verification and Conflict Detection)
+**Priority**: P4 (after Checksum Verification, Conflict Detection, and Auto-Dependencies)
 **Goal**: Allow users to install mods from local archive files downloaded manually
 
 ---
