@@ -256,38 +256,35 @@ func (d *DB) SetModFileIDs(sourceID, modID, gameID, profileName string, fileIDs 
 	return d.replaceModFileIDs(sourceID, modID, gameID, profileName, fileIDs)
 }
 
-// SwapModVersions swaps version and previous_version (for rollback)
+// SwapModVersions swaps version and previous_version (for rollback).
+// Uses explicit read-then-write so the swap is correct regardless of SQL evaluation order.
 func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error {
-	// First check if previous_version exists
+	var version string
 	var prevVersion *string
 	err := d.QueryRow(`
-		SELECT previous_version FROM installed_mods
+		SELECT version, previous_version FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, sourceID, modID, gameID, profileName).Scan(&prevVersion)
+	`, sourceID, modID, gameID, profileName).Scan(&version, &prevVersion)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.ErrModNotFound
 		}
-		return fmt.Errorf("checking previous version: %w", err)
+		return fmt.Errorf("checking versions: %w", err)
 	}
 
 	if prevVersion == nil || *prevVersion == "" {
 		return fmt.Errorf("no previous version available for rollback")
 	}
+	prevVal := *prevVersion
 
-	// Swap the versions
-	result, err := d.Exec(`
+	// Swap: write previous into version and version into previous_version
+	_, err = d.Exec(`
 		UPDATE installed_mods
-		SET version = previous_version, previous_version = version
+		SET version = ?, previous_version = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, sourceID, modID, gameID, profileName)
+	`, prevVal, version, sourceID, modID, gameID, profileName)
 	if err != nil {
 		return fmt.Errorf("swapping mod versions: %w", err)
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return domain.ErrModNotFound
 	}
 
 	return nil
