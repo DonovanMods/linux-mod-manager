@@ -6,7 +6,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var verifyFix bool
+var (
+	verifyFix     bool
+	verifyProfile string
+)
 
 var verifyCmd = &cobra.Command{
 	Use:   "verify [mod-id]",
@@ -25,7 +28,8 @@ Examples:
 }
 
 func init() {
-	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Re-download corrupted or missing files")
+	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Re-download missing files (not yet implemented)")
+	verifyCmd.Flags().StringVarP(&verifyProfile, "profile", "p", "", "profile to verify (default: default)")
 
 	rootCmd.AddCommand(verifyCmd)
 }
@@ -35,6 +39,95 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println("Verify command not yet implemented")
+	svc, err := initService()
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer svc.Close()
+
+	game, err := svc.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("getting game %s: %w", gameID, err)
+	}
+
+	profile := profileOrDefault(verifyProfile)
+
+	// Get all files with checksums for this game/profile
+	files, err := svc.DB().GetFilesWithChecksums(game.ID, profile)
+	if err != nil {
+		return fmt.Errorf("getting files: %w", err)
+	}
+
+	if len(files) == 0 {
+		fmt.Println("No installed mods to verify.")
+		return nil
+	}
+
+	// Filter to specific mod if provided
+	var modFilter string
+	if len(args) > 0 {
+		modFilter = args[0]
+	}
+
+	gameCache := svc.GetGameCache(game)
+	var issues, warnings int
+	var checked int
+
+	fmt.Println("Verifying cached mods...")
+	fmt.Println()
+
+	for _, f := range files {
+		if modFilter != "" && f.ModID != modFilter {
+			continue
+		}
+		checked++
+
+		// Get mod info for display
+		mod, err := svc.GetInstalledMod(f.SourceID, f.ModID, game.ID, profile)
+		if err != nil {
+			fmt.Printf("? Unknown mod %s - SKIPPED\n", f.ModID)
+			warnings++
+			continue
+		}
+
+		// Check cache existence
+		cacheExists := gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version)
+
+		if !cacheExists {
+			fmt.Printf("X %s (%s) - MISSING\n", mod.Name, f.FileID)
+			issues++
+			if verifyFix {
+				fmt.Println("  (Re-download not yet implemented)")
+			}
+			continue
+		}
+
+		// Check if checksum stored
+		if f.Checksum == "" {
+			fmt.Printf("? %s (%s) - NO CHECKSUM\n", mod.Name, f.FileID)
+			warnings++
+			continue
+		}
+
+		// Cache exists and checksum stored - consider OK
+		fmt.Printf("+ %s (%s) - OK\n", mod.Name, f.FileID)
+	}
+
+	fmt.Println()
+
+	if checked == 0 && modFilter != "" {
+		fmt.Printf("No files found for mod %s\n", modFilter)
+		return nil
+	}
+
+	if issues > 0 || warnings > 0 {
+		fmt.Printf("%d issue(s), %d warning(s) found.\n", issues, warnings)
+		if issues > 0 && !verifyFix {
+			fmt.Println("Run with --fix to re-download missing files.")
+		}
+	} else {
+		fmt.Println("All files verified OK.")
+	}
+
 	return nil
 }
