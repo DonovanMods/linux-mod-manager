@@ -196,3 +196,202 @@ func (i *Installer) GetDeployedFiles(game *domain.Game, mod *domain.Mod) ([]stri
 
 	return deployed, nil
 }
+
+// BatchOptions configures batch install/uninstall operations
+type BatchOptions struct {
+	Hooks       *ResolvedHooks // Hooks to run during batch operation
+	HookRunner  *HookRunner    // Runner for executing hooks
+	HookContext HookContext    // Base context for hooks (mod-specific fields added per-mod)
+	Force       bool           // If true, bypass before_* hook failures
+}
+
+// SkippedMod represents a mod that was skipped during batch operation
+type SkippedMod struct {
+	Mod    *domain.Mod
+	Reason string
+}
+
+// InstalledModResult is a successfully installed mod (wraps domain.Mod for batch result)
+type InstalledModResult struct {
+	domain.Mod
+}
+
+// UninstalledModResult is a successfully uninstalled mod (wraps domain.Mod for batch result)
+type UninstalledModResult struct {
+	domain.Mod
+}
+
+// BatchResult contains the results of a batch install/uninstall operation
+type BatchResult struct {
+	Installed   []InstalledModResult   // Successfully installed mods (for InstallBatch)
+	Uninstalled []UninstalledModResult // Successfully uninstalled mods (for UninstallBatch)
+	Skipped     []SkippedMod           // Mods skipped due to hook failure or error
+	Errors      []error                // Non-fatal errors (after_* hook failures)
+}
+
+// InstallBatch installs multiple mods with hook support
+// Hook behavior:
+// - install.before_all: If fails, return error immediately (unless Force)
+// - install.before_each: If fails, skip that mod, continue others
+// - install.after_each: If fails, warn (add to Errors), continue
+// - install.after_all: If fails, warn (add to Errors)
+func (i *Installer) InstallBatch(ctx context.Context, game *domain.Game, mods []*domain.Mod, versions []string, profileName string, opts BatchOptions) (*BatchResult, error) {
+	result := &BatchResult{}
+
+	// Run before_all hook
+	if opts.Hooks != nil && opts.Hooks.Install.BeforeAll != "" && opts.HookRunner != nil {
+		hookCtx := opts.HookContext
+		hookCtx.HookName = "install.before_all"
+		_, err := opts.HookRunner.Run(ctx, opts.Hooks.Install.BeforeAll, hookCtx)
+		if err != nil {
+			if !opts.Force {
+				return nil, fmt.Errorf("install.before_all hook failed: %w", err)
+			}
+			// Force mode: add to errors but continue
+			result.Errors = append(result.Errors, fmt.Errorf("install.before_all hook failed (forced): %w", err))
+		}
+	}
+
+	// Install each mod
+	for idx, mod := range mods {
+		// Apply version if provided
+		if idx < len(versions) && versions[idx] != "" {
+			mod.Version = versions[idx]
+		}
+
+		// Run before_each hook
+		if opts.Hooks != nil && opts.Hooks.Install.BeforeEach != "" && opts.HookRunner != nil {
+			hookCtx := opts.HookContext
+			hookCtx.HookName = "install.before_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			_, err := opts.HookRunner.Run(ctx, opts.Hooks.Install.BeforeEach, hookCtx)
+			if err != nil {
+				result.Skipped = append(result.Skipped, SkippedMod{
+					Mod:    mod,
+					Reason: fmt.Sprintf("install.before_each hook failed: %v", err),
+				})
+				continue
+			}
+		}
+
+		// Install the mod
+		if err := i.Install(ctx, game, mod, profileName); err != nil {
+			result.Skipped = append(result.Skipped, SkippedMod{
+				Mod:    mod,
+				Reason: fmt.Sprintf("install failed: %v", err),
+			})
+			continue
+		}
+
+		// Run after_each hook
+		if opts.Hooks != nil && opts.Hooks.Install.AfterEach != "" && opts.HookRunner != nil {
+			hookCtx := opts.HookContext
+			hookCtx.HookName = "install.after_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			_, err := opts.HookRunner.Run(ctx, opts.Hooks.Install.AfterEach, hookCtx)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("install.after_each hook failed for %s: %w", mod.ID, err))
+			}
+		}
+
+		result.Installed = append(result.Installed, InstalledModResult{Mod: *mod})
+	}
+
+	// Run after_all hook
+	if opts.Hooks != nil && opts.Hooks.Install.AfterAll != "" && opts.HookRunner != nil {
+		hookCtx := opts.HookContext
+		hookCtx.HookName = "install.after_all"
+		_, err := opts.HookRunner.Run(ctx, opts.Hooks.Install.AfterAll, hookCtx)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("install.after_all hook failed: %w", err))
+		}
+	}
+
+	return result, nil
+}
+
+// UninstallBatch uninstalls multiple mods with hook support
+// Hook behavior:
+// - uninstall.before_all: If fails, return error immediately (unless Force)
+// - uninstall.before_each: If fails, skip that mod, continue others
+// - uninstall.after_each: If fails, warn (add to Errors), continue
+// - uninstall.after_all: If fails, warn (add to Errors)
+func (i *Installer) UninstallBatch(ctx context.Context, game *domain.Game, mods []*domain.InstalledMod, profileName string, opts BatchOptions) (*BatchResult, error) {
+	result := &BatchResult{}
+
+	// Run before_all hook
+	if opts.Hooks != nil && opts.Hooks.Uninstall.BeforeAll != "" && opts.HookRunner != nil {
+		hookCtx := opts.HookContext
+		hookCtx.HookName = "uninstall.before_all"
+		_, err := opts.HookRunner.Run(ctx, opts.Hooks.Uninstall.BeforeAll, hookCtx)
+		if err != nil {
+			if !opts.Force {
+				return nil, fmt.Errorf("uninstall.before_all hook failed: %w", err)
+			}
+			// Force mode: add to errors but continue
+			result.Errors = append(result.Errors, fmt.Errorf("uninstall.before_all hook failed (forced): %w", err))
+		}
+	}
+
+	// Uninstall each mod
+	for _, installedMod := range mods {
+		mod := &installedMod.Mod
+
+		// Run before_each hook
+		if opts.Hooks != nil && opts.Hooks.Uninstall.BeforeEach != "" && opts.HookRunner != nil {
+			hookCtx := opts.HookContext
+			hookCtx.HookName = "uninstall.before_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			_, err := opts.HookRunner.Run(ctx, opts.Hooks.Uninstall.BeforeEach, hookCtx)
+			if err != nil {
+				result.Skipped = append(result.Skipped, SkippedMod{
+					Mod:    mod,
+					Reason: fmt.Sprintf("uninstall.before_each hook failed: %v", err),
+				})
+				continue
+			}
+		}
+
+		// Uninstall the mod
+		if err := i.Uninstall(ctx, game, mod, profileName); err != nil {
+			result.Skipped = append(result.Skipped, SkippedMod{
+				Mod:    mod,
+				Reason: fmt.Sprintf("uninstall failed: %v", err),
+			})
+			continue
+		}
+
+		// Run after_each hook
+		if opts.Hooks != nil && opts.Hooks.Uninstall.AfterEach != "" && opts.HookRunner != nil {
+			hookCtx := opts.HookContext
+			hookCtx.HookName = "uninstall.after_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			_, err := opts.HookRunner.Run(ctx, opts.Hooks.Uninstall.AfterEach, hookCtx)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("uninstall.after_each hook failed for %s: %w", mod.ID, err))
+			}
+		}
+
+		result.Uninstalled = append(result.Uninstalled, UninstalledModResult{Mod: *mod})
+	}
+
+	// Run after_all hook
+	if opts.Hooks != nil && opts.Hooks.Uninstall.AfterAll != "" && opts.HookRunner != nil {
+		hookCtx := opts.HookContext
+		hookCtx.HookName = "uninstall.after_all"
+		_, err := opts.HookRunner.Run(ctx, opts.Hooks.Uninstall.AfterAll, hookCtx)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("uninstall.after_all hook failed: %w", err))
+		}
+	}
+
+	return result, nil
+}
