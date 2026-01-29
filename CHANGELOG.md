@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-01-29
+
+### Added
+
+- **Installation Hooks**: Run user-defined scripts before/after mod operations
+  - Configure hooks per-game in `games.yaml` with optional per-profile overrides
+  - Hook points: `install.before_all`, `install.before_each`, `install.after_each`, `install.after_all`
+  - Same pattern for `uninstall.*` hooks
+  - Environment variables: `LMM_GAME_ID`, `LMM_GAME_PATH`, `LMM_MOD_PATH`, `LMM_MOD_ID`, `LMM_MOD_NAME`, `LMM_MOD_VERSION`, `LMM_HOOK`
+  - Contextual failure handling: `before_*` hooks abort (unless `--force`), `after_*` hooks warn only
+  - `--no-hooks` global flag to disable all hooks at runtime
+  - Configurable timeout via `hook_timeout` in `config.yaml` (default 60s)
+- **Batch Install/Uninstall**: New `InstallBatch` and `UninstallBatch` methods in installer
+
+### Changed
+
+- All mod commands now support hooks: `install`, `uninstall`, `deploy`, `purge`, `update`, `update rollback`, `import`
+- Commands now have `--force` flag to continue despite hook failures
+
 ## [0.11.0] - 2026-01-28
 
 ### Added
@@ -472,7 +491,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.8.0...v0.9.0
