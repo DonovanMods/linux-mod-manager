@@ -98,7 +98,7 @@ lmm install --id 12345 --game skyrim-se
 # List installed mods
 lmm list --game skyrim-se
 
-# Check for updates
+# Check for updates (shows partial results and a warning if some mods can't be checked)
 lmm update --game skyrim-se
 
 # Update a specific mod
@@ -217,6 +217,8 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm update --all`                     | Apply all available updates                 |
 | `lmm update --dry-run`                 | Preview what would update                   |
 | `lmm update rollback <mod-id>`         | Rollback to previous version                |
+| `lmm verify`                           | Verify cached mod files (see below)         |
+| `lmm verify --fix`                     | Re-download missing or corrupted files      |
 | `lmm mod enable <mod-id>`              | Enable a disabled mod                       |
 | `lmm mod disable <mod-id>`             | Disable mod (keep in cache)                 |
 | `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                 |
@@ -242,6 +244,18 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm deploy --method hardlink`         | Deploy using different link method          |
 | `lmm deploy --purge`                   | Purge then deploy all mods                  |
 | `lmm purge`                            | Remove all mods from game directory         |
+
+### Update check behavior
+
+When you run `lmm update`, the tool checks each installed mod against the source (e.g. NexusMods). If some mods cannot be fetched (e.g. deleted, private, or network error), you still see **partial results** (any updates that were found), and a **warning** is printed to stderr describing which mods could not be checked.
+
+### Verify output
+
+`lmm verify` reports per file:
+
+- **+ ModName (fileID) - OK** - Cache exists and checksum stored.
+- **X ModName (fileID) - MISSING (version X not in cache)** - Cached files for that mod version are missing; use `--fix` to re-download.
+- **? ModName (fileID) - NO CHECKSUM** - File was installed without a stored checksum (e.g. before checksum support or with `--skip-verify`).
 
 ## Architecture
 

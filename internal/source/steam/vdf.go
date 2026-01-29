@@ -86,15 +86,32 @@ func scanVDFTokens(data []byte, atEOF bool) (advance int, token []byte, err erro
 	data = data[start:]
 
 	if data[0] == '"' {
-		// Quoted string: find closing "
+		// Quoted string: find closing " and unescape \\ \n \t \"
+		var decoded []byte
 		for i := 1; i < len(data); i++ {
 			if data[i] == '\\' && i+1 < len(data) {
 				i++
+				switch data[i] {
+				case '\\':
+					decoded = append(decoded, '\\')
+				case 'n':
+					decoded = append(decoded, '\n')
+				case 't':
+					decoded = append(decoded, '\t')
+				case '"':
+					decoded = append(decoded, '"')
+				default:
+					decoded = append(decoded, data[i])
+				}
 				continue
 			}
 			if data[i] == '"' {
-				return start + i + 1, data[1:i], nil
+				if decoded == nil {
+					decoded = []byte{}
+				}
+				return start + i + 1, decoded, nil
 			}
+			decoded = append(decoded, data[i])
 		}
 		if atEOF {
 			return len(data) + start, nil, fmt.Errorf("vdf: unclosed quote")

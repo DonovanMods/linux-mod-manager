@@ -8,7 +8,17 @@ lmm verify \- Verify cached mod files
 .SH DESCRIPTION
 Verify the integrity of cached mod files using stored checksums. Without
 arguments, verifies all cached mods for the specified game. With a mod ID,
-verifies only that mod.
+verifies only that mod. Checks are done per mod version; missing cache is reported.
+.SH OUTPUT
+.TP
+.B + ModName (fileID) \- OK
+Cache exists for that mod version and checksum is stored.
+.TP
+.B X ModName (fileID) \- MISSING (version X not in cache)
+Cached files for that mod version are missing. Use \fB\-\-fix\fR to re-download.
+.TP
+.B ? ModName (fileID) \- NO CHECKSUM
+No checksum stored (e.g. installed with \fB\-\-skip-verify\fR or before checksum support).
 .SH OPTIONS
 .TP
 .BR \-g ", " \-\-game\fR=ID

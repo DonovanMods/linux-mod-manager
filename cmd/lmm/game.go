@@ -162,9 +162,12 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	games, err := steam.DetectGames(svcCfg.ConfigDir)
+	games, warnings, err := steam.DetectGames(svcCfg.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("detecting games: %w", err)
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 	if len(games) == 0 {
 		cmd.Println("No moddable Steam games found.")

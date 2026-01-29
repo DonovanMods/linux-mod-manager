@@ -64,6 +64,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		if i.db != nil {
 			if err := i.db.SaveDeployedFile(game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
 				rollbackDeploy(i.linker, game.ModPath, deployed)
+				_ = i.db.DeleteDeployedFiles(game.ID, profileName, mod.SourceID, mod.ID)
 				return fmt.Errorf("tracking deployed file %s: %w", file, err)
 			}
 		}

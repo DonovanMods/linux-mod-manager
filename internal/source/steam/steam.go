@@ -70,27 +70,30 @@ func getLibraryPathsFromMap(root VDFMap) []string {
 
 // DetectGames scans Steam libraries for known moddable games and returns them.
 // configDir is used to load the known-games list (embedded default + optional steam-games.yaml).
-func DetectGames(configDir string) ([]DetectedGame, error) {
+// Warnings are non-fatal errors (e.g. unreadable library, parse failure) so users can diagnose.
+func DetectGames(configDir string) (games []DetectedGame, warnings []string, err error) {
 	knownGames, err := LoadKnownGames(configDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	steamRoots := FindSteamRoots()
 	if len(steamRoots) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var found []DetectedGame
-	seen := make(map[string]bool) // slug -> true to dedupe same game in multiple libraries
+	seen := make(map[string]bool)
 
 	for _, steamRoot := range steamRoots {
 		libraries, err := GetLibraryPaths(steamRoot)
 		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", steamRoot, err))
 			continue
 		}
 		for _, libPath := range libraries {
 			steamapps := filepath.Join(libPath, "steamapps")
 			entries, err := os.ReadDir(steamapps)
 			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: %v", steamapps, err))
 				continue
 			}
 			for _, e := range entries {
@@ -101,12 +104,17 @@ func DetectGames(configDir string) ([]DetectedGame, error) {
 				if !strings.HasPrefix(name, "appmanifest_") || !strings.HasSuffix(name, ".acf") {
 					continue
 				}
-				data, err := os.ReadFile(filepath.Join(steamapps, name))
+				acfPath := filepath.Join(steamapps, name)
+				data, err := os.ReadFile(acfPath)
 				if err != nil {
+					warnings = append(warnings, fmt.Sprintf("%s: %v", acfPath, err))
 					continue
 				}
 				manifest, err := ParseAppManifest(string(data))
 				if err != nil || manifest.AppID == "" || manifest.InstallDir == "" {
+					if err != nil {
+						warnings = append(warnings, fmt.Sprintf("%s: parse: %v", acfPath, err))
+					}
 					continue
 				}
 				info, ok := knownGames[manifest.AppID]
@@ -118,6 +126,7 @@ func DetectGames(configDir string) ([]DetectedGame, error) {
 				}
 				installPath := filepath.Join(libPath, "steamapps", "common", manifest.InstallDir)
 				if _, err := os.Stat(installPath); err != nil {
+					warnings = append(warnings, fmt.Sprintf("%s: install dir missing: %v", installPath, err))
 					continue
 				}
 				modPath := installPath
@@ -137,5 +146,5 @@ func DetectGames(configDir string) ([]DetectedGame, error) {
 		}
 	}
 
-	return found, nil
+	return found, warnings, nil
 }

@@ -6,6 +6,8 @@ BUILD_DIR := ./build
 MAIN_PATH := ./cmd/lmm
 VERSION := $(shell grep 'version = ' cmd/lmm/root.go | cut -d'"' -f2)
 LDFLAGS := -ldflags "-s -w"
+# Project-local Go cache so tests run in sandboxed environments (e.g. CI, Cursor)
+GOCACHE_LOCAL := $(CURDIR)/.go-mod/cache
 
 # Default target
 all: build
@@ -29,17 +31,17 @@ install:
 	@echo "Installing $(BINARY_NAME)..."
 	@go install $(LDFLAGS) $(MAIN_PATH)
 
-## test: Run tests
+## test: Run tests (uses project GOCACHE for sandbox-friendly runs)
 test:
-	@go test ./...
+	@GOCACHE=$(GOCACHE_LOCAL) go test ./...
 
 ## test-verbose: Run tests with verbose output
 test-verbose:
-	@go test -v ./...
+	@GOCACHE=$(GOCACHE_LOCAL) go test -v ./...
 
 ## coverage: Run tests with coverage report
 coverage:
-	@go test -coverprofile=coverage.out ./...
+	@GOCACHE=$(GOCACHE_LOCAL) go test -coverprofile=coverage.out ./...
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
