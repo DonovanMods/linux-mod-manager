@@ -42,7 +42,7 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer svc.Close()
+	defer func() { _ = svc.Close() }()
 
 	// Get all installed mods
 	mods, err := svc.GetInstalledMods(gameID, profileName)
