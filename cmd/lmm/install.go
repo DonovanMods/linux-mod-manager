@@ -22,6 +22,12 @@ type installPlan struct {
 	missing []string      // Dependencies that couldn't be fetched (warning only)
 }
 
+// depFetcher is the interface needed for dependency resolution
+type depFetcher interface {
+	GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error)
+	GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error)
+}
+
 var (
 	installSource       string
 	installProfile      string
@@ -809,4 +815,72 @@ func parseRangeSelection(input string, max int) ([]int, error) {
 	// Sort for consistent output
 	sort.Ints(result)
 	return result, nil
+}
+
+// resolveDependencies fetches all dependencies for a mod and returns them in install order.
+// Dependencies are fetched recursively. Already-installed mods are skipped.
+// Missing dependencies (not found on source) are recorded but don't cause failure.
+func resolveDependencies(ctx context.Context, fetcher depFetcher, target *domain.Mod, installedIDs map[string]bool) (*installPlan, error) {
+	plan := &installPlan{}
+	visited := make(map[string]bool)
+
+	var collect func(mod *domain.Mod) error
+	collect = func(mod *domain.Mod) error {
+		key := mod.SourceID + ":" + mod.ID
+		if visited[key] {
+			return nil
+		}
+		visited[key] = true
+
+		// Fetch dependencies for this mod
+		deps, err := fetcher.GetDependencies(ctx, mod)
+		if err != nil {
+			// Log but continue - dependency info might not be available
+			return nil
+		}
+
+		// Process each dependency
+		for _, ref := range deps {
+			depKey := ref.SourceID + ":" + ref.ModID
+
+			// Skip already installed
+			if installedIDs[depKey] {
+				continue
+			}
+
+			// Skip already visited (handles cycles)
+			if visited[depKey] {
+				continue
+			}
+
+			// Fetch the dependency mod
+			depMod, err := fetcher.GetMod(ctx, mod.GameID, ref.ModID)
+			if err != nil {
+				// Dependency not available (external like SKSE)
+				plan.missing = append(plan.missing, depKey)
+				continue
+			}
+			depMod.SourceID = ref.SourceID
+
+			// Recursively collect transitive dependencies
+			if err := collect(depMod); err != nil {
+				return err
+			}
+
+			// Add dependency after its dependencies (topological order)
+			plan.mods = append(plan.mods, depMod)
+		}
+
+		return nil
+	}
+
+	// Collect all dependencies
+	if err := collect(target); err != nil {
+		return nil, err
+	}
+
+	// Add target mod last
+	plan.mods = append(plan.mods, target)
+
+	return plan, nil
 }
