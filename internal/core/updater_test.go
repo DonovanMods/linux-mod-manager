@@ -160,6 +160,28 @@ func TestUpdater_CheckUpdates_PinnedModsSkipped(t *testing.T) {
 	assert.Empty(t, updates, "pinned mods should not show updates")
 }
 
+func TestUpdater_CheckUpdates_LocalModsSkipped(t *testing.T) {
+	registry := source.NewRegistry()
+	// No source registered for "local" - local mods have no remote source
+	updater := core.NewUpdater(registry)
+
+	installed := []domain.InstalledMod{
+		{
+			Mod: domain.Mod{
+				ID:       "abc123",
+				SourceID: domain.SourceLocal, // Local mod - should skip
+				Name:     "My Local Mod",
+				Version:  "1.0.0",
+			},
+			UpdatePolicy: domain.UpdateNotify,
+		},
+	}
+
+	updates, err := updater.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	assert.Empty(t, updates, "local mods should not be checked for updates")
+}
+
 func TestCompareVersions(t *testing.T) {
 	tests := []struct {
 		v1       string

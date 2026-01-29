@@ -23,10 +23,10 @@ func NewUpdater(registry *source.Registry) *Updater {
 
 // CheckUpdates checks for available updates for installed mods
 func (u *Updater) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
-	// Filter out pinned mods
+	// Filter out pinned mods and local mods (local mods have no remote source)
 	var checkable []domain.InstalledMod
 	for _, mod := range installed {
-		if mod.UpdatePolicy != domain.UpdatePinned {
+		if mod.UpdatePolicy != domain.UpdatePinned && mod.SourceID != domain.SourceLocal {
 			checkable = append(checkable, mod)
 		}
 	}
