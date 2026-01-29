@@ -246,7 +246,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 	// Undeploy mod files from game directory
 	installer := service.GetInstaller(game)
 
-	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
+	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 		// Warn but continue - files may have been manually removed
 		if verbose {
 			fmt.Printf("  Warning: failed to undeploy some files: %v\n", err)

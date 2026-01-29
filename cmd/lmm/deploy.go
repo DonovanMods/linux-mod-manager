@@ -115,7 +115,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	lnk := linker.New(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), lnk)
+	installer := core.NewInstaller(service.GetGameCache(game), lnk, service.DB())
 
 	// Get mods to deploy
 	var modsToDeploy []*domain.InstalledMod
@@ -224,7 +224,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 
 		// Undeploy first (remove old links/files)
-		if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
+		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: undeploy %s: %v\n", mod.Name, err)
 			}

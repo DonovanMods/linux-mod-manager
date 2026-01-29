@@ -397,7 +397,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 
 	// Disable mods
 	for _, im := range toDisable {
-		if err := installer.Uninstall(ctx, game, &im.Mod); err != nil {
+		if err := installer.Uninstall(ctx, game, &im.Mod, currentName); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
 			}
@@ -1110,7 +1110,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 
 	// Disable mods
 	for _, im := range toDisable {
-		if err := installer.Uninstall(ctx, game, &im.Mod); err != nil {
+		if err := installer.Uninstall(ctx, game, &im.Mod, profileName); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
 			}

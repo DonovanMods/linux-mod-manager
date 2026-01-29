@@ -283,9 +283,9 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	// Undeploy old version
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker)
+	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
 
-	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
+	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 		// Log but continue - files may have been manually removed
 		if verbose {
 			fmt.Printf("  Warning: failed to undeploy old version: %v\n", err)
@@ -376,9 +376,9 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	// Undeploy current version
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker)
+	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
 
-	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
+	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 		if verbose {
 			fmt.Printf("  Warning: failed to undeploy current version: %v\n", err)
 		}

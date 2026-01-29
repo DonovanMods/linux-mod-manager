@@ -43,7 +43,7 @@ func TestInstaller_Install(t *testing.T) {
 		GameID:   "skyrim",
 	}
 
-	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink))
+	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 
 	err = installer.Install(context.Background(), game, mod, "default")
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func TestInstaller_Uninstall(t *testing.T) {
 	}
 
 	lnk := linker.New(domain.LinkSymlink)
-	installer := core.NewInstaller(modCache, lnk)
+	installer := core.NewInstaller(modCache, lnk, nil)
 
 	// Install first
 	err = installer.Install(context.Background(), game, mod, "default")
@@ -96,7 +96,7 @@ func TestInstaller_Uninstall(t *testing.T) {
 	require.NoError(t, err)
 
 	// Uninstall
-	err = installer.Uninstall(context.Background(), game, mod)
+	err = installer.Uninstall(context.Background(), game, mod, "default")
 	require.NoError(t, err)
 
 	// Verify removed
@@ -127,7 +127,7 @@ func TestInstaller_IsInstalled(t *testing.T) {
 		GameID:   "skyrim",
 	}
 
-	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink))
+	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 
 	// Not installed yet
 	installed, err := installer.IsInstalled(game, mod)
@@ -179,7 +179,7 @@ func TestInstaller_Install_VerifyFilesInModPath(t *testing.T) {
 		GameID:   "testgame",
 	}
 
-	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink))
+	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 
 	// Install the mod
 	err := installer.Install(context.Background(), game, mod, "default")
@@ -230,7 +230,7 @@ func TestInstaller_Install_WithExpandedTildePath(t *testing.T) {
 		GameID:   "game",
 	}
 
-	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink))
+	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 	err = installer.Install(context.Background(), game, mod, "default")
 	require.NoError(t, err)
 
@@ -284,7 +284,7 @@ games:
 	}
 
 	// Deploy using the game loaded from YAML
-	installer := core.NewInstaller(modCache, linker.New(game.LinkMethod))
+	installer := core.NewInstaller(modCache, linker.New(game.LinkMethod), nil)
 	err = installer.Install(context.Background(), game, mod, "default")
 	require.NoError(t, err)
 

@@ -101,7 +101,7 @@ func runPurge(cmd *cobra.Command, args []string) error {
 
 	for _, mod := range mods {
 		// Undeploy files from game directory
-		if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
+		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 			if verbose {
 				fmt.Printf("  ⚠ %s - %v\n", mod.Name, err)
 			}
@@ -171,7 +171,7 @@ func purgeDeployedMods(ctx context.Context, service *core.Service, game *domain.
 	fmt.Printf("Purging %d mod(s) before deploy...\n", len(mods))
 
 	for _, mod := range mods {
-		if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
+		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 			if verbose {
 				fmt.Printf("  ⚠ %s - %v\n", mod.Name, err)
 			}

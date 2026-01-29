@@ -281,7 +281,7 @@ func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
 // GetInstaller returns an Installer configured for the given game
 func (s *Service) GetInstaller(game *domain.Game) *Installer {
 	lnk := s.GetLinker(s.GetGameLinkMethod(game))
-	return NewInstaller(s.GetGameCache(game), lnk)
+	return NewInstaller(s.GetGameCache(game), lnk, s.db)
 }
 
 // Cache returns the default cache manager

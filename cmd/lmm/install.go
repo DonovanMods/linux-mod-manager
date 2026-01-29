@@ -252,14 +252,14 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	// Set up installer
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker)
+	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
 
 	// Check if mod is already installed - if so, uninstall old files first
 	existingMod, err := service.GetInstalledMod(installSource, mod.ID, gameID, profileName)
 	if err == nil && existingMod != nil {
 		fmt.Println("\nRemoving previous installation...")
 		// Uninstall using the OLD version info to remove correct files
-		if err := installer.Uninstall(ctx, game, &existingMod.Mod); err != nil {
+		if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: could not remove old files: %v\n", err)
 			}
@@ -513,13 +513,13 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 
 		// Set up installer
 		linker := service.GetLinker(linkMethod)
-		installer := core.NewInstaller(service.GetGameCache(game), linker)
+		installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
 
 		// Check if mod is already installed - if so, uninstall old files first
 		existingMod, err := service.GetInstalledMod(installSource, mod.ID, game.ID, profileName)
 		if err == nil && existingMod != nil {
 			fmt.Printf("  Removing previous installation...\n")
-			if err := installer.Uninstall(ctx, game, &existingMod.Mod); err != nil {
+			if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil {
 				if verbose {
 					fmt.Printf("  Warning: could not remove old files: %v\n", err)
 				}

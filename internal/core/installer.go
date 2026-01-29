@@ -8,19 +8,23 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 )
 
 // Installer handles mod installation and uninstallation
 type Installer struct {
 	cache  *cache.Cache
 	linker linker.Linker
+	db     *db.DB // Optional: enables file tracking for conflict detection
 }
 
 // NewInstaller creates a new installer
-func NewInstaller(cache *cache.Cache, linker linker.Linker) *Installer {
+// The db parameter is optional - if nil, file tracking is disabled
+func NewInstaller(cache *cache.Cache, linker linker.Linker, database *db.DB) *Installer {
 	return &Installer{
 		cache:  cache,
 		linker: linker,
+		db:     database,
 	}
 }
 
@@ -51,13 +55,20 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			return fmt.Errorf("deploying %s: %w", file, err)
 		}
+
+		// Track file ownership in database (for conflict detection)
+		if i.db != nil {
+			if err := i.db.SaveDeployedFile(game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
+				return fmt.Errorf("tracking deployed file %s: %w", file, err)
+			}
+		}
 	}
 
 	return nil
 }
 
 // Uninstall removes a mod from the game directory
-func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod) error {
+func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
 	// Get list of files in the cached mod
 	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
@@ -76,6 +87,13 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 
 		if err := i.linker.Undeploy(dstPath); err != nil {
 			return fmt.Errorf("undeploying %s: %w", file, err)
+		}
+	}
+
+	// Remove file ownership records from database
+	if i.db != nil {
+		if err := i.db.DeleteDeployedFiles(game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+			return fmt.Errorf("removing file tracking: %w", err)
 		}
 	}
 
