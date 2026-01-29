@@ -181,6 +181,25 @@ func TestSaveProfile_WithFileIDs(t *testing.T) {
 	assert.Equal(t, []string{"99999"}, loaded.Mods[1].FileIDs)
 }
 
+func TestLoad_HookTimeout(t *testing.T) {
+	t.Run("default timeout", func(t *testing.T) {
+		tempDir := t.TempDir()
+		cfg, err := config.Load(tempDir)
+		require.NoError(t, err)
+		assert.Equal(t, 60, cfg.HookTimeout)
+	})
+
+	t.Run("custom timeout", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configYAML := `hook_timeout: 120`
+		require.NoError(t, os.WriteFile(filepath.Join(tempDir, "config.yaml"), []byte(configYAML), 0644))
+
+		cfg, err := config.Load(tempDir)
+		require.NoError(t, err)
+		assert.Equal(t, 120, cfg.HookTimeout)
+	})
+}
+
 func TestLoadGames_ExpandsTilde(t *testing.T) {
 	dir := t.TempDir()
 	gamesPath := filepath.Join(dir, "games.yaml")

@@ -18,6 +18,7 @@ type Config struct {
 	DefaultGame       string            `yaml:"default_game"`
 	Keybindings       string            `yaml:"keybindings"`
 	CachePath         string            `yaml:"cache_path"`
+	HookTimeout       int               `yaml:"hook_timeout"`
 }
 
 // Load reads configuration from the given directory
@@ -25,6 +26,7 @@ func Load(configDir string) (*Config, error) {
 	cfg := &Config{
 		DefaultLinkMethod: domain.LinkSymlink,
 		Keybindings:       "vim",
+		HookTimeout:       60, // Default 60 seconds
 	}
 
 	configPath := filepath.Join(configDir, "config.yaml")
