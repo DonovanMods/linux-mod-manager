@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -73,12 +74,54 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		modFilter = args[0]
 	}
 
+	// Group by mod for file-count check (expected DB file count vs cached file count)
+	fileCountByMod := make(map[string]int)
+	for _, f := range files {
+		key := f.SourceID + ":" + f.ModID
+		if modFilter != "" && f.ModID != modFilter {
+			continue
+		}
+		fileCountByMod[key]++
+	}
+
 	gameCache := svc.GetGameCache(game)
 	var issues, warnings int
 	var checked int
 
 	fmt.Println("Verifying cached mods...")
 	fmt.Println()
+
+	// Per-mod file-count mismatch: report when cache exists but has 0 files (expected > 0)
+	reportedMismatch := make(map[string]bool)
+	for key, expectedCount := range fileCountByMod {
+		if expectedCount == 0 {
+			continue
+		}
+		sourceID, modID, _ := strings.Cut(key, ":")
+		mod, err := svc.GetInstalledMod(sourceID, modID, game.ID, profile)
+		if err != nil {
+			continue
+		}
+		if modFilter != "" && mod.ID != modFilter {
+			continue
+		}
+		cacheExists := gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version)
+		if !cacheExists {
+			continue
+		}
+		cachedFiles, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+		if err != nil {
+			continue
+		}
+		actualCount := len(cachedFiles)
+		if expectedCount > 0 && actualCount == 0 {
+			if !reportedMismatch[key] {
+				fmt.Printf("! %s - FILE COUNT MISMATCH (expected content from %d download(s), cache has 0 files)\n", mod.Name, expectedCount)
+				reportedMismatch[key] = true
+				warnings++
+			}
+		}
+	}
 
 	for _, f := range files {
 		if modFilter != "" && f.ModID != modFilter {
