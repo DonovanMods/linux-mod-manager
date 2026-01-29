@@ -16,6 +16,7 @@ var (
 	purgeProfile   string
 	purgeUninstall bool
 	purgeYes       bool
+	purgeForce     bool
 )
 
 var purgeCmd = &cobra.Command{
@@ -42,6 +43,7 @@ func init() {
 	purgeCmd.Flags().StringVarP(&purgeProfile, "profile", "p", "", "profile to purge (default: default profile)")
 	purgeCmd.Flags().BoolVar(&purgeUninstall, "uninstall", false, "also remove mod records from database (like uninstalling each mod)")
 	purgeCmd.Flags().BoolVarP(&purgeYes, "yes", "y", false, "skip confirmation prompt")
+	purgeCmd.Flags().BoolVarP(&purgeForce, "force", "f", false, "continue even if hooks fail")
 
 	rootCmd.AddCommand(purgeCmd)
 }
@@ -96,11 +98,41 @@ func runPurge(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	installer := service.GetInstaller(game)
 
+	// Set up hooks
+	hookRunner := getHookRunner(service)
+	resolvedHooks := getResolvedHooks(service, game, profileName)
+	hookCtx := makeHookContext(game)
+	var hookErrors []error
+
+	// Run uninstall.before_all hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.BeforeAll != "" {
+		hookCtx.HookName = "uninstall.before_all"
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.BeforeAll, hookCtx); err != nil {
+			if !purgeForce {
+				return fmt.Errorf("uninstall.before_all hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: uninstall.before_all hook failed (forced): %v\n", err)
+		}
+	}
+
 	var succeeded, failed int
 
 	fmt.Printf("\nPurging mods from %s...\n\n", game.Name)
 
 	for _, mod := range mods {
+		// Run uninstall.before_each hook
+		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.BeforeEach != "" {
+			hookCtx.HookName = "uninstall.before_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.BeforeEach, hookCtx); err != nil {
+				fmt.Printf("  Skipped %s: uninstall.before_each hook failed: %v\n", mod.Name, err)
+				failed++
+				continue // Skip this mod, continue with others
+			}
+		}
+
 		// Undeploy files from game directory
 		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 			if verbose {
@@ -135,9 +167,34 @@ func runPurge(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// Run uninstall.after_each hook
+		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
+			hookCtx.HookName = "uninstall.after_each"
+			hookCtx.ModID = mod.ID
+			hookCtx.ModName = mod.Name
+			hookCtx.ModVersion = mod.Version
+			if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
+				hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed for %s: %w", mod.Name, err))
+			}
+		}
+
 		fmt.Printf("  ✓ %s\n", mod.Name)
 		succeeded++
 	}
+
+	// Run uninstall.after_all hook
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterAll != "" {
+		hookCtx.HookName = "uninstall.after_all"
+		hookCtx.ModID = ""
+		hookCtx.ModName = ""
+		hookCtx.ModVersion = ""
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterAll, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_all hook failed: %w", err))
+		}
+	}
+
+	// Print hook warnings
+	printHookWarnings(hookErrors)
 
 	// Final cleanup: remove any empty directories left in mod path
 	linker.CleanupEmptyDirs(game.ModPath)
