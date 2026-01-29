@@ -63,6 +63,8 @@ var installCmd = &cobra.Command{
 The mod will be searched for by name and added to the specified profile
 (or default profile if not specified).
 
+Dependencies are automatically resolved and installed. Use --no-deps to skip.
+
 When selecting files, you can choose multiple files (e.g., main + optional patches)
 using comma-separated values or ranges: 1,3,5 or 1-3 or 1,3-5
 
@@ -70,8 +72,8 @@ Examples:
   lmm install "ore stack" --game starrupture
   lmm install "skyui" --game skyrim-se --profile survival
   lmm install --id 12345 --game skyrim-se
-  lmm install "mod name" -g skyrim-se -y  # Auto-select first match
-  lmm install --id 12345 --file 456,789 -g skyrim-se  # Install specific files`,
+  lmm install "mod name" -g skyrim-se -y       # Auto-select and auto-confirm
+  lmm install "mod name" -g skyrim-se --no-deps  # Skip dependencies`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runInstall,
 }
