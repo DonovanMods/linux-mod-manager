@@ -1026,14 +1026,26 @@ func resolveDependencies(ctx context.Context, fetcher depFetcher, target *domain
 				continue
 			}
 
-			// Fetch the dependency mod
-			depMod, err := fetcher.GetMod(ctx, mod.GameID, ref.ModID)
+			// Fetch the dependency mod (use target game domain so fetch is correct)
+			gameIDForFetch := target.GameID
+			if gameIDForFetch == "" {
+				gameIDForFetch = mod.GameID
+			}
+			depMod, err := fetcher.GetMod(ctx, gameIDForFetch, ref.ModID)
 			if err != nil {
 				// Dependency not available (external like SKSE)
 				plan.missing = append(plan.missing, depKey)
 				continue
 			}
-			depMod.SourceID = ref.SourceID
+			// Keep actual source from fetch; validate against ref
+			if depMod.SourceID != "" && depMod.SourceID != ref.SourceID {
+				// Mismatch: dependency listed for different source
+				plan.missing = append(plan.missing, depKey)
+				continue
+			}
+			if depMod.SourceID == "" {
+				depMod.SourceID = ref.SourceID
+			}
 
 			// Recursively collect transitive dependencies
 			if err := collect(depMod); err != nil {
