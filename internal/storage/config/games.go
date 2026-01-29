@@ -6,11 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"gopkg.in/yaml.v3"
 )
+
+// gamesMu serializes read-modify-write of games.yaml to avoid lost updates
+var gamesMu sync.Mutex
 
 // ExpandPath expands ~ to the user's home directory
 func ExpandPath(path string) string {
@@ -61,6 +65,13 @@ type GamesFile struct {
 
 // LoadGames reads all game configurations from the config directory
 func LoadGames(configDir string) (map[string]*domain.Game, error) {
+	gamesMu.Lock()
+	defer gamesMu.Unlock()
+	return loadGamesLocked(configDir)
+}
+
+// loadGamesLocked reads games; caller must hold gamesMu
+func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 	gamesPath := filepath.Join(configDir, "games.yaml")
 	data, err := os.ReadFile(gamesPath)
 	if err != nil {
@@ -69,12 +80,10 @@ func LoadGames(configDir string) (map[string]*domain.Game, error) {
 		}
 		return nil, fmt.Errorf("reading games.yaml: %w", err)
 	}
-
 	var gamesFile GamesFile
 	if err := yaml.Unmarshal(data, &gamesFile); err != nil {
 		return nil, fmt.Errorf("parsing games.yaml: %w", err)
 	}
-
 	games := make(map[string]*domain.Game)
 	for id, cfg := range gamesFile.Games {
 		games[id] = &domain.Game{
@@ -102,23 +111,23 @@ func LoadGames(configDir string) (map[string]*domain.Game, error) {
 			},
 		}
 	}
-
 	return games, nil
 }
 
 // SaveGame adds or updates a game in games.yaml
 func SaveGame(configDir string, game *domain.Game) error {
-	games, err := LoadGames(configDir)
+	gamesMu.Lock()
+	defer gamesMu.Unlock()
+	games, err := loadGamesLocked(configDir)
 	if err != nil {
 		return err
 	}
-
 	games[game.ID] = game
-
-	return saveGames(configDir, games)
+	return saveGamesLocked(configDir, games)
 }
 
-func saveGames(configDir string, games map[string]*domain.Game) error {
+// saveGamesLocked writes games; caller must hold gamesMu
+func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 	gamesFile := GamesFile{Games: make(map[string]GameConfig)}
 
 	for id, game := range games {
@@ -169,15 +178,15 @@ func saveGames(configDir string, games map[string]*domain.Game) error {
 
 // DeleteGame removes a game from games.yaml
 func DeleteGame(configDir string, gameID string) error {
-	games, err := LoadGames(configDir)
+	gamesMu.Lock()
+	defer gamesMu.Unlock()
+	games, err := loadGamesLocked(configDir)
 	if err != nil {
 		return err
 	}
-
 	if _, exists := games[gameID]; !exists {
 		return domain.ErrGameNotFound
 	}
-
 	delete(games, gameID)
-	return saveGames(configDir, games)
+	return saveGamesLocked(configDir, games)
 }

@@ -58,6 +58,10 @@ func (c *Cache) ListFiles(gameID, sourceID, modID, version string) ([]string, er
 		if d.IsDir() {
 			return nil
 		}
+		// Skip symlinks to avoid traversing outside cache root
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
 
 		relPath, err := filepath.Rel(modPath, path)
 		if err != nil {

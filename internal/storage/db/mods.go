@@ -72,16 +72,41 @@ func (d *DB) GetInstalledMods(gameID, profileName string) ([]domain.InstalledMod
 		return nil, err
 	}
 
-	// Fetch file IDs for each mod
+	// Batch fetch file IDs for all mods (avoids N+1)
+	fileIDsByMod, err := d.getModFileIDsBatch(gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("getting file IDs: %w", err)
+	}
 	for i := range mods {
-		fileIDs, err := d.GetModFileIDs(mods[i].SourceID, mods[i].ID, gameID, profileName)
-		if err != nil {
-			return nil, fmt.Errorf("getting file IDs for %s: %w", mods[i].ID, err)
-		}
-		mods[i].FileIDs = fileIDs
+		key := mods[i].SourceID + ":" + mods[i].ID
+		mods[i].FileIDs = fileIDsByMod[key]
 	}
 
 	return mods, nil
+}
+
+// getModFileIDsBatch returns file IDs for all mods in game/profile, keyed by "sourceID:modID"
+func (d *DB) getModFileIDsBatch(gameID, profileName string) (map[string][]string, error) {
+	rows, err := d.Query(`
+		SELECT source_id, mod_id, file_id FROM installed_mod_files
+		WHERE game_id = ? AND profile_name = ?
+		ORDER BY source_id, mod_id
+	`, gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string][]string)
+	for rows.Next() {
+		var sourceID, modID, fileID string
+		if err := rows.Scan(&sourceID, &modID, &fileID); err != nil {
+			return nil, err
+		}
+		key := sourceID + ":" + modID
+		out[key] = append(out[key], fileID)
+	}
+	return out, rows.Err()
 }
 
 // DeleteInstalledMod removes an installed mod record
