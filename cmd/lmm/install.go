@@ -884,3 +884,22 @@ func resolveDependencies(ctx context.Context, fetcher depFetcher, target *domain
 
 	return plan, nil
 }
+
+// showInstallPlan displays the install plan to the user
+func showInstallPlan(plan *installPlan, targetModID string) {
+	fmt.Printf("\nInstall plan (%d mod(s)):\n", len(plan.mods))
+	for i, mod := range plan.mods {
+		label := "[dependency]"
+		if mod.ID == targetModID {
+			label = "[target]"
+		}
+		fmt.Printf("  %d. %s v%s (ID: %s) %s\n", i+1, mod.Name, mod.Version, mod.ID, label)
+	}
+
+	if len(plan.missing) > 0 {
+		fmt.Printf("\n⚠ Warning: %d dependency(ies) not available on source:\n", len(plan.missing))
+		for _, m := range plan.missing {
+			fmt.Printf("  - %s (may require manual install)\n", m)
+		}
+	}
+}
