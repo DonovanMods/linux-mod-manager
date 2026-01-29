@@ -137,3 +137,55 @@ func TestResolveDependencies_TransitiveDeps(t *testing.T) {
 	assert.Equal(t, "200", plan.mods[1].ID)
 	assert.Equal(t, "100", plan.mods[2].ID)
 }
+
+func TestResolveDependencies_CyclicDeps(t *testing.T) {
+	// Mod A depends on B, B depends on A
+	src := &mockDepSource{
+		mods: map[string]*domain.Mod{
+			"100": {ID: "100", SourceID: "nexusmods", Name: "Mod A", GameID: "skyrim"},
+			"200": {ID: "200", SourceID: "nexusmods", Name: "Mod B", GameID: "skyrim"},
+		},
+		deps: map[string][]domain.ModReference{
+			"100": {{SourceID: "nexusmods", ModID: "200"}},
+			"200": {{SourceID: "nexusmods", ModID: "100"}},
+		},
+	}
+
+	target := src.mods["100"]
+	installed := make(map[string]bool)
+
+	// Should not infinite loop - visited map prevents it
+	plan, err := resolveDependencies(context.Background(), src, target, installed)
+	require.NoError(t, err)
+	// Both mods should be in plan (cycle is handled by visited check)
+	assert.Len(t, plan.mods, 2)
+}
+
+func TestResolveDependencies_DeepTransitive(t *testing.T) {
+	// A -> B -> C -> D (4 levels deep)
+	src := &mockDepSource{
+		mods: map[string]*domain.Mod{
+			"A": {ID: "A", SourceID: "nexusmods", Name: "Mod A", GameID: "skyrim"},
+			"B": {ID: "B", SourceID: "nexusmods", Name: "Mod B", GameID: "skyrim"},
+			"C": {ID: "C", SourceID: "nexusmods", Name: "Mod C", GameID: "skyrim"},
+			"D": {ID: "D", SourceID: "nexusmods", Name: "Mod D", GameID: "skyrim"},
+		},
+		deps: map[string][]domain.ModReference{
+			"A": {{SourceID: "nexusmods", ModID: "B"}},
+			"B": {{SourceID: "nexusmods", ModID: "C"}},
+			"C": {{SourceID: "nexusmods", ModID: "D"}},
+		},
+	}
+
+	target := src.mods["A"]
+	installed := make(map[string]bool)
+
+	plan, err := resolveDependencies(context.Background(), src, target, installed)
+	require.NoError(t, err)
+	assert.Len(t, plan.mods, 4)
+	// Order should be D, C, B, A (deepest first)
+	assert.Equal(t, "D", plan.mods[0].ID)
+	assert.Equal(t, "C", plan.mods[1].ID)
+	assert.Equal(t, "B", plan.mods[2].ID)
+	assert.Equal(t, "A", plan.mods[3].ID)
+}
