@@ -2,6 +2,7 @@ package nexusmods
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -179,9 +180,11 @@ func (n *NexusMods) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID 
 	return links[0].URI, nil
 }
 
-// CheckUpdates checks for available updates by comparing installed versions against NexusMods
+// CheckUpdates checks for available updates by comparing installed versions against NexusMods.
+// Returns partial updates plus a joined error when one or more mods fail to fetch (deleted, private, etc.).
 func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	var updates []domain.Update
+	var fetchErrs []error
 
 	for _, inst := range installed {
 		select {
@@ -193,7 +196,7 @@ func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.Install
 		// Fetch current mod info from NexusMods
 		remoteMod, err := n.GetMod(ctx, inst.GameID, inst.ID)
 		if err != nil {
-			// Skip mods that can't be fetched (deleted, private, etc.)
+			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
 			continue
 		}
 
@@ -207,6 +210,9 @@ func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.Install
 		}
 	}
 
+	if len(fetchErrs) > 0 {
+		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(fetchErrs), errors.Join(fetchErrs...))
+	}
 	return updates, nil
 }
 

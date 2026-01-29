@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -42,6 +44,7 @@ func (u *Updater) CheckUpdates(ctx context.Context, installed []domain.Installed
 	}
 
 	var allUpdates []domain.Update
+	var checkErrs []error
 
 	// Check each source
 	for sourceID, mods := range bySource {
@@ -53,19 +56,20 @@ func (u *Updater) CheckUpdates(ctx context.Context, installed []domain.Installed
 
 		src, err := u.registry.Get(sourceID)
 		if err != nil {
-			// Skip unknown sources
+			checkErrs = append(checkErrs, fmt.Errorf("source %s: %w", sourceID, err))
 			continue
 		}
 
 		updates, err := src.CheckUpdates(ctx, mods)
-		if err != nil {
-			// Log but continue with other sources
-			continue
-		}
-
 		allUpdates = append(allUpdates, updates...)
+		if err != nil {
+			checkErrs = append(checkErrs, fmt.Errorf("source %s: %w", sourceID, err))
+		}
 	}
 
+	if len(checkErrs) > 0 {
+		return allUpdates, fmt.Errorf("update check had %d source error(s): %w", len(checkErrs), errors.Join(checkErrs...))
+	}
 	return allUpdates, nil
 }
 

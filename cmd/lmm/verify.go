@@ -77,6 +77,19 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	var issues, warnings int
 	var checked int
 
+	// Count files per mod for cache vs DB mismatch check (verify per mod version)
+	type modKey struct{ sourceID, modID string }
+	filesPerMod := make(map[modKey]int)
+	for _, f := range files {
+		if modFilter != "" && f.ModID != modFilter {
+			continue
+		}
+		filesPerMod[modKey{f.SourceID, f.ModID}]++
+	}
+
+	// Track mods we've already reported file-count mismatch for
+	reportedMismatch := make(map[modKey]bool)
+
 	fmt.Println("Verifying cached mods...")
 	fmt.Println()
 
@@ -86,7 +99,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		}
 		checked++
 
-		// Get mod info for display
+		// Get mod info for display (version used for cache path)
 		mod, err := svc.GetInstalledMod(f.SourceID, f.ModID, game.ID, profile)
 		if err != nil {
 			fmt.Printf("? Unknown mod %s - SKIPPED\n", f.ModID)
@@ -94,11 +107,11 @@ func runVerify(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// Check cache existence
+		// Check cache existence for this mod version (per file/version)
 		cacheExists := gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version)
 
 		if !cacheExists {
-			fmt.Printf("X %s (%s) - MISSING\n", mod.Name, f.FileID)
+			fmt.Printf("X %s (%s) - MISSING (version %s not in cache)\n", mod.Name, f.FileID, mod.Version)
 			issues++
 			if verifyFix && mod.SourceID != domain.SourceLocal {
 				if err := redownloadModFile(cmd, svc, game, profile, mod, f.FileID); err != nil {
@@ -109,6 +122,21 @@ func runVerify(cmd *cobra.Command, args []string) error {
 				}
 			}
 			continue
+		}
+
+		// Surface mismatch: cache file count vs DB file count for this mod version (once per mod)
+		key := modKey{mod.SourceID, mod.ID}
+		if !reportedMismatch[key] {
+			reportedMismatch[key] = true
+			cacheFiles, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+			if err == nil {
+				want := filesPerMod[key]
+				if len(cacheFiles) != want {
+					fmt.Printf("? %s - FILE COUNT MISMATCH (cache version %s: %d files, DB: %d)\n",
+						mod.Name, mod.Version, len(cacheFiles), want)
+					warnings++
+				}
+			}
 		}
 
 		// Check if checksum stored

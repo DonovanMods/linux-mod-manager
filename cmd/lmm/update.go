@@ -120,14 +120,15 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", len(installed), game.Name, profileName)
 	}
 
-	// Check for updates
+	// Check for updates (partial results returned even when some mods fail to fetch)
 	updater := core.NewUpdater(service.Registry())
 	updates, err := updater.CheckUpdates(ctx, installed)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
 		}
-		return fmt.Errorf("failed to check updates: %w", err)
+		// Surface warning but continue to show partial updates
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 	}
 
 	if len(updates) == 0 {
