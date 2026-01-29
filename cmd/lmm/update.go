@@ -268,7 +268,10 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	// Try to use the same file IDs as before, or fall back to primary
-	filesToDownload, _ := selectFilesToDownload(files, mod.FileIDs)
+	filesToDownload, _, err := selectFilesToDownload(files, mod.FileIDs)
+	if err != nil {
+		return fmt.Errorf("selecting files to download: %w", err)
+	}
 
 	// Download the new version
 	progressFn := func(p core.DownloadProgress) {

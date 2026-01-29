@@ -452,7 +452,11 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 			}
 
 			// Select files to download - use FileIDs from ref (populated for re-downloads from installed mod, or from profile for new installs)
-			filesToDownload, usedFallback := selectFilesToDownload(files, ref.FileIDs)
+			filesToDownload, usedFallback, err := selectFilesToDownload(files, ref.FileIDs)
+			if err != nil {
+				fmt.Printf("    Error: %v\n", err)
+				continue
+			}
 			if usedFallback && len(ref.FileIDs) > 0 {
 				fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 			}
@@ -719,7 +723,12 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 			// New install: use FileIDs from imported profile
 			fileIDsToUse = ref.FileIDs
 		}
-		filesToDownload, usedFallback := selectFilesToDownload(files, fileIDsToUse)
+		filesToDownload, usedFallback, err := selectFilesToDownload(files, fileIDsToUse)
+		if err != nil {
+			fmt.Printf("    Error: %v\n", err)
+			failedCount++
+			continue
+		}
 		if usedFallback && len(fileIDsToUse) > 0 {
 			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 		}
@@ -1174,7 +1183,11 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				// New install: use FileIDs from profile
 				fileIDsToUse = ref.FileIDs
 			}
-			filesToDownload, usedFallback := selectFilesToDownload(files, fileIDsToUse)
+			filesToDownload, usedFallback, err := selectFilesToDownload(files, fileIDsToUse)
+			if err != nil {
+				fmt.Printf("    Error: %v\n", err)
+				continue
+			}
 			if usedFallback && len(fileIDsToUse) > 0 {
 				fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 			}
@@ -1258,18 +1271,25 @@ func selectPrimaryFile(files []domain.DownloadableFile) *domain.DownloadableFile
 	return &files[0]
 }
 
+// errNoDownloadableFiles is returned when selectFilesToDownload is called with no files.
+var errNoDownloadableFiles = fmt.Errorf("no downloadable files")
+
 // selectFilesToDownload picks files to download based on stored FileIDs (for re-downloads)
-// or primary file (for fresh installs). Returns files to download and whether a fallback was used.
-func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, bool) {
+// or primary file (for fresh installs). Returns files to download, whether a fallback was used,
+// and an error if files is empty (avoids returning a slice containing nil).
+func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, bool, error) {
+	if len(files) == 0 {
+		return nil, false, errNoDownloadableFiles
+	}
 	if len(storedFileIDs) > 0 {
 		// Try to use stored file IDs
 		found := findFilesByIDs(files, storedFileIDs)
 		if len(found) > 0 {
-			return found, false
+			return found, false, nil
 		}
 		// Fallback to primary
-		return []*domain.DownloadableFile{selectPrimaryFile(files)}, true
+		return []*domain.DownloadableFile{selectPrimaryFile(files)}, true, nil
 	}
 	// Fresh install: use primary file
-	return []*domain.DownloadableFile{selectPrimaryFile(files)}, false
+	return []*domain.DownloadableFile{selectPrimaryFile(files)}, false, nil
 }

@@ -225,7 +225,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			}
 
 			// Find files to download - use stored FileIDs or fall back to primary
-			filesToDownload, usedFallback := selectFilesToDownload(files, mod.FileIDs)
+			filesToDownload, usedFallback, err := selectFilesToDownload(files, mod.FileIDs)
+			if err != nil {
+				fmt.Printf("  ✗ %s - %v\n", mod.Name, err)
+				failed++
+				continue
+			}
 			if usedFallback {
 				fmt.Printf("  ⚠ %s - stored file IDs not found, using primary\n", mod.Name)
 			}
