@@ -24,6 +24,7 @@ var (
 	installFileID       string
 	installYes          bool
 	installShowArchived bool
+	skipVerify          bool
 )
 
 var installCmd = &cobra.Command{
@@ -55,6 +56,7 @@ func init() {
 	installCmd.Flags().StringVar(&installFileID, "file", "", "file ID(s), comma-separated (skips file selection)")
 	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-select first/primary option (no prompts)")
 	installCmd.Flags().BoolVar(&installShowArchived, "show-archived", false, "show archived/old files")
+	installCmd.Flags().BoolVar(&skipVerify, "skip-verify", false, "skip checksum storage and display")
 
 	rootCmd.AddCommand(installCmd)
 }
@@ -299,8 +301,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Println() // newline after progress
 
-		// Display checksum (truncated for readability)
-		if downloadResult.Checksum != "" {
+		// Display checksum (truncated for readability) unless --skip-verify
+		if !skipVerify && downloadResult.Checksum != "" {
 			displayChecksum := downloadResult.Checksum
 			if len(displayChecksum) > 12 {
 				displayChecksum = displayChecksum[:12] + "..."
@@ -577,8 +579,8 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		}
 		fmt.Println()
 
-		// Display checksum (truncated for readability)
-		if downloadResult.Checksum != "" {
+		// Display checksum (truncated for readability) unless --skip-verify
+		if !skipVerify && downloadResult.Checksum != "" {
 			displayChecksum := downloadResult.Checksum
 			if len(displayChecksum) > 12 {
 				displayChecksum = displayChecksum[:12] + "..."
@@ -609,8 +611,8 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			continue
 		}
 
-		// Store checksum in database
-		if downloadResult.Checksum != "" {
+		// Store checksum in database (unless --skip-verify)
+		if !skipVerify && downloadResult.Checksum != "" {
 			if err := service.DB().SaveFileChecksum(
 				installSource, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum,
 			); err != nil {
