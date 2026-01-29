@@ -44,4 +44,5 @@ type Game struct {
 	LinkMethod         LinkMethod        // How to deploy mods
 	LinkMethodExplicit bool              // True if LinkMethod was explicitly set in config
 	CachePath          string            // Optional: custom cache path for this game's mods
+	Hooks              GameHooks         // Optional: hooks for install/uninstall operations
 }
