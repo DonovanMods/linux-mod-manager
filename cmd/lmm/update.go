@@ -18,6 +18,7 @@ var (
 	updateProfile string
 	updateAll     bool
 	updateDryRun  bool
+	updateForce   bool
 )
 
 var updateCmd = &cobra.Command{
@@ -55,9 +56,11 @@ func init() {
 	updateCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile to check (default: active profile)")
 	updateCmd.Flags().BoolVar(&updateAll, "all", false, "apply all available updates")
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
+	updateCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
 
 	updateRollbackCmd.Flags().StringVarP(&updateSource, "source", "s", "nexusmods", "mod source")
 	updateRollbackCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile (default: active profile)")
+	updateRollbackCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
 
 	updateCmd.AddCommand(updateRollbackCmd)
 	rootCmd.AddCommand(updateCmd)
@@ -237,6 +240,12 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 }
 
 func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, newVersion, profileName string) error {
+	// Set up hooks
+	hookRunner := getHookRunner(service)
+	resolvedHooks := getResolvedHooks(service, game, profileName)
+	hookCtx := makeHookContext(game)
+	var hookErrors []error
+
 	// Get the new version's mod info
 	newMod, err := service.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
 	if err != nil {
@@ -280,6 +289,20 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		fmt.Println()
 	}
 
+	// Run uninstall.before_each hook (before uninstalling old version)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.BeforeEach != "" {
+		hookCtx.HookName = "uninstall.before_each"
+		hookCtx.ModID = mod.ID
+		hookCtx.ModName = mod.Name
+		hookCtx.ModVersion = mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.BeforeEach, hookCtx); err != nil {
+			if !updateForce {
+				return fmt.Errorf("uninstall.before_each hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: uninstall.before_each hook failed (forced): %v\n", err)
+		}
+	}
+
 	// Undeploy old version
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
@@ -292,10 +315,49 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		}
 	}
 
+	// Run uninstall.after_each hook (after uninstalling old version)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
+		hookCtx.HookName = "uninstall.after_each"
+		hookCtx.ModID = mod.ID
+		hookCtx.ModName = mod.Name
+		hookCtx.ModVersion = mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed: %w", err))
+		}
+	}
+
+	// Run install.before_each hook (before installing new version)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
+		hookCtx.HookName = "install.before_each"
+		hookCtx.ModID = newMod.ID
+		hookCtx.ModName = newMod.Name
+		hookCtx.ModVersion = newMod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
+			if !updateForce {
+				return fmt.Errorf("install.before_each hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: install.before_each hook failed (forced): %v\n", err)
+		}
+	}
+
 	// Deploy new version
 	if err := installer.Install(ctx, game, newMod, profileName); err != nil {
 		return fmt.Errorf("deploying update: %w", err)
 	}
+
+	// Run install.after_each hook (after installing new version)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
+		hookCtx.HookName = "install.after_each"
+		hookCtx.ModID = newMod.ID
+		hookCtx.ModName = newMod.Name
+		hookCtx.ModVersion = newMod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed: %w", err))
+		}
+	}
+
+	// Print hook warnings
+	printHookWarnings(hookErrors)
 
 	// Update database (preserves previous version for rollback)
 	if err := service.UpdateModVersion(mod.SourceID, mod.ID, game.ID, profileName, newVersion); err != nil {
@@ -373,6 +435,26 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 
+	// Set up hooks
+	hookRunner := getHookRunner(service)
+	resolvedHooks := getResolvedHooks(service, game, profileName)
+	hookCtx := makeHookContext(game)
+	var hookErrors []error
+
+	// Run uninstall.before_each hook (before uninstalling current version)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.BeforeEach != "" {
+		hookCtx.HookName = "uninstall.before_each"
+		hookCtx.ModID = mod.ID
+		hookCtx.ModName = mod.Name
+		hookCtx.ModVersion = mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.BeforeEach, hookCtx); err != nil {
+			if !updateForce {
+				return fmt.Errorf("uninstall.before_each hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: uninstall.before_each hook failed (forced): %v\n", err)
+		}
+	}
+
 	// Undeploy current version
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
@@ -384,12 +466,52 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Run uninstall.after_each hook (after uninstalling current version)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
+		hookCtx.HookName = "uninstall.after_each"
+		hookCtx.ModID = mod.ID
+		hookCtx.ModName = mod.Name
+		hookCtx.ModVersion = mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed: %w", err))
+		}
+	}
+
 	// Deploy previous version
 	prevMod := mod.Mod
 	prevMod.Version = mod.PreviousVersion
+
+	// Run install.before_each hook (before installing previous version)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
+		hookCtx.HookName = "install.before_each"
+		hookCtx.ModID = prevMod.ID
+		hookCtx.ModName = prevMod.Name
+		hookCtx.ModVersion = prevMod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
+			if !updateForce {
+				return fmt.Errorf("install.before_each hook failed: %w", err)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: install.before_each hook failed (forced): %v\n", err)
+		}
+	}
+
 	if err := installer.Install(ctx, game, &prevMod, profileName); err != nil {
 		return fmt.Errorf("deploying previous version: %w", err)
 	}
+
+	// Run install.after_each hook (after installing previous version)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
+		hookCtx.HookName = "install.after_each"
+		hookCtx.ModID = prevMod.ID
+		hookCtx.ModName = prevMod.Name
+		hookCtx.ModVersion = prevMod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed: %w", err))
+		}
+	}
+
+	// Print hook warnings
+	printHookWarnings(hookErrors)
 
 	// Swap versions in database
 	if err := service.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName); err != nil {
