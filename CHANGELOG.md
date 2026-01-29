@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-01-28
+
+### Added
+
+- **Local Mod Import**: `lmm import <archive-path>` imports mods from local archive files
+  - Supports ZIP, 7z, and RAR archive formats
+  - Auto-detects NexusMods naming pattern (ModName-ModID-Version.ext) for update linking
+  - Extracts to mod cache and deploys to game directory
+  - Flags: `--profile`, `--source`, `--id`, `--force`
+  - Local mods tracked with source ID "local"
+- **NexusMods Filename Parsing**: Automatically extracts mod ID and version from filenames like `SkyUI-12604-5-2SE.zip`
+  - Strips trailing timestamps from version strings
+  - Normalizes version format (replaces dashes with dots)
+  - Falls back to UUID for mods without recognizable patterns
+
+### Changed
+
+- `lmm list` now shows "(local)" for mods imported from local files
+- Update checker skips local mods (no remote source to check)
+
 ## [0.9.0] - 2026-01-28
 
 ### Added
@@ -442,7 +462,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.8...v0.8.0
 [0.7.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.7...v0.7.8
