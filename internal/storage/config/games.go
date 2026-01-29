@@ -29,6 +29,20 @@ func ExpandPath(path string) string {
 	return path
 }
 
+// HookConfigYAML is the YAML representation of hook configuration
+type HookConfigYAML struct {
+	BeforeAll  string `yaml:"before_all"`
+	BeforeEach string `yaml:"before_each"`
+	AfterEach  string `yaml:"after_each"`
+	AfterAll   string `yaml:"after_all"`
+}
+
+// GameHooksYAML is the YAML representation of game hooks
+type GameHooksYAML struct {
+	Install   HookConfigYAML `yaml:"install"`
+	Uninstall HookConfigYAML `yaml:"uninstall"`
+}
+
 // GameConfig is the YAML representation of a game
 type GameConfig struct {
 	Name        string            `yaml:"name"`
@@ -37,6 +51,7 @@ type GameConfig struct {
 	Sources     map[string]string `yaml:"sources"`
 	LinkMethod  string            `yaml:"link_method"`
 	CachePath   string            `yaml:"cache_path"`
+	Hooks       GameHooksYAML     `yaml:"hooks"`
 }
 
 // GamesFile is the top-level games.yaml structure
@@ -71,6 +86,20 @@ func LoadGames(configDir string) (map[string]*domain.Game, error) {
 			LinkMethod:         domain.ParseLinkMethod(cfg.LinkMethod),
 			LinkMethodExplicit: cfg.LinkMethod != "",
 			CachePath:          ExpandPath(cfg.CachePath),
+			Hooks: domain.GameHooks{
+				Install: domain.HookConfig{
+					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),
+					BeforeEach: ExpandPath(cfg.Hooks.Install.BeforeEach),
+					AfterEach:  ExpandPath(cfg.Hooks.Install.AfterEach),
+					AfterAll:   ExpandPath(cfg.Hooks.Install.AfterAll),
+				},
+				Uninstall: domain.HookConfig{
+					BeforeAll:  ExpandPath(cfg.Hooks.Uninstall.BeforeAll),
+					BeforeEach: ExpandPath(cfg.Hooks.Uninstall.BeforeEach),
+					AfterEach:  ExpandPath(cfg.Hooks.Uninstall.AfterEach),
+					AfterAll:   ExpandPath(cfg.Hooks.Uninstall.AfterAll),
+				},
+			},
 		}
 	}
 
@@ -99,6 +128,20 @@ func saveGames(configDir string, games map[string]*domain.Game) error {
 			ModPath:     game.ModPath,
 			Sources:     game.SourceIDs,
 			CachePath:   game.CachePath,
+			Hooks: GameHooksYAML{
+				Install: HookConfigYAML{
+					BeforeAll:  game.Hooks.Install.BeforeAll,
+					BeforeEach: game.Hooks.Install.BeforeEach,
+					AfterEach:  game.Hooks.Install.AfterEach,
+					AfterAll:   game.Hooks.Install.AfterAll,
+				},
+				Uninstall: HookConfigYAML{
+					BeforeAll:  game.Hooks.Uninstall.BeforeAll,
+					BeforeEach: game.Hooks.Uninstall.BeforeEach,
+					AfterEach:  game.Hooks.Uninstall.AfterEach,
+					AfterAll:   game.Hooks.Uninstall.AfterAll,
+				},
+			},
 		}
 		// Only write link_method if explicitly set
 		if game.LinkMethodExplicit {
