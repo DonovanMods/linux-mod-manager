@@ -1,6 +1,11 @@
 package linker
 
-import "github.com/DonovanMods/linux-mod-manager/internal/domain"
+import (
+	"os"
+	"path/filepath"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+)
 
 // Linker deploys and undeploys mod files to game directories
 type Linker interface {
@@ -19,5 +24,28 @@ func New(method domain.LinkMethod) Linker {
 		return NewCopy()
 	default:
 		return NewSymlink()
+	}
+}
+
+// CleanupEmptyDirs removes all empty directories under the given path.
+// It iterates until no more empty directories are found, handling nested empties.
+// The basePath itself is never removed.
+func CleanupEmptyDirs(basePath string) {
+	for {
+		found := false
+		filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil || !info.IsDir() || path == basePath {
+				return nil
+			}
+			entries, err := os.ReadDir(path)
+			if err == nil && len(entries) == 0 {
+				os.Remove(path)
+				found = true
+			}
+			return nil
+		})
+		if !found {
+			break
+		}
 	}
 }

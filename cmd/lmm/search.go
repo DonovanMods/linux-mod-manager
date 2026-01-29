@@ -82,10 +82,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get installed mods to mark already-installed ones
-	profileName := searchProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(searchProfile)
 	installedMods, _ := service.GetInstalledMods(gameID, profileName)
 	installedIDs := make(map[string]bool)
 	for _, im := range installedMods {

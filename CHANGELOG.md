@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-01-28
+
+### Added
+
+- **Deployed State Tracking**: Separate `enabled` and `deployed` states for mods
+  - `enabled` = user intent (wants this mod active)
+  - `deployed` = current state (files are in game directory)
+  - `lmm list` now shows both ENABLED and DEPLOYED columns
+  - Purge sets `deployed=false` while preserving `enabled` state
+  - Deploy sets `deployed=true` without changing `enabled` state
+  - Allows purging and redeploying without losing user's enabled/disabled preferences
+- **Deploy All Flag**: `lmm deploy --all` deploys all mods including disabled ones
+  - Useful after a purge when you want to deploy everything
+  - Without `--all`, only enabled mods are deployed
+
+### Changed
+
+- Database schema V5: Added `deployed` column to track deployment state separately from enabled state
+
 ## [0.7.7] - 2026-01-28
 
 ### Added
@@ -381,7 +400,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.7...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.8...HEAD
+[0.7.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.7.4...v0.7.5

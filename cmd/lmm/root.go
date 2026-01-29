@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	version = "0.7.7"
+	version = "0.7.8"
 
 	// Global flags
 	configDir string
@@ -138,4 +138,12 @@ func requireGame(cmd *cobra.Command) error {
 	}
 
 	return fmt.Errorf("no game specified; use --game or -g flag, or set a default with 'lmm game set-default <game-id>'")
+}
+
+// profileOrDefault returns the given profile name, or "default" if empty
+func profileOrDefault(profile string) string {
+	if profile == "" {
+		return "default"
+	}
+	return profile
 }

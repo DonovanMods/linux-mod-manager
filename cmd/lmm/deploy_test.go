@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
@@ -44,22 +42,4 @@ func TestDeployCmd_NoGame(t *testing.T) {
 	err := cmd.Execute()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no game specified")
-}
-
-func TestLinkMethodName(t *testing.T) {
-	tests := []struct {
-		method   domain.LinkMethod
-		expected string
-	}{
-		{domain.LinkSymlink, "symlink"},
-		{domain.LinkHardlink, "hardlink"},
-		{domain.LinkCopy, "copy"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.expected, func(t *testing.T) {
-			result := linkMethodName(tt.method)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }

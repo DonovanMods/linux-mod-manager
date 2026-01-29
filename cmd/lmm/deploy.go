@@ -72,10 +72,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	profileName := deployProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(deployProfile)
 
 	ctx := context.Background()
 
@@ -169,7 +166,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	methodName := linkMethodName(linkMethod)
+	methodName := linkMethod.String()
 	fmt.Printf("Deploying %d mod(s) using %s...\n\n", len(modsToDeploy), methodName)
 
 	var succeeded, failed int
@@ -247,10 +244,10 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Mark mod as enabled
-		if err := service.DB().SetModEnabled(mod.SourceID, mod.ID, gameID, profileName, true); err != nil {
+		// Mark mod as deployed (files are now in game directory)
+		if err := service.DB().SetModDeployed(mod.SourceID, mod.ID, gameID, profileName, true); err != nil {
 			if verbose {
-				fmt.Printf("  Warning: could not enable mod: %v\n", err)
+				fmt.Printf("  Warning: could not mark as deployed: %v\n", err)
 			}
 		}
 
@@ -270,19 +267,6 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-func linkMethodName(method domain.LinkMethod) string {
-	switch method {
-	case domain.LinkSymlink:
-		return "symlink"
-	case domain.LinkHardlink:
-		return "hardlink"
-	case domain.LinkCopy:
-		return "copy"
-	default:
-		return "unknown"
-	}
 }
 
 // findFilesByIDs finds downloadable files matching the given IDs

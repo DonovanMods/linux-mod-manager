@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
@@ -118,10 +117,7 @@ func runModSetUpdate(cmd *cobra.Command, args []string) error {
 	}
 	defer service.Close()
 
-	profileName := modProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists and get its name
 	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
@@ -177,10 +173,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	profileName := modProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists
 	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
@@ -201,8 +194,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Deploy mod files from cache
-	linker := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker)
+	installer := service.GetInstaller(game)
 
 	if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
 		return fmt.Errorf("failed to deploy mod: %w", err)
@@ -236,10 +228,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	profileName := modProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists
 	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
@@ -255,8 +244,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Undeploy mod files from game directory
-	linker := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker)
+	installer := service.GetInstaller(game)
 
 	if err := installer.Uninstall(ctx, game, &mod.Mod); err != nil {
 		// Warn but continue - files may have been manually removed

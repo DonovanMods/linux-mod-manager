@@ -62,7 +62,8 @@ type InstalledMod struct {
 	ProfileName     string
 	UpdatePolicy    UpdatePolicy
 	InstalledAt     time.Time
-	Enabled         bool
+	Enabled         bool       // User intent: wants this mod active
+	Deployed        bool       // Current state: files are in game directory
 	PreviousVersion string     // Version before last update (for rollback)
 	LinkMethod      LinkMethod // How the mod was deployed (symlink, hardlink, copy)
 	FileIDs         []string   // Source-specific file IDs that were downloaded

@@ -3,11 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 
 	"github.com/spf13/cobra"
 )
@@ -62,10 +61,7 @@ func runPurge(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	profileName := purgeProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(purgeProfile)
 
 	// Get all installed mods for this profile
 	mods, err := service.GetInstalledMods(gameID, profileName)
@@ -97,8 +93,7 @@ func runPurge(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	linker := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker)
+	installer := service.GetInstaller(game)
 
 	var succeeded, failed int
 
@@ -131,10 +126,10 @@ func runPurge(cmd *cobra.Command, args []string) error {
 				}
 			}
 		} else {
-			// Mark mod as disabled since it's no longer deployed
-			if err := service.DB().SetModEnabled(mod.SourceID, mod.ID, gameID, profileName, false); err != nil {
+			// Mark mod as not deployed (files removed from game directory)
+			if err := service.DB().SetModDeployed(mod.SourceID, mod.ID, gameID, profileName, false); err != nil {
 				if verbose {
-					fmt.Printf("  ⚠ %s - failed to disable: %v\n", mod.Name, err)
+					fmt.Printf("  ⚠ %s - failed to mark as not deployed: %v\n", mod.Name, err)
 				}
 			}
 		}
@@ -144,7 +139,7 @@ func runPurge(cmd *cobra.Command, args []string) error {
 	}
 
 	// Final cleanup: remove any empty directories left in mod path
-	cleanupEmptyModDirs(game.ModPath)
+	linker.CleanupEmptyDirs(game.ModPath)
 
 	fmt.Printf("\nPurged: %d mod(s)", succeeded)
 	if failed > 0 {
@@ -159,60 +154,6 @@ func runPurge(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// cleanupEmptyModDirs removes all empty directories under the mod path.
-// This catches any leftover directories from previous mod versions or failed installs.
-func cleanupEmptyModDirs(modPath string) {
-	// Walk the directory tree and collect empty directories
-	var emptyDirs []string
-
-	filepath.Walk(modPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // Skip errors
-		}
-		if !info.IsDir() {
-			return nil // Skip files
-		}
-		if path == modPath {
-			return nil // Don't remove the mod path itself
-		}
-
-		// Check if directory is empty
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return nil
-		}
-		if len(entries) == 0 {
-			emptyDirs = append(emptyDirs, path)
-		}
-		return nil
-	})
-
-	// Remove empty directories (deepest first by removing in reverse order after sorting by length)
-	// Sort by path length descending so deeper paths come first
-	for i := len(emptyDirs) - 1; i >= 0; i-- {
-		os.Remove(emptyDirs[i])
-	}
-
-	// Do a second pass in case removing a directory made its parent empty
-	for {
-		found := false
-		filepath.Walk(modPath, func(path string, info os.FileInfo, err error) error {
-			if err != nil || !info.IsDir() || path == modPath {
-				return nil
-			}
-			entries, err := os.ReadDir(path)
-			if err == nil && len(entries) == 0 {
-				os.Remove(path)
-				found = true
-			}
-			return nil
-		})
-		if !found {
-			break
-		}
-	}
-}
-
 // purgeDeployedMods undeploys all mods for a game/profile and marks them as disabled.
 // This is used by the deploy --purge flag to ensure a clean slate before deploying.
 func purgeDeployedMods(ctx context.Context, service *core.Service, game *domain.Game, profileName string) error {
@@ -225,8 +166,7 @@ func purgeDeployedMods(ctx context.Context, service *core.Service, game *domain.
 		return nil
 	}
 
-	linker := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker)
+	installer := service.GetInstaller(game)
 
 	fmt.Printf("Purging %d mod(s) before deploy...\n", len(mods))
 
@@ -238,16 +178,16 @@ func purgeDeployedMods(ctx context.Context, service *core.Service, game *domain.
 			// Continue anyway - files may have been manually removed
 		}
 
-		// Mark mod as disabled since it's no longer deployed
-		if err := service.DB().SetModEnabled(mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
+		// Mark mod as not deployed (files removed from game directory)
+		if err := service.DB().SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
 			if verbose {
-				fmt.Printf("  ⚠ %s - failed to disable: %v\n", mod.Name, err)
+				fmt.Printf("  ⚠ %s - failed to mark as not deployed: %v\n", mod.Name, err)
 			}
 		}
 	}
 
 	// Clean up any leftover empty directories
-	cleanupEmptyModDirs(game.ModPath)
+	linker.CleanupEmptyDirs(game.ModPath)
 
 	fmt.Println()
 	return nil

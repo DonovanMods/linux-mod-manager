@@ -2,7 +2,7 @@ package db
 
 import "fmt"
 
-const currentVersion = 4
+const currentVersion = 5
 
 func (d *DB) migrate() error {
 	// Create migrations table if it doesn't exist
@@ -28,6 +28,7 @@ func (d *DB) migrate() error {
 		migrateV2,
 		migrateV3,
 		migrateV4,
+		migrateV5,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -113,5 +114,14 @@ func migrateV4(d *DB) error {
 				ON DELETE CASCADE
 		)
 	`)
+	return err
+}
+
+func migrateV5(d *DB) error {
+	// Add deployed column to track whether mod files are currently in game directory
+	// enabled = user intent (wants mod active)
+	// deployed = current state (files are in game directory)
+	// Default 1 for existing mods (assume they're deployed)
+	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN deployed INTEGER DEFAULT 1`)
 	return err
 }

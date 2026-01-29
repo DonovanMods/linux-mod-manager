@@ -115,10 +115,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 
 		// Get installed mods to mark already-installed ones
-		profileName := installProfile
-		if profileName == "" {
-			profileName = "default"
-		}
+		profileName := profileOrDefault(installProfile)
 		installedMods, _ := service.GetInstalledMods(gameID, profileName)
 		installedIDs := make(map[string]bool)
 		for _, im := range installedMods {
@@ -248,10 +245,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine profile name early - needed for checking existing installation
-	profileName := installProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(installProfile)
 
 	// Set up installer
 	linkMethod := service.GetGameLinkMethod(game)
@@ -322,6 +316,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		ProfileName:  profileName,
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
+		Deployed:     true,
 		LinkMethod:   linkMethod,
 		FileIDs:      downloadedFileIDs,
 	}
@@ -389,11 +384,6 @@ func promptSelection(prompt string, defaultChoice, max int) (int, error) {
 
 		return n, nil
 	}
-}
-
-// promptSelectionWithDefault is like promptSelection but shows the default
-func promptSelectionWithDefault(prompt string, defaultChoice, max int) (int, error) {
-	return promptSelection(prompt, defaultChoice, max)
 }
 
 // promptMultiSelection prompts the user to select one or more numbers
@@ -578,6 +568,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			ProfileName:  profileName,
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      true,
+			Deployed:     true,
 			LinkMethod:   linkMethod,
 			FileIDs:      []string{selectedFile.ID},
 		}

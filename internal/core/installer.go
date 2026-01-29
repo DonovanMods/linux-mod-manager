@@ -3,10 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
@@ -67,9 +64,6 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 		return fmt.Errorf("listing cached files: %w", err)
 	}
 
-	// Collect directories to potentially clean up
-	dirsToClean := make(map[string]bool)
-
 	// Undeploy each file
 	for _, file := range files {
 		select {
@@ -83,49 +77,12 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 		if err := i.linker.Undeploy(dstPath); err != nil {
 			return fmt.Errorf("undeploying %s: %w", file, err)
 		}
-
-		// Track all parent directories for cleanup
-		dir := filepath.Dir(file)
-		for dir != "." && dir != "/" {
-			fullDir := filepath.Join(game.ModPath, dir)
-			dirsToClean[fullDir] = true
-			dir = filepath.Dir(dir)
-		}
 	}
 
-	// Clean up empty directories (deepest first)
-	cleanupEmptyDirs(dirsToClean, game.ModPath)
+	// Clean up any empty directories left behind
+	linker.CleanupEmptyDirs(game.ModPath)
 
 	return nil
-}
-
-// cleanupEmptyDirs removes empty directories, starting with the deepest ones.
-// Only removes directories that are under the base path and are empty.
-func cleanupEmptyDirs(dirs map[string]bool, basePath string) {
-	// Sort directories by depth (deepest first)
-	dirList := make([]string, 0, len(dirs))
-	for dir := range dirs {
-		dirList = append(dirList, dir)
-	}
-	sort.Slice(dirList, func(i, j int) bool {
-		// Count path separators to determine depth
-		return strings.Count(dirList[i], string(filepath.Separator)) >
-			strings.Count(dirList[j], string(filepath.Separator))
-	})
-
-	// Try to remove each directory (will fail if not empty, which is fine)
-	for _, dir := range dirList {
-		// Safety check: only remove directories under basePath
-		if !strings.HasPrefix(dir, basePath) {
-			continue
-		}
-		// Don't remove the base path itself
-		if dir == basePath {
-			continue
-		}
-		// os.Remove only removes empty directories
-		os.Remove(dir)
-	}
 }
 
 // IsInstalled checks if a mod is currently deployed

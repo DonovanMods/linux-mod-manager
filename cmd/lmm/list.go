@@ -44,10 +44,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	profileName := listProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(listProfile)
 
 	mods, err := service.GetInstalledMods(gameID, profileName)
 	if err != nil {
@@ -69,20 +66,25 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tVERSION\tSOURCE\tENABLED\tDEPLOY")
-	fmt.Fprintln(w, "--\t----\t-------\t------\t-------\t------")
+	fmt.Fprintln(w, "ID\tNAME\tVERSION\tSOURCE\tENABLED\tDEPLOYED\tMETHOD")
+	fmt.Fprintln(w, "--\t----\t-------\t------\t-------\t--------\t------")
 
 	for _, mod := range mods {
 		enabled := "yes"
 		if !mod.Enabled {
 			enabled = "no"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		deployed := "yes"
+		if !mod.Deployed {
+			deployed = "no"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			mod.ID,
 			truncate(mod.Name, 40),
 			mod.Version,
 			mod.SourceID,
 			enabled,
+			deployed,
 			mod.LinkMethod.String(),
 		)
 	}

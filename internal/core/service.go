@@ -265,6 +265,12 @@ func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
 	return s.config.DefaultLinkMethod
 }
 
+// GetInstaller returns an Installer configured for the given game
+func (s *Service) GetInstaller(game *domain.Game) *Installer {
+	lnk := s.GetLinker(s.GetGameLinkMethod(game))
+	return NewInstaller(s.GetGameCache(game), lnk)
+}
+
 // Cache returns the default cache manager
 func (s *Service) Cache() *cache.Cache {
 	return s.cache

@@ -81,10 +81,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine profile
-	profileName := updateProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(updateProfile)
 
 	ctx := context.Background()
 
@@ -355,10 +352,7 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	profileName := updateProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(updateProfile)
 
 	// Get the installed mod
 	mod, err := service.GetInstalledMod(updateSource, modID, gameID, profileName)

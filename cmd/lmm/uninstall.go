@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-
 	"github.com/spf13/cobra"
 )
 
@@ -59,10 +57,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine profile
-	profileName := uninstallProfile
-	if profileName == "" {
-		profileName = "default"
-	}
+	profileName := profileOrDefault(uninstallProfile)
 
 	if verbose {
 		fmt.Printf("Uninstalling mod %s from %s (profile: %s)...\n", modID, game.Name, profileName)
@@ -77,8 +72,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Undeploy files from game directory
-	linker := service.GetLinker(game.LinkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker)
+	installer := service.GetInstaller(game)
 
 	if err := installer.Uninstall(ctx, game, &installedMod.Mod); err != nil {
 		// Warn but continue - files may have been manually removed

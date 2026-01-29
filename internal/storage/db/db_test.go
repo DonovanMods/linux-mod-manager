@@ -229,3 +229,71 @@ func TestGetInstalledMod_NotFound(t *testing.T) {
 	_, err = database.GetInstalledMod("nexusmods", "nonexistent", "skyrim-se", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
+
+func TestSetModDeployed(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Create a deployed mod
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName: "default",
+		Enabled:     true,
+		Deployed:    true,
+	}
+	err = database.SaveInstalledMod(mod)
+	require.NoError(t, err)
+
+	// Verify initial deployed state
+	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, retrieved.Deployed)
+
+	// Set deployed to false (purge scenario)
+	err = database.SetModDeployed("nexusmods", "12345", "skyrim-se", "default", false)
+	require.NoError(t, err)
+
+	// Verify deployed is now false but enabled unchanged
+	retrieved, err = database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.False(t, retrieved.Deployed)
+	assert.True(t, retrieved.Enabled) // Enabled should remain true
+
+	// Set deployed back to true (deploy scenario)
+	err = database.SetModDeployed("nexusmods", "12345", "skyrim-se", "default", true)
+	require.NoError(t, err)
+
+	retrieved, err = database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, retrieved.Deployed)
+}
+
+func TestSetModDeployed_NotFound(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	err = database.SetModDeployed("nexusmods", "nonexistent", "skyrim-se", "default", false)
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+}
+
+func TestMigrationV5_DeployedColumn(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Verify deployed column exists by querying it
+	var deployed interface{}
+	err = database.QueryRow(`
+		SELECT deployed FROM installed_mods LIMIT 1
+	`).Scan(&deployed)
+	// This should not error on column not found - only on no rows
+	assert.ErrorContains(t, err, "no rows")
+}
