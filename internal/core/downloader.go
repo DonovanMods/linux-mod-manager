@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +20,13 @@ type DownloadProgress struct {
 
 // ProgressFunc is called periodically during download with progress updates
 type ProgressFunc func(DownloadProgress)
+
+// DownloadResult contains the outcome of a download
+type DownloadResult struct {
+	Path     string // Final file path
+	Size     int64  // Bytes downloaded
+	Checksum string // MD5 hash of downloaded file
+}
 
 // Downloader handles HTTP file downloads with progress tracking
 type Downloader struct {
@@ -37,36 +46,36 @@ func NewDownloader(httpClient *http.Client) *Downloader {
 
 // Download fetches a file from the URL and saves it to destPath
 // Progress updates are sent to the optional progressFn callback
-func (d *Downloader) Download(ctx context.Context, url, destPath string, progressFn ProgressFunc) error {
+func (d *Downloader) Download(ctx context.Context, url, destPath string, progressFn ProgressFunc) (*DownloadResult, error) {
 	// Create the request
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
 	// Execute the request
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
+		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP error: %d %s", resp.StatusCode, resp.Status)
+		return nil, fmt.Errorf("HTTP error: %d %s", resp.StatusCode, resp.Status)
 	}
 
 	// Create destination directory if needed
 	dir := filepath.Dir(destPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating directory: %w", err)
+		return nil, fmt.Errorf("creating directory: %w", err)
 	}
 
 	// Create a temporary file first for atomic write
 	tempPath := destPath + ".tmp"
 	file, err := os.Create(tempPath)
 	if err != nil {
-		return fmt.Errorf("creating file: %w", err)
+		return nil, fmt.Errorf("creating file: %w", err)
 	}
 	defer func() {
 		file.Close()
@@ -76,6 +85,9 @@ func (d *Downloader) Download(ctx context.Context, url, destPath string, progres
 	// Get content length if available
 	totalBytes := resp.ContentLength
 
+	// Create MD5 hasher
+	hasher := md5.New()
+
 	// Create a progress tracking reader
 	reader := &progressReader{
 		reader:     resp.Body,
@@ -83,23 +95,30 @@ func (d *Downloader) Download(ctx context.Context, url, destPath string, progres
 		progressFn: progressFn,
 	}
 
+	// TeeReader writes to both file and hasher
+	teeReader := io.TeeReader(reader, hasher)
+
 	// Copy the data
-	_, err = io.Copy(file, reader)
+	written, err := io.Copy(file, teeReader)
 	if err != nil {
-		return fmt.Errorf("downloading file: %w", err)
+		return nil, fmt.Errorf("downloading file: %w", err)
 	}
 
 	// Close the file before renaming
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("closing file: %w", err)
+		return nil, fmt.Errorf("closing file: %w", err)
 	}
 
 	// Atomically move temp file to final destination
 	if err := os.Rename(tempPath, destPath); err != nil {
-		return fmt.Errorf("renaming file: %w", err)
+		return nil, fmt.Errorf("renaming file: %w", err)
 	}
 
-	return nil
+	return &DownloadResult{
+		Path:     destPath,
+		Size:     written,
+		Checksum: hex.EncodeToString(hasher.Sum(nil)),
+	}, nil
 }
 
 // progressReader wraps an io.Reader to track download progress

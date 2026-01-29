@@ -178,7 +178,7 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 	// Download the file
 	archivePath := filepath.Join(tempDir, file.FileName)
 	downloader := NewDownloader(nil)
-	if err := downloader.Download(ctx, url, archivePath, progressFn); err != nil {
+	if _, err := downloader.Download(ctx, url, archivePath, progressFn); err != nil {
 		return 0, fmt.Errorf("downloading mod: %w", err)
 	}
 

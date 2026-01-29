@@ -15,6 +15,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDownloader_Download_ReturnsChecksum(t *testing.T) {
+	content := []byte("test file content for checksum")
+	// MD5 of "test file content for checksum" = 658a93464f955290e4b8ecd8fc1d3df7
+	expectedChecksum := "658a93464f955290e4b8ecd8fc1d3df7"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(content)
+	}))
+	defer server.Close()
+
+	downloader := core.NewDownloader(nil)
+	destPath := filepath.Join(t.TempDir(), "test.txt")
+
+	result, err := downloader.Download(context.Background(), server.URL, destPath, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, destPath, result.Path)
+	assert.Equal(t, int64(len(content)), result.Size)
+	assert.Equal(t, expectedChecksum, result.Checksum)
+	assert.Len(t, result.Checksum, 32) // MD5 produces 32 hex chars
+}
+
 func TestDownloader_Download(t *testing.T) {
 	// Create test content
 	content := []byte("test file content")
@@ -33,7 +55,7 @@ func TestDownloader_Download(t *testing.T) {
 		progressCalls = append(progressCalls, p)
 	}
 
-	err := downloader.Download(context.Background(), server.URL, destPath, progressFn)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, progressFn)
 	require.NoError(t, err)
 
 	// Verify file was created
@@ -71,7 +93,7 @@ func TestDownloader_Download_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	err := downloader.Download(ctx, server.URL, destPath, nil)
+	_, err := downloader.Download(ctx, server.URL, destPath, nil)
 	assert.Error(t, err)
 }
 
@@ -84,7 +106,7 @@ func TestDownloader_Download_ServerError(t *testing.T) {
 	downloader := core.NewDownloader(nil)
 	destPath := filepath.Join(t.TempDir(), "test.txt")
 
-	err := downloader.Download(context.Background(), server.URL, destPath, nil)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "500")
 }
@@ -98,7 +120,7 @@ func TestDownloader_Download_NotFound(t *testing.T) {
 	downloader := core.NewDownloader(nil)
 	destPath := filepath.Join(t.TempDir(), "test.txt")
 
-	err := downloader.Download(context.Background(), server.URL, destPath, nil)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
 }
@@ -114,7 +136,7 @@ func TestDownloader_Download_CreatesDirectories(t *testing.T) {
 	downloader := core.NewDownloader(nil)
 	destPath := filepath.Join(t.TempDir(), "nested", "dir", "test.txt")
 
-	err := downloader.Download(context.Background(), server.URL, destPath, nil)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(destPath)
@@ -143,7 +165,7 @@ func TestDownloader_Download_ProgressTracking(t *testing.T) {
 		lastProgress = p
 	}
 
-	err := downloader.Download(context.Background(), server.URL, destPath, progressFn)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, progressFn)
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(1000), lastProgress.TotalBytes)
@@ -168,7 +190,7 @@ func TestDownloader_Download_UnknownContentLength(t *testing.T) {
 		progressCalls = append(progressCalls, p)
 	}
 
-	err := downloader.Download(context.Background(), server.URL, destPath, progressFn)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, progressFn)
 	require.NoError(t, err)
 
 	// Verify file was created
@@ -197,7 +219,7 @@ func TestDownloader_Download_CustomHTTPClient(t *testing.T) {
 	downloader := core.NewDownloader(customClient)
 	destPath := filepath.Join(t.TempDir(), "test.txt")
 
-	err := downloader.Download(context.Background(), server.URL, destPath, nil)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(destPath)
@@ -259,7 +281,7 @@ func TestDownloader_Download_ReaderError(t *testing.T) {
 	downloader := core.NewDownloader(nil)
 	destPath := filepath.Join(t.TempDir(), "test.txt")
 
-	err := downloader.Download(context.Background(), server.URL, destPath, nil)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, nil)
 	// Should still work (partial download) or error - depends on implementation
 	// The key is that it doesn't panic
 	_ = err
@@ -291,7 +313,7 @@ func TestDownloader_Download_WriteTempFirst(t *testing.T) {
 	err := os.WriteFile(destPath, []byte("old content"), 0644)
 	require.NoError(t, err)
 
-	err = downloader.Download(context.Background(), server.URL, destPath, nil)
+	_, err = downloader.Download(context.Background(), server.URL, destPath, nil)
 	require.NoError(t, err)
 
 	// Verify new content replaced old
@@ -319,7 +341,7 @@ func BenchmarkDownloader_Download(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		destPath := filepath.Join(tempDir, "test"+string(rune(i))+".bin")
-		downloader.Download(context.Background(), server.URL, destPath, nil)
+		_, _ = downloader.Download(context.Background(), server.URL, destPath, nil)
 	}
 }
 
