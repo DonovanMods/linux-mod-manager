@@ -28,6 +28,20 @@ type depFetcher interface {
 	GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error)
 }
 
+// serviceDepFetcher wraps core.Service to implement depFetcher
+type serviceDepFetcher struct {
+	svc      *core.Service
+	sourceID string
+}
+
+func (s *serviceDepFetcher) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
+	return s.svc.GetMod(ctx, s.sourceID, gameID, modID)
+}
+
+func (s *serviceDepFetcher) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
+	return s.svc.GetDependencies(ctx, s.sourceID, mod)
+}
+
 var (
 	installSource       string
 	installProfile      string

@@ -375,3 +375,12 @@ func (s *Service) SetModFileIDs(sourceID, modID, gameID, profileName string, fil
 func (s *Service) GetInstalledMod(sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
 	return s.db.GetInstalledMod(sourceID, modID, gameID, profileName)
 }
+
+// GetDependencies returns dependencies for a mod from the specified source
+func (s *Service) GetDependencies(ctx context.Context, sourceID string, mod *domain.Mod) ([]domain.ModReference, error) {
+	src, err := s.registry.Get(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	return src.GetDependencies(ctx, mod)
+}
