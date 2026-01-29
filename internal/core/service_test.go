@@ -524,15 +524,17 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 	ctx := context.Background()
 
 	// Download first file
-	count1, err := svc.DownloadMod(ctx, "test", game, mod, file1, nil)
+	result1, err := svc.DownloadMod(ctx, "test", game, mod, file1, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 1, count1, "First download should extract 1 file")
+	assert.Equal(t, 1, result1.FilesExtracted, "First download should extract 1 file")
+	assert.NotEmpty(t, result1.Checksum, "First download should have checksum")
 
 	// Download second file - previously bugged: returned early because cache dir existed
-	count2, err := svc.DownloadMod(ctx, "test", game, mod, file2, nil)
+	result2, err := svc.DownloadMod(ctx, "test", game, mod, file2, nil)
 	require.NoError(t, err)
 	// Returns total files in cache after extraction (1 from first + 1 from second = 2)
-	assert.Equal(t, 2, count2, "After second download, cache should have 2 files total")
+	assert.Equal(t, 2, result2.FilesExtracted, "After second download, cache should have 2 files total")
+	assert.NotEmpty(t, result2.Checksum, "Second download should have checksum")
 
 	// Verify both files are in the cache
 	gameCache := svc.GetGameCache(game)

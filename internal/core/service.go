@@ -21,6 +21,12 @@ type ServiceConfig struct {
 	CacheDir  string // Directory for mod file cache
 }
 
+// DownloadModResult contains the outcome of downloading a mod file
+type DownloadModResult struct {
+	FilesExtracted int    // Number of files extracted
+	Checksum       string // MD5 hash of downloaded archive
+}
+
 // Service is the main orchestrator for mod management operations
 type Service struct {
 	config   *config.Config
@@ -151,9 +157,9 @@ func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *doma
 }
 
 // DownloadMod downloads a mod file, extracts it, and stores it in the cache
-// Returns the number of files extracted from this specific download.
+// Returns the download result including files extracted and checksum.
 // Multiple files from the same mod can be downloaded to the same cache location.
-func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (int, error) {
+func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (*DownloadModResult, error) {
 	// Get game-specific cache
 	gameCache := s.GetGameCache(game)
 
@@ -165,21 +171,22 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 	// Get download URL
 	url, err := s.GetDownloadURL(ctx, sourceID, mod, file.ID)
 	if err != nil {
-		return 0, fmt.Errorf("getting download URL: %w", err)
+		return nil, fmt.Errorf("getting download URL: %w", err)
 	}
 
 	// Create temp directory for download
 	tempDir, err := os.MkdirTemp("", "lmm-download-*")
 	if err != nil {
-		return 0, fmt.Errorf("creating temp directory: %w", err)
+		return nil, fmt.Errorf("creating temp directory: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
 
 	// Download the file
 	archivePath := filepath.Join(tempDir, file.FileName)
 	downloader := NewDownloader(nil)
-	if _, err := downloader.Download(ctx, url, archivePath, progressFn); err != nil {
-		return 0, fmt.Errorf("downloading mod: %w", err)
+	downloadResult, err := downloader.Download(ctx, url, archivePath, progressFn)
+	if err != nil {
+		return nil, fmt.Errorf("downloading mod: %w", err)
 	}
 
 	// Extract to cache location
@@ -188,30 +195,36 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 	if !extractor.CanExtract(file.FileName) {
 		// Not an archive - just copy to cache
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
-			return 0, fmt.Errorf("creating cache directory: %w", err)
+			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
 		destPath := filepath.Join(cachePath, file.FileName)
 		content, err := os.ReadFile(archivePath)
 		if err != nil {
-			return 0, fmt.Errorf("reading downloaded file: %w", err)
+			return nil, fmt.Errorf("reading downloaded file: %w", err)
 		}
 		if err := os.WriteFile(destPath, content, 0644); err != nil {
-			return 0, fmt.Errorf("writing to cache: %w", err)
+			return nil, fmt.Errorf("writing to cache: %w", err)
 		}
-		return 1, nil
+		return &DownloadModResult{
+			FilesExtracted: 1,
+			Checksum:       downloadResult.Checksum,
+		}, nil
 	}
 
 	if err := extractor.Extract(archivePath, cachePath); err != nil {
-		return 0, fmt.Errorf("extracting mod: %w", err)
+		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
 
 	// Count extracted files
 	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	return len(files), nil
+	return &DownloadModResult{
+		FilesExtracted: len(files),
+		Checksum:       downloadResult.Checksum,
+	}, nil
 }
 
 // GetGame retrieves a game by ID

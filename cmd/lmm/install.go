@@ -291,13 +291,13 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		fileCount, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
+		downloadResult, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
 		if err != nil {
 			fmt.Println() // newline after progress
 			return fmt.Errorf("download failed: %w", err)
 		}
 		fmt.Println() // newline after progress
-		totalFileCount += fileCount
+		totalFileCount += downloadResult.FilesExtracted
 		downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
 	}
 
@@ -547,7 +547,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			}
 		}
 
-		fileCount, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
+		downloadResult, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
 		if err != nil {
 			fmt.Println()
 			fmt.Printf("  Error: download failed: %v\n", err)
@@ -592,7 +592,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 			}
 		}
 
-		fmt.Printf("  ✓ Installed (%d files)\n", fileCount)
+		fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
 		installed = append(installed, mod.Name)
 	}
 
