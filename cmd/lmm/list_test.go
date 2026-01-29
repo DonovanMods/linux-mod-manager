@@ -31,6 +31,7 @@ func TestListCmd_Structure(t *testing.T) {
 
 	// Check flags
 	assert.NotNil(t, listCmd.Flags().Lookup("profile"))
+	assert.NotNil(t, listCmd.Flags().Lookup("profiles"))
 }
 
 func TestStatusCmd_Structure(t *testing.T) {

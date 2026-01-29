@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -123,6 +124,33 @@ func TestDownloader_Download_NotFound(t *testing.T) {
 	_, err := downloader.Download(context.Background(), server.URL, destPath, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
+}
+
+func TestDownloader_Download_RetriesOnTransientError(t *testing.T) {
+	content := []byte("ok after retries")
+	attempt := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt++
+		if attempt < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		w.Write(content)
+	}))
+	defer server.Close()
+
+	downloader := core.NewDownloader(nil)
+	destPath := filepath.Join(t.TempDir(), "test.txt")
+
+	result, err := downloader.Download(context.Background(), server.URL, destPath, nil)
+	require.NoError(t, err)
+	assert.Equal(t, destPath, result.Path)
+	assert.Equal(t, int64(len(content)), result.Size)
+	data, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	assert.Equal(t, content, data)
+	assert.Equal(t, 3, attempt)
 }
 
 func TestDownloader_Download_CreatesDirectories(t *testing.T) {

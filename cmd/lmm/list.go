@@ -7,10 +7,12 @@ import (
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/spf13/cobra"
 )
 
 var listProfile string
+var listProfiles bool
 
 type listJSONOutput struct {
 	GameID  string        `json:"game_id"`
@@ -33,14 +35,18 @@ var listCmd = &cobra.Command{
 	Short: "List installed mods",
 	Long: `List all mods installed in the specified game and profile.
 
+Use --profiles to list profile names for the game instead of mods.
+
 Examples:
   lmm list --game skyrim-se
-  lmm list --game skyrim-se --profile survival`,
+  lmm list --game skyrim-se --profile survival
+  lmm list --game skyrim-se --profiles`,
 	RunE: runList,
 }
 
 func init() {
 	listCmd.Flags().StringVarP(&listProfile, "profile", "p", "", "profile to list (default: active profile)")
+	listCmd.Flags().BoolVar(&listProfiles, "profiles", false, "list profile names for the game instead of mods")
 
 	rootCmd.AddCommand(listCmd)
 }
@@ -56,10 +62,13 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	defer service.Close()
 
-	// Verify game exists
 	game, err := service.GetGame(gameID)
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	if listProfiles {
+		return runListProfiles(cmd, service, gameID, game.Name)
 	}
 
 	profileName := profileOrDefault(listProfile)
@@ -135,5 +144,42 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 	w.Flush()
 
+	return nil
+}
+
+func runListProfiles(cmd *cobra.Command, service interface{ ConfigDir() string }, gameID, gameName string) error {
+	names, err := config.ListProfiles(service.ConfigDir(), gameID)
+	if err != nil {
+		return fmt.Errorf("listing profiles: %w", err)
+	}
+
+	if jsonOutput {
+		type listProfilesJSON struct {
+			GameID   string   `json:"game_id"`
+			Profiles []string `json:"profiles"`
+		}
+		out := listProfilesJSON{GameID: gameID, Profiles: names}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			return fmt.Errorf("encoding json: %w", err)
+		}
+		return nil
+	}
+
+	if len(names) == 0 {
+		fmt.Printf("No profiles for %s.\n", gameName)
+		return nil
+	}
+
+	fmt.Printf("Profiles for %s (%s):\n", gameName, gameID)
+	for _, name := range names {
+		prof, err := config.LoadProfile(service.ConfigDir(), gameID, name)
+		if err == nil && prof.IsDefault {
+			fmt.Printf("  %s (default)\n", name)
+		} else {
+			fmt.Printf("  %s\n", name)
+		}
+	}
 	return nil
 }

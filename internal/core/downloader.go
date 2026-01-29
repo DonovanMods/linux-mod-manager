@@ -4,11 +4,20 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
+)
+
+const (
+	defaultMaxAttempts   = 3
+	defaultInitialBackoff = time.Second
+	defaultBackoffMultiplier = 2
 )
 
 // DownloadProgress represents the current state of a download
@@ -44,34 +53,104 @@ func NewDownloader(httpClient *http.Client) *Downloader {
 	}
 }
 
-// Download fetches a file from the URL and saves it to destPath
-// Progress updates are sent to the optional progressFn callback
+// isRetryableHTTP returns true for status codes that warrant a retry (transient/server overload).
+func isRetryableHTTP(statusCode int) bool {
+	return statusCode == http.StatusRequestTimeout || statusCode == http.StatusTooManyRequests ||
+		(statusCode >= 500 && statusCode < 600)
+}
+
+// isRetryableNet returns true for network errors that are typically transient.
+func isRetryableNet(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Do not retry on context cancellation or deadline
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var netErr net.Error
+	if ok := errors.As(err, &netErr); ok && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
+	// Retry on generic connection errors (e.g. connection refused, reset)
+	return true
+}
+
+// Download fetches a file from the URL and saves it to destPath, with retries on transient
+// failures (exponential backoff). Progress updates are sent to the optional progressFn callback.
 func (d *Downloader) Download(ctx context.Context, url, destPath string, progressFn ProgressFunc) (*DownloadResult, error) {
-	// Create the request
+	var lastErr error
+	backoff := defaultInitialBackoff
+
+	for attempt := 1; attempt <= defaultMaxAttempts; attempt++ {
+		result, err := d.downloadOnce(ctx, url, destPath, progressFn)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+
+		if attempt == defaultMaxAttempts {
+			break
+		}
+
+		// Check if error is retryable (including HTTP status from our wrapped error)
+		var httpErr *httpStatusError
+		if errors.As(err, &httpErr) {
+			if !isRetryableHTTP(httpErr.code) {
+				return nil, err
+			}
+		} else if ctx.Err() != nil || !isRetryableNet(err) {
+			return nil, err
+		}
+
+		// Sleep with backoff; respect context
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("download: %w", ctx.Err())
+		case <-timer.C:
+		}
+		backoff *= defaultBackoffMultiplier
+	}
+
+	return nil, lastErr
+}
+
+// httpStatusError carries an HTTP status code for retry decisions.
+type httpStatusError struct {
+	code int
+	msg  string
+}
+
+func (e *httpStatusError) Error() string {
+	return e.msg
+}
+
+// downloadOnce performs a single download attempt (no retries).
+func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, progressFn ProgressFunc) (*DownloadResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	// Execute the request
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP error: %d %s", resp.StatusCode, resp.Status)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		err := &httpStatusError{code: resp.StatusCode, msg: fmt.Sprintf("HTTP error: %d %s", resp.StatusCode, resp.Status)}
+		return nil, err
 	}
 
-	// Create destination directory if needed
 	dir := filepath.Dir(destPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("creating directory: %w", err)
 	}
 
-	// Create a temporary file first for atomic write
 	tempPath := destPath + ".tmp"
 	file, err := os.Create(tempPath)
 	if err != nil {
@@ -85,38 +164,28 @@ func (d *Downloader) Download(ctx context.Context, url, destPath string, progres
 		}
 	}()
 
-	// Get content length if available
 	totalBytes := resp.ContentLength
-
-	// Create MD5 hasher
 	hasher := md5.New()
-
-	// Create a progress tracking reader
 	reader := &progressReader{
 		reader:     resp.Body,
 		totalBytes: totalBytes,
 		progressFn: progressFn,
 	}
-
-	// TeeReader writes to both file and hasher
 	teeReader := io.TeeReader(reader, hasher)
 
-	// Copy the data
 	written, err := io.Copy(file, teeReader)
 	if err != nil {
 		return nil, fmt.Errorf("downloading file: %w", err)
 	}
 
-	// Close the file before renaming
 	if err := file.Close(); err != nil {
 		return nil, fmt.Errorf("closing file: %w", err)
 	}
 
-	// Atomically move temp file to final destination
 	if err := os.Rename(tempPath, destPath); err != nil {
 		return nil, fmt.Errorf("renaming file: %w", err)
 	}
-	removeTemp = false // success: temp was renamed, do not remove
+	removeTemp = false
 
 	return &DownloadResult{
 		Path:     destPath,
