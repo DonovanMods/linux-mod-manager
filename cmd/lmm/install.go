@@ -197,6 +197,55 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\nSelected: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
 
+	// Determine profile name early
+	profileName := profileOrDefault(installProfile)
+
+	// Resolve dependencies (unless --no-deps or local mod)
+	var modsToInstall []*domain.Mod
+	if !installNoDeps && mod.SourceID != domain.SourceLocal {
+		fmt.Println("\nResolving dependencies...")
+
+		// Get already-installed mods
+		installedMods, _ := service.GetInstalledMods(gameID, profileName)
+		installedIDs := make(map[string]bool)
+		for _, im := range installedMods {
+			installedIDs[im.SourceID+":"+im.ID] = true
+		}
+
+		// Resolve dependencies
+		fetcher := &serviceDepFetcher{svc: service, sourceID: installSource}
+		plan, err := resolveDependencies(ctx, fetcher, mod, installedIDs)
+		if err != nil {
+			return fmt.Errorf("resolving dependencies: %w", err)
+		}
+
+		// If there are dependencies to install, show plan and confirm
+		if len(plan.mods) > 1 || len(plan.missing) > 0 {
+			showInstallPlan(plan, mod.ID)
+
+			if !installYes {
+				fmt.Printf("\nInstall %d mod(s)? [Y/n]: ", len(plan.mods))
+				reader := bufio.NewReader(os.Stdin)
+				input, _ := reader.ReadString('\n')
+				input = strings.TrimSpace(strings.ToLower(input))
+				if input == "n" || input == "no" {
+					return fmt.Errorf("installation cancelled")
+				}
+			}
+		}
+
+		modsToInstall = plan.mods
+	} else {
+		modsToInstall = []*domain.Mod{mod}
+	}
+
+	// If multiple mods to install (target + deps), use batch install
+	if len(modsToInstall) > 1 {
+		return installModsWithDeps(ctx, service, game, modsToInstall, profileName)
+	}
+
+	// Single mod install - continue with existing flow
+
 	// Get available files
 	files, err := service.GetModFiles(ctx, installSource, mod)
 	if err != nil {
@@ -275,9 +324,6 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  - %s\n", f.FileName)
 		}
 	}
-
-	// Determine profile name early - needed for checking existing installation
-	profileName := profileOrDefault(installProfile)
 
 	// Set up installer
 	linkMethod := service.GetGameLinkMethod(game)
