@@ -25,6 +25,7 @@ var (
 	installYes          bool
 	installShowArchived bool
 	skipVerify          bool
+	installForce        bool
 )
 
 var installCmd = &cobra.Command{
@@ -57,6 +58,7 @@ func init() {
 	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-select first/primary option (no prompts)")
 	installCmd.Flags().BoolVar(&installShowArchived, "show-archived", false, "show archived/old files")
 	installCmd.Flags().BoolVar(&skipVerify, "skip-verify", false, "skip checksum storage and display")
+	installCmd.Flags().BoolVarP(&installForce, "force", "f", false, "install without conflict prompts")
 
 	rootCmd.AddCommand(installCmd)
 }
@@ -316,6 +318,55 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("\nExtracting to cache...")
+
+	// Check for conflicts (unless --force)
+	if !installForce {
+		conflicts, err := installer.GetConflicts(ctx, game, mod, profileName)
+		if err != nil {
+			if verbose {
+				fmt.Printf("Warning: could not check conflicts: %v\n", err)
+			}
+		} else if len(conflicts) > 0 {
+			fmt.Printf("\n⚠ File conflicts detected:\n")
+
+			// Group conflicts by mod
+			modConflicts := make(map[string][]string) // "sourceID:modID" -> []paths
+			for _, c := range conflicts {
+				key := c.CurrentSourceID + ":" + c.CurrentModID
+				modConflicts[key] = append(modConflicts[key], c.RelativePath)
+			}
+
+			for key, paths := range modConflicts {
+				parts := strings.SplitN(key, ":", 2)
+				sourceID, modID := parts[0], parts[1]
+
+				// Try to get mod name
+				conflictMod, _ := service.GetInstalledMod(sourceID, modID, gameID, profileName)
+				modName := modID
+				if conflictMod != nil {
+					modName = conflictMod.Name
+				}
+
+				fmt.Printf("  From %s (%s):\n", modName, modID)
+				maxShow := 5
+				for i, p := range paths {
+					if i >= maxShow {
+						fmt.Printf("    ... and %d more\n", len(paths)-maxShow)
+						break
+					}
+					fmt.Printf("    - %s\n", p)
+				}
+			}
+
+			fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
+			reader := bufio.NewReader(os.Stdin)
+			input, _ := reader.ReadString('\n')
+			input = strings.TrimSpace(strings.ToLower(input))
+			if input != "y" && input != "yes" {
+				return fmt.Errorf("installation cancelled")
+			}
+		}
+	}
 
 	// Deploy to game directory
 	fmt.Println("Deploying to game directory...")
