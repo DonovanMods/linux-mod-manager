@@ -11,6 +11,17 @@ import (
 func TestModCmd_Structure(t *testing.T) {
 	assert.Equal(t, "mod", modCmd.Use)
 	assert.NotEmpty(t, modCmd.Short)
+	assert.NotNil(t, modCmd.Commands())
+	// mod show subcommand exists
+	var showFound bool
+	for _, c := range modCmd.Commands() {
+		if c.Name() == "show" {
+			showFound = true
+			assert.Equal(t, "show <mod-id>", c.Use)
+			break
+		}
+	}
+	assert.True(t, showFound, "mod show subcommand should exist")
 }
 
 func TestModSetUpdateCmd_Structure(t *testing.T) {

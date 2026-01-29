@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
@@ -86,6 +89,20 @@ Examples:
 	RunE: runModFiles,
 }
 
+var modShowCmd = &cobra.Command{
+	Use:   "show <mod-id>",
+	Short: "Show mod details",
+	Long: `Fetch and display mod details from the source (description, summary, image URL).
+
+Does not require the mod to be installed. Use --json for scriptable output.
+
+Examples:
+  lmm mod show 12345 --game skyrim-se
+  lmm mod show 12345 --game skyrim-se --json`,
+	Args: cobra.ExactArgs(1),
+	RunE: runModShow,
+}
+
 func init() {
 	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "nexusmods", "mod source")
 	modCmd.PersistentFlags().StringVarP(&modProfile, "profile", "p", "", "profile (default: active profile)")
@@ -98,6 +115,7 @@ func init() {
 	modCmd.AddCommand(modEnableCmd)
 	modCmd.AddCommand(modDisableCmd)
 	modCmd.AddCommand(modFilesCmd)
+	modCmd.AddCommand(modShowCmd)
 	rootCmd.AddCommand(modCmd)
 }
 
@@ -316,6 +334,86 @@ func runModFiles(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s\n", f)
 	}
 	fmt.Printf("\nTotal: %d file(s)\n", len(files))
+
+	return nil
+}
+
+func runModShow(cmd *cobra.Command, args []string) error {
+	if err := requireGame(cmd); err != nil {
+		return err
+	}
+
+	modID := args[0]
+
+	svc, err := initService()
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer svc.Close()
+
+	ctx := context.Background()
+	mod, err := svc.GetMod(ctx, modSource, gameID, modID)
+	if err != nil {
+		return fmt.Errorf("mod not found: %w", err)
+	}
+
+	if jsonOutput {
+		type modShowJSON struct {
+			ID           string `json:"id"`
+			Name         string `json:"name"`
+			Version      string `json:"version"`
+			Author       string `json:"author"`
+			Summary      string `json:"summary"`
+			Description  string `json:"description"`
+			PictureURL   string `json:"picture_url,omitempty"`
+			Category     string `json:"category"`
+			Endorsements int64  `json:"endorsements"`
+		}
+		out := modShowJSON{
+			ID:           mod.ID,
+			Name:         mod.Name,
+			Version:      mod.Version,
+			Author:       mod.Author,
+			Summary:      mod.Summary,
+			Description:  mod.Description,
+			PictureURL:   mod.PictureURL,
+			Category:     mod.Category,
+			Endorsements: mod.Endorsements,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+
+	// Human-readable output
+	fmt.Printf("%s\n", strings.Repeat("=", 60))
+	fmt.Printf("%s\n", mod.Name)
+	fmt.Printf("%s\n", strings.Repeat("=", 60))
+	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, mod.Version, mod.Author)
+	if mod.Category != "" {
+		fmt.Printf("Category: %s  Endorsements: %d\n", mod.Category, mod.Endorsements)
+	}
+	if mod.PictureURL != "" {
+		fmt.Printf("Image: %s\n", mod.PictureURL)
+	}
+	fmt.Println()
+
+	if mod.Summary != "" {
+		fmt.Println("Summary:")
+		fmt.Println(strings.TrimSpace(mod.Summary))
+		fmt.Println()
+	}
+
+	if mod.Description != "" {
+		fmt.Println("Description:")
+		// Limit length for terminal; description can be long HTML
+		desc := strings.TrimSpace(mod.Description)
+		const maxDesc = 2000
+		if len(desc) > maxDesc {
+			desc = desc[:maxDesc] + "\n... (truncated; view on site for full description)"
+		}
+		fmt.Println(desc)
+	}
 
 	return nil
 }

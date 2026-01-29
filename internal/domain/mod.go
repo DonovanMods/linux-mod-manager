@@ -54,6 +54,7 @@ type Mod struct {
 	Category     string
 	Downloads    int64
 	Endorsements int64
+	PictureURL   string // Main image URL (e.g. NexusMods picture_url)
 	Files        []ModFile
 	Dependencies []ModReference
 	UpdatedAt    time.Time
