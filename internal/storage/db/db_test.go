@@ -311,3 +311,83 @@ func TestMigrationV6_ChecksumColumn(t *testing.T) {
 	// This should not error on column not found - only on no rows
 	assert.ErrorContains(t, err, "no rows")
 }
+
+func TestSaveFileChecksum(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Create a mod first
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName: "default",
+		FileIDs:     []string{"67890"},
+	}
+	err = database.SaveInstalledMod(mod)
+	require.NoError(t, err)
+
+	// Save checksum
+	err = database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "67890", "a1b2c3d4e5f6")
+	require.NoError(t, err)
+
+	// Retrieve checksum
+	checksum, err := database.GetFileChecksum("nexusmods", "12345", "skyrim-se", "default", "67890")
+	require.NoError(t, err)
+	assert.Equal(t, "a1b2c3d4e5f6", checksum)
+}
+
+func TestGetFileChecksum_NotFound(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	checksum, err := database.GetFileChecksum("nexusmods", "nonexistent", "skyrim-se", "default", "99999")
+	require.NoError(t, err)
+	assert.Equal(t, "", checksum) // Empty string for missing checksum
+}
+
+func TestGetFilesWithChecksums(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	// Create a mod with multiple files
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName: "default",
+		FileIDs:     []string{"111", "222"},
+	}
+	err = database.SaveInstalledMod(mod)
+	require.NoError(t, err)
+
+	// Save checksums
+	err = database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "111", "hash111")
+	require.NoError(t, err)
+	err = database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "222", "hash222")
+	require.NoError(t, err)
+
+	// Retrieve all files with checksums
+	files, err := database.GetFilesWithChecksums("skyrim-se", "default")
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+
+	// Verify both files have checksums
+	checksumMap := make(map[string]string)
+	for _, f := range files {
+		checksumMap[f.FileID] = f.Checksum
+	}
+	assert.Equal(t, "hash111", checksumMap["111"])
+	assert.Equal(t, "hash222", checksumMap["222"])
+}

@@ -293,6 +293,74 @@ func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error 
 	return nil
 }
 
+// FileWithChecksum represents a file record with its checksum
+type FileWithChecksum struct {
+	SourceID string
+	ModID    string
+	FileID   string
+	Checksum string
+}
+
+// SaveFileChecksum stores the MD5 checksum for a downloaded file
+func (d *DB) SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, checksum string) error {
+	_, err := d.Exec(`
+		UPDATE installed_mod_files SET checksum = ?
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ? AND file_id = ?
+	`, checksum, sourceID, modID, gameID, profileName, fileID)
+	if err != nil {
+		return fmt.Errorf("saving file checksum: %w", err)
+	}
+	return nil
+}
+
+// GetFileChecksum retrieves the checksum for a specific file
+// Returns empty string if file not found or has no checksum
+func (d *DB) GetFileChecksum(sourceID, modID, gameID, profileName, fileID string) (string, error) {
+	var checksum *string
+	err := d.QueryRow(`
+		SELECT checksum FROM installed_mod_files
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ? AND file_id = ?
+	`, sourceID, modID, gameID, profileName, fileID).Scan(&checksum)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("getting file checksum: %w", err)
+	}
+	if checksum == nil {
+		return "", nil
+	}
+	return *checksum, nil
+}
+
+// GetFilesWithChecksums returns all files for a game/profile with their checksums
+func (d *DB) GetFilesWithChecksums(gameID, profileName string) ([]FileWithChecksum, error) {
+	rows, err := d.Query(`
+		SELECT source_id, mod_id, file_id, checksum
+		FROM installed_mod_files
+		WHERE game_id = ? AND profile_name = ?
+	`, gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("querying files with checksums: %w", err)
+	}
+	defer rows.Close()
+
+	var files []FileWithChecksum
+	for rows.Next() {
+		var f FileWithChecksum
+		var checksum *string
+		if err := rows.Scan(&f.SourceID, &f.ModID, &f.FileID, &checksum); err != nil {
+			return nil, fmt.Errorf("scanning file with checksum: %w", err)
+		}
+		if checksum != nil {
+			f.Checksum = *checksum
+		}
+		files = append(files, f)
+	}
+
+	return files, rows.Err()
+}
+
 // replaceModFileIDs replaces all file IDs for a mod with new ones
 func (d *DB) replaceModFileIDs(sourceID, modID, gameID, profileName string, fileIDs []string) error {
 	// Delete existing file IDs
