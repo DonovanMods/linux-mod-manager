@@ -18,8 +18,9 @@ import (
 
 // installPlan contains the ordered list of mods to install
 type installPlan struct {
-	mods    []*domain.Mod // In install order (dependencies first, target last)
-	missing []string      // Dependencies that couldn't be fetched (warning only)
+	mods          []*domain.Mod // In install order (dependencies first, target last)
+	missing       []string      // Dependencies that couldn't be fetched (warning only)
+	cycleDetected bool          // True if a circular dependency was detected
 }
 
 // depFetcher is the interface needed for dependency resolution
@@ -993,9 +994,11 @@ func parseRangeSelection(input string, max int) ([]int, error) {
 // resolveDependencies fetches all dependencies for a mod and returns them in install order.
 // Dependencies are fetched recursively. Already-installed mods are skipped.
 // Missing dependencies (not found on source) are recorded but don't cause failure.
+// Circular dependencies are detected and recorded for warning.
 func resolveDependencies(ctx context.Context, fetcher depFetcher, target *domain.Mod, installedIDs map[string]bool) (*installPlan, error) {
 	plan := &installPlan{}
 	visited := make(map[string]bool)
+	stack := make(map[string]bool) // Keys currently being visited (for cycle detection)
 
 	var collect func(mod *domain.Mod) error
 	collect = func(mod *domain.Mod) error {
@@ -1004,24 +1007,26 @@ func resolveDependencies(ctx context.Context, fetcher depFetcher, target *domain
 			return nil
 		}
 		visited[key] = true
+		stack[key] = true
+		defer func() { delete(stack, key) }()
 
 		// Fetch dependencies for this mod
 		deps, err := fetcher.GetDependencies(ctx, mod)
 		if err != nil {
-			// Log but continue - dependency info might not be available
 			return nil
 		}
 
-		// Process each dependency
 		for _, ref := range deps {
 			depKey := ref.SourceID + ":" + ref.ModID
 
-			// Skip already installed
 			if installedIDs[depKey] {
 				continue
 			}
 
-			// Skip already visited (handles cycles)
+			if stack[depKey] {
+				plan.cycleDetected = true
+				continue
+			}
 			if visited[depKey] {
 				continue
 			}
@@ -1070,15 +1075,19 @@ func resolveDependencies(ctx context.Context, fetcher depFetcher, target *domain
 	return plan, nil
 }
 
-// showInstallPlan displays the install plan to the user
+// showInstallPlan displays the install plan (dependency tree order) to the user
 func showInstallPlan(plan *installPlan, targetModID string) {
-	fmt.Printf("\nInstall plan (%d mod(s)):\n", len(plan.mods))
+	fmt.Printf("\nDependency tree (install order):\n")
 	for i, mod := range plan.mods {
 		label := "[dependency]"
 		if mod.ID == targetModID {
 			label = "[target]"
 		}
 		fmt.Printf("  %d. %s v%s (ID: %s) %s\n", i+1, mod.Name, mod.Version, mod.ID, label)
+	}
+
+	if plan.cycleDetected {
+		fmt.Fprintf(os.Stderr, "\n⚠ Warning: Circular dependency detected among dependencies; install order is best-effort.\n")
 	}
 
 	if len(plan.missing) > 0 {
