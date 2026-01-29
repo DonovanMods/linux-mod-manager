@@ -77,9 +77,12 @@ func (d *Downloader) Download(ctx context.Context, url, destPath string, progres
 	if err != nil {
 		return nil, fmt.Errorf("creating file: %w", err)
 	}
+	var removeTemp bool = true
 	defer func() {
 		file.Close()
-		os.Remove(tempPath) // Clean up temp file on error
+		if removeTemp {
+			os.Remove(tempPath)
+		}
 	}()
 
 	// Get content length if available
@@ -113,6 +116,7 @@ func (d *Downloader) Download(ctx context.Context, url, destPath string, progres
 	if err := os.Rename(tempPath, destPath); err != nil {
 		return nil, fmt.Errorf("renaming file: %w", err)
 	}
+	removeTemp = false // success: temp was renamed, do not remove
 
 	return &DownloadResult{
 		Path:     destPath,

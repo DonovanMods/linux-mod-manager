@@ -94,19 +94,17 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if verbose {
-		fmt.Printf("Installed mods in %s (profile: %s)\n", game.Name, profileName)
-		// Show cache path if overridden
-		if game.CachePath != "" {
-			fmt.Printf("Cache: %s\n", game.CachePath)
-		}
-		fmt.Println()
-	}
-
 	if len(mods) == 0 {
 		fmt.Println("No mods installed.")
 		return nil
 	}
+
+	// Always show total count (no longer requires --verbose)
+	fmt.Printf("Installed mods in %s (profile: %s) — %d mod(s)\n", game.Name, profileName, len(mods))
+	if verbose && game.CachePath != "" {
+		fmt.Printf("Cache: %s\n", game.CachePath)
+	}
+	fmt.Println()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tNAME\tVERSION\tSOURCE\tENABLED\tDEPLOYED\tMETHOD")
@@ -136,10 +134,6 @@ func runList(cmd *cobra.Command, args []string) error {
 		)
 	}
 	w.Flush()
-
-	if verbose {
-		fmt.Printf("\nTotal: %d mod(s)\n", len(mods))
-	}
 
 	return nil
 }
