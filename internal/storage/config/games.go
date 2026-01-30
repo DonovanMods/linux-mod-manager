@@ -55,7 +55,7 @@ type GameConfig struct {
 	Sources     map[string]string `yaml:"sources"`
 	LinkMethod  string            `yaml:"link_method"`
 	CachePath   string            `yaml:"cache_path"`
-	Hooks       GameHooksYAML     `yaml:"hooks"`
+	Hooks       GameHooksYAML     `yaml:"hooks,omitempty"`
 }
 
 // GamesFile is the top-level games.yaml structure

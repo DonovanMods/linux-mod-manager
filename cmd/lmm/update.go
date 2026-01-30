@@ -135,6 +135,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	if verbose {
 		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", len(installed), game.Name, profileName)
+		ctx = context.WithValue(ctx, domain.UpdateProgressContextKey, domain.UpdateProgressFunc(func(n, total int, name string) {
+			fmt.Fprintf(os.Stderr, "  %d/%d: %s\n", n, total, truncate(name, 60))
+		}))
 	}
 
 	// Check for updates (partial results returned even when some mods fail to fetch)
@@ -152,7 +155,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			_ = enc.Encode(updateJSONOutput{GameID: gameID, Profile: profileName, Updates: []updateModJSON{}})
+			if err := enc.Encode(updateJSONOutput{GameID: gameID, Profile: profileName, Updates: []updateModJSON{}}); err != nil {
+				return fmt.Errorf("encoding json: %w", err)
+			}
 			return nil
 		}
 		fmt.Println("All mods are up to date.")
@@ -172,7 +177,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
+		if err := enc.Encode(out); err != nil {
+			return fmt.Errorf("encoding json: %w", err)
+		}
 		return nil
 	}
 
@@ -237,7 +244,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if len(autoUpdates) > 0 {
 		fmt.Printf("\nApplying %d auto-update(s)...\n", len(autoUpdates))
 		for _, update := range autoUpdates {
-			if err := applyUpdate(ctx, service, game, &update.InstalledMod, update.NewVersion, profileName); err != nil {
+			if err := applyUpdate(ctx, service, game, &update.InstalledMod, update.NewVersion, profileName, update.FileIDReplacements); err != nil {
 				fmt.Printf("  ✗ %s: %v\n", update.InstalledMod.Name, err)
 			} else {
 				fmt.Printf("  ✓ %s %s → %s\n", update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
@@ -257,7 +264,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if len(notifyUpdates) > 0 {
 			fmt.Printf("\nApplying %d remaining update(s)...\n", len(notifyUpdates))
 			for _, update := range notifyUpdates {
-				if err := applyUpdate(ctx, service, game, &update.InstalledMod, update.NewVersion, profileName); err != nil {
+				if err := applyUpdate(ctx, service, game, &update.InstalledMod, update.NewVersion, profileName, update.FileIDReplacements); err != nil {
 					fmt.Printf("  ✗ %s: %v\n", update.InstalledMod.Name, err)
 				} else {
 					fmt.Printf("  ✓ %s %s → %s\n", update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
@@ -307,7 +314,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		return nil
 	}
 
-	if err := applyUpdate(ctx, service, game, mod, newVersion, profileName); err != nil {
+	if err := applyUpdate(ctx, service, game, mod, newVersion, profileName, updates[0].FileIDReplacements); err != nil {
 		return err
 	}
 
@@ -316,7 +323,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	return nil
 }
 
-func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, newVersion, profileName string) error {
+func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, newVersion, profileName string, fileIDReplacements map[string]string) error {
 	// Set up hooks
 	hookRunner := getHookRunner(service)
 	resolvedHooks := getResolvedHooks(service, game, profileName)
@@ -344,8 +351,20 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		return fmt.Errorf("no downloadable files available")
 	}
 
-	// Try to use the same file IDs as before, or fall back to primary
-	filesToDownload, _, err := selectFilesToDownload(files, mod.FileIDs)
+	// Resolve file IDs: use replacements when a file was superseded (e.g. NexusMods FileUpdates)
+	effectiveFileIDs := mod.FileIDs
+	if len(fileIDReplacements) > 0 {
+		effectiveFileIDs = make([]string, len(mod.FileIDs))
+		for i, fid := range mod.FileIDs {
+			if newID, ok := fileIDReplacements[fid]; ok {
+				effectiveFileIDs[i] = newID
+			} else {
+				effectiveFileIDs[i] = fid
+			}
+		}
+	}
+	// Try to use the same file IDs as before (or superseding IDs), or fall back to primary
+	filesToDownload, _, err := selectFilesToDownload(files, effectiveFileIDs)
 	if err != nil {
 		return fmt.Errorf("selecting files to download: %w", err)
 	}

@@ -68,7 +68,9 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			_ = enc.Encode(conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: []conflictJSON{}})
+			if err := enc.Encode(conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
+				return fmt.Errorf("encoding json: %w", err)
+			}
 			return nil
 		}
 		fmt.Println("No installed mods.")
@@ -136,7 +138,9 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			_ = enc.Encode(conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: []conflictJSON{}})
+			if err := enc.Encode(conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
+				return fmt.Errorf("encoding json: %w", err)
+			}
 			return nil
 		}
 		fmt.Println("No conflicts found.")
@@ -162,7 +166,9 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(out)
+		if err := enc.Encode(out); err != nil {
+			return fmt.Errorf("encoding json: %w", err)
+		}
 		return nil
 	}
 

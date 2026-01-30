@@ -326,10 +326,10 @@ func (s *Service) GetGameCachePath(game *domain.Game) string {
 }
 
 // GetGameCache returns a cache manager for the specified game.
-// Uses the game's cache_path if configured, otherwise uses the global cache.
+// Uses the game's cache_path if configured (game-scoped: paths omit gameID), otherwise the global cache.
 func (s *Service) GetGameCache(game *domain.Game) *cache.Cache {
 	if game.CachePath != "" {
-		return cache.New(game.CachePath)
+		return cache.NewGameScoped(game.CachePath)
 	}
 	return s.cache
 }

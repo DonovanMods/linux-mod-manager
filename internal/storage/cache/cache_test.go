@@ -20,6 +20,15 @@ func TestCache_ModPath(t *testing.T) {
 	assert.Equal(t, expected, path)
 }
 
+func TestCache_ModPath_GameScoped(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.NewGameScoped(dir)
+
+	path := c.ModPath("starrupture", "nexusmods", "35", "1.00")
+	expected := filepath.Join(dir, "nexusmods-35", "1.00")
+	assert.Equal(t, expected, path, "game-scoped cache omits gameID from path")
+}
+
 func TestCache_Store(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
@@ -73,4 +82,18 @@ func TestCache_Delete(t *testing.T) {
 	err = c.Delete("skyrim-se", "nexusmods", "12345", "1.0.0")
 	require.NoError(t, err)
 	assert.False(t, c.Exists("skyrim-se", "nexusmods", "12345", "1.0.0"))
+}
+
+func TestCache_Exists_ListFiles_GameScoped(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.NewGameScoped(dir)
+
+	err := c.Store("starrupture", "nexusmods", "35", "1.00", "file.pak", []byte("data"))
+	require.NoError(t, err)
+	assert.True(t, c.Exists("starrupture", "nexusmods", "35", "1.00"))
+
+	files, err := c.ListFiles("starrupture", "nexusmods", "35", "1.00")
+	require.NoError(t, err)
+	assert.Len(t, files, 1)
+	assert.Equal(t, "file.pak", files[0])
 }

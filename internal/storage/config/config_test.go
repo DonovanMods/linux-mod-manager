@@ -92,6 +92,11 @@ func TestSaveGame(t *testing.T) {
 	games, err := config.LoadGames(dir)
 	require.NoError(t, err)
 	assert.Contains(t, games, "test-game")
+
+	// Empty hooks must not be written so global config hooks apply
+	raw, err := os.ReadFile(filepath.Join(dir, "games.yaml"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "hooks:", "games.yaml must not contain empty hooks so global hooks apply")
 }
 
 func TestLoadProfile(t *testing.T) {

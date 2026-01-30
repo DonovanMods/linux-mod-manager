@@ -180,49 +180,101 @@ func (n *NexusMods) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID 
 	return links[0].URI, nil
 }
 
-// CheckUpdates checks for available updates by comparing installed versions against NexusMods.
-// Returns partial updates plus a joined error when one or more mods fail to fetch (deleted, private, etc.).
+// CheckUpdates checks for available updates by comparing installed mod version and
+// installed file IDs against NexusMods (mod version and FileUpdates). Each file has its
+// own version; a mod is considered to have an update if the mod version is newer or if
+// any installed file ID has been superseded by a new file (NexusMods FileUpdates).
+// Returns partial updates plus a joined error when one or more mods fail to fetch.
 func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	var updates []domain.Update
 	var fetchErrs []error
 
-	for _, inst := range installed {
+	for i, inst := range installed {
 		select {
 		case <-ctx.Done():
 			return updates, ctx.Err()
 		default:
 		}
 
-		// Fetch current mod info from NexusMods
+		if fn, ok := ctx.Value(domain.UpdateProgressContextKey).(domain.UpdateProgressFunc); ok && fn != nil {
+			fn(i+1, len(installed), inst.Name)
+		}
+
 		remoteMod, err := n.GetMod(ctx, inst.GameID, inst.ID)
 		if err != nil {
 			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
 			continue
 		}
 
-		// Compare versions
-		if isNewerVersion(inst.Version, remoteMod.Version) {
-			changelog := ""
-			if modID, err := strconv.Atoi(inst.ID); err == nil {
-				if fileList, err := n.client.GetModFiles(ctx, inst.GameID, modID); err == nil && len(fileList.Files) > 0 {
-					// Prefer primary file changelog; otherwise first file
-					for _, f := range fileList.Files {
-						if f.IsPrimary && f.Changelog != "" {
-							changelog = f.Changelog
-							break
-						}
-						if changelog == "" && f.Changelog != "" {
-							changelog = f.Changelog
-						}
-					}
+		modID, err := strconv.Atoi(inst.ID)
+		if err != nil {
+			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): invalid mod ID: %w", inst.Name, inst.ID, err))
+			continue
+		}
+
+		fileList, err := n.client.GetModFiles(ctx, inst.GameID, modID)
+		if err != nil {
+			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
+			continue
+		}
+
+		// Build map: old file ID -> new file ID from NexusMods FileUpdates (superseded files)
+		oldToNew := make(map[string]string)
+		for _, fu := range fileList.FileUpdates {
+			oldToNew[strconv.Itoa(fu.OldFileID)] = strconv.Itoa(fu.NewFileID)
+		}
+
+		// New version file ID -> FileData for picking new version string and changelog
+		newFileIDs := make(map[string]FileData)
+		for _, f := range fileList.Files {
+			newFileIDs[strconv.Itoa(f.FileID)] = f
+		}
+
+		// Consider update if mod version is newer OR any installed file was superseded
+		modVersionNewer := isNewerVersion(inst.Version, remoteMod.Version)
+		var fileReplacements map[string]string
+		for _, fid := range inst.FileIDs {
+			if newID, ok := oldToNew[fid]; ok {
+				if fileReplacements == nil {
+					fileReplacements = make(map[string]string)
+				}
+				fileReplacements[fid] = newID
+			}
+		}
+		hasFileUpdate := len(fileReplacements) > 0
+
+		if !modVersionNewer && !hasFileUpdate {
+			continue
+		}
+
+		// Pick NewVersion: prefer mod version when it changed; else use new file's version
+		newVersion := remoteMod.Version
+		if hasFileUpdate && !modVersionNewer {
+			for _, newID := range fileReplacements {
+				if f, ok := newFileIDs[newID]; ok && f.Version != "" {
+					newVersion = f.Version
+					break
 				}
 			}
-			updates = append(updates, domain.Update{
-				InstalledMod: inst,
-				NewVersion:   remoteMod.Version,
-				Changelog:    changelog,
-			})
 		}
+
+		changelog := ""
+		for _, f := range fileList.Files {
+			if f.IsPrimary && f.Changelog != "" {
+				changelog = f.Changelog
+				break
+			}
+			if changelog == "" && f.Changelog != "" {
+				changelog = f.Changelog
+			}
+		}
+
+		updates = append(updates, domain.Update{
+			InstalledMod:       inst,
+			NewVersion:         newVersion,
+			Changelog:          changelog,
+			FileIDReplacements: fileReplacements,
+		})
 	}
 
 	if len(fetchErrs) > 0 {

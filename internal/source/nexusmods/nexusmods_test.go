@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -204,6 +205,10 @@ func TestNexusMods_CheckUpdates_FindsUpdate(t *testing.T) {
 func TestNexusMods_CheckUpdates_NoUpdateWhenSameVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/files.json") {
+			json.NewEncoder(w).Encode(ModFileList{Files: []FileData{{FileID: 100, IsPrimary: true}}})
+			return
+		}
 		json.NewEncoder(w).Encode(ModData{
 			ModID:   12345,
 			Name:    "Test Mod",
@@ -232,6 +237,48 @@ func TestNexusMods_CheckUpdates_NoUpdateWhenSameVersion(t *testing.T) {
 	assert.Empty(t, updates)
 }
 
+func TestNexusMods_CheckUpdates_FindsFileUpdate(t *testing.T) {
+	// Mod version unchanged but an installed file was superseded (NexusMods FileUpdates)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/files.json") {
+			json.NewEncoder(w).Encode(ModFileList{
+				Files: []FileData{
+					{FileID: 100, IsPrimary: true, Version: "1.0.0"},
+					{FileID: 101, IsPrimary: false, Version: "1.0.1", Changelog: "Hotfix for optional file"},
+				},
+				FileUpdates: []FileUpdate{
+					{OldFileID: 100, NewFileID: 101},
+				},
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(ModData{ModID: 12345, Name: "Test Mod", Version: "1.0.0"})
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.baseURL = server.URL
+
+	installed := []domain.InstalledMod{
+		{
+			Mod: domain.Mod{
+				ID:      "12345",
+				Name:    "Test Mod",
+				Version: "1.0.0",
+				GameID:  "skyrimspecialedition",
+			},
+			FileIDs: []string{"100"},
+		},
+	}
+
+	updates, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	assert.Equal(t, "1.0.1", updates[0].NewVersion, "should use new file version")
+	assert.Equal(t, map[string]string{"100": "101"}, updates[0].FileIDReplacements)
+}
+
 func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
 	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +292,8 @@ func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
 			json.NewEncoder(w).Encode(ModFileList{Files: []FileData{{FileID: 1, IsPrimary: true}}})
 		case "/v1/games/skyrimspecialedition/mods/222.json":
 			json.NewEncoder(w).Encode(ModData{ModID: 222, Version: "1.0.0"}) // No update
+		case "/v1/games/skyrimspecialedition/mods/222/files.json":
+			json.NewEncoder(w).Encode(ModFileList{Files: []FileData{{FileID: 10, IsPrimary: true}}})
 		case "/v1/games/skyrimspecialedition/mods/333.json":
 			json.NewEncoder(w).Encode(ModData{ModID: 333, Version: "3.5.0"}) // Update available
 		case "/v1/games/skyrimspecialedition/mods/333/files.json":
@@ -265,8 +314,8 @@ func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
 	updates, err := nm.CheckUpdates(context.Background(), installed)
 	require.NoError(t, err)
 	assert.Len(t, updates, 2, "should find 2 mods with updates")
-	// 3 GetMod + 2 GetModFiles (for mods with updates) = 5
-	assert.Equal(t, 5, requestCount, "should make GetMod per mod plus GetModFiles per mod with update")
+	// 3 GetMod + 3 GetModFiles (one per mod)
+	assert.Equal(t, 6, requestCount, "should make GetMod and GetModFiles per mod")
 }
 
 func TestNexusMods_GetDependencies(t *testing.T) {

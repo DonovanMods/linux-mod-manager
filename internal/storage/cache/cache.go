@@ -9,17 +9,28 @@ import (
 
 // Cache manages the central mod file cache
 type Cache struct {
-	basePath string
+	basePath   string
+	gameScoped bool // when true, basePath is game-specific; omit gameID from ModPath
 }
 
-// New creates a new cache manager
+// New creates a new cache manager for the global cache (basePath/gameID/source-mod/version).
 func New(basePath string) *Cache {
 	return &Cache{basePath: basePath}
 }
 
+// NewGameScoped creates a cache for a per-game cache_path.
+// Paths are basePath/source-mod/version (no gameID); the base is already game-specific.
+func NewGameScoped(basePath string) *Cache {
+	return &Cache{basePath: basePath, gameScoped: true}
+}
+
 // ModPath returns the path where a mod version's files are stored
 func (c *Cache) ModPath(gameID, sourceID, modID, version string) string {
-	return filepath.Join(c.basePath, gameID, fmt.Sprintf("%s-%s", sourceID, modID), version)
+	modKey := fmt.Sprintf("%s-%s", sourceID, modID)
+	if c.gameScoped {
+		return filepath.Join(c.basePath, modKey, version)
+	}
+	return filepath.Join(c.basePath, gameID, modKey, version)
 }
 
 // Exists checks if a mod version is cached

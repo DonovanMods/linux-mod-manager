@@ -50,7 +50,7 @@ Examples:
 }
 
 func init() {
-	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Re-download missing or corrupted files")
+	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Re-download missing files and populate missing checksums by re-downloading")
 	verifyCmd.Flags().StringVarP(&verifyProfile, "profile", "p", "", "profile to verify (default: default)")
 
 	rootCmd.AddCommand(verifyCmd)
@@ -84,7 +84,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			_ = enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: []verifyFileJSON{}, Issues: 0, Warnings: 0})
+			if err := enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: []verifyFileJSON{}, Issues: 0, Warnings: 0}); err != nil {
+				return fmt.Errorf("encoding json: %w", err)
+			}
 			return nil
 		}
 		fmt.Println("No installed mods to verify.")
@@ -198,6 +200,24 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 		// Check if checksum stored
 		if f.Checksum == "" {
+			if verifyFix && mod.SourceID != domain.SourceLocal {
+				if err := redownloadModFile(cmd, svc, game, profile, mod, f.FileID); err != nil {
+					if jsonOutput {
+						jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"})
+					} else {
+						fmt.Printf("%s %s (%s) - NO CHECKSUM\n", colorYellow("?"), mod.Name, f.FileID)
+						fmt.Printf("  Re-download to populate checksum failed: %v\n", err)
+					}
+					warnings++
+				} else {
+					if jsonOutput {
+						jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"})
+					} else {
+						fmt.Printf("%s %s (%s) - %s (checksum populated)\n", colorGreen("+"), mod.Name, f.FileID, colorGreen("OK"))
+					}
+				}
+				continue
+			}
 			if jsonOutput {
 				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"})
 			} else {
@@ -218,7 +238,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: jsonFiles, Issues: issues, Warnings: warnings})
+		if err := enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: jsonFiles, Issues: issues, Warnings: warnings}); err != nil {
+			return fmt.Errorf("encoding json: %w", err)
+		}
 		return nil
 	}
 
@@ -231,8 +253,8 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 	if issues > 0 || warnings > 0 {
 		fmt.Printf("%d issue(s), %d warning(s) found.\n", issues, warnings)
-		if issues > 0 && !verifyFix {
-			fmt.Println("Run with --fix to re-download missing files.")
+		if (issues > 0 || warnings > 0) && !verifyFix {
+			fmt.Println("Run with --fix to re-download missing files and populate missing checksums.")
 		}
 	} else {
 		fmt.Println(colorGreen("All files verified OK."))

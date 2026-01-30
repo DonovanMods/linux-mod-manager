@@ -10,6 +10,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -235,6 +236,166 @@ func TestProfileManager_Switch(t *testing.T) {
 	// Verify mod is no longer deployed
 	_, err = os.Lstat(deployedPath)
 	assert.True(t, os.IsNotExist(err))
+}
+
+func TestProfileManager_Switch_DeployFailure_Rollback(t *testing.T) {
+	dir := t.TempDir()
+	modPath := filepath.Join(dir, "game", "mods")
+	require.NoError(t, os.MkdirAll(modPath, 0755))
+
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	cacheDir := filepath.Join(dir, "cache")
+	modCache := cache.New(cacheDir)
+	pm := core.NewProfileManager(dir, database, modCache, linker.NewSymlink())
+
+	game := &domain.Game{ID: "skyrim-se", Name: "Skyrim SE", ModPath: modPath}
+
+	_, err = pm.Create("skyrim-se", "profile1")
+	require.NoError(t, err)
+	_, err = pm.Create("skyrim-se", "profile2")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault("skyrim-se", "profile1"))
+
+	modA := domain.ModReference{SourceID: "nexusmods", ModID: "111", Version: "1.0"}
+	modB := domain.ModReference{SourceID: "nexusmods", ModID: "222", Version: "1.0"}
+	require.NoError(t, pm.AddMod("skyrim-se", "profile1", modA))
+	require.NoError(t, pm.AddMod("skyrim-se", "profile2", modA))
+	require.NoError(t, pm.AddMod("skyrim-se", "profile2", modB))
+
+	require.NoError(t, modCache.Store("skyrim-se", "nexusmods", "111", "1.0", "a.esp", []byte("a")))
+	// mod B is not cached -> deploy will fail when switching to profile2
+
+	require.NoError(t, pm.Switch(context.Background(), game, "profile1"))
+	deployedA := filepath.Join(modPath, "a.esp")
+	_, err = os.Lstat(deployedA)
+	require.NoError(t, err)
+
+	err = pm.Switch(context.Background(), game, "profile2")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "profile switch failed")
+	assert.Contains(t, err.Error(), "deploy nexusmods:222")
+
+	// Rollback: old profile (profile1) restored, default unchanged
+	def, _ := pm.GetDefault("skyrim-se")
+	require.NotNil(t, def)
+	assert.Equal(t, "profile1", def.Name)
+	_, err = os.Lstat(deployedA)
+	require.NoError(t, err)
+}
+
+func TestProfileManager_Switch_UndeployFailure_Rollback(t *testing.T) {
+	dir := t.TempDir()
+	modPath := filepath.Join(dir, "game", "mods")
+	require.NoError(t, os.MkdirAll(modPath, 0755))
+
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	cacheDir := filepath.Join(dir, "cache")
+	modCache := cache.New(cacheDir)
+	pm := core.NewProfileManager(dir, database, modCache, linker.NewSymlink())
+
+	game := &domain.Game{ID: "skyrim-se", Name: "Skyrim SE", ModPath: modPath}
+
+	_, err = pm.Create("skyrim-se", "profile1")
+	require.NoError(t, err)
+	_, err = pm.Create("skyrim-se", "profile2")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault("skyrim-se", "profile1"))
+
+	modA := domain.ModReference{SourceID: "nexusmods", ModID: "111", Version: "1.0"}
+	modB := domain.ModReference{SourceID: "nexusmods", ModID: "222", Version: "1.0"}
+	require.NoError(t, pm.AddMod("skyrim-se", "profile1", modA))
+	require.NoError(t, pm.AddMod("skyrim-se", "profile1", modB))
+
+	require.NoError(t, modCache.Store("skyrim-se", "nexusmods", "111", "1.0", "a.esp", []byte("a")))
+	require.NoError(t, modCache.Store("skyrim-se", "nexusmods", "222", "1.0", "b.esp", []byte("b")))
+
+	require.NoError(t, pm.Switch(context.Background(), game, "profile1"))
+	deployedA := filepath.Join(modPath, "a.esp")
+	deployedB := filepath.Join(modPath, "b.esp")
+	_, err = os.Lstat(deployedA)
+	require.NoError(t, err)
+	_, err = os.Lstat(deployedB)
+	require.NoError(t, err)
+
+	// Replace B's symlink with a regular file so undeploy fails (symlink linker returns "not a symlink")
+	require.NoError(t, os.Remove(deployedB))
+	require.NoError(t, os.WriteFile(deployedB, []byte("replaced"), 0644))
+
+	err = pm.Switch(context.Background(), game, "profile2")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "profile switch failed")
+	assert.Contains(t, err.Error(), "undeploy nexusmods:222")
+
+	// Rollback redeploys only mods 0..i-1 (A). Mod B was never undeployed, so must not be redeployed.
+	def, _ := pm.GetDefault("skyrim-se")
+	require.NotNil(t, def)
+	assert.Equal(t, "profile1", def.Name)
+	_, err = os.Lstat(deployedA)
+	require.NoError(t, err, "A should be redeployed")
+	infoB, err := os.Lstat(deployedB)
+	require.NoError(t, err)
+	assert.False(t, infoB.Mode()&os.ModeSymlink != 0, "B must still be regular file (never undeployed, rollback must not redeploy it)")
+}
+
+func TestProfileManager_Switch_OverridesFailure_Rollback(t *testing.T) {
+	dir := t.TempDir()
+	modPath := filepath.Join(dir, "game", "mods")
+	installPath := filepath.Join(dir, "game")
+	require.NoError(t, os.MkdirAll(modPath, 0755))
+
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer database.Close()
+
+	cacheDir := filepath.Join(dir, "cache")
+	modCache := cache.New(cacheDir)
+	pm := core.NewProfileManager(dir, database, modCache, linker.NewSymlink())
+
+	game := &domain.Game{
+		ID:          "skyrim-se",
+		Name:        "Skyrim SE",
+		ModPath:     modPath,
+		InstallPath: installPath,
+	}
+
+	_, err = pm.Create("skyrim-se", "profile1")
+	require.NoError(t, err)
+	_, err = pm.Create("skyrim-se", "profile2")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault("skyrim-se", "profile1"))
+
+	modRef := domain.ModReference{SourceID: "nexusmods", ModID: "123", Version: "1.0"}
+	require.NoError(t, pm.AddMod("skyrim-se", "profile1", modRef))
+	require.NoError(t, pm.AddMod("skyrim-se", "profile2", modRef))
+	require.NoError(t, modCache.Store("skyrim-se", "nexusmods", "123", "1.0", "mod.esp", []byte("x")))
+
+	require.NoError(t, pm.Switch(context.Background(), game, "profile1"))
+	deployedPath := filepath.Join(modPath, "mod.esp")
+	_, err = os.Lstat(deployedPath)
+	require.NoError(t, err)
+
+	// Give profile2 invalid overrides (path traversal) so ApplyProfileOverrides fails
+	prof, err := config.LoadProfile(dir, "skyrim-se", "profile2")
+	require.NoError(t, err)
+	prof.Overrides = map[string][]byte{"../evil": []byte("x")}
+	require.NoError(t, config.SaveProfile(dir, prof))
+
+	err = pm.Switch(context.Background(), game, "profile2")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "profile switch failed")
+	assert.Contains(t, err.Error(), "apply overrides")
+
+	def, _ := pm.GetDefault("skyrim-se")
+	require.NotNil(t, def)
+	assert.Equal(t, "profile1", def.Name)
+	_, err = os.Lstat(deployedPath)
+	require.NoError(t, err)
 }
 
 func TestProfileManager_ExportImport(t *testing.T) {
