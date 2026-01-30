@@ -130,7 +130,7 @@ func (e *httpStatusError) Error() string {
 }
 
 // downloadOnce performs a single download attempt (no retries).
-func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, progressFn ProgressFunc) (*DownloadResult, error) {
+func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, progressFn ProgressFunc) (result *DownloadResult, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -140,12 +140,16 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, pro
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing response body: %w", cerr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		err := &httpStatusError{code: resp.StatusCode, msg: fmt.Sprintf("HTTP error: %d %s", resp.StatusCode, resp.Status)}
-		return nil, err
+		httpErr := &httpStatusError{code: resp.StatusCode, msg: fmt.Sprintf("HTTP error: %d %s", resp.StatusCode, resp.Status)}
+		return nil, httpErr
 	}
 
 	dir := filepath.Dir(destPath)

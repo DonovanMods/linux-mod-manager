@@ -21,14 +21,18 @@ func New(path string) (*DB, error) {
 
 	// Enable foreign keys and WAL mode for better performance
 	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;"); err != nil {
-		sqlDB.Close()
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			return nil, fmt.Errorf("setting pragmas: %w (closing database: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("setting pragmas: %w", err)
 	}
 
 	database := &DB{DB: sqlDB}
 
 	if err := database.migrate(); err != nil {
-		sqlDB.Close()
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			return nil, fmt.Errorf("running migrations: %w (closing database: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 

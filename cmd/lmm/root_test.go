@@ -14,7 +14,9 @@ func TestInitService_RegistersNexusMods(t *testing.T) {
 
 	svc, err := initService()
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// NexusMods should be registered by default
 	src, err := svc.GetSource("nexusmods")

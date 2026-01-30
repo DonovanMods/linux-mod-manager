@@ -53,7 +53,7 @@ func (c *Client) IsAuthenticated() bool {
 }
 
 // ValidateAPIKey validates an API key by calling the NexusMods validate endpoint
-func (c *Client) ValidateAPIKey(ctx context.Context, key string) error {
+func (c *Client) ValidateAPIKey(ctx context.Context, key string) (err error) {
 	url := c.baseURL + "/v1/users/validate.json"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -68,7 +68,11 @@ func (c *Client) ValidateAPIKey(ctx context.Context, key string) error {
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing response body: %w", cerr)
+		}
+	}()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		return errors.New("invalid API key")
@@ -86,7 +90,7 @@ func (c *Client) ValidateAPIKey(ctx context.Context, key string) error {
 }
 
 // doRequest performs an HTTP request with authentication
-func (c *Client) doRequest(ctx context.Context, method, path string, result interface{}) error {
+func (c *Client) doRequest(ctx context.Context, method, path string, result interface{}) (err error) {
 	url := c.baseURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, url, nil)
@@ -103,7 +107,11 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing response body: %w", cerr)
+		}
+	}()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("%w: NexusMods API key required", domain.ErrAuthRequired)
@@ -244,7 +252,7 @@ type graphqlRequirementsResponse struct {
 
 // SearchMods searches for mods using the NexusMods GraphQL v2 API.
 // category and tags are optional filters (source-specific; NexusMods may support categoryId and tag names).
-func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category string, tags []string, limit, offset int) ([]ModData, error) {
+func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category string, tags []string, limit, offset int) (mods []ModData, err error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -299,7 +307,11 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing response body: %w", cerr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
@@ -368,7 +380,7 @@ type ModRequirement struct {
 }
 
 // GetModRequirements fetches mod dependencies using the GraphQL API
-func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modID int) ([]ModRequirement, error) {
+func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modID int) (requirements []ModRequirement, err error) {
 	reqBody := graphqlRequest{
 		Query: graphqlRequirementsQuery,
 		Variables: map[string]interface{}{
@@ -396,7 +408,11 @@ func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modI
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing response body: %w", cerr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
@@ -421,7 +437,7 @@ func (c *Client) GetModRequirements(ctx context.Context, gameDomain string, modI
 
 	// Convert to ModRequirement slice
 	nodes := gqlResp.Data.ModRequirements.NexusRequirements.Nodes
-	requirements := make([]ModRequirement, len(nodes))
+	requirements = make([]ModRequirement, len(nodes))
 	for i, node := range nodes {
 		requirements[i] = ModRequirement{
 			ModID:   node.ModID,

@@ -18,7 +18,7 @@ func NewCopy() *CopyLinker {
 }
 
 // Deploy copies src to dst
-func (l *CopyLinker) Deploy(src, dst string) error {
+func (l *CopyLinker) Deploy(src, dst string) (err error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("creating destination dir: %w", err)
 	}
@@ -27,7 +27,11 @@ func (l *CopyLinker) Deploy(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
 	}
-	defer srcFile.Close()
+	defer func() {
+		if cerr := srcFile.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing source: %w", cerr)
+		}
+	}()
 
 	srcInfo, err := srcFile.Stat()
 	if err != nil {
@@ -38,7 +42,11 @@ func (l *CopyLinker) Deploy(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
-	defer dstFile.Close()
+	defer func() {
+		if cerr := dstFile.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing destination: %w", cerr)
+		}
+	}()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		return fmt.Errorf("copying file: %w", err)

@@ -46,7 +46,7 @@ trunk fmt
 
 Layered monolith with interface-based extensibility:
 
-```
+```text
 cmd/lmm/main.go           # Entry point, CLI (Cobra)
 internal/
 ├── domain/               # Core types (Mod, Profile, Game) - NO external deps

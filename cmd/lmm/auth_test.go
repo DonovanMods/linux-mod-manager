@@ -185,12 +185,12 @@ func TestAuthStatusCmd_NotAuthenticated(t *testing.T) {
 
 	// Clear any env var
 	oldEnv := os.Getenv("NEXUSMODS_API_KEY")
-	os.Unsetenv("NEXUSMODS_API_KEY")
-	defer func() {
+	require.NoError(t, os.Unsetenv("NEXUSMODS_API_KEY"))
+	t.Cleanup(func() {
 		if oldEnv != "" {
-			os.Setenv("NEXUSMODS_API_KEY", oldEnv)
+			require.NoError(t, os.Setenv("NEXUSMODS_API_KEY", oldEnv))
 		}
-	}()
+	})
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
@@ -213,14 +213,14 @@ func TestAuthStatusCmd_WithEnvVar(t *testing.T) {
 
 	// Set env var
 	oldEnv := os.Getenv("NEXUSMODS_API_KEY")
-	os.Setenv("NEXUSMODS_API_KEY", "test-api-key-12345")
-	defer func() {
+	require.NoError(t, os.Setenv("NEXUSMODS_API_KEY", "test-api-key-12345"))
+	t.Cleanup(func() {
 		if oldEnv != "" {
-			os.Setenv("NEXUSMODS_API_KEY", oldEnv)
+			require.NoError(t, os.Setenv("NEXUSMODS_API_KEY", oldEnv))
 		} else {
-			os.Unsetenv("NEXUSMODS_API_KEY")
+			require.NoError(t, os.Unsetenv("NEXUSMODS_API_KEY"))
 		}
-	}()
+	})
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
@@ -242,19 +242,19 @@ func TestAuthStatusCmd_WithStoredToken(t *testing.T) {
 
 	// Clear env var to ensure we're testing stored token
 	oldEnv := os.Getenv("NEXUSMODS_API_KEY")
-	os.Unsetenv("NEXUSMODS_API_KEY")
-	defer func() {
+	require.NoError(t, os.Unsetenv("NEXUSMODS_API_KEY"))
+	t.Cleanup(func() {
 		if oldEnv != "" {
-			os.Setenv("NEXUSMODS_API_KEY", oldEnv)
+			require.NoError(t, os.Setenv("NEXUSMODS_API_KEY", oldEnv))
 		}
-	}()
+	})
 
 	// First, save a token
 	svc, err := initService()
 	require.NoError(t, err)
 	err = svc.SaveSourceToken("nexusmods", "stored-test-key-12345")
 	require.NoError(t, err)
-	svc.Close()
+	require.NoError(t, svc.Close())
 
 	// Now run status
 	cmd := &cobra.Command{Use: "test"}
@@ -285,7 +285,7 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 	token, err := svc.GetSourceToken("nexusmods")
 	require.NoError(t, err)
 	require.NotNil(t, token)
-	svc.Close()
+	require.NoError(t, svc.Close())
 
 	// Now run logout
 	cmd := &cobra.Command{Use: "test"}
@@ -302,7 +302,9 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 	// Verify token is gone
 	svc2, err := initService()
 	require.NoError(t, err)
-	defer svc2.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc2.Close())
+	})
 
 	token, err = svc2.GetSourceToken("nexusmods")
 	assert.NoError(t, err)

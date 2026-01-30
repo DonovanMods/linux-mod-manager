@@ -108,7 +108,11 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	// Verify game exists
 	game, err := service.GetGame(gameID)
@@ -565,32 +569,6 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Added to profile: %s\n", profileName)
 
 	return nil
-}
-
-// promptSelection prompts the user to select a number in range [1, max]
-func promptSelection(prompt string, defaultChoice, max int) (int, error) {
-	reader := bufio.NewReader(os.Stdin)
-
-	for {
-		fmt.Printf("\n%s [%d]: ", prompt, defaultChoice)
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return 0, fmt.Errorf("reading input: %w", err)
-		}
-
-		input = strings.TrimSpace(input)
-		if input == "" {
-			return defaultChoice, nil
-		}
-
-		n, err := strconv.Atoi(input)
-		if err != nil || n < 1 || n > max {
-			fmt.Printf("Please enter a number between 1 and %d\n", max)
-			continue
-		}
-
-		return n, nil
-	}
 }
 
 // promptMultiSelection prompts the user to select one or more numbers

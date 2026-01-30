@@ -74,7 +74,11 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	// Verify game exists
 	game, err := service.GetGame(gameID)
@@ -145,23 +149,31 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Print results
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\t")
-	fmt.Fprintln(w, "--\t----\t------\t-------\t")
+	if _, err := fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\t"); err != nil {
+		return fmt.Errorf("writing header: %w", err)
+	}
+	if _, err := fmt.Fprintln(w, "--\t----\t------\t-------\t"); err != nil {
+		return fmt.Errorf("writing separator: %w", err)
+	}
 
 	for _, mod := range mods {
 		installedMark := ""
 		if installedIDs[mod.ID] {
 			installedMark = "[installed]"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			mod.ID,
 			truncate(mod.Name, 40),
 			truncate(mod.Author, 20),
 			mod.Version,
 			installedMark,
-		)
+		); err != nil {
+			return fmt.Errorf("writing row: %w", err)
+		}
 	}
-	w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flushing output: %w", err)
+	}
 
 	if verbose {
 		fmt.Printf("\nShowing %d of %d results.\n", len(mods), totalResults)

@@ -22,7 +22,9 @@ func TestDownloader_Download_ReturnsChecksum(t *testing.T) {
 	expectedChecksum := "658a93464f955290e4b8ecd8fc1d3df7"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -44,7 +46,9 @@ func TestDownloader_Download(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "17")
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -81,7 +85,10 @@ func TestDownloader_Download_CancelledContext(t *testing.T) {
 			case <-r.Context().Done():
 				return
 			default:
-				w.Write(make([]byte, 1000))
+				if _, err := w.Write(make([]byte, 1000)); err != nil {
+					t.Errorf("writing response: %v", err)
+					return
+				}
 				w.(http.Flusher).Flush()
 			}
 		}
@@ -136,7 +143,9 @@ func TestDownloader_Download_RetriesOnTransientError(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -176,7 +185,9 @@ func TestDownloader_Download_CreatesDirectories(t *testing.T) {
 	content := []byte("test content")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -200,7 +211,9 @@ func TestDownloader_Download_ProgressTracking(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1000")
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -225,7 +238,9 @@ func TestDownloader_Download_UnknownContentLength(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Don't set Content-Length header
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -252,7 +267,9 @@ func TestDownloader_Download_CustomHTTPClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify custom header is set
 		assert.Equal(t, "TestAgent", r.Header.Get("User-Agent"))
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -314,13 +331,17 @@ func TestDownloadProgress_Percentage(t *testing.T) {
 func TestDownloader_Download_ReaderError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1000")
-		w.Write([]byte("partial"))
+		if _, err := w.Write([]byte("partial")); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 		// Connection will close before all content is sent
 		// This simulates a partial read
 		hj, ok := w.(http.Hijacker)
 		if ok {
 			conn, _, _ := hj.Hijack()
-			conn.Close()
+			if err := conn.Close(); err != nil {
+				t.Errorf("closing connection: %v", err)
+			}
 		}
 	}))
 	defer server.Close()
@@ -349,7 +370,9 @@ func TestDownloader_Download_WriteTempFirst(t *testing.T) {
 	content := []byte("test content for atomic write")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(content)
+		if _, err := w.Write(content); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -378,7 +401,9 @@ func BenchmarkDownloader_Download(b *testing.B) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1048576")
-		io.Copy(w, &contentReader{content: content, pos: 0})
+		if _, err := io.Copy(w, &contentReader{content: content, pos: 0}); err != nil {
+			b.Fatalf("copying response: %v", err)
+		}
 	}))
 	defer server.Close()
 

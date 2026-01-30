@@ -64,12 +64,16 @@ func (e *Extractor) DetectFormat(filename string) string {
 }
 
 // extractZip extracts a ZIP archive using Go's native archive/zip package
-func (e *Extractor) extractZip(archivePath, destDir string) error {
+func (e *Extractor) extractZip(archivePath, destDir string) (err error) {
 	r, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return fmt.Errorf("opening zip: %w", err)
 	}
-	defer r.Close()
+	defer func() {
+		if cerr := r.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing zip: %w", cerr)
+		}
+	}()
 
 	for _, f := range r.File {
 		if err := e.extractZipFile(f, destDir); err != nil {
@@ -81,7 +85,7 @@ func (e *Extractor) extractZip(archivePath, destDir string) error {
 }
 
 // extractZipFile extracts a single file from a ZIP archive
-func (e *Extractor) extractZipFile(f *zip.File, destDir string) error {
+func (e *Extractor) extractZipFile(f *zip.File, destDir string) (err error) {
 	// Sanitize the file path to prevent zip slip attacks
 	destPath, err := e.sanitizePath(destDir, f.Name)
 	if err != nil {
@@ -104,18 +108,25 @@ func (e *Extractor) extractZipFile(f *zip.File, destDir string) error {
 	if err != nil {
 		return fmt.Errorf("opening file %s in archive: %w", f.Name, err)
 	}
-	defer rc.Close()
+	defer func() {
+		if cerr := rc.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing archive entry %s: %w", f.Name, cerr)
+		}
+	}()
 
 	// Create the destination file
 	outFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 	if err != nil {
 		return fmt.Errorf("creating file %s: %w", destPath, err)
 	}
-	defer outFile.Close()
+	defer func() {
+		if cerr := outFile.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing file %s: %w", destPath, cerr)
+		}
+	}()
 
 	// Copy the contents
-	_, err = io.Copy(outFile, rc)
-	if err != nil {
+	if _, err = io.Copy(outFile, rc); err != nil {
 		return fmt.Errorf("writing file %s: %w", destPath, err)
 	}
 

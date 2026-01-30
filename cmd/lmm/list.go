@@ -60,7 +60,11 @@ func runList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	game, err := service.GetGame(gameID)
 	if err != nil {
@@ -116,8 +120,12 @@ func runList(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tVERSION\tSOURCE\tENABLED\tDEPLOYED\tMETHOD")
-	fmt.Fprintln(w, "--\t----\t-------\t------\t-------\t--------\t------")
+	if _, err := fmt.Fprintln(w, "ID\tNAME\tVERSION\tSOURCE\tENABLED\tDEPLOYED\tMETHOD"); err != nil {
+		return fmt.Errorf("writing header: %w", err)
+	}
+	if _, err := fmt.Fprintln(w, "--\t----\t-------\t------\t-------\t--------\t------"); err != nil {
+		return fmt.Errorf("writing separator: %w", err)
+	}
 
 	for _, mod := range mods {
 		enabled := "yes"
@@ -132,7 +140,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		if mod.SourceID == domain.SourceLocal {
 			sourceDisplay = "(local)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			mod.ID,
 			truncate(mod.Name, 40),
 			mod.Version,
@@ -140,9 +148,13 @@ func runList(cmd *cobra.Command, args []string) error {
 			enabled,
 			deployed,
 			mod.LinkMethod.String(),
-		)
+		); err != nil {
+			return fmt.Errorf("writing row: %w", err)
+		}
 	}
-	w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flushing output: %w", err)
+	}
 
 	return nil
 }

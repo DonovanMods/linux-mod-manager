@@ -86,7 +86,9 @@ func TestNewService(t *testing.T) {
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
 	assert.NotNil(t, svc)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 }
 
 func TestService_RegisterSource(t *testing.T) {
@@ -98,7 +100,9 @@ func TestService_RegisterSource(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	mock := newMockSource("test")
 	svc.RegisterSource(mock)
@@ -117,7 +121,9 @@ func TestService_SearchMods(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	mock := newMockSource("test")
 	mock.AddMod("skyrim", &domain.Mod{
@@ -144,7 +150,9 @@ func TestService_GetMod(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	mock := newMockSource("test")
 	mock.AddMod("skyrim", &domain.Mod{
@@ -170,7 +178,9 @@ func TestService_SaveSourceToken(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// Save a token
 	err = svc.SaveSourceToken("nexusmods", "test-api-key")
@@ -189,7 +199,9 @@ func TestService_DeleteSourceToken(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// Save a token
 	err = svc.SaveSourceToken("nexusmods", "test-api-key")
@@ -211,7 +223,9 @@ func TestService_IsSourceAuthenticated(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// Not authenticated initially
 	assert.False(t, svc.IsSourceAuthenticated("nexusmods"))
@@ -233,7 +247,9 @@ func TestService_GetSourceToken(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// No token initially
 	token, err := svc.GetSourceToken("nexusmods")
@@ -260,7 +276,9 @@ func TestService_GetModFiles(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	mock := newMockSource("test")
 	mock.AddMod("skyrim", &domain.Mod{
@@ -294,7 +312,9 @@ func TestService_GetModFiles_SourceNotFound(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	mod := &domain.Mod{
 		ID:       "123",
@@ -315,7 +335,9 @@ func TestService_UpdateModVersion(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// Create an installed mod
 	installedMod := &domain.InstalledMod{
@@ -353,7 +375,9 @@ func TestService_RollbackModVersion(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// Create an installed mod with previous version
 	installedMod := &domain.InstalledMod{
@@ -392,7 +416,9 @@ func TestService_RollbackModVersion_NoPreviousVersion(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// Create an installed mod without previous version
 	installedMod := &domain.InstalledMod{
@@ -422,7 +448,9 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// Create an installed mod
 	installedMod := &domain.InstalledMod{
@@ -469,7 +497,9 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)
-	defer svc.Close()
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
 
 	// Create a mock source that can provide download URLs
 	mock := newMockSourceWithDownloads("test")
@@ -570,7 +600,9 @@ func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
 		fileID := filepath.Base(r.URL.Path)
 		if content, ok := m.downloads[fileID]; ok {
 			w.Header().Set("Content-Type", "application/zip")
-			w.Write(content)
+			if _, err := w.Write(content); err != nil {
+				return
+			}
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}

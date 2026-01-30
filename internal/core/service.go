@@ -58,7 +58,9 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	// Load games
 	games, err := config.LoadGames(cfg.ConfigDir)
 	if err != nil {
-		database.Close()
+		if closeErr := database.Close(); closeErr != nil {
+			return nil, fmt.Errorf("loading games: %w (closing database: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("loading games: %w", err)
 	}
 
@@ -160,7 +162,7 @@ func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *doma
 // DownloadMod downloads a mod file, extracts it, and stores it in the cache
 // Returns the download result including files extracted and checksum.
 // Multiple files from the same mod can be downloaded to the same cache location.
-func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (*DownloadModResult, error) {
+func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
 	// Get game-specific cache
 	gameCache := s.GetGameCache(game)
 
@@ -180,7 +182,11 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 	if err != nil {
 		return nil, fmt.Errorf("creating temp directory: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if cerr := os.RemoveAll(tempDir); err == nil && cerr != nil {
+			err = fmt.Errorf("removing temp directory: %w", cerr)
+		}
+	}()
 
 	// Download the file
 	archivePath := filepath.Join(tempDir, file.FileName)

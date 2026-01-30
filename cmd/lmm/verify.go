@@ -65,7 +65,11 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer svc.Close()
+	defer func() {
+		if err := svc.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	game, err := svc.GetGame(gameID)
 	if err != nil {
@@ -191,6 +195,8 @@ func runVerify(cmd *cobra.Command, args []string) error {
 				} else {
 					if !jsonOutput {
 						fmt.Printf("  %s\n", colorGreen("Re-downloaded OK"))
+					} else {
+						jsonFiles[len(jsonFiles)-1].Status = "ok"
 					}
 					issues--
 				}

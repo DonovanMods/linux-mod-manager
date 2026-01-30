@@ -21,7 +21,9 @@ func TestProfileManager_Create(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -35,7 +37,9 @@ func TestProfileManager_Create_DuplicateName(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -50,7 +54,9 @@ func TestProfileManager_List(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -68,7 +74,9 @@ func TestProfileManager_Get(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -84,7 +92,9 @@ func TestProfileManager_Get_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -96,7 +106,9 @@ func TestProfileManager_Delete(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -114,7 +126,9 @@ func TestProfileManager_SetDefault(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -135,7 +149,9 @@ func TestProfileManager_AddMod(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -161,7 +177,9 @@ func TestProfileManager_RemoveMod(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -191,7 +209,9 @@ func TestProfileManager_Switch(t *testing.T) {
 
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	cacheDir := filepath.Join(dir, "cache")
 	modCache := cache.New(cacheDir)
@@ -245,7 +265,9 @@ func TestProfileManager_Switch_DeployFailure_Rollback(t *testing.T) {
 
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	cacheDir := filepath.Join(dir, "cache")
 	modCache := cache.New(cacheDir)
@@ -293,7 +315,9 @@ func TestProfileManager_Switch_UndeployFailure_Rollback(t *testing.T) {
 
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	cacheDir := filepath.Join(dir, "cache")
 	modCache := cache.New(cacheDir)
@@ -351,7 +375,9 @@ func TestProfileManager_Switch_OverridesFailure_Rollback(t *testing.T) {
 
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	cacheDir := filepath.Join(dir, "cache")
 	modCache := cache.New(cacheDir)
@@ -402,7 +428,9 @@ func TestProfileManager_ExportImport(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
 
@@ -444,7 +472,9 @@ func TestProfileManager_UpsertMod(t *testing.T) {
 
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
-	defer database.Close()
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
 
 	cacheDir := filepath.Join(dir, "cache")
 	modCache := cache.New(cacheDir)

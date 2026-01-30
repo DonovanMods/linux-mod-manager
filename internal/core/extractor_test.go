@@ -16,7 +16,9 @@ func createTestZip(t *testing.T, dir string, files map[string]string) string {
 	zipPath := filepath.Join(dir, "test.zip")
 	f, err := os.Create(zipPath)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() {
+		require.NoError(t, f.Close())
+	}()
 
 	w := zip.NewWriter(f)
 	for name, content := range files {
@@ -82,7 +84,7 @@ func TestExtractor_Extract_ZipWithDirectories(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, w.Close())
-	f.Close()
+	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
 	err = extractor.Extract(zipPath, destDir)
@@ -109,7 +111,7 @@ func TestExtractor_Extract_EmptyZip(t *testing.T) {
 	require.NoError(t, err)
 	w := zip.NewWriter(f)
 	require.NoError(t, w.Close())
-	f.Close()
+	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
 	err = extractor.Extract(zipPath, destDir)
@@ -159,7 +161,7 @@ func TestExtractor_Extract_TruncatedZip(t *testing.T) {
 	require.NoError(t, err)
 	err = f.Truncate(info.Size() / 2)
 	require.NoError(t, err)
-	f.Close()
+	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
 	err = extractor.Extract(zipPath, destDir)
@@ -238,7 +240,7 @@ func TestExtractor_Extract_ZipSlipPrevention(t *testing.T) {
 	_, err = fw.Write([]byte("malicious content"))
 	require.NoError(t, err)
 	require.NoError(t, w.Close())
-	f.Close()
+	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
 	err = extractor.Extract(zipPath, destDir)
@@ -271,7 +273,7 @@ func TestExtractor_Extract_PreservesPermissions(t *testing.T) {
 	_, err = fw.Write([]byte("#!/bin/bash\necho hello"))
 	require.NoError(t, err)
 	require.NoError(t, w.Close())
-	f.Close()
+	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
 	err = extractor.Extract(zipPath, destDir)

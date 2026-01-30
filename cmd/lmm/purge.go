@@ -59,7 +59,11 @@ func runPurge(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	game, err := service.GetGame(gameID)
 	if err != nil {

@@ -14,6 +14,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func writeJSON(t *testing.T, w http.ResponseWriter, v interface{}) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		t.Errorf("encoding response: %v", err)
+	}
+}
+
 func TestNexusMods_GetModFiles(t *testing.T) {
 	mockResponse := ModFileList{
 		Files: []FileData{
@@ -47,7 +54,7 @@ func TestNexusMods_GetModFiles(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/games/starrupture/mods/12345/files.json", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		writeJSON(t, w, mockResponse)
 	}))
 	defer server.Close()
 
@@ -89,7 +96,7 @@ func TestNexusMods_GetDownloadURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/games/starrupture/mods/12345/files/100/download_link.json", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		writeJSON(t, w, mockResponse)
 	}))
 	defer server.Close()
 
@@ -111,7 +118,7 @@ func TestNexusMods_GetDownloadURL_NoLinks(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		writeJSON(t, w, mockResponse)
 	}))
 	defer server.Close()
 
@@ -160,14 +167,14 @@ func TestNexusMods_CheckUpdates_FindsUpdate(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/games/skyrimspecialedition/mods/12345.json":
-			json.NewEncoder(w).Encode(ModData{
+			writeJSON(t, w, ModData{
 				ModID:   12345,
 				Name:    "Test Mod",
 				Version: "2.0.0", // Newer than installed 1.0.0
 				Author:  "TestAuthor",
 			})
 		case "/v1/games/skyrimspecialedition/mods/12345/files.json":
-			json.NewEncoder(w).Encode(ModFileList{
+			writeJSON(t, w, ModFileList{
 				Files: []FileData{
 					{FileID: 100, IsPrimary: true, Changelog: "Fixed bugs in 2.0.0"},
 				},
@@ -206,10 +213,10 @@ func TestNexusMods_CheckUpdates_NoUpdateWhenSameVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "/files.json") {
-			json.NewEncoder(w).Encode(ModFileList{Files: []FileData{{FileID: 100, IsPrimary: true}}})
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 100, IsPrimary: true}}})
 			return
 		}
-		json.NewEncoder(w).Encode(ModData{
+		writeJSON(t, w, ModData{
 			ModID:   12345,
 			Name:    "Test Mod",
 			Version: "1.0.0", // Same as installed
@@ -242,7 +249,7 @@ func TestNexusMods_CheckUpdates_FindsFileUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "/files.json") {
-			json.NewEncoder(w).Encode(ModFileList{
+			writeJSON(t, w, ModFileList{
 				Files: []FileData{
 					{FileID: 100, IsPrimary: true, Version: "1.0.0"},
 					{FileID: 101, IsPrimary: false, Version: "1.0.1", Changelog: "Hotfix for optional file"},
@@ -253,7 +260,7 @@ func TestNexusMods_CheckUpdates_FindsFileUpdate(t *testing.T) {
 			})
 			return
 		}
-		json.NewEncoder(w).Encode(ModData{ModID: 12345, Name: "Test Mod", Version: "1.0.0"})
+		writeJSON(t, w, ModData{ModID: 12345, Name: "Test Mod", Version: "1.0.0"})
 	}))
 	defer server.Close()
 
@@ -287,17 +294,17 @@ func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
 
 		switch r.URL.Path {
 		case "/v1/games/skyrimspecialedition/mods/111.json":
-			json.NewEncoder(w).Encode(ModData{ModID: 111, Version: "2.0.0"}) // Update available
+			writeJSON(t, w, ModData{ModID: 111, Version: "2.0.0"}) // Update available
 		case "/v1/games/skyrimspecialedition/mods/111/files.json":
-			json.NewEncoder(w).Encode(ModFileList{Files: []FileData{{FileID: 1, IsPrimary: true}}})
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 1, IsPrimary: true}}})
 		case "/v1/games/skyrimspecialedition/mods/222.json":
-			json.NewEncoder(w).Encode(ModData{ModID: 222, Version: "1.0.0"}) // No update
+			writeJSON(t, w, ModData{ModID: 222, Version: "1.0.0"}) // No update
 		case "/v1/games/skyrimspecialedition/mods/222/files.json":
-			json.NewEncoder(w).Encode(ModFileList{Files: []FileData{{FileID: 10, IsPrimary: true}}})
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 10, IsPrimary: true}}})
 		case "/v1/games/skyrimspecialedition/mods/333.json":
-			json.NewEncoder(w).Encode(ModData{ModID: 333, Version: "3.5.0"}) // Update available
+			writeJSON(t, w, ModData{ModID: 333, Version: "3.5.0"}) // Update available
 		case "/v1/games/skyrimspecialedition/mods/333/files.json":
-			json.NewEncoder(w).Encode(ModFileList{Files: []FileData{{FileID: 2, IsPrimary: true}}})
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 2, IsPrimary: true}}})
 		}
 	}))
 	defer server.Close()
@@ -341,7 +348,7 @@ func TestNexusMods_GetDependencies(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		writeJSON(t, w, mockResponse)
 	}))
 	defer server.Close()
 
@@ -375,7 +382,7 @@ func TestNexusMods_GetDependencies_NoDeps(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		writeJSON(t, w, mockResponse)
 	}))
 	defer server.Close()
 

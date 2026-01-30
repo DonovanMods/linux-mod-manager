@@ -74,7 +74,11 @@ func runGameSetDefault(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	game, err := service.GetGame(newDefault)
 	if err != nil {
@@ -120,7 +124,11 @@ func runGameShowDefault(cmd *cobra.Command, args []string) error {
 	// Try to get game name for display
 	service, err := initService()
 	if err == nil {
-		defer service.Close()
+		defer func() {
+			if err := service.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+			}
+		}()
 		if game, err := service.GetGame(cfg.DefaultGame); err == nil {
 			cmd.Printf("Default game: %s (%s)\n", game.Name, cfg.DefaultGame)
 			return nil

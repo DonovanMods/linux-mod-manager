@@ -34,7 +34,9 @@ func TestClient_GetMod(t *testing.T) {
 		assert.Equal(t, "testapikey", r.Header.Get("apikey"))
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -69,7 +71,9 @@ func TestClient_GetLatestAdded(t *testing.T) {
 		assert.Equal(t, "/v1/games/starrupture/mods/latest_added.json", r.URL.Path)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -97,7 +101,9 @@ func TestClient_SearchMods_FiltersByQuery(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(graphqlResponse))
+		if _, err := w.Write([]byte(graphqlResponse)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -157,7 +163,9 @@ func TestClient_ValidateAPIKey_Success(t *testing.T) {
 		assert.Equal(t, "test-key", r.Header.Get("apikey"))
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -171,7 +179,9 @@ func TestClient_ValidateAPIKey_Success(t *testing.T) {
 func TestClient_ValidateAPIKey_Invalid(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"message":"Invalid API Key"}`))
+		if _, err := w.Write([]byte(`{"message":"Invalid API Key"}`)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -186,7 +196,9 @@ func TestClient_ValidateAPIKey_Invalid(t *testing.T) {
 func TestClient_ReturnsAuthRequired_On401(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"message":"Not authorized"}`))
+		if _, err := w.Write([]byte(`{"message":"Not authorized"}`)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -218,7 +230,9 @@ func TestClient_SearchMods_UsesGraphQL(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(graphqlResponse))
+		if _, err := w.Write([]byte(graphqlResponse)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -259,7 +273,9 @@ func TestClient_SearchMods_MultipleTagsAllIncluded(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(graphqlResponse))
+		if _, err := w.Write([]byte(graphqlResponse)); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -321,7 +337,9 @@ func TestClient_GetModFiles(t *testing.T) {
 		assert.Equal(t, "testapikey", r.Header.Get("apikey"))
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -364,7 +382,9 @@ func TestClient_GetDownloadLinks(t *testing.T) {
 		assert.Equal(t, "testapikey", r.Header.Get("apikey"))
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockResponse)
+		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
 	}))
 	defer server.Close()
 

@@ -34,7 +34,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	games := service.ListGames()
 
@@ -74,11 +78,19 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
 	if verbose {
-		fmt.Fprintln(w, "GAME\tID\tPATH\tLINK\tPROFILES\tMODS†")
-		fmt.Fprintln(w, "----\t--\t----\t----\t--------\t-----")
+		if _, err := fmt.Fprintln(w, "GAME\tID\tPATH\tLINK\tPROFILES\tMODS†"); err != nil {
+			return fmt.Errorf("writing header: %w", err)
+		}
+		if _, err := fmt.Fprintln(w, "----\t--\t----\t----\t--------\t-----"); err != nil {
+			return fmt.Errorf("writing separator: %w", err)
+		}
 	} else {
-		fmt.Fprintln(w, "GAME\tPATH\tMODS†\tPROFILES")
-		fmt.Fprintln(w, "----\t----\t-----\t--------")
+		if _, err := fmt.Fprintln(w, "GAME\tPATH\tMODS†\tPROFILES"); err != nil {
+			return fmt.Errorf("writing header: %w", err)
+		}
+		if _, err := fmt.Fprintln(w, "----\t----\t-----\t--------"); err != nil {
+			return fmt.Errorf("writing separator: %w", err)
+		}
 	}
 
 	lnk := linker.New(service.GetDefaultLinkMethod())
@@ -108,24 +120,30 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			if game.LinkMethodExplicit {
 				linkStr += "*" // Indicate per-game override
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\n",
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\n",
 				gameName,
 				game.ID,
 				truncate(game.InstallPath, 30),
 				linkStr,
 				len(profiles),
 				modCount,
-			)
+			); err != nil {
+				return fmt.Errorf("writing row: %w", err)
+			}
 		} else {
-			fmt.Fprintf(w, "%s\t%s\t%d\t%d\n",
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%d\n",
 				gameName,
 				truncate(game.InstallPath, 40),
 				modCount,
 				len(profiles),
-			)
+			); err != nil {
+				return fmt.Errorf("writing row: %w", err)
+			}
 		}
 	}
-	w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flushing output: %w", err)
+	}
 
 	fmt.Println()
 	if verbose {

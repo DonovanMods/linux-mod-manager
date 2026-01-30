@@ -269,7 +269,7 @@ When you run `lmm update`, the tool checks each installed mod against the source
 
 ## Architecture
 
-```
+```text
 cmd/lmm/                  # CLI entry point (Cobra)
 internal/
 ├── domain/               # Core types (Mod, Profile, Game)

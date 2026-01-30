@@ -33,17 +33,20 @@ func New(method domain.LinkMethod) Linker {
 func CleanupEmptyDirs(basePath string) {
 	for {
 		found := false
-		filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
+		if err := filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
 			if err != nil || !info.IsDir() || path == basePath {
 				return nil
 			}
 			entries, err := os.ReadDir(path)
 			if err == nil && len(entries) == 0 {
-				os.Remove(path)
-				found = true
+				if err := os.Remove(path); err == nil {
+					found = true
+				}
 			}
 			return nil
-		})
+		}); err != nil {
+			return
+		}
 		if !found {
 			break
 		}

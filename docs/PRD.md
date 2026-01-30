@@ -27,7 +27,7 @@
 #### NexusMods (MVP)
 
 - OAuth authentication flow via browser redirect
-- GraphQL API integration (https://graphql.nexusmods.com/)
+- GraphQL API integration (<https://graphql.nexusmods.com/>)
 - Search mods by game, name, category, tags
 - View mod details, descriptions, images, changelogs
 - Download files with automatic retry on failure
@@ -236,7 +236,7 @@ Location: `~/.local/share/lmm/lmm.db`
 
 User-editable configuration:
 
-```
+```text
 ~/.config/lmm/
 ├── config.yaml          # Global settings
 ├── games.yaml           # Game configurations
@@ -250,7 +250,7 @@ User-editable configuration:
 
 ### Cache Structure
 
-```
+```text
 ~/.local/share/lmm/
 ├── lmm.db               # SQLite database
 ├── cache/

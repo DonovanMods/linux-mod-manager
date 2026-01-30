@@ -38,7 +38,7 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 }
 
 // GetInstalledMods returns all installed mods for a game/profile combination
-func (d *DB) GetInstalledMods(gameID, profileName string) ([]domain.InstalledMod, error) {
+func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.InstalledMod, err error) {
 	rows, err := d.Query(`
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, link_method
 		FROM installed_mods
@@ -48,9 +48,12 @@ func (d *DB) GetInstalledMods(gameID, profileName string) ([]domain.InstalledMod
 	if err != nil {
 		return nil, fmt.Errorf("querying installed mods: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
 
-	var mods []domain.InstalledMod
 	for rows.Next() {
 		var mod domain.InstalledMod
 		var prevVersion *string
@@ -86,7 +89,7 @@ func (d *DB) GetInstalledMods(gameID, profileName string) ([]domain.InstalledMod
 }
 
 // getModFileIDsBatch returns file IDs for all mods in game/profile, keyed by "sourceID:modID"
-func (d *DB) getModFileIDsBatch(gameID, profileName string) (map[string][]string, error) {
+func (d *DB) getModFileIDsBatch(gameID, profileName string) (out map[string][]string, err error) {
 	rows, err := d.Query(`
 		SELECT source_id, mod_id, file_id FROM installed_mod_files
 		WHERE game_id = ? AND profile_name = ?
@@ -95,9 +98,13 @@ func (d *DB) getModFileIDsBatch(gameID, profileName string) (map[string][]string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
 
-	out := make(map[string][]string)
+	out = make(map[string][]string)
 	for rows.Next() {
 		var sourceID, modID, fileID string
 		if err := rows.Scan(&sourceID, &modID, &fileID); err != nil {
@@ -217,7 +224,7 @@ func (d *DB) GetInstalledMod(sourceID, modID, gameID, profileName string) (*doma
 }
 
 // GetModFileIDs retrieves the file IDs for an installed mod
-func (d *DB) GetModFileIDs(sourceID, modID, gameID, profileName string) ([]string, error) {
+func (d *DB) GetModFileIDs(sourceID, modID, gameID, profileName string) (fileIDs []string, err error) {
 	rows, err := d.Query(`
 		SELECT file_id FROM installed_mod_files
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
@@ -225,9 +232,12 @@ func (d *DB) GetModFileIDs(sourceID, modID, gameID, profileName string) ([]strin
 	if err != nil {
 		return nil, fmt.Errorf("querying mod file IDs: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
 
-	var fileIDs []string
 	for rows.Next() {
 		var fileID string
 		if err := rows.Scan(&fileID); err != nil {
@@ -356,7 +366,7 @@ func (d *DB) GetFileChecksum(sourceID, modID, gameID, profileName, fileID string
 }
 
 // GetFilesWithChecksums returns all files for a game/profile with their checksums
-func (d *DB) GetFilesWithChecksums(gameID, profileName string) ([]FileWithChecksum, error) {
+func (d *DB) GetFilesWithChecksums(gameID, profileName string) (files []FileWithChecksum, err error) {
 	rows, err := d.Query(`
 		SELECT source_id, mod_id, file_id, checksum
 		FROM installed_mod_files
@@ -365,9 +375,12 @@ func (d *DB) GetFilesWithChecksums(gameID, profileName string) ([]FileWithChecks
 	if err != nil {
 		return nil, fmt.Errorf("querying files with checksums: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
 
-	var files []FileWithChecksum
 	for rows.Next() {
 		var f FileWithChecksum
 		var checksum *string

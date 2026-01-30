@@ -101,7 +101,11 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	if err := service.SaveSourceToken(sourceID, apiKey); err != nil {
 		return fmt.Errorf("saving token: %w", err)
@@ -125,7 +129,11 @@ func runAuthLogout(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	if err := service.DeleteSourceToken(sourceID); err != nil {
 		return fmt.Errorf("removing token: %w", err)
@@ -140,7 +148,11 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	sources := []string{"nexusmods"}
 

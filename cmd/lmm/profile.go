@@ -187,7 +187,11 @@ func runProfileList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	pm := getProfileManager(service)
 
@@ -202,17 +206,25 @@ func runProfileList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tMODS\tDEFAULT")
-	fmt.Fprintln(w, "----\t----\t-------")
+	if _, err := fmt.Fprintln(w, "NAME\tMODS\tDEFAULT"); err != nil {
+		return fmt.Errorf("writing header: %w", err)
+	}
+	if _, err := fmt.Fprintln(w, "----\t----\t-------"); err != nil {
+		return fmt.Errorf("writing separator: %w", err)
+	}
 
 	for _, p := range profiles {
 		defaultMark := ""
 		if p.IsDefault {
 			defaultMark = "*"
 		}
-		fmt.Fprintf(w, "%s\t%d\t%s\n", p.Name, len(p.Mods), defaultMark)
+		if _, err := fmt.Fprintf(w, "%s\t%d\t%s\n", p.Name, len(p.Mods), defaultMark); err != nil {
+			return fmt.Errorf("writing row: %w", err)
+		}
 	}
-	w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flushing output: %w", err)
+	}
 
 	return nil
 }
@@ -228,7 +240,11 @@ func runProfileCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	pm := getProfileManager(service)
 
@@ -252,7 +268,11 @@ func runProfileDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	pm := getProfileManager(service)
 
@@ -275,7 +295,11 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	game, err := service.GetGame(gameID)
 	if err != nil {
@@ -564,7 +588,11 @@ func runProfileExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	pm := getProfileManager(service)
 
@@ -593,7 +621,11 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	game, err := service.GetGame(gameID)
 	if err != nil {
@@ -837,7 +869,11 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	pm := getProfileManager(service)
 
@@ -1006,7 +1042,11 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	_, err = service.GetGame(gameID)
 	if err != nil {
@@ -1035,16 +1075,22 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("Load order for %s (first = lowest priority):\n", profileName)
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "#\tMOD_ID\tNAME")
+		if _, err := fmt.Fprintln(w, "#\tMOD_ID\tNAME"); err != nil {
+			return fmt.Errorf("writing header: %w", err)
+		}
 		for i, ref := range profile.Mods {
 			key := ref.SourceID + ":" + ref.ModID
 			name := nameByKey[key]
 			if name == "" {
 				name = "(unknown)"
 			}
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", i+1, ref.ModID, name)
+			if _, err := fmt.Fprintf(w, "%d\t%s\t%s\n", i+1, ref.ModID, name); err != nil {
+				return fmt.Errorf("writing row: %w", err)
+			}
 		}
-		_ = w.Flush()
+		if err := w.Flush(); err != nil {
+			return fmt.Errorf("flushing output: %w", err)
+		}
 		return nil
 	}
 
@@ -1115,7 +1161,11 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	game, err := service.GetGame(gameID)
 	if err != nil {

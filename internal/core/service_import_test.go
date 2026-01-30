@@ -20,10 +20,14 @@ func createImportTestZip(t *testing.T, path string, files map[string]string) {
 	t.Helper()
 	f, err := os.Create(path)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() {
+		require.NoError(t, f.Close())
+	}()
 
 	w := zip.NewWriter(f)
-	defer w.Close()
+	defer func() {
+		require.NoError(t, w.Close())
+	}()
 
 	for name, content := range files {
 		fw, err := w.Create(name)
@@ -209,7 +213,7 @@ func TestImportMod_ReimportOverwritesCache(t *testing.T) {
 	assert.Equal(t, 1, result1.FilesExtracted)
 
 	// Re-import with different files
-	os.Remove(archivePath)
+	require.NoError(t, os.Remove(archivePath))
 	createImportTestZip(t, archivePath, map[string]string{
 		"file2.txt": "new content",
 		"file3.txt": "more content",

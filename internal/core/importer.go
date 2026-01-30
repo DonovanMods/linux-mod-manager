@@ -41,7 +41,7 @@ func NewImporter(cache *cache.Cache) *Importer {
 }
 
 // Import imports a mod from a local archive file
-func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (*ImportResult, error) {
+func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (result *ImportResult, err error) {
 	// Validate archive exists
 	if _, err := os.Stat(archivePath); err != nil {
 		return nil, fmt.Errorf("archive not found: %w", err)
@@ -81,7 +81,11 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	if err != nil {
 		return nil, fmt.Errorf("creating temp directory: %w", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if cerr := os.RemoveAll(tempDir); err == nil && cerr != nil {
+			err = fmt.Errorf("removing temp directory: %w", cerr)
+		}
+	}()
 
 	extractedPath := filepath.Join(tempDir, "extracted")
 	if err := i.extractor.Extract(archivePath, extractedPath); err != nil {

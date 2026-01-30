@@ -230,9 +230,14 @@ func (pm *ProfileManager) Switch(ctx context.Context, game *domain.Game, newProf
 	if err != nil && !errors.Is(err, domain.ErrProfileNotFound) {
 		return fmt.Errorf("getting current profile: %w", err)
 	}
+	hadCurrentProfile := currentProfile != nil
+	// Ensure current is never nil so rollbacks can safely use it (no mods/overrides when there was no default).
+	if currentProfile == nil {
+		currentProfile = &domain.Profile{Name: "", GameID: game.ID, Mods: nil, Overrides: nil}
+	}
 
-	// Phase 1: Undeploy current profile (fail-fast). Skip if switching to same profile. On error, rollback by re-deploying undeployed mods.
-	if currentProfile != nil && currentProfile.Name != newProfileName && len(currentProfile.Mods) > 0 {
+	// Phase 1: Undeploy current profile (fail-fast). Skip if no default was set, or switching to same profile. On error, rollback by re-deploying undeployed mods.
+	if hadCurrentProfile && currentProfile.Name != newProfileName && len(currentProfile.Mods) > 0 {
 		for i, modRef := range currentProfile.Mods {
 			if err := pm.undeployModRefFailFast(ctx, game, modRef); err != nil {
 				rollbackErr := pm.rollbackRedeploy(ctx, game, currentProfile.Mods[:i])

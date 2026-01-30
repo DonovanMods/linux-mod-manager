@@ -10,7 +10,9 @@ import (
 
 func TestSaveToken(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 
 	err := db.SaveToken("nexusmods", "test-api-key-123")
 	require.NoError(t, err)
@@ -25,7 +27,9 @@ func TestSaveToken(t *testing.T) {
 
 func TestSaveToken_Update(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 
 	// Save initial token
 	err := db.SaveToken("nexusmods", "old-key")
@@ -45,7 +49,9 @@ func TestSaveToken_Update(t *testing.T) {
 
 func TestGetToken_NotFound(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 
 	token, err := db.GetToken("nonexistent")
 	assert.NoError(t, err)
@@ -54,7 +60,9 @@ func TestGetToken_NotFound(t *testing.T) {
 
 func TestDeleteToken(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 
 	// Save a token
 	err := db.SaveToken("nexusmods", "test-key")
@@ -72,7 +80,9 @@ func TestDeleteToken(t *testing.T) {
 
 func TestDeleteToken_NotFound(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 
 	// Deleting non-existent token should not error
 	err := db.DeleteToken("nonexistent")
@@ -81,7 +91,9 @@ func TestDeleteToken_NotFound(t *testing.T) {
 
 func TestHasToken(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 
 	// No token initially
 	has, err := db.HasToken("nexusmods")

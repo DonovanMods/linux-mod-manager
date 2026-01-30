@@ -67,7 +67,7 @@ func (d *DB) DeleteDeployedFiles(gameID, profileName, sourceID, modID string) er
 }
 
 // GetDeployedFilesForMod returns all file paths deployed by a specific mod.
-func (d *DB) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string) ([]string, error) {
+func (d *DB) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string) (paths []string, err error) {
 	rows, err := d.Query(`
 		SELECT relative_path FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
@@ -76,9 +76,12 @@ func (d *DB) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string)
 	if err != nil {
 		return nil, fmt.Errorf("querying deployed files: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
 
-	var paths []string
 	for rows.Next() {
 		var path string
 		if err := rows.Scan(&path); err != nil {
@@ -91,7 +94,7 @@ func (d *DB) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string)
 
 // CheckFileConflicts checks which of the given paths are already owned by other mods.
 // Returns a slice of conflicts (empty if no conflicts).
-func (d *DB) CheckFileConflicts(gameID, profileName string, paths []string) ([]FileConflict, error) {
+func (d *DB) CheckFileConflicts(gameID, profileName string, paths []string) (conflicts []FileConflict, err error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
@@ -115,9 +118,12 @@ func (d *DB) CheckFileConflicts(gameID, profileName string, paths []string) ([]F
 	if err != nil {
 		return nil, fmt.Errorf("checking conflicts: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
 
-	var conflicts []FileConflict
 	for rows.Next() {
 		var c FileConflict
 		if err := rows.Scan(&c.RelativePath, &c.SourceID, &c.ModID); err != nil {

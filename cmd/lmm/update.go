@@ -92,7 +92,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	// Verify game exists
 	game, err := service.GetGame(gameID)
@@ -185,8 +189,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	// Display available updates with policy
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "MOD\tCURRENT\tAVAILABLE\tPOLICY\n")
-	fmt.Fprintf(w, "---\t-------\t---------\t------\n")
+	if _, err := fmt.Fprintf(w, "MOD\tCURRENT\tAVAILABLE\tPOLICY\n"); err != nil {
+		return fmt.Errorf("writing header: %w", err)
+	}
+	if _, err := fmt.Fprintf(w, "---\t-------\t---------\t------\n"); err != nil {
+		return fmt.Errorf("writing separator: %w", err)
+	}
 
 	var autoUpdates []domain.Update
 	for _, update := range updates {
@@ -195,14 +203,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 			policyStr += " ✓"
 			autoUpdates = append(autoUpdates, update)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			truncate(update.InstalledMod.Name, 40),
 			update.InstalledMod.Version,
 			update.NewVersion,
 			policyStr,
-		)
+		); err != nil {
+			return fmt.Errorf("writing row: %w", err)
+		}
 	}
-	w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flushing output: %w", err)
+	}
 
 	fmt.Printf("\n%d update(s) available.\n", len(updates))
 
@@ -505,7 +517,11 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
-	defer service.Close()
+	defer func() {
+		if err := service.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		}
+	}()
 
 	// Verify game exists
 	game, err := service.GetGame(gameID)

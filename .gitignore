@@ -1,5 +1,6 @@
 # AI assistant files
 .claude/
+docs/plans
 
 # Go build artifacts
 *.exe

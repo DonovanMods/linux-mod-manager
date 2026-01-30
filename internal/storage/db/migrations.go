@@ -2,8 +2,6 @@ package db
 
 import "fmt"
 
-const currentVersion = 7
-
 func (d *DB) migrate() error {
 	// Create migrations table if it doesn't exist
 	if _, err := d.Exec(`
