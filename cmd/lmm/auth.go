@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
@@ -31,9 +32,16 @@ var authLoginCmd = &cobra.Command{
 	Short: "Authenticate with a mod source",
 	Long: `Authenticate with a mod source.
 
+If no source is specified, you will be prompted to select one.
+
 Supported sources:
-  - nexusmods (default)
+  - nexusmods
   - curseforge
+
+Examples:
+  lmm auth login              # Interactive source selection
+  lmm auth login nexusmods    # Authenticate with NexusMods
+  lmm auth login curseforge   # Authenticate with CurseForge
 
 For NexusMods:
   1. Visit https://www.nexusmods.com/users/myaccount?tab=api
@@ -51,8 +59,15 @@ For CurseForge:
 var authLogoutCmd = &cobra.Command{
 	Use:   "logout [source]",
 	Short: "Remove stored credentials for a mod source",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runAuthLogout,
+	Long: `Remove stored credentials for a mod source.
+
+If no source is specified, you will be prompted to select one.
+
+Supported sources:
+  - nexusmods
+  - curseforge`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runAuthLogout,
 }
 
 var authStatusCmd = &cobra.Command{
@@ -68,14 +83,43 @@ func init() {
 	rootCmd.AddCommand(authCmd)
 }
 
-func runAuthLogin(cmd *cobra.Command, args []string) error {
-	sourceID := "nexusmods"
-	if len(args) > 0 {
-		sourceID = args[0]
+// promptForSource displays an interactive menu to select a source
+func promptForSource() (string, error) {
+	fmt.Println("Select a source to authenticate with:")
+	for i, source := range supportedSources {
+		fmt.Printf("  [%d] %s\n", i+1, getSourceDisplayName(source))
+	}
+	fmt.Print("Enter choice (1-" + strconv.Itoa(len(supportedSources)) + "): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("reading input: %w", err)
 	}
 
-	if !isSupportedSource(sourceID) {
-		return fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
+	choice, err := strconv.Atoi(strings.TrimSpace(input))
+	if err != nil || choice < 1 || choice > len(supportedSources) {
+		return "", fmt.Errorf("invalid choice: please enter a number between 1 and %d", len(supportedSources))
+	}
+
+	return supportedSources[choice-1], nil
+}
+
+func runAuthLogin(cmd *cobra.Command, args []string) error {
+	var sourceID string
+	var err error
+
+	if len(args) > 0 {
+		sourceID = args[0]
+		if !isSupportedSource(sourceID) {
+			return fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
+		}
+	} else {
+		sourceID, err = promptForSource()
+		if err != nil {
+			return err
+		}
+		fmt.Println()
 	}
 
 	printAuthInstructions(sourceID)
@@ -120,13 +164,20 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 }
 
 func runAuthLogout(cmd *cobra.Command, args []string) error {
-	sourceID := "nexusmods"
+	var sourceID string
+	var err error
+
 	if len(args) > 0 {
 		sourceID = args[0]
-	}
-
-	if !isSupportedSource(sourceID) {
-		return fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
+		if !isSupportedSource(sourceID) {
+			return fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
+		}
+	} else {
+		sourceID, err = promptForSource()
+		if err != nil {
+			return err
+		}
+		fmt.Println()
 	}
 
 	service, err := initService()
@@ -143,7 +194,7 @@ func runAuthLogout(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("removing token: %w", err)
 	}
 
-	fmt.Printf("Removed %s credentials.\n", sourceID)
+	fmt.Printf("Removed %s credentials.\n", getSourceDisplayName(sourceID))
 	return nil
 }
 
@@ -167,7 +218,7 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 
 		if token != nil {
 			masked := maskAPIKey(token.APIKey)
-			fmt.Printf("%s: authenticated (key: %s)\n", sourceID, masked)
+			fmt.Printf("%s: authenticated (key: %s)\n", getSourceDisplayName(sourceID), masked)
 			continue
 		}
 
@@ -176,12 +227,12 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 		if envKey != "" {
 			if apiKey := os.Getenv(envKey); apiKey != "" {
 				masked := maskAPIKey(apiKey)
-				fmt.Printf("%s: authenticated via %s (key: %s)\n", sourceID, envKey, masked)
+				fmt.Printf("%s: authenticated via %s (key: %s)\n", getSourceDisplayName(sourceID), envKey, masked)
 				continue
 			}
 		}
 
-		fmt.Printf("%s: not authenticated\n", sourceID)
+		fmt.Printf("%s: not authenticated\n", getSourceDisplayName(sourceID))
 	}
 
 	return nil

@@ -170,7 +170,7 @@ func TestAuthLogoutCmd_NotAuthenticated(t *testing.T) {
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"auth", "logout"})
+	cmd.SetArgs([]string{"auth", "logout", "nexusmods"})
 
 	// Should succeed even when not authenticated
 	err := cmd.Execute()
@@ -294,7 +294,7 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"auth", "logout"})
+	cmd.SetArgs([]string{"auth", "logout", "nexusmods"})
 
 	err = cmd.Execute()
 	assert.NoError(t, err)
