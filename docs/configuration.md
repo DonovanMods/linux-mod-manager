@@ -20,15 +20,15 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 
 ### Game options
 
-| Option         | Type   | Required | Description                                                         |
-| -------------- | ------ | -------- | ------------------------------------------------------------------- |
-| `name`         | string | yes      | Display name                                                        |
-| `install_path` | string | yes      | Game installation directory (supports `~`)                          |
-| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)                    |
-| `sources`      | map    | yes      | Source ID to game domain ID, e.g. `nexusmods: skyrimspecialedition` |
-| `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy`          |
-| `cache_path`   | string | no       | Per-game cache directory override                                   |
-| `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                 |
+| Option         | Type   | Required | Description                                                |
+| -------------- | ------ | -------- | ---------------------------------------------------------- |
+| `name`         | string | yes      | Display name                                               |
+| `install_path` | string | yes      | Game installation directory (supports `~`)                 |
+| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)           |
+| `sources`      | map    | yes      | Source ID to game ID mapping (see below)                   |
+| `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy` |
+| `cache_path`   | string | no       | Per-game cache directory override                          |
+| `hooks`        | object | no       | Scripts to run around install/uninstall (see below)        |
 
 ### Hooks (games.yaml)
 
@@ -110,3 +110,41 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 | `~/.config/lmm/games/<game-id>/profiles/*.yaml` | Per-game profiles                                      |
 | `~/.local/share/lmm/lmm.db`                     | SQLite database (metadata, tokens)                     |
 | `~/.local/share/lmm/cache/`                     | Mod file cache (or `cache_path` override)              |
+
+## Mod Sources
+
+lmm supports multiple mod sources. Each source uses its own game identifier:
+
+### NexusMods
+
+- **Source ID:** `nexusmods`
+- **Game ID format:** Game domain slug (e.g., `skyrimspecialedition`, `minecraft`)
+- **Auth:** API key from [NexusMods API settings](https://www.nexusmods.com/users/myaccount?tab=api)
+- **Env var:** `NEXUSMODS_API_KEY`
+
+### CurseForge
+
+- **Source ID:** `curseforge`
+- **Game ID format:** Numeric game ID (e.g., `432` for Minecraft, `1` for WoW)
+- **Auth:** API key from [CurseForge Console](https://console.curseforge.com/)
+- **Env var:** `CURSEFORGE_API_KEY`
+
+### Example games.yaml with multiple sources
+
+```yaml
+games:
+  minecraft:
+    name: "Minecraft"
+    install_path: "~/.minecraft"
+    mod_path: "~/.minecraft/mods"
+    sources:
+      nexusmods: "minecraft"
+      curseforge: "432"
+
+  skyrim-se:
+    name: "Skyrim Special Edition"
+    install_path: "~/.steam/steam/steamapps/common/Skyrim Special Edition"
+    mod_path: "~/.steam/steam/steamapps/common/Skyrim Special Edition/Data"
+    sources:
+      nexusmods: "skyrimspecialedition"
+```

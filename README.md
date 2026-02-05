@@ -4,7 +4,7 @@ A terminal-based mod manager for Linux that provides a CLI interface for searchi
 
 ## Features
 
-- **NexusMods Integration**: Search, download, install, and check updates from NexusMods
+- **Multi-Source Support**: Search, download, install mods from NexusMods and CurseForge
 - **Profile System**: Manage multiple mod configurations per game
 - **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
 - **Rollback Support**: Revert to previous mod versions when updates cause issues
@@ -48,12 +48,26 @@ go build -o lmm ./cmd/lmm
 
 ### Authentication
 
-NexusMods requires an API key for downloading mods. Get your personal API key from [NexusMods API settings](https://www.nexusmods.com/users/myaccount?tab=api) and authenticate:
+Mod sources require API keys for downloading mods.
+
+#### NexusMods
+
+Get your personal API key from [NexusMods API settings](https://www.nexusmods.com/users/myaccount?tab=api):
 
 ```bash
-lmm auth login
+lmm auth login nexusmods
 # Or set the environment variable
 export NEXUSMODS_API_KEY="your-api-key"
+```
+
+#### CurseForge
+
+Get your API key from [CurseForge Console](https://console.curseforge.com/):
+
+```bash
+lmm auth login curseforge
+# Or set the environment variable
+export CURSEFORGE_API_KEY="your-api-key"
 ```
 
 ### Set Default Game
@@ -208,7 +222,7 @@ This allows you to store different games' mods on different drives (e.g., large 
 ### Commands
 
 | Command                                | Description                                 |
-| -------------------------------------- | ------------------------------------------- |
+| -------------------------------------- | ------------------------------------------- | ----------- |
 | `lmm search <query>`                   | Search for mods                             |
 | `lmm search <query> --category ID`     | Filter by NexusMods category                |
 | `lmm search <query> --tag TAG`         | Filter by tag (repeat for multiple)         |
@@ -235,7 +249,7 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm game set-default <game-id>`       | Set the default game                        |
 | `lmm game show-default`                | Show current default game                   |
 | `lmm game clear-default`               | Clear the default game setting              |
-| `lmm auth login`                       | Authenticate with NexusMods                 |
+| `lmm auth login [source]`              | Authenticate with a source (nexusmods       | curseforge) |
 | `lmm auth logout`                      | Remove stored credentials                   |
 | `lmm auth status`                      | Show authentication status                  |
 | `lmm profile list`                     | List profiles                               |
@@ -274,7 +288,8 @@ cmd/lmm/                  # CLI entry point (Cobra)
 internal/
 ├── domain/               # Core types (Mod, Profile, Game)
 ├── source/               # Mod source abstraction
-│   └── nexusmods/        # NexusMods API client
+│   ├── nexusmods/        # NexusMods API client
+│   └── curseforge/       # CurseForge API client
 ├── storage/
 │   ├── db/               # SQLite storage
 │   ├── config/           # YAML configuration
@@ -314,7 +329,8 @@ The mod cache location can be customized via `cache_path` in `config.yaml`.
 - [x] Mod file verification (checksums, --fix re-download)
 - [ ] Automatic dependency installation
 - [ ] Interactive TUI (Bubble Tea) - see BACKLOG.md
-- [ ] Additional mod sources (CurseForge, ESOUI)
+- [x] CurseForge integration
+- [ ] Additional mod sources (ESOUI)
 - [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
 - [ ] Backup and restore
 
@@ -342,3 +358,4 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 - [Cobra](https://github.com/spf13/cobra) - CLI framework
 - [NexusMods](https://www.nexusmods.com/) - Mod hosting platform
+- [CurseForge](https://www.curseforge.com/) - Mod hosting platform
