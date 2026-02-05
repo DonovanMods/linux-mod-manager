@@ -13,10 +13,13 @@ import (
 	"golang.org/x/term"
 )
 
+// supportedSources lists all sources that support authentication
+var supportedSources = []string{"nexusmods", "curseforge"}
+
 var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Manage authentication for mod sources",
-	Long: `Manage authentication credentials for mod sources like NexusMods.
+	Long: `Manage authentication credentials for mod sources like NexusMods and CurseForge.
 
 Use 'lmm auth login' to authenticate with a source.
 Use 'lmm auth logout' to remove stored credentials.
@@ -28,13 +31,19 @@ var authLoginCmd = &cobra.Command{
 	Short: "Authenticate with a mod source",
 	Long: `Authenticate with a mod source.
 
-Currently supported sources:
+Supported sources:
   - nexusmods (default)
+  - curseforge
 
 For NexusMods:
   1. Visit https://www.nexusmods.com/users/myaccount?tab=api
   2. Click "Request an API Key" if you don't have one
-  3. Copy your Personal API Key`,
+  3. Copy your Personal API Key
+
+For CurseForge:
+  1. Visit https://console.curseforge.com/
+  2. Create a project and generate an API key
+  3. Copy your API key`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runAuthLogin,
 }
@@ -65,15 +74,11 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		sourceID = args[0]
 	}
 
-	if sourceID != "nexusmods" {
-		return fmt.Errorf("unsupported source: %s (only 'nexusmods' is currently supported)", sourceID)
+	if !isSupportedSource(sourceID) {
+		return fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
 	}
 
-	fmt.Println("To authenticate with NexusMods:")
-	fmt.Println("1. Visit https://www.nexusmods.com/users/myaccount?tab=api")
-	fmt.Println("2. Click \"Request an API Key\" if you don't have one")
-	fmt.Println("3. Copy your Personal API Key")
-	fmt.Println()
+	printAuthInstructions(sourceID)
 
 	apiKey, err := readAPIKey()
 	if err != nil {
@@ -86,10 +91,9 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 
 	fmt.Print("Validating... ")
 
-	// Validate the API key
+	// Validate the API key based on source
 	ctx := context.Background()
-	client := nexusmods.NewClient(nil, "")
-	if err := client.ValidateAPIKey(ctx, apiKey); err != nil {
+	if err := validateAPIKey(ctx, sourceID, apiKey); err != nil {
 		fmt.Println("failed")
 		return fmt.Errorf("invalid API key: %w", err)
 	}
@@ -111,7 +115,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("saving token: %w", err)
 	}
 
-	fmt.Println("Successfully authenticated with NexusMods!")
+	fmt.Printf("Successfully authenticated with %s!\n", getSourceDisplayName(sourceID))
 	return nil
 }
 
@@ -121,8 +125,8 @@ func runAuthLogout(cmd *cobra.Command, args []string) error {
 		sourceID = args[0]
 	}
 
-	if sourceID != "nexusmods" {
-		return fmt.Errorf("unsupported source: %s (only 'nexusmods' is currently supported)", sourceID)
+	if !isSupportedSource(sourceID) {
+		return fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
 	}
 
 	service, err := initService()
@@ -154,9 +158,7 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	sources := []string{"nexusmods"}
-
-	for _, sourceID := range sources {
+	for _, sourceID := range supportedSources {
 		// Check stored token first
 		token, err := service.GetSourceToken(sourceID)
 		if err != nil {
@@ -185,11 +187,71 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// isSupportedSource checks if a source ID is in the supported list
+func isSupportedSource(sourceID string) bool {
+	for _, s := range supportedSources {
+		if s == sourceID {
+			return true
+		}
+	}
+	return false
+}
+
+// getSourceDisplayName returns the display name for a source
+func getSourceDisplayName(sourceID string) string {
+	switch sourceID {
+	case "nexusmods":
+		return "NexusMods"
+	case "curseforge":
+		return "CurseForge"
+	default:
+		return sourceID
+	}
+}
+
+// printAuthInstructions prints source-specific auth instructions
+func printAuthInstructions(sourceID string) {
+	switch sourceID {
+	case "nexusmods":
+		fmt.Println("To authenticate with NexusMods:")
+		fmt.Println("1. Visit https://www.nexusmods.com/users/myaccount?tab=api")
+		fmt.Println("2. Click \"Request an API Key\" if you don't have one")
+		fmt.Println("3. Copy your Personal API Key")
+	case "curseforge":
+		fmt.Println("To authenticate with CurseForge:")
+		fmt.Println("1. Visit https://console.curseforge.com/")
+		fmt.Println("2. Create a project and generate an API key")
+		fmt.Println("3. Copy your API key")
+	}
+	fmt.Println()
+}
+
+// validateAPIKey validates an API key for the given source
+func validateAPIKey(ctx context.Context, sourceID, apiKey string) error {
+	switch sourceID {
+	case "nexusmods":
+		client := nexusmods.NewClient(nil, "")
+		return client.ValidateAPIKey(ctx, apiKey)
+	case "curseforge":
+		// CurseForge doesn't have a dedicated validate endpoint,
+		// so we just accept the key and let it fail on first use.
+		// TODO: Implement validation by making a test API call
+		if len(apiKey) < 10 {
+			return fmt.Errorf("API key too short")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown source: %s", sourceID)
+	}
+}
+
 // getEnvKeyForSource returns the environment variable name for a source's API key
 func getEnvKeyForSource(sourceID string) string {
 	switch sourceID {
 	case "nexusmods":
 		return "NEXUSMODS_API_KEY"
+	case "curseforge":
+		return "CURSEFORGE_API_KEY"
 	default:
 		return ""
 	}
