@@ -94,7 +94,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	mods, err := service.SearchMods(ctx, searchSource, gameID, query, searchCategory, searchTags)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+			return fmt.Errorf("authentication required; run 'lmm auth login <source>' to authenticate")
 		}
 		return fmt.Errorf("search failed: %w", err)
 	}

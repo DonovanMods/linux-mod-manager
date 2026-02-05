@@ -149,7 +149,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	updates, err := updater.CheckUpdates(ctx, installed)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+			return fmt.Errorf("authentication required; run 'lmm auth login <source>' to authenticate")
 		}
 		// Surface warning but continue to show partial updates
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
@@ -294,7 +294,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	updates, err := updater.CheckUpdates(ctx, []domain.InstalledMod{*mod})
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+			return fmt.Errorf("authentication required; run 'lmm auth login <source>' to authenticate")
 		}
 		return fmt.Errorf("failed to check update: %w", err)
 	}
