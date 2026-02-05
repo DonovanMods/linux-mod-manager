@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CurseForge Support**: New mod source alongside NexusMods
+  - Search, download, install, and update mods from CurseForge
+  - `lmm auth login curseforge` to authenticate with API key
+  - `CURSEFORGE_API_KEY` environment variable support
+  - Dependency detection from CurseForge file metadata
+  - Configure in games.yaml: `sources: { curseforge: "432" }` (numeric game IDs)
+
 ## [1.0.0] - 2026-01-29
 
 ### Added
