@@ -32,7 +32,7 @@ Examples:
 }
 
 func init() {
-	uninstallCmd.Flags().StringVarP(&uninstallSource, "source", "s", "nexusmods", "mod source")
+	uninstallCmd.Flags().StringVarP(&uninstallSource, "source", "s", "", "mod source (default: first configured source for game)")
 	uninstallCmd.Flags().StringVarP(&uninstallProfile, "profile", "p", "", "profile to uninstall from (default: active profile)")
 	uninstallCmd.Flags().BoolVar(&uninstallKeep, "keep-cache", false, "keep cached mod files")
 	uninstallCmd.Flags().BoolVarP(&uninstallForce, "force", "f", false, "continue even if hooks fail")
@@ -61,6 +61,12 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	game, err := service.GetGame(gameID)
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	// Resolve source: use flag if set, otherwise first configured source
+	uninstallSource, err = resolveSource(game, uninstallSource)
+	if err != nil {
+		return err
 	}
 
 	// Determine profile

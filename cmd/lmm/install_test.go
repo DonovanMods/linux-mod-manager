@@ -66,7 +66,7 @@ func TestInstallCmd_NoQueryOrID(t *testing.T) {
 func TestInstallCmd_DefaultFlags(t *testing.T) {
 	// Check default values
 	sourceFlag := installCmd.Flags().Lookup("source")
-	assert.Equal(t, "nexusmods", sourceFlag.DefValue)
+	assert.Equal(t, "", sourceFlag.DefValue) // empty = auto-detect from game config
 
 	profileFlag := installCmd.Flags().Lookup("profile")
 	assert.Equal(t, "", profileFlag.DefValue)

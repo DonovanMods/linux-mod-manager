@@ -104,7 +104,7 @@ Examples:
 }
 
 func init() {
-	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "nexusmods", "mod source")
+	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "", "mod source (default: first configured source for game)")
 	modCmd.PersistentFlags().StringVarP(&modProfile, "profile", "p", "", "profile (default: active profile)")
 
 	modSetUpdateCmd.Flags().BoolVar(&modSetAuto, "auto", false, "enable auto-update")
@@ -215,6 +215,12 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
+	// Resolve source: use flag if set, otherwise first configured source
+	modSource, err = resolveSource(game, modSource)
+	if err != nil {
+		return err
+	}
+
 	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists
@@ -272,6 +278,12 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 	game, err := service.GetGame(gameID)
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	// Resolve source: use flag if set, otherwise first configured source
+	modSource, err = resolveSource(game, modSource)
+	if err != nil {
+		return err
 	}
 
 	profileName := profileOrDefault(modProfile)

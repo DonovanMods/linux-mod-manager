@@ -89,25 +89,9 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine source: use flag if set, otherwise first configured source
-	sourceToUse := searchSource
-	if sourceToUse == "" {
-		if len(game.SourceIDs) == 0 {
-			return fmt.Errorf("no mod sources configured for %s; add sources to games.yaml", game.Name)
-		}
-		// Pick first configured source (Go maps aren't ordered, but this is fine for UX)
-		for src := range game.SourceIDs {
-			sourceToUse = src
-			break
-		}
-	} else {
-		// Validate the specified source is configured for this game
-		if _, ok := game.SourceIDs[sourceToUse]; !ok {
-			configuredSources := make([]string, 0, len(game.SourceIDs))
-			for src := range game.SourceIDs {
-				configuredSources = append(configuredSources, src)
-			}
-			return fmt.Errorf("source %q is not configured for %s; available: %v", sourceToUse, game.Name, configuredSources)
-		}
+	sourceToUse, err := resolveSource(game, searchSource)
+	if err != nil {
+		return err
 	}
 
 	if verbose {
