@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -324,14 +325,32 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 	}
 }
 
+// versionRegex matches semantic version patterns like 1.2.3, v1.2.3, 1.2.3-beta, etc.
+// The optional suffix must start with a letter (to avoid matching 1.20.1-15.3.0 as one version).
+var versionRegex = regexp.MustCompile(`[vV]?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-+][a-zA-Z][\w.]*)?)`)
+
 // extractVersion attempts to extract a version string from a display name or filename
+// Returns the last version-like pattern found (mod version typically comes after MC version)
 func extractVersion(displayName, fileName string) string {
-	// Simple heuristic: use displayName as version if it looks version-like
-	// In practice, CurseForge files often have versions in the display name
-	if displayName != "" {
-		return displayName
+	// Try to extract version from displayName first, then fileName
+	for _, s := range []string{displayName, fileName} {
+		if s == "" {
+			continue
+		}
+		// Strip file extension for cleaner matching
+		base := strings.TrimSuffix(s, ".jar")
+		base = strings.TrimSuffix(base, ".zip")
+		base = strings.TrimSuffix(base, ".7z")
+		base = strings.TrimSuffix(base, ".rar")
+
+		// Find all version matches and take the last one
+		// (mod version typically comes after MC version in filenames like "jei-1.20.1-15.3.0.4")
+		matches := versionRegex.FindAllStringSubmatch(base, -1)
+		if len(matches) > 0 {
+			return matches[len(matches)-1][1]
+		}
 	}
-	return fileName
+	return "" // No version found
 }
 
 // releaseTypeName converts a release type code to a name

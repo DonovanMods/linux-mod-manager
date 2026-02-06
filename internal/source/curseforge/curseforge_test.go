@@ -69,7 +69,7 @@ func TestCurseForge_Search(t *testing.T) {
 	assert.Equal(t, "238222", mods[0].ID)
 	assert.Equal(t, "curseforge", mods[0].SourceID)
 	assert.Equal(t, "Just Enough Items (JEI)", mods[0].Name)
-	assert.Equal(t, "jei-1.20.1-15.3.0.4", mods[0].Version)
+	assert.Equal(t, "15.3.0.4", mods[0].Version)
 	assert.Equal(t, "mezz", mods[0].Author)
 	assert.Equal(t, "View Items and Recipes", mods[0].Summary)
 	assert.Equal(t, "432", mods[0].GameID)
@@ -119,7 +119,7 @@ func TestCurseForge_GetMod(t *testing.T) {
 	assert.Equal(t, "238222", mod.ID)
 	assert.Equal(t, "curseforge", mod.SourceID)
 	assert.Equal(t, "Just Enough Items (JEI)", mod.Name)
-	assert.Equal(t, "jei-1.20.1-15.3.0.4", mod.Version)
+	assert.Equal(t, "15.3.0.4", mod.Version)
 }
 
 func TestCurseForge_GetDependencies(t *testing.T) {
@@ -260,7 +260,7 @@ func TestCurseForge_CheckUpdates(t *testing.T) {
 				ID:       "238222",
 				SourceID: "curseforge",
 				Name:     "JEI",
-				Version:  "jei-1.20.1-15.3.0.4",
+				Version:  "15.3.0.4",
 				GameID:   "432",
 			},
 		},
@@ -269,7 +269,7 @@ func TestCurseForge_CheckUpdates(t *testing.T) {
 				ID:       "306612",
 				SourceID: "curseforge",
 				Name:     "Fabric API",
-				Version:  "fabric-api-0.92.0",
+				Version:  "0.92.0",
 				GameID:   "432",
 			},
 		},
@@ -281,7 +281,7 @@ func TestCurseForge_CheckUpdates(t *testing.T) {
 	// Only JEI should have an update
 	require.Len(t, updates, 1)
 	assert.Equal(t, "238222", updates[0].InstalledMod.ID)
-	assert.Equal(t, "jei-1.20.1-15.4.0.0", updates[0].NewVersion)
+	assert.Equal(t, "15.4.0.0", updates[0].NewVersion)
 }
 
 func TestCurseForge_ExchangeToken(t *testing.T) {
