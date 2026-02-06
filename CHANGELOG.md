@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Interactive game add**: `lmm game add` searches CurseForge for games by name and guides you through configuration (no need to manually find game IDs)
+
 - **CurseForge Support**: New mod source alongside NexusMods
   - Search, download, install, and update mods from CurseForge
   - `lmm auth login curseforge` to authenticate with API key
