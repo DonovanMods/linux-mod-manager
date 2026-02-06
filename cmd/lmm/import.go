@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -14,28 +15,31 @@ import (
 )
 
 var (
-	importProfile string
-	importSource  string
-	importModID   string
-	importForce   bool
+	importProfile   string
+	importSource    string
+	importModID     string
+	importForce     bool
+	importDryRun    bool
+	importSkipMatch bool
 )
 
 var importCmd = &cobra.Command{
 	Use:   "import <archive-path>",
-	Short: "Import a mod from a local archive file",
-	Long: `Import a mod from a local archive file (zip, 7z, rar).
+	Short: "Import mods from local files or scan mod_path",
+	Long: `Import mods from local files or scan for untracked mods.
 
-This is useful for mods downloaded manually outside of lmm.
-The mod will be extracted, cached, and deployed to the game directory.
+Without arguments, scans the game's mod_path for untracked mods and imports them.
+This is useful for importing mods that were installed manually (e.g., CurseForge mods
+that require manual download).
 
-If the filename matches NexusMods naming convention (e.g., "mod name-123-1-0-1234567890.zip"),
-the mod ID and version will be auto-detected for potential update tracking.
+With an archive path, imports that specific mod file.
 
 Examples:
-  lmm import ./my-mod.zip --game skyrim-se
-  lmm import ./mod-12345-1-0.7z --game skyrim-se --profile survival
-  lmm import ./custom.zip --game skyrim-se --source nexusmods --id 12345`,
-	Args: cobra.ExactArgs(1),
+  lmm import --game hytale                    # Scan mod_path for untracked mods
+  lmm import --game hytale --dry-run          # Preview what would be imported
+  lmm import ./my-mod.zip --game skyrim-se    # Import specific archive
+  lmm import ./mod-12345-1-0.7z --game skyrim-se --profile survival`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runImport,
 }
 
@@ -44,6 +48,8 @@ func init() {
 	importCmd.Flags().StringVarP(&importSource, "source", "s", "", "source for update tracking (default: auto-detect or local)")
 	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking (requires --source)")
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "import without conflict prompts")
+	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes")
+	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip CurseForge lookup for untracked mods")
 
 	rootCmd.AddCommand(importCmd)
 }
@@ -53,6 +59,30 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	service, err := initService()
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer func() {
+		if cerr := service.Close(); cerr != nil {
+			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", cerr)
+		}
+	}()
+
+	// Verify game exists
+	game, err := service.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	profileName := profileOrDefault(importProfile)
+
+	// No args = scan mode
+	if len(args) == 0 {
+		return runImportScan(cmd, game, service, profileName)
+	}
+
+	// Single arg = import specific archive
 	archivePath := args[0]
 
 	// Validate archive exists
@@ -64,24 +94,6 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if (importSource != "" && importModID == "") || (importSource == "" && importModID != "") {
 		return fmt.Errorf("--source and --id must be used together")
 	}
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
-	profileName := profileOrDefault(importProfile)
 
 	ctx := context.Background()
 
@@ -280,6 +292,207 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	if result.LinkedSource == domain.SourceLocal {
 		fmt.Println("\nNote: Local mods won't receive update notifications.")
+	}
+
+	return nil
+}
+func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service, profileName string) error {
+	ctx := context.Background()
+
+	// Get installed mods for this game/profile
+	installedMods, err := service.GetInstalledMods(game.ID, profileName)
+	if err != nil {
+		return fmt.Errorf("getting installed mods: %w", err)
+	}
+
+	// Create importer and scan
+	importer := core.NewImporter(service.GetGameCache(game))
+	opts := core.ScanOptions{
+		ProfileName: profileName,
+		DryRun:      importDryRun,
+	}
+
+	fmt.Printf("Scanning %s for untracked mods...\n", game.ModPath)
+
+	results, err := importer.ScanModPath(ctx, game, installedMods, opts)
+	if err != nil {
+		return fmt.Errorf("scanning mod_path: %w", err)
+	}
+
+	// Count untracked
+	var untracked []core.ScanResult
+	for _, r := range results {
+		if !r.AlreadyTracked {
+			untracked = append(untracked, r)
+		}
+	}
+
+	fmt.Printf("Found %d files, %d untracked\n\n", len(results), len(untracked))
+
+	if len(untracked) == 0 {
+		fmt.Println("All mods are already tracked!")
+		return nil
+	}
+
+	// Try to match untracked mods to CurseForge
+	if !importSkipMatch {
+		fmt.Println("Looking up mods on CurseForge...")
+		for i := range untracked {
+			if untracked[i].Mod == nil {
+				continue
+			}
+
+			// Try to find on CurseForge
+			matched, err := tryMatchCurseForge(ctx, service, game, untracked[i].Mod.Name)
+			if err != nil {
+				if verbose {
+					fmt.Printf("  %s: lookup failed: %v\n", untracked[i].FileName, err)
+				}
+				continue
+			}
+			if matched != nil {
+				untracked[i].Mod.ID = matched.ID
+				untracked[i].Mod.SourceID = matched.SourceID
+				untracked[i].Mod.Name = matched.Name
+				untracked[i].MatchedSource = "curseforge"
+				fmt.Printf("  ✓ %s -> %s (CurseForge #%s)\n", untracked[i].FileName, matched.Name, matched.ID)
+			} else {
+				fmt.Printf("  ○ %s -> local (no match)\n", untracked[i].FileName)
+			}
+		}
+		fmt.Println()
+	}
+
+	// Show summary and confirm
+	fmt.Printf("Ready to import %d mod(s):\n", len(untracked))
+	for _, r := range untracked {
+		if r.Mod != nil {
+			sourceTag := "local"
+			if r.MatchedSource == "curseforge" {
+				sourceTag = fmt.Sprintf("curseforge #%s", r.Mod.ID)
+			}
+			fmt.Printf("  - %s (%s, v%s)\n", r.Mod.Name, sourceTag, r.Mod.Version)
+		} else {
+			fmt.Printf("  - %s (unknown)\n", r.FileName)
+		}
+	}
+
+	if importDryRun {
+		fmt.Println("\n(dry run - no changes made)")
+		return nil
+	}
+
+	// Confirm unless --force
+	if !importForce {
+		fmt.Printf("\nImport these mods? [y/N]: ")
+		reader := bufio.NewReader(os.Stdin)
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+		if input != "y" && input != "yes" {
+			return fmt.Errorf("import cancelled")
+		}
+	}
+
+	// Import each untracked mod
+	linkMethod := service.GetGameLinkMethod(game)
+
+	var imported, failed int
+	for _, r := range untracked {
+		if r.Mod == nil {
+			continue
+		}
+
+		// For deploy_mode: copy, the mod is already in place
+		// We just need to create a cache entry and register it
+		err := importExistingMod(ctx, service, game, r, profileName, linkMethod)
+		if err != nil {
+			fmt.Printf("  ✗ %s: %v\n", r.FileName, err)
+			failed++
+			continue
+		}
+		fmt.Printf("  ✓ %s\n", r.Mod.Name)
+		imported++
+	}
+
+	fmt.Printf("\nImported: %d, Failed: %d\n", imported, failed)
+	return nil
+}
+
+// tryMatchCurseForge searches CurseForge for a mod by name
+func tryMatchCurseForge(ctx context.Context, service *core.Service, game *domain.Game, modName string) (*domain.Mod, error) {
+	// Get the curseforge game ID
+	cfGameID, ok := game.SourceIDs["curseforge"]
+	if !ok {
+		return nil, fmt.Errorf("game has no curseforge source configured")
+	}
+
+	// Search by mod name
+	mods, err := service.SearchMods(ctx, "curseforge", cfGameID, modName, "", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(mods) == 0 {
+		return nil, nil
+	}
+
+	// Return the first (best) match
+	// TODO: Could do fuzzy matching to verify it's actually the right mod
+	return &mods[0], nil
+}
+
+// importExistingMod registers an already-deployed mod in lmm
+func importExistingMod(ctx context.Context, service *core.Service, game *domain.Game, r core.ScanResult, profileName string, linkMethod domain.LinkMethod) error {
+	// For deploy_mode: copy, create cache entry by copying the file
+	if game.DeployMode == domain.DeployCopy {
+		gameCache := service.GetGameCache(game)
+		cachePath := gameCache.ModPath(game.ID, r.Mod.SourceID, r.Mod.ID, r.Mod.Version)
+
+		// Create cache directory
+		if err := os.MkdirAll(cachePath, 0755); err != nil {
+			return fmt.Errorf("creating cache: %w", err)
+		}
+
+		// Copy the file to cache
+		destPath := filepath.Join(cachePath, r.FileName)
+		data, err := os.ReadFile(r.FilePath)
+		if err != nil {
+			return fmt.Errorf("reading file: %w", err)
+		}
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			return fmt.Errorf("writing to cache: %w", err)
+		}
+	}
+
+	// Save to database
+	installedMod := &domain.InstalledMod{
+		Mod:            *r.Mod,
+		ProfileName:    profileName,
+		UpdatePolicy:   domain.UpdateNotify,
+		Enabled:        true,
+		Deployed:       true,
+		LinkMethod:     linkMethod,
+		ManualDownload: true, // Scanned mods require manual download
+		FileIDs:        []string{},
+	}
+
+	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+		return fmt.Errorf("saving to database: %w", err)
+	}
+
+	// Add to profile
+	pm := getProfileManager(service)
+	modRef := domain.ModReference{
+		SourceID: r.Mod.SourceID,
+		ModID:    r.Mod.ID,
+		Version:  r.Mod.Version,
+		FileIDs:  []string{},
+	}
+	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+		// Non-fatal
+		if verbose {
+			fmt.Printf("    Warning: could not update profile: %v\n", err)
+		}
 	}
 
 	return nil

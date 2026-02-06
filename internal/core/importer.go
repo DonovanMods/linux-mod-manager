@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
@@ -47,11 +49,6 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		return nil, fmt.Errorf("archive not found: %w", err)
 	}
 
-	// Validate format is supported
-	if !i.extractor.CanExtract(archivePath) {
-		return nil, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
-	}
-
 	filename := filepath.Base(archivePath)
 
 	// Try to parse NexusMods filename pattern
@@ -62,7 +59,10 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		// Explicit linking provided
 		sourceID = opts.SourceID
 		modID = opts.ModID
-		version = "unknown"
+		version = extractVersionFromFilename(strings.TrimSuffix(filename, filepath.Ext(filename)))
+		if version == "" {
+			version = "unknown"
+		}
 	} else if parsed := ParseNexusModsFilename(filename); parsed != nil {
 		// Auto-detected from filename
 		sourceID = domain.SourceLocal // Still local until verified via API
@@ -73,50 +73,92 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		// No pattern - pure local mod
 		sourceID = domain.SourceLocal
 		modID = uuid.New().String()
-		version = "unknown"
-	}
-
-	// Extract to temp directory first
-	tempDir, err := os.MkdirTemp("", "lmm-import-*")
-	if err != nil {
-		return nil, fmt.Errorf("creating temp directory: %w", err)
-	}
-	defer func() {
-		if cerr := os.RemoveAll(tempDir); err == nil && cerr != nil {
-			err = fmt.Errorf("removing temp directory: %w", cerr)
-		}
-	}()
-
-	extractedPath := filepath.Join(tempDir, "extracted")
-	if err := i.extractor.Extract(archivePath, extractedPath); err != nil {
-		return nil, fmt.Errorf("extracting archive: %w", err)
-	}
-
-	// Detect mod name from extracted content
-	modName := DetectModName(extractedPath, filename)
-
-	// Move extracted files to cache
-	cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
-		return nil, fmt.Errorf("creating cache directory: %w", err)
-	}
-
-	// Remove existing cache if present (re-import case)
-	if err := os.RemoveAll(cachePath); err != nil {
-		return nil, fmt.Errorf("removing existing cache for re-import: %w", err)
-	}
-
-	if err := os.Rename(extractedPath, cachePath); err != nil {
-		// If rename fails (cross-device), fall back to copy
-		if err := copyDir(extractedPath, cachePath); err != nil {
-			return nil, fmt.Errorf("moving to cache: %w", err)
+		version = extractVersionFromFilename(strings.TrimSuffix(filename, filepath.Ext(filename)))
+		if version == "" {
+			version = "unknown"
 		}
 	}
 
-	// Count extracted files
-	files, err := i.cache.ListFiles(game.ID, sourceID, modID, version)
-	if err != nil {
-		return nil, fmt.Errorf("listing cached files: %w", err)
+	var modName string
+	var fileCount int
+
+	// Handle based on game's deploy mode
+	if game.DeployMode == domain.DeployCopy {
+		// Copy mode: just copy the file as-is to cache (don't extract)
+		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
+		if version != "" && version != "unknown" {
+			if idx := strings.LastIndex(modName, version); idx > 0 {
+				modName = strings.TrimRight(modName[:idx], "-_ ")
+			}
+		}
+
+		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
+
+		// Remove existing cache if present (re-import case)
+		_ = os.RemoveAll(cachePath)
+		if err := os.MkdirAll(cachePath, 0755); err != nil {
+			return nil, fmt.Errorf("creating cache directory: %w", err)
+		}
+
+		// Copy the file to cache
+		destPath := filepath.Join(cachePath, filename)
+		data, err := os.ReadFile(archivePath)
+		if err != nil {
+			return nil, fmt.Errorf("reading file: %w", err)
+		}
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			return nil, fmt.Errorf("writing to cache: %w", err)
+		}
+		fileCount = 1
+	} else {
+		// Extract mode: validate and extract the archive
+		if !i.extractor.CanExtract(archivePath) {
+			return nil, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
+		}
+
+		// Extract to temp directory first
+		tempDir, err := os.MkdirTemp("", "lmm-import-*")
+		if err != nil {
+			return nil, fmt.Errorf("creating temp directory: %w", err)
+		}
+		defer func() {
+			if cerr := os.RemoveAll(tempDir); err == nil && cerr != nil {
+				err = fmt.Errorf("removing temp directory: %w", cerr)
+			}
+		}()
+
+		extractedPath := filepath.Join(tempDir, "extracted")
+		if err := i.extractor.Extract(archivePath, extractedPath); err != nil {
+			return nil, fmt.Errorf("extracting archive: %w", err)
+		}
+
+		// Detect mod name from extracted content
+		modName = DetectModName(extractedPath, filename)
+
+		// Move extracted files to cache
+		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
+		if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+			return nil, fmt.Errorf("creating cache directory: %w", err)
+		}
+
+		// Remove existing cache if present (re-import case)
+		if err := os.RemoveAll(cachePath); err != nil {
+			return nil, fmt.Errorf("removing existing cache for re-import: %w", err)
+		}
+
+		if err := os.Rename(extractedPath, cachePath); err != nil {
+			// If rename fails (cross-device), fall back to copy
+			if err := copyDir(extractedPath, cachePath); err != nil {
+				return nil, fmt.Errorf("moving to cache: %w", err)
+			}
+		}
+
+		// Count extracted files
+		files, err := i.cache.ListFiles(game.ID, sourceID, modID, version)
+		if err != nil {
+			return nil, fmt.Errorf("listing cached files: %w", err)
+		}
+		fileCount = len(files)
 	}
 
 	mod := &domain.Mod{
@@ -129,7 +171,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 	return &ImportResult{
 		Mod:            mod,
-		FilesExtracted: len(files),
+		FilesExtracted: fileCount,
 		LinkedSource:   sourceID,
 		AutoDetected:   autoDetected,
 	}, nil
@@ -158,4 +200,186 @@ func copyDir(src, dst string) error {
 		}
 		return os.WriteFile(dstPath, data, info.Mode())
 	})
+}
+
+// ScanResult contains the outcome of scanning a single mod file
+type ScanResult struct {
+	FilePath       string      // Original path in mod_path
+	FileName       string      // Base filename
+	Mod            *domain.Mod // Detected/created mod info
+	MatchedSource  string      // "curseforge", "nexusmods", or "local"
+	AlreadyTracked bool        // True if already in lmm database
+	Error          error       // Any error during processing
+}
+
+// ScanOptions configures the scan operation
+type ScanOptions struct {
+	ProfileName string
+	DryRun      bool // If true, don't actually import, just report what would be done
+}
+
+// ScanModPath scans the game's mod_path for untracked mods
+func (i *Importer) ScanModPath(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
+	if game.ModPath == "" {
+		return nil, fmt.Errorf("game has no mod_path configured")
+	}
+
+	// Expand mod path
+	modPath := game.ModPath
+	if strings.HasPrefix(modPath, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			modPath = filepath.Join(home, modPath[2:])
+		}
+	}
+
+	// Check if mod_path exists
+	if _, err := os.Stat(modPath); err != nil {
+		return nil, fmt.Errorf("mod_path does not exist: %s", modPath)
+	}
+
+	var results []ScanResult
+
+	// Scan based on deploy mode
+	if game.DeployMode == domain.DeployCopy {
+		// For copy mode, scan for files (.jar, .zip, etc.)
+		entries, err := os.ReadDir(modPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading mod_path: %w", err)
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue // Skip directories in copy mode
+			}
+
+			filename := entry.Name()
+			ext := strings.ToLower(filepath.Ext(filename))
+
+			// Only process mod file extensions
+			if ext != ".jar" && ext != ".zip" {
+				continue
+			}
+
+			filePath := filepath.Join(modPath, filename)
+
+			// Check if it's a symlink (already deployed by lmm)
+			info, err := os.Lstat(filePath)
+			if err == nil && info.Mode()&os.ModeSymlink != 0 {
+				// It's a symlink - already tracked
+				results = append(results, ScanResult{
+					FilePath:       filePath,
+					FileName:       filename,
+					AlreadyTracked: true,
+				})
+				continue
+			}
+
+			// Check if already tracked by comparing to installed mods
+			alreadyTracked := i.isFileTracked(filename, installedMods)
+
+			result := ScanResult{
+				FilePath:       filePath,
+				FileName:       filename,
+				AlreadyTracked: alreadyTracked,
+			}
+
+			if !alreadyTracked {
+				// Try to detect mod info from filename
+				result.Mod = i.detectModFromFilename(filename, game.ID)
+				result.MatchedSource = domain.SourceLocal // Default, can be upgraded later
+			}
+
+			results = append(results, result)
+		}
+	} else {
+		// For extract mode, scan for directories
+		entries, err := os.ReadDir(modPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading mod_path: %w", err)
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue // Skip files in extract mode
+			}
+
+			dirName := entry.Name()
+			dirPath := filepath.Join(modPath, dirName)
+
+			// Check if already tracked
+			alreadyTracked := i.isFileTracked(dirName, installedMods)
+
+			result := ScanResult{
+				FilePath:       dirPath,
+				FileName:       dirName,
+				AlreadyTracked: alreadyTracked,
+			}
+
+			if !alreadyTracked {
+				// Create mod info from directory name
+				result.Mod = i.detectModFromFilename(dirName, game.ID)
+				result.MatchedSource = domain.SourceLocal
+			}
+
+			results = append(results, result)
+		}
+	}
+
+	return results, nil
+}
+
+// isFileTracked checks if a file is already tracked by comparing to installed mods
+func (i *Importer) isFileTracked(filename string, installedMods []domain.InstalledMod) bool {
+	// Strip extension for comparison
+	baseName := strings.TrimSuffix(filename, filepath.Ext(filename))
+
+	for _, mod := range installedMods {
+		// Check various ways the mod might be identified
+		if mod.Name == baseName || mod.Name == filename {
+			return true
+		}
+		// Check if the mod's cached filename matches
+		if strings.Contains(filename, mod.ID) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectModFromFilename attempts to parse mod info from a filename
+func (i *Importer) detectModFromFilename(filename string, gameID string) *domain.Mod {
+	// Strip extension
+	baseName := strings.TrimSuffix(filename, filepath.Ext(filename))
+
+	// Try to extract version
+	version := extractVersionFromFilename(baseName)
+
+	// Extract mod name (everything before the version)
+	name := baseName
+	if version != "" {
+		// Find where the version starts and take everything before
+		idx := strings.LastIndex(baseName, version)
+		if idx > 0 {
+			name = strings.TrimRight(baseName[:idx], "-_ ")
+		}
+	}
+
+	return &domain.Mod{
+		ID:       uuid.New().String(),
+		SourceID: domain.SourceLocal,
+		Name:     name,
+		Version:  version,
+		GameID:   gameID,
+	}
+}
+
+// extractVersionFromFilename extracts version from a filename using regex
+func extractVersionFromFilename(filename string) string {
+	// Match semantic version patterns
+	versionRegex := regexp.MustCompile(`[vV]?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-+][a-zA-Z][\w.]*)?)`)
+	matches := versionRegex.FindAllStringSubmatch(filename, -1)
+	if len(matches) > 0 {
+		return matches[len(matches)-1][1]
+	}
+	return ""
 }

@@ -17,8 +17,8 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 	}
 
 	_, err := d.Exec(`
-		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, link_method)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, link_method, manual_download)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id, mod_id, game_id, profile_name) DO UPDATE SET
 			name = excluded.name,
 			version = excluded.version,
@@ -27,8 +27,9 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 			enabled = excluded.enabled,
 			deployed = excluded.deployed,
 			previous_version = excluded.previous_version,
-			link_method = excluded.link_method
-	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, time.Now(), prevVersion, mod.LinkMethod)
+			link_method = excluded.link_method,
+			manual_download = excluded.manual_download
+	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, time.Now(), prevVersion, mod.LinkMethod, mod.ManualDownload)
 	if err != nil {
 		return fmt.Errorf("saving installed mod: %w", err)
 	}
@@ -40,7 +41,7 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 // GetInstalledMods returns all installed mods for a game/profile combination
 func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.InstalledMod, err error) {
 	rows, err := d.Query(`
-		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, link_method
+		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, link_method, manual_download
 		FROM installed_mods
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY installed_at ASC
@@ -60,7 +61,7 @@ func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.Install
 		err := rows.Scan(
 			&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 			&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
-			&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &mod.LinkMethod,
+			&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &mod.LinkMethod, &mod.ManualDownload,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning installed mod: %w", err)
@@ -194,13 +195,13 @@ func (d *DB) GetInstalledMod(sourceID, modID, gameID, profileName string) (*doma
 	var prevVersion *string
 	err := d.QueryRow(`
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author,
-		       update_policy, enabled, deployed, installed_at, previous_version, link_method
+		       update_policy, enabled, deployed, installed_at, previous_version, link_method, manual_download
 		FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(
 		&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 		&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
-		&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &mod.LinkMethod,
+		&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &mod.LinkMethod, &mod.ManualDownload,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

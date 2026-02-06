@@ -80,6 +80,7 @@ type InstalledMod struct {
 	PreviousVersion string     // Version before last update (for rollback)
 	LinkMethod      LinkMethod // How the mod was deployed (symlink, hardlink, copy)
 	FileIDs         []string   // Source-specific file IDs that were downloaded
+	ManualDownload  bool       // True if mod requires manual download (CurseForge restricted, etc.)
 }
 
 // Update represents an available update for an installed mod
