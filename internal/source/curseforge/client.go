@@ -89,7 +89,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 10*1024)) // Limit error body to 10KB
 		if readErr != nil {
 			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
 		}

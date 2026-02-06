@@ -374,10 +374,12 @@ func (i *Importer) detectModFromFilename(filename string, gameID string) *domain
 }
 
 // extractVersionFromFilename extracts version from a filename using regex
+// versionRegexImporter matches semantic version patterns like 1.2.3, v1.2.3, etc.
+var versionRegexImporter = regexp.MustCompile(`[vV]?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-+][a-zA-Z][\w.]*)?)`)
+
 func extractVersionFromFilename(filename string) string {
 	// Match semantic version patterns
-	versionRegex := regexp.MustCompile(`[vV]?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-+][a-zA-Z][\w.]*)?)`)
-	matches := versionRegex.FindAllStringSubmatch(filename, -1)
+	matches := versionRegexImporter.FindAllStringSubmatch(filename, -1)
 	if len(matches) > 0 {
 		return matches[len(matches)-1][1]
 	}

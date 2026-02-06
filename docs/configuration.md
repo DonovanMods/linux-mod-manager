@@ -29,6 +29,7 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 | `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy` |
 | `cache_path`   | string | no       | Per-game cache directory override                          |
 | `hooks`        | object | no       | Scripts to run around install/uninstall (see below)        |
+| `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default) or `copy`  |
 
 ### Hooks (games.yaml)
 
@@ -49,6 +50,26 @@ hooks:
 ```
 
 Scripts receive environment variables: `LMM_GAME_ID`, `LMM_GAME_PATH`, `LMM_MOD_PATH`, `LMM_MOD_ID`, `LMM_MOD_NAME`, `LMM_MOD_VERSION`, `LMM_HOOK`. Use `--no-hooks` to disable all hooks at runtime; `--force` to continue when a hook fails.
+
+### Deploy Mode (games.yaml)
+
+The `deploy_mode` option controls how downloaded mod archives are handled:
+
+- **`extract`** (default): Archives are extracted to the mod path. Use for games where mods are loose files (e.g., Skyrim, Fallout).
+- **`copy`**: Archives are copied as-is to the mod path without extraction. Use for games that expect mod files to remain as archives (e.g., Minecraft `.jar` files, some Unity games).
+
+Example:
+
+```yaml
+games:
+  minecraft:
+    name: "Minecraft"
+    install_path: "~/.minecraft"
+    mod_path: "~/.minecraft/mods"
+    deploy_mode: copy # Keep .jar files as-is
+    sources:
+      curseforge: "432"
+```
 
 ## Profile files
 

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 
 	"github.com/spf13/cobra"
@@ -284,11 +285,11 @@ func validateAPIKey(ctx context.Context, sourceID, apiKey string) error {
 		client := nexusmods.NewClient(nil, "")
 		return client.ValidateAPIKey(ctx, apiKey)
 	case "curseforge":
-		// CurseForge doesn't have a dedicated validate endpoint,
-		// so we just accept the key and let it fail on first use.
-		// TODO: Implement validation by making a test API call
-		if len(apiKey) < 10 {
-			return fmt.Errorf("API key too short")
+		// Validate by making a test API call to GetGames
+		client := curseforge.NewClient(nil, apiKey)
+		_, err := client.GetGames(ctx)
+		if err != nil {
+			return fmt.Errorf("API validation failed: %w", err)
 		}
 		return nil
 	default:

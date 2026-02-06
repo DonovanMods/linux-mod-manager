@@ -2,6 +2,7 @@ package curseforge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -280,7 +281,7 @@ func (c *CurseForge) CheckUpdates(ctx context.Context, installed []domain.Instal
 	}
 
 	if len(fetchErrs) > 0 {
-		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(fetchErrs), joinErrors(fetchErrs))
+		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(fetchErrs), errors.Join(fetchErrs...))
 	}
 	return updates, nil
 }
@@ -371,21 +372,4 @@ func releaseTypeName(releaseType int) string {
 // Simple string comparison - CurseForge versions are often file names
 func isNewerVersion(currentVersion, newVersion string) bool {
 	return currentVersion != newVersion && newVersion != ""
-}
-
-// joinErrors joins multiple errors into one
-func joinErrors(errs []error) error {
-	if len(errs) == 0 {
-		return nil
-	}
-	if len(errs) == 1 {
-		return errs[0]
-	}
-
-	// Go 1.20+ has errors.Join, but let's be compatible
-	msg := errs[0].Error()
-	for _, e := range errs[1:] {
-		msg += "; " + e.Error()
-	}
-	return fmt.Errorf("%s", msg)
 }
