@@ -96,6 +96,8 @@ lmm game clear-default
 
 ### Basic Usage
 
+**Source auto-detection:** Commands automatically use the mod source configured for your game. If a game has multiple sources, you will be prompted to choose (or use `-y` to auto-select, or `--source` to specify explicitly).
+
 ```bash
 # Search for mods
 lmm search "skyui" --game skyrim-se

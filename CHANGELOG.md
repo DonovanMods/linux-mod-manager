@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Automatic source detection**: Commands auto-detect which mod source to use from game config
+  - Single source configured: Uses it automatically (no `--source` flag needed)
+  - Multiple sources configured: Prompts for selection
+  - `-y` flag on install auto-selects first source (for scripting)
+  - `--source` flag still works to explicitly specify a source
+
+- **Better search result ranking**: Search results now prioritize name matches over description/tag matches, then sort by download count
+
 - **Interactive game add**: `lmm game add` searches CurseForge for games by name and guides you through configuration (no need to manually find game IDs)
 
 - **CurseForge Support**: New mod source alongside NexusMods

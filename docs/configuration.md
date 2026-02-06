@@ -148,3 +148,21 @@ games:
     sources:
       nexusmods: "skyrimspecialedition"
 ```
+
+### Source Auto-Detection
+
+When running commands like `search`, `install`, or `update`, lmm automatically detects which source to use:
+
+1. **Single source:** If the game has only one source configured, it is used automatically.
+2. **Multiple sources:** If the game has multiple sources, you are prompted to select one.
+3. **Explicit override:** Use `--source <name>` to bypass auto-detection.
+4. **Scripting mode:** Use `-y` (on install) to auto-select the first configured source without prompting.
+
+Example prompt when multiple sources are configured:
+
+```
+Minecraft has multiple mod sources configured. Select one:
+  [1] CurseForge
+  [2] NexusMods
+Enter choice (1-2):
+```
