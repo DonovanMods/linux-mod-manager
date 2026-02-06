@@ -45,4 +45,34 @@ type Game struct {
 	LinkMethodExplicit bool              // True if LinkMethod was explicitly set in config
 	CachePath          string            // Optional: custom cache path for this game's mods
 	Hooks              GameHooks         // Optional: hooks for install/uninstall operations
+	DeployMode         DeployMode        // How to handle downloaded files (extract vs copy)
+}
+
+// DeployMode determines how downloaded mod archives are handled
+type DeployMode int
+
+const (
+	DeployExtract DeployMode = iota // Default: extract archives to mod path
+	DeployCopy                      // Copy files as-is (for games like Hytale where .zip IS the mod)
+)
+
+func (m DeployMode) String() string {
+	switch m {
+	case DeployExtract:
+		return "extract"
+	case DeployCopy:
+		return "copy"
+	default:
+		return "extract"
+	}
+}
+
+// ParseDeployMode converts a string to DeployMode
+func ParseDeployMode(s string) DeployMode {
+	switch s {
+	case "copy":
+		return DeployCopy
+	default:
+		return DeployExtract
+	}
 }

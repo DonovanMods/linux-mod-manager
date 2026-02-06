@@ -199,8 +199,9 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 	// Extract to cache location
 	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
 	extractor := NewExtractor()
-	if !extractor.CanExtract(file.FileName) {
-		// Not an archive - just copy to cache
+	if game.DeployMode == domain.DeployCopy || !extractor.CanExtract(file.FileName) {
+		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
+		// Or not an archive - just copy to cache
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
