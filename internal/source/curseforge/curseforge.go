@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -128,6 +129,20 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) ([]do
 	for i, r := range results {
 		mods[i] = modToDomain(r, query.GameID)
 	}
+
+	// Sort results: prioritize name matches over description/tag matches
+	queryLower := strings.ToLower(query.Query)
+	sort.SliceStable(mods, func(i, j int) bool {
+		iNameMatch := strings.Contains(strings.ToLower(mods[i].Name), queryLower)
+		jNameMatch := strings.Contains(strings.ToLower(mods[j].Name), queryLower)
+		if iNameMatch && !jNameMatch {
+			return true
+		}
+		if !iNameMatch && jNameMatch {
+			return false
+		}
+		return mods[i].Downloads > mods[j].Downloads
+	})
 
 	return mods, nil
 }
