@@ -155,6 +155,16 @@ func runModSetUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
+	// Resolve source from game config
+	game, err := service.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+	modSource, err = resolveSource(game, modSource, false)
+	if err != nil {
+		return err
+	}
+
 	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists and get its name
@@ -334,6 +344,16 @@ func runModFiles(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = svc.Close() }()
 
+	// Resolve source from game config
+	game, err := svc.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+	modSource, err = resolveSource(game, modSource, false)
+	if err != nil {
+		return err
+	}
+
 	// Get mod info for display
 	mod, err := svc.GetInstalledMod(modSource, modID, gameID, profileName)
 	if err != nil {
@@ -374,6 +394,16 @@ func runModShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initializing service: %w", err)
 	}
 	defer func() { _ = svc.Close() }()
+
+	// Resolve source from game config
+	game, err := svc.GetGame(gameID)
+	if err != nil {
+		return fmt.Errorf("game not found: %s", gameID)
+	}
+	modSource, err = resolveSource(game, modSource, false)
+	if err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 	mod, err := svc.GetMod(ctx, modSource, gameID, modID)
