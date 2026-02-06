@@ -71,8 +71,17 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 		}
 	}()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("%w: CurseForge API key required", domain.ErrAuthRequired)
+	}
+
+	if resp.StatusCode == http.StatusForbidden {
+		// 403 can mean: no API key, OR mod author disabled third-party distribution
+		if c.apiKey == "" {
+			return fmt.Errorf("%w: CurseForge API key required", domain.ErrAuthRequired)
+		}
+		// Has API key but still forbidden - likely distribution disabled
+		return fmt.Errorf("mod author has disabled third-party downloads; visit CurseForge website to download manually")
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
