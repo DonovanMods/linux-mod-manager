@@ -118,7 +118,7 @@ func TestSearchCmd_NoQuery(t *testing.T) {
 func TestSearchCmd_DefaultFlags(t *testing.T) {
 	// Check default values
 	sourceFlag := searchCmd.Flags().Lookup("source")
-	assert.Equal(t, "nexusmods", sourceFlag.DefValue)
+	assert.Equal(t, "", sourceFlag.DefValue)
 
 	limitFlag := searchCmd.Flags().Lookup("limit")
 	assert.Equal(t, "10", limitFlag.DefValue)
