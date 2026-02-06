@@ -89,7 +89,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine source: use flag if set, otherwise first configured source
-	sourceToUse, err := resolveSource(game, searchSource)
+	sourceToUse, err := resolveSource(game, searchSource, false)
 	if err != nil {
 		return err
 	}

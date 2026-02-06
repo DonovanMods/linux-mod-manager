@@ -121,7 +121,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve source: use flag if set, otherwise first configured source
-	installSource, err = resolveSource(game, installSource)
+	installSource, err = resolveSource(game, installSource, installYes)
 	if err != nil {
 		return err
 	}

@@ -105,7 +105,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve source: use flag if set, otherwise first configured source
-	updateSource, err = resolveSource(game, updateSource)
+	updateSource, err = resolveSource(game, updateSource, false)
 	if err != nil {
 		return err
 	}
@@ -536,7 +536,7 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve source: use flag if set, otherwise first configured source
-	updateSource, err = resolveSource(game, updateSource)
+	updateSource, err = resolveSource(game, updateSource, false)
 	if err != nil {
 		return err
 	}

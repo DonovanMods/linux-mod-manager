@@ -64,7 +64,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve source: use flag if set, otherwise first configured source
-	uninstallSource, err = resolveSource(game, uninstallSource)
+	uninstallSource, err = resolveSource(game, uninstallSource, false)
 	if err != nil {
 		return err
 	}

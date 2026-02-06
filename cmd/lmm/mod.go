@@ -216,7 +216,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve source: use flag if set, otherwise first configured source
-	modSource, err = resolveSource(game, modSource)
+	modSource, err = resolveSource(game, modSource, false)
 	if err != nil {
 		return err
 	}
@@ -281,7 +281,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve source: use flag if set, otherwise first configured source
-	modSource, err = resolveSource(game, modSource)
+	modSource, err = resolveSource(game, modSource, false)
 	if err != nil {
 		return err
 	}
