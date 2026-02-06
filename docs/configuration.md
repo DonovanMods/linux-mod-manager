@@ -139,7 +139,7 @@ games:
     mod_path: "~/.minecraft/mods"
     sources:
       nexusmods: "minecraft"
-      curseforge: "432"
+      curseforge: "432" # or use slug: "minecraft"
 
   skyrim-se:
     name: "Skyrim Special Edition"

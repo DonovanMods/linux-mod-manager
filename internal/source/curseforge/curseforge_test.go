@@ -86,7 +86,7 @@ func TestCurseForge_Search_InvalidGameID(t *testing.T) {
 		Query:  "test",
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid game ID")
+	assert.Contains(t, err.Error(), "not-a-number")
 }
 
 func TestCurseForge_GetMod(t *testing.T) {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -13,12 +15,16 @@ import (
 // CurseForge implements the ModSource interface
 type CurseForge struct {
 	client *Client
+	// gameIDCache caches resolved game slugs to numeric IDs
+	gameIDCache map[string]int
+	cacheMu     sync.RWMutex
 }
 
 // New creates a new CurseForge source
 func New(httpClient *http.Client, apiKey string) *CurseForge {
 	return &CurseForge{
-		client: NewClient(httpClient, apiKey),
+		client:      NewClient(httpClient, apiKey),
+		gameIDCache: make(map[string]int),
 	}
 }
 
@@ -54,12 +60,48 @@ func (c *CurseForge) ExchangeToken(ctx context.Context, code string) (*source.To
 	return nil, fmt.Errorf("CurseForge uses API key authentication, not OAuth")
 }
 
-// Search finds mods matching the query.
-// gameID must be the CurseForge numeric game ID (e.g., "432" for Minecraft).
-func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) ([]domain.Mod, error) {
-	gameID, err := strconv.Atoi(query.GameID)
+// resolveGameID converts a game identifier (numeric ID or slug) to a numeric ID.
+// Results are cached to avoid repeated API calls.
+func (c *CurseForge) resolveGameID(ctx context.Context, gameIDOrSlug string) (int, error) {
+	// Try parsing as numeric ID first
+	if id, err := strconv.Atoi(gameIDOrSlug); err == nil {
+		return id, nil
+	}
+
+	// Check cache for slug
+	c.cacheMu.RLock()
+	if id, ok := c.gameIDCache[gameIDOrSlug]; ok {
+		c.cacheMu.RUnlock()
+		return id, nil
+	}
+	c.cacheMu.RUnlock()
+
+	// Fetch games from API and find by slug
+	games, err := c.client.GetGames(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("invalid game ID (expected numeric CurseForge game ID): %w", err)
+		return 0, fmt.Errorf("fetching games to resolve slug %q: %w", gameIDOrSlug, err)
+	}
+
+	slugLower := strings.ToLower(gameIDOrSlug)
+	for _, g := range games {
+		if strings.ToLower(g.Slug) == slugLower || strings.ToLower(g.Name) == slugLower {
+			// Cache the result
+			c.cacheMu.Lock()
+			c.gameIDCache[gameIDOrSlug] = g.ID
+			c.cacheMu.Unlock()
+			return g.ID, nil
+		}
+	}
+
+	return 0, fmt.Errorf("game not found: %q (tried as numeric ID and slug)", gameIDOrSlug)
+}
+
+// Search finds mods matching the query.
+// gameID can be either a numeric CurseForge game ID (e.g., "432") or a slug (e.g., "minecraft").
+func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) ([]domain.Mod, error) {
+	gameID, err := c.resolveGameID(ctx, query.GameID)
+	if err != nil {
+		return nil, err
 	}
 
 	pageSize := query.PageSize
