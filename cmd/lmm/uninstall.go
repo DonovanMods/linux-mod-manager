@@ -154,13 +154,13 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Remove from database
-	if err := service.DB().DeleteInstalledMod(uninstallSource, modID, gameID, profileName); err != nil {
+	if err := service.DB().DeleteInstalledMod(installedMod.SourceID, modID, gameID, profileName); err != nil {
 		return fmt.Errorf("failed to remove mod record: %w", err)
 	}
 
 	// Remove from profile
 	pm := getProfileManager(service)
-	if err := pm.RemoveMod(gameID, profileName, uninstallSource, modID); err != nil {
+	if err := pm.RemoveMod(gameID, profileName, installedMod.SourceID, modID); err != nil {
 		// Don't fail if not in profile
 		if verbose {
 			fmt.Printf("  Note: %v\n", err)
