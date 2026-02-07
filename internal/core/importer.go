@@ -332,18 +332,49 @@ func (i *Importer) ScanModPath(ctx context.Context, game *domain.Game, installed
 func (i *Importer) isFileTracked(filename string, installedMods []domain.InstalledMod) bool {
 	// Strip extension for comparison
 	baseName := strings.TrimSuffix(filename, filepath.Ext(filename))
+	baseNameLower := strings.ToLower(baseName)
+	filenameLower := strings.ToLower(filename)
 
 	for _, mod := range installedMods {
-		// Check various ways the mod might be identified
-		if mod.Name == baseName || mod.Name == filename {
+		modNameLower := strings.ToLower(mod.Name)
+
+		// Check various ways the mod might be identified (case-insensitive)
+		if modNameLower == baseNameLower || modNameLower == filenameLower {
 			return true
 		}
 		// Check if the mod's cached filename matches
-		if strings.Contains(filename, mod.ID) {
+		if strings.Contains(filenameLower, strings.ToLower(mod.ID)) {
 			return true
 		}
 	}
 	return false
+}
+
+// findDuplicateMod checks if a mod with similar name already exists (for duplicate prevention)
+func (i *Importer) FindDuplicateMod(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
+	modNameLower := strings.ToLower(modName)
+	// Normalize: remove common suffixes like version numbers, underscores, dashes
+	normalized := normalizeModName(modNameLower)
+
+	for idx := range installedMods {
+		existingNorm := normalizeModName(strings.ToLower(installedMods[idx].Name))
+		if existingNorm == normalized {
+			return &installedMods[idx]
+		}
+	}
+	return nil
+}
+
+// normalizeModName removes version suffixes and normalizes separators for comparison
+func normalizeModName(name string) string {
+	// Remove common version patterns like -1.0.5, _v2, etc.
+	re := regexp.MustCompile(`[-_]?v?\d+(\.\d+)*$`)
+	name = re.ReplaceAllString(name, "")
+	// Normalize separators
+	name = strings.ReplaceAll(name, "-", "")
+	name = strings.ReplaceAll(name, "_", "")
+	name = strings.ReplaceAll(name, " ", "")
+	return name
 }
 
 // detectModFromFilename attempts to parse mod info from a filename

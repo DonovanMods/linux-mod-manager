@@ -397,9 +397,20 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	// Import each untracked mod
 	linkMethod := service.GetGameLinkMethod(game)
 
-	var imported, failed int
+	// Get current installed mods for duplicate checking
+	currentMods, _ := service.GetInstalledMods(game.ID, profileName)
+
+	var imported, failed, skipped int
 	for _, r := range untracked {
 		if r.Mod == nil {
+			continue
+		}
+
+		// Check for duplicates before importing
+		importer := core.NewImporter(service.GetGameCache(game))
+		if dup := importer.FindDuplicateMod(r.Mod.Name, currentMods); dup != nil {
+			fmt.Printf("  ⊘ %s: skipped (duplicate of \"%s\")\n", r.FileName, dup.Name)
+			skipped++
 			continue
 		}
 
@@ -413,9 +424,12 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 		}
 		fmt.Printf("  ✓ %s\n", r.Mod.Name)
 		imported++
+
+		// Add to currentMods so we catch duplicates within this batch
+		currentMods = append(currentMods, domain.InstalledMod{Mod: *r.Mod})
 	}
 
-	fmt.Printf("\nImported: %d, Failed: %d\n", imported, failed)
+	fmt.Printf("\nImported: %d, Skipped: %d, Failed: %d\n", imported, skipped, failed)
 	return nil
 }
 

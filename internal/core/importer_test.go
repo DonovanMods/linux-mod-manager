@@ -357,3 +357,45 @@ func TestScanModPath_TildeExpansion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }
+
+func TestImporter_FindDuplicateMod(t *testing.T) {
+	importer := core.NewImporter(nil)
+
+	installedMods := []domain.InstalledMod{
+		{Mod: domain.Mod{Name: "AdvancedItemInfo", ID: "123"}},
+		{Mod: domain.Mod{Name: "BetterUI", ID: "456"}},
+		{Mod: domain.Mod{Name: "SomeOtherMod-1.2.3", ID: "789"}},
+	}
+
+	tests := []struct {
+		name      string
+		modName   string
+		wantMatch bool
+		wantName  string
+	}{
+		{"exact match", "AdvancedItemInfo", true, "AdvancedItemInfo"},
+		{"case insensitive", "advancediteminfo", true, "AdvancedItemInfo"},
+		{"case insensitive upper", "ADVANCEDITEMINFO", true, "AdvancedItemInfo"},
+		{"with version suffix", "AdvancedItemInfo-1.0.5", true, "AdvancedItemInfo"},
+		{"match versioned existing", "SomeOtherMod", true, "SomeOtherMod-1.2.3"},
+		{"no match", "CompletelyDifferent", false, ""},
+		{"partial no match", "Advanced", false, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := importer.FindDuplicateMod(tt.modName, installedMods)
+			if tt.wantMatch {
+				if result == nil {
+					t.Errorf("expected to find duplicate, got nil")
+				} else if result.Name != tt.wantName {
+					t.Errorf("expected match name %q, got %q", tt.wantName, result.Name)
+				}
+			} else {
+				if result != nil {
+					t.Errorf("expected no duplicate, got %q", result.Name)
+				}
+			}
+		})
+	}
+}
