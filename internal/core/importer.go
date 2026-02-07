@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -95,19 +96,16 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
 
 		// Remove existing cache if present (re-import case)
-		_ = os.RemoveAll(cachePath)
+		// Ignore errors - if removal fails, MkdirAll/copy will error anyway
+		os.RemoveAll(cachePath)
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
 
-		// Copy the file to cache
+		// Copy the file to cache using streaming to avoid memory spikes
 		destPath := filepath.Join(cachePath, filename)
-		data, err := os.ReadFile(archivePath)
-		if err != nil {
-			return nil, fmt.Errorf("reading file: %w", err)
-		}
-		if err := os.WriteFile(destPath, data, 0644); err != nil {
-			return nil, fmt.Errorf("writing to cache: %w", err)
+		if err := copyFileStreaming(archivePath, destPath); err != nil {
+			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
 		fileCount = 1
 	} else {
@@ -415,4 +413,25 @@ func extractVersionFromFilename(filename string) string {
 		return matches[len(matches)-1][1]
 	}
 	return ""
+}
+
+// copyFileStreaming copies a file using streaming to avoid loading it all into memory
+func copyFileStreaming(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("opening source: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("creating destination: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("copying: %w", err)
+	}
+
+	return dstFile.Sync()
 }
