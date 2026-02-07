@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -63,12 +64,6 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	// Resolve source: use flag if set, otherwise first configured source
-	uninstallSource, err = resolveSource(game, uninstallSource, false)
-	if err != nil {
-		return err
-	}
-
 	// Determine profile
 	profileName := profileOrDefault(uninstallProfile)
 
@@ -76,10 +71,34 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Uninstalling mod %s from %s (profile: %s)...\n", modID, game.Name, profileName)
 	}
 
-	// Get the installed mod details
-	installedMod, err := service.GetInstalledMod(uninstallSource, modID, gameID, profileName)
-	if err != nil {
-		return fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+	// Find the mod - try specified source first, then search all installed mods
+	var installedMod *domain.InstalledMod
+	if uninstallSource != "" {
+		// Source explicitly specified
+		if uninstallSource != domain.SourceLocal {
+			if _, ok := game.SourceIDs[uninstallSource]; !ok {
+				return fmt.Errorf("source %q is not configured for %s", uninstallSource, game.Name)
+			}
+		}
+		installedMod, err = service.GetInstalledMod(uninstallSource, modID, gameID, profileName)
+		if err != nil {
+			return fmt.Errorf("mod %s not found in profile %s (source: %s)", modID, profileName, uninstallSource)
+		}
+	} else {
+		// No source specified - search all installed mods by ID
+		allMods, err := service.GetInstalledMods(gameID, profileName)
+		if err != nil {
+			return fmt.Errorf("listing installed mods: %w", err)
+		}
+		for i := range allMods {
+			if allMods[i].ID == modID {
+				installedMod = &allMods[i]
+				break
+			}
+		}
+		if installedMod == nil {
+			return fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+		}
 	}
 
 	ctx := context.Background()
