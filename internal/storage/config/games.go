@@ -53,10 +53,10 @@ type GameConfig struct {
 	InstallPath string            `yaml:"install_path"`
 	ModPath     string            `yaml:"mod_path"`
 	Sources     map[string]string `yaml:"sources"`
-	LinkMethod  string            `yaml:"link_method"`
-	CachePath   string            `yaml:"cache_path"`
+	LinkMethod  string            `yaml:"link_method,omitempty"`
+	CachePath   string            `yaml:"cache_path,omitempty"`
 	Hooks       GameHooksYAML     `yaml:"hooks,omitempty"`
-	DeployMode  string            `yaml:"deploy_mode"`
+	DeployMode  string            `yaml:"deploy_mode,omitempty"`
 }
 
 // GamesFile is the top-level games.yaml structure

@@ -103,13 +103,36 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 	return nil
 }
 
-// GetGames fetches all available games
+// GetGames fetches all available games with pagination
 func (c *Client) GetGames(ctx context.Context) ([]Game, error) {
-	var resp PaginatedResponse[[]Game]
-	if err := c.doRequest(ctx, http.MethodGet, "/v1/games", &resp); err != nil {
-		return nil, fmt.Errorf("getting games: %w", err)
+	const pageSize = 50
+
+	var allGames []Game
+	index := 0
+
+	for {
+		params := url.Values{}
+		params.Set("pageSize", strconv.Itoa(pageSize))
+		params.Set("index", strconv.Itoa(index))
+
+		path := "/v1/games?" + params.Encode()
+
+		var resp PaginatedResponse[[]Game]
+		if err := c.doRequest(ctx, http.MethodGet, path, &resp); err != nil {
+			return nil, fmt.Errorf("getting games: %w", err)
+		}
+
+		allGames = append(allGames, resp.Data...)
+
+		p := resp.Pagination
+		if len(resp.Data) == 0 || p.Index+p.PageSize >= p.TotalCount {
+			break
+		}
+
+		index += p.PageSize
 	}
-	return resp.Data, nil
+
+	return allGames, nil
 }
 
 // GetGame fetches a single game by ID

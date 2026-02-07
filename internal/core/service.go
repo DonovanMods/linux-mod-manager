@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -206,12 +207,8 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
 		destPath := filepath.Join(cachePath, file.FileName)
-		content, err := os.ReadFile(archivePath)
-		if err != nil {
-			return nil, fmt.Errorf("reading downloaded file: %w", err)
-		}
-		if err := os.WriteFile(destPath, content, 0644); err != nil {
-			return nil, fmt.Errorf("writing to cache: %w", err)
+		if err := copyFileStreaming(archivePath, destPath); err != nil {
+			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
 		return &DownloadModResult{
 			FilesExtracted: 1,
@@ -417,4 +414,25 @@ func (s *Service) GetDependencies(ctx context.Context, sourceID string, mod *dom
 		return nil, err
 	}
 	return src.GetDependencies(ctx, mod)
+}
+
+// copyFileStreaming copies a file using streaming to avoid loading it all into memory
+func copyFileStreaming(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("opening source: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("creating destination: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("copying: %w", err)
+	}
+
+	return dstFile.Sync()
 }

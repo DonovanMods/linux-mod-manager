@@ -138,7 +138,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		mod, err = service.GetMod(ctx, installSource, gameID, installModID)
 		if err != nil {
 			if errors.Is(err, domain.ErrAuthRequired) {
-				return fmt.Errorf("authentication required; run 'lmm auth login <source>' to authenticate")
+				return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", installSource)
 			}
 			return fmt.Errorf("failed to fetch mod: %w", err)
 		}
@@ -150,7 +150,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		mods, err := service.SearchMods(ctx, installSource, gameID, query, "", nil)
 		if err != nil {
 			if errors.Is(err, domain.ErrAuthRequired) {
-				return fmt.Errorf("authentication required; run 'lmm auth login <source>' to authenticate")
+				return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", installSource)
 			}
 			return fmt.Errorf("search failed: %w", err)
 		}

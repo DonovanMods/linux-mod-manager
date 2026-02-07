@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ var (
 )
 
 var importCmd = &cobra.Command{
-	Use:   "import <archive-path>",
+	Use:   "import [archive-path]",
 	Short: "Import mods from local files or scan mod_path",
 	Long: `Import mods from local files or scan for untracked mods.
 
@@ -453,14 +454,10 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 			return fmt.Errorf("creating cache: %w", err)
 		}
 
-		// Copy the file to cache
+		// Copy the file to cache using streaming to avoid memory spikes
 		destPath := filepath.Join(cachePath, r.FileName)
-		data, err := os.ReadFile(r.FilePath)
-		if err != nil {
-			return fmt.Errorf("reading file: %w", err)
-		}
-		if err := os.WriteFile(destPath, data, 0644); err != nil {
-			return fmt.Errorf("writing to cache: %w", err)
+		if err := copyFileStreaming(r.FilePath, destPath); err != nil {
+			return fmt.Errorf("copying to cache: %w", err)
 		}
 	}
 
@@ -496,4 +493,25 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 	}
 
 	return nil
+}
+
+// copyFileStreaming copies a file using streaming to avoid loading it all into memory
+func copyFileStreaming(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("opening source: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("creating destination: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("copying: %w", err)
+	}
+
+	return dstFile.Sync()
 }
