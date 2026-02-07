@@ -15,7 +15,7 @@ import (
 // If sourceFlag is provided, validates it's configured for the game.
 // If sourceFlag is empty and only one source is configured, uses that.
 // If multiple sources are configured and autoSelect is false, prompts for selection.
-// If autoSelect is true (e.g., -y flag), uses the first configured source.
+// If autoSelect is true (e.g., -y flag), uses the first configured source (alphabetically).
 func resolveSource(game *domain.Game, sourceFlag string, autoSelect bool) (string, error) {
 	if sourceFlag != "" {
 		// Validate the specified source is configured for this game

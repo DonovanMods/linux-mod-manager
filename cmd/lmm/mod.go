@@ -104,7 +104,7 @@ Examples:
 }
 
 func init() {
-	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "", "mod source (default: first configured source for game)")
+	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "", "mod source (default: first configured source alphabetically)")
 	modCmd.PersistentFlags().StringVarP(&modProfile, "profile", "p", "", "profile (default: active profile)")
 
 	modSetUpdateCmd.Flags().BoolVar(&modSetAuto, "auto", false, "enable auto-update")

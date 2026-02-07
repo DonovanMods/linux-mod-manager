@@ -80,7 +80,7 @@ Examples:
 }
 
 func init() {
-	installCmd.Flags().StringVarP(&installSource, "source", "s", "", "mod source (default: first configured source for game)")
+	installCmd.Flags().StringVarP(&installSource, "source", "s", "", "mod source (default: first configured source alphabetically)")
 	installCmd.Flags().StringVarP(&installProfile, "profile", "p", "", "profile to install to (default: active profile)")
 	installCmd.Flags().StringVar(&installVersion, "version", "", "specific version to install (default: latest)")
 	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")

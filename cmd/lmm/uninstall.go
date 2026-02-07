@@ -33,7 +33,7 @@ Examples:
 }
 
 func init() {
-	uninstallCmd.Flags().StringVarP(&uninstallSource, "source", "s", "", "mod source (default: first configured source for game)")
+	uninstallCmd.Flags().StringVarP(&uninstallSource, "source", "s", "", "mod source (if omitted, searches all sources for mod ID)")
 	uninstallCmd.Flags().StringVarP(&uninstallProfile, "profile", "p", "", "profile to uninstall from (default: active profile)")
 	uninstallCmd.Flags().BoolVar(&uninstallKeep, "keep-cache", false, "keep cached mod files")
 	uninstallCmd.Flags().BoolVarP(&uninstallForce, "force", "f", false, "continue even if hooks fail")
@@ -146,7 +146,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 
 	// Clean up cache unless --keep-cache is set
 	if !uninstallKeep {
-		if err := service.GetGameCache(game).Delete(gameID, uninstallSource, modID, installedMod.Version); err != nil {
+		if err := service.GetGameCache(game).Delete(gameID, installedMod.SourceID, modID, installedMod.Version); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to clean cache: %v\n", err)
 			}

@@ -300,6 +300,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service, profileName string) error {
 	ctx := context.Background()
 
+	// Warn about extract mode limitations
+	if game.DeployMode != domain.DeployCopy {
+		fmt.Println("Note: Scan import for extract-mode games tracks mods in-place without caching.")
+		fmt.Println("      Uninstall will only remove the database entry, not the files.")
+		fmt.Println()
+	}
+
 	// Get installed mods for this game/profile
 	installedMods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {

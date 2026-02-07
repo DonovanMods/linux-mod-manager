@@ -69,13 +69,13 @@ Examples:
 }
 
 func init() {
-	updateCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: first configured source for game)")
+	updateCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: first configured source alphabetically)")
 	updateCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile to check (default: active profile)")
 	updateCmd.Flags().BoolVar(&updateAll, "all", false, "apply all available updates")
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
 	updateCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
 
-	updateRollbackCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: first configured source for game)")
+	updateRollbackCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: first configured source alphabetically)")
 	updateRollbackCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile (default: active profile)")
 	updateRollbackCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
 

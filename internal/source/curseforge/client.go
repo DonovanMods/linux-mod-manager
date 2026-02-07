@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
@@ -76,12 +77,23 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 	}
 
 	if resp.StatusCode == http.StatusForbidden {
-		// 403 can mean: no API key, OR mod author disabled third-party distribution
+		// 403 can mean: no API key, invalid key, OR mod author disabled third-party distribution
 		if c.apiKey == "" {
 			return fmt.Errorf("%w: CurseForge API key required", domain.ErrAuthRequired)
 		}
-		// Has API key but still forbidden - likely distribution disabled
-		return fmt.Errorf("mod author has disabled third-party downloads; visit CurseForge website to download manually")
+		// Read body to determine error type
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		bodyStr := string(body)
+		// If it looks like an auth error (common CurseForge patterns)
+		if strings.Contains(path, "/files/") && strings.Contains(path, "/download-url") {
+			// This is a file download endpoint - 403 means distribution disabled
+			return fmt.Errorf("mod author has disabled third-party downloads; visit CurseForge website to download manually")
+		}
+		// For other endpoints, 403 with valid key likely means invalid/expired key
+		if bodyStr != "" {
+			return fmt.Errorf("%w: access denied (check API key): %s", domain.ErrAuthRequired, bodyStr)
+		}
+		return fmt.Errorf("%w: access denied (check API key is valid)", domain.ErrAuthRequired)
 	}
 
 	if resp.StatusCode == http.StatusNotFound {

@@ -50,7 +50,7 @@ Examples:
 }
 
 func init() {
-	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "", "mod source to search (default: first configured source for game)")
+	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "", "mod source to search (default: first configured source alphabetically)")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "l", 10, "maximum number of results")
 	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
 	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (source-specific ID or name)")
