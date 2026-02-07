@@ -199,18 +199,15 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 	// Extract to cache location
 	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
 	extractor := NewExtractor()
-	if !extractor.CanExtract(file.FileName) {
-		// Not an archive - just copy to cache
+	if game.DeployMode == domain.DeployCopy || !extractor.CanExtract(file.FileName) {
+		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
+		// Or not an archive - just copy to cache
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
 		destPath := filepath.Join(cachePath, file.FileName)
-		content, err := os.ReadFile(archivePath)
-		if err != nil {
-			return nil, fmt.Errorf("reading downloaded file: %w", err)
-		}
-		if err := os.WriteFile(destPath, content, 0644); err != nil {
-			return nil, fmt.Errorf("writing to cache: %w", err)
+		if err := copyFileStreaming(archivePath, destPath); err != nil {
+			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
 		return &DownloadModResult{
 			FilesExtracted: 1,
@@ -417,3 +414,5 @@ func (s *Service) GetDependencies(ctx context.Context, sourceID string, mod *dom
 	}
 	return src.GetDependencies(ctx, mod)
 }
+
+// copyFileStreaming copies a file using streaming to avoid loading it all into memory

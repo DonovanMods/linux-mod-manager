@@ -40,6 +40,8 @@ var searchCmd = &cobra.Command{
 	Short: "Search for mods",
 	Long: `Search for mods in the configured sources.
 
+If --source is not specified, uses the first configured source for the game.
+
 Examples:
   lmm search skyui --game skyrim-se
   lmm search "immersive armor" --game skyrim-se --source nexusmods`,
@@ -48,7 +50,7 @@ Examples:
 }
 
 func init() {
-	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "nexusmods", "mod source to search")
+	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "", "mod source to search (default: first configured source alphabetically)")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "l", 10, "maximum number of results")
 	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
 	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (source-specific ID or name)")
@@ -86,15 +88,21 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
+	// Determine source: use flag if set, otherwise first configured source
+	sourceToUse, err := resolveSource(game, searchSource, false)
+	if err != nil {
+		return err
+	}
+
 	if verbose {
-		fmt.Printf("Searching for \"%s\" in %s (%s)...\n", query, game.Name, searchSource)
+		fmt.Printf("Searching for \"%s\" in %s (%s)...\n", query, game.Name, sourceToUse)
 	}
 
 	ctx := context.Background()
-	mods, err := service.SearchMods(ctx, searchSource, gameID, query, searchCategory, searchTags)
+	mods, err := service.SearchMods(ctx, sourceToUse, gameID, query, searchCategory, searchTags)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+			return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", sourceToUse)
 		}
 		return fmt.Errorf("search failed: %w", err)
 	}
@@ -117,7 +125,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	installedMods, _ := service.GetInstalledMods(gameID, profileName)
 	installedIDs := make(map[string]bool)
 	for _, im := range installedMods {
-		if im.SourceID == searchSource {
+		if im.SourceID == sourceToUse {
 			installedIDs[im.ID] = true
 		}
 	}

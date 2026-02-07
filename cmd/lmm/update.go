@@ -69,13 +69,13 @@ Examples:
 }
 
 func init() {
-	updateCmd.Flags().StringVarP(&updateSource, "source", "s", "nexusmods", "mod source")
+	updateCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: first configured source alphabetically)")
 	updateCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile to check (default: active profile)")
 	updateCmd.Flags().BoolVar(&updateAll, "all", false, "apply all available updates")
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
 	updateCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
 
-	updateRollbackCmd.Flags().StringVarP(&updateSource, "source", "s", "nexusmods", "mod source")
+	updateRollbackCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: first configured source alphabetically)")
 	updateRollbackCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile (default: active profile)")
 	updateRollbackCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
 
@@ -102,6 +102,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	game, err := service.GetGame(gameID)
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	// Resolve source: use flag if set, otherwise first configured source
+	updateSource, err = resolveSource(game, updateSource, false)
+	if err != nil {
+		return err
 	}
 
 	// Determine profile
@@ -149,7 +155,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	updates, err := updater.CheckUpdates(ctx, installed)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+			return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", updateSource)
 		}
 		// Surface warning but continue to show partial updates
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
@@ -294,7 +300,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	updates, err := updater.CheckUpdates(ctx, []domain.InstalledMod{*mod})
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+			return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", updateSource)
 		}
 		return fmt.Errorf("failed to check update: %w", err)
 	}
@@ -527,6 +533,12 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	game, err := service.GetGame(gameID)
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	// Resolve source: use flag if set, otherwise first configured source
+	updateSource, err = resolveSource(game, updateSource, false)
+	if err != nil {
+		return err
 	}
 
 	profileName := profileOrDefault(updateProfile)

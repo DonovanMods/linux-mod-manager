@@ -59,7 +59,7 @@ func TestUninstallCmd_NoModID(t *testing.T) {
 func TestUninstallCmd_DefaultFlags(t *testing.T) {
 	// Check default values
 	sourceFlag := uninstallCmd.Flags().Lookup("source")
-	assert.Equal(t, "nexusmods", sourceFlag.DefValue)
+	assert.Equal(t, "", sourceFlag.DefValue) // empty = auto-detect from game config
 
 	profileFlag := uninstallCmd.Flags().Lookup("profile")
 	assert.Equal(t, "", profileFlag.DefValue)

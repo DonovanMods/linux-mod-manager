@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInitService_RegistersNexusMods(t *testing.T) {
+func TestInitService_RegistersSources(t *testing.T) {
 	// Use temp directories to avoid polluting real config
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
@@ -23,4 +23,10 @@ func TestInitService_RegistersNexusMods(t *testing.T) {
 	require.NoError(t, err, "nexusmods source should be registered by default")
 	assert.Equal(t, "nexusmods", src.ID())
 	assert.Equal(t, "Nexus Mods", src.Name())
+
+	// CurseForge should be registered by default
+	src, err = svc.GetSource("curseforge")
+	require.NoError(t, err, "curseforge source should be registered by default")
+	assert.Equal(t, "curseforge", src.ID())
+	assert.Equal(t, "CurseForge", src.Name())
 }

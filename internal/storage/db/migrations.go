@@ -29,6 +29,7 @@ func (d *DB) migrate() error {
 		migrateV5,
 		migrateV6,
 		migrateV7,
+		migrateV8,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -146,5 +147,13 @@ func migrateV7(d *DB) error {
 			PRIMARY KEY (game_id, profile_name, relative_path)
 		)
 	`)
+	return err
+}
+
+func migrateV8(d *DB) error {
+	// Add manual_download column to track mods that require manual download
+	// (e.g., CurseForge mods with API restrictions)
+	// Default 0 = false (can be auto-downloaded)
+	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN manual_download INTEGER DEFAULT 0`)
 	return err
 }

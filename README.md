@@ -4,7 +4,7 @@ A terminal-based mod manager for Linux that provides a CLI interface for searchi
 
 ## Features
 
-- **NexusMods Integration**: Search, download, install, and check updates from NexusMods
+- **Multi-Source Support**: Search, download, install mods from NexusMods and CurseForge
 - **Profile System**: Manage multiple mod configurations per game
 - **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
 - **Rollback Support**: Revert to previous mod versions when updates cause issues
@@ -48,12 +48,26 @@ go build -o lmm ./cmd/lmm
 
 ### Authentication
 
-NexusMods requires an API key for downloading mods. Get your personal API key from [NexusMods API settings](https://www.nexusmods.com/users/myaccount?tab=api) and authenticate:
+Mod sources require API keys for downloading mods.
+
+#### NexusMods
+
+Get your personal API key from [NexusMods API settings](https://www.nexusmods.com/users/myaccount?tab=api):
 
 ```bash
-lmm auth login
+lmm auth login nexusmods
 # Or set the environment variable
 export NEXUSMODS_API_KEY="your-api-key"
+```
+
+#### CurseForge
+
+Get your API key from [CurseForge Console](https://console.curseforge.com/):
+
+```bash
+lmm auth login curseforge
+# Or set the environment variable
+export CURSEFORGE_API_KEY="your-api-key"
 ```
 
 ### Set Default Game
@@ -81,6 +95,8 @@ lmm game clear-default
 ```
 
 ### Basic Usage
+
+**Source auto-detection:** Commands automatically use the mod source configured for your game. If a game has multiple sources, you will be prompted to choose (or use `-y` to auto-select, or `--source` to specify explicitly).
 
 ```bash
 # Search for mods
@@ -207,53 +223,53 @@ This allows you to store different games' mods on different drives (e.g., large 
 
 ### Commands
 
-| Command                                | Description                                 |
-| -------------------------------------- | ------------------------------------------- |
-| `lmm search <query>`                   | Search for mods                             |
-| `lmm search <query> --category ID`     | Filter by NexusMods category                |
-| `lmm search <query> --tag TAG`         | Filter by tag (repeat for multiple)         |
-| `lmm install <query>`                  | Search and install a mod                    |
-| `lmm install --id <mod-id>`            | Install by mod ID                           |
-| `lmm uninstall <mod-id>`               | Uninstall a mod                             |
-| `lmm list`                             | List installed mods                         |
-| `lmm list --profiles`                  | List profiles for the game                  |
-| `lmm status`                           | Show current status                         |
-| `lmm update`                           | Check for and apply auto-updates            |
-| `lmm update <mod-id>`                  | Update a specific mod                       |
-| `lmm update --all`                     | Apply all available updates                 |
-| `lmm update --dry-run`                 | Preview what would update                   |
-| `lmm update rollback <mod-id>`         | Rollback to previous version                |
-| `lmm verify`                           | Verify cached mod files (see below)         |
-| `lmm verify --fix`                     | Re-download missing or corrupted files      |
-| `lmm mod enable <mod-id>`              | Enable a disabled mod                       |
-| `lmm mod disable <mod-id>`             | Disable mod (keep in cache)                 |
-| `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                 |
-| `lmm mod set-update <mod-id> --notify` | Notify only (default)                       |
-| `lmm mod set-update <mod-id> --pin`    | Pin mod to current version                  |
-| `lmm mod show <mod-id>`                | Show mod details (description, image, etc.) |
-| `lmm mod files <mod-id>`               | List files deployed by mod                  |
-| `lmm game set-default <game-id>`       | Set the default game                        |
-| `lmm game show-default`                | Show current default game                   |
-| `lmm game clear-default`               | Clear the default game setting              |
-| `lmm auth login`                       | Authenticate with NexusMods                 |
-| `lmm auth logout`                      | Remove stored credentials                   |
-| `lmm auth status`                      | Show authentication status                  |
-| `lmm profile list`                     | List profiles                               |
-| `lmm profile create <name>`            | Create a profile                            |
-| `lmm profile switch <name>`            | Switch to a profile (installs missing mods) |
-| `lmm profile delete <name>`            | Delete a profile                            |
-| `lmm profile export <name>`            | Export profile to YAML                      |
-| `lmm profile import <file>`            | Import profile from YAML                    |
-| `lmm profile import <file> --force`    | Import and overwrite existing               |
-| `lmm profile reorder [mod-id ...]`     | Show or set load order                      |
-| `lmm profile sync`                     | Update profile to match installed mods      |
-| `lmm profile apply`                    | Install/enable mods to match profile        |
-| `lmm deploy`                           | Deploy all enabled mods from cache          |
-| `lmm deploy <mod-id>`                  | Deploy specific mod from cache              |
-| `lmm deploy --method hardlink`         | Deploy using different link method          |
-| `lmm deploy --purge`                   | Purge then deploy all mods                  |
-| `lmm purge`                            | Remove all mods from game directory         |
-| `lmm conflicts`                        | Show file conflicts in current profile      |
+| Command                                | Description                                          |
+| -------------------------------------- | ---------------------------------------------------- |
+| `lmm search <query>`                   | Search for mods                                      |
+| `lmm search <query> --category ID`     | Filter by NexusMods category                         |
+| `lmm search <query> --tag TAG`         | Filter by tag (repeat for multiple)                  |
+| `lmm install <query>`                  | Search and install a mod                             |
+| `lmm install --id <mod-id>`            | Install by mod ID                                    |
+| `lmm uninstall <mod-id>`               | Uninstall a mod                                      |
+| `lmm list`                             | List installed mods                                  |
+| `lmm list --profiles`                  | List profiles for the game                           |
+| `lmm status`                           | Show current status                                  |
+| `lmm update`                           | Check for and apply auto-updates                     |
+| `lmm update <mod-id>`                  | Update a specific mod                                |
+| `lmm update --all`                     | Apply all available updates                          |
+| `lmm update --dry-run`                 | Preview what would update                            |
+| `lmm update rollback <mod-id>`         | Rollback to previous version                         |
+| `lmm verify`                           | Verify cached mod files (see below)                  |
+| `lmm verify --fix`                     | Re-download missing or corrupted files               |
+| `lmm mod enable <mod-id>`              | Enable a disabled mod                                |
+| `lmm mod disable <mod-id>`             | Disable mod (keep in cache)                          |
+| `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                          |
+| `lmm mod set-update <mod-id> --notify` | Notify only (default)                                |
+| `lmm mod set-update <mod-id> --pin`    | Pin mod to current version                           |
+| `lmm mod show <mod-id>`                | Show mod details (description, image, etc.)          |
+| `lmm mod files <mod-id>`               | List files deployed by mod                           |
+| `lmm game set-default <game-id>`       | Set the default game                                 |
+| `lmm game show-default`                | Show current default game                            |
+| `lmm game clear-default`               | Clear the default game setting                       |
+| `lmm auth login [source]`              | Authenticate with a source (nexusmods or curseforge) |
+| `lmm auth logout`                      | Remove stored credentials                            |
+| `lmm auth status`                      | Show authentication status                           |
+| `lmm profile list`                     | List profiles                                        |
+| `lmm profile create <name>`            | Create a profile                                     |
+| `lmm profile switch <name>`            | Switch to a profile (installs missing mods)          |
+| `lmm profile delete <name>`            | Delete a profile                                     |
+| `lmm profile export <name>`            | Export profile to YAML                               |
+| `lmm profile import <file>`            | Import profile from YAML                             |
+| `lmm profile import <file> --force`    | Import and overwrite existing                        |
+| `lmm profile reorder [mod-id ...]`     | Show or set load order                               |
+| `lmm profile sync`                     | Update profile to match installed mods               |
+| `lmm profile apply`                    | Install/enable mods to match profile                 |
+| `lmm deploy`                           | Deploy all enabled mods from cache                   |
+| `lmm deploy <mod-id>`                  | Deploy specific mod from cache                       |
+| `lmm deploy --method hardlink`         | Deploy using different link method                   |
+| `lmm deploy --purge`                   | Purge then deploy all mods                           |
+| `lmm purge`                            | Remove all mods from game directory                  |
+| `lmm conflicts`                        | Show file conflicts in current profile               |
 
 ### Update check behavior
 
@@ -274,7 +290,8 @@ cmd/lmm/                  # CLI entry point (Cobra)
 internal/
 ├── domain/               # Core types (Mod, Profile, Game)
 ├── source/               # Mod source abstraction
-│   └── nexusmods/        # NexusMods API client
+│   ├── nexusmods/        # NexusMods API client
+│   └── curseforge/       # CurseForge API client
 ├── storage/
 │   ├── db/               # SQLite storage
 │   ├── config/           # YAML configuration
@@ -314,7 +331,8 @@ The mod cache location can be customized via `cache_path` in `config.yaml`.
 - [x] Mod file verification (checksums, --fix re-download)
 - [ ] Automatic dependency installation
 - [ ] Interactive TUI (Bubble Tea) - see BACKLOG.md
-- [ ] Additional mod sources (CurseForge, ESOUI)
+- [x] CurseForge integration
+- [ ] Additional mod sources (ESOUI)
 - [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
 - [ ] Backup and restore
 
@@ -342,3 +360,4 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 - [Cobra](https://github.com/spf13/cobra) - CLI framework
 - [NexusMods](https://www.nexusmods.com/) - Mod hosting platform
+- [CurseForge](https://www.curseforge.com/) - Mod hosting platform

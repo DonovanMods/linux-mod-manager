@@ -53,9 +53,10 @@ type GameConfig struct {
 	InstallPath string            `yaml:"install_path"`
 	ModPath     string            `yaml:"mod_path"`
 	Sources     map[string]string `yaml:"sources"`
-	LinkMethod  string            `yaml:"link_method"`
-	CachePath   string            `yaml:"cache_path"`
+	LinkMethod  string            `yaml:"link_method,omitempty"`
+	CachePath   string            `yaml:"cache_path,omitempty"`
 	Hooks       GameHooksYAML     `yaml:"hooks,omitempty"`
+	DeployMode  string            `yaml:"deploy_mode,omitempty"`
 }
 
 // GamesFile is the top-level games.yaml structure
@@ -95,6 +96,7 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 			LinkMethod:         domain.ParseLinkMethod(cfg.LinkMethod),
 			LinkMethodExplicit: cfg.LinkMethod != "",
 			CachePath:          ExpandPath(cfg.CachePath),
+			DeployMode:         domain.ParseDeployMode(cfg.DeployMode),
 			Hooks: domain.GameHooks{
 				Install: domain.HookConfig{
 					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),
@@ -155,6 +157,10 @@ func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 		// Only write link_method if explicitly set
 		if game.LinkMethodExplicit {
 			cfg.LinkMethod = game.LinkMethod.String()
+		}
+		// Only write deploy_mode if not the default (extract)
+		if game.DeployMode != domain.DeployExtract {
+			cfg.DeployMode = game.DeployMode.String()
 		}
 		gamesFile.Games[id] = cfg
 	}

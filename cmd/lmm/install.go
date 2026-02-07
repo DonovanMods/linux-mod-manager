@@ -80,7 +80,7 @@ Examples:
 }
 
 func init() {
-	installCmd.Flags().StringVarP(&installSource, "source", "s", "nexusmods", "mod source")
+	installCmd.Flags().StringVarP(&installSource, "source", "s", "", "mod source (default: first configured source alphabetically)")
 	installCmd.Flags().StringVarP(&installProfile, "profile", "p", "", "profile to install to (default: active profile)")
 	installCmd.Flags().StringVar(&installVersion, "version", "", "specific version to install (default: latest)")
 	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")
@@ -120,6 +120,12 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
+	// Resolve source: use flag if set, otherwise first configured source
+	installSource, err = resolveSource(game, installSource, installYes)
+	if err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 
 	// Get the mod to install
@@ -132,7 +138,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		mod, err = service.GetMod(ctx, installSource, gameID, installModID)
 		if err != nil {
 			if errors.Is(err, domain.ErrAuthRequired) {
-				return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+				return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", installSource)
 			}
 			return fmt.Errorf("failed to fetch mod: %w", err)
 		}
@@ -144,7 +150,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		mods, err := service.SearchMods(ctx, installSource, gameID, query, "", nil)
 		if err != nil {
 			if errors.Is(err, domain.ErrAuthRequired) {
-				return fmt.Errorf("NexusMods requires authentication.\nRun 'lmm auth login' to authenticate")
+				return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", installSource)
 			}
 			return fmt.Errorf("search failed: %w", err)
 		}

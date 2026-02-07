@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
@@ -18,7 +19,7 @@ import (
 var ErrCancelled = errors.New("cancelled")
 
 var (
-	version = "1.0.0"
+	version = "1.1.0"
 
 	// Global flags
 	configDir  string
@@ -35,7 +36,7 @@ var rootCmd = &cobra.Command{
 	Use:   "lmm",
 	Short: "Linux Mod Manager - Terminal-based mod manager for Linux",
 	Long: `lmm is a terminal-based mod manager for Linux for searching, installing,
-updating, and managing game mods from various sources like NexusMods.
+updating, and managing game mods from various sources like NexusMods and CurseForge.
 
 Use subcommands for operations. Run 'lmm --help' for available commands.`,
 	Version: version,
@@ -133,24 +134,32 @@ func initService() (*core.Service, error) {
 		return nil, err
 	}
 
-	// Get NexusMods API key from environment or database
-	apiKey := getNexusModsAPIKey(svc)
-
-	// Register default mod sources
-	svc.RegisterSource(nexusmods.New(nil, apiKey))
+	// Register mod sources
+	registerSources(svc)
 
 	return svc, nil
 }
 
-// getNexusModsAPIKey retrieves the API key from environment or database
-func getNexusModsAPIKey(svc *core.Service) string {
+// registerSources registers all available mod sources with the service
+func registerSources(svc *core.Service) {
+	// NexusMods
+	nexusKey := getSourceAPIKey(svc, "nexusmods", "NEXUSMODS_API_KEY")
+	svc.RegisterSource(nexusmods.New(nil, nexusKey))
+
+	// CurseForge
+	curseKey := getSourceAPIKey(svc, "curseforge", "CURSEFORGE_API_KEY")
+	svc.RegisterSource(curseforge.New(nil, curseKey))
+}
+
+// getSourceAPIKey retrieves an API key from environment or database
+func getSourceAPIKey(svc *core.Service, sourceID, envVar string) string {
 	// Check environment variable first
-	if key := os.Getenv("NEXUSMODS_API_KEY"); key != "" {
+	if key := os.Getenv(envVar); key != "" {
 		return key
 	}
 
 	// Fall back to stored token
-	token, err := svc.GetSourceToken("nexusmods")
+	token, err := svc.GetSourceToken(sourceID)
 	if err != nil || token == nil {
 		return ""
 	}

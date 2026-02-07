@@ -20,15 +20,16 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 
 ### Game options
 
-| Option         | Type   | Required | Description                                                         |
-| -------------- | ------ | -------- | ------------------------------------------------------------------- |
-| `name`         | string | yes      | Display name                                                        |
-| `install_path` | string | yes      | Game installation directory (supports `~`)                          |
-| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)                    |
-| `sources`      | map    | yes      | Source ID to game domain ID, e.g. `nexusmods: skyrimspecialedition` |
-| `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy`          |
-| `cache_path`   | string | no       | Per-game cache directory override                                   |
-| `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                 |
+| Option         | Type   | Required | Description                                                |
+| -------------- | ------ | -------- | ---------------------------------------------------------- |
+| `name`         | string | yes      | Display name                                               |
+| `install_path` | string | yes      | Game installation directory (supports `~`)                 |
+| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)           |
+| `sources`      | map    | yes      | Source ID to game ID mapping (see below)                   |
+| `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy` |
+| `cache_path`   | string | no       | Per-game cache directory override                          |
+| `hooks`        | object | no       | Scripts to run around install/uninstall (see below)        |
+| `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default) or `copy`  |
 
 ### Hooks (games.yaml)
 
@@ -49,6 +50,26 @@ hooks:
 ```
 
 Scripts receive environment variables: `LMM_GAME_ID`, `LMM_GAME_PATH`, `LMM_MOD_PATH`, `LMM_MOD_ID`, `LMM_MOD_NAME`, `LMM_MOD_VERSION`, `LMM_HOOK`. Use `--no-hooks` to disable all hooks at runtime; `--force` to continue when a hook fails.
+
+### Deploy Mode (games.yaml)
+
+The `deploy_mode` option controls how downloaded mod archives are handled:
+
+- **`extract`** (default): Archives are extracted to the mod path. Use for games where mods are loose files (e.g., Skyrim, Fallout).
+- **`copy`**: Archives are copied as-is to the mod path without extraction. Use for games that expect mod files to remain as archives (e.g., Minecraft `.jar` files, some Unity games).
+
+Example:
+
+```yaml
+games:
+  minecraft:
+    name: "Minecraft"
+    install_path: "~/.minecraft"
+    mod_path: "~/.minecraft/mods"
+    deploy_mode: copy # Keep .jar files as-is
+    sources:
+      curseforge: "432"
+```
 
 ## Profile files
 
@@ -110,3 +131,59 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 | `~/.config/lmm/games/<game-id>/profiles/*.yaml` | Per-game profiles                                      |
 | `~/.local/share/lmm/lmm.db`                     | SQLite database (metadata, tokens)                     |
 | `~/.local/share/lmm/cache/`                     | Mod file cache (or `cache_path` override)              |
+
+## Mod Sources
+
+lmm supports multiple mod sources. Each source uses its own game identifier:
+
+### NexusMods
+
+- **Source ID:** `nexusmods`
+- **Game ID format:** Game domain slug (e.g., `skyrimspecialedition`, `minecraft`)
+- **Auth:** API key from [NexusMods API settings](https://www.nexusmods.com/users/myaccount?tab=api)
+- **Env var:** `NEXUSMODS_API_KEY`
+
+### CurseForge
+
+- **Source ID:** `curseforge`
+- **Game ID format:** Numeric game ID (e.g., `432` for Minecraft, `1` for WoW)
+- **Auth:** API key from [CurseForge Console](https://console.curseforge.com/)
+- **Env var:** `CURSEFORGE_API_KEY`
+
+### Example games.yaml with multiple sources
+
+```yaml
+games:
+  minecraft:
+    name: "Minecraft"
+    install_path: "~/.minecraft"
+    mod_path: "~/.minecraft/mods"
+    sources:
+      nexusmods: "minecraft"
+      curseforge: "432" # or use slug: "minecraft"
+
+  skyrim-se:
+    name: "Skyrim Special Edition"
+    install_path: "~/.steam/steam/steamapps/common/Skyrim Special Edition"
+    mod_path: "~/.steam/steam/steamapps/common/Skyrim Special Edition/Data"
+    sources:
+      nexusmods: "skyrimspecialedition"
+```
+
+### Source Auto-Detection
+
+When running commands like `search`, `install`, or `update`, lmm automatically detects which source to use:
+
+1. **Single source:** If the game has only one source configured, it is used automatically.
+2. **Multiple sources:** If the game has multiple sources, you are prompted to select one.
+3. **Explicit override:** Use `--source <name>` to bypass auto-detection.
+4. **Scripting mode:** Use `-y` (on install) to auto-select the first configured source without prompting.
+
+Example prompt when multiple sources are configured:
+
+```
+Minecraft has multiple mod sources configured. Select one:
+  [1] CurseForge
+  [2] NexusMods
+Enter choice (1-2):
+```
