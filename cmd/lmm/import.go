@@ -47,7 +47,7 @@ Examples:
 func init() {
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "profile to import to (default: default)")
 	importCmd.Flags().StringVarP(&importSource, "source", "s", "", "source for update tracking (default: auto-detect or local)")
-	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking (requires --source)")
+	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking to source (defaults to curseforge)")
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "import without conflict prompts")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes")
 	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip CurseForge lookup for untracked mods")
@@ -91,9 +91,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("archive not found: %s", archivePath)
 	}
 
-	// Validate --source and --id must be used together
-	if (importSource != "" && importModID == "") || (importSource == "" && importModID != "") {
-		return fmt.Errorf("--source and --id must be used together")
+	// If --id is provided without --source, default to curseforge
+	if importModID != "" && importSource == "" {
+		importSource = "curseforge"
 	}
 
 	ctx := context.Background()
@@ -114,6 +114,25 @@ func runImport(cmd *cobra.Command, args []string) error {
 	result, err := importer.Import(ctx, archivePath, game, opts)
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
+	}
+
+	// Enrich with source metadata when --id was provided
+	if importModID != "" && importSource != "" && importSource != domain.SourceLocal {
+		fmt.Printf("\nFetching metadata from %s...\n", importSource)
+		mod, err := service.GetMod(ctx, importSource, game.SourceIDs[importSource], importModID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not fetch metadata: %v\n", err)
+		} else {
+			// Apply metadata from source, keeping local file info
+			result.Mod.Name = mod.Name
+			result.Mod.Author = mod.Author
+			result.Mod.Summary = mod.Summary
+			result.Mod.SourceURL = mod.SourceURL
+			result.Mod.PictureURL = mod.PictureURL
+			if mod.Version != "" && result.Mod.Version == "unknown" {
+				result.Mod.Version = mod.Version
+			}
+		}
 	}
 
 	// Show detection results

@@ -417,6 +417,10 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		downloadResult, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
 		if err != nil {
 			fmt.Println() // newline after progress
+			if strings.Contains(err.Error(), "third-party downloads") && mod.SourceURL != "" {
+				fmt.Printf("\n  Manual download: %s\n", mod.SourceURL)
+				fmt.Printf("  Then import:    lmm import <file> --id %s\n", mod.ID)
+			}
 			return fmt.Errorf("download failed: %w", err)
 		}
 		fmt.Println() // newline after progress
