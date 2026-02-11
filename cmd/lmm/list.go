@@ -120,10 +120,16 @@ func runList(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ID\tNAME\tVERSION\tSOURCE\tENABLED\tDEPLOYED\tMETHOD"); err != nil {
+	header := "ID\tNAME\tVERSION\tSOURCE\tENABLED\tDEPLOYED\tMETHOD"
+	sep := "--\t----\t-------\t------\t-------\t--------\t------"
+	if verbose {
+		header = "ID\tNAME\tVERSION\tAUTHOR\tSOURCE\tENABLED\tDEPLOYED\tMETHOD"
+		sep = "--\t----\t-------\t------\t------\t-------\t--------\t------"
+	}
+	if _, err := fmt.Fprintln(w, header); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
-	if _, err := fmt.Fprintln(w, "--\t----\t-------\t------\t-------\t--------\t------"); err != nil {
+	if _, err := fmt.Fprintln(w, sep); err != nil {
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
@@ -140,15 +146,17 @@ func runList(cmd *cobra.Command, args []string) error {
 		if mod.SourceID == domain.SourceLocal {
 			sourceDisplay = "(local)"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			mod.ID,
-			truncate(mod.Name, 40),
-			mod.Version,
-			sourceDisplay,
-			enabled,
-			deployed,
-			mod.LinkMethod.String(),
-		); err != nil {
+		var row string
+		if verbose {
+			author := mod.Author
+			if author == "" {
+				author = "-"
+			}
+			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String())
+		} else {
+			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, sourceDisplay, enabled, deployed, mod.LinkMethod.String())
+		}
+		if _, err := fmt.Fprintln(w, row); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}

@@ -419,6 +419,7 @@ func runModShow(cmd *cobra.Command, args []string) error {
 			Author       string `json:"author"`
 			Summary      string `json:"summary"`
 			Description  string `json:"description"`
+			SourceURL    string `json:"source_url,omitempty"`
 			PictureURL   string `json:"picture_url,omitempty"`
 			Category     string `json:"category"`
 			Endorsements int64  `json:"endorsements"`
@@ -430,6 +431,7 @@ func runModShow(cmd *cobra.Command, args []string) error {
 			Author:       mod.Author,
 			Summary:      mod.Summary,
 			Description:  mod.Description,
+			SourceURL:    mod.SourceURL,
 			PictureURL:   mod.PictureURL,
 			Category:     mod.Category,
 			Endorsements: mod.Endorsements,
