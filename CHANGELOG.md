@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-02-10
+
+### Added
+
+- **Mod edit command**: `lmm mod edit <id>` to manually correct mod name, version, author after import
+- **Source re-linking**: Re-link local mods to CurseForge/NexusMods with `--source` and `--source-id` (auto-fetches metadata)
+- **Expanded metadata**: Store and display author, summary, and source URL for mods
+- **Import with --id**: `lmm import <file> --id 12345` fetches metadata from source (defaults to CurseForge)
+- **Manual download guidance**: When CurseForge blocks API downloads, shows direct URL and import command
+- **Verbose list**: `lmm list -v` now includes author column
+
+### Changed
+
+- `--id` flag on import no longer requires `--source` (defaults to curseforge)
+- `lmm mod info` now shows source URL when available
+
 ## [1.1.0] - 2026-02-05
 
 ### Added
