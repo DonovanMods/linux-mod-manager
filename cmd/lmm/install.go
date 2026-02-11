@@ -43,8 +43,6 @@ func (s *serviceDepFetcher) GetDependencies(ctx context.Context, mod *domain.Mod
 	return s.svc.GetDependencies(ctx, s.sourceID, mod)
 }
 
-var ErrSearchCancelled = ErrCancelled
-
 var (
 	installSource       string
 	installProfile      string
@@ -217,7 +215,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				input = strings.TrimSpace(input)
 
 				if input == "q" || input == "Q" {
-					return ErrCancelled
+					fmt.Println("Search cancelled.")
+					return nil
 				}
 				if (input == "n" || input == "N") && hasMore {
 					currentPage++
@@ -379,6 +378,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			selections, err := promptMultiSelection("Select file(s) (e.g., 1 or 1,3 or 1-3)", defaultChoice, len(files))
 			if err != nil {
 				return err
+			}
+			if selections == nil {
+				return nil
 			}
 			for _, sel := range selections {
 				selectedFiles = append(selectedFiles, &files[sel-1])
@@ -663,7 +665,8 @@ func promptMultiSelection(prompt string, defaultChoice, max int) ([]int, error) 
 			return []int{defaultChoice}, nil
 		}
 		if input == "q" || input == "Q" {
-			return nil, ErrSearchCancelled
+			fmt.Println("Selection cancelled.")
+			return nil, nil
 		}
 
 		selections, err := parseRangeSelection(input, max)
