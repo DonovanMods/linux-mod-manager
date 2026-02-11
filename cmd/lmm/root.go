@@ -39,7 +39,8 @@ var rootCmd = &cobra.Command{
 updating, and managing game mods from various sources like NexusMods and CurseForge.
 
 Use subcommands for operations. Run 'lmm --help' for available commands.`,
-	Version: version,
+	Version:       version,
+	SilenceErrors: true,
 }
 
 func init() {
@@ -106,6 +107,8 @@ func Execute() {
 		}
 		if jsonOutput {
 			fmt.Printf(`{"error":%q}`+"\n", err.Error())
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 		os.Exit(1)
 	}
