@@ -9,7 +9,8 @@ A terminal-based mod manager for Linux that provides a CLI interface for searchi
 - **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
 - **Rollback Support**: Revert to previous mod versions when updates cause issues
 - **Flexible Deployment**: Symlink, hardlink, or copy mods to game directories
-- **Dependency Detection**: Fetches mod dependencies from NexusMods (automatic installation coming soon)
+- **Dependency Resolution**: Automatically fetches and installs mod dependencies
+- **Paginated Search**: Browse results page-by-page with clean cancel support
 - **Pure Go**: No CGO required, easy cross-compilation
 
 ## Installation

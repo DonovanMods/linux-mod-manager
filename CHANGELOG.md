@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-02-11
+
+### Added
+
+- **Search pagination**: Search results are now paginated (10 per page) with `[n] Next page` and `[p] Previous page` navigation
+- **Cancel search**: Press `q` during mod selection to cancel without selecting (works in both single and multi-select modes)
+- **Total result count**: CurseForge searches show total available results; NexusMods gracefully handles unknown totals
+
+### Changed
+
+- `ModSource.Search()` now returns `SearchResult` struct with pagination metadata (`TotalCount`, `Page`, `PageSize`)
+- `Service.SearchMods()` accepts `page` and `pageSize` parameters for paginated queries
+
 ## [1.2.0] - 2026-02-10
 
 ### Added
@@ -543,7 +556,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.1.0...v1.2.0
 [1.0.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.12.0...v1.0.0
 [0.12.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.10.0...v0.11.0

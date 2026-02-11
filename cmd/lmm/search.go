@@ -99,7 +99,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	mods, err := service.SearchMods(ctx, sourceToUse, gameID, query, searchCategory, searchTags)
+	searchResult, err := service.SearchMods(ctx, sourceToUse, gameID, query, searchCategory, searchTags, 0, 0)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", sourceToUse)
@@ -107,6 +107,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search failed: %w", err)
 	}
 
+	mods := searchResult.Mods
 	if len(mods) == 0 {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)

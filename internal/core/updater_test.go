@@ -25,8 +25,8 @@ func (m *updateMockSource) AuthURL() string { return "" }
 func (m *updateMockSource) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
 	return nil, nil
 }
-func (m *updateMockSource) Search(ctx context.Context, query source.SearchQuery) ([]domain.Mod, error) {
-	return nil, nil
+func (m *updateMockSource) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, nil
 }
 func (m *updateMockSource) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	if m.currentMod != nil && m.currentMod.ID == modID {

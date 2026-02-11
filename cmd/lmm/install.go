@@ -43,6 +43,8 @@ func (s *serviceDepFetcher) GetDependencies(ctx context.Context, mod *domain.Mod
 	return s.svc.GetDependencies(ctx, s.sourceID, mod)
 }
 
+var ErrSearchCancelled = fmt.Errorf("search cancelled")
+
 var (
 	installSource       string
 	installProfile      string
@@ -147,7 +149,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		query := args[0]
 		fmt.Printf("Searching for \"%s\"...\n\n", query)
 
-		mods, err := service.SearchMods(ctx, installSource, gameID, query, "", nil)
+		const displayPageSize = 10
+
+		searchResult, err := service.SearchMods(ctx, installSource, gameID, query, "", nil, 0, displayPageSize)
 		if err != nil {
 			if errors.Is(err, domain.ErrAuthRequired) {
 				return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", installSource)
@@ -155,7 +159,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("search failed: %w", err)
 		}
 
-		if len(mods) == 0 {
+		if len(searchResult.Mods) == 0 {
 			return fmt.Errorf("no mods found matching \"%s\"", query)
 		}
 
@@ -169,34 +173,88 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Select the mod(s)
+		// Select the mod(s) with pagination
 		var selectedMods []*domain.Mod
-		if len(mods) == 1 || installYes {
-			selectedMods = []*domain.Mod{&mods[0]}
+		if len(searchResult.Mods) == 1 || installYes {
+			selectedMods = []*domain.Mod{&searchResult.Mods[0]}
 		} else {
-			// Show selection
-			maxDisplay := len(mods)
-			if maxDisplay > 10 {
-				maxDisplay = 10
-			}
-			for i := 0; i < maxDisplay; i++ {
-				m := mods[i]
-				installedMark := ""
-				if installedIDs[m.ID] {
-					installedMark = " [installed]"
-				}
-				fmt.Printf("  [%d] %s v%s by %s (ID: %s)%s\n", i+1, m.Name, m.Version, m.Author, m.ID, installedMark)
-			}
-			if len(mods) > 10 {
-				fmt.Printf("  ... and %d more\n", len(mods)-10)
-			}
+			currentPage := 0
+			currentResult := searchResult
+			reader := bufio.NewReader(os.Stdin)
 
-			selections, err := promptMultiSelection("Select mod(s) (e.g., 1 or 1,3,5 or 1-3)", 1, len(mods))
-			if err != nil {
-				return err
-			}
-			for _, sel := range selections {
-				selectedMods = append(selectedMods, &mods[sel-1])
+			for {
+				mods := currentResult.Mods
+				for i, m := range mods {
+					installedMark := ""
+					if installedIDs[m.ID] {
+						installedMark = " [installed]"
+					}
+					fmt.Printf("  [%d] %s v%s by %s (ID: %s)%s\n", i+1, m.Name, m.Version, m.Author, m.ID, installedMark)
+				}
+
+				// Pagination options
+				hasMore := false
+				if currentResult.TotalCount > 0 {
+					remaining := currentResult.TotalCount - (currentPage+1)*displayPageSize
+					if remaining > 0 {
+						hasMore = true
+						fmt.Printf("  [n] Next page (%d more)\n", remaining)
+					}
+				} else if len(mods) == displayPageSize {
+					hasMore = true
+					fmt.Printf("  [n] Next page\n")
+				}
+				if currentPage > 0 {
+					fmt.Printf("  [p] Previous page\n")
+				}
+				fmt.Printf("  [q] Cancel\n")
+
+				fmt.Printf("\nSelect mod(s) (e.g., 1 or 1,3,5 or 1-3) [1]: ")
+				input, err := reader.ReadString('\n')
+				if err != nil {
+					return fmt.Errorf("reading input: %w", err)
+				}
+				input = strings.TrimSpace(input)
+
+				if input == "q" || input == "Q" {
+					return fmt.Errorf("search cancelled")
+				}
+				if (input == "n" || input == "N") && hasMore {
+					currentPage++
+					currentResult, err = service.SearchMods(ctx, installSource, gameID, query, "", nil, currentPage, displayPageSize)
+					if err != nil {
+						return fmt.Errorf("search failed: %w", err)
+					}
+					if len(currentResult.Mods) == 0 {
+						fmt.Println("No more results.")
+						currentPage--
+						currentResult, _ = service.SearchMods(ctx, installSource, gameID, query, "", nil, currentPage, displayPageSize)
+					}
+					fmt.Println()
+					continue
+				}
+				if (input == "p" || input == "P") && currentPage > 0 {
+					currentPage--
+					currentResult, err = service.SearchMods(ctx, installSource, gameID, query, "", nil, currentPage, displayPageSize)
+					if err != nil {
+						return fmt.Errorf("search failed: %w", err)
+					}
+					fmt.Println()
+					continue
+				}
+
+				if input == "" {
+					input = "1"
+				}
+				selections, err := parseRangeSelection(input, len(mods))
+				if err != nil {
+					fmt.Printf("Invalid selection: %v\n", err)
+					continue
+				}
+				for _, sel := range selections {
+					selectedMods = append(selectedMods, &currentResult.Mods[sel-1])
+				}
+				break
 			}
 		}
 
@@ -594,7 +652,7 @@ func promptMultiSelection(prompt string, defaultChoice, max int) ([]int, error) 
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		fmt.Printf("\n%s [%d]: ", prompt, defaultChoice)
+		fmt.Printf("\n%s (q to cancel) [%d]: ", prompt, defaultChoice)
 		input, err := reader.ReadString('\n')
 		if err != nil {
 			return nil, fmt.Errorf("reading input: %w", err)
@@ -603,6 +661,9 @@ func promptMultiSelection(prompt string, defaultChoice, max int) ([]int, error) 
 		input = strings.TrimSpace(input)
 		if input == "" {
 			return []int{defaultChoice}, nil
+		}
+		if input == "q" || input == "Q" {
+			return nil, ErrSearchCancelled
 		}
 
 		selections, err := parseRangeSelection(input, max)

@@ -101,10 +101,10 @@ func (c *CurseForge) resolveGameID(ctx context.Context, gameIDOrSlug string) (in
 
 // Search finds mods matching the query.
 // gameID can be either a numeric CurseForge game ID (e.g., "432") or a slug (e.g., "minecraft").
-func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) ([]domain.Mod, error) {
+func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
 	gameID, err := c.resolveGameID(ctx, query.GameID)
 	if err != nil {
-		return nil, err
+		return source.SearchResult{}, err
 	}
 
 	pageSize := query.PageSize
@@ -118,13 +118,13 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) ([]do
 	if query.Category != "" {
 		categoryID, err = strconv.Atoi(query.Category)
 		if err != nil {
-			return nil, fmt.Errorf("invalid category ID (expected numeric): %w", err)
+			return source.SearchResult{}, fmt.Errorf("invalid category ID (expected numeric): %w", err)
 		}
 	}
 
-	results, _, err := c.client.SearchMods(ctx, gameID, query.Query, categoryID, pageSize, index)
+	results, pagination, err := c.client.SearchMods(ctx, gameID, query.Query, categoryID, pageSize, index)
 	if err != nil {
-		return nil, err
+		return source.SearchResult{}, err
 	}
 
 	mods := make([]domain.Mod, len(results))
@@ -146,7 +146,7 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) ([]do
 		return mods[i].Downloads > mods[j].Downloads
 	})
 
-	return mods, nil
+	return source.SearchResult{Mods: mods, TotalCount: pagination.TotalCount, Page: query.Page, PageSize: pageSize}, nil
 }
 
 // GetMod retrieves a specific mod
