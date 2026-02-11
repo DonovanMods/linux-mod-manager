@@ -418,8 +418,15 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			fmt.Println() // newline after progress
 			if strings.Contains(err.Error(), "third-party downloads") && mod.SourceURL != "" {
-				fmt.Printf("\n  Manual download: %s\n", mod.SourceURL)
-				fmt.Printf("  Then import:    lmm import <file> --id %s\n", mod.ID)
+				fmt.Println()
+				fmt.Println("  â  This mod author has disabled API downloads.")
+				fmt.Println("  To install manually:")
+				fmt.Println()
+				fmt.Printf("    1. Download from: %s\n", mod.SourceURL)
+				fmt.Printf("    2. Import:        lmm import <downloaded-file> --id %s\n", mod.ID)
+				fmt.Println()
+				cmd.SilenceUsage = true
+				return fmt.Errorf("download unavailable via API")
 			}
 			return fmt.Errorf("download failed: %w", err)
 		}
