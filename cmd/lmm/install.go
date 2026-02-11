@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -651,7 +652,12 @@ func runInstall(cmd *cobra.Command, args []string) error {
 // promptMultiSelection prompts the user to select one or more numbers
 // Accepts formats like: "1", "1,3,5", "1-3", "1..3", "1,3-5"
 func promptMultiSelection(prompt string, defaultChoice, max int) ([]int, error) {
-	reader := bufio.NewReader(os.Stdin)
+	return promptMultiSelectionFrom(os.Stdin, prompt, defaultChoice, max)
+}
+
+// promptMultiSelectionFrom is the testable core of promptMultiSelection
+func promptMultiSelectionFrom(r io.Reader, prompt string, defaultChoice, max int) ([]int, error) {
+	reader := bufio.NewReader(r)
 
 	for {
 		fmt.Printf("\n%s (q to cancel) [%d]: ", prompt, defaultChoice)
