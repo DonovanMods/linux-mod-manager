@@ -47,7 +47,7 @@ Examples:
 func init() {
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "profile to import to (default: default)")
 	importCmd.Flags().StringVarP(&importSource, "source", "s", "", "source for update tracking (default: auto-detect or local)")
-	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking (requires --source)")
+	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking to source (defaults to curseforge)")
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "import without conflict prompts")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes")
 	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip CurseForge lookup for untracked mods")
@@ -91,9 +91,20 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("archive not found: %s", archivePath)
 	}
 
-	// Validate --source and --id must be used together
-	if (importSource != "" && importModID == "") || (importSource == "" && importModID != "") {
-		return fmt.Errorf("--source and --id must be used together")
+	// If --id is provided without --source, default to first configured source
+	if importModID != "" && importSource == "" {
+		// Prefer curseforge if configured, otherwise use first available
+		if _, ok := game.SourceIDs["curseforge"]; ok {
+			importSource = "curseforge"
+		} else {
+			for sid := range game.SourceIDs {
+				importSource = sid
+				break
+			}
+		}
+		if importSource == "" {
+			return fmt.Errorf("no mod sources configured for game %s; cannot look up --id", gameID)
+		}
 	}
 
 	ctx := context.Background()
@@ -116,12 +127,59 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("import failed: %w", err)
 	}
 
+	// Save pre-enrichment values for cache rename
+	preEnrichVersion := result.Mod.Version
+	preEnrichID := result.Mod.ID
+
+	// Enrich with source metadata when --id was provided
+	if importModID != "" && importSource != "" && importSource != domain.SourceLocal {
+		sourceGameID, ok := game.SourceIDs[importSource]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Warning: source %s is not configured for this game; skipping metadata fetch\n", importSource)
+		} else {
+			fmt.Printf("\nFetching metadata from %s...\n", importSource)
+			mod, err := service.GetMod(ctx, importSource, sourceGameID, importModID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not fetch metadata: %v\n", err)
+			} else {
+				// Apply metadata from source, keeping local file info
+				result.Mod.Name = mod.Name
+				result.Mod.Author = mod.Author
+				result.Mod.Summary = mod.Summary
+				result.Mod.SourceURL = mod.SourceURL
+				result.Mod.PictureURL = mod.PictureURL
+				if mod.Version != "" && result.Mod.Version == "unknown" {
+					result.Mod.Version = mod.Version
+				}
+			}
+		}
+	}
+
+	// If enrichment changed the version or ID, rename the cache entry
+	gameCache := service.GetGameCache(game)
+	needsCacheRename := preEnrichVersion != result.Mod.Version || preEnrichID != result.Mod.ID
+	if needsCacheRename {
+		oldPath := gameCache.ModPath(game.ID, result.Mod.SourceID, preEnrichID, preEnrichVersion)
+		newPath := gameCache.ModPath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+		if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
+			if err := os.Rename(oldPath, newPath); err != nil && verbose {
+				fmt.Printf("Warning: could not rename cache entry: %v\n", err)
+			}
+		}
+	}
+
 	// Show detection results
 	fmt.Printf("\nMod: %s\n", result.Mod.Name)
 	fmt.Printf("  Source: %s\n", result.LinkedSource)
 	fmt.Printf("  ID: %s\n", result.Mod.ID)
 	if result.Mod.Version != "unknown" {
 		fmt.Printf("  Version: %s\n", result.Mod.Version)
+	}
+	if result.Mod.Author != "" {
+		fmt.Printf("  Author: %s\n", result.Mod.Author)
+	}
+	if result.Mod.SourceURL != "" {
+		fmt.Printf("  URL: %s\n", result.Mod.SourceURL)
 	}
 	if result.AutoDetected {
 		fmt.Println("  (auto-detected from filename)")
@@ -337,6 +395,70 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 
 	fmt.Printf("Found %d files, %d untracked\n\n", len(results), len(untracked))
 
+	// Backfill metadata for already-tracked mods missing metadata
+	if !importSkipMatch {
+		// Count mods needing backfill
+		var needsBackfill int
+		for _, im := range installedMods {
+			if im.SourceID != domain.SourceLocal && im.SourceID != "" {
+				if im.Author == "" || im.SourceURL == "" {
+					needsBackfill++
+				}
+			}
+		}
+		var backfilled int
+		if needsBackfill > 0 {
+			fmt.Printf("Backfilling metadata for %d mod(s)...\n", needsBackfill)
+		}
+		for _, im := range installedMods {
+			if im.SourceID == domain.SourceLocal || im.SourceID == "" {
+				continue
+			}
+			// Skip if already has metadata
+			if im.Author != "" && im.SourceURL != "" {
+				continue
+			}
+			// Fetch fresh metadata from source
+			sourceGameID, ok := game.SourceIDs[im.SourceID]
+			if !ok {
+				continue
+			}
+			mod, err := service.GetMod(ctx, im.SourceID, sourceGameID, im.ID)
+			if err != nil {
+				if verbose {
+					fmt.Printf("  %s: metadata fetch failed: %v\n", im.Name, err)
+				}
+				continue
+			}
+			// Update fields that are missing
+			updated := im
+			if im.Author == "" && mod.Author != "" {
+				updated.Author = mod.Author
+			}
+			if im.Summary == "" && mod.Summary != "" {
+				updated.Summary = mod.Summary
+			}
+			if im.SourceURL == "" && mod.SourceURL != "" {
+				updated.SourceURL = mod.SourceURL
+			}
+			if err := service.DB().SaveInstalledMod(&updated); err != nil {
+				if verbose {
+					fmt.Printf("  %s: metadata save failed: %v\n", im.Name, err)
+				}
+				continue
+			}
+			backfilled++
+			if verbose {
+				fmt.Printf("  ✓ %s: metadata updated (author: %s)\n", im.Name, mod.Author)
+			}
+		}
+		if backfilled > 0 {
+			fmt.Printf("Updated metadata for %d existing mod(s)\n\n", backfilled)
+		} else if needsBackfill > 0 {
+			fmt.Println("No metadata updates needed")
+		}
+	}
+
 	if len(untracked) == 0 {
 		fmt.Println("All mods are already tracked!")
 		return nil
@@ -362,6 +484,11 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 				untracked[i].Mod.ID = matched.ID
 				untracked[i].Mod.SourceID = matched.SourceID
 				untracked[i].Mod.Name = matched.Name
+				untracked[i].Mod.Author = matched.Author
+				untracked[i].Mod.Summary = matched.Summary
+				untracked[i].Mod.SourceURL = matched.SourceURL
+				untracked[i].Mod.PictureURL = matched.PictureURL
+				untracked[i].Mod.GameID = matched.GameID
 				untracked[i].MatchedSource = "curseforge"
 				fmt.Printf("  ✓ %s -> %s (CurseForge #%s)\n", untracked[i].FileName, matched.Name, matched.ID)
 			} else {

@@ -320,6 +320,7 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 		GameID:       gameID,
 		Category:     category,
 		Downloads:    data.DownloadCount,
+		SourceURL:    data.Links.WebsiteURL,
 		Endorsements: int64(data.ThumbsUpCount),
 		PictureURL:   pictureURL,
 		UpdatedAt:    data.DateModified,

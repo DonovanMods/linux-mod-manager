@@ -30,6 +30,7 @@ func (d *DB) migrate() error {
 		migrateV6,
 		migrateV7,
 		migrateV8,
+		migrateV9,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -156,4 +157,18 @@ func migrateV8(d *DB) error {
 	// Default 0 = false (can be auto-downloaded)
 	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN manual_download INTEGER DEFAULT 0`)
 	return err
+}
+
+func migrateV9(d *DB) error {
+	// Add metadata columns for expanded mod information
+	statements := []string{
+		`ALTER TABLE installed_mods ADD COLUMN summary TEXT DEFAULT ''`,
+		`ALTER TABLE installed_mods ADD COLUMN source_url TEXT DEFAULT ''`,
+	}
+	for _, stmt := range statements {
+		if _, err := d.Exec(stmt); err != nil {
+			return fmt.Errorf("executing %q: %w", stmt, err)
+		}
+	}
+	return nil
 }

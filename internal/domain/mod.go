@@ -64,6 +64,7 @@ type Mod struct {
 	Downloads    int64
 	Endorsements int64
 	PictureURL   string // Main image URL (e.g. NexusMods picture_url)
+	SourceURL    string // Web page URL (e.g. CurseForge mod page)
 	Files        []ModFile
 	Dependencies []ModReference
 	UpdatedAt    time.Time
