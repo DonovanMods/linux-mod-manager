@@ -171,13 +171,21 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 
 		// Update profile reference
 		pm := getProfileManager(service)
-		_ = pm.RemoveMod(gameID, profileName, oldSourceID, oldModID)
+		if err := pm.RemoveMod(gameID, profileName, oldSourceID, oldModID); err != nil {
+			if verbose {
+				fmt.Printf("Warning: could not remove old profile entry: %v\n", err)
+			}
+		}
 		modRef := domain.ModReference{
 			SourceID: newSourceID,
 			ModID:    newModID,
 			Version:  installedMod.Version,
 		}
-		_ = pm.UpsertMod(gameID, profileName, modRef)
+		if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+			if verbose {
+				fmt.Printf("Warning: could not update profile: %v\n", err)
+			}
+		}
 	}
 
 	if len(changes) == 0 {
@@ -188,6 +196,21 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 	// Save updated mod
 	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
 		return fmt.Errorf("saving changes: %w", err)
+	}
+
+	// Update profile version if changed (and not already handled by re-link)
+	if editVersion != "" && newSourceID == "" && newModID == "" {
+		pm := getProfileManager(service)
+		modRef := domain.ModReference{
+			SourceID: installedMod.SourceID,
+			ModID:    installedMod.ID,
+			Version:  installedMod.Version,
+		}
+		if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+			if verbose {
+				fmt.Printf("Warning: could not update profile version: %v\n", err)
+			}
+		}
 	}
 
 	fmt.Printf("Updated %s:\n", installedMod.Name)

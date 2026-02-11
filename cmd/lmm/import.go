@@ -118,19 +118,24 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	// Enrich with source metadata when --id was provided
 	if importModID != "" && importSource != "" && importSource != domain.SourceLocal {
-		fmt.Printf("\nFetching metadata from %s...\n", importSource)
-		mod, err := service.GetMod(ctx, importSource, game.SourceIDs[importSource], importModID)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not fetch metadata: %v\n", err)
+		sourceGameID, ok := game.SourceIDs[importSource]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Warning: source %s is not configured for this game; skipping metadata fetch\n", importSource)
 		} else {
-			// Apply metadata from source, keeping local file info
-			result.Mod.Name = mod.Name
-			result.Mod.Author = mod.Author
-			result.Mod.Summary = mod.Summary
-			result.Mod.SourceURL = mod.SourceURL
-			result.Mod.PictureURL = mod.PictureURL
-			if mod.Version != "" && result.Mod.Version == "unknown" {
-				result.Mod.Version = mod.Version
+			fmt.Printf("\nFetching metadata from %s...\n", importSource)
+			mod, err := service.GetMod(ctx, importSource, sourceGameID, importModID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not fetch metadata: %v\n", err)
+			} else {
+				// Apply metadata from source, keeping local file info
+				result.Mod.Name = mod.Name
+				result.Mod.Author = mod.Author
+				result.Mod.Summary = mod.Summary
+				result.Mod.SourceURL = mod.SourceURL
+				result.Mod.PictureURL = mod.PictureURL
+				if mod.Version != "" && result.Mod.Version == "unknown" {
+					result.Mod.Version = mod.Version
+				}
 			}
 		}
 	}
