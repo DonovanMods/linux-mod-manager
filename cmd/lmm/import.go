@@ -127,6 +127,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("import failed: %w", err)
 	}
 
+	// Save pre-enrichment values for cache rename
+	preEnrichVersion := result.Mod.Version
+	preEnrichID := result.Mod.ID
+
 	// Enrich with source metadata when --id was provided
 	if importModID != "" && importSource != "" && importSource != domain.SourceLocal {
 		sourceGameID, ok := game.SourceIDs[importSource]
@@ -147,6 +151,19 @@ func runImport(cmd *cobra.Command, args []string) error {
 				if mod.Version != "" && result.Mod.Version == "unknown" {
 					result.Mod.Version = mod.Version
 				}
+			}
+		}
+	}
+
+	// If enrichment changed the version or ID, rename the cache entry
+	gameCache := service.GetGameCache(game)
+	needsCacheRename := preEnrichVersion != result.Mod.Version || preEnrichID != result.Mod.ID
+	if needsCacheRename {
+		oldPath := gameCache.ModPath(game.ID, result.Mod.SourceID, preEnrichID, preEnrichVersion)
+		newPath := gameCache.ModPath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+		if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
+			if err := os.Rename(oldPath, newPath); err != nil && verbose {
+				fmt.Printf("Warning: could not rename cache entry: %v\n", err)
 			}
 		}
 	}
