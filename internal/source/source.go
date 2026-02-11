@@ -14,8 +14,7 @@ type Token struct {
 	ExpiresAt    time.Time
 }
 
-// SearchQuery parameters for searching mods
-// SearchResult contains paginated search results
+// SearchResult contains paginated search results.
 type SearchResult struct {
 	Mods       []domain.Mod
 	TotalCount int // Total results available (0 if unknown)
@@ -23,6 +22,7 @@ type SearchResult struct {
 	PageSize   int
 }
 
+// SearchQuery contains parameters for searching mods.
 type SearchQuery struct {
 	GameID   string
 	Query    string

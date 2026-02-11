@@ -228,7 +228,10 @@ func runInstall(cmd *cobra.Command, args []string) error {
 					if len(currentResult.Mods) == 0 {
 						fmt.Println("No more results.")
 						currentPage--
-						currentResult, _ = service.SearchMods(ctx, installSource, gameID, query, "", nil, currentPage, displayPageSize)
+						currentResult, err = service.SearchMods(ctx, installSource, gameID, query, "", nil, currentPage, displayPageSize)
+						if err != nil {
+							return fmt.Errorf("search failed: %w", err)
+						}
 					}
 					fmt.Println()
 					continue

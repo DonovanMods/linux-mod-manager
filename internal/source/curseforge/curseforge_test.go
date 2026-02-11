@@ -64,6 +64,9 @@ func TestCurseForge_Search(t *testing.T) {
 		PageSize: 20,
 	})
 	require.NoError(t, err)
+	assert.Equal(t, 1, result.TotalCount)
+	assert.Equal(t, 0, result.Page)
+	assert.Equal(t, 20, result.PageSize)
 	mods := result.Mods
 	require.Len(t, mods, 1)
 
