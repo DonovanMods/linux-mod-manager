@@ -216,8 +216,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				input = strings.TrimSpace(input)
 
 				if input == "q" || input == "Q" {
-					fmt.Println("Search cancelled.")
-					return nil
+					return ErrCancelled
 				}
 				if (input == "n" || input == "N") && hasMore {
 					currentPage++
@@ -383,9 +382,6 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-			if selections == nil {
-				return nil
-			}
 			for _, sel := range selections {
 				selectedFiles = append(selectedFiles, &files[sel-1])
 			}
@@ -489,7 +485,6 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				fmt.Printf("    1. Download from: %s\n", mod.SourceURL)
 				fmt.Printf("    2. Import:        lmm import <downloaded-file> --id %s\n", mod.ID)
 				fmt.Println()
-				cmd.SilenceUsage = true
 				return fmt.Errorf("download unavailable via API")
 			}
 			return fmt.Errorf("download failed: %w", err)
@@ -674,8 +669,7 @@ func promptMultiSelectionFrom(r io.Reader, prompt string, defaultChoice, max int
 			return []int{defaultChoice}, nil
 		}
 		if input == "q" || input == "Q" {
-			fmt.Println("Selection cancelled.")
-			return nil, nil
+			return nil, ErrCancelled
 		}
 
 		selections, err := parseRangeSelection(input, max)

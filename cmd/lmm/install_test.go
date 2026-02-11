@@ -251,7 +251,7 @@ func TestPromptMultiSelection_Cancel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := bytes.NewBufferString(tt.input)
 			selections, err := promptMultiSelectionFrom(r, "Select", 1, 10)
-			assert.NoError(t, err, "cancel should not return an error")
+			assert.ErrorIs(t, err, ErrCancelled, "cancel should return ErrCancelled")
 			assert.Nil(t, selections, "cancel should return nil selections")
 		})
 	}
