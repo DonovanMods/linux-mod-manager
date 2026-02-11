@@ -362,6 +362,56 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 
 	fmt.Printf("Found %d files, %d untracked\n\n", len(results), len(untracked))
 
+	// Backfill metadata for already-tracked CurseForge mods missing metadata
+	if !importSkipMatch {
+		var backfilled int
+		for _, im := range installedMods {
+			if im.SourceID == domain.SourceLocal || im.SourceID == "" {
+				continue
+			}
+			// Skip if already has metadata
+			if im.Author != "" && im.SourceURL != "" {
+				continue
+			}
+			// Fetch fresh metadata from source
+			cfGameID, ok := game.SourceIDs[im.SourceID]
+			if !ok {
+				continue
+			}
+			mod, err := service.GetMod(ctx, im.SourceID, cfGameID, im.ID)
+			if err != nil {
+				if verbose {
+					fmt.Printf("  %s: metadata fetch failed: %v\n", im.Name, err)
+				}
+				continue
+			}
+			// Update fields that are missing
+			updated := im
+			if im.Author == "" && mod.Author != "" {
+				updated.Author = mod.Author
+			}
+			if im.Summary == "" && mod.Summary != "" {
+				updated.Summary = mod.Summary
+			}
+			if im.SourceURL == "" && mod.SourceURL != "" {
+				updated.SourceURL = mod.SourceURL
+			}
+			if err := service.DB().SaveInstalledMod(&updated); err != nil {
+				if verbose {
+					fmt.Printf("  %s: metadata save failed: %v\n", im.Name, err)
+				}
+				continue
+			}
+			backfilled++
+			if verbose {
+				fmt.Printf("  ✓ %s: metadata updated (author: %s)\n", im.Name, mod.Author)
+			}
+		}
+		if backfilled > 0 {
+			fmt.Printf("Updated metadata for %d existing mod(s)\n\n", backfilled)
+		}
+	}
+
 	if len(untracked) == 0 {
 		fmt.Println("All mods are already tracked!")
 		return nil
@@ -387,6 +437,11 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 				untracked[i].Mod.ID = matched.ID
 				untracked[i].Mod.SourceID = matched.SourceID
 				untracked[i].Mod.Name = matched.Name
+				untracked[i].Mod.Author = matched.Author
+				untracked[i].Mod.Summary = matched.Summary
+				untracked[i].Mod.SourceURL = matched.SourceURL
+				untracked[i].Mod.PictureURL = matched.PictureURL
+				untracked[i].Mod.GameID = matched.GameID
 				untracked[i].MatchedSource = "curseforge"
 				fmt.Printf("  ✓ %s -> %s (CurseForge #%s)\n", untracked[i].FileName, matched.Name, matched.ID)
 			} else {
