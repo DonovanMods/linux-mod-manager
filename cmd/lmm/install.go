@@ -43,7 +43,7 @@ func (s *serviceDepFetcher) GetDependencies(ctx context.Context, mod *domain.Mod
 	return s.svc.GetDependencies(ctx, s.sourceID, mod)
 }
 
-var ErrSearchCancelled = fmt.Errorf("search cancelled")
+var ErrSearchCancelled = ErrCancelled
 
 var (
 	installSource       string
@@ -217,7 +217,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				input = strings.TrimSpace(input)
 
 				if input == "q" || input == "Q" {
-					return fmt.Errorf("search cancelled")
+					return ErrCancelled
 				}
 				if (input == "n" || input == "N") && hasMore {
 					currentPage++
