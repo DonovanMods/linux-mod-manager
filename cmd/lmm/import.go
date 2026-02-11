@@ -142,6 +142,12 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if result.Mod.Version != "unknown" {
 		fmt.Printf("  Version: %s\n", result.Mod.Version)
 	}
+	if result.Mod.Author != "" {
+		fmt.Printf("  Author: %s\n", result.Mod.Author)
+	}
+	if result.Mod.SourceURL != "" {
+		fmt.Printf("  URL: %s\n", result.Mod.SourceURL)
+	}
 	if result.AutoDetected {
 		fmt.Println("  (auto-detected from filename)")
 	}
