@@ -296,6 +296,7 @@ func modDataToDomain(data ModData, gameID string) domain.Mod {
 		Category:     strconv.Itoa(data.CategoryID),
 		Endorsements: int64(data.EndorsementCount),
 		PictureURL:   data.PictureURL,
+		SourceURL:    fmt.Sprintf("https://www.nexusmods.com/%s/mods/%d", data.DomainName, data.ModID),
 		UpdatedAt:    data.UpdatedTime,
 	}
 }

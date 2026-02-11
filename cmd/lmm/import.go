@@ -362,7 +362,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 
 	fmt.Printf("Found %d files, %d untracked\n\n", len(results), len(untracked))
 
-	// Backfill metadata for already-tracked CurseForge mods missing metadata
+	// Backfill metadata for already-tracked mods missing metadata
 	if !importSkipMatch {
 		var backfilled int
 		for _, im := range installedMods {
@@ -374,11 +374,11 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 				continue
 			}
 			// Fetch fresh metadata from source
-			cfGameID, ok := game.SourceIDs[im.SourceID]
+			sourceGameID, ok := game.SourceIDs[im.SourceID]
 			if !ok {
 				continue
 			}
-			mod, err := service.GetMod(ctx, im.SourceID, cfGameID, im.ID)
+			mod, err := service.GetMod(ctx, im.SourceID, sourceGameID, im.ID)
 			if err != nil {
 				if verbose {
 					fmt.Printf("  %s: metadata fetch failed: %v\n", im.Name, err)
