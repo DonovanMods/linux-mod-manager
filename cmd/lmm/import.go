@@ -91,9 +91,20 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("archive not found: %s", archivePath)
 	}
 
-	// If --id is provided without --source, default to curseforge
+	// If --id is provided without --source, default to first configured source
 	if importModID != "" && importSource == "" {
-		importSource = "curseforge"
+		// Prefer curseforge if configured, otherwise use first available
+		if _, ok := game.SourceIDs["curseforge"]; ok {
+			importSource = "curseforge"
+		} else {
+			for sid := range game.SourceIDs {
+				importSource = sid
+				break
+			}
+		}
+		if importSource == "" {
+			return fmt.Errorf("no mod sources configured for game %s; cannot look up --id", gameID)
+		}
 	}
 
 	ctx := context.Background()
@@ -369,7 +380,19 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 
 	// Backfill metadata for already-tracked mods missing metadata
 	if !importSkipMatch {
+		// Count mods needing backfill
+		var needsBackfill int
+		for _, im := range installedMods {
+			if im.SourceID != domain.SourceLocal && im.SourceID != "" {
+				if im.Author == "" || im.SourceURL == "" {
+					needsBackfill++
+				}
+			}
+		}
 		var backfilled int
+		if needsBackfill > 0 {
+			fmt.Printf("Backfilling metadata for %d mod(s)...\n", needsBackfill)
+		}
 		for _, im := range installedMods {
 			if im.SourceID == domain.SourceLocal || im.SourceID == "" {
 				continue
@@ -414,6 +437,8 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 		}
 		if backfilled > 0 {
 			fmt.Printf("Updated metadata for %d existing mod(s)\n\n", backfilled)
+		} else if needsBackfill > 0 {
+			fmt.Println("No metadata updates needed")
 		}
 	}
 
