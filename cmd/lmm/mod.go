@@ -447,7 +447,13 @@ func runModShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
 	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, mod.Version, mod.Author)
 	if mod.Category != "" {
-		fmt.Printf("Category: %s  Endorsements: %d\n", mod.Category, mod.Endorsements)
+		fmt.Printf("Category: %s\n", mod.Category)
+	}
+	if mod.Endorsements > 0 {
+		fmt.Printf("Endorsements: %d\n", mod.Endorsements)
+	}
+	if mod.SourceURL != "" {
+		fmt.Printf("URL: %s\n", mod.SourceURL)
 	}
 	if mod.PictureURL != "" {
 		fmt.Printf("Image: %s\n", mod.PictureURL)
