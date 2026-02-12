@@ -19,8 +19,8 @@ func (m *mockSource) ID() string                                                
 func (m *mockSource) Name() string                                                 { return "Mock" }
 func (m *mockSource) AuthURL() string                                              { return "" }
 func (m *mockSource) ExchangeToken(context.Context, string) (*source.Token, error) { return nil, nil }
-func (m *mockSource) Search(context.Context, source.SearchQuery) ([]domain.Mod, error) {
-	return nil, nil
+func (m *mockSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, nil
 }
 func (m *mockSource) GetMod(context.Context, string, string) (*domain.Mod, error) { return nil, nil }
 func (m *mockSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {

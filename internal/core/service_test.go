@@ -35,14 +35,14 @@ func (m *mockSource) AuthURL() string { return "" }
 func (m *mockSource) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
 	return nil, nil
 }
-func (m *mockSource) Search(ctx context.Context, query source.SearchQuery) ([]domain.Mod, error) {
+func (m *mockSource) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
 	var results []domain.Mod
 	for _, mod := range m.mods {
 		if mod.GameID == query.GameID {
 			results = append(results, *mod)
 		}
 	}
-	return results, nil
+	return source.SearchResult{Mods: results}, nil
 }
 func (m *mockSource) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	key := gameID + "/" + modID
@@ -135,10 +135,10 @@ func TestService_SearchMods(t *testing.T) {
 	})
 	svc.RegisterSource(mock)
 
-	results, err := svc.SearchMods(context.Background(), "test", "skyrim", "test", "", nil)
+	searchResult, err := svc.SearchMods(context.Background(), "test", "skyrim", "test", "", nil, 0, 0)
 	require.NoError(t, err)
-	assert.Len(t, results, 1)
-	assert.Equal(t, "Test Mod", results[0].Name)
+	assert.Len(t, searchResult.Mods, 1)
+	assert.Equal(t, "Test Mod", searchResult.Mods[0].Name)
 }
 
 func TestService_GetMod(t *testing.T) {

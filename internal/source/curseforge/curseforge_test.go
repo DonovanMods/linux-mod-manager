@@ -58,12 +58,16 @@ func TestCurseForge_Search(t *testing.T) {
 	cf := New(server.Client(), "test-api-key")
 	cf.client.baseURL = server.URL
 
-	mods, err := cf.Search(context.Background(), source.SearchQuery{
+	result, err := cf.Search(context.Background(), source.SearchQuery{
 		GameID:   "432",
 		Query:    "jei",
 		PageSize: 20,
 	})
 	require.NoError(t, err)
+	assert.Equal(t, 1, result.TotalCount)
+	assert.Equal(t, 0, result.Page)
+	assert.Equal(t, 20, result.PageSize)
+	mods := result.Mods
 	require.Len(t, mods, 1)
 
 	assert.Equal(t, "238222", mods[0].ID)

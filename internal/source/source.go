@@ -14,7 +14,15 @@ type Token struct {
 	ExpiresAt    time.Time
 }
 
-// SearchQuery parameters for searching mods
+// SearchResult contains paginated search results.
+type SearchResult struct {
+	Mods       []domain.Mod
+	TotalCount int // Total results available (0 if unknown)
+	Page       int
+	PageSize   int
+}
+
+// SearchQuery contains parameters for searching mods.
 type SearchQuery struct {
 	GameID   string
 	Query    string
@@ -35,7 +43,7 @@ type ModSource interface {
 	ExchangeToken(ctx context.Context, code string) (*Token, error)
 
 	// Discovery
-	Search(ctx context.Context, query SearchQuery) ([]domain.Mod, error)
+	Search(ctx context.Context, query SearchQuery) (SearchResult, error)
 	GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error)
 	GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error)
 

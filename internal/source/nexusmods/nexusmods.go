@@ -62,7 +62,7 @@ func (n *NexusMods) ExchangeToken(ctx context.Context, code string) (*source.Tok
 }
 
 // Search finds mods matching the query
-func (n *NexusMods) Search(ctx context.Context, query source.SearchQuery) ([]domain.Mod, error) {
+func (n *NexusMods) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
 	pageSize := query.PageSize
 	if pageSize == 0 {
 		pageSize = 20
@@ -71,7 +71,7 @@ func (n *NexusMods) Search(ctx context.Context, query source.SearchQuery) ([]dom
 
 	results, err := n.client.SearchMods(ctx, query.GameID, query.Query, query.Category, query.Tags, pageSize, offset)
 	if err != nil {
-		return nil, err
+		return source.SearchResult{}, err
 	}
 
 	mods := make([]domain.Mod, len(results))
@@ -79,7 +79,7 @@ func (n *NexusMods) Search(ctx context.Context, query source.SearchQuery) ([]dom
 		mods[i] = modDataToDomain(r, query.GameID)
 	}
 
-	return mods, nil
+	return source.SearchResult{Mods: mods, TotalCount: 0, Page: query.Page, PageSize: pageSize}, nil
 }
 
 // GetMod retrieves a specific mod

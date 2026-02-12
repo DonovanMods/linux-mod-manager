@@ -576,11 +576,12 @@ func tryMatchCurseForge(ctx context.Context, service *core.Service, game *domain
 	}
 
 	// Search by mod name
-	mods, err := service.SearchMods(ctx, "curseforge", cfGameID, modName, "", nil)
+	searchResult, err := service.SearchMods(ctx, "curseforge", cfGameID, modName, "", nil, 0, 0)
 	if err != nil {
 		return nil, err
 	}
 
+	mods := searchResult.Mods
 	if len(mods) == 0 {
 		return nil, nil
 	}

@@ -236,3 +236,47 @@ func TestParseRangeSelection(t *testing.T) {
 		})
 	}
 }
+
+// TestPromptMultiSelection_Cancel tests that 'q' cancels cleanly (no error)
+func TestPromptMultiSelection_Cancel(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"lowercase q", "q\n"},
+		{"uppercase Q", "Q\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := bytes.NewBufferString(tt.input)
+			selections, err := promptMultiSelectionFrom(r, "Select", 1, 10)
+			assert.ErrorIs(t, err, ErrCancelled, "cancel should return ErrCancelled")
+			assert.Nil(t, selections, "cancel should return nil selections")
+		})
+	}
+}
+
+// TestPromptMultiSelection_Default tests that empty input returns default choice
+func TestPromptMultiSelection_Default(t *testing.T) {
+	r := bytes.NewBufferString("\n")
+	selections, err := promptMultiSelectionFrom(r, "Select", 3, 10)
+	assert.NoError(t, err)
+	assert.Equal(t, []int{3}, selections)
+}
+
+// TestPromptMultiSelection_ValidSelection tests normal selection
+func TestPromptMultiSelection_ValidSelection(t *testing.T) {
+	r := bytes.NewBufferString("1,3,5\n")
+	selections, err := promptMultiSelectionFrom(r, "Select", 1, 10)
+	assert.NoError(t, err)
+	assert.Equal(t, []int{1, 3, 5}, selections)
+}
+
+// TestPromptMultiSelection_Range tests range selection
+func TestPromptMultiSelection_Range(t *testing.T) {
+	r := bytes.NewBufferString("2-4\n")
+	selections, err := promptMultiSelectionFrom(r, "Select", 1, 10)
+	assert.NoError(t, err)
+	assert.Equal(t, []int{2, 3, 4}, selections)
+}
