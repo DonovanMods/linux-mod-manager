@@ -78,7 +78,7 @@ func TestCurseForge_Search(t *testing.T) {
 	assert.Equal(t, "View Items and Recipes", mods[0].Summary)
 	assert.Equal(t, "432", mods[0].GameID)
 	assert.Equal(t, int64(150000000), mods[0].Downloads)
-	assert.Equal(t, int64(5000), mods[0].Endorsements)
+	assert.Equal(t, int64Ptr(5000), mods[0].Endorsements)
 	assert.Equal(t, "https://example.com/jei.png", mods[0].PictureURL)
 }
 

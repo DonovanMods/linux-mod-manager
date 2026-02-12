@@ -294,7 +294,7 @@ func modDataToDomain(data ModData, gameID string) domain.Mod {
 		Description:  data.Description,
 		GameID:       gameID,
 		Category:     strconv.Itoa(data.CategoryID),
-		Endorsements: int64(data.EndorsementCount),
+		Endorsements: int64Ptr(int64(data.EndorsementCount)),
 		PictureURL:   data.PictureURL,
 		SourceURL:    fmt.Sprintf("https://www.nexusmods.com/%s/mods/%d", data.DomainName, data.ModID),
 		UpdatedAt:    data.UpdatedTime,
@@ -367,3 +367,6 @@ func parseVersion(v string) []int {
 
 	return result
 }
+
+// int64Ptr returns a pointer to the given int64 value.
+func int64Ptr(v int64) *int64 { return &v }
