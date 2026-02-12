@@ -449,6 +449,9 @@ func runModShow(cmd *cobra.Command, args []string) error {
 	if mod.Category != "" {
 		fmt.Printf("Category: %s  Endorsements: %d\n", mod.Category, mod.Endorsements)
 	}
+	if mod.SourceURL != "" {
+		fmt.Printf("URL: %s\n", mod.SourceURL)
+	}
 	if mod.PictureURL != "" {
 		fmt.Printf("Image: %s\n", mod.PictureURL)
 	}
