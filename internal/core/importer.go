@@ -420,7 +420,12 @@ func copyFileStreaming(src, dst string) error {
 	}
 	defer srcFile.Close()
 
-	dstFile, err := os.Create(dst)
+	srcInfo, err := srcFile.Stat()
+	if err != nil {
+		return fmt.Errorf("stat source: %w", err)
+	}
+
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
