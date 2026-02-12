@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-02-12
+
+### Changed
+
+- **Consolidated version comparison**: `CompareVersions`, `IsNewerVersion`, and `parseVersionParts` moved to `domain/mod.go` as the single source of truth, eliminating duplication between `core/updater.go` and `source/nexusmods/nexusmods.go`
+- **ModKey helper**: Added `domain.ModKey()` to replace ad-hoc `sourceID + ":" + modID` string concatenation across 6+ files
+- **Deduplicated install logic**: Extracted `batchInstallMods` to replace ~400 lines of near-identical code in `installMultipleMods` and `installModsWithDeps`; extracted `selectPrimaryFile`, `truncateChecksum`, and `runInstallHook` helpers
+- **Nil-safe hook accessors**: Added 10 nil-safe getter methods on `ResolvedHooks` (e.g., `GetInstallBeforeAll()`) to simplify verbose nil-check patterns in CLI code
+- **Transaction safety**: Wrapped `SaveInstalledMod`, `SwapModVersions`, and `replaceModFileIDs` in database transactions to prevent partial writes
+- **Streaming file copy**: `copyDir` now uses streaming I/O (`copyFileStreaming`) instead of `os.ReadFile`/`os.WriteFile` to avoid memory spikes on large mod archives
+- **Reused Downloader/Extractor**: `Downloader` and `Extractor` are now persistent fields on `Service` instead of being recreated per download, improving HTTP connection reuse
+
 ## [1.3.0] - 2026-02-11
 
 ### Added
@@ -556,7 +568,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.1.0...v1.2.0
 [1.0.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v0.12.0...v1.0.0
