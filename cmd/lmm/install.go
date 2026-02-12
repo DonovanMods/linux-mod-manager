@@ -958,16 +958,6 @@ func installModsWithDeps(ctx context.Context, service *core.Service, game *domai
 	return batchInstallMods(ctx, service, game, mods, profileName)
 }
 
-// selectPrimaryFile returns the primary file from a list, or the first file if none is marked primary.
-func selectPrimaryFile(files []domain.DownloadableFile) *domain.DownloadableFile {
-	for i := range files {
-		if files[i].IsPrimary {
-			return &files[i]
-		}
-	}
-	return &files[0]
-}
-
 // truncateChecksum returns a display-friendly checksum (first 12 chars + "...").
 func truncateChecksum(checksum string) string {
 	if len(checksum) > 12 {
