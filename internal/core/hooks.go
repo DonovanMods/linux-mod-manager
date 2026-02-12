@@ -104,6 +104,71 @@ type ResolvedHooks struct {
 	Uninstall domain.HookConfig
 }
 
+// GetInstallBeforeAll returns the install.before_all command, or "" if not set.
+// Nil-safe: returns "" when the receiver is nil.
+func (h *ResolvedHooks) GetInstallBeforeAll() string {
+	if h == nil {
+		return ""
+	}
+	return h.Install.BeforeAll
+}
+
+// GetInstallBeforeEach returns the install.before_each command, or "" if not set.
+func (h *ResolvedHooks) GetInstallBeforeEach() string {
+	if h == nil {
+		return ""
+	}
+	return h.Install.BeforeEach
+}
+
+// GetInstallAfterEach returns the install.after_each command, or "" if not set.
+func (h *ResolvedHooks) GetInstallAfterEach() string {
+	if h == nil {
+		return ""
+	}
+	return h.Install.AfterEach
+}
+
+// GetInstallAfterAll returns the install.after_all command, or "" if not set.
+func (h *ResolvedHooks) GetInstallAfterAll() string {
+	if h == nil {
+		return ""
+	}
+	return h.Install.AfterAll
+}
+
+// GetUninstallBeforeAll returns the uninstall.before_all command, or "" if not set.
+func (h *ResolvedHooks) GetUninstallBeforeAll() string {
+	if h == nil {
+		return ""
+	}
+	return h.Uninstall.BeforeAll
+}
+
+// GetUninstallBeforeEach returns the uninstall.before_each command, or "" if not set.
+func (h *ResolvedHooks) GetUninstallBeforeEach() string {
+	if h == nil {
+		return ""
+	}
+	return h.Uninstall.BeforeEach
+}
+
+// GetUninstallAfterEach returns the uninstall.after_each command, or "" if not set.
+func (h *ResolvedHooks) GetUninstallAfterEach() string {
+	if h == nil {
+		return ""
+	}
+	return h.Uninstall.AfterEach
+}
+
+// GetUninstallAfterAll returns the uninstall.after_all command, or "" if not set.
+func (h *ResolvedHooks) GetUninstallAfterAll() string {
+	if h == nil {
+		return ""
+	}
+	return h.Uninstall.AfterAll
+}
+
 // ResolveHooks merges game-level hooks with profile-level overrides
 func ResolveHooks(game *domain.Game, profile *domain.Profile) *ResolvedHooks {
 	if game == nil {

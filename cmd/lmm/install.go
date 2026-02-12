@@ -282,7 +282,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		installedMods, _ := service.GetInstalledMods(gameID, profileName)
 		installedIDs := make(map[string]bool)
 		for _, im := range installedMods {
-			installedIDs[im.SourceID+":"+im.ID] = true
+			installedIDs[domain.ModKey(im.SourceID, im.ID)] = true
 		}
 
 		// Resolve dependencies
@@ -520,7 +520,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			// Group conflicts by mod
 			modConflicts := make(map[string][]string) // "sourceID:modID" -> []paths
 			for _, c := range conflicts {
-				key := c.CurrentSourceID + ":" + c.CurrentModID
+				key := domain.ModKey(c.CurrentSourceID, c.CurrentModID)
 				modConflicts[key] = append(modConflicts[key], c.RelativePath)
 			}
 
@@ -734,218 +734,10 @@ func filterAndSortFiles(files []domain.DownloadableFile, showArchived bool) []do
 	return filtered
 }
 
-// installMultipleMods handles installing multiple mods sequentially
+// installMultipleMods handles installing multiple mods sequentially.
+// Delegates to batchInstallMods.
 func installMultipleMods(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
-	fmt.Printf("\nInstalling %d mod(s)...\n", len(mods))
-
-	// Get profile manager and ensure profile exists
-	pm := getProfileManager(service)
-	if _, err := pm.Get(game.ID, profileName); err != nil {
-		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(game.ID, profileName); err != nil {
-				return fmt.Errorf("could not create profile: %w", err)
-			}
-		}
-	}
-
-	// Get link method for this game
-	linkMethod := service.GetGameLinkMethod(game)
-
-	// Set up hooks
-	hookRunner := getHookRunner(service)
-	resolvedHooks := getResolvedHooks(service, game, profileName)
-	hookCtx := makeHookContext(game)
-
-	// Run install.before_all hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
-		hookCtx.HookName = "install.before_all"
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
-			if !installForce {
-				return fmt.Errorf("install.before_all hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
-		}
-	}
-
-	var installed []string
-	var failed []string
-	var hookErrors []error
-
-	for i, mod := range mods {
-		fmt.Printf("\n[%d/%d] Installing: %s v%s\n", i+1, len(mods), mod.Name, mod.Version)
-
-		// Run install.before_each hook
-		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
-			hookCtx.HookName = "install.before_each"
-			hookCtx.ModID = mod.ID
-			hookCtx.ModName = mod.Name
-			hookCtx.ModVersion = mod.Version
-			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
-				fmt.Printf("  Skipped: install.before_each hook failed: %v\n", err)
-				failed = append(failed, mod.Name)
-				continue
-			}
-		}
-
-		// Set up installer
-		linker := service.GetLinker(linkMethod)
-		installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
-
-		// Check if mod is already installed - if so, uninstall old files first
-		existingMod, err := service.GetInstalledMod(installSource, mod.ID, game.ID, profileName)
-		if err == nil && existingMod != nil {
-			fmt.Printf("  Removing previous installation...\n")
-			if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil {
-				if verbose {
-					fmt.Printf("  Warning: could not remove old files: %v\n", err)
-				}
-			}
-			if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil {
-				if verbose {
-					fmt.Printf("  Warning: could not clear old cache: %v\n", err)
-				}
-			}
-		}
-
-		// Get available files
-		files, err := service.GetModFiles(ctx, installSource, mod)
-		if err != nil {
-			fmt.Printf("  Error: failed to get mod files: %v\n", err)
-			failed = append(failed, mod.Name)
-			continue
-		}
-
-		// Filter and sort files
-		files = filterAndSortFiles(files, installShowArchived)
-
-		if len(files) == 0 {
-			fmt.Printf("  Error: no downloadable files available\n")
-			failed = append(failed, mod.Name)
-			continue
-		}
-
-		// Auto-select primary or first file for batch install
-		var selectedFile *domain.DownloadableFile
-		for i := range files {
-			if files[i].IsPrimary {
-				selectedFile = &files[i]
-				break
-			}
-		}
-		if selectedFile == nil {
-			selectedFile = &files[0]
-		}
-
-		fmt.Printf("  File: %s\n", selectedFile.FileName)
-
-		// Download the mod
-		progressFn := func(p core.DownloadProgress) {
-			if p.TotalBytes > 0 {
-				bar := progressBar(p.Percentage, 20)
-				fmt.Printf("\r  [%s] %.1f%%", bar, p.Percentage)
-			}
-		}
-
-		downloadResult, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
-		if err != nil {
-			fmt.Println()
-			fmt.Printf("  Error: download failed: %v\n", err)
-			failed = append(failed, mod.Name)
-			continue
-		}
-		fmt.Println()
-
-		// Display checksum (truncated for readability) unless --skip-verify
-		if !skipVerify && downloadResult.Checksum != "" {
-			displayChecksum := downloadResult.Checksum
-			if len(displayChecksum) > 12 {
-				displayChecksum = displayChecksum[:12] + "..."
-			}
-			fmt.Printf("  Checksum: %s\n", displayChecksum)
-		}
-
-		if err := installer.Install(ctx, game, mod, profileName); err != nil {
-			fmt.Printf("  Error: deployment failed: %v\n", err)
-			failed = append(failed, mod.Name)
-			continue
-		}
-
-		// Save to database
-		installedMod := &domain.InstalledMod{
-			Mod:          *mod,
-			ProfileName:  profileName,
-			UpdatePolicy: domain.UpdateNotify,
-			Enabled:      true,
-			Deployed:     true,
-			LinkMethod:   linkMethod,
-			FileIDs:      []string{selectedFile.ID},
-		}
-
-		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
-			fmt.Printf("  Error: failed to save mod: %v\n", err)
-			failed = append(failed, mod.Name)
-			continue
-		}
-
-		// Store checksum in database (unless --skip-verify)
-		if !skipVerify && downloadResult.Checksum != "" {
-			if err := service.DB().SaveFileChecksum(
-				installSource, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum,
-			); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: failed to save checksum: %v\n", err)
-			}
-		}
-
-		// Add or update mod in profile (with FileIDs)
-		modRef := domain.ModReference{
-			SourceID: mod.SourceID,
-			ModID:    mod.ID,
-			Version:  mod.Version,
-			FileIDs:  []string{selectedFile.ID},
-		}
-		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: could not update profile: %v\n", err)
-			}
-		}
-
-		fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
-		installed = append(installed, mod.Name)
-
-		// Run install.after_each hook
-		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
-			hookCtx.HookName = "install.after_each"
-			hookCtx.ModID = mod.ID
-			hookCtx.ModName = mod.Name
-			hookCtx.ModVersion = mod.Version
-			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
-				hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed for %s: %w", mod.ID, err))
-			}
-		}
-	}
-
-	// Run install.after_all hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
-		hookCtx.HookName = "install.after_all"
-		hookCtx.ModID = ""
-		hookCtx.ModName = ""
-		hookCtx.ModVersion = ""
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
-		}
-	}
-
-	// Print hook warnings
-	printHookWarnings(hookErrors)
-
-	// Summary
-	fmt.Printf("\n--- Summary ---\n")
-	fmt.Printf("Installed: %d\n", len(installed))
-	if len(failed) > 0 {
-		fmt.Printf("Failed: %d (%s)\n", len(failed), strings.Join(failed, ", "))
-	}
-
-	return nil
+	return batchInstallMods(ctx, service, game, mods, profileName)
 }
 
 // fileCategoryPriority returns sort priority for file categories (lower = first)
@@ -1064,7 +856,7 @@ func resolveDependencies(ctx context.Context, fetcher depFetcher, target *domain
 
 	var collect func(mod *domain.Mod) error
 	collect = func(mod *domain.Mod) error {
-		key := mod.SourceID + ":" + mod.ID
+		key := domain.ModKey(mod.SourceID, mod.ID)
 		if visited[key] {
 			return nil
 		}
@@ -1079,7 +871,7 @@ func resolveDependencies(ctx context.Context, fetcher depFetcher, target *domain
 		}
 
 		for _, ref := range deps {
-			depKey := ref.SourceID + ":" + ref.ModID
+			depKey := domain.ModKey(ref.SourceID, ref.ModID)
 
 			if installedIDs[depKey] {
 				continue
@@ -1160,11 +952,47 @@ func showInstallPlan(plan *installPlan, targetModID string) {
 	}
 }
 
-// installModsWithDeps installs multiple mods in order (dependencies first)
+// installModsWithDeps installs multiple mods in order (dependencies first).
+// Delegates to batchInstallMods.
 func installModsWithDeps(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
+	return batchInstallMods(ctx, service, game, mods, profileName)
+}
+
+// selectPrimaryFile returns the primary file from a list, or the first file if none is marked primary.
+func selectPrimaryFile(files []domain.DownloadableFile) *domain.DownloadableFile {
+	for i := range files {
+		if files[i].IsPrimary {
+			return &files[i]
+		}
+	}
+	return &files[0]
+}
+
+// truncateChecksum returns a display-friendly checksum (first 12 chars + "...").
+func truncateChecksum(checksum string) string {
+	if len(checksum) > 12 {
+		return checksum[:12] + "..."
+	}
+	return checksum
+}
+
+// runInstallHook runs a named hook if configured. Returns an error if the hook fails.
+func runInstallHook(ctx context.Context, runner *core.HookRunner, hooks *core.ResolvedHooks, hookCtx *core.HookContext, hookName, command string) error {
+	if runner == nil || hooks == nil || command == "" {
+		return nil
+	}
+	hookCtx.HookName = hookName
+	_, err := runner.Run(ctx, command, *hookCtx)
+	return err
+}
+
+// batchInstallMods is the shared implementation for installing multiple mods sequentially.
+// Used by installMultipleMods (multi-select from search) and installModsWithDeps (dependency-resolved).
+// Each mod's SourceID is used for API calls (set during search/dep resolution).
+func batchInstallMods(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
 	fmt.Printf("\nInstalling %d mod(s)...\n", len(mods))
 
-	// Get profile manager and ensure profile exists
+	// Ensure profile exists
 	pm := getProfileManager(service)
 	if _, err := pm.Get(game.ID, profileName); err != nil {
 		if err == domain.ErrProfileNotFound {
@@ -1174,7 +1002,6 @@ func installModsWithDeps(ctx context.Context, service *core.Service, game *domai
 		}
 	}
 
-	// Get link method for this game
 	linkMethod := service.GetGameLinkMethod(game)
 
 	// Set up hooks
@@ -1183,96 +1010,70 @@ func installModsWithDeps(ctx context.Context, service *core.Service, game *domai
 	hookCtx := makeHookContext(game)
 
 	// Run install.before_all hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
-		hookCtx.HookName = "install.before_all"
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
-			if !installForce {
-				return fmt.Errorf("install.before_all hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
+	if err := runInstallHook(ctx, hookRunner, resolvedHooks, &hookCtx, "install.before_all", resolvedHooks.GetInstallBeforeAll()); err != nil {
+		if !installForce {
+			return fmt.Errorf("install.before_all hook failed: %w", err)
 		}
+		fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
 	}
 
-	var installed []string
-	var failed []string
+	var installed, failed []string
 	var hookErrors []error
 
 	for i, mod := range mods {
 		fmt.Printf("\n[%d/%d] Installing: %s v%s\n", i+1, len(mods), mod.Name, mod.Version)
 
+		sourceID := mod.SourceID
+
 		// Run install.before_each hook
-		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
-			hookCtx.HookName = "install.before_each"
-			hookCtx.ModID = mod.ID
-			hookCtx.ModName = mod.Name
-			hookCtx.ModVersion = mod.Version
-			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
-				fmt.Printf("  Skipped: install.before_each hook failed: %v\n", err)
-				failed = append(failed, mod.Name)
-				continue
-			}
+		hookCtx.ModID = mod.ID
+		hookCtx.ModName = mod.Name
+		hookCtx.ModVersion = mod.Version
+		if err := runInstallHook(ctx, hookRunner, resolvedHooks, &hookCtx, "install.before_each", resolvedHooks.GetInstallBeforeEach()); err != nil {
+			fmt.Printf("  Skipped: install.before_each hook failed: %v\n", err)
+			failed = append(failed, mod.Name)
+			continue
 		}
 
-		// Set up installer
 		linker := service.GetLinker(linkMethod)
 		installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
 
-		// Check if mod is already installed - if so, uninstall old files first
-		existingMod, err := service.GetInstalledMod(mod.SourceID, mod.ID, game.ID, profileName)
-		if err == nil && existingMod != nil {
+		// Remove previous installation if re-installing
+		if existingMod, err := service.GetInstalledMod(sourceID, mod.ID, game.ID, profileName); err == nil && existingMod != nil {
 			fmt.Printf("  Removing previous installation...\n")
-			if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil {
-				if verbose {
-					fmt.Printf("  Warning: could not remove old files: %v\n", err)
-				}
+			if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil && verbose {
+				fmt.Printf("  Warning: could not remove old files: %v\n", err)
 			}
-			if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil {
-				if verbose {
-					fmt.Printf("  Warning: could not clear old cache: %v\n", err)
-				}
+			if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
+				fmt.Printf("  Warning: could not clear old cache: %v\n", err)
 			}
 		}
 
-		// Get available files
-		files, err := service.GetModFiles(ctx, mod.SourceID, mod)
+		// Get and filter available files
+		files, err := service.GetModFiles(ctx, sourceID, mod)
 		if err != nil {
 			fmt.Printf("  Error: failed to get mod files: %v\n", err)
 			failed = append(failed, mod.Name)
 			continue
 		}
-
-		// Filter and sort files
 		files = filterAndSortFiles(files, installShowArchived)
-
 		if len(files) == 0 {
 			fmt.Printf("  Error: no downloadable files available\n")
 			failed = append(failed, mod.Name)
 			continue
 		}
 
-		// Auto-select primary or first file
-		var selectedFile *domain.DownloadableFile
-		for j := range files {
-			if files[j].IsPrimary {
-				selectedFile = &files[j]
-				break
-			}
-		}
-		if selectedFile == nil {
-			selectedFile = &files[0]
-		}
-
+		selectedFile := selectPrimaryFile(files)
 		fmt.Printf("  File: %s\n", selectedFile.FileName)
 
-		// Download the mod
+		// Download
 		progressFn := func(p core.DownloadProgress) {
 			if p.TotalBytes > 0 {
 				bar := progressBar(p.Percentage, 20)
 				fmt.Printf("\r  [%s] %.1f%%", bar, p.Percentage)
 			}
 		}
-
-		downloadResult, err := service.DownloadMod(ctx, mod.SourceID, game, mod, selectedFile, progressFn)
+		downloadResult, err := service.DownloadMod(ctx, sourceID, game, mod, selectedFile, progressFn)
 		if err != nil {
 			fmt.Println()
 			fmt.Printf("  Error: download failed: %v\n", err)
@@ -1281,23 +1082,18 @@ func installModsWithDeps(ctx context.Context, service *core.Service, game *domai
 		}
 		fmt.Println()
 
-		// Display checksum unless --skip-verify
 		if !skipVerify && downloadResult.Checksum != "" {
-			displayChecksum := downloadResult.Checksum
-			if len(displayChecksum) > 12 {
-				displayChecksum = displayChecksum[:12] + "..."
-			}
-			fmt.Printf("  Checksum: %s\n", displayChecksum)
+			fmt.Printf("  Checksum: %s\n", truncateChecksum(downloadResult.Checksum))
 		}
 
-		// Check for conflicts (unless --force)
+		// Check conflicts in batch mode (warn but proceed)
 		if !installForce {
-			conflicts, err := installer.GetConflicts(ctx, game, mod, profileName)
-			if err == nil && len(conflicts) > 0 {
+			if conflicts, err := installer.GetConflicts(ctx, game, mod, profileName); err == nil && len(conflicts) > 0 {
 				fmt.Printf("  ⚠ %d file conflict(s) - will overwrite\n", len(conflicts))
 			}
 		}
 
+		// Deploy
 		if err := installer.Install(ctx, game, mod, profileName); err != nil {
 			fmt.Printf("  Error: deployment failed: %v\n", err)
 			failed = append(failed, mod.Name)
@@ -1314,62 +1110,47 @@ func installModsWithDeps(ctx context.Context, service *core.Service, game *domai
 			LinkMethod:   linkMethod,
 			FileIDs:      []string{selectedFile.ID},
 		}
-
 		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
 			fmt.Printf("  Error: failed to save mod: %v\n", err)
 			failed = append(failed, mod.Name)
 			continue
 		}
 
-		// Store checksum in database
+		// Store checksum
 		if !skipVerify && downloadResult.Checksum != "" {
-			if err := service.DB().SaveFileChecksum(
-				mod.SourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum,
-			); err != nil {
+			if err := service.DB().SaveFileChecksum(sourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum); err != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: failed to save checksum: %v\n", err)
 			}
 		}
 
-		// Add to profile
+		// Update profile
 		modRef := domain.ModReference{
 			SourceID: mod.SourceID,
 			ModID:    mod.ID,
 			Version:  mod.Version,
 			FileIDs:  []string{selectedFile.ID},
 		}
-		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: could not update profile: %v\n", err)
-			}
+		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil && verbose {
+			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}
 
 		fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
 		installed = append(installed, mod.Name)
 
 		// Run install.after_each hook
-		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
-			hookCtx.HookName = "install.after_each"
-			hookCtx.ModID = mod.ID
-			hookCtx.ModName = mod.Name
-			hookCtx.ModVersion = mod.Version
-			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
-				hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed for %s: %w", mod.ID, err))
-			}
+		if err := runInstallHook(ctx, hookRunner, resolvedHooks, &hookCtx, "install.after_each", resolvedHooks.GetInstallAfterEach()); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed for %s: %w", mod.ID, err))
 		}
 	}
 
 	// Run install.after_all hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
-		hookCtx.HookName = "install.after_all"
-		hookCtx.ModID = ""
-		hookCtx.ModName = ""
-		hookCtx.ModVersion = ""
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
-		}
+	hookCtx.ModID = ""
+	hookCtx.ModName = ""
+	hookCtx.ModVersion = ""
+	if err := runInstallHook(ctx, hookRunner, resolvedHooks, &hookCtx, "install.after_all", resolvedHooks.GetInstallAfterAll()); err != nil {
+		hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
 	}
 
-	// Print hook warnings
 	printHookWarnings(hookErrors)
 
 	// Summary
