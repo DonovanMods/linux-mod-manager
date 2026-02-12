@@ -278,12 +278,11 @@ func (s *Service) GetInstalledModsInProfileOrder(gameID, profileName string) ([]
 	}
 	byKey := make(map[string]*domain.InstalledMod)
 	for i := range all {
-		key := all[i].SourceID + ":" + all[i].ID
-		byKey[key] = &all[i]
+		byKey[domain.ModKey(all[i].SourceID, all[i].ID)] = &all[i]
 	}
 	var ordered []domain.InstalledMod
 	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
+		key := domain.ModKey(ref.SourceID, ref.ModID)
 		if m, ok := byKey[key]; ok {
 			ordered = append(ordered, *m)
 		}

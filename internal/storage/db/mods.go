@@ -85,7 +85,7 @@ func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.Install
 		return nil, fmt.Errorf("getting file IDs: %w", err)
 	}
 	for i := range mods {
-		key := mods[i].SourceID + ":" + mods[i].ID
+		key := domain.ModKey(mods[i].SourceID, mods[i].ID)
 		mods[i].FileIDs = fileIDsByMod[key]
 	}
 

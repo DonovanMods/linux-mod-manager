@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -231,7 +230,7 @@ func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.Install
 		}
 
 		// Consider update if mod version is newer OR any installed file was superseded
-		modVersionNewer := isNewerVersion(inst.Version, remoteMod.Version)
+		modVersionNewer := domain.IsNewerVersion(inst.Version, remoteMod.Version)
 		var fileReplacements map[string]string
 		for _, fid := range inst.FileIDs {
 			if newID, ok := oldToNew[fid]; ok {
@@ -299,73 +298,6 @@ func modDataToDomain(data ModData, gameID string) domain.Mod {
 		SourceURL:    fmt.Sprintf("https://www.nexusmods.com/%s/mods/%d", data.DomainName, data.ModID),
 		UpdatedAt:    data.UpdatedTime,
 	}
-}
-
-// isNewerVersion returns true if newVersion is newer than currentVersion
-func isNewerVersion(currentVersion, newVersion string) bool {
-	return compareVersions(currentVersion, newVersion) < 0
-}
-
-// compareVersions compares two version strings
-// Returns: -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
-func compareVersions(v1, v2 string) int {
-	parts1 := parseVersion(v1)
-	parts2 := parseVersion(v2)
-
-	maxLen := len(parts1)
-	if len(parts2) > maxLen {
-		maxLen = len(parts2)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		var p1, p2 int
-		if i < len(parts1) {
-			p1 = parts1[i]
-		}
-		if i < len(parts2) {
-			p2 = parts2[i]
-		}
-
-		if p1 < p2 {
-			return -1
-		}
-		if p1 > p2 {
-			return 1
-		}
-	}
-
-	return 0
-}
-
-// parseVersion splits a version string into numeric parts
-func parseVersion(v string) []int {
-	// Remove common prefixes
-	v = strings.TrimPrefix(v, "v")
-	v = strings.TrimPrefix(v, "V")
-
-	parts := strings.Split(v, ".")
-	result := make([]int, 0, len(parts))
-
-	for _, part := range parts {
-		// Extract numeric portion (handle things like "1.0.0-beta")
-		numStr := ""
-		for _, c := range part {
-			if c >= '0' && c <= '9' {
-				numStr += string(c)
-			} else {
-				break
-			}
-		}
-
-		if numStr == "" {
-			result = append(result, 0)
-		} else {
-			n, _ := strconv.Atoi(numStr)
-			result = append(result, n)
-		}
-	}
-
-	return result
 }
 
 // int64Ptr returns a pointer to the given int64 value.

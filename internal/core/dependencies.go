@@ -14,9 +14,10 @@ func NewDependencyResolver() *DependencyResolver {
 	return &DependencyResolver{}
 }
 
-// modKey generates a unique key for a mod (source:id)
+// modKey generates a unique key for a mod (source:id).
+// Delegates to domain.ModKey.
 func modKey(sourceID, modID string) string {
-	return sourceID + ":" + modID
+	return domain.ModKey(sourceID, modID)
 }
 
 // Resolve returns mods in dependency order (dependencies first)
