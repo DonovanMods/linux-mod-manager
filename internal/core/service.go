@@ -29,11 +29,13 @@ type DownloadModResult struct {
 
 // Service is the main orchestrator for mod management operations
 type Service struct {
-	config   *config.Config
-	db       *db.DB
-	cache    *cache.Cache
-	registry *source.Registry
-	games    map[string]*domain.Game
+	config     *config.Config
+	db         *db.DB
+	cache      *cache.Cache
+	registry   *source.Registry
+	games      map[string]*domain.Game
+	downloader *Downloader
+	extractor  *Extractor
 
 	configDir string
 	dataDir   string
@@ -65,14 +67,16 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	}
 
 	return &Service{
-		config:    appConfig,
-		db:        database,
-		cache:     cache.New(cfg.CacheDir),
-		registry:  source.NewRegistry(),
-		games:     games,
-		configDir: cfg.ConfigDir,
-		dataDir:   cfg.DataDir,
-		cacheDir:  cfg.CacheDir,
+		config:     appConfig,
+		db:         database,
+		cache:      cache.New(cfg.CacheDir),
+		registry:   source.NewRegistry(),
+		games:      games,
+		downloader: NewDownloader(nil),
+		extractor:  NewExtractor(),
+		configDir:  cfg.ConfigDir,
+		dataDir:    cfg.DataDir,
+		cacheDir:   cfg.CacheDir,
 	}, nil
 }
 
@@ -192,16 +196,14 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 
 	// Download the file
 	archivePath := filepath.Join(tempDir, file.FileName)
-	downloader := NewDownloader(nil)
-	downloadResult, err := downloader.Download(ctx, url, archivePath, progressFn)
+	downloadResult, err := s.downloader.Download(ctx, url, archivePath, progressFn)
 	if err != nil {
 		return nil, fmt.Errorf("downloading mod: %w", err)
 	}
 
 	// Extract to cache location
 	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
-	extractor := NewExtractor()
-	if game.DeployMode == domain.DeployCopy || !extractor.CanExtract(file.FileName) {
+	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(file.FileName) {
 		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
 		// Or not an archive - just copy to cache
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
@@ -217,7 +219,7 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 		}, nil
 	}
 
-	if err := extractor.Extract(archivePath, cachePath); err != nil {
+	if err := s.extractor.Extract(archivePath, cachePath); err != nil {
 		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
 

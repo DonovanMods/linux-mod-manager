@@ -175,7 +175,8 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	}, nil
 }
 
-// copyDir recursively copies a directory
+// copyDir recursively copies a directory using streaming I/O to avoid loading
+// entire files into memory (important for large mod archives).
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -192,11 +193,7 @@ func copyDir(src, dst string) error {
 			return os.MkdirAll(dstPath, info.Mode())
 		}
 
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(dstPath, data, info.Mode())
+		return copyFileStreaming(path, dstPath)
 	})
 }
 
