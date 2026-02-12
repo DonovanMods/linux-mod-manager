@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 // UpdateProgressFunc is called during update checks with (current 1-based index, total count, mod name).
 // Set via context when running "lmm -v update" to get per-mod progress.
@@ -90,4 +94,70 @@ type Update struct {
 	NewVersion         string
 	Changelog          string
 	FileIDReplacements map[string]string // Old file ID -> new file ID when a file was superseded (e.g. NexusMods FileUpdates)
+}
+
+// ModKey returns a unique lookup key for a mod: "sourceID:modID".
+// Use this instead of ad-hoc string concatenation throughout the codebase.
+func ModKey(sourceID, modID string) string {
+	return sourceID + ":" + modID
+}
+
+// CompareVersions compares two version strings.
+// Returns: -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2.
+// Handles common prefixes (v/V) and pre-release suffixes (e.g. "1.0.0-beta").
+func CompareVersions(v1, v2 string) int {
+	parts1 := parseVersionParts(v1)
+	parts2 := parseVersionParts(v2)
+
+	maxLen := max(len(parts1), len(parts2))
+
+	for i := range maxLen {
+		var p1, p2 int
+		if i < len(parts1) {
+			p1 = parts1[i]
+		}
+		if i < len(parts2) {
+			p2 = parts2[i]
+		}
+		if p1 < p2 {
+			return -1
+		}
+		if p1 > p2 {
+			return 1
+		}
+	}
+
+	return 0
+}
+
+// IsNewerVersion returns true if newVersion is newer than currentVersion.
+func IsNewerVersion(currentVersion, newVersion string) bool {
+	return CompareVersions(currentVersion, newVersion) < 0
+}
+
+// parseVersionParts splits a version string into numeric parts.
+// Strips v/V prefixes and extracts the leading numeric portion of each dotted segment.
+func parseVersionParts(v string) []int {
+	v = strings.TrimPrefix(v, "v")
+	v = strings.TrimPrefix(v, "V")
+
+	parts := strings.Split(v, ".")
+	result := make([]int, 0, len(parts))
+
+	for _, part := range parts {
+		// Find the end of the leading digit run
+		end := 0
+		for end < len(part) && part[end] >= '0' && part[end] <= '9' {
+			end++
+		}
+
+		if end == 0 {
+			result = append(result, 0)
+		} else {
+			n, _ := strconv.Atoi(part[:end])
+			result = append(result, n)
+		}
+	}
+
+	return result
 }

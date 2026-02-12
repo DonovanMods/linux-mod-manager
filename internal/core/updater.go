@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -84,70 +82,14 @@ func (u *Updater) GetAutoUpdateMods(installed []domain.InstalledMod) []domain.In
 	return autoUpdate
 }
 
-// CompareVersions compares two version strings
-// Returns: -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+// CompareVersions delegates to domain.CompareVersions.
+// Kept for backward compatibility with existing callers.
 func CompareVersions(v1, v2 string) int {
-	parts1 := parseVersion(v1)
-	parts2 := parseVersion(v2)
-
-	// Pad to same length
-	maxLen := len(parts1)
-	if len(parts2) > maxLen {
-		maxLen = len(parts2)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		var p1, p2 int
-		if i < len(parts1) {
-			p1 = parts1[i]
-		}
-		if i < len(parts2) {
-			p2 = parts2[i]
-		}
-
-		if p1 < p2 {
-			return -1
-		}
-		if p1 > p2 {
-			return 1
-		}
-	}
-
-	return 0
+	return domain.CompareVersions(v1, v2)
 }
 
-// parseVersion splits a version string into numeric parts
-func parseVersion(v string) []int {
-	// Remove common prefixes
-	v = strings.TrimPrefix(v, "v")
-	v = strings.TrimPrefix(v, "V")
-
-	parts := strings.Split(v, ".")
-	result := make([]int, 0, len(parts))
-
-	for _, part := range parts {
-		// Extract numeric portion (handle things like "1.0.0-beta")
-		numStr := ""
-		for _, c := range part {
-			if c >= '0' && c <= '9' {
-				numStr += string(c)
-			} else {
-				break
-			}
-		}
-
-		if numStr == "" {
-			result = append(result, 0)
-		} else {
-			n, _ := strconv.Atoi(numStr)
-			result = append(result, n)
-		}
-	}
-
-	return result
-}
-
-// IsNewerVersion returns true if newVersion is newer than currentVersion
+// IsNewerVersion delegates to domain.IsNewerVersion.
+// Kept for backward compatibility with existing callers.
 func IsNewerVersion(currentVersion, newVersion string) bool {
-	return CompareVersions(currentVersion, newVersion) < 0
+	return domain.IsNewerVersion(currentVersion, newVersion)
 }
