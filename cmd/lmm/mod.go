@@ -422,7 +422,7 @@ func runModShow(cmd *cobra.Command, args []string) error {
 			SourceURL    string `json:"source_url,omitempty"`
 			PictureURL   string `json:"picture_url,omitempty"`
 			Category     string `json:"category"`
-			Endorsements int64  `json:"endorsements"`
+			Endorsements *int64 `json:"endorsements,omitempty"`
 		}
 		out := modShowJSON{
 			ID:           mod.ID,
@@ -449,8 +449,8 @@ func runModShow(cmd *cobra.Command, args []string) error {
 	if mod.Category != "" {
 		fmt.Printf("Category: %s\n", mod.Category)
 	}
-	if mod.Endorsements > 0 {
-		fmt.Printf("Endorsements: %d\n", mod.Endorsements)
+	if mod.Endorsements != nil {
+		fmt.Printf("Endorsements: %d\n", *mod.Endorsements)
 	}
 	if mod.SourceURL != "" {
 		fmt.Printf("URL: %s\n", mod.SourceURL)

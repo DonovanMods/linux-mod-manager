@@ -321,7 +321,7 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 		Category:     category,
 		Downloads:    data.DownloadCount,
 		SourceURL:    data.Links.WebsiteURL,
-		Endorsements: int64(data.ThumbsUpCount),
+		Endorsements: int64Ptr(int64(data.ThumbsUpCount)),
 		PictureURL:   pictureURL,
 		UpdatedAt:    data.DateModified,
 	}
@@ -374,3 +374,6 @@ func releaseTypeName(releaseType int) string {
 func isNewerVersion(currentVersion, newVersion string) bool {
 	return currentVersion != newVersion && newVersion != ""
 }
+
+// int64Ptr returns a pointer to the given int64 value.
+func int64Ptr(v int64) *int64 { return &v }
