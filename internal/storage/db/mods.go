@@ -9,14 +9,21 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
-// SaveInstalledMod inserts or updates an installed mod record
+// SaveInstalledMod inserts or updates an installed mod record.
+// The mod upsert and file ID replacement are performed atomically within a transaction.
 func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
 	var prevVersion *string
 	if mod.PreviousVersion != "" {
 		prevVersion = &mod.PreviousVersion
 	}
 
-	_, err := d.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, link_method, manual_download, summary, source_url)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id, mod_id, game_id, profile_name) DO UPDATE SET
@@ -36,8 +43,12 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 		return fmt.Errorf("saving installed mod: %w", err)
 	}
 
-	// Save file IDs to separate table
-	return d.replaceModFileIDs(mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.FileIDs)
+	// Replace file IDs within the same transaction
+	if err := replaceModFileIDsTx(tx, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.FileIDs); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // GetInstalledMods returns all installed mods for a game/profile combination
@@ -114,7 +125,7 @@ func (d *DB) getModFileIDsBatch(gameID, profileName string) (out map[string][]st
 		if err := rows.Scan(&sourceID, &modID, &fileID); err != nil {
 			return nil, err
 		}
-		key := sourceID + ":" + modID
+		key := domain.ModKey(sourceID, modID)
 		out[key] = append(out[key], fileID)
 	}
 	return out, rows.Err()
@@ -298,11 +309,17 @@ func (d *DB) SetModFileIDs(sourceID, modID, gameID, profileName string, fileIDs 
 }
 
 // SwapModVersions swaps version and previous_version (for rollback).
-// Uses explicit read-then-write so the swap is correct regardless of SQL evaluation order.
+// The read and write are performed atomically within a transaction.
 func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	var version string
 	var prevVersion *string
-	err := d.QueryRow(`
+	err = tx.QueryRow(`
 		SELECT version, previous_version FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(&version, &prevVersion)
@@ -318,8 +335,7 @@ func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error 
 	}
 	prevVal := *prevVersion
 
-	// Swap: write previous into version and version into previous_version
-	_, err = d.Exec(`
+	_, err = tx.Exec(`
 		UPDATE installed_mods
 		SET version = ?, previous_version = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
@@ -328,7 +344,7 @@ func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error 
 		return fmt.Errorf("swapping mod versions: %w", err)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 // FileWithChecksum represents a file record with its checksum
@@ -402,10 +418,29 @@ func (d *DB) GetFilesWithChecksums(gameID, profileName string) (files []FileWith
 	return files, rows.Err()
 }
 
-// replaceModFileIDs replaces all file IDs for a mod with new ones
+// execer abstracts *sql.DB and *sql.Tx for running SQL statements.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// replaceModFileIDs replaces all file IDs for a mod within a new transaction.
 func (d *DB) replaceModFileIDs(sourceID, modID, gameID, profileName string, fileIDs []string) error {
-	// Delete existing file IDs
-	_, err := d.Exec(`
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if err := replaceModFileIDsTx(tx, sourceID, modID, gameID, profileName, fileIDs); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// replaceModFileIDsTx performs the DELETE + INSERT within an existing transaction/execer.
+func replaceModFileIDsTx(e execer, sourceID, modID, gameID, profileName string, fileIDs []string) error {
+	_, err := e.Exec(`
 		DELETE FROM installed_mod_files
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName)
@@ -413,12 +448,11 @@ func (d *DB) replaceModFileIDs(sourceID, modID, gameID, profileName string, file
 		return fmt.Errorf("clearing mod file IDs: %w", err)
 	}
 
-	// Insert new file IDs
 	for _, fileID := range fileIDs {
 		if fileID == "" {
 			continue
 		}
-		_, err = d.Exec(`
+		_, err = e.Exec(`
 			INSERT INTO installed_mod_files (source_id, mod_id, game_id, profile_name, file_id)
 			VALUES (?, ?, ?, ?, ?)
 		`, sourceID, modID, gameID, profileName, fileID)
