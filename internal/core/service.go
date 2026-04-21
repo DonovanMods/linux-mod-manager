@@ -203,15 +203,28 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 
 	// Extract to cache location
 	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	stagePath := cachePath + ".staging"
+	if err := os.RemoveAll(stagePath); err != nil {
+		return nil, fmt.Errorf("clearing staging cache: %w", err)
+	}
+	defer os.RemoveAll(stagePath) //nolint:errcheck
+	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		if err := copyDir(cachePath, stagePath); err != nil {
+			return nil, fmt.Errorf("staging existing cache: %w", err)
+		}
+	}
 	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(file.FileName) {
 		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
 		// Or not an archive - just copy to cache
-		if err := os.MkdirAll(cachePath, 0755); err != nil {
+		if err := os.MkdirAll(stagePath, 0755); err != nil {
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
-		destPath := filepath.Join(cachePath, file.FileName)
+		destPath := filepath.Join(stagePath, file.FileName)
 		if err := copyFileStreaming(archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
+		}
+		if err := commitStagedCache(cachePath, stagePath); err != nil {
+			return nil, err
 		}
 		return &DownloadModResult{
 			FilesExtracted: 1,
@@ -219,8 +232,11 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 		}, nil
 	}
 
-	if err := s.extractor.Extract(archivePath, cachePath); err != nil {
+	if err := s.extractor.Extract(archivePath, stagePath); err != nil {
 		return nil, fmt.Errorf("extracting mod: %w", err)
+	}
+	if err := commitStagedCache(cachePath, stagePath); err != nil {
+		return nil, err
 	}
 
 	// Count extracted files
@@ -233,6 +249,33 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 		FilesExtracted: len(files),
 		Checksum:       downloadResult.Checksum,
 	}, nil
+}
+
+func commitStagedCache(cachePath, stagePath string) error {
+	parentDir := filepath.Dir(cachePath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return fmt.Errorf("creating cache parent directory: %w", err)
+	}
+
+	backupPath := cachePath + ".backup"
+	if err := os.RemoveAll(backupPath); err != nil {
+		return fmt.Errorf("clearing cache backup: %w", err)
+	}
+	if _, err := os.Stat(cachePath); err == nil {
+		if err := os.Rename(cachePath, backupPath); err != nil {
+			return fmt.Errorf("backing up existing cache: %w", err)
+		}
+	}
+	if err := os.Rename(stagePath, cachePath); err != nil {
+		if _, statErr := os.Stat(backupPath); statErr == nil {
+			_ = os.Rename(backupPath, cachePath)
+		}
+		return fmt.Errorf("activating staged cache: %w", err)
+	}
+	if err := os.RemoveAll(backupPath); err != nil {
+		return fmt.Errorf("removing old cache backup: %w", err)
+	}
+	return nil
 }
 
 // GetGame retrieves a game by ID
@@ -382,6 +425,11 @@ func (s *Service) IsSourceAuthenticated(sourceID string) bool {
 // UpdateModVersion updates the version of an installed mod, preserving the previous version for rollback
 func (s *Service) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion string) error {
 	return s.db.UpdateModVersion(sourceID, modID, gameID, profileName, newVersion)
+}
+
+// ApplyModUpdate updates version and file IDs atomically, preserving rollback state.
+func (s *Service) ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
+	return s.db.ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion, fileIDs)
 }
 
 // RollbackModVersion reverts a mod to its previous version

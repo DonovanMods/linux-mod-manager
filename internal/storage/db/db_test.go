@@ -199,6 +199,43 @@ func TestSwapModVersions(t *testing.T) {
 	assert.Equal(t, "2.0.0", retrieved.PreviousVersion)
 }
 
+func TestApplyModUpdateAndRollbackRestoresFileIDs(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName: "default",
+		FileIDs:     []string{"old-main", "old-patch"},
+	}
+	require.NoError(t, database.SaveInstalledMod(mod))
+
+	require.NoError(t, database.ApplyModUpdate("nexusmods", "12345", "skyrim-se", "default", "2.0.0", []string{"new-main"}))
+
+	updated, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0.0", updated.Version)
+	assert.Equal(t, "1.0.0", updated.PreviousVersion)
+	assert.Equal(t, []string{"new-main"}, updated.FileIDs)
+	assert.Equal(t, []string{"old-main", "old-patch"}, updated.PreviousFileIDs)
+
+	require.NoError(t, database.SwapModVersions("nexusmods", "12345", "skyrim-se", "default"))
+
+	rolledBack, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.0", rolledBack.Version)
+	assert.Equal(t, "2.0.0", rolledBack.PreviousVersion)
+	assert.Equal(t, []string{"old-main", "old-patch"}, rolledBack.FileIDs)
+	assert.Equal(t, []string{"new-main"}, rolledBack.PreviousFileIDs)
+}
+
 func TestSwapModVersions_NoPreviousVersion(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)

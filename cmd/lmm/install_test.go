@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestInstallCmd_Structure tests the install command structure
@@ -255,6 +258,25 @@ func TestPromptMultiSelection_Cancel(t *testing.T) {
 			assert.Nil(t, selections, "cancel should return nil selections")
 		})
 	}
+}
+
+func TestReinstallCacheSnapshot_RollbackRestoresOriginalCache(t *testing.T) {
+	liveCache := cache.New(t.TempDir())
+	require.NoError(t, liveCache.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "main.esp", []byte("main")))
+	require.NoError(t, liveCache.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "optional.esp", []byte("optional")))
+
+	snapshot, err := prepareReinstallCacheSnapshot(liveCache, "skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+
+	require.NoError(t, liveCache.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "main.esp", []byte("new-main")))
+	require.NoError(t, snapshot.Rollback())
+
+	files, err := liveCache.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"main.esp", "optional.esp"}, files)
+
+	_, err = os.Stat(snapshot.tempDir)
+	assert.True(t, os.IsNotExist(err), "snapshot temp dir should be cleaned up")
 }
 
 // TestPromptMultiSelection_Default tests that empty input returns default choice

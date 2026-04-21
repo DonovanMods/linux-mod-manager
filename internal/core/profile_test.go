@@ -356,7 +356,8 @@ func TestProfileManager_Switch_UndeployFailure_Rollback(t *testing.T) {
 	assert.Contains(t, err.Error(), "profile switch failed")
 	assert.Contains(t, err.Error(), "undeploy nexusmods:222")
 
-	// Rollback redeploys only mods 0..i-1 (A). Mod B was never undeployed, so must not be redeployed.
+	// Rollback must restore the current profile completely, including the mod
+	// whose undeploy failed after partially mutating its files.
 	def, _ := pm.GetDefault("skyrim-se")
 	require.NotNil(t, def)
 	assert.Equal(t, "profile1", def.Name)
@@ -364,7 +365,7 @@ func TestProfileManager_Switch_UndeployFailure_Rollback(t *testing.T) {
 	require.NoError(t, err, "A should be redeployed")
 	infoB, err := os.Lstat(deployedB)
 	require.NoError(t, err)
-	assert.False(t, infoB.Mode()&os.ModeSymlink != 0, "B must still be regular file (never undeployed, rollback must not redeploy it)")
+	assert.True(t, infoB.Mode()&os.ModeSymlink != 0, "B should be restored to the original symlink deployment")
 }
 
 func TestProfileManager_Switch_OverridesFailure_Rollback(t *testing.T) {

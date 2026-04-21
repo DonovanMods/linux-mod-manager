@@ -13,6 +13,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 )
@@ -433,23 +434,22 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
 	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+	var reinstallSnapshot *reinstallCacheSnapshot
 
-	// Check if mod is already installed - if so, uninstall old files first
+	// Check if mod is already installed so we can replace it atomically later.
 	existingMod, err := service.GetInstalledMod(installSource, mod.ID, gameID, profileName)
-	if err == nil && existingMod != nil {
-		fmt.Println("\nRemoving previous installation...")
-		// Uninstall using the OLD version info to remove correct files
-		if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: could not remove old files: %v\n", err)
-			}
+	if err != nil {
+		existingMod = nil
+	} else if existingMod.Version == mod.Version {
+		reinstallSnapshot, err = prepareReinstallCacheSnapshot(service.GetGameCache(game), gameID, existingMod.SourceID, existingMod.ID, existingMod.Version)
+		if err != nil {
+			return fmt.Errorf("preparing reinstall cache: %w", err)
 		}
-		// Delete old cache for this mod/version to ensure clean slate
-		if err := service.GetGameCache(game).Delete(gameID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: could not clear old cache: %v\n", err)
+		defer func() {
+			if reinstallSnapshot != nil {
+				_ = reinstallSnapshot.Rollback()
 			}
-		}
+		}()
 	}
 
 	// Download each selected file
@@ -559,7 +559,17 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	// Deploy to game directory
 	fmt.Println("Deploying to game directory...")
 
-	if err := installer.Install(ctx, game, mod, profileName); err != nil {
+	if existingMod != nil {
+		var replaceErr error
+		if reinstallSnapshot != nil {
+			replaceErr = installer.ReplaceWithOldCache(ctx, game, reinstallSnapshot.snapshot, &existingMod.Mod, mod, profileName)
+		} else {
+			replaceErr = installer.Replace(ctx, game, &existingMod.Mod, mod, profileName)
+		}
+		if replaceErr != nil {
+			return fmt.Errorf("deployment failed: %w", replaceErr)
+		}
+	} else if err := installer.Install(ctx, game, mod, profileName); err != nil {
 		return fmt.Errorf("deployment failed: %w", err)
 	}
 
@@ -575,7 +585,22 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+		if existingMod != nil {
+			if reinstallSnapshot != nil {
+				_ = installer.ReplaceWithOldCache(ctx, game, reinstallSnapshot.snapshot, mod, &existingMod.Mod, profileName)
+			} else {
+				_ = installer.Replace(ctx, game, mod, &existingMod.Mod, profileName)
+			}
+		} else {
+			_ = installer.Uninstall(ctx, game, mod, profileName)
+		}
 		return fmt.Errorf("failed to save mod: %w", err)
+	}
+	if reinstallSnapshot != nil {
+		if err := reinstallSnapshot.Commit(); err != nil && verbose {
+			fmt.Printf("  Warning: could not finalize reinstall cache snapshot: %v\n", err)
+		}
+		reinstallSnapshot = nil
 	}
 
 	// Store checksums in database
@@ -615,6 +640,12 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if existingMod != nil && existingMod.Version != mod.Version {
+		if err := service.GetGameCache(game).Delete(gameID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
+			fmt.Printf("  Warning: could not clear old cache: %v\n", err)
+		}
+	}
+
 	// Run install.after_each hook
 	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
 		hookCtx.HookName = "install.after_each"
@@ -645,6 +676,65 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Added to profile: %s\n", profileName)
 
 	return nil
+}
+
+type reinstallCacheSnapshot struct {
+	live     *cache.Cache
+	snapshot *cache.Cache
+	tempDir  string
+	gameID   string
+	sourceID string
+	modID    string
+	version  string
+}
+
+func prepareReinstallCacheSnapshot(live *cache.Cache, gameID, sourceID, modID, version string) (*reinstallCacheSnapshot, error) {
+	tempDir, err := os.MkdirTemp("", "lmm-reinstall-cache-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating cache snapshot: %w", err)
+	}
+	snapshot := cache.New(tempDir)
+	if err := live.CloneMod(snapshot, gameID, sourceID, modID, version); err != nil {
+		_ = os.RemoveAll(tempDir)
+		return nil, fmt.Errorf("snapshotting existing cache: %w", err)
+	}
+	if err := live.Delete(gameID, sourceID, modID, version); err != nil {
+		_ = os.RemoveAll(tempDir)
+		return nil, fmt.Errorf("preparing clean reinstall cache: %w", err)
+	}
+	return &reinstallCacheSnapshot{
+		live:     live,
+		snapshot: snapshot,
+		tempDir:  tempDir,
+		gameID:   gameID,
+		sourceID: sourceID,
+		modID:    modID,
+		version:  version,
+	}, nil
+}
+
+func (s *reinstallCacheSnapshot) Rollback() error {
+	if s == nil {
+		return nil
+	}
+	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
+		return err
+	}
+	if err := s.snapshot.CloneMod(s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
+		return err
+	}
+	err := os.RemoveAll(s.tempDir)
+	*s = reinstallCacheSnapshot{}
+	return err
+}
+
+func (s *reinstallCacheSnapshot) Commit() error {
+	if s == nil {
+		return nil
+	}
+	err := os.RemoveAll(s.tempDir)
+	*s = reinstallCacheSnapshot{}
+	return err
 }
 
 // promptMultiSelection prompts the user to select one or more numbers

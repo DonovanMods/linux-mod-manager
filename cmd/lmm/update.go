@@ -425,24 +425,6 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	linker := service.GetLinker(linkMethod)
 	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
 
-	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
-		// Log but continue - files may have been manually removed
-		if verbose {
-			fmt.Printf("  Warning: failed to undeploy old version: %v\n", err)
-		}
-	}
-
-	// Run uninstall.after_each hook (after uninstalling old version)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
-		hookCtx.HookName = "uninstall.after_each"
-		hookCtx.ModID = mod.ID
-		hookCtx.ModName = mod.Name
-		hookCtx.ModVersion = mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed: %w", err))
-		}
-	}
-
 	// Run install.before_each hook (before installing new version)
 	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
 		hookCtx.HookName = "install.before_each"
@@ -457,9 +439,20 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		}
 	}
 
-	// Deploy new version
-	if err := installer.Install(ctx, game, newMod, profileName); err != nil {
+	// Replace old version with the new version.
+	if err := installer.Replace(ctx, game, &mod.Mod, newMod, profileName); err != nil {
 		return fmt.Errorf("deploying update: %w", err)
+	}
+
+	// Run uninstall.after_each hook (after old files are no longer the active deployment)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
+		hookCtx.HookName = "uninstall.after_each"
+		hookCtx.ModID = mod.ID
+		hookCtx.ModName = mod.Name
+		hookCtx.ModVersion = mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed: %w", err))
+		}
 	}
 
 	// Run install.after_each hook (after installing new version)
@@ -476,8 +469,9 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	// Print hook warnings
 	printHookWarnings(hookErrors)
 
-	// Update database (preserves previous version for rollback)
-	if err := service.UpdateModVersion(mod.SourceID, mod.ID, game.ID, profileName, newVersion); err != nil {
+	// Update database (preserves rollback state and file IDs atomically).
+	if err := service.ApplyModUpdate(mod.SourceID, mod.ID, game.ID, profileName, newVersion, downloadedFileIDs); err != nil {
+		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName)
 		return fmt.Errorf("updating database: %w", err)
 	}
 
@@ -485,13 +479,6 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	if err := service.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
 		if verbose {
 			fmt.Printf("  Warning: could not update link method: %v\n", err)
-		}
-	}
-
-	// Update FileIDs in database
-	if err := service.SetModFileIDs(mod.SourceID, mod.ID, game.ID, profileName, downloadedFileIDs); err != nil {
-		if verbose {
-			fmt.Printf("  Warning: could not update file IDs: %v\n", err)
 		}
 	}
 
@@ -504,9 +491,9 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		FileIDs:  downloadedFileIDs,
 	}
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-		if verbose {
-			fmt.Printf("  Warning: could not update profile: %v\n", err)
-		}
+		_ = service.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)
+		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName)
+		return fmt.Errorf("updating profile: %w", err)
 	}
 
 	return nil
@@ -587,23 +574,6 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	linker := service.GetLinker(linkMethod)
 	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
 
-	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
-		if verbose {
-			fmt.Printf("  Warning: failed to undeploy current version: %v\n", err)
-		}
-	}
-
-	// Run uninstall.after_each hook (after uninstalling current version)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
-		hookCtx.HookName = "uninstall.after_each"
-		hookCtx.ModID = mod.ID
-		hookCtx.ModName = mod.Name
-		hookCtx.ModVersion = mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed: %w", err))
-		}
-	}
-
 	// Deploy previous version
 	prevMod := mod.Mod
 	prevMod.Version = mod.PreviousVersion
@@ -622,8 +592,19 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := installer.Install(ctx, game, &prevMod, profileName); err != nil {
+	if err := installer.Replace(ctx, game, &mod.Mod, &prevMod, profileName); err != nil {
 		return fmt.Errorf("deploying previous version: %w", err)
+	}
+
+	// Run uninstall.after_each hook (after current version is no longer active)
+	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
+		hookCtx.HookName = "uninstall.after_each"
+		hookCtx.ModID = mod.ID
+		hookCtx.ModName = mod.Name
+		hookCtx.ModVersion = mod.Version
+		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
+			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed: %w", err))
+		}
 	}
 
 	// Run install.after_each hook (after installing previous version)
@@ -642,6 +623,7 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 
 	// Swap versions in database
 	if err := service.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName); err != nil {
+		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName)
 		return fmt.Errorf("updating database: %w", err)
 	}
 
@@ -650,6 +632,22 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 		if verbose {
 			fmt.Printf("  Warning: could not update link method: %v\n", err)
 		}
+	}
+
+	rolledBackMod, err := service.GetInstalledMod(mod.SourceID, mod.ID, game.ID, profileName)
+	if err != nil {
+		return fmt.Errorf("reloading rolled back mod: %w", err)
+	}
+	pm := getProfileManager(service)
+	if err := pm.UpsertMod(game.ID, profileName, domain.ModReference{
+		SourceID: rolledBackMod.SourceID,
+		ModID:    rolledBackMod.ID,
+		Version:  rolledBackMod.Version,
+		FileIDs:  rolledBackMod.FileIDs,
+	}); err != nil {
+		_ = service.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)
+		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName)
+		return fmt.Errorf("updating profile: %w", err)
 	}
 
 	fmt.Printf("\n✓ Rolled back: %s %s → %s\n", mod.Name, mod.Version, mod.PreviousVersion)

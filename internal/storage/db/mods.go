@@ -2,12 +2,35 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
+
+func encodeFileIDs(fileIDs []string) (string, error) {
+	if len(fileIDs) == 0 {
+		return "[]", nil
+	}
+	data, err := json.Marshal(fileIDs)
+	if err != nil {
+		return "", fmt.Errorf("encoding file IDs: %w", err)
+	}
+	return string(data), nil
+}
+
+func decodeFileIDs(raw *string) ([]string, error) {
+	if raw == nil || *raw == "" {
+		return nil, nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(*raw), &out); err != nil {
+		return nil, fmt.Errorf("decoding file IDs: %w", err)
+	}
+	return out, nil
+}
 
 // SaveInstalledMod inserts or updates an installed mod record.
 // The mod upsert and file ID replacement are performed atomically within a transaction.
@@ -22,10 +45,14 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 	if mod.PreviousVersion != "" {
 		prevVersion = &mod.PreviousVersion
 	}
+	prevFileIDs, err := encodeFileIDs(mod.PreviousFileIDs)
+	if err != nil {
+		return err
+	}
 
 	_, err = tx.Exec(`
-		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, link_method, manual_download, summary, source_url)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id, mod_id, game_id, profile_name) DO UPDATE SET
 			name = excluded.name,
 			version = excluded.version,
@@ -34,11 +61,12 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 			enabled = excluded.enabled,
 			deployed = excluded.deployed,
 			previous_version = excluded.previous_version,
+			previous_file_ids = excluded.previous_file_ids,
 			link_method = excluded.link_method,
 			manual_download = excluded.manual_download,
 			summary = excluded.summary,
 			source_url = excluded.source_url
-	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, time.Now(), prevVersion, mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL)
+	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, time.Now(), prevVersion, prevFileIDs, mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL)
 	if err != nil {
 		return fmt.Errorf("saving installed mod: %w", err)
 	}
@@ -54,7 +82,7 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 // GetInstalledMods returns all installed mods for a game/profile combination
 func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.InstalledMod, err error) {
 	rows, err := d.Query(`
-		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, link_method, manual_download, summary, source_url
+		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url
 		FROM installed_mods
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY installed_at ASC
@@ -71,10 +99,11 @@ func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.Install
 	for rows.Next() {
 		var mod domain.InstalledMod
 		var prevVersion *string
+		var prevFileIDs *string
 		err := rows.Scan(
 			&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 			&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
-			&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &mod.LinkMethod, &mod.ManualDownload,
+			&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
 			&mod.Summary, &mod.SourceURL,
 		)
 		if err != nil {
@@ -82,6 +111,10 @@ func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.Install
 		}
 		if prevVersion != nil {
 			mod.PreviousVersion = *prevVersion
+		}
+		mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
+		if err != nil {
+			return nil, err
 		}
 		mods = append(mods, mod)
 	}
@@ -207,16 +240,17 @@ func (d *DB) SetModDeployed(sourceID, modID, gameID, profileName string, deploye
 func (d *DB) GetInstalledMod(sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
 	var mod domain.InstalledMod
 	var prevVersion *string
+	var prevFileIDs *string
 	err := d.QueryRow(`
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author,
-		       update_policy, enabled, deployed, installed_at, previous_version, link_method, manual_download,
+		       update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download,
 		       summary, source_url
 		FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(
 		&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 		&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
-		&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &mod.LinkMethod, &mod.ManualDownload,
+		&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
 		&mod.Summary, &mod.SourceURL,
 	)
 	if err != nil {
@@ -228,6 +262,10 @@ func (d *DB) GetInstalledMod(sourceID, modID, gameID, profileName string) (*doma
 
 	if prevVersion != nil {
 		mod.PreviousVersion = *prevVersion
+	}
+	mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	// Fetch file IDs
@@ -266,13 +304,46 @@ func (d *DB) GetModFileIDs(sourceID, modID, gameID, profileName string) (fileIDs
 	return fileIDs, rows.Err()
 }
 
-// UpdateModVersion updates a mod's version, preserving the previous version for rollback
+func getModFileIDsTx(tx *sql.Tx, sourceID, modID, gameID, profileName string) (fileIDs []string, err error) {
+	rows, err := tx.Query(`
+		SELECT file_id FROM installed_mod_files
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("querying mod file IDs: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = fmt.Errorf("closing rows: %w", cerr)
+		}
+	}()
+
+	for rows.Next() {
+		var fileID string
+		if err := rows.Scan(&fileID); err != nil {
+			return nil, fmt.Errorf("scanning file ID: %w", err)
+		}
+		fileIDs = append(fileIDs, fileID)
+	}
+
+	return fileIDs, rows.Err()
+}
+
+// UpdateModVersion updates a mod's version, preserving the previous version and file IDs for rollback.
 func (d *DB) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion string) error {
+	currentFileIDs, err := d.GetModFileIDs(sourceID, modID, gameID, profileName)
+	if err != nil {
+		return err
+	}
+	prevFileIDs, err := encodeFileIDs(currentFileIDs)
+	if err != nil {
+		return err
+	}
 	result, err := d.Exec(`
 		UPDATE installed_mods
-		SET previous_version = version, version = ?
+		SET previous_version = version, previous_file_ids = ?, version = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, newVersion, sourceID, modID, gameID, profileName)
+	`, prevFileIDs, newVersion, sourceID, modID, gameID, profileName)
 	if err != nil {
 		return fmt.Errorf("updating mod version: %w", err)
 	}
@@ -308,8 +379,53 @@ func (d *DB) SetModFileIDs(sourceID, modID, gameID, profileName string, fileIDs 
 	return d.replaceModFileIDs(sourceID, modID, gameID, profileName, fileIDs)
 }
 
+// ApplyModUpdate updates version and file IDs atomically while preserving rollback state.
+func (d *DB) ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion string, newFileIDs []string) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var currentVersion string
+	err = tx.QueryRow(`
+		SELECT version FROM installed_mods
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, sourceID, modID, gameID, profileName).Scan(&currentVersion)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrModNotFound
+		}
+		return fmt.Errorf("checking current version: %w", err)
+	}
+
+	currentFileIDs, err := getModFileIDsTx(tx, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return err
+	}
+	prevFileIDs, err := encodeFileIDs(currentFileIDs)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`
+		UPDATE installed_mods
+		SET previous_version = ?, previous_file_ids = ?, version = ?
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, currentVersion, prevFileIDs, newVersion, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("updating mod version: %w", err)
+	}
+
+	if err := replaceModFileIDsTx(tx, sourceID, modID, gameID, profileName, newFileIDs); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // SwapModVersions swaps version and previous_version (for rollback).
-// The read and write are performed atomically within a transaction.
+// The read/write and file ID restoration are performed atomically within a transaction.
 func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error {
 	tx, err := d.Begin()
 	if err != nil {
@@ -319,10 +435,11 @@ func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error 
 
 	var version string
 	var prevVersion *string
+	var prevFileIDsRaw *string
 	err = tx.QueryRow(`
-		SELECT version, previous_version FROM installed_mods
+		SELECT version, previous_version, previous_file_ids FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, sourceID, modID, gameID, profileName).Scan(&version, &prevVersion)
+	`, sourceID, modID, gameID, profileName).Scan(&version, &prevVersion, &prevFileIDsRaw)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.ErrModNotFound
@@ -334,14 +451,29 @@ func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error 
 		return fmt.Errorf("no previous version available for rollback")
 	}
 	prevVal := *prevVersion
+	prevFileIDs, err := decodeFileIDs(prevFileIDsRaw)
+	if err != nil {
+		return err
+	}
+	currentFileIDs, err := getModFileIDsTx(tx, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return err
+	}
+	currentFileIDsRaw, err := encodeFileIDs(currentFileIDs)
+	if err != nil {
+		return err
+	}
 
 	_, err = tx.Exec(`
 		UPDATE installed_mods
-		SET version = ?, previous_version = ?
+		SET version = ?, previous_version = ?, previous_file_ids = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
-	`, prevVal, version, sourceID, modID, gameID, profileName)
+	`, prevVal, version, currentFileIDsRaw, sourceID, modID, gameID, profileName)
 	if err != nil {
 		return fmt.Errorf("swapping mod versions: %w", err)
+	}
+	if err := replaceModFileIDsTx(tx, sourceID, modID, gameID, profileName, prevFileIDs); err != nil {
+		return err
 	}
 
 	return tx.Commit()
