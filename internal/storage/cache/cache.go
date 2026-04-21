@@ -3,6 +3,7 @@ package cache
 import (
 	"fmt"
 	"io/fs"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -103,6 +104,25 @@ func (c *Cache) GetFilePath(gameID, sourceID, modID, version, relativePath strin
 	return filepath.Join(c.ModPath(gameID, sourceID, modID, version), relativePath)
 }
 
+// CloneMod copies a cached mod version into another cache.
+func (c *Cache) CloneMod(dest *Cache, gameID, sourceID, modID, version string) error {
+	files, err := c.ListFiles(gameID, sourceID, modID, version)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		srcPath := c.GetFilePath(gameID, sourceID, modID, version, file)
+		dstPath := dest.GetFilePath(gameID, sourceID, modID, version, file)
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+			return fmt.Errorf("creating destination dir: %w", err)
+		}
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Size returns the total size of cached files for a mod version
 func (c *Cache) Size(gameID, sourceID, modID, version string) (int64, error) {
 	modPath := c.ModPath(gameID, sourceID, modID, version)
@@ -128,4 +148,28 @@ func (c *Cache) Size(gameID, sourceID, modID, version string) (int64, error) {
 	}
 
 	return totalSize, nil
+}
+
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("opening source: %w", err)
+	}
+	defer srcFile.Close()
+
+	srcInfo, err := srcFile.Stat()
+	if err != nil {
+		return fmt.Errorf("stat source: %w", err)
+	}
+
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
+	if err != nil {
+		return fmt.Errorf("creating destination: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("copying file: %w", err)
+	}
+	return nil
 }

@@ -240,7 +240,7 @@ func (pm *ProfileManager) Switch(ctx context.Context, game *domain.Game, newProf
 	if hadCurrentProfile && currentProfile.Name != newProfileName && len(currentProfile.Mods) > 0 {
 		for i, modRef := range currentProfile.Mods {
 			if err := pm.undeployModRefFailFast(ctx, game, modRef); err != nil {
-				rollbackErr := pm.rollbackRedeploy(ctx, game, currentProfile.Mods[:i])
+				rollbackErr := pm.rollbackRedeploy(ctx, game, currentProfile.Mods[:i+1])
 				return joinSwitchErr(fmt.Errorf("undeploy %s:%s: %w", modRef.SourceID, modRef.ModID, err), rollbackErr)
 			}
 		}
@@ -369,6 +369,7 @@ func (pm *ProfileManager) deployMod(ctx context.Context, game *domain.Game, modR
 		return fmt.Errorf("listing cached files: %w", err)
 	}
 
+	var deployed []string
 	// Deploy each file
 	for _, file := range files {
 		select {
@@ -381,8 +382,12 @@ func (pm *ProfileManager) deployMod(ctx context.Context, game *domain.Game, modR
 		dstPath := filepath.Join(game.ModPath, file)
 
 		if err := pm.linker.Deploy(srcPath, dstPath); err != nil {
+			for j := len(deployed) - 1; j >= 0; j-- {
+				_ = pm.linker.Undeploy(filepath.Join(game.ModPath, deployed[j]))
+			}
 			return fmt.Errorf("deploying %s: %w", file, err)
 		}
+		deployed = append(deployed, file)
 	}
 
 	return nil

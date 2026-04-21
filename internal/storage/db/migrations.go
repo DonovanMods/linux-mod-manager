@@ -31,6 +31,7 @@ func (d *DB) migrate() error {
 		migrateV7,
 		migrateV8,
 		migrateV9,
+		migrateV10,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -171,4 +172,9 @@ func migrateV9(d *DB) error {
 		}
 	}
 	return nil
+}
+
+func migrateV10(d *DB) error {
+	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN previous_file_ids TEXT DEFAULT '[]'`)
+	return err
 }

@@ -97,3 +97,19 @@ func TestCache_Exists_ListFiles_GameScoped(t *testing.T) {
 	assert.Len(t, files, 1)
 	assert.Equal(t, "file.pak", files[0])
 }
+
+func TestCache_CloneMod(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+	src := cache.New(srcDir)
+	dst := cache.New(dstDir)
+
+	require.NoError(t, src.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "main.esp", []byte("main")))
+	require.NoError(t, src.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "optional/patch.esp", []byte("patch")))
+
+	require.NoError(t, src.CloneMod(dst, "skyrim-se", "nexusmods", "12345", "1.0.0"))
+
+	files, err := dst.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"main.esp", "optional/patch.esp"}, files)
+}

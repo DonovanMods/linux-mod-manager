@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -355,6 +356,23 @@ func (f *failingLinker) Deploy(src, dst string) error {
 	return f.Linker.Deploy(src, dst)
 }
 
+type conditionalFailingLinker struct {
+	linker.Linker
+	failSrcSubstring string
+	failAfter        int
+	matches          int
+}
+
+func (f *conditionalFailingLinker) Deploy(src, dst string) error {
+	if strings.Contains(src, f.failSrcSubstring) {
+		f.matches++
+		if f.matches > f.failAfter {
+			return fmt.Errorf("simulated deploy failure")
+		}
+	}
+	return f.Linker.Deploy(src, dst)
+}
+
 func TestInstaller_Install_DeployFailureRollsBackAndClearsDB(t *testing.T) {
 	// When Deploy fails after some files are deployed, roll back all deployed
 	// files and clear DB records so disk and DB stay consistent.
@@ -389,6 +407,77 @@ func TestInstaller_Install_DeployFailureRollsBackAndClearsDB(t *testing.T) {
 	paths, err := database.GetDeployedFilesForMod("g", "default", "src", "1")
 	require.NoError(t, err)
 	assert.Empty(t, paths, "DB should have no deployed file records for this mod")
+}
+
+func TestInstaller_Replace_DeployFailureRestoresOldFiles(t *testing.T) {
+	cacheDir := t.TempDir()
+	gameDir := t.TempDir()
+
+	modCache := cache.New(cacheDir)
+	require.NoError(t, modCache.Store("g", "src", "mod", "old", "same.esp", []byte("old-same")))
+	require.NoError(t, modCache.Store("g", "src", "mod", "old", "old-only.esp", []byte("old-only")))
+	require.NoError(t, modCache.Store("g", "src", "mod", "new", "same.esp", []byte("new-same")))
+	require.NoError(t, modCache.Store("g", "src", "mod", "new", "new-only.esp", []byte("new-only")))
+
+	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	oldMod := &domain.Mod{ID: "mod", SourceID: "src", Version: "old", GameID: "g"}
+	newMod := &domain.Mod{ID: "mod", SourceID: "src", Version: "new", GameID: "g"}
+
+	baseLinker := linker.New(domain.LinkSymlink)
+	initialInstaller := core.NewInstaller(modCache, baseLinker, nil)
+	require.NoError(t, initialInstaller.Install(context.Background(), game, oldMod, "default"))
+
+	lnk := &conditionalFailingLinker{
+		Linker:           linker.New(domain.LinkSymlink),
+		failSrcSubstring: string(filepath.Separator) + "new" + string(filepath.Separator),
+		failAfter:        1,
+	}
+	installer := core.NewInstaller(modCache, lnk, nil)
+	err := installer.Replace(context.Background(), game, oldMod, newMod, "default")
+	require.Error(t, err)
+
+	samePath := filepath.Join(gameDir, "same.esp")
+	oldOnlyPath := filepath.Join(gameDir, "old-only.esp")
+	newOnlyPath := filepath.Join(gameDir, "new-only.esp")
+
+	sameTarget, err := os.Readlink(samePath)
+	require.NoError(t, err)
+	assert.Equal(t, modCache.GetFilePath("g", "src", "mod", "old", "same.esp"), sameTarget)
+
+	oldOnlyTarget, err := os.Readlink(oldOnlyPath)
+	require.NoError(t, err)
+	assert.Equal(t, modCache.GetFilePath("g", "src", "mod", "old", "old-only.esp"), oldOnlyTarget)
+
+	_, err = os.Lstat(newOnlyPath)
+	assert.True(t, os.IsNotExist(err), "new-only file should not remain after rollback")
+}
+
+func TestInstaller_ReplaceWithOldCache_SameVersionRemovesStaleFiles(t *testing.T) {
+	oldCacheDir := t.TempDir()
+	newCacheDir := t.TempDir()
+	gameDir := t.TempDir()
+
+	oldCache := cache.New(oldCacheDir)
+	newCache := cache.New(newCacheDir)
+	require.NoError(t, oldCache.Store("g", "src", "mod", "1.0", "main.esp", []byte("old-main")))
+	require.NoError(t, oldCache.Store("g", "src", "mod", "1.0", "optional.esp", []byte("old-optional")))
+	require.NoError(t, newCache.Store("g", "src", "mod", "1.0", "main.esp", []byte("new-main")))
+
+	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
+
+	initialInstaller := core.NewInstaller(oldCache, linker.New(domain.LinkSymlink), nil)
+	require.NoError(t, initialInstaller.Install(context.Background(), game, mod, "default"))
+
+	installer := core.NewInstaller(newCache, linker.New(domain.LinkSymlink), nil)
+	require.NoError(t, installer.ReplaceWithOldCache(context.Background(), game, oldCache, mod, mod, "default"))
+
+	mainTarget, err := os.Readlink(filepath.Join(gameDir, "main.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, newCache.GetFilePath("g", "src", "mod", "1.0", "main.esp"), mainTarget)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "optional.esp"))
+	assert.True(t, os.IsNotExist(err), "stale optional file should be removed")
 }
 
 func TestGetConflicts(t *testing.T) {

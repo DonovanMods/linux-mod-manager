@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -81,6 +82,150 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		}
 	}
 
+	return nil
+}
+
+// Replace swaps an existing deployment with a new cached version and restores
+// the old files if the replacement fails.
+func (i *Installer) Replace(ctx context.Context, game *domain.Game, oldMod, newMod *domain.Mod, profileName string) error {
+	return i.replaceWithCaches(ctx, game, i.cache, i.cache, oldMod, newMod, profileName)
+}
+
+// ReplaceWithCaches swaps an existing deployment using explicit old and new caches.
+func (i *Installer) ReplaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
+	return i.replaceWithCaches(ctx, game, oldCache, newCache, oldMod, newMod, profileName)
+}
+
+// ReplaceWithOldCache swaps an existing deployment using an alternate cache
+// snapshot for the old version.
+func (i *Installer) ReplaceWithOldCache(ctx context.Context, game *domain.Game, oldCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
+	return i.replaceWithCaches(ctx, game, oldCache, i.cache, oldMod, newMod, profileName)
+}
+
+func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
+	if !oldCache.Exists(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version) {
+		return fmt.Errorf("old mod not in cache: %s/%s@%s", oldMod.SourceID, oldMod.ID, oldMod.Version)
+	}
+	if !newCache.Exists(game.ID, newMod.SourceID, newMod.ID, newMod.Version) {
+		return fmt.Errorf("new mod not in cache: %s/%s@%s", newMod.SourceID, newMod.ID, newMod.Version)
+	}
+
+	oldFiles, err := oldCache.ListFiles(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version)
+	if err != nil {
+		return fmt.Errorf("listing old cached files: %w", err)
+	}
+	newFiles, err := newCache.ListFiles(game.ID, newMod.SourceID, newMod.ID, newMod.Version)
+	if err != nil {
+		return fmt.Errorf("listing new cached files: %w", err)
+	}
+
+	oldSet := make(map[string]bool, len(oldFiles))
+	for _, file := range oldFiles {
+		oldSet[file] = true
+	}
+	newSet := make(map[string]bool, len(newFiles))
+	for _, file := range newFiles {
+		newSet[file] = true
+	}
+
+	var removedOld []string
+	for _, file := range oldFiles {
+		if newSet[file] {
+			continue
+		}
+		if err := i.linker.Undeploy(filepath.Join(game.ModPath, file)); err != nil {
+			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, nil, oldSet); rollbackErr != nil {
+				return fmt.Errorf("removing obsolete file %s: %w; rollback failed: %v", file, err, rollbackErr)
+			}
+			return fmt.Errorf("removing obsolete file %s: %w", file, err)
+		}
+		removedOld = append(removedOld, file)
+	}
+
+	var replacedOrAdded []string
+	for _, file := range newFiles {
+		select {
+		case <-ctx.Done():
+			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
+				return fmt.Errorf("%w; rollback failed: %v", ctx.Err(), rollbackErr)
+			}
+			return ctx.Err()
+		default:
+		}
+
+		srcPath := newCache.GetFilePath(game.ID, newMod.SourceID, newMod.ID, newMod.Version, file)
+		dstPath := filepath.Join(game.ModPath, file)
+		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
+			cleanupErr := i.linker.Undeploy(dstPath)
+			rollbackFiles := append(append([]string(nil), replacedOrAdded...), file)
+			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, rollbackFiles, oldSet); rollbackErr != nil {
+				if cleanupErr != nil {
+					return fmt.Errorf("deploying %s: %w; cleanup failed: %v; rollback failed: %v", file, err, cleanupErr, rollbackErr)
+				}
+				return fmt.Errorf("deploying %s: %w; rollback failed: %v", file, err, rollbackErr)
+			}
+			if cleanupErr != nil {
+				return fmt.Errorf("deploying %s: %w; cleanup failed: %v", file, err, cleanupErr)
+			}
+			return fmt.Errorf("deploying %s: %w", file, err)
+		}
+		replacedOrAdded = append(replacedOrAdded, file)
+	}
+
+	if i.db != nil {
+		if err := i.db.DeleteDeployedFiles(game.ID, profileName, oldMod.SourceID, oldMod.ID); err != nil {
+			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
+				return fmt.Errorf("resetting file tracking: %w; rollback failed: %v", err, rollbackErr)
+			}
+			return fmt.Errorf("resetting file tracking: %w", err)
+		}
+		for _, file := range newFiles {
+			if err := i.db.SaveDeployedFile(game.ID, profileName, file, newMod.SourceID, newMod.ID); err != nil {
+				_ = i.db.DeleteDeployedFiles(game.ID, profileName, newMod.SourceID, newMod.ID)
+				for _, oldFile := range oldFiles {
+					_ = i.db.SaveDeployedFile(game.ID, profileName, oldFile, oldMod.SourceID, oldMod.ID)
+				}
+				if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
+					return fmt.Errorf("tracking deployed file %s: %w; rollback failed: %v", file, err, rollbackErr)
+				}
+				return fmt.Errorf("tracking deployed file %s: %w", file, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (i *Installer) restoreOldFiles(oldCache *cache.Cache, game *domain.Game, oldMod *domain.Mod, removedOld, replacedOrAdded []string, oldSet map[string]bool) error {
+	var errs []error
+
+	for j := len(replacedOrAdded) - 1; j >= 0; j-- {
+		file := replacedOrAdded[j]
+		dstPath := filepath.Join(game.ModPath, file)
+		if oldSet[file] {
+			srcPath := oldCache.GetFilePath(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version, file)
+			if err := i.linker.Deploy(srcPath, dstPath); err != nil {
+				errs = append(errs, fmt.Errorf("restoring %s: %w", file, err))
+			}
+			continue
+		}
+		if err := i.linker.Undeploy(dstPath); err != nil {
+			errs = append(errs, fmt.Errorf("removing %s: %w", file, err))
+		}
+	}
+
+	for j := len(removedOld) - 1; j >= 0; j-- {
+		file := removedOld[j]
+		srcPath := oldCache.GetFilePath(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version, file)
+		dstPath := filepath.Join(game.ModPath, file)
+		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
+			errs = append(errs, fmt.Errorf("restoring removed %s: %w", file, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return nil
 }
 
