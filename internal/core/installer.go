@@ -91,6 +91,11 @@ func (i *Installer) Replace(ctx context.Context, game *domain.Game, oldMod, newM
 	return i.replaceWithCaches(ctx, game, i.cache, i.cache, oldMod, newMod, profileName)
 }
 
+// ReplaceWithCaches swaps an existing deployment using explicit old and new caches.
+func (i *Installer) ReplaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
+	return i.replaceWithCaches(ctx, game, oldCache, newCache, oldMod, newMod, profileName)
+}
+
 // ReplaceWithOldCache swaps an existing deployment using an alternate cache
 // snapshot for the old version.
 func (i *Installer) ReplaceWithOldCache(ctx context.Context, game *domain.Game, oldCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
@@ -151,8 +156,16 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		srcPath := newCache.GetFilePath(game.ID, newMod.SourceID, newMod.ID, newMod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
-			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
+			cleanupErr := i.linker.Undeploy(dstPath)
+			rollbackFiles := append(append([]string(nil), replacedOrAdded...), file)
+			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, rollbackFiles, oldSet); rollbackErr != nil {
+				if cleanupErr != nil {
+					return fmt.Errorf("deploying %s: %w; cleanup failed: %v; rollback failed: %v", file, err, cleanupErr, rollbackErr)
+				}
 				return fmt.Errorf("deploying %s: %w; rollback failed: %v", file, err, rollbackErr)
+			}
+			if cleanupErr != nil {
+				return fmt.Errorf("deploying %s: %w; cleanup failed: %v", file, err, cleanupErr)
 			}
 			return fmt.Errorf("deploying %s: %w", file, err)
 		}

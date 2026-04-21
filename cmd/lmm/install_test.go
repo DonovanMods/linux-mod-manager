@@ -260,22 +260,32 @@ func TestPromptMultiSelection_Cancel(t *testing.T) {
 	}
 }
 
-func TestReinstallCacheSnapshot_RollbackRestoresOriginalCache(t *testing.T) {
+func TestReinstallCacheTransaction_RollbackRestoresOriginalCache(t *testing.T) {
 	liveCache := cache.New(t.TempDir())
 	require.NoError(t, liveCache.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "main.esp", []byte("main")))
 	require.NoError(t, liveCache.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "optional.esp", []byte("optional")))
 
-	snapshot, err := prepareReinstallCacheSnapshot(liveCache, "skyrim-se", "nexusmods", "12345", "1.0.0")
+	txn, err := prepareReinstallCacheTransaction(liveCache, "skyrim-se", "nexusmods", "12345", "1.0.0")
 	require.NoError(t, err)
-
-	require.NoError(t, liveCache.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "main.esp", []byte("new-main")))
-	require.NoError(t, snapshot.Rollback())
 
 	files, err := liveCache.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"main.esp", "optional.esp"}, files)
 
-	_, err = os.Stat(snapshot.tempDir)
+	require.NoError(t, txn.staged.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "main.esp", []byte("new-main")))
+	require.NoError(t, txn.Activate())
+
+	files, err = liveCache.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"main.esp"}, files)
+
+	require.NoError(t, txn.Rollback())
+
+	files, err = liveCache.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"main.esp", "optional.esp"}, files)
+
+	_, err = os.Stat(txn.tempDir)
 	assert.True(t, os.IsNotExist(err), "snapshot temp dir should be cleaned up")
 }
 

@@ -169,8 +169,11 @@ func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *doma
 // Returns the download result including files extracted and checksum.
 // Multiple files from the same mod can be downloaded to the same cache location.
 func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
-	// Get game-specific cache
-	gameCache := s.GetGameCache(game)
+	return s.DownloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, progressFn)
+}
+
+// DownloadModToCache downloads a mod file, extracts it, and stores it in the provided cache.
+func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
 
 	// Note: We intentionally do NOT check if cache exists here.
 	// A mod can have multiple downloadable files (e.g., main mod + optional patches),
@@ -265,6 +268,8 @@ func commitStagedCache(cachePath, stagePath string) error {
 		if err := os.Rename(cachePath, backupPath); err != nil {
 			return fmt.Errorf("backing up existing cache: %w", err)
 		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking existing cache: %w", err)
 	}
 	if err := os.Rename(stagePath, cachePath); err != nil {
 		if _, statErr := os.Stat(backupPath); statErr == nil {

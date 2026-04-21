@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -434,20 +435,25 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	linkMethod := service.GetGameLinkMethod(game)
 	linker := service.GetLinker(linkMethod)
 	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
-	var reinstallSnapshot *reinstallCacheSnapshot
+	var reinstallTxn *reinstallCacheTransaction
+	downloadCache := service.GetGameCache(game)
 
 	// Check if mod is already installed so we can replace it atomically later.
 	existingMod, err := service.GetInstalledMod(installSource, mod.ID, gameID, profileName)
 	if err != nil {
+		if !errors.Is(err, domain.ErrModNotFound) {
+			return fmt.Errorf("checking existing installed mod: %w", err)
+		}
 		existingMod = nil
 	} else if existingMod.Version == mod.Version {
-		reinstallSnapshot, err = prepareReinstallCacheSnapshot(service.GetGameCache(game), gameID, existingMod.SourceID, existingMod.ID, existingMod.Version)
+		reinstallTxn, err = prepareReinstallCacheTransaction(service.GetGameCache(game), gameID, existingMod.SourceID, existingMod.ID, existingMod.Version)
 		if err != nil {
 			return fmt.Errorf("preparing reinstall cache: %w", err)
 		}
+		downloadCache = reinstallTxn.staged
 		defer func() {
-			if reinstallSnapshot != nil {
-				_ = reinstallSnapshot.Rollback()
+			if reinstallTxn != nil {
+				_ = reinstallTxn.Rollback()
 			}
 		}()
 	}
@@ -474,7 +480,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		downloadResult, err := service.DownloadMod(ctx, installSource, game, mod, selectedFile, progressFn)
+		downloadResult, err := service.DownloadModToCache(ctx, downloadCache, installSource, game, mod, selectedFile, progressFn)
 		if err != nil {
 			fmt.Println() // newline after progress
 			if strings.Contains(err.Error(), "third-party downloads") && mod.SourceURL != "" {
@@ -560,13 +566,22 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Println("Deploying to game directory...")
 
 	if existingMod != nil {
+		if reinstallTxn != nil {
+			if err := reinstallTxn.Activate(); err != nil {
+				return fmt.Errorf("activating reinstall cache: %w", err)
+			}
+		}
 		var replaceErr error
-		if reinstallSnapshot != nil {
-			replaceErr = installer.ReplaceWithOldCache(ctx, game, reinstallSnapshot.snapshot, &existingMod.Mod, mod, profileName)
+		if reinstallTxn != nil {
+			replaceErr = installer.ReplaceWithOldCache(ctx, game, reinstallTxn.snapshot, &existingMod.Mod, mod, profileName)
 		} else {
 			replaceErr = installer.Replace(ctx, game, &existingMod.Mod, mod, profileName)
 		}
 		if replaceErr != nil {
+			if reinstallTxn != nil {
+				_ = reinstallTxn.RestoreLive()
+				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.snapshot, service.GetGameCache(game), &existingMod.Mod, &existingMod.Mod, profileName)
+			}
 			return fmt.Errorf("deployment failed: %w", replaceErr)
 		}
 	} else if err := installer.Install(ctx, game, mod, profileName); err != nil {
@@ -586,8 +601,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
 		if existingMod != nil {
-			if reinstallSnapshot != nil {
-				_ = installer.ReplaceWithOldCache(ctx, game, reinstallSnapshot.snapshot, mod, &existingMod.Mod, profileName)
+			if reinstallTxn != nil {
+				_ = reinstallTxn.RestoreLive()
+				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.staged, service.GetGameCache(game), mod, &existingMod.Mod, profileName)
 			} else {
 				_ = installer.Replace(ctx, game, mod, &existingMod.Mod, profileName)
 			}
@@ -596,11 +612,11 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("failed to save mod: %w", err)
 	}
-	if reinstallSnapshot != nil {
-		if err := reinstallSnapshot.Commit(); err != nil && verbose {
-			fmt.Printf("  Warning: could not finalize reinstall cache snapshot: %v\n", err)
+	if reinstallTxn != nil {
+		if err := reinstallTxn.Commit(); err != nil && verbose {
+			fmt.Printf("  Warning: could not finalize reinstall cache transaction: %v\n", err)
 		}
-		reinstallSnapshot = nil
+		reinstallTxn = nil
 	}
 
 	// Store checksums in database
@@ -678,33 +694,33 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-type reinstallCacheSnapshot struct {
-	live     *cache.Cache
-	snapshot *cache.Cache
-	tempDir  string
-	gameID   string
-	sourceID string
-	modID    string
-	version  string
+type reinstallCacheTransaction struct {
+	live      *cache.Cache
+	snapshot  *cache.Cache
+	staged    *cache.Cache
+	tempDir   string
+	gameID    string
+	sourceID  string
+	modID     string
+	version   string
+	activated bool
 }
 
-func prepareReinstallCacheSnapshot(live *cache.Cache, gameID, sourceID, modID, version string) (*reinstallCacheSnapshot, error) {
+func prepareReinstallCacheTransaction(live *cache.Cache, gameID, sourceID, modID, version string) (*reinstallCacheTransaction, error) {
 	tempDir, err := os.MkdirTemp("", "lmm-reinstall-cache-*")
 	if err != nil {
 		return nil, fmt.Errorf("creating cache snapshot: %w", err)
 	}
-	snapshot := cache.New(tempDir)
+	snapshot := cache.New(filepath.Join(tempDir, "snapshot"))
+	staged := cache.New(filepath.Join(tempDir, "staged"))
 	if err := live.CloneMod(snapshot, gameID, sourceID, modID, version); err != nil {
 		_ = os.RemoveAll(tempDir)
 		return nil, fmt.Errorf("snapshotting existing cache: %w", err)
 	}
-	if err := live.Delete(gameID, sourceID, modID, version); err != nil {
-		_ = os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("preparing clean reinstall cache: %w", err)
-	}
-	return &reinstallCacheSnapshot{
+	return &reinstallCacheTransaction{
 		live:     live,
 		snapshot: snapshot,
+		staged:   staged,
 		tempDir:  tempDir,
 		gameID:   gameID,
 		sourceID: sourceID,
@@ -713,8 +729,25 @@ func prepareReinstallCacheSnapshot(live *cache.Cache, gameID, sourceID, modID, v
 	}, nil
 }
 
-func (s *reinstallCacheSnapshot) Rollback() error {
+func (s *reinstallCacheTransaction) Activate() error {
 	if s == nil {
+		return nil
+	}
+	if s.activated {
+		return nil
+	}
+	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
+		return err
+	}
+	if err := s.staged.CloneMod(s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
+		return err
+	}
+	s.activated = true
+	return nil
+}
+
+func (s *reinstallCacheTransaction) RestoreLive() error {
+	if s == nil || !s.activated {
 		return nil
 	}
 	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
@@ -723,17 +756,28 @@ func (s *reinstallCacheSnapshot) Rollback() error {
 	if err := s.snapshot.CloneMod(s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
 		return err
 	}
+	s.activated = false
+	return nil
+}
+
+func (s *reinstallCacheTransaction) Rollback() error {
+	if s == nil {
+		return nil
+	}
+	if err := s.RestoreLive(); err != nil {
+		return err
+	}
 	err := os.RemoveAll(s.tempDir)
-	*s = reinstallCacheSnapshot{}
+	*s = reinstallCacheTransaction{}
 	return err
 }
 
-func (s *reinstallCacheSnapshot) Commit() error {
+func (s *reinstallCacheTransaction) Commit() error {
 	if s == nil {
 		return nil
 	}
 	err := os.RemoveAll(s.tempDir)
-	*s = reinstallCacheSnapshot{}
+	*s = reinstallCacheTransaction{}
 	return err
 }
 
