@@ -196,6 +196,34 @@ func TestExtractor_CanExtract(t *testing.T) {
 	}
 }
 
+func TestExtractor_CanExtract_ByContentWithoutExtension(t *testing.T) {
+	srcDir := t.TempDir()
+	zipPath := createTestZip(t, srcDir, map[string]string{"file.txt": "content"})
+	noExtPath := filepath.Join(srcDir, "downloaded-archive")
+
+	require.NoError(t, os.Rename(zipPath, noExtPath))
+
+	extractor := core.NewExtractor()
+	assert.True(t, extractor.CanExtract(noExtPath))
+}
+
+func TestExtractor_Extract_ZipWithoutExtension(t *testing.T) {
+	srcDir := t.TempDir()
+	destDir := t.TempDir()
+
+	zipPath := createTestZip(t, srcDir, map[string]string{"nested/file.txt": "content"})
+	noExtPath := filepath.Join(srcDir, "downloaded-archive")
+
+	require.NoError(t, os.Rename(zipPath, noExtPath))
+
+	extractor := core.NewExtractor()
+	require.NoError(t, extractor.Extract(noExtPath, destDir))
+
+	content, err := os.ReadFile(filepath.Join(destDir, "nested/file.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "content", string(content))
+}
+
 func TestExtractor_DetectFormat(t *testing.T) {
 	extractor := core.NewExtractor()
 

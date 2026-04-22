@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -142,7 +144,7 @@ func (n *NexusMods) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 		files[i] = domain.DownloadableFile{
 			ID:          strconv.Itoa(f.FileID),
 			Name:        f.Name,
-			FileName:    f.FileName,
+			FileName:    sanitizeFileName(f.FileName),
 			Version:     f.Version,
 			Size:        size,
 			IsPrimary:   f.IsPrimary,
@@ -152,6 +154,20 @@ func (n *NexusMods) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 	}
 
 	return files, nil
+}
+
+func sanitizeFileName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return name
+	}
+
+	safe := path.Base(strings.ReplaceAll(name, "\\", "/"))
+	if safe == "." || safe == "/" || safe == "" {
+		return name
+	}
+
+	return safe
 }
 
 // GetDownloadURL gets the download URL for a mod file

@@ -84,6 +84,42 @@ func TestNexusMods_GetModFiles(t *testing.T) {
 	assert.Equal(t, "OPTIONAL", files[1].Category)
 }
 
+func TestNexusMods_GetModFiles_SanitizesPathLikeFileName(t *testing.T) {
+	mockResponse := ModFileList{
+		Files: []FileData{
+			{
+				FileID:       100,
+				Name:         "Main File",
+				FileName:     "c3/f2/ac/test-mod-1-0.zip",
+				Version:      "1.0.0",
+				CategoryID:   1,
+				CategoryName: "MAIN",
+				IsPrimary:    true,
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/games/starrupture/mods/12345/files.json", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(t, w, mockResponse)
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.baseURL = server.URL
+
+	mod := &domain.Mod{
+		ID:     "12345",
+		GameID: "starrupture",
+	}
+
+	files, err := nm.GetModFiles(context.Background(), mod)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "test-mod-1-0.zip", files[0].FileName)
+}
+
 func TestNexusMods_GetDownloadURL(t *testing.T) {
 	mockResponse := []DownloadLink{
 		{

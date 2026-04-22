@@ -583,6 +583,67 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 	assert.True(t, fileNames["file2_content.txt"], "Cache should contain file2_content.txt")
 }
 
+func TestService_DownloadMod_NestedNonArchiveFilename(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
+
+	mock := newMockSourceWithDownloads("test")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{
+		ID:      "testgame",
+		Name:    "Test Game",
+		ModPath: filepath.Join(t.TempDir(), "mods"),
+	}
+	err = svc.AddGame(game)
+	require.NoError(t, err)
+
+	mod := &domain.Mod{
+		ID:       "123",
+		SourceID: "test",
+		Name:     "Nested File Mod",
+		Version:  "1.0.0",
+		GameID:   "testgame",
+	}
+
+	file := &domain.DownloadableFile{
+		ID:       "file1",
+		Name:     "Nested File",
+		FileName: "c3/f2/ac/c3f2ac27-ca21-42f3-bb09-cc41e09db10d",
+	}
+
+	tmpDir := t.TempDir()
+	zipPath := createTestZip(t, tmpDir, map[string]string{"plugin.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+
+	mock.AddDownload(file.ID, zipContent)
+
+	result, err := svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.FilesExtracted)
+	assert.NotEmpty(t, result.Checksum)
+
+	gameCache := svc.GetGameCache(game)
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"plugin.esp"}, files)
+
+	content, err := os.ReadFile(gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, "plugin.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("payload"), content)
+}
+
 // mockSourceWithDownloads extends mockSource with download URL support
 type mockSourceWithDownloads struct {
 	*mockSource

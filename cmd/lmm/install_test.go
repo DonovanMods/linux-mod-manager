@@ -184,6 +184,41 @@ func TestFilterAndSortFiles(t *testing.T) {
 	assert.Equal(t, "OLD_VERSION", withArchived[5].Category)
 }
 
+func TestDisplayFileLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		file     domain.DownloadableFile
+		expected string
+	}{
+		{
+			name:     "uses filename when it looks normal",
+			file:     domain.DownloadableFile{Name: "Main File", FileName: "mod-1.0.zip"},
+			expected: "mod-1.0.zip",
+		},
+		{
+			name:     "uses name for uuid-like opaque filename",
+			file:     domain.DownloadableFile{Name: "MoreTreeResources 2x", FileName: "c3f2ac27-ca21-42f3-bb09-cc41e09db10d"},
+			expected: "MoreTreeResources 2x",
+		},
+		{
+			name:     "uses name for path-like filename",
+			file:     domain.DownloadableFile{Name: "MoreTreeResources 2x", FileName: "c3/f2/ac/test-mod.zip"},
+			expected: "MoreTreeResources 2x",
+		},
+		{
+			name:     "falls back to name when filename missing",
+			file:     domain.DownloadableFile{Name: "MoreTreeResources 2x"},
+			expected: "MoreTreeResources 2x",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, displayFileLabel(tt.file))
+		})
+	}
+}
+
 // TestFileCategoryPriority tests category priority ordering
 func TestFileCategoryPriority(t *testing.T) {
 	assert.Less(t, fileCategoryPriority("MAIN"), fileCategoryPriority("OPTIONAL"))
