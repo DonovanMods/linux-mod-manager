@@ -1,5 +1,6 @@
 # AI assistant files
 .claude/
+.codex/
 docs/plans
 
 # Go build artifacts
