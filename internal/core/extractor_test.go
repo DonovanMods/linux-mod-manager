@@ -140,6 +140,21 @@ func TestExtractor_Extract_InvalidZip(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestExtractor_Extract_UnsupportedWithoutExtensionReportsPath(t *testing.T) {
+	srcDir := t.TempDir()
+	destDir := t.TempDir()
+
+	invalidPath := filepath.Join(srcDir, "downloaded-archive")
+	err := os.WriteFile(invalidPath, []byte("not an archive"), 0644)
+	require.NoError(t, err)
+
+	extractor := core.NewExtractor()
+	err = extractor.Extract(invalidPath, destDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported archive format for path")
+	assert.Contains(t, err.Error(), invalidPath)
+}
+
 // TestExtractor_Extract_TruncatedZip verifies corrupt/truncated zip returns error (error-path test).
 func TestExtractor_Extract_TruncatedZip(t *testing.T) {
 	srcDir := t.TempDir()
@@ -194,6 +209,45 @@ func TestExtractor_CanExtract(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestExtractor_CanExtract_ByContentWithoutExtension(t *testing.T) {
+	srcDir := t.TempDir()
+	zipPath := createTestZip(t, srcDir, map[string]string{"file.txt": "content"})
+	noExtPath := filepath.Join(srcDir, "downloaded-archive")
+
+	require.NoError(t, os.Rename(zipPath, noExtPath))
+
+	extractor := core.NewExtractor()
+	assert.True(t, extractor.CanExtract(noExtPath))
+}
+
+func TestExtractor_Extract_ZipWithoutExtension(t *testing.T) {
+	srcDir := t.TempDir()
+	destDir := t.TempDir()
+
+	zipPath := createTestZip(t, srcDir, map[string]string{"nested/file.txt": "content"})
+	noExtPath := filepath.Join(srcDir, "downloaded-archive")
+
+	require.NoError(t, os.Rename(zipPath, noExtPath))
+
+	extractor := core.NewExtractor()
+	require.NoError(t, extractor.Extract(noExtPath, destDir))
+
+	content, err := os.ReadFile(filepath.Join(destDir, "nested/file.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "content", string(content))
+}
+
+func TestExtractor_Extract_NonExistentFileReportsPath(t *testing.T) {
+	destDir := t.TempDir()
+	missingPath := "/nonexistent/file.zip"
+
+	extractor := core.NewExtractor()
+	err := extractor.Extract(missingPath, destDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "accessing archive")
+	assert.Contains(t, err.Error(), missingPath)
 }
 
 func TestExtractor_DetectFormat(t *testing.T) {

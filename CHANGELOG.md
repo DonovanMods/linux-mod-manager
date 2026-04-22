@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-04-21
+
+### Fixed
+
+- **NexusMods filename normalization**: Path-like `file_name` values from NexusMods are now sanitized to a safe basename before they reach the CLI, cache, or installer, avoiding bogus nested relative paths in file selection and cache writes
+- **Archive detection without extensions**: Downloaded archives are now identified by file signature as well as filename extension, so ZIP/7z/RAR downloads still extract correctly even when the source filename is missing or malformed
+- **Import path handling**: The CLI import streaming-copy helper now also creates destination parent directories before writing, matching the cache/import behavior used elsewhere
+
 ## [1.3.1] - 2026-02-12
 
 ### Changed
@@ -568,7 +576,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.1...v1.3.3
 [1.3.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.1.0...v1.2.0

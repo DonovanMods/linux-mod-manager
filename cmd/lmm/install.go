@@ -97,6 +97,47 @@ func init() {
 	rootCmd.AddCommand(installCmd)
 }
 
+func displayFileLabel(file domain.DownloadableFile) string {
+	name := strings.TrimSpace(file.Name)
+	fileName := strings.TrimSpace(file.FileName)
+
+	if fileName == "" {
+		return name
+	}
+	if name == "" {
+		return fileName
+	}
+	if strings.ContainsAny(fileName, `/\`) {
+		return name
+	}
+	if looksOpaqueFileName(fileName) {
+		return name
+	}
+	return fileName
+}
+
+func looksOpaqueFileName(fileName string) bool {
+	if filepath.Ext(fileName) != "" {
+		return false
+	}
+	if strings.Count(fileName, "-") < 4 {
+		return false
+	}
+
+	compact := strings.ReplaceAll(fileName, "-", "")
+	if len(compact) < 24 {
+		return false
+	}
+
+	for _, r := range compact {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return false
+		}
+	}
+
+	return true
+}
+
 func runInstall(cmd *cobra.Command, args []string) error {
 	if err := requireGame(cmd); err != nil {
 		return err
@@ -377,7 +418,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 				if f.IsPrimary {
 					defaultMark = " <- default"
 				}
-				fmt.Printf("  [%d] %s (%s, %s)%s\n", i+1, f.FileName, f.Category, sizeStr, defaultMark)
+				fmt.Printf("  [%d] %s (%s, %s)%s\n", i+1, displayFileLabel(f), f.Category, sizeStr, defaultMark)
 			}
 
 			selections, err := promptMultiSelection("Select file(s) (e.g., 1 or 1,3 or 1-3)", defaultChoice, len(files))
@@ -392,11 +433,11 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// Show selected files
 	if len(selectedFiles) == 1 {
-		fmt.Printf("\nFile: %s\n", selectedFiles[0].FileName)
+		fmt.Printf("\nFile: %s\n", displayFileLabel(*selectedFiles[0]))
 	} else {
 		fmt.Printf("\nFiles (%d):\n", len(selectedFiles))
 		for _, f := range selectedFiles {
-			fmt.Printf("  - %s\n", f.FileName)
+			fmt.Printf("  - %s\n", displayFileLabel(*f))
 		}
 	}
 
@@ -465,9 +506,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	for i, selectedFile := range selectedFiles {
 		if len(selectedFiles) > 1 {
-			fmt.Printf("\n[%d/%d] Downloading %s...\n", i+1, len(selectedFiles), selectedFile.FileName)
+			fmt.Printf("\n[%d/%d] Downloading %s...\n", i+1, len(selectedFiles), displayFileLabel(*selectedFile))
 		} else {
-			fmt.Printf("\nDownloading %s...\n", selectedFile.FileName)
+			fmt.Printf("\nDownloading %s...\n", displayFileLabel(*selectedFile))
 		}
 
 		progressFn := func(p core.DownloadProgress) {
@@ -1188,7 +1229,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		}
 
 		selectedFile := selectPrimaryFile(files)
-		fmt.Printf("  File: %s\n", selectedFile.FileName)
+		fmt.Printf("  File: %s\n", displayFileLabel(*selectedFile))
 
 		// Download
 		progressFn := func(p core.DownloadProgress) {

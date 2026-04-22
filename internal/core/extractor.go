@@ -23,9 +23,18 @@ func NewExtractor() *Extractor {
 // Extract extracts an archive to the destination directory
 // Supports .zip (native), .7z and .rar (via system 7z command)
 func (e *Extractor) Extract(archivePath, destDir string) error {
-	format := e.DetectFormat(archivePath)
+	if _, err := os.Stat(archivePath); err != nil {
+		return fmt.Errorf("accessing archive %q: %w", archivePath, err)
+	}
+
+	format := e.detectFormatFromPath(archivePath)
 	if format == "" {
-		return fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
+		ext := filepath.Ext(archivePath)
+		if ext != "" {
+			return fmt.Errorf("unsupported archive format: %s", ext)
+		}
+
+		return fmt.Errorf("unsupported archive format for path: %s", archivePath)
 	}
 
 	// Create destination directory
@@ -45,7 +54,7 @@ func (e *Extractor) Extract(archivePath, destDir string) error {
 
 // CanExtract returns true if the extractor can handle the given filename
 func (e *Extractor) CanExtract(filename string) bool {
-	return e.DetectFormat(filename) != ""
+	return e.detectFormatFromPath(filename) != ""
 }
 
 // DetectFormat returns the archive format based on filename extension
@@ -57,6 +66,47 @@ func (e *Extractor) DetectFormat(filename string) string {
 	case ".7z":
 		return "7z"
 	case ".rar":
+		return "rar"
+	default:
+		return ""
+	}
+}
+
+func (e *Extractor) detectFormatFromPath(path string) string {
+	if format := e.DetectFormat(path); format != "" {
+		return format
+	}
+
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return ""
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	header := make([]byte, 8)
+	n, err := io.ReadFull(file, header)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return ""
+	}
+	header = header[:n]
+
+	switch {
+	case len(header) >= 4 && string(header[:4]) == "PK\x03\x04":
+		return "zip"
+	case len(header) >= 4 && string(header[:4]) == "PK\x05\x06":
+		return "zip"
+	case len(header) >= 4 && string(header[:4]) == "PK\x07\x08":
+		return "zip"
+	case len(header) >= 6 && string(header[:6]) == "7z\xBC\xAF\x27\x1C":
+		return "7z"
+	case len(header) >= 7 && string(header[:7]) == "Rar!\x1A\x07\x00":
+		return "rar"
+	case len(header) >= 8 && string(header[:8]) == "Rar!\x1A\x07\x01\x00":
 		return "rar"
 	default:
 		return ""

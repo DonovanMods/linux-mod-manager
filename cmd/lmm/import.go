@@ -657,6 +657,10 @@ func copyFileStreaming(src, dst string) error {
 		return fmt.Errorf("stat source: %w", err)
 	}
 
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("creating destination directory: %w", err)
+	}
+
 	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)

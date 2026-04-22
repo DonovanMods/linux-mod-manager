@@ -216,7 +216,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 			return nil, fmt.Errorf("staging existing cache: %w", err)
 		}
 	}
-	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(file.FileName) {
+	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(archivePath) {
 		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
 		// Or not an archive - just copy to cache
 		if err := os.MkdirAll(stagePath, 0755); err != nil {
