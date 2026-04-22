@@ -157,14 +157,16 @@ func (n *NexusMods) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 }
 
 func sanitizeFileName(name string) string {
+	const fallbackFileName = "download"
+
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return name
+		return fallbackFileName
 	}
 
 	safe := path.Base(strings.ReplaceAll(name, "\\", "/"))
-	if safe == "." || safe == "/" || safe == "" {
-		return name
+	if safe == "." || safe == ".." || safe == "/" || safe == "" {
+		return fallbackFileName
 	}
 
 	return safe

@@ -583,7 +583,7 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 	assert.True(t, fileNames["file2_content.txt"], "Cache should contain file2_content.txt")
 }
 
-func TestService_DownloadMod_NestedNonArchiveFilename(t *testing.T) {
+func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing.T) {
 	cfg := core.ServiceConfig{
 		ConfigDir: t.TempDir(),
 		DataDir:   t.TempDir(),

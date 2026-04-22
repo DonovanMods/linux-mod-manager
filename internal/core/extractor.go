@@ -23,9 +23,18 @@ func NewExtractor() *Extractor {
 // Extract extracts an archive to the destination directory
 // Supports .zip (native), .7z and .rar (via system 7z command)
 func (e *Extractor) Extract(archivePath, destDir string) error {
+	if _, err := os.Stat(archivePath); err != nil {
+		return fmt.Errorf("accessing archive %q: %w", archivePath, err)
+	}
+
 	format := e.detectFormatFromPath(archivePath)
 	if format == "" {
-		return fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
+		ext := filepath.Ext(archivePath)
+		if ext != "" {
+			return fmt.Errorf("unsupported archive format: %s", ext)
+		}
+
+		return fmt.Errorf("unsupported archive format for path: %s", archivePath)
 	}
 
 	// Create destination directory
