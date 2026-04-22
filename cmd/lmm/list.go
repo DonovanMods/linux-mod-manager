@@ -134,24 +134,24 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, mod := range mods {
-		enabled := "yes"
-		if !mod.Enabled {
-			enabled = "no"
-		}
-		deployed := "yes"
-		if !mod.Deployed {
-			deployed = "no"
-		}
-		sourceDisplay := mod.SourceID
-		if mod.SourceID == domain.SourceLocal {
-			sourceDisplay = "(local)"
-		}
 		author := mod.Author
 		if author == "" {
 			author = "-"
 		}
 		var row string
 		if verbose {
+			enabled := "yes"
+			if !mod.Enabled {
+				enabled = "no"
+			}
+			deployed := "yes"
+			if !mod.Deployed {
+				deployed = "no"
+			}
+			sourceDisplay := mod.SourceID
+			if mod.SourceID == domain.SourceLocal {
+				sourceDisplay = "(local)"
+			}
 			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String())
 		} else {
 			row = fmt.Sprintf("%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20))
