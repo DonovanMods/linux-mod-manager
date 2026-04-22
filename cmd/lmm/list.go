@@ -120,8 +120,8 @@ func runList(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	header := "ID\tNAME\tVERSION\tSOURCE\tENABLED\tDEPLOYED\tMETHOD"
-	sep := "--\t----\t-------\t------\t-------\t--------\t------"
+	header := "ID\tNAME\tVERSION\tAUTHOR"
+	sep := "--\t----\t-------\t------"
 	if verbose {
 		header = "ID\tNAME\tVERSION\tAUTHOR\tSOURCE\tENABLED\tDEPLOYED\tMETHOD"
 		sep = "--\t----\t-------\t------\t------\t-------\t--------\t------"
@@ -134,27 +134,27 @@ func runList(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, mod := range mods {
-		enabled := "yes"
-		if !mod.Enabled {
-			enabled = "no"
-		}
-		deployed := "yes"
-		if !mod.Deployed {
-			deployed = "no"
-		}
-		sourceDisplay := mod.SourceID
-		if mod.SourceID == domain.SourceLocal {
-			sourceDisplay = "(local)"
+		author := mod.Author
+		if author == "" {
+			author = "-"
 		}
 		var row string
 		if verbose {
-			author := mod.Author
-			if author == "" {
-				author = "-"
+			enabled := "yes"
+			if !mod.Enabled {
+				enabled = "no"
+			}
+			deployed := "yes"
+			if !mod.Deployed {
+				deployed = "no"
+			}
+			sourceDisplay := mod.SourceID
+			if mod.SourceID == domain.SourceLocal {
+				sourceDisplay = "(local)"
 			}
 			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String())
 		} else {
-			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, sourceDisplay, enabled, deployed, mod.LinkMethod.String())
+			row = fmt.Sprintf("%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20))
 		}
 		if _, err := fmt.Fprintln(w, row); err != nil {
 			return fmt.Errorf("writing row: %w", err)
