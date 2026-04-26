@@ -61,7 +61,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	games, err := config.LoadGames(cfg.ConfigDir)
 	if err != nil {
 		if closeErr := database.Close(); closeErr != nil {
-			return nil, fmt.Errorf("loading games: %w (closing database: %v)", err, closeErr)
+			return nil, &domain.DeployError{Op: "loading games", Primary: err, Cleanup: closeErr}
 		}
 		return nil, fmt.Errorf("loading games: %w", err)
 	}
