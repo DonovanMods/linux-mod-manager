@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.7] - 2026-04-26
+
+### Changed
+
+- **Service boundary tightened**: Removed the `Service.DB()` and `Service.Registry()` accessors that let CLI code reach into `*db.DB` / `*source.Registry` directly. Replaced 28+ external usages with focused service methods (`SaveInstalledMod`, `DeleteInstalledMod`, `SetModEnabled`, `SetModDeployed`, `GetDeployedFilesForMod`, `GetFileOwner`, `GetFilesWithChecksums`, `SaveFileChecksum`) and factory helpers (`Service.GetInstaller`, `Service.NewInstallerWithLinker`, `Service.NewProfileManager`, `Service.NewUpdater`). `GetFileOwner` now returns `(sourceID, modID string, found bool, err error)` so callers no longer import the `db` package
+- **`core.DeployedFile`**: New service-boundary view type returned by `GetFilesWithChecksums`, replacing the leaked `db.FileWithChecksum`
+
 ## [1.3.6] - 2026-04-25
 
 ### Changed
@@ -596,7 +603,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.6...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.7...HEAD
+[1.3.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.6...v1.3.7
 [1.3.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.5...v1.3.6
 [1.3.5]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.3...v1.3.4
