@@ -56,26 +56,12 @@ func init() {
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doImport(ctx, cmd, service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if cerr := service.Close(); cerr != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", cerr)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, game *domain.Game, args []string) error {
 	profileName := profileOrDefault(importProfile)
 
 	// No args = scan mode
@@ -106,8 +92,6 @@ func runImport(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("no mod sources configured for game %s; cannot look up --id", gameID)
 		}
 	}
-
-	ctx := context.Background()
 
 	// Create importer
 	importer := core.NewImporter(service.GetGameCache(game))
@@ -356,7 +340,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service, profileName string) error {
-	ctx := context.Background()
+	ctx := cmd.Context()
 
 	// Warn about extract mode limitations
 	if game.DeployMode != domain.DeployCopy {

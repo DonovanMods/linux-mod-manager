@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,16 +31,12 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
+	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+		return doStatus(service)
+	})
+}
 
+func doStatus(service *core.Service) error {
 	games := service.ListGames()
 
 	if len(games) == 0 {

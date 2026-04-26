@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
@@ -53,22 +54,13 @@ func init() {
 }
 
 func runModEdit(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doModEdit(ctx, service, game, args[0])
+	})
+}
 
-	currentID := args[0]
+func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, currentID string) error {
 	profileName := profileOrDefault(editProfile)
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
 
 	// Find the mod - search all sources
 	var installedMod *domain.InstalledMod
@@ -116,17 +108,11 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 
 		// If re-linking to a non-local source, try to fetch metadata
 		if newSourceID != domain.SourceLocal {
-			game, err := service.GetGame(gameID)
-			if err != nil {
-				return fmt.Errorf("getting game: %w", err)
-			}
-
 			cfGameID, ok := game.SourceIDs[newSourceID]
 			if !ok {
 				return fmt.Errorf("source %q is not configured for %s", newSourceID, game.Name)
 			}
 
-			ctx := context.Background()
 			fmt.Printf("Fetching metadata from %s...\n", newSourceID)
 			mod, err := service.GetMod(ctx, newSourceID, cfGameID, newModID)
 			if err != nil {

@@ -61,28 +61,13 @@ func init() {
 }
 
 func runDeploy(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doDeploy(ctx, service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	profileName := profileOrDefault(deployProfile)
-
-	ctx := context.Background()
 
 	// If --purge flag is set, purge all deployed mods first
 	// We remember which mods were enabled before purging so we can redeploy them

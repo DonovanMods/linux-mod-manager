@@ -8,6 +8,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
@@ -60,32 +61,18 @@ func init() {
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doSearch(ctx, service, game, args)
+	})
+}
 
+func doSearch(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	query := args[0]
 	if len(args) > 1 {
 		// Join multiple args as single query
 		for _, arg := range args[1:] {
 			query += " " + arg
 		}
-	}
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
 	}
 
 	// Determine source: use flag if set, otherwise first configured source
@@ -98,11 +85,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Searching for \"%s\" in %s (%s)...\n", query, game.Name, sourceToUse)
 	}
 
-	ctx := context.Background()
 	searchResult, err := service.SearchMods(ctx, sourceToUse, gameID, query, searchCategory, searchTags, 0, 0)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", sourceToUse)
+			return authPromptError(sourceToUse)
 		}
 		return fmt.Errorf("search failed: %w", err)
 	}

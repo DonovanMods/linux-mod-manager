@@ -51,25 +51,12 @@ func init() {
 }
 
 func runPurge(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doPurge(ctx, service, game)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doPurge(ctx context.Context, service *core.Service, game *domain.Game) error {
 	profileName := profileOrDefault(purgeProfile)
 
 	// Get all installed mods for this profile
@@ -103,7 +90,6 @@ func runPurge(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ctx := context.Background()
 	installer := service.GetInstaller(game)
 
 	// Set up hooks

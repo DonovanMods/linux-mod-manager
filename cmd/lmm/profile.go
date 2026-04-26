@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -438,7 +437,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	ctx := context.Background()
+	ctx := cmd.Context()
 	installer := service.GetInstaller(game)
 
 	// Disable mods
@@ -734,7 +733,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Download and install mods
-	ctx := context.Background()
+	ctx := cmd.Context()
 	installer := service.GetInstaller(game)
 
 	fmt.Println("\nDownloading and installing mods...")
@@ -1295,7 +1294,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ctx := context.Background()
+	ctx := cmd.Context()
 	installer := service.GetInstaller(game)
 
 	// Disable mods

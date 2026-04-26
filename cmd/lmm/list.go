@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/spf13/cobra"
@@ -52,25 +54,12 @@ func init() {
 }
 
 func runList(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doList(cmd, service, game)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error {
 	if listProfiles {
 		return runListProfiles(cmd, service, gameID, game.Name)
 	}

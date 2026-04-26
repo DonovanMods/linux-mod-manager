@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -46,17 +50,13 @@ func init() {
 }
 
 func runConflicts(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
+		return doConflicts(svc)
+	})
+}
 
+func doConflicts(svc *core.Service) error {
 	profileName := profileOrDefault(conflictsProfile)
-
-	svc, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() { _ = svc.Close() }()
 
 	// Get all installed mods
 	mods, err := svc.GetInstalledMods(gameID, profileName)
