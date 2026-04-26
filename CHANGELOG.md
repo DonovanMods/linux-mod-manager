@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.6] - 2026-04-25
+
+### Changed
+
+- **Composite errors stay inspectable**: Multi-cause errors (primary + rollback / cleanup) now use a typed `domain.DeployError` whose `Unwrap() []error` exposes every cause to `errors.Is` / `errors.As`. Replaces 9 `fmt.Errorf("...%w; ...%v")` sites in `internal/core/installer.go` plus the `joinSwitchErr` helper in `profile.go` and the database-close compound in `service.go`. Output stays close to the prior format (`...; rollback failed: ...`, `...; cleanup failed: ...`)
+
+## [1.3.5] - 2026-04-25
+
+### Changed
+
+- **Context propagation**: Cobra commands now run under a signal-aware context (SIGINT/SIGTERM cancel in-flight I/O). Replaced 18 mid-stack `context.Background()` calls with `cmd.Context()` so cancellation reaches all source/storage/installer calls
+- **CLI lifecycle middleware**: Extracted `withService` and `withGameService` helpers in `cmd/lmm/helpers.go`, removing repeated `requireGame` + `initService` + `defer Close` boilerplate from auth, conflicts, deploy, game-add, import, list, mod, mod-edit, purge, search, status, uninstall, update, and verify commands. `install.go` and `profile.go` are deferred to a follow-up that decomposes their large RunE handlers
+- **Single auth-prompt source**: New `authPromptError` helper replaces the 5 duplicated `errors.Is(err, domain.ErrAuthRequired)` formatting blocks across `search`, `install`, and `update`
+
 ## [1.3.4] - 2026-04-22
 
 ### Changed
@@ -582,7 +596,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.5...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.6...HEAD
+[1.3.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.5...v1.3.6
 [1.3.5]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.1...v1.3.3
