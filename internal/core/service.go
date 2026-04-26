@@ -361,8 +361,25 @@ func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
 
 // GetInstaller returns an Installer configured for the given game
 func (s *Service) GetInstaller(game *domain.Game) *Installer {
-	lnk := s.GetLinker(s.GetGameLinkMethod(game))
+	return s.NewInstallerWithLinker(game, s.GetLinker(s.GetGameLinkMethod(game)))
+}
+
+// NewInstallerWithLinker returns an Installer for the given game using a
+// caller-supplied linker — used when the CLI overrides the game's default
+// link method (e.g. `lmm deploy --method`).
+func (s *Service) NewInstallerWithLinker(game *domain.Game, lnk linker.Linker) *Installer {
 	return NewInstaller(s.GetGameCache(game), lnk, s.db)
+}
+
+// NewProfileManager returns a ProfileManager wired to this service's storage,
+// so callers do not need direct access to the database or registry.
+func (s *Service) NewProfileManager() *ProfileManager {
+	return NewProfileManager(s.configDir, s.db, s.cache, s.GetLinker(s.config.DefaultLinkMethod))
+}
+
+// NewUpdater returns an Updater wired to this service's source registry.
+func (s *Service) NewUpdater() *Updater {
+	return NewUpdater(s.registry)
 }
 
 // Cache returns the default cache manager
@@ -388,19 +405,9 @@ func (s *Service) GetGameCache(game *domain.Game) *cache.Cache {
 	return s.cache
 }
 
-// DB returns the database
-func (s *Service) DB() *db.DB {
-	return s.db
-}
-
 // ConfigDir returns the configuration directory
 func (s *Service) ConfigDir() string {
 	return s.configDir
-}
-
-// Registry returns the source registry
-func (s *Service) Registry() *source.Registry {
-	return s.registry
 }
 
 // SaveSourceToken saves an API token for a source
@@ -455,6 +462,72 @@ func (s *Service) SetModLinkMethod(sourceID, modID, gameID, profileName string, 
 // SetModFileIDs updates the file IDs for an installed mod
 func (s *Service) SetModFileIDs(sourceID, modID, gameID, profileName string, fileIDs []string) error {
 	return s.db.SetModFileIDs(sourceID, modID, gameID, profileName, fileIDs)
+}
+
+// SetModEnabled toggles the enabled flag for an installed mod.
+func (s *Service) SetModEnabled(sourceID, modID, gameID, profileName string, enabled bool) error {
+	return s.db.SetModEnabled(sourceID, modID, gameID, profileName, enabled)
+}
+
+// SetModDeployed records whether a mod's files are currently deployed.
+func (s *Service) SetModDeployed(sourceID, modID, gameID, profileName string, deployed bool) error {
+	return s.db.SetModDeployed(sourceID, modID, gameID, profileName, deployed)
+}
+
+// SaveInstalledMod persists an installed-mod record (insert or update).
+func (s *Service) SaveInstalledMod(mod *domain.InstalledMod) error {
+	return s.db.SaveInstalledMod(mod)
+}
+
+// DeleteInstalledMod removes the installed-mod record from the active profile.
+func (s *Service) DeleteInstalledMod(sourceID, modID, gameID, profileName string) error {
+	return s.db.DeleteInstalledMod(sourceID, modID, gameID, profileName)
+}
+
+// GetDeployedFilesForMod returns the relative paths the given mod has deployed
+// in the named profile.
+func (s *Service) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string) ([]string, error) {
+	return s.db.GetDeployedFilesForMod(gameID, profileName, sourceID, modID)
+}
+
+// GetFileOwner reports which mod currently owns a deployed file. The bool is
+// false when no record exists; err is non-nil only on storage errors.
+func (s *Service) GetFileOwner(gameID, profileName, relativePath string) (sourceID, modID string, found bool, err error) {
+	owner, err := s.db.GetFileOwner(gameID, profileName, relativePath)
+	if err != nil {
+		return "", "", false, err
+	}
+	if owner == nil {
+		return "", "", false, nil
+	}
+	return owner.SourceID, owner.ModID, true, nil
+}
+
+// DeployedFile is a service-boundary view of a tracked mod file with its checksum.
+type DeployedFile struct {
+	SourceID string
+	ModID    string
+	FileID   string
+	Checksum string
+}
+
+// GetFilesWithChecksums returns every tracked file in the profile with its
+// recorded checksum (empty when none has been computed yet).
+func (s *Service) GetFilesWithChecksums(gameID, profileName string) ([]DeployedFile, error) {
+	rows, err := s.db.GetFilesWithChecksums(gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DeployedFile, len(rows))
+	for i, r := range rows {
+		out[i] = DeployedFile{SourceID: r.SourceID, ModID: r.ModID, FileID: r.FileID, Checksum: r.Checksum}
+	}
+	return out, nil
+}
+
+// SaveFileChecksum records the verified checksum for a downloaded mod file.
+func (s *Service) SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, checksum string) error {
+	return s.db.SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, checksum)
 }
 
 // GetInstalledMod retrieves a single installed mod

@@ -108,7 +108,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	lnk := linker.New(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), lnk, service.DB())
+	installer := service.NewInstallerWithLinker(game, lnk)
 
 	// Get mods to deploy
 	var modsToDeploy []*domain.InstalledMod
@@ -269,7 +269,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 
 		// Mark mod as deployed (files are now in game directory)
-		if err := service.DB().SetModDeployed(mod.SourceID, mod.ID, gameID, profileName, true); err != nil {
+		if err := service.SetModDeployed(mod.SourceID, mod.ID, gameID, profileName, true); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: could not mark as deployed: %v\n", err)
 			}

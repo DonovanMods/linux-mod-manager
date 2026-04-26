@@ -9,7 +9,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -173,8 +172,7 @@ func init() {
 }
 
 func getProfileManager(service *core.Service) *core.ProfileManager {
-	lnk := linker.New(service.GetDefaultLinkMethod())
-	return core.NewProfileManager(service.ConfigDir(), service.DB(), service.Cache(), lnk)
+	return service.NewProfileManager()
 }
 
 func runProfileList(cmd *cobra.Command, args []string) error {
@@ -447,7 +445,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
 			}
 		}
-		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, currentName, false); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, gameID, currentName, false); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -463,7 +461,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 			}
 			continue
 		}
-		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, targetName, true); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, gameID, targetName, true); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -545,7 +543,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				Enabled:      true,
 				FileIDs:      downloadedFileIDs,
 			}
-			if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+			if err := service.SaveInstalledMod(installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
 				continue
 			}
@@ -827,7 +825,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 			Enabled:      true,
 			FileIDs:      downloadedFileIDs,
 		}
-		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+		if err := service.SaveInstalledMod(installedMod); err != nil {
 			fmt.Printf("    Error: save failed: %v\n", err)
 			failedCount++
 			continue
@@ -1304,7 +1302,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
 			}
 		}
-		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, profileName, false); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, gameID, profileName, false); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -1320,7 +1318,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 			}
 			continue
 		}
-		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, profileName, true); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, gameID, profileName, true); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -1411,7 +1409,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				Enabled:      true,
 				FileIDs:      downloadedFileIDs,
 			}
-			if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+			if err := service.SaveInstalledMod(installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
 				continue
 			}

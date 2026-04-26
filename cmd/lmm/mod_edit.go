@@ -151,7 +151,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 		}
 
 		// Delete old record
-		if err := service.DB().DeleteInstalledMod(oldSourceID, oldModID, gameID, profileName); err != nil {
+		if err := service.DeleteInstalledMod(oldSourceID, oldModID, gameID, profileName); err != nil {
 			return fmt.Errorf("removing old record: %w", err)
 		}
 
@@ -180,7 +180,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 	}
 
 	// Save updated mod
-	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(installedMod); err != nil {
 		return fmt.Errorf("saving changes: %w", err)
 	}
 

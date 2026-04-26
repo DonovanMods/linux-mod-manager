@@ -172,8 +172,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 
 	// Set up installer for conflict checking and deployment
 	linkMethod := service.GetGameLinkMethod(game)
-	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+	installer := service.GetInstaller(game)
 
 	// Check for conflicts (unless --force)
 	if !importForce {
@@ -273,7 +272,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		FileIDs:      []string{}, // Local imports don't have file IDs
 	}
 
-	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(installedMod); err != nil {
 		return fmt.Errorf("failed to save mod: %w", err)
 	}
 
@@ -425,7 +424,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 			if im.SourceURL == "" && mod.SourceURL != "" {
 				updated.SourceURL = mod.SourceURL
 			}
-			if err := service.DB().SaveInstalledMod(&updated); err != nil {
+			if err := service.SaveInstalledMod(&updated); err != nil {
 				if verbose {
 					fmt.Printf("  %s: metadata save failed: %v\n", im.Name, err)
 				}
@@ -606,7 +605,7 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 		FileIDs:        []string{},
 	}
 
-	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(installedMod); err != nil {
 		return fmt.Errorf("saving to database: %w", err)
 	}
 

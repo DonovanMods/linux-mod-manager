@@ -352,7 +352,7 @@ func TestService_UpdateModVersion(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}
-	err = svc.DB().SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(installedMod)
 	require.NoError(t, err)
 
 	// Update the version
@@ -360,7 +360,7 @@ func TestService_UpdateModVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the update
-	updated, err := svc.DB().GetInstalledMod("test", "123", "skyrim-se", "default")
+	updated, err := svc.GetInstalledMod("test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0.0", updated.Version)
 	assert.Equal(t, "1.0.0", updated.PreviousVersion)
@@ -393,7 +393,7 @@ func TestService_RollbackModVersion(t *testing.T) {
 		Enabled:         true,
 		PreviousVersion: "1.0.0",
 	}
-	err = svc.DB().SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(installedMod)
 	require.NoError(t, err)
 
 	// Rollback the version
@@ -401,7 +401,7 @@ func TestService_RollbackModVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the rollback
-	rolledBack, err := svc.DB().GetInstalledMod("test", "123", "skyrim-se", "default")
+	rolledBack, err := svc.GetInstalledMod("test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.0", rolledBack.Version)
 	assert.Equal(t, "2.0.0", rolledBack.PreviousVersion)
@@ -431,7 +431,7 @@ func TestService_RollbackModVersion_NoPreviousVersion(t *testing.T) {
 		},
 		ProfileName: "default",
 	}
-	err = svc.DB().SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(installedMod)
 	require.NoError(t, err)
 
 	// Rollback should fail
@@ -464,7 +464,7 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 	}
-	err = svc.DB().SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(installedMod)
 	require.NoError(t, err)
 
 	// Change policy to auto
@@ -472,7 +472,7 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify
-	updated, err := svc.DB().GetInstalledMod("test", "123", "skyrim-se", "default")
+	updated, err := svc.GetInstalledMod("test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdateAuto, updated.UpdatePolicy)
 
@@ -480,7 +480,7 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 	err = svc.SetModUpdatePolicy("test", "123", "skyrim-se", "default", domain.UpdatePinned)
 	require.NoError(t, err)
 
-	updated, err = svc.DB().GetInstalledMod("test", "123", "skyrim-se", "default")
+	updated, err = svc.GetInstalledMod("test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdatePinned, updated.UpdatePolicy)
 }
@@ -681,4 +681,71 @@ func (m *mockSourceWithDownloads) GetDownloadURL(ctx context.Context, mod *domai
 
 func (m *mockSourceWithDownloads) Close() {
 	m.server.Close()
+}
+
+// TestService_ModLifecycleFacade pins the Phase 3 Service boundary: callers
+// drive the full mod lifecycle via Service methods without ever reaching into
+// *db.DB or *source.Registry directly.
+func TestService_ModLifecycleFacade(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	require.NoError(t, svc.AddGame(&domain.Game{
+		ID:      "g1",
+		Name:    "Game 1",
+		ModPath: t.TempDir(),
+	}))
+
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID: "42", SourceID: "test", Name: "Test", Version: "1.0",
+			GameID: "g1",
+		},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     false,
+	}
+
+	require.NoError(t, svc.SaveInstalledMod(mod))
+
+	require.NoError(t, svc.SetModDeployed("test", "42", "g1", "default", true))
+	got, err := svc.GetInstalledMod("test", "42", "g1", "default")
+	require.NoError(t, err)
+	assert.True(t, got.Deployed)
+
+	require.NoError(t, svc.SetModEnabled("test", "42", "g1", "default", false))
+	got, err = svc.GetInstalledMod("test", "42", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, got.Enabled)
+
+	require.NoError(t, svc.DeleteInstalledMod("test", "42", "g1", "default"))
+	_, err = svc.GetInstalledMod("test", "42", "g1", "default")
+	assert.Error(t, err, "mod should be gone after delete")
+}
+
+// TestService_GetFileOwner_NotFound proves the tuple-shaped GetFileOwner
+// signature: (sourceID, modID, found, err). Returns found=false (not an error)
+// when no record exists.
+func TestService_GetFileOwner_NotFound(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	sourceID, modID, found, err := svc.GetFileOwner("g1", "default", "missing/path.txt")
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Empty(t, sourceID)
+	assert.Empty(t, modID)
 }

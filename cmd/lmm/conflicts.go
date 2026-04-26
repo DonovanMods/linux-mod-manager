@@ -89,7 +89,7 @@ func doConflicts(svc *core.Service) error {
 	fileToMods := make(map[string][]string)
 
 	for _, m := range mods {
-		files, err := svc.DB().GetDeployedFilesForMod(gameID, profileName, m.SourceID, m.ID)
+		files, err := svc.GetDeployedFilesForMod(gameID, profileName, m.SourceID, m.ID)
 		if err != nil {
 			continue
 		}
@@ -110,11 +110,11 @@ func doConflicts(svc *core.Service) error {
 	for path, keys := range fileToMods {
 		if len(keys) > 1 {
 			// Get current owner from database
-			owner, err := svc.DB().GetFileOwner(gameID, profileName, path)
-			if err != nil || owner == nil {
+			ownerSourceID, ownerModID, found, err := svc.GetFileOwner(gameID, profileName, path)
+			if err != nil || !found {
 				continue
 			}
-			ownerKey := owner.SourceID + ":" + owner.ModID
+			ownerKey := ownerSourceID + ":" + ownerModID
 
 			// Other mods that wanted this file
 			var others []string

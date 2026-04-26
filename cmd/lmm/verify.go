@@ -66,7 +66,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	profile := profileOrDefault(verifyProfile)
 
 	// Get all files with checksums for this game/profile
-	files, err := svc.DB().GetFilesWithChecksums(game.ID, profile)
+	files, err := svc.GetFilesWithChecksums(game.ID, profile)
 	if err != nil {
 		return fmt.Errorf("getting files: %w", err)
 	}
@@ -278,7 +278,7 @@ func redownloadModFile(cmd *cobra.Command, svc *core.Service, game *domain.Game,
 		return err
 	}
 	if result.Checksum != "" {
-		if err := svc.DB().SaveFileChecksum(mod.SourceID, mod.ID, game.ID, profile, fileID, result.Checksum); err != nil {
+		if err := svc.SaveFileChecksum(mod.SourceID, mod.ID, game.ID, profile, fileID, result.Checksum); err != nil {
 			return fmt.Errorf("saving checksum: %w", err)
 		}
 	}

@@ -234,7 +234,7 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	// Update enabled flag in database
-	if err := service.DB().SetModEnabled(modSource, modID, gameID, profileName, true); err != nil {
+	if err := service.SetModEnabled(modSource, modID, gameID, profileName, true); err != nil {
 		return fmt.Errorf("failed to update mod status: %w", err)
 	}
 
@@ -280,7 +280,7 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 	}
 
 	// Update enabled flag in database
-	if err := service.DB().SetModEnabled(modSource, modID, gameID, profileName, false); err != nil {
+	if err := service.SetModEnabled(modSource, modID, gameID, profileName, false); err != nil {
 		return fmt.Errorf("failed to update mod status: %w", err)
 	}
 
@@ -310,7 +310,7 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 	}
 
 	// Get deployed files from database
-	files, err := svc.DB().GetDeployedFilesForMod(gameID, profileName, modSource, modID)
+	files, err := svc.GetDeployedFilesForMod(gameID, profileName, modSource, modID)
 	if err != nil {
 		return fmt.Errorf("getting deployed files: %w", err)
 	}

@@ -136,7 +136,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Check for updates (partial results returned even when some mods fail to fetch)
-	updater := core.NewUpdater(service.Registry())
+	updater := service.NewUpdater()
 	updates, err := updater.CheckUpdates(ctx, installed)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
@@ -281,7 +281,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, profileName string) error {
 	// Check for update for this specific mod
-	updater := core.NewUpdater(service.Registry())
+	updater := service.NewUpdater()
 	updates, err := updater.CheckUpdates(ctx, []domain.InstalledMod{*mod})
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
@@ -407,8 +407,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 
 	// Undeploy old version
 	linkMethod := service.GetGameLinkMethod(game)
-	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+	installer := service.GetInstaller(game)
 
 	// Run install.before_each hook (before installing new version)
 	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
@@ -539,8 +538,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 
 	// Undeploy current version
 	linkMethod := service.GetGameLinkMethod(game)
-	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+	installer := service.GetInstaller(game)
 
 	// Deploy previous version
 	prevMod := mod.Mod

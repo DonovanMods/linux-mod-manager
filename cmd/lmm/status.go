@@ -9,7 +9,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -90,8 +89,7 @@ func doStatus(service *core.Service) error {
 		}
 	}
 
-	lnk := linker.New(service.GetDefaultLinkMethod())
-	pm := core.NewProfileManager(service.ConfigDir(), service.DB(), service.Cache(), lnk)
+	pm := service.NewProfileManager()
 
 	var totalMods int
 	for _, game := range games {
@@ -170,8 +168,7 @@ type statusGameJSON struct {
 
 func outputStatusJSON(service *core.Service, games []*domain.Game) error {
 	cfg, _ := config.Load(service.ConfigDir())
-	lnk := linker.New(service.GetDefaultLinkMethod())
-	pm := core.NewProfileManager(service.ConfigDir(), service.DB(), service.Cache(), lnk)
+	pm := service.NewProfileManager()
 
 	out := statusJSONOutput{Games: make([]statusGameJSON, 0, len(games))}
 	for _, game := range games {
@@ -208,8 +205,7 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
-	lnk := linker.New(service.GetDefaultLinkMethod())
-	pm := core.NewProfileManager(service.ConfigDir(), service.DB(), service.Cache(), lnk)
+	pm := service.NewProfileManager()
 	profiles, _ := pm.List(gameID)
 	profileList := make([]statusProfileJSON, len(profiles))
 	for i, p := range profiles {
@@ -268,8 +264,7 @@ func showGameStatus(service *core.Service, gameID string) error {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	lnk := linker.New(service.GetDefaultLinkMethod())
-	pm := core.NewProfileManager(service.ConfigDir(), service.DB(), service.Cache(), lnk)
+	pm := service.NewProfileManager()
 
 	fmt.Printf("Game: %s\n", game.Name)
 	fmt.Printf("  ID: %s\n", game.ID)

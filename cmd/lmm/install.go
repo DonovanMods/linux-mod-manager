@@ -474,8 +474,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// Set up installer
 	linkMethod := service.GetGameLinkMethod(game)
-	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+	installer := service.GetInstaller(game)
 	var reinstallTxn *reinstallCacheTransaction
 	downloadCache := service.GetGameCache(game)
 
@@ -640,7 +639,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		FileIDs:      downloadedFileIDs,
 	}
 
-	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(installedMod); err != nil {
 		if existingMod != nil {
 			if reinstallTxn != nil {
 				_ = reinstallTxn.RestoreLive()
@@ -662,7 +661,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// Store checksums in database
 	for fileID, checksum := range fileChecksums {
-		if err := service.DB().SaveFileChecksum(
+		if err := service.SaveFileChecksum(
 			installSource, mod.ID, game.ID, profileName, fileID, checksum,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to save checksum for file %s: %v\n", fileID, err)
@@ -1200,8 +1199,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			continue
 		}
 
-		linker := service.GetLinker(linkMethod)
-		installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+		installer := service.GetInstaller(game)
 
 		// Remove previous installation if re-installing
 		if existingMod, err := service.GetInstalledMod(sourceID, mod.ID, game.ID, profileName); err == nil && existingMod != nil {
@@ -1275,7 +1273,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			LinkMethod:   linkMethod,
 			FileIDs:      []string{selectedFile.ID},
 		}
-		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+		if err := service.SaveInstalledMod(installedMod); err != nil {
 			fmt.Printf("  Error: failed to save mod: %v\n", err)
 			failed = append(failed, mod.Name)
 			continue
@@ -1283,7 +1281,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 
 		// Store checksum
 		if !skipVerify && downloadResult.Checksum != "" {
-			if err := service.DB().SaveFileChecksum(sourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum); err != nil {
+			if err := service.SaveFileChecksum(sourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum); err != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: failed to save checksum: %v\n", err)
 			}
 		}

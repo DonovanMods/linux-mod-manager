@@ -138,7 +138,7 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	// Remove from database
-	if err := service.DB().DeleteInstalledMod(installedMod.SourceID, modID, game.ID, profileName); err != nil {
+	if err := service.DeleteInstalledMod(installedMod.SourceID, modID, game.ID, profileName); err != nil {
 		return fmt.Errorf("failed to remove mod record: %w", err)
 	}
 
