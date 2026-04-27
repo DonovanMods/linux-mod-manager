@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -176,20 +177,12 @@ func getProfileManager(service *core.Service) *core.ProfileManager {
 }
 
 func runProfileList(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileList(service)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileList(service *core.Service) error {
 	pm := getProfileManager(service)
 
 	profiles, err := pm.List(gameID)
@@ -227,22 +220,12 @@ func runProfileList(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileCreate(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileCreate(service, args[0])
+	})
+}
 
-	name := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileCreate(service *core.Service, name string) error {
 	pm := getProfileManager(service)
 
 	profile, err := pm.Create(gameID, name)
@@ -255,22 +238,12 @@ func runProfileCreate(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileDelete(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileDelete(service, args[0])
+	})
+}
 
-	name := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileDelete(service *core.Service, name string) error {
 	pm := getProfileManager(service)
 
 	if err := pm.Delete(gameID, name); err != nil {
@@ -282,27 +255,12 @@ func runProfileDelete(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileSwitch(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileSwitch(ctx, service, game, args[0])
+	})
+}
 
-	targetName := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Game, targetName string) error {
 	pm := getProfileManager(service)
 
 	// Get target profile
@@ -435,7 +393,6 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	ctx := cmd.Context()
 	installer := service.GetInstaller(game)
 
 	// Disable mods
@@ -575,22 +532,12 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileExport(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileExport(service, args[0])
+	})
+}
 
-	name := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileExport(service *core.Service, name string) error {
 	pm := getProfileManager(service)
 
 	data, err := pm.Export(gameID, name)
@@ -603,32 +550,17 @@ func runProfileExport(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileImport(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
-
 	filePath := args[0]
-
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
 	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileImport(ctx, service, game, data)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doProfileImport(ctx context.Context, service *core.Service, game *domain.Game, data []byte) error {
 	pm := getProfileManager(service)
 
 	// Parse profile first to preview
@@ -731,7 +663,6 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Download and install mods
-	ctx := cmd.Context()
 	installer := service.GetInstaller(game)
 
 	fmt.Println("\nDownloading and installing mods...")
@@ -858,20 +789,12 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileSync(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileSync(service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileSync(service *core.Service, game *domain.Game, args []string) error {
 	pm := getProfileManager(service)
 
 	// Determine profile name
@@ -1031,24 +954,12 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileReorder(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileReorder(service, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	_, err = service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
+func doProfileReorder(service *core.Service, args []string) error {
 
 	profileName := profileOrDefault(profileReorderProfile)
 	profile, err := config.LoadProfile(service.ConfigDir(), gameID, profileName)
@@ -1150,24 +1061,12 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileApply(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileApply(ctx, service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
+func doProfileApply(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 
 	pm := getProfileManager(service)
 
@@ -1292,7 +1191,6 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ctx := cmd.Context()
 	installer := service.GetInstaller(game)
 
 	// Disable mods
