@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/httpclient"
 )
 
 const (
@@ -20,11 +20,14 @@ const (
 	oauthToken        = "https://www.nexusmods.com/oauth/token"
 )
 
-// Client wraps the NexusMods REST API v1 and GraphQL v2 APIs
+// Client wraps the NexusMods REST API v1 and GraphQL v2 APIs.
+// REST traffic flows through httpclient.Client; GraphQL traffic uses the
+// underlying *http.Client directly because its envelope and error shape
+// differ from the REST endpoints.
 type Client struct {
 	httpClient *http.Client
+	rest       *httpclient.Client
 	apiKey     string
-	baseURL    string
 	graphqlURL string
 }
 
@@ -36,8 +39,14 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 
 	return &Client{
 		httpClient: httpClient,
+		rest: httpclient.New(httpclient.Options{
+			HTTPClient: httpClient,
+			BaseURL:    defaultBaseURL,
+			APIKey:     apiKey,
+			AuthHeader: "apikey",
+			AuthLabel:  "NexusMods",
+		}),
 		apiKey:     apiKey,
-		baseURL:    defaultBaseURL,
 		graphqlURL: defaultGraphQLURL,
 	}
 }
@@ -45,6 +54,13 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 // SetAPIKey sets the API key for authentication
 func (c *Client) SetAPIKey(key string) {
 	c.apiKey = key
+	c.rest.SetAPIKey(key)
+}
+
+// SetBaseURL overrides the REST API base URL — primarily used by tests that
+// front the client with an httptest server.
+func (c *Client) SetBaseURL(u string) {
+	c.rest.SetBaseURL(u)
 }
 
 // IsAuthenticated returns true if an API key is configured
@@ -54,7 +70,7 @@ func (c *Client) IsAuthenticated() bool {
 
 // ValidateAPIKey validates an API key by calling the NexusMods validate endpoint
 func (c *Client) ValidateAPIKey(ctx context.Context, key string) (err error) {
-	url := c.baseURL + "/v1/users/validate.json"
+	url := c.rest.BaseURL() + "/v1/users/validate.json"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -89,47 +105,10 @@ func (c *Client) ValidateAPIKey(ctx context.Context, key string) (err error) {
 	return nil
 }
 
-// doRequest performs an HTTP request with authentication
-func (c *Client) doRequest(ctx context.Context, method, path string, result interface{}) (err error) {
-	url := c.baseURL + path
-
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-
-	if c.apiKey != "" {
-		req.Header.Set("apikey", c.apiKey)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); err == nil && cerr != nil {
-			err = fmt.Errorf("closing response body: %w", cerr)
-		}
-	}()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("%w: NexusMods API key required", domain.ErrAuthRequired)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
-		}
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-		return fmt.Errorf("decoding response: %w", err)
-	}
-
-	return nil
+// doRequest performs an authenticated REST request and JSON-decodes the response.
+// Thin wrapper around httpclient.Client.DoJSON, kept for callsite stability.
+func (c *Client) doRequest(ctx context.Context, method, path string, result interface{}) error {
+	return c.rest.DoJSON(ctx, method, path, result)
 }
 
 // GetMod fetches a mod by ID
