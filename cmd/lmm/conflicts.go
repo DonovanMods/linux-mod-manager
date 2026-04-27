@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -46,20 +50,16 @@ func init() {
 }
 
 func runConflicts(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
+		return doConflicts(svc, game)
+	})
+}
 
+func doConflicts(svc *core.Service, game *domain.Game) error {
 	profileName := profileOrDefault(conflictsProfile)
 
-	svc, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() { _ = svc.Close() }()
-
 	// Get all installed mods
-	mods, err := svc.GetInstalledMods(gameID, profileName)
+	mods, err := svc.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -68,7 +68,7 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
+			if err := enc.Encode(conflictsJSONOutput{GameID: game.ID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
 			return nil
@@ -89,7 +89,7 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 	fileToMods := make(map[string][]string)
 
 	for _, m := range mods {
-		files, err := svc.DB().GetDeployedFilesForMod(gameID, profileName, m.SourceID, m.ID)
+		files, err := svc.GetDeployedFilesForMod(game.ID, profileName, m.SourceID, m.ID)
 		if err != nil {
 			continue
 		}
@@ -110,11 +110,11 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 	for path, keys := range fileToMods {
 		if len(keys) > 1 {
 			// Get current owner from database
-			owner, err := svc.DB().GetFileOwner(gameID, profileName, path)
-			if err != nil || owner == nil {
+			ownerSourceID, ownerModID, found, err := svc.GetFileOwner(game.ID, profileName, path)
+			if err != nil || !found {
 				continue
 			}
-			ownerKey := owner.SourceID + ":" + owner.ModID
+			ownerKey := ownerSourceID + ":" + ownerModID
 
 			// Other mods that wanted this file
 			var others []string
@@ -138,7 +138,7 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
+			if err := enc.Encode(conflictsJSONOutput{GameID: game.ID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
 			return nil
@@ -148,7 +148,7 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 	}
 
 	if jsonOutput {
-		out := conflictsJSONOutput{GameID: gameID, Profile: profileName, Conflicts: make([]conflictJSON, len(conflicts))}
+		out := conflictsJSONOutput{GameID: game.ID, Profile: profileName, Conflicts: make([]conflictJSON, len(conflicts))}
 		for i, c := range conflicts {
 			ownerName := modNames[c.ownerKey]
 			if ownerName == "" {

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
@@ -19,7 +22,7 @@ import (
 var ErrCancelled = errors.New("cancelled")
 
 var (
-	version = "1.3.4"
+	version = "1.3.10"
 
 	// Global flags
 	configDir  string
@@ -100,10 +103,15 @@ func colorYellow(s string) string {
 
 // Execute runs the root command. Exit codes: 0 = success, 1 = error, 2 = user cancelled.
 // When --json is set and an error occurs, prints {"error":"..."} to stdout before exiting.
-// Cancellation (ErrCancelled) exits with code 2 without printing JSON, since it is a user action, not an error.
+// Cancellation (ErrCancelled or context.Canceled) exits with code 2 without printing JSON,
+// since it is a user action, not an error. SIGINT/SIGTERM cancel the per-command context
+// so RunE handlers using cmd.Context() can stop in-flight I/O cleanly.
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		if errors.Is(err, ErrCancelled) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := runRoot(ctx); err != nil {
+		if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
 			os.Exit(2)
 		}
 		if jsonOutput {
@@ -113,6 +121,12 @@ func Execute() {
 		}
 		os.Exit(1)
 	}
+}
+
+// runRoot dispatches to rootCmd with the given context. Split out so tests can
+// drive the command tree without going through signal.NotifyContext.
+func runRoot(ctx context.Context) error {
+	return rootCmd.ExecuteContext(ctx)
 }
 
 // initService creates and initializes the core service

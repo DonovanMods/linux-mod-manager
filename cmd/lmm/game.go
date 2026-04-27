@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/steam"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
@@ -67,19 +69,12 @@ func init() {
 }
 
 func runGameSetDefault(cmd *cobra.Command, args []string) error {
-	newDefault := args[0]
+	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+		return doGameSetDefault(cmd, service, args[0])
+	})
+}
 
-	// Verify the game exists
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doGameSetDefault(cmd *cobra.Command, service *core.Service, newDefault string) error {
 	game, err := service.GetGame(newDefault)
 	if err != nil {
 		return fmt.Errorf("game not found: %s", newDefault)
@@ -122,13 +117,8 @@ func runGameShowDefault(cmd *cobra.Command, args []string) error {
 	}
 
 	// Try to get game name for display
-	service, err := initService()
-	if err == nil {
-		defer func() {
-			if err := service.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-			}
-		}()
+	if service, err := initService(); err == nil {
+		defer closeService(service)
 		if game, err := service.GetGame(cfg.DefaultGame); err == nil {
 			cmd.Printf("Default game: %s (%s)\n", game.Name, cfg.DefaultGame)
 			return nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
@@ -53,26 +54,17 @@ func init() {
 }
 
 func runModEdit(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doModEdit(ctx, service, game, args[0])
+	})
+}
 
-	currentID := args[0]
+func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, currentID string) error {
 	profileName := profileOrDefault(editProfile)
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
 
 	// Find the mod - search all sources
 	var installedMod *domain.InstalledMod
-	allMods, err := service.GetInstalledMods(gameID, profileName)
+	allMods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -116,17 +108,11 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 
 		// If re-linking to a non-local source, try to fetch metadata
 		if newSourceID != domain.SourceLocal {
-			game, err := service.GetGame(gameID)
-			if err != nil {
-				return fmt.Errorf("getting game: %w", err)
-			}
-
 			cfGameID, ok := game.SourceIDs[newSourceID]
 			if !ok {
 				return fmt.Errorf("source %q is not configured for %s", newSourceID, game.Name)
 			}
 
-			ctx := context.Background()
 			fmt.Printf("Fetching metadata from %s...\n", newSourceID)
 			mod, err := service.GetMod(ctx, newSourceID, cfGameID, newModID)
 			if err != nil {
@@ -165,13 +151,13 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 		}
 
 		// Delete old record
-		if err := service.DB().DeleteInstalledMod(oldSourceID, oldModID, gameID, profileName); err != nil {
+		if err := service.DeleteInstalledMod(oldSourceID, oldModID, game.ID, profileName); err != nil {
 			return fmt.Errorf("removing old record: %w", err)
 		}
 
 		// Update profile reference
 		pm := getProfileManager(service)
-		if err := pm.RemoveMod(gameID, profileName, oldSourceID, oldModID); err != nil {
+		if err := pm.RemoveMod(game.ID, profileName, oldSourceID, oldModID); err != nil {
 			if verbose {
 				fmt.Printf("Warning: could not remove old profile entry: %v\n", err)
 			}
@@ -181,7 +167,7 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 			ModID:    newModID,
 			Version:  installedMod.Version,
 		}
-		if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 			if verbose {
 				fmt.Printf("Warning: could not update profile: %v\n", err)
 			}
@@ -194,7 +180,7 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 	}
 
 	// Save updated mod
-	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(installedMod); err != nil {
 		return fmt.Errorf("saving changes: %w", err)
 	}
 
@@ -206,7 +192,7 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 			ModID:    installedMod.ID,
 			Version:  installedMod.Version,
 		}
-		if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 			if verbose {
 				fmt.Printf("Warning: could not update profile version: %v\n", err)
 			}

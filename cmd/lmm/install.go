@@ -19,6 +19,295 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// downloadSelectedFiles fetches each selected mod file into downloadCache,
+// printing progress and returning per-file metadata for the caller to record.
+// sourceID is passed in (rather than read from the installSource global) so
+// the helper is reusable and testable in isolation.
+func downloadSelectedFiles(ctx context.Context, service *core.Service, downloadCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, selectedFiles []*domain.DownloadableFile) (totalFileCount int, downloadedFileIDs []string, fileChecksums map[string]string, err error) {
+	fileChecksums = make(map[string]string)
+
+	for i, selectedFile := range selectedFiles {
+		if len(selectedFiles) > 1 {
+			fmt.Printf("\n[%d/%d] Downloading %s...\n", i+1, len(selectedFiles), displayFileLabel(*selectedFile))
+		} else {
+			fmt.Printf("\nDownloading %s...\n", displayFileLabel(*selectedFile))
+		}
+
+		progressFn := func(p core.DownloadProgress) {
+			if p.TotalBytes > 0 {
+				bar := progressBar(p.Percentage, 30)
+				fmt.Printf("\r  [%s] %.1f%% (%s / %s)", bar, p.Percentage,
+					formatSize(p.Downloaded), formatSize(p.TotalBytes))
+			} else {
+				fmt.Printf("\r  Downloaded %s", formatSize(p.Downloaded))
+			}
+		}
+
+		downloadResult, dlErr := service.DownloadModToCache(ctx, downloadCache, sourceID, game, mod, selectedFile, progressFn)
+		if dlErr != nil {
+			fmt.Println()
+			if strings.Contains(dlErr.Error(), "third-party downloads") && mod.SourceURL != "" {
+				fmt.Println()
+				fmt.Println("  ⚠  This mod author has disabled API downloads.")
+				fmt.Println("  To install manually:")
+				fmt.Println()
+				fmt.Printf("    1. Download from: %s\n", mod.SourceURL)
+				fmt.Printf("    2. Import:        lmm import <downloaded-file> --id %s\n", mod.ID)
+				fmt.Println()
+				return 0, nil, nil, fmt.Errorf("download unavailable via API")
+			}
+			return 0, nil, nil, fmt.Errorf("download failed: %w", dlErr)
+		}
+		fmt.Println()
+
+		if !skipVerify && downloadResult.Checksum != "" {
+			displayChecksum := downloadResult.Checksum
+			if len(displayChecksum) > 12 {
+				displayChecksum = displayChecksum[:12] + "..."
+			}
+			fmt.Printf("  Checksum: %s\n", displayChecksum)
+			fileChecksums[selectedFile.ID] = downloadResult.Checksum
+		}
+
+		totalFileCount += downloadResult.FilesExtracted
+		downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
+	}
+	return totalFileCount, downloadedFileIDs, fileChecksums, nil
+}
+
+// confirmInstallConflicts inspects what files the about-to-install mod would
+// overwrite. If conflicts exist it prints them and prompts for confirmation,
+// returning an error to abort the install when the user declines.
+func confirmInstallConflicts(ctx context.Context, service *core.Service, installer *core.Installer, game *domain.Game, mod *domain.Mod, profileName string) error {
+	conflicts, err := installer.GetConflicts(ctx, game, mod, profileName)
+	if err != nil {
+		if verbose {
+			fmt.Printf("Warning: could not check conflicts: %v\n", err)
+		}
+		return nil
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+
+	fmt.Printf("\n⚠ File conflicts detected:\n")
+
+	modConflicts := make(map[string][]string)
+	for _, c := range conflicts {
+		key := domain.ModKey(c.CurrentSourceID, c.CurrentModID)
+		modConflicts[key] = append(modConflicts[key], c.RelativePath)
+	}
+
+	for key, paths := range modConflicts {
+		parts := strings.SplitN(key, ":", 2)
+		sourceID, modID := parts[0], parts[1]
+
+		conflictMod, _ := service.GetInstalledMod(sourceID, modID, game.ID, profileName)
+		modName := modID
+		if conflictMod != nil {
+			modName = conflictMod.Name
+		}
+
+		fmt.Printf("  From %s (%s):\n", modName, modID)
+		const maxShow = 5
+		for i, p := range paths {
+			if i >= maxShow {
+				fmt.Printf("    ... and %d more\n", len(paths)-maxShow)
+				break
+			}
+			fmt.Printf("    - %s\n", p)
+		}
+	}
+
+	fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
+	input, err := readPromptLine()
+	if err != nil {
+		return err
+	}
+	if input != "y" && input != "yes" {
+		return fmt.Errorf("installation cancelled")
+	}
+	return nil
+}
+
+// selectInstallFiles applies the --file flag, single-file shortcut, --yes default,
+// or interactive prompt to choose which downloadable files to install.
+func selectInstallFiles(files []domain.DownloadableFile) ([]*domain.DownloadableFile, error) {
+	// Direct file ID(s) via --file flag
+	if installFileID != "" {
+		var selected []*domain.DownloadableFile
+		for _, fid := range strings.Split(installFileID, ",") {
+			fid = strings.TrimSpace(fid)
+			found := false
+			for i := range files {
+				if files[i].ID == fid {
+					selected = append(selected, &files[i])
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("file ID %s not found", fid)
+			}
+		}
+		return selected, nil
+	}
+
+	if len(files) == 1 {
+		return []*domain.DownloadableFile{&files[0]}, nil
+	}
+
+	// Find primary file index for default
+	defaultChoice := 1
+	for i := range files {
+		if files[i].IsPrimary {
+			defaultChoice = i + 1
+			break
+		}
+	}
+
+	if installYes {
+		return []*domain.DownloadableFile{&files[defaultChoice-1]}, nil
+	}
+
+	fmt.Println("\nAvailable files:")
+	for i, f := range files {
+		sizeStr := formatSize(f.Size)
+		defaultMark := ""
+		if f.IsPrimary {
+			defaultMark = " <- default"
+		}
+		fmt.Printf("  [%d] %s (%s, %s)%s\n", i+1, displayFileLabel(f), f.Category, sizeStr, defaultMark)
+	}
+
+	selections, err := promptMultiSelection("Select file(s) (e.g., 1 or 1,3 or 1-3)", defaultChoice, len(files))
+	if err != nil {
+		return nil, err
+	}
+	selected := make([]*domain.DownloadableFile, 0, len(selections))
+	for _, sel := range selections {
+		selected = append(selected, &files[sel-1])
+	}
+	return selected, nil
+}
+
+// searchAndSelectMods runs an interactive paginated search for query and returns
+// the user's selection. If only one match exists or installYes is set, it auto-
+// selects without prompting. Returns ErrCancelled if the user types 'q'.
+func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, source, query, profileName string) ([]*domain.Mod, error) {
+	const displayPageSize = 10
+
+	fmt.Printf("Searching for \"%s\"...\n\n", query)
+
+	searchResult, err := service.SearchMods(ctx, source, gameID, query, "", nil, 0, displayPageSize)
+	if err != nil {
+		if errors.Is(err, domain.ErrAuthRequired) {
+			return nil, authPromptError(source)
+		}
+		return nil, fmt.Errorf("search failed: %w", err)
+	}
+	if len(searchResult.Mods) == 0 {
+		return nil, fmt.Errorf("no mods found matching \"%s\"", query)
+	}
+
+	// Mark already-installed mods in the listing
+	installedMods, _ := service.GetInstalledMods(gameID, profileName)
+	installedIDs := make(map[string]bool)
+	for _, im := range installedMods {
+		if im.SourceID == source {
+			installedIDs[im.ID] = true
+		}
+	}
+
+	// Trivial selections
+	if len(searchResult.Mods) == 1 || installYes {
+		return []*domain.Mod{&searchResult.Mods[0]}, nil
+	}
+
+	// Interactive paginated selection
+	currentPage := 0
+	currentResult := searchResult
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		mods := currentResult.Mods
+		for i, m := range mods {
+			installedMark := ""
+			if installedIDs[m.ID] {
+				installedMark = " [installed]"
+			}
+			fmt.Printf("  [%d] %s v%s by %s (ID: %s)%s\n", i+1, m.Name, m.Version, m.Author, m.ID, installedMark)
+		}
+
+		hasMore := false
+		if currentResult.TotalCount > 0 {
+			remaining := currentResult.TotalCount - (currentPage+1)*displayPageSize
+			if remaining > 0 {
+				hasMore = true
+				fmt.Printf("  [n] Next page (%d more)\n", remaining)
+			}
+		} else if len(mods) == displayPageSize {
+			hasMore = true
+			fmt.Printf("  [n] Next page\n")
+		}
+		if currentPage > 0 {
+			fmt.Printf("  [p] Previous page\n")
+		}
+		fmt.Printf("  [q] Cancel\n")
+
+		fmt.Printf("\nSelect mod(s) (e.g., 1 or 1,3,5 or 1-3) [1]: ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("reading input: %w", err)
+		}
+		input = strings.TrimSpace(input)
+
+		if input == "q" || input == "Q" {
+			return nil, ErrCancelled
+		}
+		if (input == "n" || input == "N") && hasMore {
+			currentPage++
+			currentResult, err = service.SearchMods(ctx, source, gameID, query, "", nil, currentPage, displayPageSize)
+			if err != nil {
+				return nil, fmt.Errorf("search failed: %w", err)
+			}
+			if len(currentResult.Mods) == 0 {
+				fmt.Println("No more results.")
+				currentPage--
+				currentResult, err = service.SearchMods(ctx, source, gameID, query, "", nil, currentPage, displayPageSize)
+				if err != nil {
+					return nil, fmt.Errorf("search failed: %w", err)
+				}
+			}
+			fmt.Println()
+			continue
+		}
+		if (input == "p" || input == "P") && currentPage > 0 {
+			currentPage--
+			currentResult, err = service.SearchMods(ctx, source, gameID, query, "", nil, currentPage, displayPageSize)
+			if err != nil {
+				return nil, fmt.Errorf("search failed: %w", err)
+			}
+			fmt.Println()
+			continue
+		}
+
+		if input == "" {
+			input = "1"
+		}
+		selections, err := parseRangeSelection(input, len(mods))
+		if err != nil {
+			fmt.Printf("Invalid selection: %v\n", err)
+			continue
+		}
+		var selectedMods []*domain.Mod
+		for _, sel := range selections {
+			selectedMods = append(selectedMods, &currentResult.Mods[sel-1])
+		}
+		return selectedMods, nil
+	}
+}
+
 // installPlan contains the ordered list of mods to install
 type installPlan struct {
 	mods          []*domain.Mod // In install order (dependencies first, target last)
@@ -139,182 +428,50 @@ func looksOpaqueFileName(fileName string) bool {
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
-
 	// Either query or --id is required
 	if len(args) == 0 && installModID == "" {
 		return fmt.Errorf("either a search query or --id is required")
 	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doInstall(ctx, service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doInstall(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	// Resolve source: use flag if set, otherwise first configured source
+	var err error
 	installSource, err = resolveSource(game, installSource, installYes)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
+	profileName := profileOrDefault(installProfile)
 
-	// Get the mod to install
+	// Get the mod to install (by --id or interactive search)
 	var mod *domain.Mod
 	if installModID != "" {
-		// Direct ID - fetch mod directly
 		if verbose {
 			fmt.Printf("Fetching mod %s from %s...\n", installModID, installSource)
 		}
-		mod, err = service.GetMod(ctx, installSource, gameID, installModID)
+		mod, err = service.GetMod(ctx, installSource, game.ID, installModID)
 		if err != nil {
 			if errors.Is(err, domain.ErrAuthRequired) {
-				return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", installSource)
+				return authPromptError(installSource)
 			}
 			return fmt.Errorf("failed to fetch mod: %w", err)
 		}
 	} else {
-		// Search for mod
-		query := args[0]
-		fmt.Printf("Searching for \"%s\"...\n\n", query)
-
-		const displayPageSize = 10
-
-		searchResult, err := service.SearchMods(ctx, installSource, gameID, query, "", nil, 0, displayPageSize)
+		selectedMods, err := searchAndSelectMods(ctx, service, game.ID, installSource, args[0], profileName)
 		if err != nil {
-			if errors.Is(err, domain.ErrAuthRequired) {
-				return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", installSource)
-			}
-			return fmt.Errorf("search failed: %w", err)
+			return err
 		}
-
-		if len(searchResult.Mods) == 0 {
-			return fmt.Errorf("no mods found matching \"%s\"", query)
-		}
-
-		// Get installed mods to mark already-installed ones
-		profileName := profileOrDefault(installProfile)
-		installedMods, _ := service.GetInstalledMods(gameID, profileName)
-		installedIDs := make(map[string]bool)
-		for _, im := range installedMods {
-			if im.SourceID == installSource {
-				installedIDs[im.ID] = true
-			}
-		}
-
-		// Select the mod(s) with pagination
-		var selectedMods []*domain.Mod
-		if len(searchResult.Mods) == 1 || installYes {
-			selectedMods = []*domain.Mod{&searchResult.Mods[0]}
-		} else {
-			currentPage := 0
-			currentResult := searchResult
-			reader := bufio.NewReader(os.Stdin)
-
-			for {
-				mods := currentResult.Mods
-				for i, m := range mods {
-					installedMark := ""
-					if installedIDs[m.ID] {
-						installedMark = " [installed]"
-					}
-					fmt.Printf("  [%d] %s v%s by %s (ID: %s)%s\n", i+1, m.Name, m.Version, m.Author, m.ID, installedMark)
-				}
-
-				// Pagination options
-				hasMore := false
-				if currentResult.TotalCount > 0 {
-					remaining := currentResult.TotalCount - (currentPage+1)*displayPageSize
-					if remaining > 0 {
-						hasMore = true
-						fmt.Printf("  [n] Next page (%d more)\n", remaining)
-					}
-				} else if len(mods) == displayPageSize {
-					hasMore = true
-					fmt.Printf("  [n] Next page\n")
-				}
-				if currentPage > 0 {
-					fmt.Printf("  [p] Previous page\n")
-				}
-				fmt.Printf("  [q] Cancel\n")
-
-				fmt.Printf("\nSelect mod(s) (e.g., 1 or 1,3,5 or 1-3) [1]: ")
-				input, err := reader.ReadString('\n')
-				if err != nil {
-					return fmt.Errorf("reading input: %w", err)
-				}
-				input = strings.TrimSpace(input)
-
-				if input == "q" || input == "Q" {
-					return ErrCancelled
-				}
-				if (input == "n" || input == "N") && hasMore {
-					currentPage++
-					currentResult, err = service.SearchMods(ctx, installSource, gameID, query, "", nil, currentPage, displayPageSize)
-					if err != nil {
-						return fmt.Errorf("search failed: %w", err)
-					}
-					if len(currentResult.Mods) == 0 {
-						fmt.Println("No more results.")
-						currentPage--
-						currentResult, err = service.SearchMods(ctx, installSource, gameID, query, "", nil, currentPage, displayPageSize)
-						if err != nil {
-							return fmt.Errorf("search failed: %w", err)
-						}
-					}
-					fmt.Println()
-					continue
-				}
-				if (input == "p" || input == "P") && currentPage > 0 {
-					currentPage--
-					currentResult, err = service.SearchMods(ctx, installSource, gameID, query, "", nil, currentPage, displayPageSize)
-					if err != nil {
-						return fmt.Errorf("search failed: %w", err)
-					}
-					fmt.Println()
-					continue
-				}
-
-				if input == "" {
-					input = "1"
-				}
-				selections, err := parseRangeSelection(input, len(mods))
-				if err != nil {
-					fmt.Printf("Invalid selection: %v\n", err)
-					continue
-				}
-				for _, sel := range selections {
-					selectedMods = append(selectedMods, &currentResult.Mods[sel-1])
-				}
-				break
-			}
-		}
-
-		// If multiple mods selected, install each one
 		if len(selectedMods) > 1 {
 			return installMultipleMods(ctx, service, game, selectedMods, profileName)
 		}
-
 		mod = selectedMods[0]
 	}
 
 	fmt.Printf("\nSelected: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
-
-	// Determine profile name early
-	profileName := profileOrDefault(installProfile)
 
 	// Resolve dependencies (unless --no-deps or local mod)
 	var modsToInstall []*domain.Mod
@@ -322,7 +479,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Println("\nResolving dependencies...")
 
 		// Get already-installed mods
-		installedMods, _ := service.GetInstalledMods(gameID, profileName)
+		installedMods, _ := service.GetInstalledMods(game.ID, profileName)
 		installedIDs := make(map[string]bool)
 		for _, im := range installedMods {
 			installedIDs[domain.ModKey(im.SourceID, im.ID)] = true
@@ -341,9 +498,10 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 			if !installYes {
 				fmt.Printf("\nInstall %d mod(s)? [Y/n]: ", len(plan.mods))
-				reader := bufio.NewReader(os.Stdin)
-				input, _ := reader.ReadString('\n')
-				input = strings.TrimSpace(strings.ToLower(input))
+				input, err := readPromptLine()
+				if err != nil {
+					return err
+				}
 				if input == "n" || input == "no" {
 					return fmt.Errorf("installation cancelled")
 				}
@@ -368,67 +526,14 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get mod files: %w", err)
 	}
 
-	// Filter and sort files
 	files = filterAndSortFiles(files, installShowArchived)
-
 	if len(files) == 0 {
 		return fmt.Errorf("no downloadable files available for this mod")
 	}
 
-	// Select file(s)
-	var selectedFiles []*domain.DownloadableFile
-	if installFileID != "" {
-		// Direct file ID (can be comma-separated)
-		fileIDs := strings.Split(installFileID, ",")
-		for _, fid := range fileIDs {
-			fid = strings.TrimSpace(fid)
-			found := false
-			for i := range files {
-				if files[i].ID == fid {
-					selectedFiles = append(selectedFiles, &files[i])
-					found = true
-					break
-				}
-			}
-			if !found {
-				return fmt.Errorf("file ID %s not found", fid)
-			}
-		}
-	} else if len(files) == 1 {
-		selectedFiles = []*domain.DownloadableFile{&files[0]}
-	} else {
-		// Find primary file index for default
-		defaultChoice := 1
-		for i := range files {
-			if files[i].IsPrimary {
-				defaultChoice = i + 1
-				break
-			}
-		}
-
-		if installYes {
-			// Auto-select primary or first file
-			selectedFiles = []*domain.DownloadableFile{&files[defaultChoice-1]}
-		} else {
-			// Show file selection with multi-select support
-			fmt.Println("\nAvailable files:")
-			for i, f := range files {
-				sizeStr := formatSize(f.Size)
-				defaultMark := ""
-				if f.IsPrimary {
-					defaultMark = " <- default"
-				}
-				fmt.Printf("  [%d] %s (%s, %s)%s\n", i+1, displayFileLabel(f), f.Category, sizeStr, defaultMark)
-			}
-
-			selections, err := promptMultiSelection("Select file(s) (e.g., 1 or 1,3 or 1-3)", defaultChoice, len(files))
-			if err != nil {
-				return err
-			}
-			for _, sel := range selections {
-				selectedFiles = append(selectedFiles, &files[sel-1])
-			}
-		}
+	selectedFiles, err := selectInstallFiles(files)
+	if err != nil {
+		return err
 	}
 
 	// Show selected files
@@ -474,20 +579,19 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// Set up installer
 	linkMethod := service.GetGameLinkMethod(game)
-	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+	installer := service.GetInstaller(game)
 	var reinstallTxn *reinstallCacheTransaction
 	downloadCache := service.GetGameCache(game)
 
 	// Check if mod is already installed so we can replace it atomically later.
-	existingMod, err := service.GetInstalledMod(installSource, mod.ID, gameID, profileName)
+	existingMod, err := service.GetInstalledMod(installSource, mod.ID, game.ID, profileName)
 	if err != nil {
 		if !errors.Is(err, domain.ErrModNotFound) {
 			return fmt.Errorf("checking existing installed mod: %w", err)
 		}
 		existingMod = nil
 	} else if existingMod.Version == mod.Version {
-		reinstallTxn, err = prepareReinstallCacheTransaction(service.GetGameCache(game), gameID, existingMod.SourceID, existingMod.ID, existingMod.Version)
+		reinstallTxn, err = prepareReinstallCacheTransaction(service.GetGameCache(game), game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version)
 		if err != nil {
 			return fmt.Errorf("preparing reinstall cache: %w", err)
 		}
@@ -499,107 +603,16 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
-	// Download each selected file
-	var totalFileCount int
-	var downloadedFileIDs []string
-	fileChecksums := make(map[string]string) // fileID -> checksum
-
-	for i, selectedFile := range selectedFiles {
-		if len(selectedFiles) > 1 {
-			fmt.Printf("\n[%d/%d] Downloading %s...\n", i+1, len(selectedFiles), displayFileLabel(*selectedFile))
-		} else {
-			fmt.Printf("\nDownloading %s...\n", displayFileLabel(*selectedFile))
-		}
-
-		progressFn := func(p core.DownloadProgress) {
-			if p.TotalBytes > 0 {
-				bar := progressBar(p.Percentage, 30)
-				fmt.Printf("\r  [%s] %.1f%% (%s / %s)", bar, p.Percentage,
-					formatSize(p.Downloaded), formatSize(p.TotalBytes))
-			} else {
-				fmt.Printf("\r  Downloaded %s", formatSize(p.Downloaded))
-			}
-		}
-
-		downloadResult, err := service.DownloadModToCache(ctx, downloadCache, installSource, game, mod, selectedFile, progressFn)
-		if err != nil {
-			fmt.Println() // newline after progress
-			if strings.Contains(err.Error(), "third-party downloads") && mod.SourceURL != "" {
-				fmt.Println()
-				fmt.Println("  â  This mod author has disabled API downloads.")
-				fmt.Println("  To install manually:")
-				fmt.Println()
-				fmt.Printf("    1. Download from: %s\n", mod.SourceURL)
-				fmt.Printf("    2. Import:        lmm import <downloaded-file> --id %s\n", mod.ID)
-				fmt.Println()
-				return fmt.Errorf("download unavailable via API")
-			}
-			return fmt.Errorf("download failed: %w", err)
-		}
-		fmt.Println() // newline after progress
-
-		// Display checksum (truncated for readability) unless --skip-verify
-		if !skipVerify && downloadResult.Checksum != "" {
-			displayChecksum := downloadResult.Checksum
-			if len(displayChecksum) > 12 {
-				displayChecksum = displayChecksum[:12] + "..."
-			}
-			fmt.Printf("  Checksum: %s\n", displayChecksum)
-			fileChecksums[selectedFile.ID] = downloadResult.Checksum
-		}
-
-		totalFileCount += downloadResult.FilesExtracted
-		downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
+	totalFileCount, downloadedFileIDs, fileChecksums, err := downloadSelectedFiles(ctx, service, downloadCache, installSource, game, mod, selectedFiles)
+	if err != nil {
+		return err
 	}
 
 	fmt.Println("\nExtracting to cache...")
 
-	// Check for conflicts (unless --force)
 	if !installForce {
-		conflicts, err := installer.GetConflicts(ctx, game, mod, profileName)
-		if err != nil {
-			if verbose {
-				fmt.Printf("Warning: could not check conflicts: %v\n", err)
-			}
-		} else if len(conflicts) > 0 {
-			fmt.Printf("\n⚠ File conflicts detected:\n")
-
-			// Group conflicts by mod
-			modConflicts := make(map[string][]string) // "sourceID:modID" -> []paths
-			for _, c := range conflicts {
-				key := domain.ModKey(c.CurrentSourceID, c.CurrentModID)
-				modConflicts[key] = append(modConflicts[key], c.RelativePath)
-			}
-
-			for key, paths := range modConflicts {
-				parts := strings.SplitN(key, ":", 2)
-				sourceID, modID := parts[0], parts[1]
-
-				// Try to get mod name
-				conflictMod, _ := service.GetInstalledMod(sourceID, modID, gameID, profileName)
-				modName := modID
-				if conflictMod != nil {
-					modName = conflictMod.Name
-				}
-
-				fmt.Printf("  From %s (%s):\n", modName, modID)
-				maxShow := 5
-				for i, p := range paths {
-					if i >= maxShow {
-						fmt.Printf("    ... and %d more\n", len(paths)-maxShow)
-						break
-					}
-					fmt.Printf("    - %s\n", p)
-				}
-			}
-
-			fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
-			reader := bufio.NewReader(os.Stdin)
-			input, _ := reader.ReadString('\n')
-			input = strings.TrimSpace(strings.ToLower(input))
-			if input != "y" && input != "yes" {
-				return fmt.Errorf("installation cancelled")
-			}
+		if err := confirmInstallConflicts(ctx, service, installer, game, mod, profileName); err != nil {
+			return err
 		}
 	}
 
@@ -640,7 +653,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		FileIDs:      downloadedFileIDs,
 	}
 
-	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(installedMod); err != nil {
 		if existingMod != nil {
 			if reinstallTxn != nil {
 				_ = reinstallTxn.RestoreLive()
@@ -662,7 +675,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	// Store checksums in database
 	for fileID, checksum := range fileChecksums {
-		if err := service.DB().SaveFileChecksum(
+		if err := service.SaveFileChecksum(
 			installSource, mod.ID, game.ID, profileName, fileID, checksum,
 		); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to save checksum for file %s: %v\n", fileID, err)
@@ -679,9 +692,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Ensure profile exists, create if needed
-	if _, err := pm.Get(gameID, profileName); err != nil {
+	if _, err := pm.Get(game.ID, profileName); err != nil {
 		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(gameID, profileName); err != nil {
+			if _, err := pm.Create(game.ID, profileName); err != nil {
 				// Log but don't fail - mod is installed
 				if verbose {
 					fmt.Printf("  Warning: could not create profile: %v\n", err)
@@ -691,14 +704,14 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Add or update mod in profile (handles both new installs and re-installs)
-	if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		if verbose {
 			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}
 	}
 
 	if existingMod != nil && existingMod.Version != mod.Version {
-		if err := service.GetGameCache(game).Delete(gameID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
+		if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
 			fmt.Printf("  Warning: could not clear old cache: %v\n", err)
 		}
 	}
@@ -1200,8 +1213,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			continue
 		}
 
-		linker := service.GetLinker(linkMethod)
-		installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+		installer := service.GetInstaller(game)
 
 		// Remove previous installation if re-installing
 		if existingMod, err := service.GetInstalledMod(sourceID, mod.ID, game.ID, profileName); err == nil && existingMod != nil {
@@ -1275,7 +1287,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			LinkMethod:   linkMethod,
 			FileIDs:      []string{selectedFile.ID},
 		}
-		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+		if err := service.SaveInstalledMod(installedMod); err != nil {
 			fmt.Printf("  Error: failed to save mod: %v\n", err)
 			failed = append(failed, mod.Name)
 			continue
@@ -1283,7 +1295,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 
 		// Store checksum
 		if !skipVerify && downloadResult.Checksum != "" {
-			if err := service.DB().SaveFileChecksum(sourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum); err != nil {
+			if err := service.SaveFileChecksum(sourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum); err != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: failed to save checksum: %v\n", err)
 			}
 		}

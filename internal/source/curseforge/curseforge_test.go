@@ -56,7 +56,7 @@ func TestCurseForge_Search(t *testing.T) {
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
-	cf.client.baseURL = server.URL
+	cf.client.SetBaseURL(server.URL)
 
 	result, err := cf.Search(context.Background(), source.SearchQuery{
 		GameID:   "432",
@@ -115,7 +115,7 @@ func TestCurseForge_GetMod(t *testing.T) {
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
-	cf.client.baseURL = server.URL
+	cf.client.SetBaseURL(server.URL)
 
 	mod, err := cf.GetMod(context.Background(), "432", "238222")
 	require.NoError(t, err)
@@ -146,7 +146,7 @@ func TestCurseForge_GetDependencies(t *testing.T) {
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
-	cf.client.baseURL = server.URL
+	cf.client.SetBaseURL(server.URL)
 
 	mod := &domain.Mod{ID: "238222", GameID: "432"}
 	deps, err := cf.GetDependencies(context.Background(), mod)
@@ -185,7 +185,7 @@ func TestCurseForge_GetModFiles(t *testing.T) {
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
-	cf.client.baseURL = server.URL
+	cf.client.SetBaseURL(server.URL)
 
 	mod := &domain.Mod{ID: "238222", GameID: "432"}
 	files, err := cf.GetModFiles(context.Background(), mod)
@@ -215,7 +215,7 @@ func TestCurseForge_GetDownloadURL(t *testing.T) {
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
-	cf.client.baseURL = server.URL
+	cf.client.SetBaseURL(server.URL)
 
 	mod := &domain.Mod{ID: "238222", GameID: "432"}
 	url, err := cf.GetDownloadURL(context.Background(), mod, "12345")
@@ -256,7 +256,7 @@ func TestCurseForge_CheckUpdates(t *testing.T) {
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
-	cf.client.baseURL = server.URL
+	cf.client.SetBaseURL(server.URL)
 
 	installed := []domain.InstalledMod{
 		{

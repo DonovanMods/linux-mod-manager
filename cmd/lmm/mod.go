@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
@@ -120,13 +121,16 @@ func init() {
 }
 
 func runModSetUpdate(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
+	// Validate flags before initialising the service so bad CLI usage fails fast.
+	if err := validateModSetUpdatePolicyFlags(); err != nil {
 		return err
 	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doModSetUpdate(service, game, args[0])
+	})
+}
 
-	modID := args[0]
-
-	// Validate that exactly one policy is specified
+func validateModSetUpdatePolicyFlags() error {
 	policyCount := 0
 	if modSetAuto {
 		policyCount++
@@ -137,29 +141,17 @@ func runModSetUpdate(cmd *cobra.Command, args []string) error {
 	if modSetPin {
 		policyCount++
 	}
-
 	if policyCount == 0 {
 		return fmt.Errorf("specify a policy: --auto, --notify, or --pin")
 	}
 	if policyCount > 1 {
 		return fmt.Errorf("specify only one policy: --auto, --notify, or --pin")
 	}
+	return nil
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	// Resolve source from game config
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
+func doModSetUpdate(service *core.Service, game *domain.Game, modID string) error {
+	var err error
 	modSource, err = resolveSource(game, modSource, false)
 	if err != nil {
 		return err
@@ -168,7 +160,7 @@ func runModSetUpdate(cmd *cobra.Command, args []string) error {
 	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists and get its name
-	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
+	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -189,7 +181,7 @@ func runModSetUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Update the policy
-	if err := service.SetModUpdatePolicy(modSource, modID, gameID, profileName, policy); err != nil {
+	if err := service.SetModUpdatePolicy(modSource, modID, game.ID, profileName, policy); err != nil {
 		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
@@ -203,29 +195,14 @@ func runModSetUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func runModEnable(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doModEnable(ctx, service, game, args[0])
+	})
+}
 
-	modID := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Resolve source: use flag if set, otherwise first configured source
+	var err error
 	modSource, err = resolveSource(game, modSource, false)
 	if err != nil {
 		return err
@@ -234,7 +211,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists
-	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
+	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -245,11 +222,9 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if mod is in cache
-	if !service.GetGameCache(game).Exists(gameID, modSource, modID, mod.Version) {
+	if !service.GetGameCache(game).Exists(game.ID, modSource, modID, mod.Version) {
 		return fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
-
-	ctx := context.Background()
 
 	// Deploy mod files from cache
 	installer := service.GetInstaller(game)
@@ -259,7 +234,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	// Update enabled flag in database
-	if err := service.DB().SetModEnabled(modSource, modID, gameID, profileName, true); err != nil {
+	if err := service.SetModEnabled(modSource, modID, game.ID, profileName, true); err != nil {
 		return fmt.Errorf("failed to update mod status: %w", err)
 	}
 
@@ -268,29 +243,14 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 }
 
 func runModDisable(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doModDisable(ctx, service, game, args[0])
+	})
+}
 
-	modID := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doModDisable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Resolve source: use flag if set, otherwise first configured source
+	var err error
 	modSource, err = resolveSource(game, modSource, false)
 	if err != nil {
 		return err
@@ -299,7 +259,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists
-	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
+	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -308,8 +268,6 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s is already disabled.\n", mod.Name)
 		return nil
 	}
-
-	ctx := context.Background()
 
 	// Undeploy mod files from game directory
 	installer := service.GetInstaller(game)
@@ -322,7 +280,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 	}
 
 	// Update enabled flag in database
-	if err := service.DB().SetModEnabled(modSource, modID, gameID, profileName, false); err != nil {
+	if err := service.SetModEnabled(modSource, modID, game.ID, profileName, false); err != nil {
 		return fmt.Errorf("failed to update mod status: %w", err)
 	}
 
@@ -331,37 +289,28 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 }
 
 func runModFiles(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
+		return doModFiles(svc, game, args[0])
+	})
+}
 
-	modID := args[0]
+func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 	profileName := profileOrDefault(modProfile)
 
-	svc, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() { _ = svc.Close() }()
-
-	// Resolve source from game config
-	game, err := svc.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
+	var err error
 	modSource, err = resolveSource(game, modSource, false)
 	if err != nil {
 		return err
 	}
 
 	// Get mod info for display
-	mod, err := svc.GetInstalledMod(modSource, modID, gameID, profileName)
+	mod, err := svc.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
 	// Get deployed files from database
-	files, err := svc.DB().GetDeployedFilesForMod(gameID, profileName, modSource, modID)
+	files, err := svc.GetDeployedFilesForMod(game.ID, profileName, modSource, modID)
 	if err != nil {
 		return fmt.Errorf("getting deployed files: %w", err)
 	}
@@ -383,30 +332,19 @@ func runModFiles(cmd *cobra.Command, args []string) error {
 }
 
 func runModShow(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
+		return doModShow(ctx, svc, game, args[0])
+	})
+}
 
-	modID := args[0]
-
-	svc, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() { _ = svc.Close() }()
-
-	// Resolve source from game config
-	game, err := svc.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
+func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
+	var err error
 	modSource, err = resolveSource(game, modSource, false)
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
-	mod, err := svc.GetMod(ctx, modSource, gameID, modID)
+	mod, err := svc.GetMod(ctx, modSource, game.ID, modID)
 	if err != nil {
 		return fmt.Errorf("mod not found: %w", err)
 	}

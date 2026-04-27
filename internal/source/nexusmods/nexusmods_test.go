@@ -59,7 +59,7 @@ func TestNexusMods_GetModFiles(t *testing.T) {
 	defer server.Close()
 
 	nm := New(nil, "testapikey")
-	nm.client.baseURL = server.URL
+	nm.client.SetBaseURL(server.URL)
 
 	mod := &domain.Mod{
 		ID:     "12345",
@@ -107,7 +107,7 @@ func TestNexusMods_GetModFiles_SanitizesPathLikeFileName(t *testing.T) {
 	defer server.Close()
 
 	nm := New(nil, "testapikey")
-	nm.client.baseURL = server.URL
+	nm.client.SetBaseURL(server.URL)
 
 	mod := &domain.Mod{
 		ID:     "12345",
@@ -152,7 +152,7 @@ func TestNexusMods_GetModFiles_SanitizesInvalidFileNameToFallback(t *testing.T) 
 	defer server.Close()
 
 	nm := New(nil, "testapikey")
-	nm.client.baseURL = server.URL
+	nm.client.SetBaseURL(server.URL)
 
 	mod := &domain.Mod{
 		ID:     "12345",
@@ -183,7 +183,7 @@ func TestNexusMods_GetDownloadURL(t *testing.T) {
 	defer server.Close()
 
 	nm := New(nil, "testapikey")
-	nm.client.baseURL = server.URL
+	nm.client.SetBaseURL(server.URL)
 
 	mod := &domain.Mod{
 		ID:     "12345",
@@ -205,7 +205,7 @@ func TestNexusMods_GetDownloadURL_NoLinks(t *testing.T) {
 	defer server.Close()
 
 	nm := New(nil, "testapikey")
-	nm.client.baseURL = server.URL
+	nm.client.SetBaseURL(server.URL)
 
 	mod := &domain.Mod{
 		ID:     "12345",
@@ -266,7 +266,7 @@ func TestNexusMods_CheckUpdates_FindsUpdate(t *testing.T) {
 	defer server.Close()
 
 	nm := New(nil, "testapikey")
-	nm.client.baseURL = server.URL
+	nm.client.SetBaseURL(server.URL)
 
 	installed := []domain.InstalledMod{
 		{
@@ -307,7 +307,7 @@ func TestNexusMods_CheckUpdates_NoUpdateWhenSameVersion(t *testing.T) {
 	defer server.Close()
 
 	nm := New(nil, "testapikey")
-	nm.client.baseURL = server.URL
+	nm.client.SetBaseURL(server.URL)
 
 	installed := []domain.InstalledMod{
 		{
@@ -347,7 +347,7 @@ func TestNexusMods_CheckUpdates_FindsFileUpdate(t *testing.T) {
 	defer server.Close()
 
 	nm := New(nil, "testapikey")
-	nm.client.baseURL = server.URL
+	nm.client.SetBaseURL(server.URL)
 
 	installed := []domain.InstalledMod{
 		{
@@ -392,7 +392,7 @@ func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
 	defer server.Close()
 
 	nm := New(nil, "testapikey")
-	nm.client.baseURL = server.URL
+	nm.client.SetBaseURL(server.URL)
 
 	installed := []domain.InstalledMod{
 		{Mod: domain.Mod{ID: "111", Version: "1.0.0", GameID: "skyrimspecialedition"}},
