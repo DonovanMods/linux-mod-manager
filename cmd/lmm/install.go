@@ -120,14 +120,10 @@ func confirmInstallConflicts(ctx context.Context, service *core.Service, install
 	}
 
 	fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
-	// EOF is fine: piped input or Ctrl-D both legitimately end the line. Any
-	// other read error is something the user should see, not a silent "no".
-	if err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("reading confirmation: %w", err)
+	input, err := readPromptLine()
+	if err != nil {
+		return err
 	}
-	input = strings.TrimSpace(strings.ToLower(input))
 	if input != "y" && input != "yes" {
 		return fmt.Errorf("installation cancelled")
 	}
@@ -502,9 +498,10 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 
 			if !installYes {
 				fmt.Printf("\nInstall %d mod(s)? [Y/n]: ", len(plan.mods))
-				reader := bufio.NewReader(os.Stdin)
-				input, _ := reader.ReadString('\n')
-				input = strings.TrimSpace(strings.ToLower(input))
+				input, err := readPromptLine()
+				if err != nil {
+					return err
+				}
 				if input == "n" || input == "no" {
 					return fmt.Errorf("installation cancelled")
 				}

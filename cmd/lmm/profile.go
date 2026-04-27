@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -385,9 +384,10 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 
 	// Confirm
 	fmt.Print("\nProceed? [Y/n]: ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
+	input, err := readPromptLine()
+	if err != nil {
+		return err
+	}
 	if input != "" && input != "y" && input != "yes" {
 		fmt.Println("Cancelled.")
 		return nil
@@ -654,9 +654,10 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 
 	// Ask to install missing mods
 	fmt.Print("\nDownload and install mods? [Y/n]: ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
+	input, err := readPromptLine()
+	if err != nil {
+		return err
+	}
 	if input != "" && input != "y" && input != "yes" {
 		fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", profile.Name)
 		return nil
@@ -915,9 +916,10 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 
 	// Confirm
 	fmt.Print("\nProceed? [Y/n]: ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
+	input, err := readPromptLine()
+	if err != nil {
+		return err
+	}
 	if input != "" && input != "y" && input != "yes" {
 		fmt.Println("Cancelled.")
 		return nil
@@ -1182,9 +1184,10 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	// Confirm unless --yes
 	if !profileApplyYes {
 		fmt.Print("\nProceed? [Y/n]: ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
 		if input != "" && input != "y" && input != "yes" {
 			fmt.Println("Cancelled.")
 			return nil

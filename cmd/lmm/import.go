@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -214,9 +213,10 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 			}
 
 			fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
-			reader := bufio.NewReader(os.Stdin)
-			input, _ := reader.ReadString('\n')
-			input = strings.TrimSpace(strings.ToLower(input))
+			input, err := readPromptLine()
+			if err != nil {
+				return err
+			}
 			if input != "y" && input != "yes" {
 				return fmt.Errorf("import cancelled")
 			}
@@ -503,9 +503,10 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	// Confirm unless --force
 	if !importForce {
 		fmt.Printf("\nImport these mods? [y/N]: ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
 		if input != "y" && input != "yes" {
 			return fmt.Errorf("import cancelled")
 		}

@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -53,6 +55,25 @@ func closeService(svc *core.Service) {
 // domain.ErrAuthRequired, instructing the user how to authenticate.
 func authPromptError(sourceID string) error {
 	return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", sourceID)
+}
+
+// readPromptLine reads a line from stdin, trim-spaced and lower-cased, ready
+// for y/n comparison. io.EOF is treated as empty input (Ctrl-D and piped
+// input both legitimately end the line); any other read error is propagated
+// with context so a stdin failure is not silently conflated with a "no".
+func readPromptLine() (string, error) {
+	return readPromptLineFrom(os.Stdin)
+}
+
+// readPromptLineFrom is the testable seam for readPromptLine. The split
+// exists so unit tests can drive the helper with a strings.Reader instead
+// of os.Stdin.
+func readPromptLineFrom(r io.Reader) (string, error) {
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("reading input: %w", err)
+	}
+	return strings.TrimSpace(strings.ToLower(line)), nil
 }
 
 // resolveSource determines which source to use for a game.
