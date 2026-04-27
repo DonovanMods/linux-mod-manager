@@ -569,8 +569,7 @@ func tryMatchCurseForge(ctx context.Context, service *core.Service, game *domain
 		return nil, nil
 	}
 
-	// Return the first (best) match
-	// TODO: Could do fuzzy matching to verify it's actually the right mod
+	// Return the first (best) match. Tighter scoring tracked in #27.
 	return &mods[0], nil
 }
 

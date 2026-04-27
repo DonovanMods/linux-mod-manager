@@ -182,9 +182,7 @@ func (c *Client) GetMods(ctx context.Context, modIDs []int) ([]Mod, error) {
 		return nil, nil
 	}
 
-	// CurseForge expects POST with body for batch requests
-	// For simplicity, we'll fetch one at a time for now
-	// TODO: Implement batch POST /v1/mods
+	// Per-id fan-out for now; batch POST /v1/mods tracked in #28.
 	var mods []Mod
 	var errs []error
 

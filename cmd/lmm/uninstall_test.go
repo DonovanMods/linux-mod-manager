@@ -22,8 +22,10 @@ func TestUninstallCmd_Structure(t *testing.T) {
 
 // TestUninstallCmd_NoGame tests uninstall without game flag
 func TestUninstallCmd_NoGame(t *testing.T) {
-	// Reset flags
+	// Reset flags. configDir must point at an empty tempdir so requireGame
+	// does not pick up a default-game from the user's real ~/.config/lmm.
 	gameID = ""
+	configDir = t.TempDir()
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(uninstallCmd)
