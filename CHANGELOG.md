@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.9] - 2026-04-26
+
+### Changed
+
+- **Shared source HTTP client**: New `internal/source/httpclient` package centralises auth-header injection (`apikey` for NexusMods, `x-api-key` for CurseForge), 401 → `domain.ErrAuthRequired` mapping, JSON decoding, and bounded error-body reads. Both source clients now compose this rather than each maintaining their own near-identical `doRequest`. Source-specific status handling (CurseForge's 403 disambiguation and 404 → `ErrModNotFound`) plugs in via the optional `ErrorMapper` callback. Recorded-response tests pass without modification, proving no behavioural change
+
 ## [1.3.8] - 2026-04-26
 
 ### Changed
@@ -615,7 +621,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.8...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.9...HEAD
+[1.3.9]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.8...v1.3.9
 [1.3.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.7...v1.3.8
 [1.3.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.6...v1.3.7
 [1.3.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.5...v1.3.6
