@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.10] - 2026-04-26
+
+### Changed
+
+- **TODO comments converted to issues**: Two in-code `TODO`s now have tracking issues — fuzzy-matching for local imports (#27) and CurseForge batch-mods endpoint (#28). The comments themselves are reduced to one-line pointers
+- **Test isolation fix**: `TestUninstallCmd_NoGame`, `TestSearchCmd_NoGame`, `TestUpdateCmd_NoGame`, and `TestUpdateRollbackCmd_NoGame` now set `configDir = t.TempDir()` so they pass in isolation. They previously relied on a previous test having already pointed `configDir` away from the user's real `~/.config/lmm`, which would otherwise leak a default-game and skew the assertion
+
+### Notes
+
+- Phase 6b (move per-command flag globals to scoped structs) is intentionally skipped: the existing `var (foo string; bar bool)` + `init()` binding pattern is idiomatic Cobra, and converting it would not fix the persistent root-flag globals (`gameID`, `configDir`, `dataDir`, etc.) that drive the test-isolation issue. Better to revisit if a concrete pain point appears
+
 ## [1.3.9] - 2026-04-26
 
 ### Changed
@@ -621,7 +632,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.9...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.10...HEAD
+[1.3.10]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.9...v1.3.10
 [1.3.9]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.8...v1.3.9
 [1.3.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.7...v1.3.8
 [1.3.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.6...v1.3.7
