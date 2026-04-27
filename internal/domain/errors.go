@@ -40,7 +40,14 @@ func (e *DeployError) Error() string {
 		b.WriteString(e.Op)
 		b.WriteString(": ")
 	}
-	b.WriteString(e.Primary.Error())
+	// Primary is documented as required, but Error() is on the formatting
+	// path (logs, %v, fmt.Errorf chains) — so guard rather than panic if a
+	// future caller forgets to set it.
+	if e.Primary != nil {
+		b.WriteString(e.Primary.Error())
+	} else {
+		b.WriteString("<nil primary>")
+	}
 	if e.Cleanup != nil {
 		b.WriteString("; cleanup failed: ")
 		b.WriteString(e.Cleanup.Error())
@@ -53,10 +60,13 @@ func (e *DeployError) Error() string {
 }
 
 // Unwrap returns every non-nil cause so errors.Is and errors.As can walk the
-// full chain — primary first, then cleanup, then rollback.
+// full chain — primary first, then cleanup, then rollback. Nil entries are
+// skipped so the slice never contains a dangling nil.
 func (e *DeployError) Unwrap() []error {
 	out := make([]error, 0, 3)
-	out = append(out, e.Primary)
+	if e.Primary != nil {
+		out = append(out, e.Primary)
+	}
 	if e.Cleanup != nil {
 		out = append(out, e.Cleanup)
 	}

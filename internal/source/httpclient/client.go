@@ -20,8 +20,9 @@ import (
 // for an actionable error message and bounds memory use.
 const errorBodyLimit = 10 * 1024
 
-// Options configures a Client. AuthHeader and AuthLabel are required; the
-// rest have sensible zero-value defaults.
+// Options configures a Client. BaseURL, AuthHeader, and AuthLabel are
+// required and validated by New (which panics on omission); the rest have
+// sensible zero-value defaults.
 type Options struct {
 	HTTPClient *http.Client
 	BaseURL    string

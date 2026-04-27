@@ -121,7 +121,12 @@ func confirmInstallConflicts(ctx context.Context, service *core.Service, install
 
 	fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
 	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
+	input, err := reader.ReadString('\n')
+	// EOF is fine: piped input or Ctrl-D both legitimately end the line. Any
+	// other read error is something the user should see, not a silent "no".
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("reading confirmation: %w", err)
+	}
 	input = strings.TrimSpace(strings.ToLower(input))
 	if input != "y" && input != "yes" {
 		return fmt.Errorf("installation cancelled")

@@ -48,6 +48,27 @@ func TestDeployError_AllThree(t *testing.T) {
 	require.ErrorIs(t, e, rb)
 }
 
+func TestDeployError_NilPrimaryDoesNotPanic(t *testing.T) {
+	// Primary is documented as required, but Error() and Unwrap() should
+	// fail gracefully if a future refactor accidentally constructs the
+	// composite without one — the formatting path is not the place for an
+	// opaque nil-pointer panic.
+	rb := errors.New("rollback failed")
+	e := &DeployError{Op: "deploying foo.esp", Rollback: rb}
+
+	assert.NotPanics(t, func() { _ = e.Error() })
+	assert.Contains(t, e.Error(), "deploying foo.esp")
+	assert.Contains(t, e.Error(), "<nil primary>")
+	assert.Contains(t, e.Error(), "rollback failed")
+
+	// Unwrap should skip the nil rather than emit a dangling nil entry.
+	unwrapped := e.Unwrap()
+	for _, u := range unwrapped {
+		assert.NotNil(t, u, "Unwrap must not include nil entries")
+	}
+	require.ErrorIs(t, e, rb)
+}
+
 func TestDeployError_NoOp(t *testing.T) {
 	primary := errors.New("ctx cancelled")
 	e := &DeployError{Primary: primary}
