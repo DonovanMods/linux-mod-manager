@@ -140,6 +140,59 @@ func TestDoJSON_ErrorMapperReturningNilFallsThrough(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrAuthRequired)
 }
 
+func TestDoJSON_AcceptsAny2xxAsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":7}`))
+	}))
+	defer srv.Close()
+
+	c := httpclient.New(httpclient.Options{
+		BaseURL:    srv.URL,
+		AuthHeader: "apikey",
+		AuthLabel:  "Test",
+	})
+
+	var out struct {
+		ID int `json:"id"`
+	}
+	require.NoError(t, c.DoJSON(context.Background(), http.MethodPost, "/", &out))
+	assert.Equal(t, 7, out.ID)
+}
+
+func TestDoJSON_204NoContentSucceedsWithoutDecode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := httpclient.New(httpclient.Options{
+		BaseURL:    srv.URL,
+		AuthHeader: "apikey",
+		AuthLabel:  "Test",
+	})
+
+	// Pass a non-nil result to prove we don't try to decode an empty body.
+	var out struct{ X int }
+	require.NoError(t, c.DoJSON(context.Background(), http.MethodDelete, "/thing", &out))
+}
+
+func TestNew_PanicsOnMissingRequiredFields(t *testing.T) {
+	cases := []struct {
+		name string
+		opts httpclient.Options
+	}{
+		{"missing BaseURL", httpclient.Options{AuthHeader: "h", AuthLabel: "l"}},
+		{"missing AuthHeader", httpclient.Options{BaseURL: "https://x", AuthLabel: "l"}},
+		{"missing AuthLabel", httpclient.Options{BaseURL: "https://x", AuthHeader: "h"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Panics(t, func() { httpclient.New(tc.opts) })
+		})
+	}
+}
+
 func TestDoJSON_ContextCancellationPropagates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()

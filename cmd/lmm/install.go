@@ -21,7 +21,9 @@ import (
 
 // downloadSelectedFiles fetches each selected mod file into downloadCache,
 // printing progress and returning per-file metadata for the caller to record.
-func downloadSelectedFiles(ctx context.Context, service *core.Service, downloadCache *cache.Cache, game *domain.Game, mod *domain.Mod, selectedFiles []*domain.DownloadableFile) (totalFileCount int, downloadedFileIDs []string, fileChecksums map[string]string, err error) {
+// sourceID is passed in (rather than read from the installSource global) so
+// the helper is reusable and testable in isolation.
+func downloadSelectedFiles(ctx context.Context, service *core.Service, downloadCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, selectedFiles []*domain.DownloadableFile) (totalFileCount int, downloadedFileIDs []string, fileChecksums map[string]string, err error) {
 	fileChecksums = make(map[string]string)
 
 	for i, selectedFile := range selectedFiles {
@@ -41,7 +43,7 @@ func downloadSelectedFiles(ctx context.Context, service *core.Service, downloadC
 			}
 		}
 
-		downloadResult, dlErr := service.DownloadModToCache(ctx, downloadCache, installSource, game, mod, selectedFile, progressFn)
+		downloadResult, dlErr := service.DownloadModToCache(ctx, downloadCache, sourceID, game, mod, selectedFile, progressFn)
 		if dlErr != nil {
 			fmt.Println()
 			if strings.Contains(dlErr.Error(), "third-party downloads") && mod.SourceURL != "" {
@@ -599,7 +601,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		}()
 	}
 
-	totalFileCount, downloadedFileIDs, fileChecksums, err := downloadSelectedFiles(ctx, service, downloadCache, game, mod, selectedFiles)
+	totalFileCount, downloadedFileIDs, fileChecksums, err := downloadSelectedFiles(ctx, service, downloadCache, installSource, game, mod, selectedFiles)
 	if err != nil {
 		return err
 	}

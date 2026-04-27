@@ -49,8 +49,20 @@ type Client struct {
 	errorMapper func(int, []byte, string) error
 }
 
-// New returns a Client configured with opts.
+// New returns a Client configured with opts. Panics when a required field
+// (BaseURL, AuthHeader, AuthLabel) is empty — the package is internal and
+// only ever constructed at startup, so a missing required field is a
+// programming error worth catching loudly.
 func New(opts Options) *Client {
+	if opts.BaseURL == "" {
+		panic("httpclient.New: BaseURL is required")
+	}
+	if opts.AuthHeader == "" {
+		panic("httpclient.New: AuthHeader is required")
+	}
+	if opts.AuthLabel == "" {
+		panic("httpclient.New: AuthLabel is required")
+	}
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -108,7 +120,7 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, result interfa
 		}
 	}()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
 		if readErr != nil {
 			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
@@ -122,6 +134,11 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, result interfa
 			return fmt.Errorf("%w: %s API key required", domain.ErrAuthRequired, c.authLabel)
 		}
 		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// 204 No Content has no body to decode; treat as success.
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
