@@ -101,7 +101,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	profileName := profileOrDefault(updateProfile)
 
 	// Get installed mods
-	installed, err := service.GetInstalledMods(gameID, profileName)
+	installed, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("failed to get installed mods: %w", err)
 	}
@@ -150,7 +150,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(updateJSONOutput{GameID: gameID, Profile: profileName, Updates: []updateModJSON{}}); err != nil {
+			if err := enc.Encode(updateJSONOutput{GameID: game.ID, Profile: profileName, Updates: []updateModJSON{}}); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
 			return nil
@@ -160,7 +160,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	if jsonOutput {
-		out := updateJSONOutput{GameID: gameID, Profile: profileName, Updates: make([]updateModJSON, len(updates))}
+		out := updateJSONOutput{GameID: game.ID, Profile: profileName, Updates: make([]updateModJSON, len(updates))}
 		for i, u := range updates {
 			out.Updates[i] = updateModJSON{
 				ModID:        u.InstalledMod.ID,
@@ -500,7 +500,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	profileName := profileOrDefault(updateProfile)
 
 	// Get the installed mod
-	mod, err := service.GetInstalledMod(updateSource, modID, gameID, profileName)
+	mod, err := service.GetInstalledMod(updateSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}

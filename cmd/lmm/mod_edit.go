@@ -64,7 +64,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 
 	// Find the mod - search all sources
 	var installedMod *domain.InstalledMod
-	allMods, err := service.GetInstalledMods(gameID, profileName)
+	allMods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -151,13 +151,13 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 		}
 
 		// Delete old record
-		if err := service.DeleteInstalledMod(oldSourceID, oldModID, gameID, profileName); err != nil {
+		if err := service.DeleteInstalledMod(oldSourceID, oldModID, game.ID, profileName); err != nil {
 			return fmt.Errorf("removing old record: %w", err)
 		}
 
 		// Update profile reference
 		pm := getProfileManager(service)
-		if err := pm.RemoveMod(gameID, profileName, oldSourceID, oldModID); err != nil {
+		if err := pm.RemoveMod(game.ID, profileName, oldSourceID, oldModID); err != nil {
 			if verbose {
 				fmt.Printf("Warning: could not remove old profile entry: %v\n", err)
 			}
@@ -167,7 +167,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 			ModID:    newModID,
 			Version:  installedMod.Version,
 		}
-		if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 			if verbose {
 				fmt.Printf("Warning: could not update profile: %v\n", err)
 			}
@@ -192,7 +192,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 			ModID:    installedMod.ID,
 			Version:  installedMod.Version,
 		}
-		if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 			if verbose {
 				fmt.Printf("Warning: could not update profile version: %v\n", err)
 			}

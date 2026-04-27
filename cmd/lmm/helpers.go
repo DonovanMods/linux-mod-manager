@@ -39,7 +39,9 @@ func withGameService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.
 	return withService(cmd, func(ctx context.Context, svc *core.Service) error {
 		game, err := svc.GetGame(gameID)
 		if err != nil {
-			return fmt.Errorf("game not found: %s", gameID)
+			// Wrap rather than reformat so callers can errors.Is(err, domain.ErrGameNotFound).
+			// The visible message stays "game not found: <id>".
+			return fmt.Errorf("%w: %s", err, gameID)
 		}
 		return fn(ctx, svc, game)
 	})

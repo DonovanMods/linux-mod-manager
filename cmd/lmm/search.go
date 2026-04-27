@@ -85,7 +85,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		fmt.Printf("Searching for \"%s\" in %s (%s)...\n", query, game.Name, sourceToUse)
 	}
 
-	searchResult, err := service.SearchMods(ctx, sourceToUse, gameID, query, searchCategory, searchTags, 0, 0)
+	searchResult, err := service.SearchMods(ctx, sourceToUse, game.ID, query, searchCategory, searchTags, 0, 0)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return authPromptError(sourceToUse)
@@ -98,7 +98,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(searchJSONOutput{GameID: gameID, Query: query, Mods: []searchModJSON{}}); err != nil {
+			if err := enc.Encode(searchJSONOutput{GameID: game.ID, Query: query, Mods: []searchModJSON{}}); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
 			return nil
@@ -109,7 +109,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// Get installed mods to mark already-installed ones
 	profileName := profileOrDefault(searchProfile)
-	installedMods, _ := service.GetInstalledMods(gameID, profileName)
+	installedMods, _ := service.GetInstalledMods(game.ID, profileName)
 	installedIDs := make(map[string]bool)
 	for _, im := range installedMods {
 		if im.SourceID == sourceToUse {
@@ -124,7 +124,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	if jsonOutput {
-		out := searchJSONOutput{GameID: gameID, Query: query, Mods: make([]searchModJSON, len(mods))}
+		out := searchJSONOutput{GameID: game.ID, Query: query, Mods: make([]searchModJSON, len(mods))}
 		for i, mod := range mods {
 			out.Mods[i] = searchModJSON{
 				ID:        mod.ID,

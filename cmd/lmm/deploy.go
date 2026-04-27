@@ -74,7 +74,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	var enabledBeforePurge map[string]bool
 	if deployPurge {
 		// Remember enabled mods before purge
-		mods, err := service.GetInstalledMods(gameID, profileName)
+		mods, err := service.GetInstalledMods(game.ID, profileName)
 		if err != nil {
 			return fmt.Errorf("getting installed mods: %w", err)
 		}
@@ -116,7 +116,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if len(args) > 0 {
 		// Specific mod
 		modID := args[0]
-		mod, err := service.GetInstalledMod(deploySource, modID, gameID, profileName)
+		mod, err := service.GetInstalledMod(deploySource, modID, game.ID, profileName)
 		if err != nil {
 			return fmt.Errorf("mod not found: %s", modID)
 		}
@@ -126,7 +126,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		modsToDeploy = append(modsToDeploy, mod)
 	} else {
 		// Get mods in profile load order (first = lowest priority)
-		mods, err := service.GetInstalledModsInProfileOrder(gameID, profileName)
+		mods, err := service.GetInstalledModsInProfileOrder(game.ID, profileName)
 		if err != nil {
 			return fmt.Errorf("getting installed mods: %w", err)
 		}
@@ -192,11 +192,11 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 			}
 		}
 		// Check if mod is in cache
-		if !service.GetGameCache(game).Exists(gameID, mod.SourceID, mod.ID, mod.Version) {
+		if !service.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 			fmt.Printf("  %s %s - cache missing, re-downloading...\n", colorYellow("⚠"), mod.Name)
 
 			// Fetch mod info from source
-			fetchedMod, err := service.GetMod(ctx, mod.SourceID, gameID, mod.ID)
+			fetchedMod, err := service.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
 			if err != nil {
 				fmt.Printf("  %s %s - failed to fetch: %v\n", colorRed("✗"), mod.Name, err)
 				failed++
@@ -262,14 +262,14 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 
 		// Update the link method in database
-		if err := service.SetModLinkMethod(mod.SourceID, mod.ID, gameID, profileName, linkMethod); err != nil {
+		if err := service.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: could not update link method: %v\n", err)
 			}
 		}
 
 		// Mark mod as deployed (files are now in game directory)
-		if err := service.SetModDeployed(mod.SourceID, mod.ID, gameID, profileName, true); err != nil {
+		if err := service.SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, true); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: could not mark as deployed: %v\n", err)
 			}
@@ -302,7 +302,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Apply profile overrides (INI tweaks, etc.)
-	if profile, err := config.LoadProfile(service.ConfigDir(), gameID, profileName); err == nil && len(profile.Overrides) > 0 {
+	if profile, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName); err == nil && len(profile.Overrides) > 0 {
 		if err := core.ApplyProfileOverrides(game, profile); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: applying profile overrides: %v\n", err)
 		}

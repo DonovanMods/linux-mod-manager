@@ -584,14 +584,14 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	downloadCache := service.GetGameCache(game)
 
 	// Check if mod is already installed so we can replace it atomically later.
-	existingMod, err := service.GetInstalledMod(installSource, mod.ID, gameID, profileName)
+	existingMod, err := service.GetInstalledMod(installSource, mod.ID, game.ID, profileName)
 	if err != nil {
 		if !errors.Is(err, domain.ErrModNotFound) {
 			return fmt.Errorf("checking existing installed mod: %w", err)
 		}
 		existingMod = nil
 	} else if existingMod.Version == mod.Version {
-		reinstallTxn, err = prepareReinstallCacheTransaction(service.GetGameCache(game), gameID, existingMod.SourceID, existingMod.ID, existingMod.Version)
+		reinstallTxn, err = prepareReinstallCacheTransaction(service.GetGameCache(game), game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version)
 		if err != nil {
 			return fmt.Errorf("preparing reinstall cache: %w", err)
 		}
@@ -692,9 +692,9 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	}
 
 	// Ensure profile exists, create if needed
-	if _, err := pm.Get(gameID, profileName); err != nil {
+	if _, err := pm.Get(game.ID, profileName); err != nil {
 		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(gameID, profileName); err != nil {
+			if _, err := pm.Create(game.ID, profileName); err != nil {
 				// Log but don't fail - mod is installed
 				if verbose {
 					fmt.Printf("  Warning: could not create profile: %v\n", err)
@@ -704,14 +704,14 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	}
 
 	// Add or update mod in profile (handles both new installs and re-installs)
-	if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		if verbose {
 			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}
 	}
 
 	if existingMod != nil && existingMod.Version != mod.Version {
-		if err := service.GetGameCache(game).Delete(gameID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
+		if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
 			fmt.Printf("  Warning: could not clear old cache: %v\n", err)
 		}
 	}

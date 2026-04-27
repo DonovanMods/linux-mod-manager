@@ -160,7 +160,7 @@ func doModSetUpdate(service *core.Service, game *domain.Game, modID string) erro
 	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists and get its name
-	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
+	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -181,7 +181,7 @@ func doModSetUpdate(service *core.Service, game *domain.Game, modID string) erro
 	}
 
 	// Update the policy
-	if err := service.SetModUpdatePolicy(modSource, modID, gameID, profileName, policy); err != nil {
+	if err := service.SetModUpdatePolicy(modSource, modID, game.ID, profileName, policy); err != nil {
 		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
@@ -211,7 +211,7 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists
-	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
+	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -222,7 +222,7 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	// Check if mod is in cache
-	if !service.GetGameCache(game).Exists(gameID, modSource, modID, mod.Version) {
+	if !service.GetGameCache(game).Exists(game.ID, modSource, modID, mod.Version) {
 		return fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 
@@ -234,7 +234,7 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	// Update enabled flag in database
-	if err := service.SetModEnabled(modSource, modID, gameID, profileName, true); err != nil {
+	if err := service.SetModEnabled(modSource, modID, game.ID, profileName, true); err != nil {
 		return fmt.Errorf("failed to update mod status: %w", err)
 	}
 
@@ -259,7 +259,7 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 	profileName := profileOrDefault(modProfile)
 
 	// Get the mod to verify it exists
-	mod, err := service.GetInstalledMod(modSource, modID, gameID, profileName)
+	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -280,7 +280,7 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 	}
 
 	// Update enabled flag in database
-	if err := service.SetModEnabled(modSource, modID, gameID, profileName, false); err != nil {
+	if err := service.SetModEnabled(modSource, modID, game.ID, profileName, false); err != nil {
 		return fmt.Errorf("failed to update mod status: %w", err)
 	}
 
@@ -304,13 +304,13 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 	}
 
 	// Get mod info for display
-	mod, err := svc.GetInstalledMod(modSource, modID, gameID, profileName)
+	mod, err := svc.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
 	// Get deployed files from database
-	files, err := svc.GetDeployedFilesForMod(gameID, profileName, modSource, modID)
+	files, err := svc.GetDeployedFilesForMod(game.ID, profileName, modSource, modID)
 	if err != nil {
 		return fmt.Errorf("getting deployed files: %w", err)
 	}
@@ -344,7 +344,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		return err
 	}
 
-	mod, err := svc.GetMod(ctx, modSource, gameID, modID)
+	mod, err := svc.GetMod(ctx, modSource, game.ID, modID)
 	if err != nil {
 		return fmt.Errorf("mod not found: %w", err)
 	}

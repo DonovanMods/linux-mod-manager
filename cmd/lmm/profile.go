@@ -177,14 +177,14 @@ func getProfileManager(service *core.Service) *core.ProfileManager {
 
 func runProfileList(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileList(service)
+		return doProfileList(service, game)
 	})
 }
 
-func doProfileList(service *core.Service) error {
+func doProfileList(service *core.Service, game *domain.Game) error {
 	pm := getProfileManager(service)
 
-	profiles, err := pm.List(gameID)
+	profiles, err := pm.List(game.ID)
 	if err != nil {
 		return fmt.Errorf("listing profiles: %w", err)
 	}
@@ -220,14 +220,14 @@ func doProfileList(service *core.Service) error {
 
 func runProfileCreate(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileCreate(service, args[0])
+		return doProfileCreate(service, game, args[0])
 	})
 }
 
-func doProfileCreate(service *core.Service, name string) error {
+func doProfileCreate(service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	profile, err := pm.Create(gameID, name)
+	profile, err := pm.Create(game.ID, name)
 	if err != nil {
 		return fmt.Errorf("creating profile: %w", err)
 	}
@@ -238,14 +238,14 @@ func doProfileCreate(service *core.Service, name string) error {
 
 func runProfileDelete(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileDelete(service, args[0])
+		return doProfileDelete(service, game, args[0])
 	})
 }
 
-func doProfileDelete(service *core.Service, name string) error {
+func doProfileDelete(service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	if err := pm.Delete(gameID, name); err != nil {
+	if err := pm.Delete(game.ID, name); err != nil {
 		return fmt.Errorf("deleting profile: %w", err)
 	}
 
@@ -263,13 +263,13 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	pm := getProfileManager(service)
 
 	// Get target profile
-	targetProfile, err := pm.Get(gameID, targetName)
+	targetProfile, err := pm.Get(game.ID, targetName)
 	if err != nil {
 		return fmt.Errorf("profile not found: %s", targetName)
 	}
 
 	// Get current profile
-	currentProfile, err := pm.GetDefault(gameID)
+	currentProfile, err := pm.GetDefault(game.ID)
 	var currentName string
 	if err != nil {
 		currentName = "default"
@@ -283,7 +283,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	// Get installed mods for current profile
-	currentMods, _ := service.GetInstalledMods(gameID, currentName)
+	currentMods, _ := service.GetInstalledMods(game.ID, currentName)
 
 	// Build lookup of current enabled mods
 	currentEnabled := make(map[string]*domain.InstalledMod)
@@ -303,7 +303,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 
 	// Get all installed mods (any profile) to check what's available
 	allInstalled := make(map[string]*domain.InstalledMod)
-	allMods, _ := service.GetInstalledMods(gameID, targetName)
+	allMods, _ := service.GetInstalledMods(game.ID, targetName)
 	for i := range allMods {
 		key := allMods[i].SourceID + ":" + allMods[i].ID
 		allInstalled[key] = &allMods[i]
@@ -354,7 +354,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 
 	if len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 {
 		// No mod changes, just switch the default
-		if err := pm.SetDefault(gameID, targetName); err != nil {
+		if err := pm.SetDefault(game.ID, targetName); err != nil {
 			return fmt.Errorf("setting default profile: %w", err)
 		}
 		fmt.Printf("✓ Switched to profile: %s\n", targetName)
@@ -402,7 +402,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
 			}
 		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, gameID, currentName, false); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, currentName, false); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -418,7 +418,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			}
 			continue
 		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, gameID, targetName, true); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, targetName, true); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -433,7 +433,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
 
 			// Fetch mod details
-			mod, err := service.GetMod(ctx, ref.SourceID, gameID, ref.ModID)
+			mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 			if err != nil {
 				fmt.Printf("    Error: failed to fetch mod: %v\n", err)
 				continue
@@ -512,7 +512,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 				Version:  mod.Version,
 				FileIDs:  downloadedFileIDs,
 			}
-			if err := pm.UpsertMod(gameID, targetName, modRef); err != nil {
+			if err := pm.UpsertMod(game.ID, targetName, modRef); err != nil {
 				if verbose {
 					fmt.Printf("    Warning: could not update profile: %v\n", err)
 				}
@@ -523,7 +523,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	// Set new profile as default
-	if err := pm.SetDefault(gameID, targetName); err != nil {
+	if err := pm.SetDefault(game.ID, targetName); err != nil {
 		return fmt.Errorf("setting default profile: %w", err)
 	}
 
@@ -533,14 +533,14 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 
 func runProfileExport(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileExport(service, args[0])
+		return doProfileExport(service, game, args[0])
 	})
 }
 
-func doProfileExport(service *core.Service, name string) error {
+func doProfileExport(service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	data, err := pm.Export(gameID, name)
+	data, err := pm.Export(game.ID, name)
 	if err != nil {
 		return fmt.Errorf("exporting profile: %w", err)
 	}
@@ -574,7 +574,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		Version string
 		FileIDs []string
 	}
-	installedMods, _ := service.GetInstalledMods(gameID, profile.Name)
+	installedMods, _ := service.GetInstalledMods(game.ID, profile.Name)
 	installedData := make(map[string]installedInfo) // key -> version and file IDs
 	for _, im := range installedMods {
 		key := im.SourceID + ":" + im.ID
@@ -582,9 +582,9 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	// Also check mods from any profile (might be installed under different profile)
-	allProfiles, _ := pm.List(gameID)
+	allProfiles, _ := pm.List(game.ID)
 	for _, p := range allProfiles {
-		mods, _ := service.GetInstalledMods(gameID, p.Name)
+		mods, _ := service.GetInstalledMods(game.ID, p.Name)
 		for _, im := range mods {
 			key := im.SourceID + ":" + im.ID
 			if _, exists := installedData[key]; !exists {
@@ -673,7 +673,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
 
 		// Fetch mod details
-		mod, err := service.GetMod(ctx, ref.SourceID, gameID, ref.ModID)
+		mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 		if err != nil {
 			fmt.Printf("    Error: failed to fetch mod: %v\n", err)
 			failedCount++
@@ -770,7 +770,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			Version:  mod.Version,
 			FileIDs:  downloadedFileIDs,
 		}
-		if err := pm.UpsertMod(gameID, profile.Name, modRef); err != nil {
+		if err := pm.UpsertMod(game.ID, profile.Name, modRef); err != nil {
 			if verbose {
 				fmt.Printf("    Warning: could not update profile: %v\n", err)
 			}
@@ -803,7 +803,7 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 	if len(args) > 0 {
 		profileName = args[0]
 	} else {
-		defaultProfile, err := pm.GetDefault(gameID)
+		defaultProfile, err := pm.GetDefault(game.ID)
 		if err != nil {
 			profileName = "default"
 		} else {
@@ -812,11 +812,11 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 	}
 
 	// Get current profile
-	profile, err := pm.Get(gameID, profileName)
+	profile, err := pm.Get(game.ID, profileName)
 	if err != nil {
 		if err == domain.ErrProfileNotFound {
 			// Create profile if it doesn't exist
-			profile, err = pm.Create(gameID, profileName)
+			profile, err = pm.Create(game.ID, profileName)
 			if err != nil {
 				return fmt.Errorf("creating profile: %w", err)
 			}
@@ -826,7 +826,7 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 	}
 
 	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(gameID, profileName)
+	installedMods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -886,7 +886,7 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 		fmt.Println("Will add to profile:")
 		for _, ref := range toAdd {
 			// Try to get mod name from DB
-			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, gameID, profileName)
+			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, game.ID, profileName)
 			if mod != nil {
 				fmt.Printf("  + %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
 			} else {
@@ -905,7 +905,7 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 	if len(toUpdate) > 0 {
 		fmt.Println("Will update FileIDs for:")
 		for _, ref := range toUpdate {
-			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, gameID, profileName)
+			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, game.ID, profileName)
 			if mod != nil {
 				fmt.Printf("  ~ %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
 			} else {
@@ -927,7 +927,7 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 
 	// Apply changes
 	for _, ref := range toAdd {
-		if err := pm.AddMod(gameID, profileName, ref); err != nil {
+		if err := pm.AddMod(game.ID, profileName, ref); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: %v\n", err)
 			}
@@ -935,7 +935,7 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 	}
 
 	for _, ref := range toRemove {
-		if err := pm.RemoveMod(gameID, profileName, ref.SourceID, ref.ModID); err != nil {
+		if err := pm.RemoveMod(game.ID, profileName, ref.SourceID, ref.ModID); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: %v\n", err)
 			}
@@ -944,7 +944,7 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 
 	// Update mods with FileIDs
 	for _, ref := range toUpdate {
-		if err := pm.UpsertMod(gameID, profileName, ref); err != nil {
+		if err := pm.UpsertMod(game.ID, profileName, ref); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: could not update %s:%s: %v\n", ref.SourceID, ref.ModID, err)
 			}
@@ -957,14 +957,14 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 
 func runProfileReorder(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileReorder(service, args)
+		return doProfileReorder(service, game, args)
 	})
 }
 
-func doProfileReorder(service *core.Service, args []string) error {
+func doProfileReorder(service *core.Service, game *domain.Game, args []string) error {
 
 	profileName := profileOrDefault(profileReorderProfile)
-	profile, err := config.LoadProfile(service.ConfigDir(), gameID, profileName)
+	profile, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("loading profile: %w", err)
 	}
@@ -977,7 +977,7 @@ func doProfileReorder(service *core.Service, args []string) error {
 			fmt.Printf("No mods in profile %s.\n", profileName)
 			return nil
 		}
-		installed, _ := service.GetInstalledMods(gameID, profileName)
+		installed, _ := service.GetInstalledMods(game.ID, profileName)
 		nameByKey := make(map[string]string)
 		for i := range installed {
 			key := installed[i].SourceID + ":" + installed[i].ID
@@ -1055,7 +1055,7 @@ func doProfileReorder(service *core.Service, args []string) error {
 		}
 	}
 
-	if err := pm.ReorderMods(gameID, profileName, newRefs); err != nil {
+	if err := pm.ReorderMods(game.ID, profileName, newRefs); err != nil {
 		return fmt.Errorf("reordering: %w", err)
 	}
 	fmt.Printf("✓ Load order updated for profile %s.\n", profileName)
@@ -1077,7 +1077,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	if len(args) > 0 {
 		profileName = args[0]
 	} else {
-		defaultProfile, err := pm.GetDefault(gameID)
+		defaultProfile, err := pm.GetDefault(game.ID)
 		if err != nil {
 			profileName = "default"
 		} else {
@@ -1086,13 +1086,13 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 
 	// Get the profile
-	profile, err := pm.Get(gameID, profileName)
+	profile, err := pm.Get(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("profile not found: %s", profileName)
 	}
 
 	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(gameID, profileName)
+	installedMods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -1203,7 +1203,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
 			}
 		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, gameID, profileName, false); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, profileName, false); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -1219,7 +1219,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			}
 			continue
 		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, gameID, profileName, true); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, profileName, true); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -1234,7 +1234,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
 
 			// Fetch mod details
-			mod, err := service.GetMod(ctx, ref.SourceID, gameID, ref.ModID)
+			mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 			if err != nil {
 				fmt.Printf("    Error: failed to fetch mod: %v\n", err)
 				continue
@@ -1322,7 +1322,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				Version:  mod.Version,
 				FileIDs:  downloadedFileIDs,
 			}
-			if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+			if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 				if verbose {
 					fmt.Printf("    Warning: could not update profile: %v\n", err)
 				}

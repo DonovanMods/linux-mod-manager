@@ -88,7 +88,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 			}
 		}
 		if importSource == "" {
-			return fmt.Errorf("no mod sources configured for game %s; cannot look up --id", gameID)
+			return fmt.Errorf("no mod sources configured for game %s; cannot look up --id", game.ID)
 		}
 	}
 
@@ -195,7 +195,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 				sourceID, modID := parts[0], parts[1]
 
 				// Try to get mod name
-				conflictMod, _ := service.GetInstalledMod(sourceID, modID, gameID, profileName)
+				conflictMod, _ := service.GetInstalledMod(sourceID, modID, game.ID, profileName)
 				modName := modID
 				if conflictMod != nil {
 					modName = conflictMod.Name
@@ -280,9 +280,9 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	pm := getProfileManager(service)
 
 	// Ensure profile exists, create if needed
-	if _, err := pm.Get(gameID, profileName); err != nil {
+	if _, err := pm.Get(game.ID, profileName); err != nil {
 		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(gameID, profileName); err != nil {
+			if _, err := pm.Create(game.ID, profileName); err != nil {
 				if verbose {
 					fmt.Printf("  Warning: could not create profile: %v\n", err)
 				}
@@ -297,7 +297,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		Version:  result.Mod.Version,
 		FileIDs:  []string{},
 	}
-	if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		if verbose {
 			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}

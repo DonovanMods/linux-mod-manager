@@ -89,6 +89,23 @@ func TestWithService_PropagatesFnError(t *testing.T) {
 	require.ErrorIs(t, err, sentinel)
 }
 
+func TestWithGameService_UnknownGameWrapsErrGameNotFound(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameID = "no-such-game"
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	err := withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
+		t.Fatal("fn should not run when game is missing")
+		return nil
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, domain.ErrGameNotFound, "must preserve sentinel for errors.Is")
+	assert.Contains(t, err.Error(), "no-such-game")
+}
+
 func TestWithGameService_RequiresGame(t *testing.T) {
 	configDir = t.TempDir()
 	dataDir = t.TempDir()

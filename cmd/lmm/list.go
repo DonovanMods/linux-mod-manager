@@ -61,18 +61,18 @@ func runList(cmd *cobra.Command, args []string) error {
 
 func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error {
 	if listProfiles {
-		return runListProfiles(cmd, service, gameID, game.Name)
+		return runListProfiles(cmd, service, game.ID, game.Name)
 	}
 
 	profileName := profileOrDefault(listProfile)
 
-	mods, err := service.GetInstalledMods(gameID, profileName)
+	mods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
 
 	if jsonOutput {
-		out := listJSONOutput{GameID: gameID, Profile: profileName, Mods: make([]listModJSON, len(mods))}
+		out := listJSONOutput{GameID: game.ID, Profile: profileName, Mods: make([]listModJSON, len(mods))}
 		for i, mod := range mods {
 			sourceDisplay := mod.SourceID
 			if mod.SourceID == domain.SourceLocal {
