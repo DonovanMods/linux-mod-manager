@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.8] - 2026-04-26
+
+### Changed
+
+- **`runInstall` decomposed**: 608-line `runInstall` split into focused helpers — `searchAndSelectMods` (paginated interactive search), `selectInstallFiles` (file picker with --file / --yes / interactive), `downloadSelectedFiles` (per-file progress + checksum), and `confirmInstallConflicts` (overwrite prompt). Top-level `doInstall` now orchestrates these in ~320 lines instead of inlining everything
+- **Profile commands wrapped with `withGameService`**: All 9 `runProfileX` functions (list, create, delete, switch, export, import, sync, reorder, apply) now extract their bodies into `doProfileX` helpers and run through the lifecycle middleware. Resolves the `install.go` / `profile.go` carve-out left over from Phase 1b
+- **Game subcommands**: `runGameSetDefault` now uses `withService`. Saves the same `requireGame` / `initService` boilerplate that was already removed from the rest of `cmd/lmm/`
+
+### Notes
+
+- Deferred: moving profile-switch / -apply / -import orchestration into `internal/core/profile.go`. Even after the wrap, the three biggest profile commands are 228–271 lines because they interleave UI prompts with state mutation; a clean split needs a designed core API and is out of scope for this phase
+
 ## [1.3.7] - 2026-04-26
 
 ### Changed
@@ -603,7 +615,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.7...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.8...HEAD
+[1.3.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.7...v1.3.8
 [1.3.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.6...v1.3.7
 [1.3.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.5...v1.3.6
 [1.3.5]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.4...v1.3.5
