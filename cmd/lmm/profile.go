@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -174,28 +172,19 @@ func init() {
 }
 
 func getProfileManager(service *core.Service) *core.ProfileManager {
-	lnk := linker.New(service.GetDefaultLinkMethod())
-	return core.NewProfileManager(service.ConfigDir(), service.DB(), service.Cache(), lnk)
+	return service.NewProfileManager()
 }
 
 func runProfileList(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileList(service, game)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileList(service *core.Service, game *domain.Game) error {
 	pm := getProfileManager(service)
 
-	profiles, err := pm.List(gameID)
+	profiles, err := pm.List(game.ID)
 	if err != nil {
 		return fmt.Errorf("listing profiles: %w", err)
 	}
@@ -230,25 +219,15 @@ func runProfileList(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileCreate(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileCreate(service, game, args[0])
+	})
+}
 
-	name := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileCreate(service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	profile, err := pm.Create(gameID, name)
+	profile, err := pm.Create(game.ID, name)
 	if err != nil {
 		return fmt.Errorf("creating profile: %w", err)
 	}
@@ -258,25 +237,15 @@ func runProfileCreate(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileDelete(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileDelete(service, game, args[0])
+	})
+}
 
-	name := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileDelete(service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	if err := pm.Delete(gameID, name); err != nil {
+	if err := pm.Delete(game.ID, name); err != nil {
 		return fmt.Errorf("deleting profile: %w", err)
 	}
 
@@ -285,37 +254,22 @@ func runProfileDelete(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileSwitch(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileSwitch(ctx, service, game, args[0])
+	})
+}
 
-	targetName := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Game, targetName string) error {
 	pm := getProfileManager(service)
 
 	// Get target profile
-	targetProfile, err := pm.Get(gameID, targetName)
+	targetProfile, err := pm.Get(game.ID, targetName)
 	if err != nil {
 		return fmt.Errorf("profile not found: %s", targetName)
 	}
 
 	// Get current profile
-	currentProfile, err := pm.GetDefault(gameID)
+	currentProfile, err := pm.GetDefault(game.ID)
 	var currentName string
 	if err != nil {
 		currentName = "default"
@@ -329,7 +283,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get installed mods for current profile
-	currentMods, _ := service.GetInstalledMods(gameID, currentName)
+	currentMods, _ := service.GetInstalledMods(game.ID, currentName)
 
 	// Build lookup of current enabled mods
 	currentEnabled := make(map[string]*domain.InstalledMod)
@@ -349,7 +303,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 
 	// Get all installed mods (any profile) to check what's available
 	allInstalled := make(map[string]*domain.InstalledMod)
-	allMods, _ := service.GetInstalledMods(gameID, targetName)
+	allMods, _ := service.GetInstalledMods(game.ID, targetName)
 	for i := range allMods {
 		key := allMods[i].SourceID + ":" + allMods[i].ID
 		allInstalled[key] = &allMods[i]
@@ -400,7 +354,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 
 	if len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 {
 		// No mod changes, just switch the default
-		if err := pm.SetDefault(gameID, targetName); err != nil {
+		if err := pm.SetDefault(game.ID, targetName); err != nil {
 			return fmt.Errorf("setting default profile: %w", err)
 		}
 		fmt.Printf("✓ Switched to profile: %s\n", targetName)
@@ -430,15 +384,15 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 
 	// Confirm
 	fmt.Print("\nProceed? [Y/n]: ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
+	input, err := readPromptLine()
+	if err != nil {
+		return err
+	}
 	if input != "" && input != "y" && input != "yes" {
 		fmt.Println("Cancelled.")
 		return nil
 	}
 
-	ctx := context.Background()
 	installer := service.GetInstaller(game)
 
 	// Disable mods
@@ -448,7 +402,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
 			}
 		}
-		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, currentName, false); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, currentName, false); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -464,7 +418,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 			}
 			continue
 		}
-		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, targetName, true); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, targetName, true); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -479,7 +433,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
 
 			// Fetch mod details
-			mod, err := service.GetMod(ctx, ref.SourceID, gameID, ref.ModID)
+			mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 			if err != nil {
 				fmt.Printf("    Error: failed to fetch mod: %v\n", err)
 				continue
@@ -546,7 +500,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				Enabled:      true,
 				FileIDs:      downloadedFileIDs,
 			}
-			if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+			if err := service.SaveInstalledMod(installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
 				continue
 			}
@@ -558,7 +512,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 				Version:  mod.Version,
 				FileIDs:  downloadedFileIDs,
 			}
-			if err := pm.UpsertMod(gameID, targetName, modRef); err != nil {
+			if err := pm.UpsertMod(game.ID, targetName, modRef); err != nil {
 				if verbose {
 					fmt.Printf("    Warning: could not update profile: %v\n", err)
 				}
@@ -569,7 +523,7 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Set new profile as default
-	if err := pm.SetDefault(gameID, targetName); err != nil {
+	if err := pm.SetDefault(game.ID, targetName); err != nil {
 		return fmt.Errorf("setting default profile: %w", err)
 	}
 
@@ -578,25 +532,15 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileExport(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileExport(service, game, args[0])
+	})
+}
 
-	name := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileExport(service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	data, err := pm.Export(gameID, name)
+	data, err := pm.Export(game.ID, name)
 	if err != nil {
 		return fmt.Errorf("exporting profile: %w", err)
 	}
@@ -606,32 +550,17 @@ func runProfileExport(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileImport(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
-
 	filePath := args[0]
-
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
 	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileImport(ctx, service, game, data)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doProfileImport(ctx context.Context, service *core.Service, game *domain.Game, data []byte) error {
 	pm := getProfileManager(service)
 
 	// Parse profile first to preview
@@ -645,7 +574,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		Version string
 		FileIDs []string
 	}
-	installedMods, _ := service.GetInstalledMods(gameID, profile.Name)
+	installedMods, _ := service.GetInstalledMods(game.ID, profile.Name)
 	installedData := make(map[string]installedInfo) // key -> version and file IDs
 	for _, im := range installedMods {
 		key := im.SourceID + ":" + im.ID
@@ -653,9 +582,9 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Also check mods from any profile (might be installed under different profile)
-	allProfiles, _ := pm.List(gameID)
+	allProfiles, _ := pm.List(game.ID)
 	for _, p := range allProfiles {
-		mods, _ := service.GetInstalledMods(gameID, p.Name)
+		mods, _ := service.GetInstalledMods(game.ID, p.Name)
 		for _, im := range mods {
 			key := im.SourceID + ":" + im.ID
 			if _, exists := installedData[key]; !exists {
@@ -725,16 +654,16 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 
 	// Ask to install missing mods
 	fmt.Print("\nDownload and install mods? [Y/n]: ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
+	input, err := readPromptLine()
+	if err != nil {
+		return err
+	}
 	if input != "" && input != "y" && input != "yes" {
 		fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", profile.Name)
 		return nil
 	}
 
 	// Download and install mods
-	ctx := context.Background()
 	installer := service.GetInstaller(game)
 
 	fmt.Println("\nDownloading and installing mods...")
@@ -744,7 +673,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
 
 		// Fetch mod details
-		mod, err := service.GetMod(ctx, ref.SourceID, gameID, ref.ModID)
+		mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 		if err != nil {
 			fmt.Printf("    Error: failed to fetch mod: %v\n", err)
 			failedCount++
@@ -828,7 +757,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 			Enabled:      true,
 			FileIDs:      downloadedFileIDs,
 		}
-		if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+		if err := service.SaveInstalledMod(installedMod); err != nil {
 			fmt.Printf("    Error: save failed: %v\n", err)
 			failedCount++
 			continue
@@ -841,7 +770,7 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 			Version:  mod.Version,
 			FileIDs:  downloadedFileIDs,
 		}
-		if err := pm.UpsertMod(gameID, profile.Name, modRef); err != nil {
+		if err := pm.UpsertMod(game.ID, profile.Name, modRef); err != nil {
 			if verbose {
 				fmt.Printf("    Warning: could not update profile: %v\n", err)
 			}
@@ -861,20 +790,12 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileSync(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileSync(service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
+func doProfileSync(service *core.Service, game *domain.Game, args []string) error {
 	pm := getProfileManager(service)
 
 	// Determine profile name
@@ -882,7 +803,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		profileName = args[0]
 	} else {
-		defaultProfile, err := pm.GetDefault(gameID)
+		defaultProfile, err := pm.GetDefault(game.ID)
 		if err != nil {
 			profileName = "default"
 		} else {
@@ -891,11 +812,11 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get current profile
-	profile, err := pm.Get(gameID, profileName)
+	profile, err := pm.Get(game.ID, profileName)
 	if err != nil {
 		if err == domain.ErrProfileNotFound {
 			// Create profile if it doesn't exist
-			profile, err = pm.Create(gameID, profileName)
+			profile, err = pm.Create(game.ID, profileName)
 			if err != nil {
 				return fmt.Errorf("creating profile: %w", err)
 			}
@@ -905,7 +826,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(gameID, profileName)
+	installedMods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -965,7 +886,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 		fmt.Println("Will add to profile:")
 		for _, ref := range toAdd {
 			// Try to get mod name from DB
-			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, gameID, profileName)
+			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, game.ID, profileName)
 			if mod != nil {
 				fmt.Printf("  + %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
 			} else {
@@ -984,7 +905,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 	if len(toUpdate) > 0 {
 		fmt.Println("Will update FileIDs for:")
 		for _, ref := range toUpdate {
-			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, gameID, profileName)
+			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, game.ID, profileName)
 			if mod != nil {
 				fmt.Printf("  ~ %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
 			} else {
@@ -995,9 +916,10 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 
 	// Confirm
 	fmt.Print("\nProceed? [Y/n]: ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
+	input, err := readPromptLine()
+	if err != nil {
+		return err
+	}
 	if input != "" && input != "y" && input != "yes" {
 		fmt.Println("Cancelled.")
 		return nil
@@ -1005,7 +927,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 
 	// Apply changes
 	for _, ref := range toAdd {
-		if err := pm.AddMod(gameID, profileName, ref); err != nil {
+		if err := pm.AddMod(game.ID, profileName, ref); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: %v\n", err)
 			}
@@ -1013,7 +935,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, ref := range toRemove {
-		if err := pm.RemoveMod(gameID, profileName, ref.SourceID, ref.ModID); err != nil {
+		if err := pm.RemoveMod(game.ID, profileName, ref.SourceID, ref.ModID); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: %v\n", err)
 			}
@@ -1022,7 +944,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 
 	// Update mods with FileIDs
 	for _, ref := range toUpdate {
-		if err := pm.UpsertMod(gameID, profileName, ref); err != nil {
+		if err := pm.UpsertMod(game.ID, profileName, ref); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: could not update %s:%s: %v\n", ref.SourceID, ref.ModID, err)
 			}
@@ -1034,27 +956,15 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileReorder(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileReorder(service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	_, err = service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
+func doProfileReorder(service *core.Service, game *domain.Game, args []string) error {
 
 	profileName := profileOrDefault(profileReorderProfile)
-	profile, err := config.LoadProfile(service.ConfigDir(), gameID, profileName)
+	profile, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("loading profile: %w", err)
 	}
@@ -1067,7 +977,7 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 			fmt.Printf("No mods in profile %s.\n", profileName)
 			return nil
 		}
-		installed, _ := service.GetInstalledMods(gameID, profileName)
+		installed, _ := service.GetInstalledMods(game.ID, profileName)
 		nameByKey := make(map[string]string)
 		for i := range installed {
 			key := installed[i].SourceID + ":" + installed[i].ID
@@ -1145,7 +1055,7 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := pm.ReorderMods(gameID, profileName, newRefs); err != nil {
+	if err := pm.ReorderMods(game.ID, profileName, newRefs); err != nil {
 		return fmt.Errorf("reordering: %w", err)
 	}
 	fmt.Printf("✓ Load order updated for profile %s.\n", profileName)
@@ -1153,24 +1063,12 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 }
 
 func runProfileApply(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileApply(ctx, service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
+func doProfileApply(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 
 	pm := getProfileManager(service)
 
@@ -1179,7 +1077,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		profileName = args[0]
 	} else {
-		defaultProfile, err := pm.GetDefault(gameID)
+		defaultProfile, err := pm.GetDefault(game.ID)
 		if err != nil {
 			profileName = "default"
 		} else {
@@ -1188,13 +1086,13 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get the profile
-	profile, err := pm.Get(gameID, profileName)
+	profile, err := pm.Get(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("profile not found: %s", profileName)
 	}
 
 	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(gameID, profileName)
+	installedMods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -1286,16 +1184,16 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 	// Confirm unless --yes
 	if !profileApplyYes {
 		fmt.Print("\nProceed? [Y/n]: ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
 		if input != "" && input != "y" && input != "yes" {
 			fmt.Println("Cancelled.")
 			return nil
 		}
 	}
 
-	ctx := context.Background()
 	installer := service.GetInstaller(game)
 
 	// Disable mods
@@ -1305,7 +1203,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
 			}
 		}
-		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, profileName, false); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, profileName, false); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -1321,7 +1219,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 			}
 			continue
 		}
-		if err := service.DB().SetModEnabled(im.SourceID, im.ID, gameID, profileName, true); err != nil {
+		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, profileName, true); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -1336,7 +1234,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
 
 			// Fetch mod details
-			mod, err := service.GetMod(ctx, ref.SourceID, gameID, ref.ModID)
+			mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
 			if err != nil {
 				fmt.Printf("    Error: failed to fetch mod: %v\n", err)
 				continue
@@ -1412,7 +1310,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				Enabled:      true,
 				FileIDs:      downloadedFileIDs,
 			}
-			if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+			if err := service.SaveInstalledMod(installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
 				continue
 			}
@@ -1424,7 +1322,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 				Version:  mod.Version,
 				FileIDs:  downloadedFileIDs,
 			}
-			if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+			if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 				if verbose {
 					fmt.Printf("    Warning: could not update profile: %v\n", err)
 				}

@@ -41,7 +41,7 @@ func TestClient_GetMod(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(nil, "testapikey")
-	client.baseURL = server.URL // Override for testing
+	client.SetBaseURL(server.URL) // Override for testing
 
 	mod, err := client.GetMod(context.Background(), "starrupture", 12345)
 	require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestClient_GetLatestAdded(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(nil, "testapikey")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	mods, err := client.GetLatestAdded(context.Background(), "starrupture")
 	require.NoError(t, err)
@@ -170,7 +170,7 @@ func TestClient_ValidateAPIKey_Success(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(nil, "")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	err := client.ValidateAPIKey(context.Background(), "test-key")
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestClient_ValidateAPIKey_Invalid(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(nil, "")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	err := client.ValidateAPIKey(context.Background(), "invalid-key")
 	require.Error(t, err)
@@ -203,7 +203,7 @@ func TestClient_ReturnsAuthRequired_On401(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(nil, "bad-key")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	_, err := client.GetMod(context.Background(), "starrupture", 12345)
 	require.Error(t, err)
@@ -344,7 +344,7 @@ func TestClient_GetModFiles(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(nil, "testapikey")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	files, err := client.GetModFiles(context.Background(), "starrupture", 12345)
 	require.NoError(t, err)
@@ -389,7 +389,7 @@ func TestClient_GetDownloadLinks(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(nil, "testapikey")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	links, err := client.GetDownloadLinks(context.Background(), "starrupture", 12345, 100)
 	require.NoError(t, err)

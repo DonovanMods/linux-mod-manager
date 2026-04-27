@@ -57,29 +57,16 @@ func init() {
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
+		return doVerify(cmd, svc, game, args)
+	})
+}
 
-	svc, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := svc.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := svc.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("getting game %s: %w", gameID, err)
-	}
-
+func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []string) error {
 	profile := profileOrDefault(verifyProfile)
 
 	// Get all files with checksums for this game/profile
-	files, err := svc.DB().GetFilesWithChecksums(game.ID, profile)
+	files, err := svc.GetFilesWithChecksums(game.ID, profile)
 	if err != nil {
 		return fmt.Errorf("getting files: %w", err)
 	}
@@ -271,7 +258,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 
 // redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
 func redownloadModFile(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, fileID string) error {
-	ctx := context.Background()
+	ctx := cmd.Context()
 	files, err := svc.GetModFiles(ctx, mod.SourceID, &mod.Mod)
 	if err != nil {
 		return fmt.Errorf("getting mod files: %w", err)
@@ -291,7 +278,7 @@ func redownloadModFile(cmd *cobra.Command, svc *core.Service, game *domain.Game,
 		return err
 	}
 	if result.Checksum != "" {
-		if err := svc.DB().SaveFileChecksum(mod.SourceID, mod.ID, game.ID, profile, fileID, result.Checksum); err != nil {
+		if err := svc.SaveFileChecksum(mod.SourceID, mod.ID, game.ID, profile, fileID, result.Checksum); err != nil {
 			return fmt.Errorf("saving checksum: %w", err)
 		}
 	}

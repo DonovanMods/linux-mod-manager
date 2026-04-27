@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
@@ -61,17 +62,12 @@ func runGameAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runGameAddCurseForge(cmd *cobra.Command, reader *bufio.Reader) error {
-	// Get CurseForge API key
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
+	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+		return doGameAddCurseForge(ctx, cmd, reader, service)
+	})
+}
 
+func doGameAddCurseForge(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service) error {
 	apiKey := getSourceAPIKey(service, "curseforge", "CURSEFORGE_API_KEY")
 	if apiKey == "" {
 		return fmt.Errorf("CurseForge authentication required. Run: lmm auth login curseforge")
@@ -91,7 +87,6 @@ func runGameAddCurseForge(cmd *cobra.Command, reader *bufio.Reader) error {
 	}
 
 	cmd.Println("Searching CurseForge...")
-	ctx := context.Background()
 	games, err := client.GetGames(ctx)
 	if err != nil {
 		return fmt.Errorf("fetching games from CurseForge: %w", err)

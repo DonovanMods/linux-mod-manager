@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.10] - 2026-04-26
+
+### Changed
+
+- **TODO comments converted to issues**: Two in-code `TODO`s now have tracking issues — fuzzy-matching for local imports (#27) and CurseForge batch-mods endpoint (#28). The comments themselves are reduced to one-line pointers
+- **Test isolation fix**: `TestUninstallCmd_NoGame`, `TestSearchCmd_NoGame`, `TestUpdateCmd_NoGame`, and `TestUpdateRollbackCmd_NoGame` now set `configDir = t.TempDir()` so they pass in isolation. They previously relied on a previous test having already pointed `configDir` away from the user's real `~/.config/lmm`, which would otherwise leak a default-game and skew the assertion
+
+### Notes
+
+- Phase 6b (move per-command flag globals to scoped structs) is intentionally skipped: the existing `var (foo string; bar bool)` + `init()` binding pattern is idiomatic Cobra, and converting it would not fix the persistent root-flag globals (`gameID`, `configDir`, `dataDir`, etc.) that drive the test-isolation issue. Better to revisit if a concrete pain point appears
+
+## [1.3.9] - 2026-04-26
+
+### Changed
+
+- **Shared source HTTP client**: New `internal/source/httpclient` package centralises auth-header injection (`apikey` for NexusMods, `x-api-key` for CurseForge), 401 → `domain.ErrAuthRequired` mapping, JSON decoding, and bounded error-body reads. Both source clients now compose this rather than each maintaining their own near-identical `doRequest`. Source-specific status handling (CurseForge's 403 disambiguation and 404 → `ErrModNotFound`) plugs in via the optional `ErrorMapper` callback. Recorded-response tests pass without modification, proving no behavioural change
+
+## [1.3.8] - 2026-04-26
+
+### Changed
+
+- **`runInstall` decomposed**: 608-line `runInstall` split into focused helpers — `searchAndSelectMods` (paginated interactive search), `selectInstallFiles` (file picker with --file / --yes / interactive), `downloadSelectedFiles` (per-file progress + checksum), and `confirmInstallConflicts` (overwrite prompt). Top-level `doInstall` now orchestrates these in ~320 lines instead of inlining everything
+- **Profile commands wrapped with `withGameService`**: All 9 `runProfileX` functions (list, create, delete, switch, export, import, sync, reorder, apply) now extract their bodies into `doProfileX` helpers and run through the lifecycle middleware. Resolves the `install.go` / `profile.go` carve-out left over from Phase 1b
+- **Game subcommands**: `runGameSetDefault` now uses `withService`. Saves the same `requireGame` / `initService` boilerplate that was already removed from the rest of `cmd/lmm/`
+
+### Notes
+
+- Deferred: moving profile-switch / -apply / -import orchestration into `internal/core/profile.go`. Even after the wrap, the three biggest profile commands are 228–271 lines because they interleave UI prompts with state mutation; a clean split needs a designed core API and is out of scope for this phase
+
+## [1.3.7] - 2026-04-26
+
+### Changed
+
+- **Service boundary tightened**: Removed the `Service.DB()` and `Service.Registry()` accessors that let CLI code reach into `*db.DB` / `*source.Registry` directly. Replaced 28+ external usages with focused service methods (`SaveInstalledMod`, `DeleteInstalledMod`, `SetModEnabled`, `SetModDeployed`, `GetDeployedFilesForMod`, `GetFileOwner`, `GetFilesWithChecksums`, `SaveFileChecksum`) and factory helpers (`Service.GetInstaller`, `Service.NewInstallerWithLinker`, `Service.NewProfileManager`, `Service.NewUpdater`). `GetFileOwner` now returns `(sourceID, modID string, found bool, err error)` so callers no longer import the `db` package
+- **`core.DeployedFile`**: New service-boundary view type returned by `GetFilesWithChecksums`, replacing the leaked `db.FileWithChecksum`
+
+## [1.3.6] - 2026-04-25
+
+### Changed
+
+- **Composite errors stay inspectable**: Multi-cause errors (primary + rollback / cleanup) now use a typed `domain.DeployError` whose `Unwrap() []error` exposes every cause to `errors.Is` / `errors.As`. Replaces 9 `fmt.Errorf("...%w; ...%v")` sites in `internal/core/installer.go` plus the `joinSwitchErr` helper in `profile.go` and the database-close compound in `service.go`. Output stays close to the prior format (`...; rollback failed: ...`, `...; cleanup failed: ...`)
+
+## [1.3.5] - 2026-04-25
+
+### Changed
+
+- **Context propagation**: Cobra commands now run under a signal-aware context (SIGINT/SIGTERM cancel in-flight I/O). Replaced 18 mid-stack `context.Background()` calls with `cmd.Context()` so cancellation reaches all source/storage/installer calls
+- **CLI lifecycle middleware**: Extracted `withService` and `withGameService` helpers in `cmd/lmm/helpers.go`, removing repeated `requireGame` + `initService` + `defer Close` boilerplate from auth, conflicts, deploy, game-add, import, list, mod, mod-edit, purge, search, status, uninstall, update, and verify commands. `install.go` and `profile.go` are deferred to a follow-up that decomposes their large RunE handlers
+- **Single auth-prompt source**: New `authPromptError` helper replaces the 5 duplicated `errors.Is(err, domain.ErrAuthRequired)` formatting blocks across `search`, `install`, and `update`
+
 ## [1.3.4] - 2026-04-22
 
 ### Changed
@@ -582,7 +632,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.4...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.10...HEAD
+[1.3.10]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.9...v1.3.10
+[1.3.9]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.8...v1.3.9
+[1.3.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.7...v1.3.8
+[1.3.7]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.6...v1.3.7
+[1.3.6]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.5...v1.3.6
+[1.3.5]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.4...v1.3.5
 [1.3.4]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.1...v1.3.3
 [1.3.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.0...v1.3.1

@@ -45,7 +45,7 @@ func TestClient_SearchMods(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.Client(), "test-api-key")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	mods, pagination, err := client.SearchMods(context.Background(), 432, "jei", 0, 20, 0)
 	require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestClient_GetMod(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.Client(), "test-api-key")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	mod, err := client.GetMod(context.Background(), 238222)
 	require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestClient_GetModFiles(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.Client(), "test-api-key")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	files, err := client.GetModFiles(context.Background(), 238222)
 	require.NoError(t, err)
@@ -179,7 +179,7 @@ func TestClient_GetDownloadURL(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.Client(), "test-api-key")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	url, err := client.GetDownloadURL(context.Background(), 238222, 12345)
 	require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestClient_AuthRequired(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.Client(), "")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	_, _, err := client.SearchMods(context.Background(), 432, "test", 0, 20, 0)
 	require.Error(t, err)
@@ -209,7 +209,7 @@ func TestClient_NotFound(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.Client(), "test-api-key")
-	client.baseURL = server.URL
+	client.SetBaseURL(server.URL)
 
 	_, err := client.GetMod(context.Background(), 99999)
 	require.Error(t, err)

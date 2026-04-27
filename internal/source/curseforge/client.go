@@ -2,16 +2,15 @@ package curseforge
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/httpclient"
 )
 
 const (
@@ -21,8 +20,8 @@ const (
 // Client wraps the CurseForge REST API v1
 type Client struct {
 	httpClient *http.Client
+	rest       *httpclient.Client
 	apiKey     string
-	baseURL    string
 }
 
 // NewClient creates a new CurseForge API client
@@ -31,16 +30,31 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 		httpClient = http.DefaultClient
 	}
 
-	return &Client{
+	c := &Client{
 		httpClient: httpClient,
 		apiKey:     apiKey,
-		baseURL:    defaultBaseURL,
 	}
+	c.rest = httpclient.New(httpclient.Options{
+		HTTPClient:  httpClient,
+		BaseURL:     defaultBaseURL,
+		APIKey:      apiKey,
+		AuthHeader:  "x-api-key",
+		AuthLabel:   "CurseForge",
+		ErrorMapper: c.mapError,
+	})
+	return c
 }
 
 // SetAPIKey sets the API key for authentication
 func (c *Client) SetAPIKey(key string) {
 	c.apiKey = key
+	c.rest.SetAPIKey(key)
+}
+
+// SetBaseURL overrides the REST API base URL — primarily used by tests that
+// front the client with an httptest server.
+func (c *Client) SetBaseURL(u string) {
+	c.rest.SetBaseURL(u)
 }
 
 // IsAuthenticated returns true if an API key is configured
@@ -48,71 +62,34 @@ func (c *Client) IsAuthenticated() bool {
 	return c.apiKey != ""
 }
 
-// doRequest performs an HTTP request with authentication
-func (c *Client) doRequest(ctx context.Context, method, path string, result interface{}) (err error) {
-	reqURL := c.baseURL + path
-
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, nil)
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
-
-	if c.apiKey != "" {
-		req.Header.Set("x-api-key", c.apiKey)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); err == nil && cerr != nil {
-			err = fmt.Errorf("closing response body: %w", cerr)
-		}
-	}()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("%w: CurseForge API key required", domain.ErrAuthRequired)
-	}
-
-	if resp.StatusCode == http.StatusForbidden {
-		// 403 can mean: no API key, invalid key, OR mod author disabled third-party distribution
+// mapError translates CurseForge-specific status codes (403 disambiguation,
+// 404 -> ErrModNotFound) before the shared client falls back to its default
+// 401 / generic mapping. Returning nil defers to the default.
+func (c *Client) mapError(status int, body []byte, path string) error {
+	switch status {
+	case http.StatusForbidden:
 		if c.apiKey == "" {
 			return fmt.Errorf("%w: CurseForge API key required", domain.ErrAuthRequired)
 		}
-		// Read body to determine error type
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		bodyStr := string(body)
-		// If it looks like an auth error (common CurseForge patterns)
+		// File-download endpoints answer 403 when the mod author has opted out
+		// of third-party distribution; everything else is treated as auth.
 		if strings.Contains(path, "/files/") && strings.Contains(path, "/download-url") {
-			// This is a file download endpoint - 403 means distribution disabled
 			return fmt.Errorf("mod author has disabled third-party downloads; visit CurseForge website to download manually")
 		}
-		// For other endpoints, 403 with valid key likely means invalid/expired key
-		if bodyStr != "" {
-			return fmt.Errorf("%w: access denied (check API key): %s", domain.ErrAuthRequired, bodyStr)
+		if len(body) > 0 {
+			return fmt.Errorf("%w: access denied (check API key): %s", domain.ErrAuthRequired, string(body))
 		}
 		return fmt.Errorf("%w: access denied (check API key is valid)", domain.ErrAuthRequired)
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
+	case http.StatusNotFound:
 		return fmt.Errorf("%w: resource not found", domain.ErrModNotFound)
 	}
-
-	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 10*1024)) // Limit error body to 10KB
-		if readErr != nil {
-			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
-		}
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-		return fmt.Errorf("decoding response: %w", err)
-	}
-
 	return nil
+}
+
+// doRequest performs an authenticated REST request and JSON-decodes the response.
+// Thin wrapper around httpclient.Client.DoJSON, kept for callsite stability.
+func (c *Client) doRequest(ctx context.Context, method, path string, result interface{}) error {
+	return c.rest.DoJSON(ctx, method, path, result)
 }
 
 // GetGames fetches all available games with pagination
@@ -205,9 +182,7 @@ func (c *Client) GetMods(ctx context.Context, modIDs []int) ([]Mod, error) {
 		return nil, nil
 	}
 
-	// CurseForge expects POST with body for batch requests
-	// For simplicity, we'll fetch one at a time for now
-	// TODO: Implement batch POST /v1/mods
+	// Per-id fan-out for now; batch POST /v1/mods tracked in #28.
 	var mods []Mod
 	var errs []error
 

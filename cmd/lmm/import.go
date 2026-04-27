@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -56,26 +55,12 @@ func init() {
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doImport(ctx, cmd, service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if cerr := service.Close(); cerr != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", cerr)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, game *domain.Game, args []string) error {
 	profileName := profileOrDefault(importProfile)
 
 	// No args = scan mode
@@ -103,11 +88,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if importSource == "" {
-			return fmt.Errorf("no mod sources configured for game %s; cannot look up --id", gameID)
+			return fmt.Errorf("no mod sources configured for game %s; cannot look up --id", game.ID)
 		}
 	}
-
-	ctx := context.Background()
 
 	// Create importer
 	importer := core.NewImporter(service.GetGameCache(game))
@@ -188,8 +171,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	// Set up installer for conflict checking and deployment
 	linkMethod := service.GetGameLinkMethod(game)
-	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+	installer := service.GetInstaller(game)
 
 	// Check for conflicts (unless --force)
 	if !importForce {
@@ -213,7 +195,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 				sourceID, modID := parts[0], parts[1]
 
 				// Try to get mod name
-				conflictMod, _ := service.GetInstalledMod(sourceID, modID, gameID, profileName)
+				conflictMod, _ := service.GetInstalledMod(sourceID, modID, game.ID, profileName)
 				modName := modID
 				if conflictMod != nil {
 					modName = conflictMod.Name
@@ -231,9 +213,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 			}
 
 			fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
-			reader := bufio.NewReader(os.Stdin)
-			input, _ := reader.ReadString('\n')
-			input = strings.TrimSpace(strings.ToLower(input))
+			input, err := readPromptLine()
+			if err != nil {
+				return err
+			}
 			if input != "y" && input != "yes" {
 				return fmt.Errorf("import cancelled")
 			}
@@ -289,7 +272,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		FileIDs:      []string{}, // Local imports don't have file IDs
 	}
 
-	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(installedMod); err != nil {
 		return fmt.Errorf("failed to save mod: %w", err)
 	}
 
@@ -297,9 +280,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 	pm := getProfileManager(service)
 
 	// Ensure profile exists, create if needed
-	if _, err := pm.Get(gameID, profileName); err != nil {
+	if _, err := pm.Get(game.ID, profileName); err != nil {
 		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(gameID, profileName); err != nil {
+			if _, err := pm.Create(game.ID, profileName); err != nil {
 				if verbose {
 					fmt.Printf("  Warning: could not create profile: %v\n", err)
 				}
@@ -314,7 +297,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		Version:  result.Mod.Version,
 		FileIDs:  []string{},
 	}
-	if err := pm.UpsertMod(gameID, profileName, modRef); err != nil {
+	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		if verbose {
 			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}
@@ -356,7 +339,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service, profileName string) error {
-	ctx := context.Background()
+	ctx := cmd.Context()
 
 	// Warn about extract mode limitations
 	if game.DeployMode != domain.DeployCopy {
@@ -441,7 +424,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 			if im.SourceURL == "" && mod.SourceURL != "" {
 				updated.SourceURL = mod.SourceURL
 			}
-			if err := service.DB().SaveInstalledMod(&updated); err != nil {
+			if err := service.SaveInstalledMod(&updated); err != nil {
 				if verbose {
 					fmt.Printf("  %s: metadata save failed: %v\n", im.Name, err)
 				}
@@ -520,9 +503,10 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	// Confirm unless --force
 	if !importForce {
 		fmt.Printf("\nImport these mods? [y/N]: ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
 		if input != "y" && input != "yes" {
 			return fmt.Errorf("import cancelled")
 		}
@@ -586,8 +570,7 @@ func tryMatchCurseForge(ctx context.Context, service *core.Service, game *domain
 		return nil, nil
 	}
 
-	// Return the first (best) match
-	// TODO: Could do fuzzy matching to verify it's actually the right mod
+	// Return the first (best) match. Tighter scoring tracked in #27.
 	return &mods[0], nil
 }
 
@@ -622,7 +605,7 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 		FileIDs:        []string{},
 	}
 
-	if err := service.DB().SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(installedMod); err != nil {
 		return fmt.Errorf("saving to database: %w", err)
 	}
 

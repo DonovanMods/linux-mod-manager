@@ -269,10 +269,7 @@ func (pm *ProfileManager) Switch(ctx context.Context, game *domain.Game, newProf
 }
 
 func joinSwitchErr(primary, rollback error) error {
-	if rollback != nil {
-		return fmt.Errorf("profile switch failed: %w (rollback: %v)", primary, rollback)
-	}
-	return fmt.Errorf("profile switch failed: %w", primary)
+	return &domain.DeployError{Op: "profile switch failed", Primary: primary, Rollback: rollback}
 }
 
 // undeployModRefFailFast removes a mod from the game directory, returning on first file error.

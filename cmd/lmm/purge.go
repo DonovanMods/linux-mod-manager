@@ -51,29 +51,16 @@ func init() {
 }
 
 func runPurge(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doPurge(ctx, service, game)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doPurge(ctx context.Context, service *core.Service, game *domain.Game) error {
 	profileName := profileOrDefault(purgeProfile)
 
 	// Get all installed mods for this profile
-	mods, err := service.GetInstalledMods(gameID, profileName)
+	mods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -103,7 +90,6 @@ func runPurge(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ctx := context.Background()
 	installer := service.GetInstaller(game)
 
 	// Set up hooks
@@ -151,7 +137,7 @@ func runPurge(cmd *cobra.Command, args []string) error {
 
 		// Remove from database only if --uninstall is set
 		if purgeUninstall {
-			if err := service.DB().DeleteInstalledMod(mod.SourceID, mod.ID, gameID, profileName); err != nil {
+			if err := service.DeleteInstalledMod(mod.SourceID, mod.ID, game.ID, profileName); err != nil {
 				if verbose {
 					fmt.Printf("  ⚠ %s - failed to remove record: %v\n", mod.Name, err)
 				}
@@ -161,14 +147,14 @@ func runPurge(cmd *cobra.Command, args []string) error {
 
 			// Also remove from profile YAML
 			pm := getProfileManager(service)
-			if err := pm.RemoveMod(gameID, profileName, mod.SourceID, mod.ID); err != nil {
+			if err := pm.RemoveMod(game.ID, profileName, mod.SourceID, mod.ID); err != nil {
 				if verbose {
 					fmt.Printf("  Note: %s - %v\n", mod.Name, err)
 				}
 			}
 		} else {
 			// Mark mod as not deployed (files removed from game directory)
-			if err := service.DB().SetModDeployed(mod.SourceID, mod.ID, gameID, profileName, false); err != nil {
+			if err := service.SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
 				if verbose {
 					fmt.Printf("  ⚠ %s - failed to mark as not deployed: %v\n", mod.Name, err)
 				}
@@ -275,7 +261,7 @@ func purgeDeployedMods(ctx context.Context, service *core.Service, game *domain.
 		}
 
 		// Mark mod as not deployed (files removed from game directory)
-		if err := service.DB().SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
+		if err := service.SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
 			if verbose {
 				fmt.Printf("  ⚠ %s - failed to mark as not deployed: %v\n", mod.Name, err)
 			}

@@ -84,27 +84,14 @@ func init() {
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doUpdate(ctx, service, game, args)
+	})
+}
 
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	// Resolve source: use flag if set, otherwise first configured source
+	var err error
 	updateSource, err = resolveSource(game, updateSource, false)
 	if err != nil {
 		return err
@@ -113,10 +100,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// Determine profile
 	profileName := profileOrDefault(updateProfile)
 
-	ctx := context.Background()
-
 	// Get installed mods
-	installed, err := service.GetInstalledMods(gameID, profileName)
+	installed, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("failed to get installed mods: %w", err)
 	}
@@ -151,11 +136,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check for updates (partial results returned even when some mods fail to fetch)
-	updater := core.NewUpdater(service.Registry())
+	updater := service.NewUpdater()
 	updates, err := updater.CheckUpdates(ctx, installed)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", updateSource)
+			return authPromptError(updateSource)
 		}
 		// Surface warning but continue to show partial updates
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
@@ -165,7 +150,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(updateJSONOutput{GameID: gameID, Profile: profileName, Updates: []updateModJSON{}}); err != nil {
+			if err := enc.Encode(updateJSONOutput{GameID: game.ID, Profile: profileName, Updates: []updateModJSON{}}); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
 			return nil
@@ -175,7 +160,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if jsonOutput {
-		out := updateJSONOutput{GameID: gameID, Profile: profileName, Updates: make([]updateModJSON, len(updates))}
+		out := updateJSONOutput{GameID: game.ID, Profile: profileName, Updates: make([]updateModJSON, len(updates))}
 		for i, u := range updates {
 			out.Updates[i] = updateModJSON{
 				ModID:        u.InstalledMod.ID,
@@ -296,11 +281,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, profileName string) error {
 	// Check for update for this specific mod
-	updater := core.NewUpdater(service.Registry())
+	updater := service.NewUpdater()
 	updates, err := updater.CheckUpdates(ctx, []domain.InstalledMod{*mod})
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", updateSource)
+			return authPromptError(updateSource)
 		}
 		return fmt.Errorf("failed to check update: %w", err)
 	}
@@ -422,8 +407,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 
 	// Undeploy old version
 	linkMethod := service.GetGameLinkMethod(game)
-	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+	installer := service.GetInstaller(game)
 
 	// Run install.before_each hook (before installing new version)
 	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
@@ -500,29 +484,14 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 }
 
 func runUpdateRollback(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doUpdateRollback(ctx, service, game, args[0])
+	})
+}
 
-	modID := args[0]
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
-	}
-
+func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Resolve source: use flag if set, otherwise first configured source
+	var err error
 	updateSource, err = resolveSource(game, updateSource, false)
 	if err != nil {
 		return err
@@ -531,7 +500,7 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	profileName := profileOrDefault(updateProfile)
 
 	// Get the installed mod
-	mod, err := service.GetInstalledMod(updateSource, modID, gameID, profileName)
+	mod, err := service.GetInstalledMod(updateSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -546,8 +515,6 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Rolling back %s %s → %s...\n", mod.Name, mod.Version, mod.PreviousVersion)
-
-	ctx := context.Background()
 
 	// Set up hooks
 	hookRunner := getHookRunner(service)
@@ -571,8 +538,7 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 
 	// Undeploy current version
 	linkMethod := service.GetGameLinkMethod(game)
-	linker := service.GetLinker(linkMethod)
-	installer := core.NewInstaller(service.GetGameCache(game), linker, service.DB())
+	installer := service.GetInstaller(game)
 
 	// Deploy previous version
 	prevMod := mod.Mod

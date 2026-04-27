@@ -8,6 +8,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
@@ -60,32 +61,18 @@ func init() {
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
-	if err := requireGame(cmd); err != nil {
-		return err
-	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doSearch(ctx, service, game, args)
+	})
+}
 
+func doSearch(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	query := args[0]
 	if len(args) > 1 {
 		// Join multiple args as single query
 		for _, arg := range args[1:] {
 			query += " " + arg
 		}
-	}
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
-
-	// Verify game exists
-	game, err := service.GetGame(gameID)
-	if err != nil {
-		return fmt.Errorf("game not found: %s", gameID)
 	}
 
 	// Determine source: use flag if set, otherwise first configured source
@@ -98,11 +85,10 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Searching for \"%s\" in %s (%s)...\n", query, game.Name, sourceToUse)
 	}
 
-	ctx := context.Background()
-	searchResult, err := service.SearchMods(ctx, sourceToUse, gameID, query, searchCategory, searchTags, 0, 0)
+	searchResult, err := service.SearchMods(ctx, sourceToUse, game.ID, query, searchCategory, searchTags, 0, 0)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
-			return fmt.Errorf("authentication required; run 'lmm auth login %s' to authenticate", sourceToUse)
+			return authPromptError(sourceToUse)
 		}
 		return fmt.Errorf("search failed: %w", err)
 	}
@@ -112,7 +98,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(searchJSONOutput{GameID: gameID, Query: query, Mods: []searchModJSON{}}); err != nil {
+			if err := enc.Encode(searchJSONOutput{GameID: game.ID, Query: query, Mods: []searchModJSON{}}); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
 			return nil
@@ -123,7 +109,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 
 	// Get installed mods to mark already-installed ones
 	profileName := profileOrDefault(searchProfile)
-	installedMods, _ := service.GetInstalledMods(gameID, profileName)
+	installedMods, _ := service.GetInstalledMods(game.ID, profileName)
 	installedIDs := make(map[string]bool)
 	for _, im := range installedMods {
 		if im.SourceID == sourceToUse {
@@ -138,7 +124,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	if jsonOutput {
-		out := searchJSONOutput{GameID: gameID, Query: query, Mods: make([]searchModJSON, len(mods))}
+		out := searchJSONOutput{GameID: game.ID, Query: query, Mods: make([]searchModJSON, len(mods))}
 		for i, mod := range mods {
 			out.Mods[i] = searchModJSON{
 				ID:        mod.ID,

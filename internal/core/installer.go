@@ -57,15 +57,14 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		dstPath := filepath.Join(game.ModPath, file)
 
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
-			if rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed); rollbackErr != nil {
-				err = fmt.Errorf("deploying %s: %w; rollback failed (some files may remain deployed): %v", file, err, rollbackErr)
-			} else {
-				err = fmt.Errorf("deploying %s: %w", file, err)
-			}
+			rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed)
 			if i.db != nil {
 				_ = i.db.DeleteDeployedFiles(game.ID, profileName, mod.SourceID, mod.ID)
 			}
-			return err
+			if rollbackErr != nil {
+				return &domain.DeployError{Op: fmt.Sprintf("deploying %s", file), Primary: err, Rollback: rollbackErr}
+			}
+			return fmt.Errorf("deploying %s: %w", file, err)
 		}
 		deployed = append(deployed, file)
 
@@ -75,7 +74,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 				// Roll back only the file that failed to track; leave previously
 				// deployed+tracked files and DB records intact.
 				if rollbackErr := rollbackDeploy(i.linker, game.ModPath, []string{file}); rollbackErr != nil {
-					return fmt.Errorf("tracking deployed file %s: %w; rollback failed (file may remain deployed but untracked): %v", file, err, rollbackErr)
+					return &domain.DeployError{Op: fmt.Sprintf("tracking deployed file %s", file), Primary: err, Rollback: rollbackErr}
 				}
 				return fmt.Errorf("tracking deployed file %s: %w", file, err)
 			}
@@ -135,7 +134,7 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		}
 		if err := i.linker.Undeploy(filepath.Join(game.ModPath, file)); err != nil {
 			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, nil, oldSet); rollbackErr != nil {
-				return fmt.Errorf("removing obsolete file %s: %w; rollback failed: %v", file, err, rollbackErr)
+				return &domain.DeployError{Op: fmt.Sprintf("removing obsolete file %s", file), Primary: err, Rollback: rollbackErr}
 			}
 			return fmt.Errorf("removing obsolete file %s: %w", file, err)
 		}
@@ -147,7 +146,7 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		select {
 		case <-ctx.Done():
 			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
-				return fmt.Errorf("%w; rollback failed: %v", ctx.Err(), rollbackErr)
+				return &domain.DeployError{Primary: ctx.Err(), Rollback: rollbackErr}
 			}
 			return ctx.Err()
 		default:
@@ -158,14 +157,9 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			cleanupErr := i.linker.Undeploy(dstPath)
 			rollbackFiles := append(append([]string(nil), replacedOrAdded...), file)
-			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, rollbackFiles, oldSet); rollbackErr != nil {
-				if cleanupErr != nil {
-					return fmt.Errorf("deploying %s: %w; cleanup failed: %v; rollback failed: %v", file, err, cleanupErr, rollbackErr)
-				}
-				return fmt.Errorf("deploying %s: %w; rollback failed: %v", file, err, rollbackErr)
-			}
-			if cleanupErr != nil {
-				return fmt.Errorf("deploying %s: %w; cleanup failed: %v", file, err, cleanupErr)
+			rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, rollbackFiles, oldSet)
+			if cleanupErr != nil || rollbackErr != nil {
+				return &domain.DeployError{Op: fmt.Sprintf("deploying %s", file), Primary: err, Cleanup: cleanupErr, Rollback: rollbackErr}
 			}
 			return fmt.Errorf("deploying %s: %w", file, err)
 		}
@@ -175,7 +169,7 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	if i.db != nil {
 		if err := i.db.DeleteDeployedFiles(game.ID, profileName, oldMod.SourceID, oldMod.ID); err != nil {
 			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
-				return fmt.Errorf("resetting file tracking: %w; rollback failed: %v", err, rollbackErr)
+				return &domain.DeployError{Op: "resetting file tracking", Primary: err, Rollback: rollbackErr}
 			}
 			return fmt.Errorf("resetting file tracking: %w", err)
 		}
@@ -186,7 +180,7 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 					_ = i.db.SaveDeployedFile(game.ID, profileName, oldFile, oldMod.SourceID, oldMod.ID)
 				}
 				if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
-					return fmt.Errorf("tracking deployed file %s: %w; rollback failed: %v", file, err, rollbackErr)
+					return &domain.DeployError{Op: fmt.Sprintf("tracking deployed file %s", file), Primary: err, Rollback: rollbackErr}
 				}
 				return fmt.Errorf("tracking deployed file %s: %w", file, err)
 			}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 
@@ -107,109 +108,76 @@ func promptForSource() (string, error) {
 }
 
 func runAuthLogin(cmd *cobra.Command, args []string) error {
-	var sourceID string
-	var err error
-
-	if len(args) > 0 {
-		sourceID = args[0]
-		if !isSupportedSource(sourceID) {
-			return fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
-		}
-	} else {
-		sourceID, err = promptForSource()
+	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+		sourceID, err := selectAuthSource(args)
 		if err != nil {
 			return err
 		}
-		fmt.Println()
-	}
 
-	printAuthInstructions(sourceID)
+		printAuthInstructions(sourceID)
 
-	apiKey, err := readAPIKey()
-	if err != nil {
-		return fmt.Errorf("reading API key: %w", err)
-	}
-
-	if apiKey == "" {
-		return fmt.Errorf("API key cannot be empty")
-	}
-
-	fmt.Print("Validating... ")
-
-	// Validate the API key based on source
-	ctx := context.Background()
-	if err := validateAPIKey(ctx, sourceID, apiKey); err != nil {
-		fmt.Println("failed")
-		return fmt.Errorf("invalid API key: %w", err)
-	}
-
-	fmt.Println("done")
-
-	// Save the token
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		apiKey, err := readAPIKey()
+		if err != nil {
+			return fmt.Errorf("reading API key: %w", err)
 		}
-	}()
+		if apiKey == "" {
+			return fmt.Errorf("API key cannot be empty")
+		}
 
-	if err := service.SaveSourceToken(sourceID, apiKey); err != nil {
-		return fmt.Errorf("saving token: %w", err)
+		fmt.Print("Validating... ")
+		if err := validateAPIKey(ctx, sourceID, apiKey); err != nil {
+			fmt.Println("failed")
+			return fmt.Errorf("invalid API key: %w", err)
+		}
+		fmt.Println("done")
+
+		if err := service.SaveSourceToken(sourceID, apiKey); err != nil {
+			return fmt.Errorf("saving token: %w", err)
+		}
+
+		fmt.Printf("Successfully authenticated with %s!\n", getSourceDisplayName(sourceID))
+		return nil
+	})
+}
+
+// selectAuthSource resolves the source from args or prompts the user.
+func selectAuthSource(args []string) (string, error) {
+	if len(args) > 0 {
+		sourceID := args[0]
+		if !isSupportedSource(sourceID) {
+			return "", fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
+		}
+		return sourceID, nil
 	}
-
-	fmt.Printf("Successfully authenticated with %s!\n", getSourceDisplayName(sourceID))
-	return nil
+	sourceID, err := promptForSource()
+	if err != nil {
+		return "", err
+	}
+	fmt.Println()
+	return sourceID, nil
 }
 
 func runAuthLogout(cmd *cobra.Command, args []string) error {
-	var sourceID string
-	var err error
-
-	if len(args) > 0 {
-		sourceID = args[0]
-		if !isSupportedSource(sourceID) {
-			return fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
-		}
-	} else {
-		sourceID, err = promptForSource()
+	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+		sourceID, err := selectAuthSource(args)
 		if err != nil {
 			return err
 		}
-		fmt.Println()
-	}
-
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
+		if err := service.DeleteSourceToken(sourceID); err != nil {
+			return fmt.Errorf("removing token: %w", err)
 		}
-	}()
-
-	if err := service.DeleteSourceToken(sourceID); err != nil {
-		return fmt.Errorf("removing token: %w", err)
-	}
-
-	fmt.Printf("Removed %s credentials.\n", getSourceDisplayName(sourceID))
-	return nil
+		fmt.Printf("Removed %s credentials.\n", getSourceDisplayName(sourceID))
+		return nil
+	})
 }
 
 func runAuthStatus(cmd *cobra.Command, args []string) error {
-	service, err := initService()
-	if err != nil {
-		return fmt.Errorf("initializing service: %w", err)
-	}
-	defer func() {
-		if err := service.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: closing service: %v\n", err)
-		}
-	}()
+	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+		return doAuthStatus(service)
+	})
+}
 
+func doAuthStatus(service *core.Service) error {
 	for _, sourceID := range supportedSources {
 		// Check stored token first
 		token, err := service.GetSourceToken(sourceID)

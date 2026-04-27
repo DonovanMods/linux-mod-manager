@@ -81,8 +81,10 @@ func TestSearchCmd_Structure(t *testing.T) {
 
 // TestSearchCmd_NoGame tests search without game flag
 func TestSearchCmd_NoGame(t *testing.T) {
-	// Reset flags
+	// Reset flags. configDir must point at an empty tempdir so requireGame
+	// does not pick up a default-game from the user's real ~/.config/lmm.
 	gameID = ""
+	configDir = t.TempDir()
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(searchCmd)
