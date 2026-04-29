@@ -50,7 +50,7 @@ func base(name string, foreground, background, accent lipgloss.Color) Theme {
 	danger := lipgloss.Color("9")
 	success := lipgloss.Color("10")
 
-	return Theme{
+	t := Theme{
 		Name:       name,
 		Background: background,
 		Foreground: foreground,
@@ -81,18 +81,25 @@ func base(name string, foreground, background, accent lipgloss.Color) Theme {
 			Foreground(background).
 			Background(accent).
 			Bold(true),
-		MutedText: lipgloss.NewStyle().
-			Foreground(muted).
-			Background(background),
-		Help: lipgloss.NewStyle().
-			Foreground(muted).
-			Background(background),
 		Badge: lipgloss.NewStyle().
 			Foreground(background).
 			Background(accent).
 			Bold(true).
 			Padding(0, 1),
 	}
+
+	return t.withMuted(muted)
+}
+
+func (t Theme) withMuted(muted lipgloss.Color) Theme {
+	t.Muted = muted
+	t.MutedText = lipgloss.NewStyle().
+		Foreground(muted).
+		Background(t.Background)
+	t.Help = lipgloss.NewStyle().
+		Foreground(muted).
+		Background(t.Background)
+	return t
 }
 
 // Wizardry returns the default RPG party-sheet theme.
@@ -106,9 +113,7 @@ func Wizardry() Theme {
 // Amber returns a monochrome amber CRT theme.
 func Amber() Theme {
 	t := base("amber", lipgloss.Color("214"), lipgloss.Color("0"), lipgloss.Color("220"))
-	t.Muted = lipgloss.Color("94")
-	t.MutedText = t.MutedText.Foreground(t.Muted)
-	return t
+	return t.withMuted(lipgloss.Color("94"))
 }
 
 // DOS returns a blue DOS utility theme.
@@ -121,7 +126,5 @@ func DOS() Theme {
 // Green returns a green phosphor terminal theme.
 func Green() Theme {
 	t := base("green", lipgloss.Color("46"), lipgloss.Color("0"), lipgloss.Color("120"))
-	t.Muted = lipgloss.Color("22")
-	t.MutedText = t.MutedText.Foreground(t.Muted)
-	return t
+	return t.withMuted(lipgloss.Color("22"))
 }

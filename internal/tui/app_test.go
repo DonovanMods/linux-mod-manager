@@ -28,16 +28,16 @@ func TestNumberKeysNavigateScreens(t *testing.T) {
 	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
 	require.NoError(t, err)
 
-	updated := updateWithKey(t, model, "2")
+	updated := updateWithRunes(t, model, "2")
 	require.Equal(t, ScreenInstalledMods, updated.CurrentScreen())
 
-	updated = updateWithKey(t, updated, "3")
+	updated = updateWithRunes(t, updated, "3")
 	require.Equal(t, ScreenSearch, updated.CurrentScreen())
 
-	updated = updateWithKey(t, updated, "4")
+	updated = updateWithRunes(t, updated, "4")
 	require.Equal(t, ScreenProfiles, updated.CurrentScreen())
 
-	updated = updateWithKey(t, updated, "1")
+	updated = updateWithRunes(t, updated, "1")
 	require.Equal(t, ScreenDashboard, updated.CurrentScreen())
 }
 
@@ -47,11 +47,30 @@ func TestTabCyclesScreens(t *testing.T) {
 	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
 	require.NoError(t, err)
 
-	updated := updateWithKey(t, model, "tab")
+	updated := updateWithKeyType(t, model, tea.KeyTab)
 	require.Equal(t, ScreenInstalledMods, updated.CurrentScreen())
 
-	updated = updateWithKey(t, updated, "shift+tab")
+	updated = updateWithKeyType(t, updated, tea.KeyShiftTab)
 	require.Equal(t, ScreenDashboard, updated.CurrentScreen())
+}
+
+func TestArrowAndVimKeysNavigateScreens(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	require.NoError(t, err)
+
+	model = updateWithKeyType(t, model, tea.KeyRight)
+	require.Equal(t, ScreenInstalledMods, model.CurrentScreen())
+
+	model = updateWithRunes(t, model, "l")
+	require.Equal(t, ScreenSearch, model.CurrentScreen())
+
+	model = updateWithKeyType(t, model, tea.KeyLeft)
+	require.Equal(t, ScreenInstalledMods, model.CurrentScreen())
+
+	model = updateWithRunes(t, model, "h")
+	require.Equal(t, ScreenDashboard, model.CurrentScreen())
 }
 
 func TestSelectionMovementIsClamped(t *testing.T) {
@@ -59,21 +78,37 @@ func TestSelectionMovementIsClamped(t *testing.T) {
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
 	require.NoError(t, err)
-	model = updateWithKey(t, model, "2")
+	model = updateWithRunes(t, model, "2")
 
-	model = updateWithKey(t, model, "j")
-	model = updateWithKey(t, model, "j")
+	model = updateWithRunes(t, model, "j")
+	model = updateWithKeyType(t, model, tea.KeyDown)
 	require.Equal(t, 2, model.SelectedIndex(ScreenInstalledMods))
 
 	for i := 0; i < 20; i++ {
-		model = updateWithKey(t, model, "j")
+		model = updateWithKeyType(t, model, tea.KeyDown)
 	}
 	require.Equal(t, 4, model.SelectedIndex(ScreenInstalledMods))
 
+	model = updateWithRunes(t, model, "k")
+	require.Equal(t, 3, model.SelectedIndex(ScreenInstalledMods))
+
 	for i := 0; i < 20; i++ {
-		model = updateWithKey(t, model, "k")
+		model = updateWithKeyType(t, model, tea.KeyUp)
 	}
 	require.Equal(t, 0, model.SelectedIndex(ScreenInstalledMods))
+}
+
+func TestSearchAndQuitBindings(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	require.NoError(t, err)
+
+	model = updateWithRunes(t, model, "/")
+	require.Equal(t, ScreenSearch, model.CurrentScreen())
+
+	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	require.NotNil(t, cmd)
 }
 
 func TestHelpToggle(t *testing.T) {
@@ -82,17 +117,29 @@ func TestHelpToggle(t *testing.T) {
 	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
 	require.NoError(t, err)
 
-	model = updateWithKey(t, model, "?")
+	model = updateWithRunes(t, model, "?")
 	require.True(t, model.HelpVisible())
 
-	model = updateWithKey(t, model, "?")
+	model = updateWithRunes(t, model, "?")
 	require.False(t, model.HelpVisible())
 }
 
-func updateWithKey(t *testing.T, model Model, key string) Model {
+func updateWithRunes(t *testing.T, model Model, key string) Model {
 	t.Helper()
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	return updateWithMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+}
+
+func updateWithKeyType(t *testing.T, model Model, keyType tea.KeyType) Model {
+	t.Helper()
+
+	return updateWithMsg(t, model, tea.KeyMsg{Type: keyType})
+}
+
+func updateWithMsg(t *testing.T, model Model, msg tea.KeyMsg) Model {
+	t.Helper()
+
+	updated, _ := model.Update(msg)
 	updatedModel, ok := updated.(Model)
 	require.True(t, ok)
 	return updatedModel

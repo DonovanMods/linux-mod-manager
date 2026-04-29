@@ -10,19 +10,20 @@ func TestByNameReturnsPresets(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		want string
+		caseName string
+		name     string
+		want     string
 	}{
-		{name: "", want: "wizardry"},
-		{name: "wizardry", want: "wizardry"},
-		{name: "amber", want: "amber"},
-		{name: "dos", want: "dos"},
-		{name: "green", want: "green"},
-		{name: "phosphor", want: "green"},
+		{caseName: "default", name: "", want: "wizardry"},
+		{caseName: "wizardry", name: "wizardry", want: "wizardry"},
+		{caseName: "amber", name: "amber", want: "amber"},
+		{caseName: "dos", name: "dos", want: "dos"},
+		{caseName: "green", name: "green", want: "green"},
+		{caseName: "phosphor alias", name: "phosphor", want: "green"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.caseName, func(t *testing.T) {
 			theme, err := ByName(tt.name)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, theme.Name)
