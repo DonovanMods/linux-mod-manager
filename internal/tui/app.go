@@ -11,6 +11,18 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/theme"
 )
 
+const defaultContentWidth = 76
+
+// Layout describes the major panel arrangement for a prototype theme.
+type Layout string
+
+const (
+	LayoutPartySheet         Layout = "party-sheet"
+	LayoutMonochromeTerminal Layout = "monochrome-terminal"
+	LayoutCommander          Layout = "commander"
+	LayoutCrtStack           Layout = "crt-stack"
+)
+
 // Options configures the TUI app.
 type Options struct {
 	Theme     string
@@ -20,6 +32,7 @@ type Options struct {
 // Model is the root Bubble Tea model for the lmm TUI.
 type Model struct {
 	theme    theme.Theme
+	layout   Layout
 	data     prototype.Data
 	screen   Screen
 	selected map[Screen]int
@@ -37,6 +50,7 @@ func NewPrototypeModel(options Options) (Model, error) {
 
 	return Model{
 		theme:  t,
+		layout: layoutForTheme(t.Name),
 		data:   prototype.Load(),
 		screen: ScreenDashboard,
 		selected: map[Screen]int{
@@ -109,16 +123,7 @@ func (m Model) View() string {
 	b.WriteString(m.nav())
 	b.WriteString("\n\n")
 
-	switch m.screen {
-	case ScreenDashboard:
-		b.WriteString(m.dashboardView())
-	case ScreenInstalledMods:
-		b.WriteString(m.modsView())
-	case ScreenSearch:
-		b.WriteString(m.searchView())
-	case ScreenProfiles:
-		b.WriteString(m.profilesView())
-	}
+	b.WriteString(m.screenView())
 
 	b.WriteString("\n\n")
 	if m.showHelp {
@@ -127,7 +132,15 @@ func (m Model) View() string {
 		b.WriteString(m.theme.Help.Render("?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  q: quit"))
 	}
 
-	return m.theme.App.Render(b.String())
+	app := m.theme.App
+	if m.width > 0 {
+		app = app.Width(m.width)
+	}
+	if m.height > 0 {
+		app = app.Height(m.height)
+	}
+
+	return app.Render(b.String())
 }
 
 // CurrentScreen exposes the selected screen for tests.
@@ -143,6 +156,11 @@ func (m Model) SelectedIndex(screen Screen) int {
 // HelpVisible exposes help overlay state for tests.
 func (m Model) HelpVisible() bool {
 	return m.showHelp
+}
+
+// Layout exposes the active layout for tests and future visual selection UI.
+func (m Model) Layout() Layout {
+	return m.layout
 }
 
 func (m Model) screenIndex() int {
@@ -197,7 +215,39 @@ func (m Model) nav() string {
 	return strings.Join(items, "  ")
 }
 
+func (m Model) screenView() string {
+	switch m.screen {
+	case ScreenDashboard:
+		return m.dashboardView()
+	case ScreenInstalledMods:
+		return m.modsView()
+	case ScreenSearch:
+		return m.searchView()
+	case ScreenProfiles:
+		return m.profilesView()
+	default:
+		return m.dashboardView()
+	}
+}
+
 func (m Model) dashboardView() string {
+	switch m.layout {
+	case LayoutMonochromeTerminal:
+		return m.terminalDashboardView()
+	case LayoutCommander:
+		return m.commanderDashboardView()
+	case LayoutCrtStack:
+		return m.crtDashboardView()
+	default:
+		return m.partyDashboardView()
+	}
+}
+
+func (m Model) partyDashboardView() string {
+	width := m.availableWidth()
+	gap := 1
+	panelWidth := max((width-gap)/2, 24)
+
 	party := strings.Join([]string{
 		m.theme.PanelTitle.Render("PARTY"),
 		fmt.Sprintf("Game:    %s", m.data.Game.Name),
@@ -221,10 +271,71 @@ func (m Model) dashboardView() string {
 	}, "\n")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.theme.Panel.Width(31).Render(party),
+		m.panel(panelWidth).Render(party),
 		" ",
-		m.theme.Panel.Width(31).Render(quest),
-	) + "\n" + m.theme.Panel.Width(66).Render(menu)
+		m.panel(panelWidth).Render(quest),
+	) + "\n" + m.panel(width).Render(menu)
+}
+
+func (m Model) terminalDashboardView() string {
+	rows := []string{
+		m.theme.PanelTitle.Render("BOOT SEQUENCE // MOD GUILD TERMINAL"),
+		fmt.Sprintf("> GAME     %s", m.data.Game.Name),
+		fmt.Sprintf("> PROFILE  %s", m.data.Profile.Name),
+		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.data.Stats.Installed, m.data.Stats.Enabled),
+		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", statusValue(m.data.Stats.Updates, m.theme.Warning), statusValue(m.data.Stats.Conflicts, m.theme.Danger)),
+		"",
+		m.row(0, "RUN SPELLBOOK SCAN"),
+		m.row(1, "QUERY ARCHIVE INDEX"),
+		m.row(2, "LOAD PROFILE ROSTER"),
+		m.row(3, "ASK CONFLICT ORACLE"),
+	}
+	return m.panel(m.availableWidth()).Render(strings.Join(rows, "\n"))
+}
+
+func (m Model) commanderDashboardView() string {
+	width := m.availableWidth()
+	gap := 1
+	leftWidth := max((width-gap)/2, 24)
+	rightWidth := max(width-gap-leftWidth, 24)
+
+	left := strings.Join([]string{
+		m.theme.PanelTitle.Render("ACTIVE PROFILE"),
+		m.data.Profile.Name,
+		"",
+		fmt.Sprintf("Game     %s", m.data.Game.Name),
+		fmt.Sprintf("Enabled  %d", m.data.Stats.Enabled),
+		fmt.Sprintf("Updates  %d", m.data.Stats.Updates),
+	}, "\n")
+	right := strings.Join([]string{
+		m.theme.PanelTitle.Render("OPERATIONS"),
+		m.row(0, "Installed Mods"),
+		m.row(1, "Search Archives"),
+		m.row(2, "Profiles"),
+		m.row(3, "Conflict Oracle"),
+	}, "\n")
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		m.panel(leftWidth).Render(left),
+		" ",
+		m.panel(rightWidth).Render(right),
+	)
+}
+
+func (m Model) crtDashboardView() string {
+	rows := []string{
+		m.theme.PanelTitle.Render("CRT STATUS STACK"),
+		fmt.Sprintf("▓ %-10s %s", "GAME", m.data.Game.Name),
+		fmt.Sprintf("▓ %-10s %s", "PROFILE", m.data.Profile.Name),
+		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.data.Stats.Enabled, m.data.Stats.Installed),
+		fmt.Sprintf("▓ %-10s %d updates, %d conflict", "SIGNAL", m.data.Stats.Updates, m.data.Stats.Conflicts),
+		"",
+		m.row(0, "Installed Mods"),
+		m.row(1, "Search Archives"),
+		m.row(2, "Profiles"),
+		m.row(3, "Consult Conflict Oracle"),
+	}
+	return m.panel(m.availableWidth()).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) modsView() string {
@@ -233,7 +344,7 @@ func (m Model) modsView() string {
 	for i, mod := range m.data.InstalledMods {
 		rows = append(rows, m.modRow(i, mod))
 	}
-	return m.theme.Panel.Width(76).Render(strings.Join(rows, "\n"))
+	return m.panel(m.availableWidth()).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) searchView() string {
@@ -242,7 +353,7 @@ func (m Model) searchView() string {
 	for i, mod := range m.data.SearchResults {
 		rows = append(rows, m.modRow(i, mod))
 	}
-	return m.theme.Panel.Width(76).Render(strings.Join(rows, "\n"))
+	return m.panel(m.availableWidth()).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) profilesView() string {
@@ -255,11 +366,11 @@ func (m Model) profilesView() string {
 		line := fmt.Sprintf("%s %-22s %3d mods", active, profile.Name, profile.ModCount)
 		rows = append(rows, m.row(i, line))
 	}
-	return m.theme.Panel.Width(54).Render(strings.Join(rows, "\n"))
+	return m.panel(min(m.availableWidth(), 54)).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) helpView() string {
-	return m.theme.Panel.Width(76).Render(strings.Join([]string{
+	return m.panel(m.availableWidth()).Render(strings.Join([]string{
 		m.theme.PanelTitle.Render("HELP"),
 		"arrows / hjkl       move or switch screens",
 		"tab / shift+tab     cycle top-level screens",
@@ -286,6 +397,44 @@ func (m Model) modRow(index int, mod prototype.Mod) string {
 	return m.row(index, line)
 }
 
+func (m Model) panel(width int) lipgloss.Style {
+	return m.theme.Panel.Width(max(width-m.theme.Panel.GetHorizontalFrameSize(), 1))
+}
+
+func (m Model) availableWidth() int {
+	if m.width == 0 {
+		return defaultContentWidth
+	}
+	return max(m.width-m.theme.App.GetHorizontalFrameSize(), 40)
+}
+
+func layoutForTheme(name string) Layout {
+	switch name {
+	case "amber":
+		return LayoutMonochromeTerminal
+	case "dos":
+		return LayoutCommander
+	case "green":
+		return LayoutCrtStack
+	default:
+		return LayoutPartySheet
+	}
+}
+
 func statusValue(value int, color lipgloss.Color) string {
 	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(fmt.Sprintf("%d", value))
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

@@ -1,8 +1,10 @@
 package theme
 
 import (
+	"strconv"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,4 +38,25 @@ func TestByNameRejectsUnknownTheme(t *testing.T) {
 
 	_, err := ByName("cursed-rainbow")
 	require.Error(t, err)
+}
+
+func TestDarkTerminalThemesKeepMutedTextReadable(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"wizardry", "amber", "green"} {
+		t.Run(name, func(t *testing.T) {
+			theme, err := ByName(name)
+			require.NoError(t, err)
+			require.NotEqual(t, theme.Background, theme.Muted)
+			require.GreaterOrEqual(t, colorIndex(t, theme.Muted), 60)
+		})
+	}
+}
+
+func colorIndex(t *testing.T, color lipgloss.Color) int {
+	t.Helper()
+
+	index, err := strconv.Atoi(string(color))
+	require.NoError(t, err)
+	return index
 }

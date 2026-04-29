@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Prototype TUI shell**: Added `lmm tui --prototype` with fake-data Dashboard, Installed Mods, Search, and Profiles screens, retro theme presets (`wizardry`, `amber`, `dos`, `green`), and keyboard navigation for early look-and-feel iteration. Prototype mode is intentionally side-effect-free: no DB writes, API calls, installs, updates, or deploys.
 
+### Changed
+
+- **Prototype TUI visual pass**: The TUI now expands to the current terminal size, uses more readable muted colors on dark terminals, and assigns each retro theme its own dashboard layout rather than only swapping colors.
+
 ## [1.3.10] - 2026-04-26
 
 ### Changed

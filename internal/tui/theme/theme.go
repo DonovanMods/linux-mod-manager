@@ -45,7 +45,7 @@ func ByName(name string) (Theme, error) {
 }
 
 func base(name string, foreground, background, accent lipgloss.Color) Theme {
-	muted := lipgloss.Color("8")
+	muted := lipgloss.Color("244")
 	warning := lipgloss.Color("11")
 	danger := lipgloss.Color("9")
 	success := lipgloss.Color("10")
@@ -113,7 +113,7 @@ func Wizardry() Theme {
 // Amber returns a monochrome amber CRT theme.
 func Amber() Theme {
 	t := base("amber", lipgloss.Color("214"), lipgloss.Color("0"), lipgloss.Color("220"))
-	return t.withMuted(lipgloss.Color("94"))
+	return t.withMuted(lipgloss.Color("172"))
 }
 
 // DOS returns a blue DOS utility theme.
@@ -126,5 +126,5 @@ func DOS() Theme {
 // Green returns a green phosphor terminal theme.
 func Green() Theme {
 	t := base("green", lipgloss.Color("46"), lipgloss.Color("0"), lipgloss.Color("120"))
-	return t.withMuted(lipgloss.Color("22"))
+	return t.withMuted(lipgloss.Color("70"))
 }

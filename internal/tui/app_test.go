@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,6 +123,42 @@ func TestHelpToggle(t *testing.T) {
 
 	model = updateWithRunes(t, model, "?")
 	require.False(t, model.HelpVisible())
+}
+
+func TestWindowSizeExpandsViewToTerminalBounds(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	require.NoError(t, err)
+
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	model = updated.(Model)
+
+	view := model.View()
+	require.Equal(t, 100, lipgloss.Width(view))
+	require.Equal(t, 30, lipgloss.Height(view))
+}
+
+func TestThemesUseDistinctLayouts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		themeName string
+		want      Layout
+	}{
+		{themeName: "wizardry", want: LayoutPartySheet},
+		{themeName: "amber", want: LayoutMonochromeTerminal},
+		{themeName: "dos", want: LayoutCommander},
+		{themeName: "green", want: LayoutCrtStack},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.themeName, func(t *testing.T) {
+			model, err := NewPrototypeModel(Options{Theme: tt.themeName, Prototype: true})
+			require.NoError(t, err)
+			require.Equal(t, tt.want, model.Layout())
+		})
+	}
 }
 
 func updateWithRunes(t *testing.T, model Model, key string) Model {
