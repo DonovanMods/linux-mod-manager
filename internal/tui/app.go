@@ -245,8 +245,11 @@ func (m Model) dashboardView() string {
 
 func (m Model) partyDashboardView() string {
 	width := m.availableWidth()
+	height := m.availableContentHeight()
 	gap := 1
 	panelWidth := max((width-gap)/2, 24)
+	topHeight := max((height-1)/2, 6)
+	menuHeight := max(height-topHeight, 6)
 
 	party := strings.Join([]string{
 		m.theme.PanelTitle.Render("PARTY"),
@@ -271,10 +274,10 @@ func (m Model) partyDashboardView() string {
 	}, "\n")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.panel(panelWidth).Render(party),
+		m.panelWithHeight(panelWidth, topHeight).Render(party),
 		" ",
-		m.panel(panelWidth).Render(quest),
-	) + "\n" + m.panel(width).Render(menu)
+		m.panelWithHeight(panelWidth, topHeight).Render(quest),
+	) + "\n" + m.panelWithHeight(width, menuHeight).Render(menu)
 }
 
 func (m Model) terminalDashboardView() string {
@@ -290,11 +293,12 @@ func (m Model) terminalDashboardView() string {
 		m.row(2, "LOAD PROFILE ROSTER"),
 		m.row(3, "ASK CONFLICT ORACLE"),
 	}
-	return m.panel(m.availableWidth()).Render(strings.Join(rows, "\n"))
+	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) commanderDashboardView() string {
 	width := m.availableWidth()
+	height := m.availableContentHeight()
 	gap := 1
 	leftWidth := max((width-gap)/2, 24)
 	rightWidth := max(width-gap-leftWidth, 24)
@@ -316,9 +320,9 @@ func (m Model) commanderDashboardView() string {
 	}, "\n")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.panel(leftWidth).Render(left),
+		m.panelWithHeight(leftWidth, height).Render(left),
 		" ",
-		m.panel(rightWidth).Render(right),
+		m.panelWithHeight(rightWidth, height).Render(right),
 	)
 }
 
@@ -335,7 +339,7 @@ func (m Model) crtDashboardView() string {
 		m.row(2, "Profiles"),
 		m.row(3, "Consult Conflict Oracle"),
 	}
-	return m.panel(m.availableWidth()).Render(strings.Join(rows, "\n"))
+	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) modsView() string {
@@ -344,7 +348,7 @@ func (m Model) modsView() string {
 	for i, mod := range m.data.InstalledMods {
 		rows = append(rows, m.modRow(i, mod))
 	}
-	return m.panel(m.availableWidth()).Render(strings.Join(rows, "\n"))
+	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) searchView() string {
@@ -353,7 +357,7 @@ func (m Model) searchView() string {
 	for i, mod := range m.data.SearchResults {
 		rows = append(rows, m.modRow(i, mod))
 	}
-	return m.panel(m.availableWidth()).Render(strings.Join(rows, "\n"))
+	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) profilesView() string {
@@ -366,7 +370,7 @@ func (m Model) profilesView() string {
 		line := fmt.Sprintf("%s %-22s %3d mods", active, profile.Name, profile.ModCount)
 		rows = append(rows, m.row(i, line))
 	}
-	return m.panel(min(m.availableWidth(), 54)).Render(strings.Join(rows, "\n"))
+	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
 func (m Model) helpView() string {
@@ -398,7 +402,11 @@ func (m Model) modRow(index int, mod prototype.Mod) string {
 }
 
 func (m Model) panel(width int) lipgloss.Style {
-	return m.theme.Panel.Width(max(width-m.theme.Panel.GetHorizontalFrameSize(), 1))
+	return m.theme.Panel.Width(max(width-m.theme.Panel.GetHorizontalBorderSize(), 1))
+}
+
+func (m Model) panelWithHeight(width, height int) lipgloss.Style {
+	return m.panel(width).Height(max(height-m.theme.Panel.GetVerticalBorderSize(), 1))
 }
 
 func (m Model) availableWidth() int {
@@ -406,6 +414,15 @@ func (m Model) availableWidth() int {
 		return defaultContentWidth
 	}
 	return max(m.width-m.theme.App.GetHorizontalFrameSize(), 40)
+}
+
+func (m Model) availableContentHeight() int {
+	if m.height == 0 {
+		return 12
+	}
+
+	const chromeHeight = 6 // title, nav, spacer lines, and one-line footer.
+	return max(m.height-m.theme.App.GetVerticalFrameSize()-chromeHeight, 8)
 }
 
 func layoutForTheme(name string) Layout {
@@ -423,13 +440,6 @@ func layoutForTheme(name string) Layout {
 
 func statusValue(value int, color lipgloss.Color) string {
 	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(fmt.Sprintf("%d", value))
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func max(a, b int) int {

@@ -139,6 +139,36 @@ func TestWindowSizeExpandsViewToTerminalBounds(t *testing.T) {
 	require.Equal(t, 30, lipgloss.Height(view))
 }
 
+func TestScreenViewsUseAvailableWidth(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	require.NoError(t, err)
+
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 36})
+	model = updated.(Model)
+
+	for _, screen := range screens {
+		model.screen = screen
+		require.Equal(t, model.availableWidth(), lipgloss.Width(model.screenView()), screen.String())
+	}
+}
+
+func TestScreenViewsUseAvailableHeightOnLargeTerminals(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	require.NoError(t, err)
+
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 36})
+	model = updated.(Model)
+
+	for _, screen := range screens {
+		model.screen = screen
+		require.GreaterOrEqual(t, lipgloss.Height(model.screenView()), model.availableContentHeight(), screen.String())
+	}
+}
+
 func TestThemesUseDistinctLayouts(t *testing.T) {
 	t.Parallel()
 
