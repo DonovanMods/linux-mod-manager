@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Prototype TUI visual pass**: The TUI now expands to the current terminal size, uses more readable muted colors on dark terminals, assigns each retro theme its own dashboard layout rather than only swapping colors, and stretches screen panels/sections to use the available content area instead of rendering as fixed-size islands.
+- **Prototype TUI visual pass**: The TUI now expands to the current terminal size, uses more readable muted colors on dark terminals, assigns each retro theme its own dashboard layout rather than only swapping colors, stretches screen panels/sections to use the available content area instead of rendering as fixed-size islands, and avoids painting non-selected chrome backgrounds so terminal themes do not show stray ANSI blocks.
 
 ## [1.3.10] - 2026-04-26
 

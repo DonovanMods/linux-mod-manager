@@ -40,6 +40,22 @@ func TestByNameRejectsUnknownTheme(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestThemeChromeUsesTerminalDefaultBackground(t *testing.T) {
+	t.Parallel()
+
+	theme, err := ByName("wizardry")
+	require.NoError(t, err)
+
+	assertNoBackground(t, theme.App)
+	assertNoBackground(t, theme.Title)
+	assertNoBackground(t, theme.Panel)
+	assertNoBackground(t, theme.PanelTitle)
+	assertNoBackground(t, theme.MutedText)
+	assertNoBackground(t, theme.Help)
+
+	require.IsType(t, lipgloss.Color(""), theme.Selected.GetBackground())
+}
+
 func TestDarkTerminalThemesKeepMutedTextReadable(t *testing.T) {
 	t.Parallel()
 
@@ -51,6 +67,12 @@ func TestDarkTerminalThemesKeepMutedTextReadable(t *testing.T) {
 			require.GreaterOrEqual(t, colorIndex(t, theme.Muted), 60)
 		})
 	}
+}
+
+func assertNoBackground(t *testing.T, style lipgloss.Style) {
+	t.Helper()
+
+	require.IsType(t, lipgloss.NoColor{}, style.GetBackground())
 }
 
 func colorIndex(t *testing.T, color lipgloss.Color) int {

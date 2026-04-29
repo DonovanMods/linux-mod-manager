@@ -61,21 +61,17 @@ func base(name string, foreground, background, accent lipgloss.Color) Theme {
 		Success:    success,
 		App: lipgloss.NewStyle().
 			Foreground(foreground).
-			Background(background).
 			Padding(1, 2),
 		Title: lipgloss.NewStyle().
 			Foreground(accent).
-			Background(background).
 			Bold(true),
 		Panel: lipgloss.NewStyle().
 			Foreground(foreground).
-			Background(background).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(accent).
 			Padding(0, 1),
 		PanelTitle: lipgloss.NewStyle().
 			Foreground(accent).
-			Background(background).
 			Bold(true),
 		Selected: lipgloss.NewStyle().
 			Foreground(background).
@@ -94,11 +90,9 @@ func base(name string, foreground, background, accent lipgloss.Color) Theme {
 func (t Theme) withMuted(muted lipgloss.Color) Theme {
 	t.Muted = muted
 	t.MutedText = lipgloss.NewStyle().
-		Foreground(muted).
-		Background(t.Background)
+		Foreground(muted)
 	t.Help = lipgloss.NewStyle().
-		Foreground(muted).
-		Background(t.Background)
+		Foreground(muted)
 	return t
 }
 
