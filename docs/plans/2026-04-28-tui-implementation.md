@@ -314,7 +314,9 @@ lmm tui --prototype --theme dos
 5. Keep alternate themes available if they are cheap to maintain.
 6. Document the decision in this plan or a short follow-up note.
 
-**Recommended default:** `wizardry`, with `amber` and `dos` retained as alternates if maintenance stays low.
+**Selected default:** `wizardry`. It has the strongest RPG/tool identity for `lmm` and best matches the “Wizardry/Ultima in spirit, useful mod manager in practice” direction.
+
+**Retained alternates:** `amber`, `dos`, and `green` stay available while they remain cheap to maintain. `amber` is explicitly kept for the VAX/VMS-era terminal nostalgia lane.
 
 **Exit criteria:**
 
