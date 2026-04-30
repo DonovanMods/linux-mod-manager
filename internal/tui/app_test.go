@@ -142,11 +142,7 @@ func TestWindowSizeExpandsViewToTerminalBounds(t *testing.T) {
 func TestScreenViewsUseAvailableWidth(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
-	require.NoError(t, err)
-
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 36})
-	model = updated.(Model)
+	model := sizedPrototypeModel(t, "wizardry", 120, 36)
 
 	for _, screen := range screens {
 		model.screen = screen
@@ -154,19 +150,40 @@ func TestScreenViewsUseAvailableWidth(t *testing.T) {
 	}
 }
 
-func TestScreenViewsUseAvailableHeightOnLargeTerminals(t *testing.T) {
+func TestDashboardLayoutsDoNotOverflowNarrowTerminals(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
-	require.NoError(t, err)
+	for _, themeName := range []string{"wizardry", "dos"} {
+		t.Run(themeName, func(t *testing.T) {
+			t.Parallel()
 
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 36})
-	model = updated.(Model)
+			model := sizedPrototypeModel(t, themeName, 40, 24)
+			require.Equal(t, ScreenDashboard, model.CurrentScreen())
+			require.LessOrEqual(t, lipgloss.Width(model.screenView()), model.availableWidth())
+		})
+	}
+}
+
+func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 120, 36)
 
 	for _, screen := range screens {
 		model.screen = screen
-		require.GreaterOrEqual(t, lipgloss.Height(model.screenView()), model.availableContentHeight(), screen.String())
+		require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()), screen.String())
 	}
+}
+
+func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 120, 36)
+	model = updateWithRunes(t, model, "?")
+
+	view := model.View()
+	require.Equal(t, 120, lipgloss.Width(view))
+	require.Equal(t, 36, lipgloss.Height(view))
 }
 
 func TestThemesUseDistinctLayouts(t *testing.T) {
@@ -189,6 +206,18 @@ func TestThemesUseDistinctLayouts(t *testing.T) {
 			require.Equal(t, tt.want, model.Layout())
 		})
 	}
+}
+
+func sizedPrototypeModel(t *testing.T, themeName string, width, height int) Model {
+	t.Helper()
+
+	model, err := NewPrototypeModel(Options{Theme: themeName, Prototype: true})
+	require.NoError(t, err)
+
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	updatedModel, ok := updated.(Model)
+	require.True(t, ok)
+	return updatedModel
 }
 
 func updateWithRunes(t *testing.T, model Model, key string) Model {

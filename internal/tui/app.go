@@ -247,9 +247,10 @@ func (m Model) partyDashboardView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
 	gap := 1
-	panelWidth := max((width-gap)/2, 24)
-	topHeight := max((height-1)/2, 6)
-	menuHeight := max(height-topHeight, 6)
+	panelWidth := max((width-gap)/2, 1)
+	splitHeight := height
+	topHeight := splitHeight / 2
+	menuHeight := splitHeight - topHeight
 
 	party := strings.Join([]string{
 		m.theme.PanelTitle.Render("PARTY"),
@@ -300,8 +301,8 @@ func (m Model) commanderDashboardView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
 	gap := 1
-	leftWidth := max((width-gap)/2, 24)
-	rightWidth := max(width-gap-leftWidth, 24)
+	leftWidth := max((width-gap)/2, 1)
+	rightWidth := max(width-gap-leftWidth, 1)
 
 	left := strings.Join([]string{
 		m.theme.PanelTitle.Render("ACTIVE PROFILE"),
@@ -421,8 +422,17 @@ func (m Model) availableContentHeight() int {
 		return 12
 	}
 
-	const chromeHeight = 6 // title, nav, spacer lines, and one-line footer.
-	return max(m.height-m.theme.App.GetVerticalFrameSize()-chromeHeight, 8)
+	return max(m.height-m.theme.App.GetVerticalFrameSize()-m.contentChromeHeight(), 8)
+}
+
+func (m Model) contentChromeHeight() int {
+	footerHeight := 1
+	if m.showHelp {
+		footerHeight = lipgloss.Height(m.helpView())
+	}
+
+	const titleNavAndSpacerHeight = 4 // title, nav, and the spacer lines around content.
+	return titleNavAndSpacerHeight + footerHeight
 }
 
 func layoutForTheme(name string) Layout {
