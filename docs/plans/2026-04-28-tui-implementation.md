@@ -336,18 +336,21 @@ lmm tui --prototype --theme dos
 2. Implement a real adapter over `*core.Service`.
 3. Keep a fake adapter for tests and prototype/demo mode.
 4. Wire `lmm tui` without `--prototype` to initialize config and service like existing CLI commands.
-5. Load real data for:
+5. Load the user's configured default TUI theme when no `--theme` flag is provided, while still defaulting fresh installs to `wizardry`.
+6. Add a config path for setting the default TUI theme, analogous to the existing default game workflow, so users can make `amber`, `dos`, `green`, or future themes their personal default.
+7. Load real data for:
    - current/configured games
    - active/default profile
    - installed mods
    - profile list
    - status/update/conflict summaries where existing core methods support it
-6. Preserve `--prototype` as a safe design/demo mode.
-7. Add loading/error states for missing config, missing game, auth-required, and empty mod lists.
+8. Preserve `--prototype` as a safe design/demo mode.
+9. Add loading/error states for missing config, missing game, auth-required, and empty mod lists.
 
 **Exit criteria:**
 
 - `lmm tui` starts with real config/service initialization.
+- A user-configured default TUI theme is honored when `--theme` is omitted; `--theme` remains an explicit per-run override.
 - Dashboard and Installed Mods views show real local data.
 - Search/Profile views either show real read-only data or honest placeholder states.
 - `go test ./...` passes.
