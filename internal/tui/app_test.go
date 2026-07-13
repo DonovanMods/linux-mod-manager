@@ -324,10 +324,14 @@ func TestEnterOutsideDashboardIsANoop(t *testing.T) {
 
 type failingProvider struct{ err error }
 
-func (f failingProvider) Summary(context.Context) (Summary, error)         { return Summary{}, f.err }
-func (f failingProvider) InstalledMods(context.Context) ([]ModItem, error) { return nil, f.err }
-func (f failingProvider) SearchResults(context.Context) ([]ModItem, error) { return nil, f.err }
-func (f failingProvider) Profiles(context.Context) ([]ProfileItem, error)  { return nil, f.err }
+func (f failingProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{}, nil, f.err
+}
+func (f failingProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, f.err }
+func (f failingProvider) Sources() []string                               { return []string{"nexusmods"} }
+func (f failingProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, f.err
+}
 
 func TestModelShowsLoadingBeforeDataArrives(t *testing.T) {
 	t.Parallel()
@@ -375,10 +379,14 @@ func TestNewModelRequiresProvider(t *testing.T) {
 
 type emptyProvider struct{}
 
-func (emptyProvider) Summary(context.Context) (Summary, error)         { return Summary{}, nil }
-func (emptyProvider) InstalledMods(context.Context) ([]ModItem, error) { return nil, nil }
-func (emptyProvider) SearchResults(context.Context) ([]ModItem, error) { return nil, nil }
-func (emptyProvider) Profiles(context.Context) ([]ProfileItem, error)  { return nil, nil }
+func (emptyProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{}, nil, nil
+}
+func (emptyProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (emptyProvider) Sources() []string                               { return []string{"nexusmods"} }
+func (emptyProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
 
 func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	t.Parallel()
@@ -393,5 +401,49 @@ func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	require.Contains(t, model.View(), "No mods installed yet. 'lmm install <mod>' begins the quest.")
 
 	model = updateWithRunes(t, model, "3")
-	require.Contains(t, model.View(), "The archive index opens in a later chapter. (Search arrives in Phase 4.)")
+	require.Contains(t, model.View(), "/ focus · enter search · s source")
+}
+
+// recordingProvider wraps a delegate DataProvider and records the context
+// passed to Overview for test verification.
+type recordingProvider struct {
+	delegate   DataProvider
+	onOverview func(context.Context)
+}
+
+func (r recordingProvider) Overview(ctx context.Context) (Summary, []ModItem, error) {
+	if r.onOverview != nil {
+		r.onOverview(ctx)
+	}
+	return r.delegate.Overview(ctx)
+}
+
+func (r recordingProvider) Profiles(ctx context.Context) ([]ProfileItem, error) {
+	return r.delegate.Profiles(ctx)
+}
+
+func (r recordingProvider) Sources() []string {
+	return r.delegate.Sources()
+}
+
+func (r recordingProvider) Search(ctx context.Context, source, query string, page int) (SearchPage, error) {
+	return r.delegate.Search(ctx, source, query, page)
+}
+
+func TestModelUsesProvidedContext(t *testing.T) {
+	t.Parallel()
+
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
+
+	var seen context.Context
+	provider := recordingProvider{
+		delegate:   NewPrototypeProvider(),
+		onOverview: func(c context.Context) { seen = c },
+	}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Ctx: ctx})
+	require.NoError(t, err)
+
+	model.Init()()
+	require.Equal(t, "marker", seen.Value(ctxKey{}))
 }

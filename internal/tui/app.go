@@ -2,13 +2,17 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/theme"
 )
 
@@ -36,6 +40,9 @@ const (
 type Options struct {
 	Theme    string
 	Provider DataProvider
+	// Ctx seeds Model.ctx; see that field for why the context is stored
+	// rather than threaded as a parameter.
+	Ctx context.Context
 }
 
 // Model is the root Bubble Tea model for the lmm TUI.
@@ -44,14 +51,18 @@ type Model struct {
 	layout   Layout
 	keys     KeyMap
 	provider DataProvider
+	// ctx deviates from "don't store contexts in structs": Bubble Tea's
+	// Init/Update/View take no context parameter, so commands (e.g.
+	// startSearch) close over m.ctx to reach it from goroutines.
+	ctx context.Context
 
 	state   loadState
 	loadErr error
 
-	summary       Summary
-	mods          []ModItem
-	searchResults []ModItem
-	profiles      []ProfileItem
+	summary  Summary
+	mods     []ModItem
+	profiles []ProfileItem
+	search   searchModel
 
 	screen   Screen
 	selected map[Screen]int
@@ -71,10 +82,9 @@ const (
 
 // dataLoadedMsg carries data successfully loaded through a DataProvider.
 type dataLoadedMsg struct {
-	summary       Summary
-	mods          []ModItem
-	searchResults []ModItem
-	profiles      []ProfileItem
+	summary  Summary
+	mods     []ModItem
+	profiles []ProfileItem
 }
 
 // loadFailedMsg carries an error from a failed DataProvider load.
@@ -90,13 +100,19 @@ func NewModel(options Options) (Model, error) {
 		return Model{}, err
 	}
 
+	if options.Ctx == nil {
+		options.Ctx = context.Background()
+	}
+
 	return Model{
 		theme:    t,
 		layout:   layoutForTheme(t.Name),
 		keys:     DefaultKeyMap(),
 		provider: options.Provider,
+		ctx:      options.Ctx,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
+		search:   newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize()),
 		selected: map[Screen]int{
 			ScreenDashboard:     0,
 			ScreenInstalledMods: 0,
@@ -158,26 +174,16 @@ func (m Model) Init() tea.Cmd {
 // loadData fetches all dashboard data through the configured DataProvider.
 // It runs as a Bubble Tea command, off the update loop.
 func (m Model) loadData() tea.Msg {
-	ctx := context.Background()
-
-	summary, err := m.provider.Summary(ctx)
+	summary, mods, err := m.provider.Overview(m.ctx)
 	if err != nil {
 		return loadFailedMsg{err: err}
 	}
-	mods, err := m.provider.InstalledMods(ctx)
-	if err != nil {
-		return loadFailedMsg{err: err}
-	}
-	results, err := m.provider.SearchResults(ctx)
-	if err != nil {
-		return loadFailedMsg{err: err}
-	}
-	profiles, err := m.provider.Profiles(ctx)
+	profiles, err := m.provider.Profiles(m.ctx)
 	if err != nil {
 		return loadFailedMsg{err: err}
 	}
 
-	return dataLoadedMsg{summary: summary, mods: mods, searchResults: results, profiles: profiles}
+	return dataLoadedMsg{summary: summary, mods: mods, profiles: profiles}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -186,16 +192,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateReady
 		m.summary = msg.summary
 		m.mods = msg.mods
-		m.searchResults = msg.searchResults
 		m.profiles = msg.profiles
 		return m, nil
 	case loadFailedMsg:
 		m.state = stateFailed
 		m.loadErr = msg.err
 		return m, nil
+	case searchResultMsg:
+		if msg.gen != m.search.gen {
+			return m, nil
+		}
+		m.search.state = searchReady
+		m.search.page = msg.page
+		m.selected[ScreenSearch] = 0
+		return m, nil
+	case searchFailedMsg:
+		if msg.gen != m.search.gen {
+			return m, nil
+		}
+		if errors.Is(msg.err, domain.ErrAuthRequired) {
+			m.search.state = searchAuthRequired
+			m.search.authSource = msg.source
+			return m, nil
+		}
+		m.search.state = searchFailed
+		m.search.err = msg.err
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.search.input.Width = searchInputWidthFor(m.availableWidth(), m.theme.Panel.GetHorizontalFrameSize())
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -205,6 +231,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.screen == ScreenSearch && m.search.input.Focused() {
+		switch {
+		case key.Matches(msg, m.keys.Quit) && msg.String() == "ctrl+c":
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.Blur):
+			m.search.input.Blur()
+			return m, nil
+		case key.Matches(msg, m.keys.Submit):
+			m.search.input.Blur()
+			return m.startSearch(m.search.input.Value(), 0)
+		default:
+			var cmd tea.Cmd
+			m.search.input, cmd = m.search.input.Update(msg)
+			return m, cmd
+		}
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
@@ -225,6 +268,37 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case key.Matches(msg, m.keys.Search):
 		m.screen = ScreenSearch
+		m.search.input.Focus()
+		return m, textinput.Blink
+	case key.Matches(msg, m.keys.SearchScreen):
+		m.screen = ScreenSearch
+		return m, nil
+	case key.Matches(msg, m.keys.NextPage):
+		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.hasNextPage() {
+			return m.startSearch(m.search.page.Query, m.search.page.Page+1)
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.PrevPage):
+		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.page.Page > 0 {
+			return m.startSearch(m.search.page.Query, m.search.page.Page-1)
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.CycleSource):
+		if m.screen == ScreenSearch && len(m.search.sources) > 1 {
+			m.search.sourceIdx = (m.search.sourceIdx + 1) % len(m.search.sources)
+			// Cycling the target source must not leave the header, results,
+			// and pagination disagreeing about which source they describe:
+			// cancel any in-flight query for the old source, bump gen so a
+			// late result/failure for it is discarded as stale, and drop
+			// back to idle (keeping the typed query) so the user resubmits
+			// explicitly against the new source.
+			if m.search.cancel != nil {
+				m.search.cancel()
+				m.search.cancel = nil
+			}
+			m.search.gen++
+			m.search.state = searchIdle
+		}
 		return m, nil
 	case key.Matches(msg, m.keys.Profiles):
 		m.screen = ScreenProfiles
@@ -320,7 +394,7 @@ func (m Model) itemCount(screen Screen) int {
 	case ScreenInstalledMods:
 		return len(m.mods)
 	case ScreenSearch:
-		return len(m.searchResults)
+		return len(m.search.page.Results)
 	case ScreenProfiles:
 		return len(m.profiles)
 	default:
@@ -482,15 +556,207 @@ func (m Model) modsView() string {
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// searchHeaderLines renders the two lines shared by every search state: the
+// panel title with the active source, and the query input itself. In
+// searchReady, the source label reflects m.search.page.Source (the source
+// the on-screen results actually came from) rather than m.search.source()
+// (the target of the next search), so cycling sources mid-view can never
+// make the header claim a source the results don't match. Every other state
+// has no results yet, so source() (the next search's target) is correct.
+func (m Model) searchHeaderLines() []string {
+	title := m.theme.PanelTitle.Render("ARCHIVE SEARCH")
+	source := m.search.source()
+	if m.search.state == searchReady {
+		source = m.search.page.Source
+	}
+	meta := m.theme.MutedText.Render(fmt.Sprintf("[source: %s  (s cycles)]", source))
+	return []string{title + "  " + meta, m.search.input.View()}
+}
+
+// searchSinglePanel wraps header+body lines in one full-bounds panel, used by
+// every search state except the ready-with-results two-pane layout.
+func (m Model) searchSinglePanel(lines []string) string {
+	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
+		Render(strings.Join(lines, "\n"))
+}
+
 func (m Model) searchView() string {
-	rows := []string{m.theme.PanelTitle.Render("ARCHIVE SEARCH")}
-	if len(m.searchResults) == 0 {
-		rows = append(rows, m.theme.MutedText.Render("The archive index opens in a later chapter. (Search arrives in Phase 4.)"))
+	header := m.searchHeaderLines()
+
+	switch m.search.state {
+	case searchLoading:
+		return m.searchSinglePanel(append(header, "Consulting the archive index..."))
+	case searchAuthRequired:
+		return m.searchSinglePanel(append(header,
+			m.theme.DangerText.Render(fmt.Sprintf("Authentication required for %s.", m.search.authSource)),
+			fmt.Sprintf("Run 'lmm auth login %s' in a shell, then search again.", m.search.authSource),
+		))
+	case searchFailed:
+		return m.searchSinglePanel(append(header, m.theme.DangerText.Render(m.search.err.Error())))
+	case searchReady:
+		if len(m.search.page.Results) == 0 {
+			return m.searchSinglePanel(append(header,
+				m.theme.MutedText.Render(fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, m.search.page.Source)),
+			))
+		}
+		return m.searchReadyView(header)
+	default: // searchIdle
+		return m.searchSinglePanel(append(header, m.theme.MutedText.Render("/ focus · enter search · s source")))
 	}
-	for i, mod := range m.searchResults {
-		rows = append(rows, m.modRow(i, mod))
+}
+
+// searchReadyView renders the two-pane results/detail layout, mirroring
+// commanderDashboardView's width math so the panes plus a 1-column gap sum to
+// exactly availableWidth(). Unlike the other search states, this view's
+// header and footer lines sit outside any Width()-constrained panel style,
+// so they are hard-capped to width here: lipgloss.Width of the whole view is
+// the max width across its lines, and the panes line already sums to exactly
+// width, but an unclamped header/footer line would push that max past width
+// and wrap the bordered panes onto separate output lines at narrow sizes.
+func (m Model) searchReadyView(header []string) string {
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+	footer := m.searchFooterLine()
+
+	paneHeight := max(height-len(header)-1, 1)
+	gap := 1
+	leftWidth := max((width-gap)/2, 1)
+	rightWidth := max(width-gap-leftWidth, 1)
+
+	// Panel content must never exceed paneContentHeight: lipgloss pads short
+	// content to a set Height() but does not clip content taller than it, so
+	// an unbounded row count or a long summary would silently grow the
+	// rendered block past paneHeight and break the exact-height invariant.
+	paneContentHeight := max(paneHeight-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	panes := lipgloss.JoinHorizontal(lipgloss.Top,
+		m.panelWithHeight(leftWidth, paneHeight).Render(m.searchResultsPane(leftWidth, paneContentHeight)),
+		" ",
+		m.panelWithHeight(rightWidth, paneHeight).Render(m.searchDetailPane(rightWidth, paneContentHeight)),
+	)
+
+	lines := make([]string, 0, len(header)+2)
+	for _, line := range header {
+		lines = append(lines, truncate(line, width))
 	}
-	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+	lines = append(lines, panes, truncate(footer, width))
+	return strings.Join(lines, "\n")
+}
+
+// searchResultsPane renders the selectable result rows: name / version /
+// status, with "installed" statuses styled to pop. Column widths are derived
+// from the pane's actual content width (rather than fixed constants) and the
+// name column always absorbs whatever's left, so the three columns can never
+// sum past innerWidth. Overflowing values truncate instead of overflowing
+// into lipgloss's automatic line wrap, which would silently break the
+// exact-height layout invariant. Rows beyond maxLines are omitted for the
+// same reason (a full page of results can outnumber the available rows on a
+// short terminal).
+func (m Model) searchResultsPane(width, maxLines int) string {
+	const (
+		prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+		gaps        = 2 // the two separating spaces between columns
+	)
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	avail := max(innerWidth-prefixWidth-gaps, 3)
+	statusWidth := min(max(avail/4, 1), 9) // "installed"/"available" are 9 runes
+	versionWidth := min(max(avail/4, 1), 8)
+	nameWidth := max(avail-statusWidth-versionWidth, 1)
+
+	results := m.search.page.Results
+	if len(results) > maxLines {
+		results = results[:maxLines]
+	}
+
+	rows := make([]string, 0, len(results))
+	for i, item := range results {
+		status := fmt.Sprintf("%-*s", statusWidth, truncate(item.Status, statusWidth))
+		if item.Status == "installed" {
+			status = m.theme.WarningText.Render(status)
+		}
+		line := fmt.Sprintf("%-*s %-*s %s",
+			nameWidth, truncate(item.Name, nameWidth),
+			versionWidth, truncate(item.Version, versionWidth),
+			status)
+		rows = append(rows, m.row(i, line))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// searchDetailPane renders the fields for the currently selected result.
+// Unknown endorsements render "?" (countLabel convention: never fake data).
+// Labels and free-text values are truncated to the pane's content width for
+// the same reason searchResultsPane truncates: overflow would trigger an
+// unpredictable automatic re-wrap inside the bordered panel. The summary is
+// clipped to whatever vertical budget remains after the fixed fields so a
+// long summary can never grow the pane past maxLines.
+func (m Model) searchDetailPane(width, maxLines int) string {
+	results := m.search.page.Results
+	idx := m.selected[ScreenSearch]
+	if idx < 0 || idx >= len(results) {
+		return m.theme.MutedText.Render("No selection.")
+	}
+	item := results[idx]
+
+	endorsements := "?"
+	if item.HasEndorsements {
+		endorsements = fmt.Sprintf("%d", item.Endorsements)
+	}
+
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	labelWidth := min(13, max(innerWidth-1, 1)) // len("Endorsements ") == 13
+	valueWidth := max(innerWidth-labelWidth, 1)
+	field := func(label, value string) string {
+		return fmt.Sprintf("%-*s%s", labelWidth, truncate(label, labelWidth), truncate(value, valueWidth))
+	}
+
+	lines := []string{
+		m.theme.PanelTitle.Render("DETAIL"),
+		field("Name", item.Name),
+		field("Author", item.Author),
+		field("Version", item.Version),
+		field("Source", item.Source),
+		field("Status", item.Status),
+		field("Downloads", fmt.Sprintf("%d", item.Downloads)),
+		field("Endorsements", endorsements),
+	}
+
+	if summaryBudget := maxLines - len(lines) - 1; summaryBudget > 0 && item.Summary != "" {
+		lines = append(lines, "")
+		summary := strings.Split(m.theme.MutedText.Width(innerWidth).Render(item.Summary), "\n")
+		if len(summary) > summaryBudget {
+			summary = summary[:summaryBudget]
+			last := summaryBudget - 1
+			summary[last] = strings.TrimRight(summary[last], " ") + m.theme.MutedText.Render("…")
+		}
+		lines = append(lines, summary...)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// searchFooterLine renders pagination status. The total-pages figure only
+// appears when the source reports a TotalCount; otherwise only the current
+// page is shown. In both cases, the "n next"/"p prev" hints only render when
+// the corresponding key would actually act, so a page-1 footer never shows a
+// dead "p prev" hint.
+func (m Model) searchFooterLine() string {
+	page := m.search.page
+	current := page.Page + 1
+
+	footer := fmt.Sprintf("Page %d", current)
+	if page.TotalCount > 0 && page.PageSize > 0 {
+		totalPages := (page.TotalCount + page.PageSize - 1) / page.PageSize
+		footer = fmt.Sprintf("Page %d/%d (%d results)", current, totalPages, page.TotalCount)
+	}
+
+	if m.search.hasNextPage() {
+		footer += " · n next"
+	}
+	if page.Page > 0 {
+		footer += " · p prev"
+	}
+	return footer
 }
 
 func (m Model) profilesView() string {
@@ -512,7 +778,11 @@ func (m Model) helpView() string {
 		"arrows / hjkl       move or switch screens",
 		"tab / shift+tab     cycle top-level screens",
 		"1-4                 jump to a screen",
-		"/                   open search screen",
+		"/                   search from anywhere (jumps + focuses input)",
+		"enter               search",
+		"esc                 cancel input",
+		"n/p                 result pages",
+		"s                   cycle source",
 		"?                   toggle this help",
 		"q / ctrl+c           quit",
 		"",
@@ -574,6 +844,19 @@ func countLabel(n int) string {
 		return "?"
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// truncate returns s trimmed to at most width display columns, marking a cut
+// with a trailing ellipsis. Used to keep fixed-width row/field values from
+// overflowing a panel's content width, which would otherwise trigger
+// lipgloss's automatic re-wrap and silently grow the rendered line count.
+// ansi.Truncate is display-width aware (wide runes such as CJK count as two
+// columns) and ANSI-escape safe, unlike a plain rune-count slice.
+func truncate(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return ansi.Truncate(s, width, "…")
 }
 
 func layoutForTheme(name string) Layout {

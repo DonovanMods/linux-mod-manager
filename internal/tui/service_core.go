@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -21,10 +22,10 @@ func NewCoreProvider(svc *core.Service, game *domain.Game, profileName string) D
 	return &coreProvider{svc: svc, game: game, profile: profileName}
 }
 
-func (p *coreProvider) Summary(_ context.Context) (Summary, error) {
+func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 	mods, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
 	if err != nil {
-		return Summary{}, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
+		return Summary{}, nil, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
 	}
 
 	enabled := 0
@@ -32,22 +33,6 @@ func (p *coreProvider) Summary(_ context.Context) (Summary, error) {
 		if mod.Enabled {
 			enabled++
 		}
-	}
-
-	return Summary{
-		GameName:    p.game.Name,
-		ProfileName: p.profile,
-		Installed:   len(mods),
-		Enabled:     enabled,
-		Updates:     -1, // unknown: update checks are a Phase 6 workflow
-		Conflicts:   -1, // unknown: conflict detection is a Phase 6 workflow
-	}, nil
-}
-
-func (p *coreProvider) InstalledMods(_ context.Context) ([]ModItem, error) {
-	mods, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
-	if err != nil {
-		return nil, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
 	}
 
 	items := make([]ModItem, 0, len(mods))
@@ -60,13 +45,73 @@ func (p *coreProvider) InstalledMods(_ context.Context) ([]ModItem, error) {
 			Status:  installedModStatus(mod),
 		})
 	}
-	return items, nil
+
+	return Summary{
+		GameName:    p.game.Name,
+		ProfileName: p.profile,
+		Installed:   len(mods),
+		Enabled:     enabled,
+		Updates:     -1, // unknown: update checks are a Phase 6 workflow
+		Conflicts:   -1, // unknown: conflict detection is a Phase 6 workflow
+	}, items, nil
 }
 
-// SearchResults is an honest placeholder until Phase 4 wires real source
-// search into the TUI.
-func (p *coreProvider) SearchResults(_ context.Context) ([]ModItem, error) {
-	return nil, nil
+func (p *coreProvider) Sources() []string {
+	sources := make([]string, 0, len(p.game.SourceIDs))
+	for id := range p.game.SourceIDs {
+		sources = append(sources, id)
+	}
+	sort.Strings(sources)
+	return sources
+}
+
+// Search queries the given source and marks results already installed in
+// the active profile.
+func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page int) (SearchPage, error) {
+	result, err := p.svc.SearchMods(ctx, sourceID, p.game.ID, query, "", nil, page, SearchPageSize)
+	if err != nil {
+		return SearchPage{}, fmt.Errorf("searching %s for %q: %w", sourceID, query, err)
+	}
+
+	installed, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
+	if err != nil {
+		return SearchPage{}, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
+	}
+	installedKeys := make(map[string]bool, len(installed))
+	for _, mod := range installed {
+		installedKeys[domain.ModKey(mod.SourceID, mod.ID)] = true
+	}
+
+	items := make([]ModItem, 0, len(result.Mods))
+	for _, mod := range result.Mods {
+		status := "available"
+		if installedKeys[domain.ModKey(mod.SourceID, mod.ID)] {
+			status = "installed"
+		}
+		item := ModItem{
+			Name:      mod.Name,
+			Author:    mod.Author,
+			Version:   mod.Version,
+			Source:    mod.SourceID,
+			Status:    status,
+			Summary:   mod.Summary,
+			Downloads: mod.Downloads,
+		}
+		if mod.Endorsements != nil {
+			item.Endorsements = *mod.Endorsements
+			item.HasEndorsements = true
+		}
+		items = append(items, item)
+	}
+
+	return SearchPage{
+		Results:    items,
+		Query:      query,
+		Source:     sourceID,
+		Page:       page,
+		PageSize:   SearchPageSize,
+		TotalCount: result.TotalCount,
+	}, nil
 }
 
 func (p *coreProvider) Profiles(_ context.Context) ([]ProfileItem, error) {

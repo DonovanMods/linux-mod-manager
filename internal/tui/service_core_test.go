@@ -2,14 +2,50 @@ package tui_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui"
 )
+
+// stubSource implements source.ModSource with canned search results.
+// Only Search and identity methods matter; the rest are unreachable in
+// these tests.
+type stubSource struct {
+	result source.SearchResult
+	err    error
+}
+
+func (s *stubSource) ID() string      { return "stub" }
+func (s *stubSource) Name() string    { return "Stub Source" }
+func (s *stubSource) AuthURL() string { return "" }
+func (s *stubSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *stubSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return s.result, s.err
+}
+func (s *stubSource) GetMod(context.Context, string, string) (*domain.Mod, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *stubSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *stubSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *stubSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", errors.New("not implemented")
+}
+func (s *stubSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, errors.New("not implemented")
+}
 
 func newCoreProviderFixture(t *testing.T) (tui.DataProvider, *core.Service, *domain.Game) {
 	t.Helper()
@@ -64,10 +100,10 @@ func newCoreProviderFixture(t *testing.T) (tui.DataProvider, *core.Service, *dom
 	return tui.NewCoreProvider(svc, game, "default"), svc, game
 }
 
-func TestCoreProviderSummary(t *testing.T) {
+func TestCoreProviderOverview(t *testing.T) {
 	provider, _, _ := newCoreProviderFixture(t)
 
-	summary, err := provider.Summary(context.Background())
+	summary, mods, err := provider.Overview(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "Test Game", summary.GameName)
 	require.Equal(t, "default", summary.ProfileName)
@@ -75,15 +111,8 @@ func TestCoreProviderSummary(t *testing.T) {
 	require.Equal(t, 1, summary.Enabled)
 	require.Equal(t, -1, summary.Updates, "updates are unknown until an update check runs")
 	require.Equal(t, -1, summary.Conflicts, "conflicts are unknown in the read-only phase")
-}
 
-func TestCoreProviderInstalledMods(t *testing.T) {
-	provider, _, _ := newCoreProviderFixture(t)
-
-	mods, err := provider.InstalledMods(context.Background())
-	require.NoError(t, err)
 	require.Len(t, mods, 2)
-
 	byName := map[string]tui.ModItem{}
 	for _, m := range mods {
 		byName[m.Name] = m
@@ -92,14 +121,6 @@ func TestCoreProviderInstalledMods(t *testing.T) {
 	require.Equal(t, "nexusmods", byName["SkyUI"].Source)
 	require.Equal(t, "5.2", byName["SkyUI"].Version)
 	require.Equal(t, "disabled", byName["USSEP"].Status)
-}
-
-func TestCoreProviderSearchResultsAreEmptyUntilPhase4(t *testing.T) {
-	provider, _, _ := newCoreProviderFixture(t)
-
-	results, err := provider.SearchResults(context.Background())
-	require.NoError(t, err)
-	require.Empty(t, results)
 }
 
 func TestCoreProviderProfiles(t *testing.T) {
@@ -121,4 +142,70 @@ func TestCoreProviderProfiles(t *testing.T) {
 	require.True(t, byName["default"].Active)
 	require.False(t, byName["hardcore"].Active)
 	require.Equal(t, 1, byName["hardcore"].ModCount, "ModCount should map from profile YAML mods, not the DB")
+}
+
+func TestCoreProviderSourcesAreSortedGameSources(t *testing.T) {
+	provider, _, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"nexusmods": "testgame", "curseforge": "testgame"}
+
+	require.Equal(t, []string{"curseforge", "nexusmods"}, provider.Sources())
+}
+
+func TestCoreProviderSearchMarksInstalled(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"stub": "testgame"}
+	svc.RegisterSource(&stubSource{result: source.SearchResult{
+		Mods: []domain.Mod{
+			{ID: "101", SourceID: "stub", Name: "SkyUI-Stub", Author: "a", Version: "5.2"},
+			{ID: "999", SourceID: "stub", Name: "NewMod", Author: "b", Version: "1.0"},
+		},
+		TotalCount: 2, Page: 0, PageSize: 10,
+	}})
+	// Fixture installed mod 101 under sourceID "nexusmods"; install one under "stub" too:
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "101", SourceID: "stub", GameID: game.ID, Name: "SkyUI-Stub", Version: "5.2"},
+		ProfileName: "default", Enabled: true,
+	}))
+
+	page, err := provider.Search(context.Background(), "stub", "sky", 0)
+	require.NoError(t, err)
+	require.Equal(t, "sky", page.Query)
+	require.Equal(t, "stub", page.Source)
+	require.Equal(t, 2, page.TotalCount)
+	require.Len(t, page.Results, 2)
+
+	byName := map[string]tui.ModItem{}
+	for _, r := range page.Results {
+		byName[r.Name] = r
+	}
+	require.Equal(t, "installed", byName["SkyUI-Stub"].Status)
+	require.Equal(t, "available", byName["NewMod"].Status)
+}
+
+func TestCoreProviderSearchDoesNotCrossSourceMarkInstalled(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"stub": "testgame"}
+	svc.RegisterSource(&stubSource{result: source.SearchResult{
+		Mods: []domain.Mod{
+			// Same mod ID as the fixture's nexusmods install, but from "stub" —
+			// ModKey(source, id) must keep these distinct.
+			{ID: "101", SourceID: "stub", Name: "SkyUI-Stub", Author: "a", Version: "5.2"},
+		},
+		TotalCount: 1, Page: 0, PageSize: 10,
+	}})
+
+	page, err := provider.Search(context.Background(), "stub", "sky", 0)
+	require.NoError(t, err)
+	require.Len(t, page.Results, 1)
+	require.Equal(t, "available", page.Results[0].Status,
+		"mod 101 is installed under nexusmods, not stub — no cross-source marking")
+}
+
+func TestCoreProviderSearchPropagatesAuthRequired(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"stub": "testgame"}
+	svc.RegisterSource(&stubSource{err: fmt.Errorf("%w: key required", domain.ErrAuthRequired)})
+
+	_, err := provider.Search(context.Background(), "stub", "x", 0)
+	require.ErrorIs(t, err, domain.ErrAuthRequired)
 }
