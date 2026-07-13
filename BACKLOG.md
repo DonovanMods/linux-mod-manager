@@ -18,7 +18,8 @@ Per-mod update policies, actual update application, rollback support.
 
 ### Terminal UI (TUI)
 
-Interactive terminal interface using Bubble Tea framework. Removed to focus on CLI functionality first.
+Interactive terminal interface using Bubble Tea framework (originally removed
+to focus on CLI functionality first, then reimplemented).
 
 **Planned features:**
 
@@ -29,8 +30,11 @@ Interactive terminal interface using Bubble Tea framework. Removed to focus on C
 - Settings view
 - Configurable keybindings (vim and standard modes)
 
-**Status:** Reimplemented. Prototype shell (v1.3.x, #31/#32) and read-only
-service-backed TUI (v1.4.0) are done; search, mutations, and workflows are
-tracked by the Phase 4-6 sections of docs/plans/2026-04-28-tui-implementation.md.
-
-**Original implementation:** See git history before commit that removed TUI.
+**Status:** Reimplemented and shipped — `lmm tui` (read-only, service-backed)
+released as v1.4.0 on 2026-07-13; current code lives in `internal/tui/`.
+Search, mutations, and workflows are tracked by the Phase 4-6 sections of
+docs/plans/2026-04-28-tui-implementation.md (see its status block and
+CLI-parity gap tables); roadmap additions and carry-forwards are in issue #37.
+Of the planned features above: mod browser, installed-mods actions, and
+profile management are Phases 4-6; the game selector is assigned to Phase 6;
+the settings view and configurable keybindings remain deferred post-v1.
