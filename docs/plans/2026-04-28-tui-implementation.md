@@ -4,6 +4,19 @@
 **Scope:** Add a Bubble Tea/Lip Gloss TUI to `lmm`, starting with visual prototypes and iterating toward a real service-backed interface.
 **Out of scope:** Replacing the existing CLI, changing config formats, implementing image thumbnails, background update daemons, or redesigning core mod-management behavior.
 
+> **Status (2026-07-13): Phases 0–3 are COMPLETE**, shipped as **v1.4.0** on `main`
+> (PRs #31, #33, #34, #36, promotion PR #38; issues #30, #32, #35 closed; tag `v1.4.0`).
+> **Phase 4 (search and detail browsing) is next.** Before planning it, read:
+>
+> - the **"CLI-parity coverage and roadmap gaps"** section at the bottom of this file
+>   (adds `uninstall` to Phase 5 and several items to Phase 6), and
+> - **issue #37**, which tracks those additions plus the Phase 4 carry-forwards
+>   (thread the program context into `loadData` once providers take a ctx,
+>   single-fetch summary/mods load, optional cmd test-globals helper).
+>
+> The `feat/tui` integration branch is deleted — Phase 4+ branches from `main`.
+> Execution record for Phases 2–3: `docs/plans/2026-07-13-tui-phase2-close-and-phase3.md`.
+
 The TUI should feel like an 80s console RPG / DOS utility: Wizardry or Ultima in spirit, but still useful for managing real mod lists. Haunted terminal artifact, not hostile UX.
 
 This plan is intentionally phased. Early phases optimise for fast visual iteration with fake data. Later phases wire the selected look into the existing `core.Service` boundary and add real actions.
@@ -213,7 +226,7 @@ require.Equal(t, "wizardry", theme.Name)
 
 ---
 
-## Phase 0 — Discovery and issue setup
+## Phase 0 — Discovery and issue setup ✅ (complete)
 
 **Goal:** Start the TUI work with current repo context and a GitHub issue trail.
 
@@ -237,7 +250,7 @@ require.Equal(t, "wizardry", theme.Name)
 
 ---
 
-## Phase 1 — Visual prototype shell with fake data
+## Phase 1 — Visual prototype shell with fake data ✅ (complete, PR #31)
 
 **Goal:** Build a prototype TUI that renders navigable screens with fake data and theme switching. No real service calls. No mutations.
 
@@ -296,7 +309,7 @@ lmm tui --prototype --theme dos
 
 ---
 
-## Phase 2 — Visual iteration and selection
+## Phase 2 — Visual iteration and selection ✅ (complete, PRs #33/#34)
 
 **Goal:** Compare the proposed looks and settle on the base visual language before real integration.
 
@@ -326,7 +339,7 @@ lmm tui --prototype --theme dos
 
 ---
 
-## Phase 3 — Read-only service-backed TUI
+## Phase 3 — Read-only service-backed TUI ✅ (complete, PR #36, v1.4.0)
 
 **Goal:** Replace fake data with real app data for safe, read-only screens.
 
