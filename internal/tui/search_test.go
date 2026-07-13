@@ -143,14 +143,16 @@ func TestReadyHeaderShowsResultSourceNotTarget(t *testing.T) {
 func TestLongQueryDoesNotBreakSearchHeightInvariant(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 80, 24)
-	model = updateWithRunes(t, model, "3")
-	model = updateWithRunes(t, model, "/")
-	for range 100 {
-		model = updateWithRunes(t, model, "x")
+	for _, width := range []int{44, 48, 60, 80} {
+		model := sizedPrototypeModel(t, "wizardry", width, 24)
+		model = updateWithRunes(t, model, "3")
+		model = updateWithRunes(t, model, "/")
+		for range 100 {
+			model = updateWithRunes(t, model, "x")
+		}
+		require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()), "height at %d", width)
+		require.Equal(t, model.availableWidth(), lipgloss.Width(model.screenView()), "width at %d", width)
 	}
-	require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()))
-	require.Equal(t, model.availableWidth(), lipgloss.Width(model.screenView()))
 }
 
 func TestPaginationKeysRequeryWithinBounds(t *testing.T) {
