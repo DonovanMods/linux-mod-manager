@@ -65,14 +65,52 @@ func (p *coreProvider) Sources() []string {
 	return sources
 }
 
-// Search is an honest placeholder until Phase 4 wires real source
-// search into the TUI.
-func (p *coreProvider) Search(_ context.Context, source, query string, _ int) (SearchPage, error) {
+// Search queries the given source and marks results already installed in
+// the active profile.
+func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page int) (SearchPage, error) {
+	result, err := p.svc.SearchMods(ctx, sourceID, p.game.ID, query, "", nil, page, SearchPageSize)
+	if err != nil {
+		return SearchPage{}, fmt.Errorf("searching %s for %q: %w", sourceID, query, err)
+	}
+
+	installed, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
+	if err != nil {
+		return SearchPage{}, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
+	}
+	installedKeys := make(map[string]bool, len(installed))
+	for _, mod := range installed {
+		installedKeys[domain.ModKey(mod.SourceID, mod.ID)] = true
+	}
+
+	items := make([]ModItem, 0, len(result.Mods))
+	for _, mod := range result.Mods {
+		status := "available"
+		if installedKeys[domain.ModKey(mod.SourceID, mod.ID)] {
+			status = "installed"
+		}
+		item := ModItem{
+			Name:      mod.Name,
+			Author:    mod.Author,
+			Version:   mod.Version,
+			Source:    mod.SourceID,
+			Status:    status,
+			Summary:   mod.Summary,
+			Downloads: mod.Downloads,
+		}
+		if mod.Endorsements != nil {
+			item.Endorsements = *mod.Endorsements
+			item.HasEndorsements = true
+		}
+		items = append(items, item)
+	}
+
 	return SearchPage{
-		Query:    query,
-		Source:   source,
-		Page:     0,
-		PageSize: SearchPageSize,
+		Results:    items,
+		Query:      query,
+		Source:     sourceID,
+		Page:       page,
+		PageSize:   SearchPageSize,
+		TotalCount: result.TotalCount,
 	}, nil
 }
 
