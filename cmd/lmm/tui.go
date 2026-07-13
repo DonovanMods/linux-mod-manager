@@ -49,8 +49,8 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 
 	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
-		// Match the CLI's behavior (profileOrDefault): fall back to the
-		// literal "default" profile when none exists yet, so a fresh setup
+		// Fall back to the CLI's default-profile convention (cf.
+		// profileOrDefault) when no profile exists yet, so a fresh setup
 		// opens an empty TUI instead of erroring.
 		profileName := "default"
 		if profile, err := svc.NewProfileManager().GetDefault(game.ID); err == nil {

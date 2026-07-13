@@ -372,3 +372,26 @@ func TestNewModelRequiresProvider(t *testing.T) {
 	_, err := NewModel(Options{Theme: "wizardry"})
 	require.ErrorContains(t, err, "provider")
 }
+
+type emptyProvider struct{}
+
+func (emptyProvider) Summary(context.Context) (Summary, error)         { return Summary{}, nil }
+func (emptyProvider) InstalledMods(context.Context) ([]ModItem, error) { return nil, nil }
+func (emptyProvider) SearchResults(context.Context) ([]ModItem, error) { return nil, nil }
+func (emptyProvider) Profiles(context.Context) ([]ProfileItem, error)  { return nil, nil }
+
+func TestEmptyStatesRenderHonestCopy(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: emptyProvider{}})
+	require.NoError(t, err)
+
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	model = updateWithRunes(t, model, "2")
+	require.Contains(t, model.View(), "No mods installed yet. 'lmm install <mod>' begins the quest.")
+
+	model = updateWithRunes(t, model, "3")
+	require.Contains(t, model.View(), "The archive index opens in a later chapter. (Search arrives in Phase 4.)")
+}

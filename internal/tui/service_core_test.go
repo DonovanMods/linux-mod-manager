@@ -105,8 +105,10 @@ func TestCoreProviderSearchResultsAreEmptyUntilPhase4(t *testing.T) {
 func TestCoreProviderProfiles(t *testing.T) {
 	provider, svc, game := newCoreProviderFixture(t)
 
-	_, err := svc.NewProfileManager().Create(game.ID, "hardcore")
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "hardcore")
 	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "hardcore", domain.ModReference{SourceID: "nexusmods", ModID: "101"}))
 
 	profiles, err := provider.Profiles(context.Background())
 	require.NoError(t, err)
@@ -118,4 +120,5 @@ func TestCoreProviderProfiles(t *testing.T) {
 	}
 	require.True(t, byName["default"].Active)
 	require.False(t, byName["hardcore"].Active)
+	require.Equal(t, 1, byName["hardcore"].ModCount, "ModCount should map from profile YAML mods, not the DB")
 }

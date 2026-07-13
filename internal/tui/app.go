@@ -22,7 +22,7 @@ type menuItem struct {
 	hasTarget bool
 }
 
-// Layout describes the major panel arrangement for a prototype theme.
+// Layout describes the major panel arrangement for a theme.
 type Layout string
 
 const (
@@ -245,7 +245,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	var b strings.Builder
 
-	b.WriteString(m.theme.Title.Render("LMM // Linux Mod Manager // Prototype Terminal"))
+	b.WriteString(m.theme.Title.Render("LMM // Linux Mod Manager"))
 	b.WriteString("\n")
 	b.WriteString(m.nav())
 	b.WriteString("\n\n")
@@ -404,7 +404,7 @@ func (m Model) partyDashboardView() string {
 		m.theme.PanelTitle.Render("QUEST LOG"),
 		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(countLabel(m.summary.Updates))),
 		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
-		"Last deploy: 2h ago",
+		"Last deploy: ?",
 	}, "\n")
 
 	menu := strings.Join(
@@ -472,7 +472,7 @@ func (m Model) crtDashboardView() string {
 
 func (m Model) modsView() string {
 	rows := []string{m.theme.PanelTitle.Render("SPELLBOOK: INSTALLED MODS")}
-	rows = append(rows, "[E] Enable  [D] Disable  [U] Update  [/] Search")
+	rows = append(rows, "[/] Search")
 	if len(m.mods) == 0 {
 		rows = append(rows, m.theme.MutedText.Render("No mods installed yet. 'lmm install <mod>' begins the quest."))
 	}
@@ -484,7 +484,6 @@ func (m Model) modsView() string {
 
 func (m Model) searchView() string {
 	rows := []string{m.theme.PanelTitle.Render("ARCHIVE SEARCH")}
-	rows = append(rows, "Query: survival mods_")
 	if len(m.searchResults) == 0 {
 		rows = append(rows, m.theme.MutedText.Render("The archive index opens in a later chapter. (Search arrives in Phase 4.)"))
 	}
@@ -517,7 +516,7 @@ func (m Model) helpView() string {
 		"?                   toggle this help",
 		"q / ctrl+c           quit",
 		"",
-		"Prototype mode uses static fake data only. No DB, API, install, update, or deploy actions run here.",
+		"Browsing is read-only. Nothing is installed, updated, or deployed from this screen.",
 	}, "\n"))
 }
 
