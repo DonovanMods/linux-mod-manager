@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-13
+
+### Added
+
+- **TUI search** — Real source search from the TUI: query input with focus-aware key routing (`/` to focus on the Search screen, or jump there from other screens; `enter` to execute the search), per-source search with cancellation (stale results discarded), installed-result markers, detail panel for the selected result, CLI-parity pagination (`n`/`p` navigation), source cycling (`s` to switch between a game's configured sources), and first-class auth-required guidance (displays the login command needed).
+
+### Changed
+
+- **DataProvider boundary v2** — Single-fetch `Overview`, `Sources`, and `Search(ctx, source, query, page)` replace the Phase 3 read-only methods; the Bubble Tea program context now threads into all data loads.
+
 ## [1.4.0] - 2026-07-13
 
 ### Added
@@ -646,7 +656,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.10...v1.4.0
 [1.3.10]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.9...v1.3.10
 [1.3.9]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.8...v1.3.9

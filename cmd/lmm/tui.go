@@ -24,8 +24,9 @@ var tuiCmd = &cobra.Command{
 	Long: `Launch the interactive terminal UI.
 
 Shows the configured game's installed mods, profiles, and status using the
-same config, database, and game resolution as the CLI commands. Read-only:
-browsing never installs, updates, deploys, or deletes anything.
+same config, database, and game resolution as the CLI commands. Search mod
+sources interactively. Read-only: browsing and searching never install,
+update, deploy, or delete anything.
 
 Use --prototype for a demo mode backed by static fake data:
 

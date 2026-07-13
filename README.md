@@ -145,7 +145,7 @@ lmm mod set-update 12345 --game skyrim-se --pin
 
 ### Terminal UI
 
-Browse your configured game, installed mods, and profiles interactively:
+Browse your configured game, installed mods, and profiles interactively, and search mod sources:
 
 ```bash
 lmm tui                     # real data, read-only
@@ -153,9 +153,11 @@ lmm tui --theme amber       # themes: wizardry (default), amber, dos, green
 lmm tui --prototype         # demo mode with static fake data
 ```
 
-Keys: `tab`/`h`/`l` cycle screens, `1`–`4` jump, `↑↓`/`j`/`k` move, `enter` open,
-`/` search screen, `?` help, `q` quit. Browsing is read-only — install/update/deploy
-actions from the TUI arrive in a later release.
+Keys: `tab`/`h`/`l` cycle screens, `1`–`4` jump, `↑↓`/`j`/`k` move, `enter` open/select,
+`/` focus search (jumps to Search screen from other screens; type query, `enter` to search),
+`n`/`p` next/previous page, `s` cycle sources, `esc` cancel input, `?` help, `q` quit.
+Results mark already-installed mods; selecting a result shows a detail panel.
+Browsing and searching are read-only — install/update/deploy actions from the TUI arrive in a later release.
 
 ## Configuration
 
