@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Prototype TUI shell**: Added `lmm tui --prototype` with fake-data Dashboard, Installed Mods, Search, and Profiles screens, retro theme presets (`wizardry`, `amber`, `dos`, `green`), and keyboard navigation for early look-and-feel iteration. Prototype mode is intentionally side-effect-free: no DB writes, API calls, installs, updates, or deploys.
+- **TUI theme snapshots**: Committed ANSI captures of all four prototype themes at 80x24 and 120x36 under `docs/assets/tui/`, regenerable via `UPDATE_TUI_SNAPSHOTS=1 go test ./internal/tui -run TestGenerateThemeSnapshots`.
 
 ### Changed
 
