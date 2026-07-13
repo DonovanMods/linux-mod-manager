@@ -4,18 +4,22 @@
 **Scope:** Add a Bubble Tea/Lip Gloss TUI to `lmm`, starting with visual prototypes and iterating toward a real service-backed interface.
 **Out of scope:** Replacing the existing CLI, changing config formats, implementing image thumbnails, background update daemons, or redesigning core mod-management behavior.
 
-> **Status (2026-07-13): Phases 0–3 are COMPLETE**, shipped as **v1.4.0** on `main`
-> (PRs #31, #33, #34, #36, promotion PR #38; issues #30, #32, #35 closed; tag `v1.4.0`).
-> **Phase 4 (search and detail browsing) is next.** Before planning it, read:
+> **Status (2026-07-13): Phases 0–4 are COMPLETE** — Phases 0–3 shipped as **v1.4.0**
+> (PRs #31/#33/#34/#36/#38; issues #30/#32/#35), Phase 4 (search and detail browsing)
+> shipped as **v1.5.0** (PR #41; issue #40; tag `v1.5.0`).
+> **Phase 5 (safe mutating actions) is next.** Before planning it, read:
 >
-> - the **"CLI-parity coverage and roadmap gaps"** section at the bottom of this file
->   (adds `uninstall` to Phase 5 and several items to Phase 6), and
-> - **issue #37**, which tracks those additions plus the Phase 4 carry-forwards
->   (thread the program context into `loadData` once providers take a ctx,
->   single-fetch summary/mods load, optional cmd test-globals helper).
+> - this file's Phase 5 section AND the **"CLI-parity coverage and roadmap gaps"**
+>   tables below (the audit ADDED `uninstall` to Phase 5),
+> - **issue #37** (Phase 5/6 scope additions + lifecycle carry-forwards),
+> - **issue #42** (short/narrow-terminal hardening + polish backlog), and
+> - the Phase 4 review note: `tui.ModItem` has no mod `ID` field — add it before
+>   install-from-search; mutations belong in a separate writer interface so the
+>   read-only `DataProvider` stays provably read-only.
 >
-> The `feat/tui` integration branch is deleted — Phase 4+ branches from `main`.
-> Execution record for Phases 2–3: `docs/plans/2026-07-13-tui-phase2-close-and-phase3.md`.
+> Branches come off `main` (protected — PRs only). Execution records (local-only):
+> `docs/plans/2026-07-13-tui-phase2-close-and-phase3.md`,
+> `docs/plans/2026-07-13-tui-phase4-search-impl.md`.
 
 The TUI should feel like an 80s console RPG / DOS utility: Wizardry or Ultima in spirit, but still useful for managing real mod lists. Haunted terminal artifact, not hostile UX.
 
@@ -371,7 +375,7 @@ lmm tui --prototype --theme dos
 
 ---
 
-## Phase 4 — Search and detail browsing
+## Phase 4 — Search and detail browsing ✅ (complete, PR #41, v1.5.0)
 
 **Goal:** Make the TUI useful for browsing source results without installing anything yet.
 
