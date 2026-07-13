@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -8,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/theme"
 )
 
@@ -34,43 +34,82 @@ const (
 
 // Options configures the TUI app.
 type Options struct {
-	Theme     string
-	Prototype bool
+	Theme    string
+	Provider DataProvider
 }
 
 // Model is the root Bubble Tea model for the lmm TUI.
 type Model struct {
 	theme    theme.Theme
 	layout   Layout
-	data     prototype.Data
+	keys     KeyMap
+	provider DataProvider
+
+	state   loadState
+	loadErr error
+
+	summary       Summary
+	mods          []ModItem
+	searchResults []ModItem
+	profiles      []ProfileItem
+
 	screen   Screen
 	selected map[Screen]int
 	showHelp bool
 	width    int
 	height   int
-	keys     KeyMap
 }
 
-// NewPrototypeModel creates a side-effect-free TUI model backed by fake data.
-func NewPrototypeModel(options Options) (Model, error) {
+// loadState tracks where the Model is in its async data-load lifecycle.
+type loadState int
+
+const (
+	stateLoading loadState = iota
+	stateReady
+	stateFailed
+)
+
+// dataLoadedMsg carries data successfully loaded through a DataProvider.
+type dataLoadedMsg struct {
+	summary       Summary
+	mods          []ModItem
+	searchResults []ModItem
+	profiles      []ProfileItem
+}
+
+// loadFailedMsg carries an error from a failed DataProvider load.
+type loadFailedMsg struct{ err error }
+
+// NewModel creates the TUI model backed by the given DataProvider.
+func NewModel(options Options) (Model, error) {
+	if options.Provider == nil {
+		return Model{}, fmt.Errorf("TUI options: provider is required")
+	}
 	t, err := theme.ByName(options.Theme)
 	if err != nil {
 		return Model{}, err
 	}
 
 	return Model{
-		theme:  t,
-		layout: layoutForTheme(t.Name),
-		data:   prototype.Load(),
-		screen: ScreenDashboard,
+		theme:    t,
+		layout:   layoutForTheme(t.Name),
+		keys:     DefaultKeyMap(),
+		provider: options.Provider,
+		state:    stateLoading,
+		screen:   ScreenDashboard,
 		selected: map[Screen]int{
 			ScreenDashboard:     0,
 			ScreenInstalledMods: 0,
 			ScreenSearch:        0,
 			ScreenProfiles:      0,
 		},
-		keys: DefaultKeyMap(),
 	}, nil
+}
+
+// NewPrototypeModel creates a side-effect-free TUI model backed by fake data.
+func NewPrototypeModel(options Options) (Model, error) {
+	options.Provider = NewPrototypeProvider()
+	return NewModel(options)
 }
 
 func (m Model) dashboardMenu() []menuItem {
@@ -113,11 +152,47 @@ func (m Model) openSelectedMenuEntry() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.loadData
+}
+
+// loadData fetches all dashboard data through the configured DataProvider.
+// It runs as a Bubble Tea command, off the update loop.
+func (m Model) loadData() tea.Msg {
+	ctx := context.Background()
+
+	summary, err := m.provider.Summary(ctx)
+	if err != nil {
+		return loadFailedMsg{err: err}
+	}
+	mods, err := m.provider.InstalledMods(ctx)
+	if err != nil {
+		return loadFailedMsg{err: err}
+	}
+	results, err := m.provider.SearchResults(ctx)
+	if err != nil {
+		return loadFailedMsg{err: err}
+	}
+	profiles, err := m.provider.Profiles(ctx)
+	if err != nil {
+		return loadFailedMsg{err: err}
+	}
+
+	return dataLoadedMsg{summary: summary, mods: mods, searchResults: results, profiles: profiles}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case dataLoadedMsg:
+		m.state = stateReady
+		m.summary = msg.summary
+		m.mods = msg.mods
+		m.searchResults = msg.searchResults
+		m.profiles = msg.profiles
+		return m, nil
+	case loadFailedMsg:
+		m.state = stateFailed
+		m.loadErr = msg.err
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -243,11 +318,11 @@ func (m Model) moveSelection(delta int) {
 func (m Model) itemCount(screen Screen) int {
 	switch screen {
 	case ScreenInstalledMods:
-		return len(m.data.InstalledMods)
+		return len(m.mods)
 	case ScreenSearch:
-		return len(m.data.SearchResults)
+		return len(m.searchResults)
 	case ScreenProfiles:
-		return len(m.data.Profiles)
+		return len(m.profiles)
 	default:
 		return len(m.dashboardMenu())
 	}
@@ -268,6 +343,20 @@ func (m Model) nav() string {
 }
 
 func (m Model) screenView() string {
+	switch m.state {
+	case stateLoading:
+		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
+			Render(m.theme.PanelTitle.Render("Consulting the archives..."))
+	case stateFailed:
+		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
+			Render(strings.Join([]string{
+				m.theme.PanelTitle.Render("THE RITUAL FAILED"),
+				m.theme.DangerText.Render(m.loadErr.Error()),
+				"",
+				m.theme.MutedText.Render("q: quit"),
+			}, "\n"))
+	}
+
 	switch m.screen {
 	case ScreenDashboard:
 		return m.dashboardView()
@@ -306,15 +395,15 @@ func (m Model) partyDashboardView() string {
 
 	party := strings.Join([]string{
 		m.theme.PanelTitle.Render("PARTY"),
-		fmt.Sprintf("Game:    %s", m.data.Game.Name),
-		fmt.Sprintf("Profile: %s", m.data.Profile.Name),
-		fmt.Sprintf("Mods:    %d installed / %d enabled", m.data.Stats.Installed, m.data.Stats.Enabled),
+		fmt.Sprintf("Game:    %s", m.summary.GameName),
+		fmt.Sprintf("Profile: %s", m.summary.ProfileName),
+		fmt.Sprintf("Mods:    %d installed / %d enabled", m.summary.Installed, m.summary.Enabled),
 	}, "\n")
 
 	quest := strings.Join([]string{
 		m.theme.PanelTitle.Render("QUEST LOG"),
-		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(fmt.Sprintf("%d", m.data.Stats.Updates))),
-		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(fmt.Sprintf("%d", m.data.Stats.Conflicts))),
+		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(countLabel(m.summary.Updates))),
+		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
 		"Last deploy: 2h ago",
 	}, "\n")
 
@@ -332,10 +421,10 @@ func (m Model) partyDashboardView() string {
 func (m Model) terminalDashboardView() string {
 	rows := []string{
 		m.theme.PanelTitle.Render("BOOT SEQUENCE // MOD GUILD TERMINAL"),
-		fmt.Sprintf("> GAME     %s", m.data.Game.Name),
-		fmt.Sprintf("> PROFILE  %s", m.data.Profile.Name),
-		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.data.Stats.Installed, m.data.Stats.Enabled),
-		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", m.theme.WarningText.Render(fmt.Sprintf("%d", m.data.Stats.Updates)), m.theme.DangerText.Render(fmt.Sprintf("%d", m.data.Stats.Conflicts))),
+		fmt.Sprintf("> GAME     %s", m.summary.GameName),
+		fmt.Sprintf("> PROFILE  %s", m.summary.ProfileName),
+		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.summary.Installed, m.summary.Enabled),
+		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", m.theme.WarningText.Render(countLabel(m.summary.Updates)), m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
@@ -351,11 +440,11 @@ func (m Model) commanderDashboardView() string {
 
 	left := strings.Join([]string{
 		m.theme.PanelTitle.Render("ACTIVE PROFILE"),
-		m.data.Profile.Name,
+		m.summary.ProfileName,
 		"",
-		fmt.Sprintf("Game     %s", m.data.Game.Name),
-		fmt.Sprintf("Enabled  %d", m.data.Stats.Enabled),
-		fmt.Sprintf("Updates  %d", m.data.Stats.Updates),
+		fmt.Sprintf("Game     %s", m.summary.GameName),
+		fmt.Sprintf("Enabled  %d", m.summary.Enabled),
+		fmt.Sprintf("Updates  %d", m.summary.Updates),
 	}, "\n")
 	right := strings.Join(
 		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
@@ -371,10 +460,10 @@ func (m Model) commanderDashboardView() string {
 func (m Model) crtDashboardView() string {
 	rows := []string{
 		m.theme.PanelTitle.Render("CRT STATUS STACK"),
-		fmt.Sprintf("▓ %-10s %s", "GAME", m.data.Game.Name),
-		fmt.Sprintf("▓ %-10s %s", "PROFILE", m.data.Profile.Name),
-		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.data.Stats.Enabled, m.data.Stats.Installed),
-		fmt.Sprintf("▓ %-10s %d updates, %d conflict", "SIGNAL", m.data.Stats.Updates, m.data.Stats.Conflicts),
+		fmt.Sprintf("▓ %-10s %s", "GAME", m.summary.GameName),
+		fmt.Sprintf("▓ %-10s %s", "PROFILE", m.summary.ProfileName),
+		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.summary.Enabled, m.summary.Installed),
+		fmt.Sprintf("▓ %-10s %d updates, %d conflict", "SIGNAL", m.summary.Updates, m.summary.Conflicts),
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
@@ -384,7 +473,7 @@ func (m Model) crtDashboardView() string {
 func (m Model) modsView() string {
 	rows := []string{m.theme.PanelTitle.Render("SPELLBOOK: INSTALLED MODS")}
 	rows = append(rows, "[E] Enable  [D] Disable  [U] Update  [/] Search")
-	for i, mod := range m.data.InstalledMods {
+	for i, mod := range m.mods {
 		rows = append(rows, m.modRow(i, mod))
 	}
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
@@ -393,7 +482,7 @@ func (m Model) modsView() string {
 func (m Model) searchView() string {
 	rows := []string{m.theme.PanelTitle.Render("ARCHIVE SEARCH")}
 	rows = append(rows, "Query: survival mods_")
-	for i, mod := range m.data.SearchResults {
+	for i, mod := range m.searchResults {
 		rows = append(rows, m.modRow(i, mod))
 	}
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
@@ -401,7 +490,7 @@ func (m Model) searchView() string {
 
 func (m Model) profilesView() string {
 	rows := []string{m.theme.PanelTitle.Render("PROFILE ROSTER")}
-	for i, profile := range m.data.Profiles {
+	for i, profile := range m.profiles {
 		active := " "
 		if profile.Active {
 			active = "*"
@@ -435,7 +524,7 @@ func (m Model) row(index int, label string) string {
 	return prefix + label
 }
 
-func (m Model) modRow(index int, mod prototype.Mod) string {
+func (m Model) modRow(index int, mod ModItem) string {
 	line := fmt.Sprintf("%-28s %-11s %-16s %7s", mod.Name, mod.Status, mod.Author, mod.Version)
 	return m.row(index, line)
 }
@@ -471,6 +560,15 @@ func (m Model) contentChromeHeight() int {
 
 	const titleNavAndSpacerHeight = 4 // title, nav, and the spacer lines around content.
 	return titleNavAndSpacerHeight + footerHeight
+}
+
+// countLabel renders n, or "?" when n is negative (unknown, e.g. no update
+// check has run yet).
+func countLabel(n int) string {
+	if n < 0 {
+		return "?"
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 func layoutForTheme(name string) Layout {

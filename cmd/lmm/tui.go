@@ -36,7 +36,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("real TUI mode is not implemented yet; use --prototype")
 	}
 
-	model, err := tui.NewPrototypeModel(tui.Options{Theme: tuiOptions.theme, Prototype: true})
+	model, err := tui.NewModel(tui.Options{Theme: tuiOptions.theme, Provider: tui.NewPrototypeProvider()})
 	if err != nil {
 		return err
 	}
