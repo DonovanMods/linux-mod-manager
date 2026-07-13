@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/theme"
@@ -584,7 +585,12 @@ func (m Model) searchView() string {
 
 // searchReadyView renders the two-pane results/detail layout, mirroring
 // commanderDashboardView's width math so the panes plus a 1-column gap sum to
-// exactly availableWidth().
+// exactly availableWidth(). Unlike the other search states, this view's
+// header and footer lines sit outside any Width()-constrained panel style,
+// so they are hard-capped to width here: lipgloss.Width of the whole view is
+// the max width across its lines, and the panes line already sums to exactly
+// width, but an unclamped header/footer line would push that max past width
+// and wrap the bordered panes onto separate output lines at narrow sizes.
 func (m Model) searchReadyView(header []string) string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
@@ -607,7 +613,11 @@ func (m Model) searchReadyView(header []string) string {
 		m.panelWithHeight(rightWidth, paneHeight).Render(m.searchDetailPane(rightWidth, paneContentHeight)),
 	)
 
-	lines := append(append([]string{}, header...), panes, footer)
+	lines := make([]string, 0, len(header)+2)
+	for _, line := range header {
+		lines = append(lines, truncate(line, width))
+	}
+	lines = append(lines, panes, truncate(footer, width))
 	return strings.Join(lines, "\n")
 }
 
@@ -705,19 +715,24 @@ func (m Model) searchDetailPane(width, maxLines int) string {
 
 // searchFooterLine renders pagination status. The total-pages figure only
 // appears when the source reports a TotalCount; otherwise only the current
-// page and (if available) the next-page hint are shown.
+// page is shown. In both cases, the "n next"/"p prev" hints only render when
+// the corresponding key would actually act, so a page-1 footer never shows a
+// dead "p prev" hint.
 func (m Model) searchFooterLine() string {
 	page := m.search.page
 	current := page.Page + 1
 
+	footer := fmt.Sprintf("Page %d", current)
 	if page.TotalCount > 0 && page.PageSize > 0 {
 		totalPages := (page.TotalCount + page.PageSize - 1) / page.PageSize
-		return fmt.Sprintf("Page %d/%d (%d results) · n next · p prev", current, totalPages, page.TotalCount)
+		footer = fmt.Sprintf("Page %d/%d (%d results)", current, totalPages, page.TotalCount)
 	}
 
-	footer := fmt.Sprintf("Page %d", current)
 	if m.search.hasNextPage() {
 		footer += " · n next"
+	}
+	if page.Page > 0 {
+		footer += " · p prev"
 	}
 	return footer
 }
@@ -806,22 +821,17 @@ func countLabel(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-// truncate returns s trimmed to at most width runes, marking a cut with a
-// trailing ellipsis. Used to keep fixed-width row/field values from
+// truncate returns s trimmed to at most width display columns, marking a cut
+// with a trailing ellipsis. Used to keep fixed-width row/field values from
 // overflowing a panel's content width, which would otherwise trigger
 // lipgloss's automatic re-wrap and silently grow the rendered line count.
+// ansi.Truncate is display-width aware (wide runes such as CJK count as two
+// columns) and ANSI-escape safe, unlike a plain rune-count slice.
 func truncate(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= width {
-		return s
-	}
-	if width == 1 {
-		return string(runes[:1])
-	}
-	return string(runes[:width-1]) + "…"
+	return ansi.Truncate(s, width, "…")
 }
 
 func layoutForTheme(name string) Layout {

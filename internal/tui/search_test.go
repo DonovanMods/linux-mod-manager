@@ -176,3 +176,25 @@ func TestSearchViewStaysWithinBounds(t *testing.T) {
 	require.Equal(t, model.availableWidth(), lipgloss.Width(model.screenView()))
 	require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()))
 }
+
+func TestSearchReadyViewFitsNarrowTerminals(t *testing.T) {
+	t.Parallel()
+
+	for _, width := range []int{40, 48, 54, 80} {
+		model := sizedPrototypeModel(t, "wizardry", width, 24)
+		model = updateWithRunes(t, model, "3")
+		model.search.state = searchReady
+		model.search.page = SearchPage{
+			Query: "sky", Source: "nexusmods", Page: 0, PageSize: 10, TotalCount: 25,
+			Results: []ModItem{{Name: "SkyUI", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "UI overhaul."}},
+		}
+		require.Equal(t, model.availableWidth(), lipgloss.Width(model.screenView()), "width %d", width)
+	}
+}
+
+func TestTruncateIsDisplayWidthAware(t *testing.T) {
+	t.Parallel()
+
+	require.LessOrEqual(t, lipgloss.Width(truncate("模组名称超长测试", 10)), 10)
+	require.Equal(t, "short", truncate("short", 10))
+}
