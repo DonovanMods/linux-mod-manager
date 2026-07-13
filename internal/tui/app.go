@@ -14,6 +14,14 @@ import (
 
 const defaultContentWidth = 76
 
+// menuItem is one dashboard menu entry. hasTarget is false for flavor-only
+// entries (like the Conflict Oracle) that have no screen yet.
+type menuItem struct {
+	label     string
+	target    Screen
+	hasTarget bool
+}
+
 // Layout describes the major panel arrangement for a prototype theme.
 type Layout string
 
@@ -65,6 +73,45 @@ func NewPrototypeModel(options Options) (Model, error) {
 	}, nil
 }
 
+func (m Model) dashboardMenu() []menuItem {
+	if m.layout == LayoutMonochromeTerminal {
+		return []menuItem{
+			{label: "RUN SPELLBOOK SCAN", target: ScreenInstalledMods, hasTarget: true},
+			{label: "QUERY ARCHIVE INDEX", target: ScreenSearch, hasTarget: true},
+			{label: "LOAD PROFILE ROSTER", target: ScreenProfiles, hasTarget: true},
+			{label: "ASK CONFLICT ORACLE"},
+		}
+	}
+	return []menuItem{
+		{label: "Installed Mods", target: ScreenInstalledMods, hasTarget: true},
+		{label: "Search Archives", target: ScreenSearch, hasTarget: true},
+		{label: "Profiles", target: ScreenProfiles, hasTarget: true},
+		{label: "Consult Conflict Oracle"},
+	}
+}
+
+func (m Model) dashboardMenuRows() []string {
+	items := m.dashboardMenu()
+	rows := make([]string, 0, len(items))
+	for i, item := range items {
+		rows = append(rows, m.row(i, item.label))
+	}
+	return rows
+}
+
+func (m Model) openSelectedMenuEntry() Model {
+	if m.screen != ScreenDashboard {
+		return m
+	}
+	items := m.dashboardMenu()
+	selected := m.selected[ScreenDashboard]
+	if selected >= len(items) || !items[selected].hasTarget {
+		return m
+	}
+	m.screen = items[selected].target
+	return m
+}
+
 func (m Model) Init() tea.Cmd {
 	return nil
 }
@@ -113,6 +160,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Down):
 		m.moveSelection(1)
 		return m, nil
+	case key.Matches(msg, m.keys.Select):
+		return m.openSelectedMenuEntry(), nil
 	default:
 		return m, nil
 	}
@@ -200,7 +249,7 @@ func (m Model) itemCount(screen Screen) int {
 	case ScreenProfiles:
 		return len(m.data.Profiles)
 	default:
-		return 4
+		return len(m.dashboardMenu())
 	}
 }
 
@@ -269,13 +318,9 @@ func (m Model) partyDashboardView() string {
 		"Last deploy: 2h ago",
 	}, "\n")
 
-	menu := strings.Join([]string{
-		m.theme.PanelTitle.Render("COMMANDS"),
-		m.row(0, "Installed Mods"),
-		m.row(1, "Search Archives"),
-		m.row(2, "Profiles"),
-		m.row(3, "Consult Conflict Oracle"),
-	}, "\n")
+	menu := strings.Join(
+		append([]string{m.theme.PanelTitle.Render("COMMANDS")}, m.dashboardMenuRows()...),
+		"\n")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		m.panelWithHeight(panelWidth, topHeight).Render(party),
@@ -292,11 +337,8 @@ func (m Model) terminalDashboardView() string {
 		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.data.Stats.Installed, m.data.Stats.Enabled),
 		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", m.theme.WarningText.Render(fmt.Sprintf("%d", m.data.Stats.Updates)), m.theme.DangerText.Render(fmt.Sprintf("%d", m.data.Stats.Conflicts))),
 		"",
-		m.row(0, "RUN SPELLBOOK SCAN"),
-		m.row(1, "QUERY ARCHIVE INDEX"),
-		m.row(2, "LOAD PROFILE ROSTER"),
-		m.row(3, "ASK CONFLICT ORACLE"),
 	}
+	rows = append(rows, m.dashboardMenuRows()...)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
@@ -315,13 +357,9 @@ func (m Model) commanderDashboardView() string {
 		fmt.Sprintf("Enabled  %d", m.data.Stats.Enabled),
 		fmt.Sprintf("Updates  %d", m.data.Stats.Updates),
 	}, "\n")
-	right := strings.Join([]string{
-		m.theme.PanelTitle.Render("OPERATIONS"),
-		m.row(0, "Installed Mods"),
-		m.row(1, "Search Archives"),
-		m.row(2, "Profiles"),
-		m.row(3, "Conflict Oracle"),
-	}, "\n")
+	right := strings.Join(
+		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
+		"\n")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		m.panelWithHeight(leftWidth, height).Render(left),
@@ -338,11 +376,8 @@ func (m Model) crtDashboardView() string {
 		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.data.Stats.Enabled, m.data.Stats.Installed),
 		fmt.Sprintf("▓ %-10s %d updates, %d conflict", "SIGNAL", m.data.Stats.Updates, m.data.Stats.Conflicts),
 		"",
-		m.row(0, "Installed Mods"),
-		m.row(1, "Search Archives"),
-		m.row(2, "Profiles"),
-		m.row(3, "Consult Conflict Oracle"),
 	}
+	rows = append(rows, m.dashboardMenuRows()...)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 

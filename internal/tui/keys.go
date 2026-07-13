@@ -14,6 +14,7 @@ type KeyMap struct {
 	Dashboard     key.Binding
 	InstalledMods key.Binding
 	Profiles      key.Binding
+	Select        key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -58,6 +59,10 @@ func DefaultKeyMap() KeyMap {
 		Profiles: key.NewBinding(
 			key.WithKeys("4"),
 			key.WithHelp("4", "profiles"),
+		),
+		Select: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "open"),
 		),
 	}
 }

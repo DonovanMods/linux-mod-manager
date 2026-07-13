@@ -275,3 +275,44 @@ func TestNumberKeysJumpToScreens(t *testing.T) {
 		require.Equal(t, want, updateWithRunes(t, model, keyPress).CurrentScreen(), "key %q", keyPress)
 	}
 }
+
+func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+
+	// Initial selection is the first menu entry: Installed Mods.
+	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
+
+	// Second entry opens Search.
+	moved := updateWithRunes(t, model, "j")
+	opened, _ = moved.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, ScreenSearch, opened.(Model).CurrentScreen())
+}
+
+func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+
+	// Move to the last entry (Conflict Oracle) — no screen exists for it yet.
+	for range 3 {
+		model = updateWithRunes(t, model, "j")
+	}
+	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, ScreenDashboard, opened.(Model).CurrentScreen())
+}
+
+func TestEnterOutsideDashboardIsANoop(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model = updateWithRunes(t, model, "2")
+
+	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
+}
