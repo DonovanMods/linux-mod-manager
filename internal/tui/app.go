@@ -444,7 +444,7 @@ func (m Model) commanderDashboardView() string {
 		"",
 		fmt.Sprintf("Game     %s", m.summary.GameName),
 		fmt.Sprintf("Enabled  %d", m.summary.Enabled),
-		fmt.Sprintf("Updates  %d", m.summary.Updates),
+		fmt.Sprintf("Updates  %s", countLabel(m.summary.Updates)),
 	}, "\n")
 	right := strings.Join(
 		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
@@ -463,7 +463,7 @@ func (m Model) crtDashboardView() string {
 		fmt.Sprintf("▓ %-10s %s", "GAME", m.summary.GameName),
 		fmt.Sprintf("▓ %-10s %s", "PROFILE", m.summary.ProfileName),
 		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.summary.Enabled, m.summary.Installed),
-		fmt.Sprintf("▓ %-10s %d updates, %d conflict", "SIGNAL", m.summary.Updates, m.summary.Conflicts),
+		fmt.Sprintf("▓ %-10s %s updates, %s conflict", "SIGNAL", countLabel(m.summary.Updates), countLabel(m.summary.Conflicts)),
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
@@ -473,6 +473,9 @@ func (m Model) crtDashboardView() string {
 func (m Model) modsView() string {
 	rows := []string{m.theme.PanelTitle.Render("SPELLBOOK: INSTALLED MODS")}
 	rows = append(rows, "[E] Enable  [D] Disable  [U] Update  [/] Search")
+	if len(m.mods) == 0 {
+		rows = append(rows, m.theme.MutedText.Render("No mods installed yet. 'lmm install <mod>' begins the quest."))
+	}
 	for i, mod := range m.mods {
 		rows = append(rows, m.modRow(i, mod))
 	}
@@ -482,6 +485,9 @@ func (m Model) modsView() string {
 func (m Model) searchView() string {
 	rows := []string{m.theme.PanelTitle.Render("ARCHIVE SEARCH")}
 	rows = append(rows, "Query: survival mods_")
+	if len(m.searchResults) == 0 {
+		rows = append(rows, m.theme.MutedText.Render("The archive index opens in a later chapter. (Search arrives in Phase 4.)"))
+	}
 	for i, mod := range m.searchResults {
 		rows = append(rows, m.modRow(i, mod))
 	}
