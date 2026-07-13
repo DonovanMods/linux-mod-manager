@@ -107,3 +107,10 @@ func TestCoreProviderProfiles(t *testing.T) {
 	require.False(t, byName["hardcore"].Active)
 	require.Equal(t, 1, byName["hardcore"].ModCount, "ModCount should map from profile YAML mods, not the DB")
 }
+
+func TestCoreProviderSourcesAreSortedGameSources(t *testing.T) {
+	provider, _, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"nexusmods": "testgame", "curseforge": "testgame"}
+
+	require.Equal(t, []string{"curseforge", "nexusmods"}, provider.Sources())
+}

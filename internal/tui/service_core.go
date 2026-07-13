@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -56,7 +57,12 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 }
 
 func (p *coreProvider) Sources() []string {
-	return []string{"nexusmods"}
+	sources := make([]string, 0, len(p.game.SourceIDs))
+	for id := range p.game.SourceIDs {
+		sources = append(sources, id)
+	}
+	sort.Strings(sources)
+	return sources
 }
 
 // Search is an honest placeholder until Phase 4 wires real source
