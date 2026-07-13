@@ -2,7 +2,10 @@
 .claude/
 .codex
 .codex/
-docs/plans
+
+# Local/private notes (keep public project documentation under docs/)
+.private/
+private/
 
 # Go build artifacts
 *.exe

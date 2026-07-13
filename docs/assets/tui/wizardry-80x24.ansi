@@ -1,0 +1,24 @@
+                                                                                
+  LMM // Linux Mod Manager                                                      
+  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles                   
+                                                                                
+  ╭───────────────────────────────────╮ ╭───────────────────────────────────╮   
+  │ PARTY                             │ │ QUEST LOG                         │   
+  │ Game:    Skyrim Special Edition   │ │ 3 updates available               │   
+  │ Profile: survival                 │ │ 1 file conflict                   │   
+  │ Mods:    42 installed / 39        │ │ Last deploy: ?                    │   
+  │ enabled                           │ │                                   │   
+  │                                   │ │                                   │   
+  ╰───────────────────────────────────╯ ╰───────────────────────────────────╯   
+  ╭──────────────────────────────────────────────────────────────────────────╮  
+  │ COMMANDS                                                                 │  
+  │ > Installed Mods                                                         │  
+  │   Search Archives                                                        │  
+  │   Profiles                                                               │  
+  │   Consult Conflict Oracle                                                │  
+  │                                                                          │  
+  │                                                                          │  
+  ╰──────────────────────────────────────────────────────────────────────────╯  
+                                                                                
+  ?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  q: quit                   
+                                                                                

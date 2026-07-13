@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.4.0] - 2026-07-13
+
+### Added
+
+- **`lmm tui` (read-only)**: The TUI now runs against real app data — Dashboard, Installed Mods, and Profiles views load the configured game, default profile, and installed mods through a narrow read-only provider. Search shows an honest placeholder until source search is wired in. `--prototype` remains as a side-effect-free demo mode.
+- **TUI theme snapshots**: Committed ANSI captures of all four themes at 80x24 and 120x36 under `docs/assets/tui/`, regenerable with `UPDATE_TUI_SNAPSHOTS=1 go test ./internal/tui -run TestGenerateThemeSnapshots`.
+- **Dashboard enter-to-open**: The dashboard menu is defined once, and Enter opens the selected entry's screen.
+
+### Changed
+
+- **TUI internals**: Key handling flows through the shared KeyMap; status text styles live in the theme; the TUI uses the terminal's alternate screen.
+
 ## [1.3.10] - 2026-04-26
 
 ### Changed
@@ -632,7 +646,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.10...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.10...v1.4.0
 [1.3.10]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.9...v1.3.10
 [1.3.9]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.8...v1.3.9
 [1.3.8]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.7...v1.3.8

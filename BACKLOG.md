@@ -29,6 +29,8 @@ Interactive terminal interface using Bubble Tea framework. Removed to focus on C
 - Settings view
 - Configurable keybindings (vim and standard modes)
 
-**Status:** Code removed, to be reimplemented once CLI is stable.
+**Status:** Reimplemented. Prototype shell (v1.3.x, #31/#32) and read-only
+service-backed TUI (v1.4.0) are done; search, mutations, and workflows are
+tracked by the Phase 4-6 sections of docs/plans/2026-04-28-tui-implementation.md.
 
 **Original implementation:** See git history before commit that removed TUI.
