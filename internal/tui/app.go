@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -39,6 +40,7 @@ type Model struct {
 	showHelp bool
 	width    int
 	height   int
+	keys     KeyMap
 }
 
 // NewPrototypeModel creates a side-effect-free TUI model backed by fake data.
@@ -59,6 +61,7 @@ func NewPrototypeModel(options Options) (Model, error) {
 			ScreenSearch:        0,
 			ScreenProfiles:      0,
 		},
+		keys: DefaultKeyMap(),
 	}, nil
 }
 
@@ -80,34 +83,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c", "q":
+	switch {
+	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
-	case "?":
+	case key.Matches(msg, m.keys.Help):
 		m.showHelp = !m.showHelp
 		return m, nil
-	case "tab", "right", "l":
+	case key.Matches(msg, m.keys.NextScreen):
 		m.screen = screenAt((m.screenIndex() + 1) % len(screens))
 		return m, nil
-	case "shift+tab", "left", "h":
+	case key.Matches(msg, m.keys.PrevScreen):
 		m.screen = screenAt((m.screenIndex() - 1 + len(screens)) % len(screens))
 		return m, nil
-	case "1":
+	case key.Matches(msg, m.keys.Dashboard):
 		m.screen = ScreenDashboard
 		return m, nil
-	case "2":
+	case key.Matches(msg, m.keys.InstalledMods):
 		m.screen = ScreenInstalledMods
 		return m, nil
-	case "3", "/":
+	case key.Matches(msg, m.keys.Search):
 		m.screen = ScreenSearch
 		return m, nil
-	case "4":
+	case key.Matches(msg, m.keys.Profiles):
 		m.screen = ScreenProfiles
 		return m, nil
-	case "up", "k":
+	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 		return m, nil
-	case "down", "j":
+	case key.Matches(msg, m.keys.Down):
 		m.moveSelection(1)
 		return m, nil
 	default:
