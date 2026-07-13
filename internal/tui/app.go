@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -12,6 +13,14 @@ import (
 )
 
 const defaultContentWidth = 76
+
+// menuItem is one dashboard menu entry. hasTarget is false for flavor-only
+// entries (like the Conflict Oracle) that have no screen yet.
+type menuItem struct {
+	label     string
+	target    Screen
+	hasTarget bool
+}
 
 // Layout describes the major panel arrangement for a prototype theme.
 type Layout string
@@ -39,6 +48,7 @@ type Model struct {
 	showHelp bool
 	width    int
 	height   int
+	keys     KeyMap
 }
 
 // NewPrototypeModel creates a side-effect-free TUI model backed by fake data.
@@ -59,7 +69,47 @@ func NewPrototypeModel(options Options) (Model, error) {
 			ScreenSearch:        0,
 			ScreenProfiles:      0,
 		},
+		keys: DefaultKeyMap(),
 	}, nil
+}
+
+func (m Model) dashboardMenu() []menuItem {
+	if m.layout == LayoutMonochromeTerminal {
+		return []menuItem{
+			{label: "RUN SPELLBOOK SCAN", target: ScreenInstalledMods, hasTarget: true},
+			{label: "QUERY ARCHIVE INDEX", target: ScreenSearch, hasTarget: true},
+			{label: "LOAD PROFILE ROSTER", target: ScreenProfiles, hasTarget: true},
+			{label: "ASK CONFLICT ORACLE"},
+		}
+	}
+	return []menuItem{
+		{label: "Installed Mods", target: ScreenInstalledMods, hasTarget: true},
+		{label: "Search Archives", target: ScreenSearch, hasTarget: true},
+		{label: "Profiles", target: ScreenProfiles, hasTarget: true},
+		{label: "Consult Conflict Oracle"},
+	}
+}
+
+func (m Model) dashboardMenuRows() []string {
+	items := m.dashboardMenu()
+	rows := make([]string, 0, len(items))
+	for i, item := range items {
+		rows = append(rows, m.row(i, item.label))
+	}
+	return rows
+}
+
+func (m Model) openSelectedMenuEntry() Model {
+	if m.screen != ScreenDashboard {
+		return m
+	}
+	items := m.dashboardMenu()
+	selected := m.selected[ScreenDashboard]
+	if selected >= len(items) || !items[selected].hasTarget {
+		return m
+	}
+	m.screen = items[selected].target
+	return m
 }
 
 func (m Model) Init() tea.Cmd {
@@ -80,36 +130,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c", "q":
+	switch {
+	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
-	case "?":
+	case key.Matches(msg, m.keys.Help):
 		m.showHelp = !m.showHelp
 		return m, nil
-	case "tab", "right", "l":
+	case key.Matches(msg, m.keys.NextScreen):
 		m.screen = screenAt((m.screenIndex() + 1) % len(screens))
 		return m, nil
-	case "shift+tab", "left", "h":
+	case key.Matches(msg, m.keys.PrevScreen):
 		m.screen = screenAt((m.screenIndex() - 1 + len(screens)) % len(screens))
 		return m, nil
-	case "1":
+	case key.Matches(msg, m.keys.Dashboard):
 		m.screen = ScreenDashboard
 		return m, nil
-	case "2":
+	case key.Matches(msg, m.keys.InstalledMods):
 		m.screen = ScreenInstalledMods
 		return m, nil
-	case "3", "/":
+	case key.Matches(msg, m.keys.Search):
 		m.screen = ScreenSearch
 		return m, nil
-	case "4":
+	case key.Matches(msg, m.keys.Profiles):
 		m.screen = ScreenProfiles
 		return m, nil
-	case "up", "k":
+	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 		return m, nil
-	case "down", "j":
+	case key.Matches(msg, m.keys.Down):
 		m.moveSelection(1)
 		return m, nil
+	case key.Matches(msg, m.keys.Select):
+		return m.openSelectedMenuEntry(), nil
 	default:
 		return m, nil
 	}
@@ -197,7 +249,7 @@ func (m Model) itemCount(screen Screen) int {
 	case ScreenProfiles:
 		return len(m.data.Profiles)
 	default:
-		return 4
+		return len(m.dashboardMenu())
 	}
 }
 
@@ -261,18 +313,14 @@ func (m Model) partyDashboardView() string {
 
 	quest := strings.Join([]string{
 		m.theme.PanelTitle.Render("QUEST LOG"),
-		fmt.Sprintf("%s updates available", statusValue(m.data.Stats.Updates, m.theme.Warning)),
-		fmt.Sprintf("%s file conflict", statusValue(m.data.Stats.Conflicts, m.theme.Danger)),
+		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(fmt.Sprintf("%d", m.data.Stats.Updates))),
+		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(fmt.Sprintf("%d", m.data.Stats.Conflicts))),
 		"Last deploy: 2h ago",
 	}, "\n")
 
-	menu := strings.Join([]string{
-		m.theme.PanelTitle.Render("COMMANDS"),
-		m.row(0, "Installed Mods"),
-		m.row(1, "Search Archives"),
-		m.row(2, "Profiles"),
-		m.row(3, "Consult Conflict Oracle"),
-	}, "\n")
+	menu := strings.Join(
+		append([]string{m.theme.PanelTitle.Render("COMMANDS")}, m.dashboardMenuRows()...),
+		"\n")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		m.panelWithHeight(panelWidth, topHeight).Render(party),
@@ -287,13 +335,10 @@ func (m Model) terminalDashboardView() string {
 		fmt.Sprintf("> GAME     %s", m.data.Game.Name),
 		fmt.Sprintf("> PROFILE  %s", m.data.Profile.Name),
 		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.data.Stats.Installed, m.data.Stats.Enabled),
-		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", statusValue(m.data.Stats.Updates, m.theme.Warning), statusValue(m.data.Stats.Conflicts, m.theme.Danger)),
+		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", m.theme.WarningText.Render(fmt.Sprintf("%d", m.data.Stats.Updates)), m.theme.DangerText.Render(fmt.Sprintf("%d", m.data.Stats.Conflicts))),
 		"",
-		m.row(0, "RUN SPELLBOOK SCAN"),
-		m.row(1, "QUERY ARCHIVE INDEX"),
-		m.row(2, "LOAD PROFILE ROSTER"),
-		m.row(3, "ASK CONFLICT ORACLE"),
 	}
+	rows = append(rows, m.dashboardMenuRows()...)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
@@ -312,13 +357,9 @@ func (m Model) commanderDashboardView() string {
 		fmt.Sprintf("Enabled  %d", m.data.Stats.Enabled),
 		fmt.Sprintf("Updates  %d", m.data.Stats.Updates),
 	}, "\n")
-	right := strings.Join([]string{
-		m.theme.PanelTitle.Render("OPERATIONS"),
-		m.row(0, "Installed Mods"),
-		m.row(1, "Search Archives"),
-		m.row(2, "Profiles"),
-		m.row(3, "Conflict Oracle"),
-	}, "\n")
+	right := strings.Join(
+		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
+		"\n")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		m.panelWithHeight(leftWidth, height).Render(left),
@@ -335,11 +376,8 @@ func (m Model) crtDashboardView() string {
 		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.data.Stats.Enabled, m.data.Stats.Installed),
 		fmt.Sprintf("▓ %-10s %d updates, %d conflict", "SIGNAL", m.data.Stats.Updates, m.data.Stats.Conflicts),
 		"",
-		m.row(0, "Installed Mods"),
-		m.row(1, "Search Archives"),
-		m.row(2, "Profiles"),
-		m.row(3, "Consult Conflict Oracle"),
 	}
+	rows = append(rows, m.dashboardMenuRows()...)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
@@ -446,15 +484,4 @@ func layoutForTheme(name string) Layout {
 	default:
 		return LayoutPartySheet
 	}
-}
-
-func statusValue(value int, color lipgloss.Color) string {
-	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(fmt.Sprintf("%d", value))
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

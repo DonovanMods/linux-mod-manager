@@ -82,3 +82,23 @@ func colorIndex(t *testing.T, color lipgloss.Color) int {
 	require.NoError(t, err)
 	return index
 }
+
+func TestStatusTextStylesMatchStatusColors(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"wizardry", "amber", "dos", "green"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			th, err := ByName(name)
+			require.NoError(t, err)
+
+			require.Equal(t, th.Warning, th.WarningText.GetForeground(), "WarningText foreground")
+			require.Equal(t, th.Danger, th.DangerText.GetForeground(), "DangerText foreground")
+			require.Equal(t, th.Background, th.WarningText.GetBackground(), "WarningText background")
+			require.Equal(t, th.Background, th.DangerText.GetBackground(), "DangerText background")
+			require.True(t, th.WarningText.GetBold())
+			require.True(t, th.DangerText.GetBold())
+		})
+	}
+}

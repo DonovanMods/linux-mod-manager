@@ -3,6 +3,7 @@ package tui
 import (
 	"testing"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
@@ -239,4 +240,79 @@ func updateWithMsg(t *testing.T, model Model, msg tea.KeyMsg) Model {
 	updatedModel, ok := updated.(Model)
 	require.True(t, ok)
 	return updatedModel
+}
+
+// TestUpdateKeyConsultsKeyMap proves key handling reads the KeyMap rather
+// than hard-coded strings: rebinding NextScreen must change which key cycles.
+func TestUpdateKeyConsultsKeyMap(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+
+	model.keys.NextScreen = key.NewBinding(key.WithKeys("n"))
+
+	moved := updateWithRunes(t, model, "n")
+	require.Equal(t, ScreenInstalledMods, moved.CurrentScreen())
+
+	// The old default must no longer cycle once rebound away.
+	stay := updateWithRunes(t, model, "l")
+	require.Equal(t, ScreenDashboard, stay.CurrentScreen())
+}
+
+func TestNumberKeysJumpToScreens(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+
+	for keyPress, want := range map[string]Screen{
+		"1": ScreenDashboard,
+		"2": ScreenInstalledMods,
+		"3": ScreenSearch,
+		"4": ScreenProfiles,
+	} {
+		require.Equal(t, want, updateWithRunes(t, model, keyPress).CurrentScreen(), "key %q", keyPress)
+	}
+}
+
+func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+
+	// Initial selection is the first menu entry: Installed Mods.
+	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
+
+	// Second entry opens Search.
+	moved := updateWithRunes(t, model, "j")
+	opened, _ = moved.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, ScreenSearch, opened.(Model).CurrentScreen())
+}
+
+func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+
+	// Move to the last entry (Conflict Oracle) — no screen exists for it yet.
+	for range 3 {
+		model = updateWithRunes(t, model, "j")
+	}
+	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, ScreenDashboard, opened.(Model).CurrentScreen())
+}
+
+func TestEnterOutsideDashboardIsANoop(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model = updateWithRunes(t, model, "2")
+
+	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 }

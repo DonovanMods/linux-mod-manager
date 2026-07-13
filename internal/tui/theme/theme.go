@@ -18,14 +18,16 @@ type Theme struct {
 	Danger     lipgloss.Color
 	Success    lipgloss.Color
 
-	App        lipgloss.Style
-	Title      lipgloss.Style
-	Panel      lipgloss.Style
-	PanelTitle lipgloss.Style
-	Selected   lipgloss.Style
-	MutedText  lipgloss.Style
-	Help       lipgloss.Style
-	Badge      lipgloss.Style
+	App         lipgloss.Style
+	Title       lipgloss.Style
+	Panel       lipgloss.Style
+	PanelTitle  lipgloss.Style
+	Selected    lipgloss.Style
+	MutedText   lipgloss.Style
+	Help        lipgloss.Style
+	Badge       lipgloss.Style
+	WarningText lipgloss.Style
+	DangerText  lipgloss.Style
 }
 
 // ByName returns a named theme preset.
@@ -56,9 +58,6 @@ func base(name string, foreground, background, accent lipgloss.Color) Theme {
 		Foreground: foreground,
 		Accent:     accent,
 		Muted:      muted,
-		Warning:    warning,
-		Danger:     danger,
-		Success:    success,
 		App: lipgloss.NewStyle().
 			Foreground(foreground).
 			Padding(1, 2),
@@ -84,7 +83,7 @@ func base(name string, foreground, background, accent lipgloss.Color) Theme {
 			Padding(0, 1),
 	}
 
-	return t.withMuted(muted)
+	return t.withMuted(muted).withStatusColors(warning, danger, success)
 }
 
 func (t Theme) withMuted(muted lipgloss.Color) Theme {
@@ -96,11 +95,21 @@ func (t Theme) withMuted(muted lipgloss.Color) Theme {
 	return t
 }
 
+// withStatusColors sets the status palette and the derived text styles
+// together so they can never drift apart.
+func (t Theme) withStatusColors(warning, danger, success lipgloss.Color) Theme {
+	t.Warning = warning
+	t.Danger = danger
+	t.Success = success
+	t.WarningText = lipgloss.NewStyle().Foreground(warning).Background(t.Background).Bold(true)
+	t.DangerText = lipgloss.NewStyle().Foreground(danger).Background(t.Background).Bold(true)
+	return t
+}
+
 // Wizardry returns the default RPG party-sheet theme.
 func Wizardry() Theme {
 	t := base("wizardry", lipgloss.Color("230"), lipgloss.Color("0"), lipgloss.Color("141"))
-	t.Warning = lipgloss.Color("215")
-	t.Success = lipgloss.Color("150")
+	t = t.withStatusColors(lipgloss.Color("215"), t.Danger, lipgloss.Color("150"))
 	return t
 }
 
