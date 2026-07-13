@@ -581,3 +581,54 @@ Acceptance criteria:
 Per `CLAUDE.md`, a full TUI is a new feature and should be a **MINOR** release when completed. Prototype-only work can live under `[Unreleased]` until the service-backed TUI is useful enough to ship.
 
 Do the version bump and `CHANGELOG.md` update as a separate release commit at the end of the shippable TUI milestone, not after every visual-prototype tweak.
+
+---
+
+## CLI-parity coverage and roadmap gaps
+
+**Added:** 2026-07-13, after the Phase 3 (read-only service-backed) milestone shipped as v1.4.0.
+
+This section audits every CLI capability against the TUI and the phases above, so nothing is missing from the roadmap by omission. Items marked *planned* were already covered by a phase; items marked **added** were roadmap gaps discovered in this audit and are now assigned; items marked *CLI-only for now* are deliberate deferrals, not oversights.
+
+### Covered by the shipped TUI (v1.4.0, read-only)
+
+| CLI capability | TUI status |
+| --- | --- |
+| `status` (game/profile/mod counts) | Dashboard summary; update/conflict counts render `?` until Phase 6 |
+| `list` (installed mods) | Installed Mods view (read-only) |
+| `list --profiles` | Profile roster (read-only, active marker) |
+| Game selection at launch | Works today via the global `-g/--game` flag (`lmm tui -g skyrim-se`) |
+
+### Already planned (no change)
+
+| CLI capability | Phase |
+| --- | --- |
+| `search`, `show` (details), auth-required messaging | Phase 4 |
+| `install`, `enable`, `disable`, `deploy`, `profile switch`, `update` (check/apply) | Phase 5 |
+| `conflicts`, `profile reorder` (load order), `profile export`/`import` entry points, update changelogs, respecting per-mod policies | Phase 6 |
+
+### Roadmap gaps — **added** to phases by this audit
+
+| Capability | Assigned | Rationale |
+| --- | --- | --- |
+| `uninstall <mod-id>` | **Phase 5** (add to the initial action set) | Same confirmation/async machinery as install; its omission from the P5 list was an oversight |
+| `update rollback <mod-id>` | **Phase 6** (update workflow) | Belongs beside apply-updates; rollback is the safety net the update view should surface |
+| `mod set-update` (notify/auto/pin) | **Phase 6** (update workflow) | P6 only *respects* policies; editing them from the update list is the natural affordance |
+| In-TUI game selector/switcher | **Phase 6** | Original BACKLOG feature ("Game selector view") dropped when this plan was drafted; multi-game users otherwise must restart the TUI. Switching only — game add/detect/set-default stay CLI-only |
+| `purge` | **Phase 6** | Destructive; requires the P5 confirmation view, and pairs with the deploy workflow |
+| `files <mod-id>` (deployed file listing) | **Phase 6** (fold into conflict/detail panels) | The P6 conflict view already renders per-file data; a per-mod file panel reuses it |
+| `profile create` / `profile delete` | **Phase 6** (profile management affordances) | P6 has switch/reorder/export/import; create/delete complete the management loop |
+
+### Deliberately CLI-only for now (revisit post-Phase 6)
+
+| Capability | Reason |
+| --- | --- |
+| `auth login`/`logout`/`status` | Login requires API-key entry and browser round-trips; Phase 4 shows clear "run `lmm auth login <source>`" instructions instead. Revisit if/when the NexusMods OAuth flow (currently deferred in TODO.local.md) lands |
+| `import` (local archives / mod_path scan) | Interactive file-picking in a TUI is heavy; the CLI flow includes fuzzy matching prompts (#27) that don't map cleanly yet |
+| `verify` (cache checksums) | Maintenance task with long runtime and rare use; no interactive benefit over the CLI |
+| `mod edit` (metadata fixes) | Rare corrective surgery; form-style editing needs widgets none of the planned views require |
+| `profile sync` / `profile apply` | Power-user reconciliation commands; semantics are easier to express (and audit) as explicit CLI invocations |
+| `game add` / `game detect` / `game set-default` / `game clear-default` | Setup-time operations, usually once per machine; keep setup in the CLI, browsing/management in the TUI |
+| Settings view; configurable keybindings (vim/standard) | Original BACKLOG wish-list items; post-v1 TUI polish once the workflows above exist. Theme is already configurable per the Phase 2 decision note |
+
+Track execution of the **added** items in the corresponding phase issues as those phases begin; this table is the checklist to copy from.

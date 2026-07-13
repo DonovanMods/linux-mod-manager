@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -12,7 +14,7 @@ import (
 func TestNewPrototypeModelDefaultsToDashboard(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 	require.Equal(t, ScreenDashboard, model.CurrentScreen())
 }
@@ -20,14 +22,14 @@ func TestNewPrototypeModelDefaultsToDashboard(t *testing.T) {
 func TestNewPrototypeModelRejectsInvalidTheme(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewPrototypeModel(Options{Theme: "bogus", Prototype: true})
+	_, err := NewPrototypeModel(Options{Theme: "bogus"})
 	require.Error(t, err)
 }
 
 func TestNumberKeysNavigateScreens(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 
 	updated := updateWithRunes(t, model, "2")
@@ -46,7 +48,7 @@ func TestNumberKeysNavigateScreens(t *testing.T) {
 func TestTabCyclesScreens(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 
 	updated := updateWithKeyType(t, model, tea.KeyTab)
@@ -59,7 +61,7 @@ func TestTabCyclesScreens(t *testing.T) {
 func TestArrowAndVimKeysNavigateScreens(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 
 	model = updateWithKeyType(t, model, tea.KeyRight)
@@ -78,8 +80,10 @@ func TestArrowAndVimKeysNavigateScreens(t *testing.T) {
 func TestSelectionMovementIsClamped(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
 	model = updateWithRunes(t, model, "2")
 
 	model = updateWithRunes(t, model, "j")
@@ -103,7 +107,7 @@ func TestSelectionMovementIsClamped(t *testing.T) {
 func TestSearchAndQuitBindings(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 
 	model = updateWithRunes(t, model, "/")
@@ -116,7 +120,7 @@ func TestSearchAndQuitBindings(t *testing.T) {
 func TestHelpToggle(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 
 	model = updateWithRunes(t, model, "?")
@@ -129,7 +133,7 @@ func TestHelpToggle(t *testing.T) {
 func TestWindowSizeExpandsViewToTerminalBounds(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry", Prototype: true})
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -202,7 +206,7 @@ func TestThemesUseDistinctLayouts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.themeName, func(t *testing.T) {
-			model, err := NewPrototypeModel(Options{Theme: tt.themeName, Prototype: true})
+			model, err := NewPrototypeModel(Options{Theme: tt.themeName})
 			require.NoError(t, err)
 			require.Equal(t, tt.want, model.Layout())
 		})
@@ -212,10 +216,11 @@ func TestThemesUseDistinctLayouts(t *testing.T) {
 func sizedPrototypeModel(t *testing.T, themeName string, width, height int) Model {
 	t.Helper()
 
-	model, err := NewPrototypeModel(Options{Theme: themeName, Prototype: true})
+	model, err := NewPrototypeModel(Options{Theme: themeName})
 	require.NoError(t, err)
 
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	loaded, _ := model.Update(model.Init()())
+	updated, _ := loaded.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	updatedModel, ok := updated.(Model)
 	require.True(t, ok)
 	return updatedModel
@@ -315,4 +320,78 @@ func TestEnterOutsideDashboardIsANoop(t *testing.T) {
 
 	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
+}
+
+type failingProvider struct{ err error }
+
+func (f failingProvider) Summary(context.Context) (Summary, error)         { return Summary{}, f.err }
+func (f failingProvider) InstalledMods(context.Context) ([]ModItem, error) { return nil, f.err }
+func (f failingProvider) SearchResults(context.Context) ([]ModItem, error) { return nil, f.err }
+func (f failingProvider) Profiles(context.Context) ([]ProfileItem, error)  { return nil, f.err }
+
+func TestModelShowsLoadingBeforeDataArrives(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: NewPrototypeProvider()})
+	require.NoError(t, err)
+
+	require.Contains(t, model.View(), "Consulting the archives")
+}
+
+func TestInitLoadsDataThroughProvider(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: NewPrototypeProvider()})
+	require.NoError(t, err)
+
+	msg := model.Init()()
+	updated, _ := model.Update(msg)
+	view := updated.(Model).View()
+
+	require.Contains(t, view, "Skyrim Special Edition")
+	require.NotContains(t, view, "Consulting the archives")
+}
+
+func TestLoadFailureRendersErrorState(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: failingProvider{err: errors.New("the archive door is sealed")}})
+	require.NoError(t, err)
+
+	msg := model.Init()()
+	updated, _ := model.Update(msg)
+	view := updated.(Model).View()
+
+	require.Contains(t, view, "the archive door is sealed")
+	require.Contains(t, view, "q: quit")
+}
+
+func TestNewModelRequiresProvider(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewModel(Options{Theme: "wizardry"})
+	require.ErrorContains(t, err, "provider")
+}
+
+type emptyProvider struct{}
+
+func (emptyProvider) Summary(context.Context) (Summary, error)         { return Summary{}, nil }
+func (emptyProvider) InstalledMods(context.Context) ([]ModItem, error) { return nil, nil }
+func (emptyProvider) SearchResults(context.Context) ([]ModItem, error) { return nil, nil }
+func (emptyProvider) Profiles(context.Context) ([]ProfileItem, error)  { return nil, nil }
+
+func TestEmptyStatesRenderHonestCopy(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: emptyProvider{}})
+	require.NoError(t, err)
+
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	model = updateWithRunes(t, model, "2")
+	require.Contains(t, model.View(), "No mods installed yet. 'lmm install <mod>' begins the quest.")
+
+	model = updateWithRunes(t, model, "3")
+	require.Contains(t, model.View(), "The archive index opens in a later chapter. (Search arrives in Phase 4.)")
 }

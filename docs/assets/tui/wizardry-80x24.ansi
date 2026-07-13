@@ -1,12 +1,12 @@
                                                                                 
-  LMM // Linux Mod Manager // Prototype Terminal                                
+  LMM // Linux Mod Manager                                                      
   [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles                   
                                                                                 
   ╭───────────────────────────────────╮ ╭───────────────────────────────────╮   
   │ PARTY                             │ │ QUEST LOG                         │   
   │ Game:    Skyrim Special Edition   │ │ 3 updates available               │   
   │ Profile: survival                 │ │ 1 file conflict                   │   
-  │ Mods:    42 installed / 39        │ │ Last deploy: 2h ago               │   
+  │ Mods:    42 installed / 39        │ │ Last deploy: ?                    │   
   │ enabled                           │ │                                   │   
   │                                   │ │                                   │   
   ╰───────────────────────────────────╯ ╰───────────────────────────────────╯   

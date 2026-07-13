@@ -143,6 +143,20 @@ lmm mod set-update 12345 --game skyrim-se --notify
 lmm mod set-update 12345 --game skyrim-se --pin
 ```
 
+### Terminal UI
+
+Browse your configured game, installed mods, and profiles interactively:
+
+```bash
+lmm tui                     # real data, read-only
+lmm tui --theme amber       # themes: wizardry (default), amber, dos, green
+lmm tui --prototype         # demo mode with static fake data
+```
+
+Keys: `tab`/`h`/`l` cycle screens, `1`–`4` jump, `↑↓`/`j`/`k` move, `enter` open,
+`/` search screen, `?` help, `q` quit. Browsing is read-only — install/update/deploy
+actions from the TUI arrive in a later release.
+
 ## Configuration
 
 Configuration files are stored in `~/.config/lmm/`:

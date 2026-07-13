@@ -2,7 +2,7 @@ package tui
 
 import "github.com/charmbracelet/bubbles/key"
 
-// KeyMap documents the prototype TUI keyboard contract.
+// KeyMap documents the TUI keyboard contract.
 type KeyMap struct {
 	Quit          key.Binding
 	Help          key.Binding
