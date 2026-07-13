@@ -267,10 +267,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = ScreenInstalledMods
 		return m, nil
 	case key.Matches(msg, m.keys.Search):
-		if m.screen == ScreenSearch {
-			m.search.input.Focus()
-			return m, textinput.Blink
-		}
+		m.screen = ScreenSearch
+		m.search.input.Focus()
+		return m, textinput.Blink
+	case key.Matches(msg, m.keys.SearchScreen):
 		m.screen = ScreenSearch
 		return m, nil
 	case key.Matches(msg, m.keys.NextPage):
@@ -778,7 +778,7 @@ func (m Model) helpView() string {
 		"arrows / hjkl       move or switch screens",
 		"tab / shift+tab     cycle top-level screens",
 		"1-4                 jump to a screen",
-		"/                   search screen / focus input",
+		"/                   search from anywhere (jumps + focuses input)",
 		"enter               search",
 		"esc                 cancel input",
 		"n/p                 result pages",

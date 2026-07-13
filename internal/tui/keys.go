@@ -11,6 +11,7 @@ type KeyMap struct {
 	Up            key.Binding
 	Down          key.Binding
 	Search        key.Binding
+	SearchScreen  key.Binding
 	Dashboard     key.Binding
 	InstalledMods key.Binding
 	Profiles      key.Binding
@@ -50,8 +51,12 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("↓/j", "down"),
 		),
 		Search: key.NewBinding(
-			key.WithKeys("/", "3"),
+			key.WithKeys("/"),
 			key.WithHelp("/", "search"),
+		),
+		SearchScreen: key.NewBinding(
+			key.WithKeys("3"),
+			key.WithHelp("3", "search screen"),
 		),
 		Dashboard: key.NewBinding(
 			key.WithKeys("1"),

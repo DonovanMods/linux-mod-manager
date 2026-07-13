@@ -32,6 +32,31 @@ func TestSlashFocusesSearchInputOnSearchScreen(t *testing.T) {
 	require.True(t, model.search.input.Focused())
 }
 
+func TestSlashFromAnyScreenJumpsAndFocuses(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	require.Equal(t, ScreenDashboard, model.CurrentScreen())
+
+	model = updateWithRunes(t, model, "/")
+	require.Equal(t, ScreenSearch, model.CurrentScreen())
+	require.True(t, model.search.input.Focused(), "single / must be enough to type")
+
+	for _, r := range "sky" {
+		model = updateWithRunes(t, model, string(r))
+	}
+	require.Equal(t, "sky", model.search.input.Value())
+}
+
+func TestNumberThreeJumpsWithoutFocusing(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	model = updateWithRunes(t, model, "3")
+	require.Equal(t, ScreenSearch, model.CurrentScreen())
+	require.False(t, model.search.input.Focused(), "3 is pure navigation")
+}
+
 func TestTypingWhileFocusedDoesNotTriggerGlobalKeys(t *testing.T) {
 	t.Parallel()
 
