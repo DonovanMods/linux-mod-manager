@@ -182,6 +182,25 @@ func TestCoreProviderSearchMarksInstalled(t *testing.T) {
 	require.Equal(t, "available", byName["NewMod"].Status)
 }
 
+func TestCoreProviderSearchDoesNotCrossSourceMarkInstalled(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"stub": "testgame"}
+	svc.RegisterSource(&stubSource{result: source.SearchResult{
+		Mods: []domain.Mod{
+			// Same mod ID as the fixture's nexusmods install, but from "stub" —
+			// ModKey(source, id) must keep these distinct.
+			{ID: "101", SourceID: "stub", Name: "SkyUI-Stub", Author: "a", Version: "5.2"},
+		},
+		TotalCount: 1, Page: 0, PageSize: 10,
+	}})
+
+	page, err := provider.Search(context.Background(), "stub", "sky", 0)
+	require.NoError(t, err)
+	require.Len(t, page.Results, 1)
+	require.Equal(t, "available", page.Results[0].Status,
+		"mod 101 is installed under nexusmods, not stub — no cross-source marking")
+}
+
 func TestCoreProviderSearchPropagatesAuthRequired(t *testing.T) {
 	provider, svc, game := newCoreProviderFixture(t)
 	game.SourceIDs = map[string]string{"stub": "testgame"}
