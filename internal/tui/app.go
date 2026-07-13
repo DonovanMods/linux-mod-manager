@@ -264,8 +264,8 @@ func (m Model) partyDashboardView() string {
 
 	quest := strings.Join([]string{
 		m.theme.PanelTitle.Render("QUEST LOG"),
-		fmt.Sprintf("%s updates available", statusValue(m.data.Stats.Updates, m.theme.Warning)),
-		fmt.Sprintf("%s file conflict", statusValue(m.data.Stats.Conflicts, m.theme.Danger)),
+		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(fmt.Sprintf("%d", m.data.Stats.Updates))),
+		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(fmt.Sprintf("%d", m.data.Stats.Conflicts))),
 		"Last deploy: 2h ago",
 	}, "\n")
 
@@ -290,7 +290,7 @@ func (m Model) terminalDashboardView() string {
 		fmt.Sprintf("> GAME     %s", m.data.Game.Name),
 		fmt.Sprintf("> PROFILE  %s", m.data.Profile.Name),
 		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.data.Stats.Installed, m.data.Stats.Enabled),
-		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", statusValue(m.data.Stats.Updates, m.theme.Warning), statusValue(m.data.Stats.Conflicts, m.theme.Danger)),
+		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", m.theme.WarningText.Render(fmt.Sprintf("%d", m.data.Stats.Updates)), m.theme.DangerText.Render(fmt.Sprintf("%d", m.data.Stats.Conflicts))),
 		"",
 		m.row(0, "RUN SPELLBOOK SCAN"),
 		m.row(1, "QUERY ARCHIVE INDEX"),
@@ -449,15 +449,4 @@ func layoutForTheme(name string) Layout {
 	default:
 		return LayoutPartySheet
 	}
-}
-
-func statusValue(value int, color lipgloss.Color) string {
-	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(fmt.Sprintf("%d", value))
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
