@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -122,4 +124,55 @@ func TestPaginationKeysRequeryWithinBounds(t *testing.T) {
 	model.search.page.Page = 0
 	_, cmd = model.Update(keyRunes("p"))
 	require.Nil(t, cmd, "prev on page 0 is a no-op")
+}
+
+func TestCtrlCQuitsWhileSearchInputFocused(t *testing.T) {
+	t.Parallel()
+	model := searchScreenModel(t)
+	model = updateWithRunes(t, model, "/") // focus
+	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	require.NotNil(t, cmd)
+	require.Equal(t, tea.Quit(), cmd())
+}
+
+func TestSearchViewRendersStates(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+
+	require.Contains(t, model.View(), "search the archives", "idle shows the input placeholder")
+
+	model.search.state = searchAuthRequired
+	model.search.authSource = "nexusmods"
+	view := model.View()
+	require.Contains(t, view, "lmm auth login nexusmods")
+
+	model.search.state = searchFailed
+	model.search.err = errors.New("the aether is down")
+	require.Contains(t, model.View(), "the aether is down")
+
+	model.search.state = searchReady
+	model.search.page = SearchPage{
+		Query: "sky", Source: "nexusmods", Page: 0, PageSize: 10, TotalCount: 12,
+		Results: []ModItem{
+			{Name: "SkyUI", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "UI overhaul.", Downloads: 1000, Endorsements: 50, HasEndorsements: true},
+			{Name: "SkyFresh", Author: "someone", Version: "1.0", Status: "available"},
+		},
+	}
+	view = model.View()
+	require.Contains(t, view, "SkyUI")
+	require.Contains(t, view, "installed")
+	require.Contains(t, view, "Page 1/2")
+	require.Contains(t, view, "UI overhaul.", "detail panel shows the selected result's summary")
+}
+
+func TestSearchViewStaysWithinBounds(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t) // 100x30
+	model.search.state = searchReady
+	model.search.page = SearchPage{Query: "q", Source: "nexusmods", PageSize: 10, TotalCount: 10,
+		Results: []ModItem{{Name: "A", Status: "available"}}}
+	require.Equal(t, model.availableWidth(), lipgloss.Width(model.screenView()))
+	require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()))
 }

@@ -542,11 +542,184 @@ func (m Model) modsView() string {
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// searchHeaderLines renders the two lines shared by every search state: the
+// panel title with the active source, and the query input itself.
+func (m Model) searchHeaderLines() []string {
+	title := m.theme.PanelTitle.Render("ARCHIVE SEARCH")
+	meta := m.theme.MutedText.Render(fmt.Sprintf("[source: %s  (s cycles)]", m.search.source()))
+	return []string{title + "  " + meta, m.search.input.View()}
+}
+
+// searchSinglePanel wraps header+body lines in one full-bounds panel, used by
+// every search state except the ready-with-results two-pane layout.
+func (m Model) searchSinglePanel(lines []string) string {
+	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
+		Render(strings.Join(lines, "\n"))
+}
+
 func (m Model) searchView() string {
-	rows := []string{m.theme.PanelTitle.Render("ARCHIVE SEARCH")}
-	rows = append(rows, m.search.input.View())
-	rows = append(rows, m.theme.MutedText.Render("The archive index opens in a later chapter. (Search arrives in Phase 4.)"))
-	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+	header := m.searchHeaderLines()
+
+	switch m.search.state {
+	case searchLoading:
+		return m.searchSinglePanel(append(header, "Consulting the archive index..."))
+	case searchAuthRequired:
+		return m.searchSinglePanel(append(header,
+			m.theme.DangerText.Render(fmt.Sprintf("Authentication required for %s.", m.search.authSource)),
+			fmt.Sprintf("Run 'lmm auth login %s' in a shell, then search again.", m.search.authSource),
+		))
+	case searchFailed:
+		return m.searchSinglePanel(append(header, m.theme.DangerText.Render(m.search.err.Error())))
+	case searchReady:
+		if len(m.search.page.Results) == 0 {
+			return m.searchSinglePanel(append(header,
+				m.theme.MutedText.Render(fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, m.search.page.Source)),
+			))
+		}
+		return m.searchReadyView(header)
+	default: // searchIdle
+		return m.searchSinglePanel(append(header, m.theme.MutedText.Render("/ focus · enter search · s source")))
+	}
+}
+
+// searchReadyView renders the two-pane results/detail layout, mirroring
+// commanderDashboardView's width math so the panes plus a 1-column gap sum to
+// exactly availableWidth().
+func (m Model) searchReadyView(header []string) string {
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+	footer := m.searchFooterLine()
+
+	paneHeight := max(height-len(header)-1, 1)
+	gap := 1
+	leftWidth := max((width-gap)/2, 1)
+	rightWidth := max(width-gap-leftWidth, 1)
+
+	// Panel content must never exceed paneContentHeight: lipgloss pads short
+	// content to a set Height() but does not clip content taller than it, so
+	// an unbounded row count or a long summary would silently grow the
+	// rendered block past paneHeight and break the exact-height invariant.
+	paneContentHeight := max(paneHeight-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	panes := lipgloss.JoinHorizontal(lipgloss.Top,
+		m.panelWithHeight(leftWidth, paneHeight).Render(m.searchResultsPane(leftWidth, paneContentHeight)),
+		" ",
+		m.panelWithHeight(rightWidth, paneHeight).Render(m.searchDetailPane(rightWidth, paneContentHeight)),
+	)
+
+	lines := append(append([]string{}, header...), panes, footer)
+	return strings.Join(lines, "\n")
+}
+
+// searchResultsPane renders the selectable result rows: name / version /
+// status, with "installed" statuses styled to pop. Column widths are derived
+// from the pane's actual content width (rather than fixed constants) and the
+// name column always absorbs whatever's left, so the three columns can never
+// sum past innerWidth. Overflowing values truncate instead of overflowing
+// into lipgloss's automatic line wrap, which would silently break the
+// exact-height layout invariant. Rows beyond maxLines are omitted for the
+// same reason (a full page of results can outnumber the available rows on a
+// short terminal).
+func (m Model) searchResultsPane(width, maxLines int) string {
+	const (
+		prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+		gaps        = 2 // the two separating spaces between columns
+	)
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	avail := max(innerWidth-prefixWidth-gaps, 3)
+	statusWidth := min(max(avail/4, 1), 9) // "installed"/"available" are 9 runes
+	versionWidth := min(max(avail/4, 1), 8)
+	nameWidth := max(avail-statusWidth-versionWidth, 1)
+
+	results := m.search.page.Results
+	if len(results) > maxLines {
+		results = results[:maxLines]
+	}
+
+	rows := make([]string, 0, len(results))
+	for i, item := range results {
+		status := fmt.Sprintf("%-*s", statusWidth, truncate(item.Status, statusWidth))
+		if item.Status == "installed" {
+			status = m.theme.WarningText.Render(status)
+		}
+		line := fmt.Sprintf("%-*s %-*s %s",
+			nameWidth, truncate(item.Name, nameWidth),
+			versionWidth, truncate(item.Version, versionWidth),
+			status)
+		rows = append(rows, m.row(i, line))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// searchDetailPane renders the fields for the currently selected result.
+// Unknown endorsements render "?" (countLabel convention: never fake data).
+// Labels and free-text values are truncated to the pane's content width for
+// the same reason searchResultsPane truncates: overflow would trigger an
+// unpredictable automatic re-wrap inside the bordered panel. The summary is
+// clipped to whatever vertical budget remains after the fixed fields so a
+// long summary can never grow the pane past maxLines.
+func (m Model) searchDetailPane(width, maxLines int) string {
+	results := m.search.page.Results
+	idx := m.selected[ScreenSearch]
+	if idx < 0 || idx >= len(results) {
+		return m.theme.MutedText.Render("No selection.")
+	}
+	item := results[idx]
+
+	endorsements := "?"
+	if item.HasEndorsements {
+		endorsements = fmt.Sprintf("%d", item.Endorsements)
+	}
+
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	labelWidth := min(13, max(innerWidth-1, 1)) // len("Endorsements ") == 13
+	valueWidth := max(innerWidth-labelWidth, 1)
+	field := func(label, value string) string {
+		return fmt.Sprintf("%-*s%s", labelWidth, truncate(label, labelWidth), truncate(value, valueWidth))
+	}
+
+	lines := []string{
+		m.theme.PanelTitle.Render("DETAIL"),
+		field("Name", item.Name),
+		field("Author", item.Author),
+		field("Version", item.Version),
+		field("Source", item.Source),
+		field("Status", item.Status),
+		field("Downloads", fmt.Sprintf("%d", item.Downloads)),
+		field("Endorsements", endorsements),
+	}
+
+	if summaryBudget := maxLines - len(lines) - 1; summaryBudget > 0 && item.Summary != "" {
+		lines = append(lines, "")
+		summary := strings.Split(m.theme.MutedText.Width(innerWidth).Render(item.Summary), "\n")
+		if len(summary) > summaryBudget {
+			summary = summary[:summaryBudget]
+			last := summaryBudget - 1
+			summary[last] = strings.TrimRight(summary[last], " ") + m.theme.MutedText.Render("…")
+		}
+		lines = append(lines, summary...)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// searchFooterLine renders pagination status. The total-pages figure only
+// appears when the source reports a TotalCount; otherwise only the current
+// page and (if available) the next-page hint are shown.
+func (m Model) searchFooterLine() string {
+	page := m.search.page
+	current := page.Page + 1
+
+	if page.TotalCount > 0 && page.PageSize > 0 {
+		totalPages := (page.TotalCount + page.PageSize - 1) / page.PageSize
+		return fmt.Sprintf("Page %d/%d (%d results) · n next · p prev", current, totalPages, page.TotalCount)
+	}
+
+	footer := fmt.Sprintf("Page %d", current)
+	if m.search.hasNextPage() {
+		footer += " · n next"
+	}
+	return footer
 }
 
 func (m Model) profilesView() string {
@@ -569,6 +742,7 @@ func (m Model) helpView() string {
 		"tab / shift+tab     cycle top-level screens",
 		"1-4                 jump to a screen",
 		"/                   open search screen",
+		"/ focus · enter search · esc cancel · n/p pages · s source",
 		"?                   toggle this help",
 		"q / ctrl+c           quit",
 		"",
@@ -630,6 +804,24 @@ func countLabel(n int) string {
 		return "?"
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// truncate returns s trimmed to at most width runes, marking a cut with a
+// trailing ellipsis. Used to keep fixed-width row/field values from
+// overflowing a panel's content width, which would otherwise trigger
+// lipgloss's automatic re-wrap and silently grow the rendered line count.
+func truncate(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= width {
+		return s
+	}
+	if width == 1 {
+		return string(runes[:1])
+	}
+	return string(runes[:width-1]) + "…"
 }
 
 func layoutForTheme(name string) Layout {

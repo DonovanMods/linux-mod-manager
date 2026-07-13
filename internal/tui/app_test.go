@@ -401,7 +401,7 @@ func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	require.Contains(t, model.View(), "No mods installed yet. 'lmm install <mod>' begins the quest.")
 
 	model = updateWithRunes(t, model, "3")
-	require.Contains(t, model.View(), "The archive index opens in a later chapter. (Search arrives in Phase 4.)")
+	require.Contains(t, model.View(), "/ focus · enter search · s source")
 }
 
 // recordingProvider wraps a delegate DataProvider and records the context
