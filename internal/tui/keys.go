@@ -15,6 +15,11 @@ type KeyMap struct {
 	InstalledMods key.Binding
 	Profiles      key.Binding
 	Select        key.Binding
+	Submit        key.Binding
+	Blur          key.Binding
+	NextPage      key.Binding
+	PrevPage      key.Binding
+	CycleSource   key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -63,6 +68,26 @@ func DefaultKeyMap() KeyMap {
 		Select: key.NewBinding(
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "open"),
+		),
+		Submit: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "search"),
+		),
+		Blur: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "cancel input"),
+		),
+		NextPage: key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "next page"),
+		),
+		PrevPage: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "prev page"),
+		),
+		CycleSource: key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "cycle source"),
 		),
 	}
 }

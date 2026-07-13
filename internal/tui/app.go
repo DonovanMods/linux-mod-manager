@@ -2,13 +2,16 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/theme"
 )
 
@@ -36,7 +39,9 @@ const (
 type Options struct {
 	Theme    string
 	Provider DataProvider
-	Ctx      context.Context
+	// Ctx seeds Model.ctx; see that field for why the context is stored
+	// rather than threaded as a parameter.
+	Ctx context.Context
 }
 
 // Model is the root Bubble Tea model for the lmm TUI.
@@ -45,7 +50,10 @@ type Model struct {
 	layout   Layout
 	keys     KeyMap
 	provider DataProvider
-	ctx      context.Context
+	// ctx deviates from "don't store contexts in structs": Bubble Tea's
+	// Init/Update/View take no context parameter, so commands (e.g.
+	// startSearch) close over m.ctx to reach it from goroutines.
+	ctx context.Context
 
 	state   loadState
 	loadErr error
@@ -53,6 +61,7 @@ type Model struct {
 	summary  Summary
 	mods     []ModItem
 	profiles []ProfileItem
+	search   searchModel
 
 	screen   Screen
 	selected map[Screen]int
@@ -102,6 +111,7 @@ func NewModel(options Options) (Model, error) {
 		ctx:      options.Ctx,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
+		search:   newSearchModel(options.Provider),
 		selected: map[Screen]int{
 			ScreenDashboard:     0,
 			ScreenInstalledMods: 0,
@@ -187,6 +197,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateFailed
 		m.loadErr = msg.err
 		return m, nil
+	case searchResultMsg:
+		if msg.gen != m.search.gen {
+			return m, nil
+		}
+		m.search.state = searchReady
+		m.search.page = msg.page
+		m.selected[ScreenSearch] = 0
+		return m, nil
+	case searchFailedMsg:
+		if msg.gen != m.search.gen {
+			return m, nil
+		}
+		if errors.Is(msg.err, domain.ErrAuthRequired) {
+			m.search.state = searchAuthRequired
+			m.search.authSource = msg.source
+			return m, nil
+		}
+		m.search.state = searchFailed
+		m.search.err = msg.err
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -199,6 +229,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.screen == ScreenSearch && m.search.input.Focused() {
+		switch {
+		case key.Matches(msg, m.keys.Quit) && msg.String() == "ctrl+c":
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.Blur):
+			m.search.input.Blur()
+			return m, nil
+		case key.Matches(msg, m.keys.Submit):
+			m.search.input.Blur()
+			return m.startSearch(m.search.input.Value(), 0)
+		default:
+			var cmd tea.Cmd
+			m.search.input, cmd = m.search.input.Update(msg)
+			return m, cmd
+		}
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
@@ -218,7 +265,26 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = ScreenInstalledMods
 		return m, nil
 	case key.Matches(msg, m.keys.Search):
+		if m.screen == ScreenSearch {
+			m.search.input.Focus()
+			return m, textinput.Blink
+		}
 		m.screen = ScreenSearch
+		return m, nil
+	case key.Matches(msg, m.keys.NextPage):
+		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.hasNextPage() {
+			return m.startSearch(m.search.page.Query, m.search.page.Page+1)
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.PrevPage):
+		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.page.Page > 0 {
+			return m.startSearch(m.search.page.Query, m.search.page.Page-1)
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.CycleSource):
+		if m.screen == ScreenSearch && len(m.search.sources) > 1 {
+			m.search.sourceIdx = (m.search.sourceIdx + 1) % len(m.search.sources)
+		}
 		return m, nil
 	case key.Matches(msg, m.keys.Profiles):
 		m.screen = ScreenProfiles
@@ -314,7 +380,7 @@ func (m Model) itemCount(screen Screen) int {
 	case ScreenInstalledMods:
 		return len(m.mods)
 	case ScreenSearch:
-		return 0 // Search results populated by Task 4
+		return len(m.search.page.Results)
 	case ScreenProfiles:
 		return len(m.profiles)
 	default:
@@ -478,6 +544,7 @@ func (m Model) modsView() string {
 
 func (m Model) searchView() string {
 	rows := []string{m.theme.PanelTitle.Render("ARCHIVE SEARCH")}
+	rows = append(rows, m.search.input.View())
 	rows = append(rows, m.theme.MutedText.Render("The archive index opens in a later chapter. (Search arrives in Phase 4.)"))
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
