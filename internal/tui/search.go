@@ -50,12 +50,34 @@ type searchFailedMsg struct {
 	source string
 }
 
+// searchInputPromptAllowance reserves room for the query input's "> " prompt
+// plus its trailing cursor cell, so searchInputWidthFor's value-viewport
+// width keeps prompt+value+cursor inside the panel's content width. Without
+// this, a value near the viewport width can overflow by one cell and
+// word-wrap inside the width-set search panel instead of h-scrolling.
+const searchInputPromptAllowance = 4
+
+// searchInputWidthFor derives the query input's value-viewport width (see
+// textinput.Model.Width) from the content width available to the search
+// panel and that panel's horizontal frame size (border + padding), so a long
+// query scrolls horizontally within the input instead of word-wrapping
+// inside the width-set search panel and growing the view past
+// availableContentHeight.
+func searchInputWidthFor(availableWidth, panelHorizontalFrameSize int) int {
+	inner := availableWidth - panelHorizontalFrameSize
+	return max(inner-searchInputPromptAllowance, 10)
+}
+
 // newSearchModel builds the search sub-model, seeding its source list from
-// the DataProvider.
-func newSearchModel(provider DataProvider) searchModel {
+// the DataProvider. The input's Width defaults from defaultContentWidth (the
+// same zero-size fallback availableWidth uses) so the input stays bounded
+// even in tests that never send a tea.WindowSizeMsg; Update's
+// tea.WindowSizeMsg case recomputes it once real terminal dimensions arrive.
+func newSearchModel(provider DataProvider, panelHorizontalFrameSize int) searchModel {
 	input := textinput.New()
 	input.Placeholder = "search the archives"
 	input.CharLimit = 120
+	input.Width = searchInputWidthFor(defaultContentWidth, panelHorizontalFrameSize)
 	return searchModel{input: input, sources: provider.Sources()}
 }
 

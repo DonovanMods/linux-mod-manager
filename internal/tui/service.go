@@ -7,6 +7,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
 
+// SearchPageSize mirrors the CLI picker's displayPageSize (cmd/lmm/install.go).
 const SearchPageSize = 10
 
 // Summary is the dashboard header data.

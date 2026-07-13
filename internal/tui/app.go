@@ -112,7 +112,7 @@ func NewModel(options Options) (Model, error) {
 		ctx:      options.Ctx,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
-		search:   newSearchModel(options.Provider),
+		search:   newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize()),
 		selected: map[Screen]int{
 			ScreenDashboard:     0,
 			ScreenInstalledMods: 0,
@@ -221,6 +221,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.search.input.Width = searchInputWidthFor(m.availableWidth(), m.theme.Panel.GetHorizontalFrameSize())
 		return m, nil
 	case tea.KeyMsg:
 		return m.updateKey(msg)
@@ -285,6 +286,18 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.CycleSource):
 		if m.screen == ScreenSearch && len(m.search.sources) > 1 {
 			m.search.sourceIdx = (m.search.sourceIdx + 1) % len(m.search.sources)
+			// Cycling the target source must not leave the header, results,
+			// and pagination disagreeing about which source they describe:
+			// cancel any in-flight query for the old source, bump gen so a
+			// late result/failure for it is discarded as stale, and drop
+			// back to idle (keeping the typed query) so the user resubmits
+			// explicitly against the new source.
+			if m.search.cancel != nil {
+				m.search.cancel()
+				m.search.cancel = nil
+			}
+			m.search.gen++
+			m.search.state = searchIdle
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Profiles):
@@ -544,10 +557,19 @@ func (m Model) modsView() string {
 }
 
 // searchHeaderLines renders the two lines shared by every search state: the
-// panel title with the active source, and the query input itself.
+// panel title with the active source, and the query input itself. In
+// searchReady, the source label reflects m.search.page.Source (the source
+// the on-screen results actually came from) rather than m.search.source()
+// (the target of the next search), so cycling sources mid-view can never
+// make the header claim a source the results don't match. Every other state
+// has no results yet, so source() (the next search's target) is correct.
 func (m Model) searchHeaderLines() []string {
 	title := m.theme.PanelTitle.Render("ARCHIVE SEARCH")
-	meta := m.theme.MutedText.Render(fmt.Sprintf("[source: %s  (s cycles)]", m.search.source()))
+	source := m.search.source()
+	if m.search.state == searchReady {
+		source = m.search.page.Source
+	}
+	meta := m.theme.MutedText.Render(fmt.Sprintf("[source: %s  (s cycles)]", source))
 	return []string{title + "  " + meta, m.search.input.View()}
 }
 
@@ -757,7 +779,10 @@ func (m Model) helpView() string {
 		"tab / shift+tab     cycle top-level screens",
 		"1-4                 jump to a screen",
 		"/                   open search screen",
-		"/ focus · enter search · esc cancel · n/p pages · s source",
+		"enter               search",
+		"esc                 cancel input",
+		"n/p                 result pages",
+		"s                   cycle source",
 		"?                   toggle this help",
 		"q / ctrl+c           quit",
 		"",

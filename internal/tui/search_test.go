@@ -110,6 +110,49 @@ func TestCycleSourceKey(t *testing.T) {
 	require.Equal(t, 0, model.search.sourceIdx, "cycling wraps")
 }
 
+func TestCycleSourceInvalidatesInFlightAndResults(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.sources = []string{"curseforge", "nexusmods"}
+	model.search.state = searchLoading
+	model.search.gen = 3
+
+	model = updateWithRunes(t, model, "s")
+	require.Equal(t, searchIdle, model.search.state, "cycling resets state")
+	require.Greater(t, model.search.gen, 3, "gen bumped so in-flight results are stale")
+
+	// The in-flight result from the old source must now be discarded.
+	updated, _ := model.Update(searchResultMsg{gen: 3, page: SearchPage{Source: "curseforge", Query: "x"}})
+	require.Equal(t, searchIdle, updated.(Model).search.state)
+}
+
+func TestReadyHeaderShowsResultSourceNotTarget(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.sources = []string{"curseforge", "nexusmods"}
+	model.search.state = searchReady
+	model.search.page = SearchPage{Query: "q", Source: "nexusmods", PageSize: 10, TotalCount: 1,
+		Results: []ModItem{{Name: "A", Status: "available"}}}
+	model.search.sourceIdx = 0 // target is curseforge, results are nexusmods
+
+	require.Contains(t, model.View(), "nexusmods", "ready view labels the results' actual source")
+}
+
+func TestLongQueryDoesNotBreakSearchHeightInvariant(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 80, 24)
+	model = updateWithRunes(t, model, "3")
+	model = updateWithRunes(t, model, "/")
+	for range 100 {
+		model = updateWithRunes(t, model, "x")
+	}
+	require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()))
+	require.Equal(t, model.availableWidth(), lipgloss.Width(model.screenView()))
+}
+
 func TestPaginationKeysRequeryWithinBounds(t *testing.T) {
 	t.Parallel()
 
@@ -164,6 +207,16 @@ func TestSearchViewRendersStates(t *testing.T) {
 	require.Contains(t, view, "installed")
 	require.Contains(t, view, "Page 1/2")
 	require.Contains(t, view, "UI overhaul.", "detail panel shows the selected result's summary")
+
+	model.search.page.Results = append(model.search.page.Results,
+		ModItem{Name: "SkyUnknown", Author: "someone", Version: "0.1", Status: "available", HasEndorsements: false})
+	model.selected[ScreenSearch] = len(model.search.page.Results) - 1
+	view = model.View()
+	require.Contains(t, view, "Endorsements ?", "unknown endorsements render as ?")
+
+	model.search.page = SearchPage{Query: "nothing", Source: "nexusmods", PageSize: 10}
+	view = model.View()
+	require.Contains(t, view, "No archives matched", "zero-result state renders honest copy")
 }
 
 func TestSearchViewStaysWithinBounds(t *testing.T) {

@@ -47,6 +47,11 @@ func TestPrototypeProviderSearchFiltersCannedResults(t *testing.T) {
 	all, err := provider.Search(ctx, "nexusmods", "", 0)
 	require.NoError(t, err)
 	require.Len(t, all.Results, len(prototype.Load().SearchResults), "empty query returns everything")
+
+	none, err := provider.Search(ctx, "nexusmods", "zzz-nothing", 0)
+	require.NoError(t, err)
+	require.Empty(t, none.Results, "no match returns an empty page")
+	require.Equal(t, 0, none.TotalCount)
 }
 
 func TestPrototypeProviderProfiles(t *testing.T) {
