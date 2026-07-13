@@ -403,3 +403,47 @@ func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	model = updateWithRunes(t, model, "3")
 	require.Contains(t, model.View(), "The archive index opens in a later chapter. (Search arrives in Phase 4.)")
 }
+
+// recordingProvider wraps a delegate DataProvider and records the context
+// passed to Overview for test verification.
+type recordingProvider struct {
+	delegate   DataProvider
+	onOverview func(context.Context)
+}
+
+func (r recordingProvider) Overview(ctx context.Context) (Summary, []ModItem, error) {
+	if r.onOverview != nil {
+		r.onOverview(ctx)
+	}
+	return r.delegate.Overview(ctx)
+}
+
+func (r recordingProvider) Profiles(ctx context.Context) ([]ProfileItem, error) {
+	return r.delegate.Profiles(ctx)
+}
+
+func (r recordingProvider) Sources() []string {
+	return r.delegate.Sources()
+}
+
+func (r recordingProvider) Search(ctx context.Context, source, query string, page int) (SearchPage, error) {
+	return r.delegate.Search(ctx, source, query, page)
+}
+
+func TestModelUsesProvidedContext(t *testing.T) {
+	t.Parallel()
+
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
+
+	var seen context.Context
+	provider := recordingProvider{
+		delegate:   NewPrototypeProvider(),
+		onOverview: func(c context.Context) { seen = c },
+	}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Ctx: ctx})
+	require.NoError(t, err)
+
+	model.Init()()
+	require.Equal(t, "marker", seen.Value(ctxKey{}))
+}

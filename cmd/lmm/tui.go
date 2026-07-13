@@ -41,7 +41,7 @@ func init() {
 
 func runTUI(cmd *cobra.Command, args []string) error {
 	if tuiOptions.prototype {
-		model, err := tui.NewModel(tui.Options{Theme: tuiOptions.theme, Provider: tui.NewPrototypeProvider()})
+		model, err := tui.NewModel(tui.Options{Theme: tuiOptions.theme, Provider: tui.NewPrototypeProvider(), Ctx: cmd.Context()})
 		if err != nil {
 			return err
 		}
@@ -62,6 +62,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		model, err := tui.NewModel(tui.Options{
 			Theme:    tuiOptions.theme,
 			Provider: tui.NewCoreProvider(svc, game, profileName),
+			Ctx:      ctx,
 		})
 		if err != nil {
 			return err

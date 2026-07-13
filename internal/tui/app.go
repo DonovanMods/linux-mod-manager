@@ -36,6 +36,7 @@ const (
 type Options struct {
 	Theme    string
 	Provider DataProvider
+	Ctx      context.Context
 }
 
 // Model is the root Bubble Tea model for the lmm TUI.
@@ -44,6 +45,7 @@ type Model struct {
 	layout   Layout
 	keys     KeyMap
 	provider DataProvider
+	ctx      context.Context
 
 	state   loadState
 	loadErr error
@@ -88,11 +90,16 @@ func NewModel(options Options) (Model, error) {
 		return Model{}, err
 	}
 
+	if options.Ctx == nil {
+		options.Ctx = context.Background()
+	}
+
 	return Model{
 		theme:    t,
 		layout:   layoutForTheme(t.Name),
 		keys:     DefaultKeyMap(),
 		provider: options.Provider,
+		ctx:      options.Ctx,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
 		selected: map[Screen]int{
@@ -156,13 +163,11 @@ func (m Model) Init() tea.Cmd {
 // loadData fetches all dashboard data through the configured DataProvider.
 // It runs as a Bubble Tea command, off the update loop.
 func (m Model) loadData() tea.Msg {
-	ctx := context.Background()
-
-	summary, mods, err := m.provider.Overview(ctx)
+	summary, mods, err := m.provider.Overview(m.ctx)
 	if err != nil {
 		return loadFailedMsg{err: err}
 	}
-	profiles, err := m.provider.Profiles(ctx)
+	profiles, err := m.provider.Profiles(m.ctx)
 	if err != nil {
 		return loadFailedMsg{err: err}
 	}
