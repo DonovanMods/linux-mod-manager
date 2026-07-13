@@ -48,10 +48,9 @@ type Model struct {
 	state   loadState
 	loadErr error
 
-	summary       Summary
-	mods          []ModItem
-	searchResults []ModItem
-	profiles      []ProfileItem
+	summary  Summary
+	mods     []ModItem
+	profiles []ProfileItem
 
 	screen   Screen
 	selected map[Screen]int
@@ -71,10 +70,9 @@ const (
 
 // dataLoadedMsg carries data successfully loaded through a DataProvider.
 type dataLoadedMsg struct {
-	summary       Summary
-	mods          []ModItem
-	searchResults []ModItem
-	profiles      []ProfileItem
+	summary  Summary
+	mods     []ModItem
+	profiles []ProfileItem
 }
 
 // loadFailedMsg carries an error from a failed DataProvider load.
@@ -160,15 +158,7 @@ func (m Model) Init() tea.Cmd {
 func (m Model) loadData() tea.Msg {
 	ctx := context.Background()
 
-	summary, err := m.provider.Summary(ctx)
-	if err != nil {
-		return loadFailedMsg{err: err}
-	}
-	mods, err := m.provider.InstalledMods(ctx)
-	if err != nil {
-		return loadFailedMsg{err: err}
-	}
-	results, err := m.provider.SearchResults(ctx)
+	summary, mods, err := m.provider.Overview(ctx)
 	if err != nil {
 		return loadFailedMsg{err: err}
 	}
@@ -177,7 +167,7 @@ func (m Model) loadData() tea.Msg {
 		return loadFailedMsg{err: err}
 	}
 
-	return dataLoadedMsg{summary: summary, mods: mods, searchResults: results, profiles: profiles}
+	return dataLoadedMsg{summary: summary, mods: mods, profiles: profiles}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -186,7 +176,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateReady
 		m.summary = msg.summary
 		m.mods = msg.mods
-		m.searchResults = msg.searchResults
 		m.profiles = msg.profiles
 		return m, nil
 	case loadFailedMsg:
@@ -320,7 +309,7 @@ func (m Model) itemCount(screen Screen) int {
 	case ScreenInstalledMods:
 		return len(m.mods)
 	case ScreenSearch:
-		return len(m.searchResults)
+		return 0 // Search results populated by Task 4
 	case ScreenProfiles:
 		return len(m.profiles)
 	default:
@@ -484,12 +473,7 @@ func (m Model) modsView() string {
 
 func (m Model) searchView() string {
 	rows := []string{m.theme.PanelTitle.Render("ARCHIVE SEARCH")}
-	if len(m.searchResults) == 0 {
-		rows = append(rows, m.theme.MutedText.Render("The archive index opens in a later chapter. (Search arrives in Phase 4.)"))
-	}
-	for i, mod := range m.searchResults {
-		rows = append(rows, m.modRow(i, mod))
-	}
+	rows = append(rows, m.theme.MutedText.Render("The archive index opens in a later chapter. (Search arrives in Phase 4.)"))
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 

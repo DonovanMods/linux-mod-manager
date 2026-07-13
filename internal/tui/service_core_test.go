@@ -64,10 +64,10 @@ func newCoreProviderFixture(t *testing.T) (tui.DataProvider, *core.Service, *dom
 	return tui.NewCoreProvider(svc, game, "default"), svc, game
 }
 
-func TestCoreProviderSummary(t *testing.T) {
+func TestCoreProviderOverview(t *testing.T) {
 	provider, _, _ := newCoreProviderFixture(t)
 
-	summary, err := provider.Summary(context.Background())
+	summary, mods, err := provider.Overview(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "Test Game", summary.GameName)
 	require.Equal(t, "default", summary.ProfileName)
@@ -75,15 +75,8 @@ func TestCoreProviderSummary(t *testing.T) {
 	require.Equal(t, 1, summary.Enabled)
 	require.Equal(t, -1, summary.Updates, "updates are unknown until an update check runs")
 	require.Equal(t, -1, summary.Conflicts, "conflicts are unknown in the read-only phase")
-}
 
-func TestCoreProviderInstalledMods(t *testing.T) {
-	provider, _, _ := newCoreProviderFixture(t)
-
-	mods, err := provider.InstalledMods(context.Background())
-	require.NoError(t, err)
 	require.Len(t, mods, 2)
-
 	byName := map[string]tui.ModItem{}
 	for _, m := range mods {
 		byName[m.Name] = m
@@ -92,14 +85,6 @@ func TestCoreProviderInstalledMods(t *testing.T) {
 	require.Equal(t, "nexusmods", byName["SkyUI"].Source)
 	require.Equal(t, "5.2", byName["SkyUI"].Version)
 	require.Equal(t, "disabled", byName["USSEP"].Status)
-}
-
-func TestCoreProviderSearchResultsAreEmptyUntilPhase4(t *testing.T) {
-	provider, _, _ := newCoreProviderFixture(t)
-
-	results, err := provider.SearchResults(context.Background())
-	require.NoError(t, err)
-	require.Empty(t, results)
 }
 
 func TestCoreProviderProfiles(t *testing.T) {

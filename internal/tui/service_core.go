@@ -21,10 +21,10 @@ func NewCoreProvider(svc *core.Service, game *domain.Game, profileName string) D
 	return &coreProvider{svc: svc, game: game, profile: profileName}
 }
 
-func (p *coreProvider) Summary(_ context.Context) (Summary, error) {
+func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 	mods, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
 	if err != nil {
-		return Summary{}, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
+		return Summary{}, nil, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
 	}
 
 	enabled := 0
@@ -32,22 +32,6 @@ func (p *coreProvider) Summary(_ context.Context) (Summary, error) {
 		if mod.Enabled {
 			enabled++
 		}
-	}
-
-	return Summary{
-		GameName:    p.game.Name,
-		ProfileName: p.profile,
-		Installed:   len(mods),
-		Enabled:     enabled,
-		Updates:     -1, // unknown: update checks are a Phase 6 workflow
-		Conflicts:   -1, // unknown: conflict detection is a Phase 6 workflow
-	}, nil
-}
-
-func (p *coreProvider) InstalledMods(_ context.Context) ([]ModItem, error) {
-	mods, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
-	if err != nil {
-		return nil, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
 	}
 
 	items := make([]ModItem, 0, len(mods))
@@ -60,13 +44,30 @@ func (p *coreProvider) InstalledMods(_ context.Context) ([]ModItem, error) {
 			Status:  installedModStatus(mod),
 		})
 	}
-	return items, nil
+
+	return Summary{
+		GameName:    p.game.Name,
+		ProfileName: p.profile,
+		Installed:   len(mods),
+		Enabled:     enabled,
+		Updates:     -1, // unknown: update checks are a Phase 6 workflow
+		Conflicts:   -1, // unknown: conflict detection is a Phase 6 workflow
+	}, items, nil
 }
 
-// SearchResults is an honest placeholder until Phase 4 wires real source
+func (p *coreProvider) Sources() []string {
+	return []string{"nexusmods"}
+}
+
+// Search is an honest placeholder until Phase 4 wires real source
 // search into the TUI.
-func (p *coreProvider) SearchResults(_ context.Context) ([]ModItem, error) {
-	return nil, nil
+func (p *coreProvider) Search(_ context.Context, source, query string, _ int) (SearchPage, error) {
+	return SearchPage{
+		Query:    query,
+		Source:   source,
+		Page:     0,
+		PageSize: SearchPageSize,
+	}, nil
 }
 
 func (p *coreProvider) Profiles(_ context.Context) ([]ProfileItem, error) {

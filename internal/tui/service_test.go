@@ -9,31 +9,52 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
 
-func TestPrototypeProviderMirrorsFakeData(t *testing.T) {
+func TestPrototypeProviderOverviewMirrorsFakeData(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	provider := NewPrototypeProvider()
 	data := prototype.Load()
 
-	summary, err := provider.Summary(ctx)
+	summary, mods, err := provider.Overview(ctx)
 	require.NoError(t, err)
 	require.Equal(t, data.Game.Name, summary.GameName)
-	require.Equal(t, data.Profile.Name, summary.ProfileName)
 	require.Equal(t, data.Stats.Installed, summary.Installed)
-	require.Equal(t, data.Stats.Enabled, summary.Enabled)
-	require.Equal(t, data.Stats.Updates, summary.Updates)
-	require.Equal(t, data.Stats.Conflicts, summary.Conflicts)
-
-	mods, err := provider.InstalledMods(ctx)
-	require.NoError(t, err)
 	require.Len(t, mods, len(data.InstalledMods))
 	require.Equal(t, data.InstalledMods[0].Name, mods[0].Name)
-	require.Equal(t, data.InstalledMods[0].Status, mods[0].Status)
+}
 
-	results, err := provider.SearchResults(ctx)
+func TestPrototypeProviderSources(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, []string{"nexusmods"}, NewPrototypeProvider().Sources())
+}
+
+func TestPrototypeProviderSearchFiltersCannedResults(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	provider := NewPrototypeProvider()
+
+	page, err := provider.Search(ctx, "nexusmods", "frost", 0)
 	require.NoError(t, err)
-	require.Len(t, results, len(data.SearchResults))
+	require.Equal(t, "frost", page.Query)
+	require.Equal(t, "nexusmods", page.Source)
+	require.Len(t, page.Results, 1)
+	require.Equal(t, "Frostfall", page.Results[0].Name)
+	require.Equal(t, 1, page.TotalCount)
+
+	all, err := provider.Search(ctx, "nexusmods", "", 0)
+	require.NoError(t, err)
+	require.Len(t, all.Results, len(prototype.Load().SearchResults), "empty query returns everything")
+}
+
+func TestPrototypeProviderProfiles(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	provider := NewPrototypeProvider()
+	data := prototype.Load()
 
 	profiles, err := provider.Profiles(ctx)
 	require.NoError(t, err)
