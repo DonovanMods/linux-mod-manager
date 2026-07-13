@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Workflow
 
@@ -12,8 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Read these global guidance files before starting any development work:
 
-- `~/.claude/DEV.md` - Project-agnostic development practices (test-first, fail-fast, error handling)
-- `~/.claude/GO.md` - Go-specific conventions (error wrapping, context threading, table-driven tests)
+- `~/.Codex/DEV.md` - Project-agnostic development practices (test-first, fail-fast, error handling)
+- `~/.Codex/GO.md` - Go-specific conventions (error wrapping, context threading, table-driven tests)
 
 ## Project Overview
 
