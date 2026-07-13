@@ -778,7 +778,7 @@ func (m Model) helpView() string {
 		"arrows / hjkl       move or switch screens",
 		"tab / shift+tab     cycle top-level screens",
 		"1-4                 jump to a screen",
-		"/                   open search screen",
+		"/                   search screen / focus input",
 		"enter               search",
 		"esc                 cancel input",
 		"n/p                 result pages",

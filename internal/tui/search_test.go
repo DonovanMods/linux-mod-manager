@@ -253,3 +253,19 @@ func TestTruncateIsDisplayWidthAware(t *testing.T) {
 	require.LessOrEqual(t, lipgloss.Width(truncate("模组名称超长测试", 10)), 10)
 	require.Equal(t, "short", truncate("short", 10))
 }
+
+func TestSubmitWithNoConfiguredSourcesFailsClearly(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.sources = nil
+	model = updateWithRunes(t, model, "/")
+	for _, r := range "sky" {
+		model = updateWithRunes(t, model, string(r))
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m := updated.(Model)
+	require.Nil(t, cmd, "no search command without a source")
+	require.Equal(t, searchFailed, m.search.state)
+	require.Contains(t, m.View(), "no mod sources configured")
+}

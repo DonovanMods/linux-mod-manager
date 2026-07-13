@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -102,6 +103,13 @@ func (s searchModel) hasNextPage() bool {
 // startSearch cancels any in-flight search, bumps the generation, and returns
 // the model plus a command executing the new query.
 func (m Model) startSearch(query string, page int) (Model, tea.Cmd) {
+	// Guard: no sources configured for this game
+	if m.search.source() == "" {
+		m.search.state = searchFailed
+		m.search.err = errors.New("no mod sources configured for this game; add one with 'lmm game add' or edit games.yaml")
+		return m, nil
+	}
+
 	if m.search.cancel != nil {
 		m.search.cancel()
 	}
