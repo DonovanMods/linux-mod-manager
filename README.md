@@ -228,9 +228,9 @@ This allows you to store different games' mods on different drives (e.g., large 
 
 ## Custom Sources
 
-In addition to built-in mod sources (NexusMods, CurseForge), you can define custom sources declaratively in YAML files. This allows you to integrate local directories or remote mod repositories without any code changes.
+In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. This release adds the definition format plus the `lmm source` commands for authoring and validating those files; using a custom source from `search`/`install` requires an implemented source type, and the first one (`directory`) ships in the next release.
 
-Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml`. Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
+Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml` (or `*.yml`). Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
 
 ### Source Definition Format
 
@@ -251,28 +251,8 @@ directory:
 | ----------- | ------- | -------- | ----------------------------------------------------------------------------------- |
 | `id`        | string  | yes      | Unique source identifier; must contain only lowercase letters, numbers, and hyphens |
 | `name`      | string  | yes      | Display name shown in source lists and commands                                     |
-| `type`      | string  | yes      | Source type: `directory` (v1), `manifest` (planned), `api` (planned)                |
+| `type`      | string  | yes      | Source type: `directory`, `manifest`, or `api`. All three parse and validate today; `directory` support (search/install) ships in the next release, `manifest`/`api` in later releases. |
 | `allow_http` | boolean | no       | If `true`, allow unencrypted http:// URLs (default `false`, HTTPS only)            |
-
-### Directory Source
-
-A directory source treats a local folder as a mod repository. Each subdirectory or archive file (`.zip`, `.jar`) is treated as a mod.
-
-```yaml
-id: my-local-mods
-name: My Local Mods
-type: directory
-directory:
-  path: ~/projects/my-mods    # ~ expands to home directory
-```
-
-**How it works:**
-
-- Mods are discovered by scanning the directory for subdirectories and archives
-- Mod metadata (name, version, author) is read from metadata files (e.g., `ModInfo.xml` for 7D2D) or inferred from the directory name
-- Mod ID is the directory or file base name (stable across versions)
-- Install/update/enable/disable work like any other source — the linker handles deployment to the game directory
-- Updates are detected by comparing installed version to current metadata version
 
 ### Source Management Commands
 
@@ -288,7 +268,6 @@ Output:
 ID          NAME        TYPE      AUTH  CAPABILITIES              ERROR
 nexusmods   Nexus Mods  built-in  yes   search,deps,updates,auth  
 curseforge  CurseForge  built-in  yes   search,deps,updates,auth  
-donovan-mods Donovan's 7D2D Modlets directory no search,updates
 ```
 
 Validate a source definition file before use:
@@ -325,24 +304,12 @@ Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
    EOF
    ```
 
-3. (Optional) Validate the definition:
+3. Validate the definition:
    ```bash
    lmm source validate ~/.config/lmm/sources/my-mods.yaml
    ```
 
-4. Add the source to your game's `sources` map in `~/.config/lmm/games.yaml`:
-   ```yaml
-   games:
-     my-game:
-       sources:
-         my-local-mods: ""  # empty string for directory sources (no game-specific ID)
-   ```
-
-5. Use the source with all standard commands:
-   ```bash
-   lmm search --source my-local-mods --game my-game
-   lmm install --source my-local-mods "mod-name" --game my-game
-   ```
+That's as far as this release goes. The definition loads and validates, and it will show up as an `error` row in `lmm source list` if it's ever broken — but no source type is implemented yet, so lmm skips it at startup with a warning, and `lmm search --source my-local-mods` / `lmm install --source my-local-mods` won't find it. Support for the `directory` type — the first source you can actually use — ships in the next release.
 
 ## CLI Reference
 
