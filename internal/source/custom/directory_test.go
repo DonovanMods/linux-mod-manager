@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -167,4 +168,20 @@ func TestDirectoryFilesAndDownloadURL(t *testing.T) {
 	require.Len(t, zipFiles, 1)
 	assert.Equal(t, "archived-mod-2.0.zip", zipFiles[0].FileName)
 	assert.Equal(t, int64(8), zipFiles[0].Size) // len("zipbytes")
+}
+
+func TestDirectoryCheckUpdates(t *testing.T) {
+	d := newTestDirectory(t) // BiggerBackpack is at 1.2.0
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "BiggerBackpack", SourceID: "my-mods", Name: "Bigger Backpack", Version: "1.0.0"}},
+		{Mod: domain.Mod{ID: "PlainMod-0.5", SourceID: "my-mods", Name: "PlainMod", Version: "0.5"}},
+		{Mod: domain.Mod{ID: "Removed", SourceID: "my-mods", Name: "Removed", Version: "1.0"}},
+	}
+
+	updates, err := d.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	assert.Equal(t, "BiggerBackpack", updates[0].InstalledMod.ID)
+	assert.Equal(t, "1.2.0", updates[0].NewVersion)
 }
