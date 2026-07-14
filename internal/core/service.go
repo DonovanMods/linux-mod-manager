@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
@@ -186,6 +187,10 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		return nil, fmt.Errorf("getting download URL: %w", err)
 	}
 
+	if localPath, ok := strings.CutPrefix(url, "file://"); ok {
+		return s.ingestLocalToCache(gameCache, game, mod, file, localPath)
+	}
+
 	// Create temp directory for download
 	tempDir, err := os.MkdirTemp("", "lmm-download-*")
 	if err != nil {
@@ -252,6 +257,56 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		FilesExtracted: len(files),
 		Checksum:       downloadResult.Checksum,
 	}, nil
+}
+
+// ingestLocalToCache copies a local mod (directory or archive) into the cache
+// using the same staging/commit flow as downloaded mods. Local ingests have no
+// download checksum, so DownloadModResult.Checksum is empty.
+func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string) (*DownloadModResult, error) {
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return nil, fmt.Errorf("local mod path: %w", err)
+	}
+
+	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	stagePath := cachePath + ".staging"
+	if err := os.RemoveAll(stagePath); err != nil {
+		return nil, fmt.Errorf("clearing staging cache: %w", err)
+	}
+	defer os.RemoveAll(stagePath) //nolint:errcheck
+	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		if err := copyDir(cachePath, stagePath); err != nil {
+			return nil, fmt.Errorf("staging existing cache: %w", err)
+		}
+	}
+
+	switch {
+	case info.IsDir():
+		if err := copyDir(localPath, stagePath); err != nil {
+			return nil, fmt.Errorf("copying mod directory: %w", err)
+		}
+	case game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(localPath):
+		if err := os.MkdirAll(stagePath, 0755); err != nil {
+			return nil, fmt.Errorf("creating cache directory: %w", err)
+		}
+		if err := copyFileStreaming(localPath, filepath.Join(stagePath, filepath.Base(localPath))); err != nil {
+			return nil, fmt.Errorf("copying to cache: %w", err)
+		}
+	default:
+		if err := s.extractor.Extract(localPath, stagePath); err != nil {
+			return nil, fmt.Errorf("extracting mod: %w", err)
+		}
+	}
+
+	if err := commitStagedCache(cachePath, stagePath); err != nil {
+		return nil, err
+	}
+
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if err != nil {
+		return nil, err
+	}
+	return &DownloadModResult{FilesExtracted: len(files)}, nil
 }
 
 func commitStagedCache(cachePath, stagePath string) error {
