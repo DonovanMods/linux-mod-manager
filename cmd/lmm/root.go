@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
@@ -153,13 +154,14 @@ func initService() (*core.Service, error) {
 	}
 
 	// Register mod sources
-	registerSources(svc)
+	registerSources(svc, cfg.ConfigDir)
 
 	return svc, nil
 }
 
-// registerSources registers all available mod sources with the service
-func registerSources(svc *core.Service) {
+// registerSources registers all available mod sources with the service.
+// Built-ins first, then user-defined sources from <configDir>/sources/.
+func registerSources(svc *core.Service, cfgDir string) {
 	// NexusMods
 	nexusKey := getSourceAPIKey(svc, "nexusmods", "NEXUSMODS_API_KEY")
 	svc.RegisterSource(nexusmods.New(nil, nexusKey))
@@ -167,6 +169,34 @@ func registerSources(svc *core.Service) {
 	// CurseForge
 	curseKey := getSourceAPIKey(svc, "curseforge", "CURSEFORGE_API_KEY")
 	svc.RegisterSource(curseforge.New(nil, curseKey))
+
+	registerCustomSources(svc, cfgDir)
+}
+
+// registerCustomSources loads user-defined source definitions and registers
+// the valid ones. Broken definitions warn on stderr and are skipped — a bad
+// file must never prevent lmm from starting.
+func registerCustomSources(svc *core.Service, cfgDir string) {
+	defs, loadErrs, err := config.LoadSourceDefinitions(cfgDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: loading custom sources: %v\n", err)
+		return
+	}
+	for _, le := range loadErrs {
+		fmt.Fprintf(os.Stderr, "warning: skipping source definition %v\n", le)
+	}
+	for _, def := range defs {
+		if _, err := svc.GetSource(def.ID); err == nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping source %q: id already in use\n", def.ID)
+			continue
+		}
+		src, err := custom.New(def)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: skipping source %q: %v\n", def.ID, err)
+			continue
+		}
+		svc.RegisterSource(src)
+	}
 }
 
 // getSourceAPIKey retrieves an API key from environment or database
