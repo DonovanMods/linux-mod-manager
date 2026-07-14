@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `lmm source list` — list built-in and user-defined mod sources
+- `lmm source validate <file>` — validate a user-defined source definition
+- User-defined source definitions loaded from `~/.config/lmm/sources/*.yaml`
+
 ## [1.5.0] - 2026-07-13
 
 ### Added

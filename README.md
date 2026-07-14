@@ -226,6 +226,124 @@ The mod cache location is determined by:
 
 This allows you to store different games' mods on different drives (e.g., large games on HDD, frequently accessed games on SSD).
 
+## Custom Sources
+
+In addition to built-in mod sources (NexusMods, CurseForge), you can define custom sources declaratively in YAML files. This allows you to integrate local directories or remote mod repositories without any code changes.
+
+Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml`. Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
+
+### Source Definition Format
+
+```yaml
+id: donovan-mods              # required; must match ^[a-z0-9-]+$ and be unique
+name: Donovan's 7D2D Modlets  # required display name
+type: directory               # required: directory (local folders) | manifest | api
+allow_http: false             # optional; permit http:// URLs (default false)
+
+# Type-specific configuration (one block required, must match type)
+directory:
+  path: ~/Projects/mods/7dtd/donovan-7d2d-modlets
+```
+
+### Common Fields
+
+| Field       | Type    | Required | Description                                                                         |
+| ----------- | ------- | -------- | ----------------------------------------------------------------------------------- |
+| `id`        | string  | yes      | Unique source identifier; must contain only lowercase letters, numbers, and hyphens |
+| `name`      | string  | yes      | Display name shown in source lists and commands                                     |
+| `type`      | string  | yes      | Source type: `directory` (v1), `manifest` (planned), `api` (planned)                |
+| `allow_http` | boolean | no       | If `true`, allow unencrypted http:// URLs (default `false`, HTTPS only)            |
+
+### Directory Source
+
+A directory source treats a local folder as a mod repository. Each subdirectory or archive file (`.zip`, `.jar`) is treated as a mod.
+
+```yaml
+id: my-local-mods
+name: My Local Mods
+type: directory
+directory:
+  path: ~/projects/my-mods    # ~ expands to home directory
+```
+
+**How it works:**
+
+- Mods are discovered by scanning the directory for subdirectories and archives
+- Mod metadata (name, version, author) is read from metadata files (e.g., `ModInfo.xml` for 7D2D) or inferred from the directory name
+- Mod ID is the directory or file base name (stable across versions)
+- Install/update/enable/disable work like any other source — the linker handles deployment to the game directory
+- Updates are detected by comparing installed version to current metadata version
+
+### Source Management Commands
+
+List all sources (built-in and custom):
+
+```bash
+lmm source list
+```
+
+Output:
+
+```
+ID          NAME        TYPE      AUTH  CAPABILITIES              ERROR
+nexusmods   Nexus Mods  built-in  yes   search,deps,updates,auth  
+curseforge  CurseForge  built-in  yes   search,deps,updates,auth  
+donovan-mods Donovan's 7D2D Modlets directory no search,updates
+```
+
+Validate a source definition file before use:
+
+```bash
+lmm source validate ~/.config/lmm/sources/my-source.yaml
+```
+
+On success:
+```
+~/.config/lmm/sources/my-source.yaml: valid (directory source "my-source")
+```
+
+On error (exits with code 1):
+```
+Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
+```
+
+### Adding a Custom Source
+
+1. Create `~/.config/lmm/sources/` if it doesn't exist:
+   ```bash
+   mkdir -p ~/.config/lmm/sources
+   ```
+
+2. Create a YAML file with your source definition:
+   ```bash
+   cat > ~/.config/lmm/sources/my-mods.yaml <<'EOF'
+   id: my-local-mods
+   name: My Local Mods
+   type: directory
+   directory:
+     path: ~/projects/mods
+   EOF
+   ```
+
+3. (Optional) Validate the definition:
+   ```bash
+   lmm source validate ~/.config/lmm/sources/my-mods.yaml
+   ```
+
+4. Add the source to your game's `sources` map in `~/.config/lmm/games.yaml`:
+   ```yaml
+   games:
+     my-game:
+       sources:
+         my-local-mods: ""  # empty string for directory sources (no game-specific ID)
+   ```
+
+5. Use the source with all standard commands:
+   ```bash
+   lmm search --source my-local-mods --game my-game
+   lmm install --source my-local-mods "mod-name" --game my-game
+   ```
+
 ## CLI Reference
 
 ### Global Flags
@@ -289,6 +407,8 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm deploy --purge`                   | Purge then deploy all mods                           |
 | `lmm purge`                            | Remove all mods from game directory                  |
 | `lmm conflicts`                        | Show file conflicts in current profile               |
+| `lmm source list`                      | List built-in and user-defined mod sources           |
+| `lmm source validate <file>`           | Validate a user-defined source definition           |
 
 ### Update check behavior
 
