@@ -1,6 +1,10 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestSourceLocal_IsExpectedValue(t *testing.T) {
 	if SourceLocal != "local" {
@@ -71,5 +75,24 @@ func TestIsNewerVersion(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("IsNewerVersion(%q, %q) = %v, want %v", tt.current, tt.new, got, tt.want)
 		}
+	}
+}
+
+func TestExtractVersionFromName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"simple", "BiggerBackpack-1.2.0", "1.2.0"},
+		{"v prefix", "cool-mod-v2.1", "2.1"},
+		{"last version wins", "jei-1.20.1-15.3.0", "15.3.0"},
+		{"prerelease suffix", "mod-1.0.0-beta2", "1.0.0-beta2"},
+		{"no version", "JustAName", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ExtractVersionFromName(tt.in))
+		})
 	}
 }

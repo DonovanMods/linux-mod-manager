@@ -60,7 +60,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		// Explicit linking provided
 		sourceID = opts.SourceID
 		modID = opts.ModID
-		version = extractVersionFromFilename(strings.TrimSuffix(filename, filepath.Ext(filename)))
+		version = domain.ExtractVersionFromName(strings.TrimSuffix(filename, filepath.Ext(filename)))
 		if version == "" {
 			version = "unknown"
 		}
@@ -74,7 +74,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		// No pattern - pure local mod
 		sourceID = domain.SourceLocal
 		modID = uuid.New().String()
-		version = extractVersionFromFilename(strings.TrimSuffix(filename, filepath.Ext(filename)))
+		version = domain.ExtractVersionFromName(strings.TrimSuffix(filename, filepath.Ext(filename)))
 		if version == "" {
 			version = "unknown"
 		}
@@ -378,7 +378,7 @@ func (i *Importer) detectModFromFilename(filename string, gameID string) *domain
 	baseName := strings.TrimSuffix(filename, filepath.Ext(filename))
 
 	// Try to extract version
-	version := extractVersionFromFilename(baseName)
+	version := domain.ExtractVersionFromName(baseName)
 
 	// Extract mod name (everything before the version)
 	name := baseName
@@ -397,19 +397,6 @@ func (i *Importer) detectModFromFilename(filename string, gameID string) *domain
 		Version:  version,
 		GameID:   gameID,
 	}
-}
-
-// extractVersionFromFilename extracts version from a filename using regex
-// versionRegexImporter matches semantic version patterns like 1.2.3, v1.2.3, etc.
-var versionRegexImporter = regexp.MustCompile(`[vV]?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-+][a-zA-Z][\w.]*)?)`)
-
-func extractVersionFromFilename(filename string) string {
-	// Match semantic version patterns
-	matches := versionRegexImporter.FindAllStringSubmatch(filename, -1)
-	if len(matches) > 0 {
-		return matches[len(matches)-1][1]
-	}
-	return ""
 }
 
 // copyFileStreaming copies a file using streaming to avoid loading it all into memory
