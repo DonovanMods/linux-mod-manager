@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -53,4 +54,33 @@ type ModSource interface {
 
 	// Updates
 	CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error)
+}
+
+// ErrNotSupported indicates a source does not support the requested operation.
+// Callers should branch with errors.Is(err, ErrNotSupported) and degrade
+// gracefully (hide the action, show a notice) rather than treat it as a failure.
+var ErrNotSupported = errors.New("operation not supported by this source")
+
+// Capabilities reports which optional operations a source supports.
+type Capabilities struct {
+	Search       bool
+	Dependencies bool
+	Updates      bool
+	Auth         bool
+}
+
+// CapabilityReporter is implemented by sources that support only a subset of
+// ModSource operations. Sources that do not implement it are assumed fully
+// capable.
+type CapabilityReporter interface {
+	Capabilities() Capabilities
+}
+
+// CapabilitiesOf returns src's capabilities, assuming full capability for
+// sources that do not implement CapabilityReporter (all built-in sources).
+func CapabilitiesOf(src ModSource) Capabilities {
+	if cr, ok := src.(CapabilityReporter); ok {
+		return cr.Capabilities()
+	}
+	return Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}
 }
