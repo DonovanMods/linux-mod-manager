@@ -11,6 +11,8 @@ import (
 // can warn-and-skip instead of failing.
 func New(def SourceDefinition) (source.ModSource, error) {
 	switch def.Type {
+	case TypeDirectory:
+		return NewDirectory(def)
 	default:
 		return nil, fmt.Errorf("source type %q is not yet supported", def.Type)
 	}
