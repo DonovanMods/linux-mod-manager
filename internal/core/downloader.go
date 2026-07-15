@@ -78,14 +78,21 @@ func isRetryableNet(err error) bool {
 	return false
 }
 
-// Download fetches a file from the URL and saves it to destPath, with retries on transient
-// failures (exponential backoff). Progress updates are sent to the optional progressFn callback.
+// Download fetches a file from the URL and saves it to destPath, with retries
+// on transient failures (exponential backoff). Progress updates are sent to
+// the optional progressFn callback.
 func (d *Downloader) Download(ctx context.Context, url, destPath string, progressFn ProgressFunc) (*DownloadResult, error) {
+	return d.DownloadWithHeaders(ctx, url, destPath, nil, progressFn)
+}
+
+// DownloadWithHeaders is Download with extra request headers applied to every
+// attempt — used for authenticated file downloads from custom sources.
+func (d *Downloader) DownloadWithHeaders(ctx context.Context, url, destPath string, headers map[string]string, progressFn ProgressFunc) (*DownloadResult, error) {
 	var lastErr error
 	backoff := defaultInitialBackoff
 
 	for attempt := 1; attempt <= defaultMaxAttempts; attempt++ {
-		result, err := d.downloadOnce(ctx, url, destPath, progressFn)
+		result, err := d.downloadOnce(ctx, url, destPath, headers, progressFn)
 		if err == nil {
 			return result, nil
 		}
@@ -130,10 +137,13 @@ func (e *httpStatusError) Error() string {
 }
 
 // downloadOnce performs a single download attempt (no retries).
-func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, progressFn ProgressFunc) (result *DownloadResult, err error) {
+func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, headers map[string]string, progressFn ProgressFunc) (result *DownloadResult, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 
 	resp, err := d.httpClient.Do(req)

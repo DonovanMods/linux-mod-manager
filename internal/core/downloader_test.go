@@ -392,6 +392,21 @@ func TestDownloader_Download_WriteTempFirst(t *testing.T) {
 	assert.Equal(t, content, data)
 }
 
+func TestDownloadWithHeadersSetsHeaders(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-API-Key")
+		_, _ = w.Write([]byte("payload"))
+	}))
+	defer srv.Close()
+
+	d := core.NewDownloader(nil)
+	dest := filepath.Join(t.TempDir(), "out.bin")
+	_, err := d.DownloadWithHeaders(context.Background(), srv.URL, dest, map[string]string{"X-API-Key": "sekrit"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sekrit", got)
+}
+
 func BenchmarkDownloader_Download(b *testing.B) {
 	// Create 1MB of content
 	content := make([]byte, 1024*1024)

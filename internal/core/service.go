@@ -225,7 +225,11 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 
 	// Download the file
 	archivePath := filepath.Join(tempDir, file.FileName)
-	downloadResult, err := s.downloader.Download(ctx, url, archivePath, progressFn)
+	var headers map[string]string
+	if hp, ok := src.(source.DownloadHeaderProvider); ok {
+		headers = hp.DownloadHeaders()
+	}
+	downloadResult, err := s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, progressFn)
 	if err != nil {
 		return nil, fmt.Errorf("downloading mod: %w", err)
 	}

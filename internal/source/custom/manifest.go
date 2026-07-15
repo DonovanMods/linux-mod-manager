@@ -381,5 +381,15 @@ func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.Installe
 	return updates, nil
 }
 
+// DownloadHeaders implements source.DownloadHeaderProvider: header-mode auth
+// applies the same key to file downloads as to manifest fetches (design §6).
+func (m *Manifest) DownloadHeaders() map[string]string {
+	if m.auth == nil || m.auth.APIKey.In != "header" || m.apiKey == "" {
+		return nil
+	}
+	return map[string]string{m.auth.APIKey.Name: m.apiKey}
+}
+
 var _ source.ModSource = (*Manifest)(nil)
 var _ source.CapabilityReporter = (*Manifest)(nil)
+var _ source.DownloadHeaderProvider = (*Manifest)(nil)

@@ -326,3 +326,27 @@ func TestManifestCheckUpdates(t *testing.T) {
 	assert.Equal(t, "cool-mod", updates[0].InstalledMod.ID)
 	assert.Equal(t, "1.2.0", updates[0].NewVersion)
 }
+
+func TestManifestDownloadHeaders(t *testing.T) {
+	t.Run("header auth with key", func(t *testing.T) {
+		def := manifestDef("https://x.test/mods.yaml")
+		def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}}
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+		assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, m.DownloadHeaders())
+	})
+
+	t.Run("query auth or no key yields nil", func(t *testing.T) {
+		def := manifestDef("https://x.test/mods.yaml")
+		def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+		assert.Nil(t, m.DownloadHeaders())
+
+		noKey, err := NewManifest(manifestDef("https://x.test/mods.yaml"))
+		require.NoError(t, err)
+		assert.Nil(t, noKey.DownloadHeaders())
+	})
+}
