@@ -191,6 +191,28 @@ func selectAuthSource(service *core.Service, args []string) (string, error) {
 	return sourceID, nil
 }
 
+// resolveLogoutSource picks the source to log out. Unlike login, logout must
+// also work for sources that are no longer registered (definition file
+// deleted after a key was stored) — otherwise the stored token becomes
+// unremovable via the CLI.
+func resolveLogoutSource(service *core.Service, args []string) (string, error) {
+	if len(args) == 0 {
+		return selectAuthSource(service, args) // interactive prompt path unchanged
+	}
+	sourceID := args[0]
+	if isAuthCapableSource(service, sourceID) {
+		return sourceID, nil
+	}
+	token, err := service.GetSourceToken(sourceID)
+	if err != nil {
+		return "", fmt.Errorf("checking stored credentials for %s: %w", sourceID, err)
+	}
+	if token != nil {
+		return sourceID, nil
+	}
+	return "", fmt.Errorf("no stored credentials for %q and it is not a registered auth-capable source", sourceID)
+}
+
 // isAuthCapableSource reports whether sourceID can hold an API key: either a
 // built-in from supportedSources, or a registered custom source whose
 // definition declares auth.
@@ -207,7 +229,7 @@ func isAuthCapableSource(service *core.Service, sourceID string) bool {
 
 func runAuthLogout(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		sourceID, err := selectAuthSource(service, args)
+		sourceID, err := resolveLogoutSource(service, args)
 		if err != nil {
 			return err
 		}

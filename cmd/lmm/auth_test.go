@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,14 +66,14 @@ func TestGetEnvKeyForSource(t *testing.T) {
 			expected: "NEXUSMODS_API_KEY",
 		},
 		{
-			name:     "unknown source falls back to the derived LMM_*_API_KEY name",
-			sourceID: "unknown",
-			expected: "LMM_UNKNOWN_API_KEY",
+			name:     "curseforge",
+			sourceID: "curseforge",
+			expected: "CURSEFORGE_API_KEY",
 		},
 		{
-			name:     "empty source",
-			sourceID: "",
-			expected: "LMM__API_KEY",
+			name:     "custom source falls back to the derived LMM_*_API_KEY name",
+			sourceID: "unknown-source",
+			expected: "LMM_UNKNOWN_SOURCE_API_KEY",
 		},
 	}
 
@@ -178,7 +179,7 @@ func TestAuthLogoutCmd_UnsupportedSource(t *testing.T) {
 
 	err := cmd.Execute()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported source")
+	assert.Contains(t, err.Error(), "no stored credentials")
 }
 
 // TestAuthLogoutCmd_NotAuthenticated tests logout when not authenticated
@@ -404,4 +405,29 @@ func TestPrintAuthLoginSuccess(t *testing.T) {
 		assert.Equal(t, "API key stored for my-repo.\n", buf.String())
 		assert.NotContains(t, buf.String(), "Successfully authenticated", "must not fabricate a validation result that never happened")
 	})
+}
+
+func TestResolveLogoutSource(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	// A token stored for a source whose definition file has been deleted:
+	// not registered, but logout must still be able to remove it.
+	require.NoError(t, svc.SaveSourceToken("ghost-repo", "leftover-key"))
+
+	id, err := resolveLogoutSource(svc, []string{"ghost-repo"})
+	require.NoError(t, err)
+	assert.Equal(t, "ghost-repo", id)
+
+	// Unknown ID with no token and no registration still errors.
+	_, err = resolveLogoutSource(svc, []string{"never-existed"})
+	assert.Error(t, err)
+
+	// Built-ins keep working.
+	id, err = resolveLogoutSource(svc, []string{"nexusmods"})
+	require.NoError(t, err)
+	assert.Equal(t, "nexusmods", id)
 }
