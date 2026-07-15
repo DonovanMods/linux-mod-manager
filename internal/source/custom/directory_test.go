@@ -142,6 +142,13 @@ func TestDirectorySearch(t *testing.T) {
 		assert.Equal(t, 3, res.TotalCount)
 	})
 
+	t.Run("GameID is echoed onto returned mods for identity, not used to filter", func(t *testing.T) {
+		res, err := d.Search(ctx, source.SearchQuery{Query: "backpack", GameID: "7dtd"})
+		require.NoError(t, err)
+		require.Len(t, res.Mods, 1)
+		assert.Equal(t, "7dtd", res.Mods[0].GameID)
+	})
+
 	t.Run("dot-prefixed entries are skipped", func(t *testing.T) {
 		res, err := d.Search(ctx, source.SearchQuery{})
 		require.NoError(t, err)
@@ -157,9 +164,10 @@ func TestDirectorySearch(t *testing.T) {
 func TestDirectoryGetMod(t *testing.T) {
 	d := newTestDirectory(t)
 
-	mod, err := d.GetMod(context.Background(), "ignored", "BiggerBackpack")
+	mod, err := d.GetMod(context.Background(), "7dtd", "BiggerBackpack")
 	require.NoError(t, err)
 	assert.Equal(t, "Bigger Backpack", mod.Name)
+	assert.Equal(t, "7dtd", mod.GameID, "GetMod must echo the gameID it was given so installs are attributed to the right game")
 
 	_, err = d.GetMod(context.Background(), "ignored", "nope")
 	assert.ErrorContains(t, err, "not found")

@@ -113,7 +113,9 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 
 	sourceGameID := gameID
 	if game, ok := s.games[gameID]; ok {
-		if id, ok := game.SourceIDs[sourceID]; ok {
+		// An empty mapping (e.g. directory sources: `donovan-mods: ""`) means
+		// "this source applies to any game" — it must not blank out the ID.
+		if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
 			sourceGameID = id
 		}
 	}
@@ -135,10 +137,12 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 		return nil, err
 	}
 
-	// Get the source-specific game ID if we have a game configured
+	// Get the source-specific game ID if we have a game configured. An empty
+	// mapping (e.g. directory sources: `donovan-mods: ""`) means "this source
+	// applies to any game" — it must not blank out the ID.
 	sourceGameID := gameID
 	if game, ok := s.games[gameID]; ok {
-		if id, ok := game.SourceIDs[sourceID]; ok {
+		if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
 			sourceGameID = id
 		}
 	}

@@ -157,7 +157,9 @@ func nameAndVersionFrom(base string) (string, string) {
 
 // Search implements source.ModSource with client-side matching: case-insensitive
 // substring on name and summary; name matches rank first, then alphabetical.
-// GameID is ignored — a directory source applies to any game that maps it.
+// GameID is accepted from any game (a directory source applies to any game that
+// maps it — it does not filter by GameID) but is echoed onto every returned mod
+// so downstream installs are attributed to the correct game.
 func (d *Directory) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
 	scanned, err := d.scan()
 	if err != nil {
@@ -201,7 +203,9 @@ func (d *Directory) Search(ctx context.Context, query source.SearchQuery) (sourc
 
 	mods := make([]domain.Mod, 0, end-start)
 	for _, m := range matches[start:end] {
-		mods = append(mods, m.mod)
+		mod := m.mod
+		mod.GameID = query.GameID
+		mods = append(mods, mod)
 	}
 
 	return source.SearchResult{
@@ -212,13 +216,16 @@ func (d *Directory) Search(ctx context.Context, query source.SearchQuery) (sourc
 	}, nil
 }
 
-// GetMod implements source.ModSource. gameID is ignored (see Search).
+// GetMod implements source.ModSource. gameID is accepted from any game and not
+// used to look up the mod (see Search); it is echoed onto the returned mod so
+// downstream installs are attributed to the correct game.
 func (d *Directory) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
 	dm, err := d.find(modID)
 	if err != nil {
 		return nil, err
 	}
 	mod := dm.mod
+	mod.GameID = gameID
 	return &mod, nil
 }
 

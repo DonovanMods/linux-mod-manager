@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Directory source installs no longer orphaned**: mods found through a directory source mapped with the README-documented empty value (`sources: {my-mods: ""}`) now carry the correct game ID end-to-end, so `lmm list`/`update`/`uninstall` can see them after install
 - **Hidden entries ignored by directory sources**: dot-prefixed entries (`.git`, etc.) under a directory source's path are no longer listed as installable mods
 - Negative `page` values in directory source search no longer panic; they clamp to the first page
 
