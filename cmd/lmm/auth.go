@@ -252,6 +252,32 @@ func doAuthStatus(service *core.Service) error {
 		fmt.Printf("%s: not authenticated\n", getSourceDisplayName(sourceID))
 	}
 
+	// Custom sources that declare auth get the same treatment as built-ins.
+	for _, src := range service.ListSources() {
+		id := src.ID()
+		if isSupportedSource(id) {
+			continue // already reported above
+		}
+		if !source.CapabilitiesOf(src).Auth {
+			continue // directory sources, auth-less manifests: nothing to report
+		}
+
+		token, err := service.GetSourceToken(id)
+		if err != nil {
+			return fmt.Errorf("checking %s: %w", id, err)
+		}
+		if token != nil {
+			fmt.Printf("%s: authenticated (key: %s)\n", id, maskAPIKey(token.APIKey))
+			continue
+		}
+		envKey := envKeyForSourceID(id)
+		if apiKey := os.Getenv(envKey); apiKey != "" {
+			fmt.Printf("%s: authenticated via %s (key: %s)\n", id, envKey, maskAPIKey(apiKey))
+			continue
+		}
+		fmt.Printf("%s: not authenticated (run: lmm auth login %s)\n", id, id)
+	}
+
 	return nil
 }
 
