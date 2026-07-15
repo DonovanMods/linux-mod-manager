@@ -19,10 +19,14 @@ func captureStdout(t *testing.T, fn func() error) string {
 	require.NoError(t, err)
 	os.Stdout = w
 	defer func() { os.Stdout = old }()
-	require.NoError(t, fn())
-	require.NoError(t, w.Close())
-	out, err := io.ReadAll(r)
-	require.NoError(t, err)
+	defer r.Close()
+
+	fnErr := fn()
+	require.NoError(t, w.Close(), "closing write end of the pipe")
+	out, readErr := io.ReadAll(r)
+
+	require.NoError(t, fnErr)
+	require.NoError(t, readErr)
 	return string(out)
 }
 

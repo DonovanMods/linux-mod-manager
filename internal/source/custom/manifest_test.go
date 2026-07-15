@@ -419,6 +419,94 @@ func TestManifestGetDownloadURLQueryAuthOrigin(t *testing.T) {
 	})
 }
 
+// TestManifestSameOriginNormalizesDefaultPorts pins PR #55 review comment 2:
+// an explicit default port (:443 on https, :80 on http) must compare equal
+// to a bare host with an implicit default port — the prior byte-for-byte
+// Host comparison treated them as cross-origin, a fail-closed false negative
+// (the key gets withheld, not leaked) that still breaks legitimate
+// same-origin file URLs. An explicit non-default port must still mismatch.
+// Both header-mode (DownloadHeaders) and query-mode (GetDownloadURL) auth
+// flow through the shared sameOrigin helper, so both are exercised here.
+func TestManifestSameOriginNormalizesDefaultPorts(t *testing.T) {
+	tests := []struct {
+		name        string
+		manifestURL string
+		fileURL     string
+		wantMatch   bool
+	}{
+		{
+			name:        "https explicit :443 matches implicit default",
+			manifestURL: "https://repo.test/mods.yaml",
+			fileURL:     "https://repo.test:443/a.zip",
+			wantMatch:   true,
+		},
+		{
+			name:        "http explicit :80 matches implicit default",
+			manifestURL: "http://repo.test/mods.yaml",
+			fileURL:     "http://repo.test:80/a.zip",
+			wantMatch:   true,
+		},
+		{
+			name:        "https explicit non-default port still mismatches",
+			manifestURL: "https://repo.test/mods.yaml",
+			fileURL:     "https://repo.test:8443/a.zip",
+			wantMatch:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Run("header mode", func(t *testing.T) {
+				def := manifestDef(tt.manifestURL)
+				def.AllowHTTP = true
+				def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}}
+				m, err := NewManifest(def)
+				require.NoError(t, err)
+				m.SetAPIKey("sekrit")
+
+				headers := m.DownloadHeaders(tt.fileURL)
+				if tt.wantMatch {
+					assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, headers)
+				} else {
+					assert.Nil(t, headers)
+				}
+			})
+
+			t.Run("query mode", func(t *testing.T) {
+				def := manifestDef(tt.manifestURL)
+				def.AllowHTTP = true
+				def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
+				m, err := NewManifest(def)
+				require.NoError(t, err)
+				m.SetAPIKey("sekrit")
+
+				// Pre-populate the TTL cache so fetch() never hits the network —
+				// only sameOrigin's port normalization is under test here.
+				m.mu.Lock()
+				m.cached = &manifestDoc{
+					Version: 1,
+					Mods: []manifestMod{{
+						ID: "mod-a", Name: "Mod A", Version: "1.0.0",
+						Files: []manifestFile{{ID: "main", Filename: "a.zip", URL: tt.fileURL}},
+					}},
+				}
+				m.fetchedAt = m.now()
+				m.mu.Unlock()
+
+				mod, err := m.GetMod(context.Background(), "", "mod-a")
+				require.NoError(t, err)
+				u, err := m.GetDownloadURL(context.Background(), mod, "main")
+				require.NoError(t, err)
+				if tt.wantMatch {
+					assert.Equal(t, tt.fileURL+"?api_key=sekrit", u)
+				} else {
+					assert.Equal(t, tt.fileURL, u)
+				}
+			})
+		})
+	}
+}
+
 func TestManifestGetDependencies(t *testing.T) {
 	m := newLocalManifest(t)
 

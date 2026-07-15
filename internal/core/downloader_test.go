@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -458,6 +459,44 @@ func TestDownloadWithHeaders_KeepsHeaderOnSameHostRedirect(t *testing.T) {
 	_, err := d.DownloadWithHeaders(context.Background(), srv.URL+"/redir.zip", dest, map[string]string{"X-API-Key": "sekrit"}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "sekrit", gotOnFinal, "a same-host redirect must keep the header")
+}
+
+// errChainedRedirectSentinel is returned unconditionally by a fake base
+// CheckRedirect, so its appearance in DownloadWithHeaders' error proves
+// redirectSafeClient delegated to it rather than silently discarding it.
+var errChainedRedirectSentinel = errors.New("sentinel: base CheckRedirect blocked this redirect")
+
+// TestDownloadWithHeaders_ChainsBaseCheckRedirect pins PR #55 review comment
+// 1: redirectSafeClient must not clobber a CheckRedirect already set on the
+// injected base client — it should run its own header-stripping/redirect-cap
+// logic first, then delegate to the base policy (if any). A client with no
+// CheckRedirect of its own must keep working exactly as before.
+func TestDownloadWithHeaders_ChainsBaseCheckRedirect(t *testing.T) {
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("payload"))
+	}))
+	defer serverB.Close()
+
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, serverB.URL+"/final.zip", http.StatusFound)
+	}))
+	defer serverA.Close()
+
+	baseClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return errChainedRedirectSentinel
+		},
+	}
+	d := core.NewDownloader(baseClient)
+	dest := filepath.Join(t.TempDir(), "out.bin")
+	_, err := d.DownloadWithHeaders(context.Background(), serverA.URL+"/redir.zip", dest, map[string]string{"X-API-Key": "sekrit"}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errChainedRedirectSentinel, "the base client's own CheckRedirect must still run")
+
+	// A plain client with no CheckRedirect of its own must be unaffected.
+	plain := core.NewDownloader(nil)
+	_, err = plain.DownloadWithHeaders(context.Background(), serverA.URL+"/redir.zip", dest, map[string]string{"X-API-Key": "sekrit"}, nil)
+	require.NoError(t, err, "a plain client must still follow the redirect and succeed")
 }
 
 // TestDownloadWithHeaders_ErrorDoesNotLeakQueryParam pins final-review

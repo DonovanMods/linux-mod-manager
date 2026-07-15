@@ -148,22 +148,29 @@ func (e *httpStatusError) Error() string {
 // a CheckRedirect that deletes those header names once the redirect leaves
 // the original request's scheme+host (Go re-applies the original request's
 // headers to each redirect, so deleting them here — the documented hook for
-// this — is sufficient) and otherwise preserves the default 10-redirect
-// cap. Calls with no headers (plain Download) use the base client
-// untouched.
+// this — is sufficient) and enforces the default 10-redirect cap. If the
+// base client already had its own CheckRedirect, it is chained: our
+// header-stripping and redirect-cap logic runs first, then the base policy
+// runs and its error (if any) is returned — a base client's own redirect
+// policy must never be silently discarded. Calls with no headers (plain
+// Download) use the base client untouched.
 func (d *Downloader) redirectSafeClient(headers map[string]string) *http.Client {
 	if len(headers) == 0 {
 		return d.httpClient
 	}
 	client := *d.httpClient // shallow copy: shares Transport/Timeout/Jar
+	baseCheckRedirect := d.httpClient.CheckRedirect
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return errors.New("stopped after 10 redirects")
-		}
 		if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
 			for name := range headers {
 				req.Header.Del(name)
 			}
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if baseCheckRedirect != nil {
+			return baseCheckRedirect(req, via)
 		}
 		return nil
 	}

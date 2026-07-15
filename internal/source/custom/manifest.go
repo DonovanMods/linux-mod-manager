@@ -371,9 +371,13 @@ func (m *Manifest) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID s
 }
 
 // sameOrigin reports whether fileURL shares scheme and host with the
-// manifest's own URL. Only meaningful for remote manifests (m.isRemote);
-// callers guard local-path manifests separately, since a local path has no
-// URL origin to compare and is trusted regardless of the file's host.
+// manifest's own URL. Ports are normalized before comparing: an explicit
+// default port (:443 on https, :80 on http) matches a URL with no port at
+// all, so "https://repo.test" and "https://repo.test:443" are the same
+// origin; any other explicit port must still match exactly. Only meaningful
+// for remote manifests (m.isRemote); callers guard local-path manifests
+// separately, since a local path has no URL origin to compare and is
+// trusted regardless of the file's host.
 func (m *Manifest) sameOrigin(fileURL string) bool {
 	fu, err := url.Parse(fileURL)
 	if err != nil {
@@ -383,7 +387,22 @@ func (m *Manifest) sameOrigin(fileURL string) bool {
 	if err != nil {
 		return false
 	}
-	return fu.Scheme == mu.Scheme && fu.Host == mu.Host
+	return fu.Scheme == mu.Scheme && normalizedHost(fu) == normalizedHost(mu)
+}
+
+// normalizedHost returns u's hostname, with an explicit port stripped when
+// it is the scheme's default (443 for https, 80 for http). This lets
+// sameOrigin treat a bare host and that same host with its default port
+// spelled out as identical origins.
+func normalizedHost(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		return u.Hostname()
+	}
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		return u.Hostname()
+	}
+	return u.Hostname() + ":" + port
 }
 
 // findMod fetches the manifest and returns the entry with the given ID.
