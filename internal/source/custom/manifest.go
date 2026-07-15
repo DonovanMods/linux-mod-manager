@@ -343,7 +343,11 @@ func (m *Manifest) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.D
 }
 
 // GetDownloadURL implements source.ModSource. Query-mode auth is appended
-// here; header-mode auth rides via DownloadHeaders (see DownloadHeaderProvider).
+// here — for remote manifests, only when the file URL is same-origin with
+// the manifest (see sameOrigin); a manifest pointing files at a third-party
+// CDN must not ship the repo's key there via the URL either. Header-mode
+// auth rides via DownloadHeaders (see DownloadHeaderProvider) under the same
+// rule.
 func (m *Manifest) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	mm, err := m.findMod(ctx, mod.ID)
 	if err != nil {
@@ -354,7 +358,7 @@ func (m *Manifest) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID s
 			continue
 		}
 		u := f.URL
-		if m.auth != nil && m.auth.APIKey.In == "query" && m.apiKey != "" {
+		if m.auth != nil && m.auth.APIKey.In == "query" && m.apiKey != "" && (!m.isRemote || m.sameOrigin(u)) {
 			withKey, err := addQueryParam(u, m.auth.APIKey.Name, m.apiKey)
 			if err != nil {
 				return "", fmt.Errorf("source %q: file %q: %w", m.id, fileID, err)
@@ -364,6 +368,22 @@ func (m *Manifest) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID s
 		return u, nil
 	}
 	return "", fmt.Errorf("source %q: mod %q: file not found: %s", m.id, mod.ID, fileID)
+}
+
+// sameOrigin reports whether fileURL shares scheme and host with the
+// manifest's own URL. Only meaningful for remote manifests (m.isRemote);
+// callers guard local-path manifests separately, since a local path has no
+// URL origin to compare and is trusted regardless of the file's host.
+func (m *Manifest) sameOrigin(fileURL string) bool {
+	fu, err := url.Parse(fileURL)
+	if err != nil {
+		return false
+	}
+	mu, err := url.Parse(m.url)
+	if err != nil {
+		return false
+	}
+	return fu.Scheme == mu.Scheme && fu.Host == mu.Host
 }
 
 // findMod fetches the manifest and returns the entry with the given ID.
@@ -429,26 +449,17 @@ func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.Installe
 
 // DownloadHeaders implements source.DownloadHeaderProvider. Header-mode auth
 // applies the same key to file downloads as to manifest fetches (design §6),
-// but for remote manifests only when the file URL is same-origin with the
-// manifest — a manifest pointing files at a third-party CDN must not ship the
-// repo's key there. Local-path manifests are user-authored and trusted, so
-// their configured key attaches regardless of host.
+// but for remote manifests only when the file URL is same-origin (scheme and
+// host, via sameOrigin) with the manifest — a manifest pointing files at a
+// third-party CDN, or downgrading from https to http on the same host, must
+// not ship the repo's key there. Local-path manifests are user-authored and
+// trusted, so their configured key attaches regardless of host.
 func (m *Manifest) DownloadHeaders(fileURL string) map[string]string {
 	if m.auth == nil || m.auth.APIKey.In != "header" || m.apiKey == "" {
 		return nil
 	}
-	if m.isRemote {
-		fu, err := url.Parse(fileURL)
-		if err != nil {
-			return nil
-		}
-		mu, err := url.Parse(m.url)
-		if err != nil {
-			return nil
-		}
-		if fu.Host != mu.Host {
-			return nil
-		}
+	if m.isRemote && !m.sameOrigin(fileURL) {
+		return nil
 	}
 	return map[string]string{m.auth.APIKey.Name: m.apiKey}
 }

@@ -3,6 +3,7 @@ package custom
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -44,6 +45,21 @@ mods:
       - id: main
         filename: other-mod.zip
         url: https://files.test/other-mod.zip
+`
+
+// originManifestFmt is a single-mod manifest template used to control a
+// file's URL precisely, for same-origin/cross-origin comparisons against the
+// manifest's own URL.
+const originManifestFmt = `
+version: 1
+mods:
+  - id: mod-a
+    name: Mod A
+    version: 1.0.0
+    files:
+      - id: main
+        filename: a.zip
+        url: %s
 `
 
 func manifestDef(url string) SourceDefinition {
@@ -319,6 +335,9 @@ func TestManifestFilesAndDownloadURL(t *testing.T) {
 }
 
 func TestManifestDownloadURLQueryAuth(t *testing.T) {
+	// This manifest is local (a temp-file path, not a remote URL), so — per
+	// the same-origin rule — the query key attaches regardless of the file
+	// URL's host: local manifests are user-authored and trusted.
 	path := filepath.Join(t.TempDir(), "mods.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(testManifest), 0644))
 	def := manifestDef(path)
@@ -332,6 +351,72 @@ func TestManifestDownloadURLQueryAuth(t *testing.T) {
 	u, err := m.GetDownloadURL(context.Background(), mod, "main")
 	require.NoError(t, err)
 	assert.Equal(t, "https://files.test/cool-mod-1.2.0.zip?api_key=sekrit", u)
+}
+
+// TestManifestGetDownloadURLQueryAuthOrigin pins the same-origin rule for
+// query-mode auth (final-review finding 2a): a remote manifest must only
+// attach its key to file URLs on its own scheme+host, exactly mirroring the
+// header-mode rule. Local manifests keep attaching regardless of host.
+func TestManifestGetDownloadURLQueryAuthOrigin(t *testing.T) {
+	queryAuth := &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
+
+	t.Run("remote manifest: same-origin file URL gets the key", func(t *testing.T) {
+		var srv *httptest.Server
+		srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprintf(w, originManifestFmt, srv.URL+"/files/a.zip")
+		}))
+		defer srv.Close()
+
+		def := manifestDef(srv.URL + "/mods.yaml")
+		def.AllowHTTP = true
+		def.Manifest.Auth = queryAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+
+		mod, err := m.GetMod(context.Background(), "", "mod-a")
+		require.NoError(t, err)
+		u, err := m.GetDownloadURL(context.Background(), mod, "main")
+		require.NoError(t, err)
+		assert.Equal(t, srv.URL+"/files/a.zip?api_key=sekrit", u)
+	})
+
+	t.Run("remote manifest: cross-origin file URL gets nothing", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprintf(w, originManifestFmt, "https://cdn.example.com/files/a.zip")
+		}))
+		defer srv.Close()
+
+		def := manifestDef(srv.URL + "/mods.yaml")
+		def.AllowHTTP = true
+		def.Manifest.Auth = queryAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+
+		mod, err := m.GetMod(context.Background(), "", "mod-a")
+		require.NoError(t, err)
+		u, err := m.GetDownloadURL(context.Background(), mod, "main")
+		require.NoError(t, err)
+		assert.Equal(t, "https://cdn.example.com/files/a.zip", u,
+			"the repo's API key must not be shipped to third-party hosts")
+	})
+
+	t.Run("local manifest: any host gets the key (user-authored, trusted)", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "mods.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf(originManifestFmt, "https://anywhere.test/a.zip")), 0644))
+		def := manifestDef(path)
+		def.Manifest.Auth = queryAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+
+		mod, err := m.GetMod(context.Background(), "", "mod-a")
+		require.NoError(t, err)
+		u, err := m.GetDownloadURL(context.Background(), mod, "main")
+		require.NoError(t, err)
+		assert.Equal(t, "https://anywhere.test/a.zip?api_key=sekrit", u)
+	})
 }
 
 func TestManifestGetDependencies(t *testing.T) {
@@ -523,6 +608,16 @@ func TestManifestDownloadHeaders(t *testing.T) {
 		require.NoError(t, err)
 		m.SetAPIKey("sekrit")
 		assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, m.DownloadHeaders("https://anywhere.test/a.zip"))
+	})
+
+	t.Run("remote manifest: same host but different scheme gets nothing", func(t *testing.T) {
+		def := manifestDef("https://repo.test/mods.yaml")
+		def.Manifest.Auth = headerAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+		assert.Nil(t, m.DownloadHeaders("http://repo.test/files/a.zip"),
+			"a scheme downgrade must not carry the key even though the host matches")
 	})
 
 	t.Run("query auth or no key yields nil", func(t *testing.T) {
