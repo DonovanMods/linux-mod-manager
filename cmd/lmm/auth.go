@@ -139,8 +139,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("saving token: %w", err)
 		}
 		printLoginResult(os.Stdout, sourceID)
-
-		fmt.Printf("Successfully authenticated with %s!\n", getSourceDisplayName(sourceID))
+		printAuthLoginSuccess(os.Stdout, sourceID)
 		return nil
 	})
 }
@@ -157,6 +156,20 @@ func printLoginResult(w io.Writer, sourceID string) {
 		return
 	}
 	fmt.Fprintln(w, "Stored (validated on first use).")
+}
+
+// printAuthLoginSuccess prints the final confirmation line for a completed
+// login. Built-in sources were actively validated via a real API call
+// earlier in the flow ("Validating... done"), so "Successfully
+// authenticated" is accurate. Custom sources have no generic validation
+// endpoint — printing that same claim would fabricate a result that never
+// happened, so they get an honest "stored" message instead.
+func printAuthLoginSuccess(w io.Writer, sourceID string) {
+	if isSupportedSource(sourceID) {
+		fmt.Fprintf(w, "Successfully authenticated with %s!\n", getSourceDisplayName(sourceID))
+		return
+	}
+	fmt.Fprintf(w, "API key stored for %s.\n", sourceID)
 }
 
 // selectAuthSource resolves the source from args or prompts the user. The

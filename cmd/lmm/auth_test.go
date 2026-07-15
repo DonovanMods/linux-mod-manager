@@ -379,3 +379,29 @@ func TestPrintLoginResult(t *testing.T) {
 		assert.NotContains(t, buf.String(), "Validating", "must not fabricate a validation step that never ran")
 	})
 }
+
+// TestPrintAuthLoginSuccess pins the re-review fix for finding 4: custom
+// sources have no generic validation endpoint, so runAuthLogin's final line
+// must not claim "Successfully authenticated" for them — that's a fabricated
+// result. Built-ins were actively validated earlier in the flow and keep the
+// original message; non-built-ins get an honest "stored" message instead.
+func TestPrintAuthLoginSuccess(t *testing.T) {
+	t.Run("built-in source keeps the authenticated message", func(t *testing.T) {
+		var buf bytes.Buffer
+		printAuthLoginSuccess(&buf, "nexusmods")
+		assert.Equal(t, "Successfully authenticated with NexusMods!\n", buf.String())
+	})
+
+	t.Run("curseforge keeps the authenticated message", func(t *testing.T) {
+		var buf bytes.Buffer
+		printAuthLoginSuccess(&buf, "curseforge")
+		assert.Equal(t, "Successfully authenticated with CurseForge!\n", buf.String())
+	})
+
+	t.Run("custom source prints an honest stored message", func(t *testing.T) {
+		var buf bytes.Buffer
+		printAuthLoginSuccess(&buf, "my-repo")
+		assert.Equal(t, "API key stored for my-repo.\n", buf.String())
+		assert.NotContains(t, buf.String(), "Successfully authenticated", "must not fabricate a validation result that never happened")
+	})
+}

@@ -395,7 +395,7 @@ manifest:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
   2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store.
 - The resolved key is attached to **both** the manifest fetch and every file download from that source, using the same `in`/`name` the definition declares.
-- Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth login` masks stored keys to their first/last 3 characters. (`lmm auth status` currently only reports on built-in sources — nexusmods and curseforge.)
+- Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth status` masks stored keys to their first/last 3 characters. (`lmm auth status` currently only reports on built-in sources — nexusmods and curseforge.)
 
 ### Source Management Commands
 
