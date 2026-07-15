@@ -126,7 +126,7 @@ var sourceValidateCmd = &cobra.Command{
 // Extend this switch as new custom source types (manifest, api) ship.
 func isCustomSource(src source.ModSource) bool {
 	switch src.(type) {
-	case *custom.Directory:
+	case *custom.Directory, *custom.Manifest:
 		return true
 	default:
 		return false

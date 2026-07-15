@@ -2,7 +2,10 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -222,9 +225,19 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 
 	// Download the file
 	archivePath := filepath.Join(tempDir, file.FileName)
-	downloadResult, err := s.downloader.Download(ctx, url, archivePath, progressFn)
+	var headers map[string]string
+	if hp, ok := src.(source.DownloadHeaderProvider); ok {
+		headers = hp.DownloadHeaders()
+	}
+	downloadResult, err := s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, progressFn)
 	if err != nil {
 		return nil, fmt.Errorf("downloading mod: %w", err)
+	}
+
+	if file.SHA256 != "" {
+		if err := verifyFileSHA256(archivePath, file.SHA256); err != nil {
+			return nil, fmt.Errorf("verifying download of %s: %w", file.FileName, err)
+		}
 	}
 
 	// Extract to cache location
@@ -275,6 +288,27 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		FilesExtracted: len(files),
 		Checksum:       downloadResult.Checksum,
 	}, nil
+}
+
+// verifyFileSHA256 streams path and compares its SHA-256 against expectedHex
+// (case-insensitive). Sources that publish expected checksums (manifest
+// sha256) set DownloadableFile.SHA256; built-in sources leave it empty and
+// skip this entirely.
+func verifyFileSHA256(path, expectedHex string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("opening downloaded file: %w", err)
+	}
+	defer f.Close() //nolint:errcheck
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hashing downloaded file: %w", err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, expectedHex) {
+		return fmt.Errorf("sha256 mismatch: source declares %s, downloaded file is %s", expectedHex, got)
+	}
+	return nil
 }
 
 // ingestLocalToCache copies a local mod (directory or archive) into the cache

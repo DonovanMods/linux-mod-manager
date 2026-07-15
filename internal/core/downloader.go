@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -78,14 +79,21 @@ func isRetryableNet(err error) bool {
 	return false
 }
 
-// Download fetches a file from the URL and saves it to destPath, with retries on transient
-// failures (exponential backoff). Progress updates are sent to the optional progressFn callback.
+// Download fetches a file from the URL and saves it to destPath, with retries
+// on transient failures (exponential backoff). Progress updates are sent to
+// the optional progressFn callback.
 func (d *Downloader) Download(ctx context.Context, url, destPath string, progressFn ProgressFunc) (*DownloadResult, error) {
+	return d.DownloadWithHeaders(ctx, url, destPath, nil, progressFn)
+}
+
+// DownloadWithHeaders is Download with extra request headers applied to every
+// attempt — used for authenticated file downloads from custom sources.
+func (d *Downloader) DownloadWithHeaders(ctx context.Context, url, destPath string, headers map[string]string, progressFn ProgressFunc) (*DownloadResult, error) {
 	var lastErr error
 	backoff := defaultInitialBackoff
 
 	for attempt := 1; attempt <= defaultMaxAttempts; attempt++ {
-		result, err := d.downloadOnce(ctx, url, destPath, progressFn)
+		result, err := d.downloadOnce(ctx, url, destPath, headers, progressFn)
 		if err == nil {
 			return result, nil
 		}
@@ -130,14 +138,31 @@ func (e *httpStatusError) Error() string {
 }
 
 // downloadOnce performs a single download attempt (no retries).
-func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, progressFn ProgressFunc) (result *DownloadResult, err error) {
+func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, headers map[string]string, progressFn ProgressFunc) (result *DownloadResult, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
+		// *url.Error's Error() embeds the request URL verbatim, which for
+		// query-mode auth (custom sources' GetDownloadURL) contains the API
+		// key. Unwrap to the transport error and report a query-stripped URL
+		// instead — %w still wraps the inner net error so isRetryableNet's
+		// errors.As(err, &netErr) keeps working for retry classification.
+		var uerr *neturl.Error
+		if errors.As(err, &uerr) {
+			reportURL := uerr.URL
+			if parsed, perr := neturl.Parse(uerr.URL); perr == nil {
+				parsed.RawQuery = ""
+				reportURL = parsed.String()
+			}
+			return nil, fmt.Errorf("executing request to %s: %w", reportURL, uerr.Err)
+		}
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer func() {

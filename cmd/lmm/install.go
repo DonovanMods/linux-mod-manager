@@ -642,7 +642,11 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		return fmt.Errorf("deployment failed: %w", err)
 	}
 
-	// Save to database
+	// Save to database. Normalize GameID to the lmm game (not the
+	// source-mapped value Service.SearchMods/GetMod stamped onto mod.GameID
+	// for querying the source) so every DB read, which queries by the lmm
+	// game ID, can find this row again (see issue: non-empty sources:
+	// mappings otherwise orphan the install).
 	installedMod := &domain.InstalledMod{
 		Mod:          *mod,
 		ProfileName:  profileName,
@@ -652,6 +656,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		LinkMethod:   linkMethod,
 		FileIDs:      downloadedFileIDs,
 	}
+	installedMod.Mod.GameID = game.ID
 
 	if err := service.SaveInstalledMod(installedMod); err != nil {
 		if existingMod != nil {
@@ -1277,7 +1282,8 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			continue
 		}
 
-		// Save to database
+		// Save to database. Normalize GameID to the lmm game (see comment on
+		// the single-mod save site above for why).
 		installedMod := &domain.InstalledMod{
 			Mod:          *mod,
 			ProfileName:  profileName,
@@ -1287,6 +1293,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			LinkMethod:   linkMethod,
 			FileIDs:      []string{selectedFile.ID},
 		}
+		installedMod.Mod.GameID = game.ID
 		if err := service.SaveInstalledMod(installedMod); err != nil {
 			fmt.Printf("  Error: failed to save mod: %v\n", err)
 			failed = append(failed, mod.Name)

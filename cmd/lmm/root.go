@@ -23,7 +23,7 @@ import (
 var ErrCancelled = errors.New("cancelled")
 
 var (
-	version = "1.6.0"
+	version = "1.7.0"
 
 	// Global flags
 	configDir  string
@@ -194,6 +194,11 @@ func registerCustomSources(svc *core.Service, cfgDir string) {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: skipping source %q: %v\n", def.ID, err)
 			continue
+		}
+		if a, ok := src.(interface{ SetAPIKey(string) }); ok {
+			if key := getSourceAPIKey(svc, def.ID, envKeyForSourceID(def.ID)); key != "" {
+				a.SetAPIKey(key)
+			}
 		}
 		svc.RegisterSource(src)
 	}

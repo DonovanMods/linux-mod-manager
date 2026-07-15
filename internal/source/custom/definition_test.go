@@ -53,6 +53,11 @@ func TestSourceDefinitionValidate(t *testing.T) {
 			d.AllowHTTP = true
 			d.Manifest = &ManifestConfig{URL: "http://x.test/m.yaml"}
 		}, ""},
+		{"ftp manifest url rejected", func(d *SourceDefinition) {
+			d.Type = TypeManifest
+			d.Directory = nil
+			d.Manifest = &ManifestConfig{URL: "ftp://x.test/m.yaml"}
+		}, "unsupported scheme"},
 		{"bad manifest refresh", func(d *SourceDefinition) {
 			d.Type = TypeManifest
 			d.Directory = nil
@@ -68,6 +73,43 @@ func TestSourceDefinitionValidate(t *testing.T) {
 			d.Directory = nil
 			d.API = &APIConfig{BaseURL: "http://api.x.test"}
 		}, "https"},
+		{"valid manifest auth header", func(d *SourceDefinition) {
+			d.Type = TypeManifest
+			d.Directory = nil
+			d.Manifest = &ManifestConfig{
+				URL:  "https://x.test/m.yaml",
+				Auth: &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}},
+			}
+		}, ""},
+		{"valid manifest auth query", func(d *SourceDefinition) {
+			d.Type = TypeManifest
+			d.Directory = nil
+			d.Manifest = &ManifestConfig{
+				URL:  "https://x.test/m.yaml",
+				Auth: &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}},
+			}
+		}, ""},
+		{"auth without api_key block", func(d *SourceDefinition) {
+			d.Type = TypeManifest
+			d.Directory = nil
+			d.Manifest = &ManifestConfig{URL: "https://x.test/m.yaml", Auth: &AuthConfig{}}
+		}, "auth.api_key is required"},
+		{"auth bad in", func(d *SourceDefinition) {
+			d.Type = TypeManifest
+			d.Directory = nil
+			d.Manifest = &ManifestConfig{
+				URL:  "https://x.test/m.yaml",
+				Auth: &AuthConfig{APIKey: &APIKeyConfig{In: "body", Name: "k"}},
+			}
+		}, `auth.api_key.in must be "header" or "query"`},
+		{"auth missing name", func(d *SourceDefinition) {
+			d.Type = TypeManifest
+			d.Directory = nil
+			d.Manifest = &ManifestConfig{
+				URL:  "https://x.test/m.yaml",
+				Auth: &AuthConfig{APIKey: &APIKeyConfig{In: "header"}},
+			}
+		}, "auth.api_key.name is required"},
 	}
 
 	for _, tt := range tests {

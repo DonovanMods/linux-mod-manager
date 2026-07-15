@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-14
+
+### Added
+
+- Manifest source type: publish a JSON/YAML mod list (https URL or local file) and use it as a full source — search, install, within-source dependencies, and update checks
+- Declared `sha256` checksums in manifests are verified on download
+- API-key authentication for custom sources (`auth.api_key` in the definition; `LMM_<ID>_API_KEY` env var or `lmm auth login <id>`)
+
+### Fixed
+
+- **Manifest source installs no longer orphaned**: mods found through a source mapped to a non-empty, different value under a game's `sources:` block (the README-documented pattern for manifest `game_ids` filtering, e.g. `my-repo: skyrim`) now save with the correct game ID, so `lmm list`/`update`/`uninstall` can see them after install
+- **Query-mode API keys no longer leak into error output**: a manifest source or file download using query-string authentication (`auth.api_key.in: query`) could print the API key in plain text as part of a network-failure error message; failures now redact the key
+- **Honest `lmm auth login` feedback for custom sources**: custom sources no longer show a fabricated "Validating... done" (they have no generic validation endpoint) — they now report "Stored (validated on first use)." instead. The rejection for an unrecognized source name now also mentions that a registered custom source with auth declared is an option
+
 ## [1.6.0] - 2026-07-14
 
 ### Added
@@ -674,7 +688,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.10...v1.4.0

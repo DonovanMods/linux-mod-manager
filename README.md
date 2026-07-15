@@ -228,7 +228,7 @@ This allows you to store different games' mods on different drives (e.g., large 
 
 ## Custom Sources
 
-In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. The `directory` type is fully implemented — point it at a local folder of mods and use it from `search`/`install` like any built-in source. `manifest` and `api` definitions parse and validate today, but their source types (fetching mods over HTTP) ship in later releases.
+In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. Two types are fully implemented: `directory` (a local folder of mods) and `manifest` (a JSON/YAML mod list you publish, over `https://` or as a local file) — both work from `search`/`install`/`update` like any built-in source, and `manifest` sources also support optional API-key authentication. `api` definitions parse and validate today, but the declarative-REST source type itself ships in a later release.
 
 Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml` (or `*.yml`). Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
 
@@ -251,7 +251,7 @@ directory:
 | ----------- | ------- | -------- | ----------------------------------------------------------------------------------- |
 | `id`        | string  | yes      | Unique source identifier; must contain only lowercase letters, numbers, and hyphens |
 | `name`      | string  | yes      | Display name shown in source lists and commands                                     |
-| `type`      | string  | yes      | Source type: `directory`, `manifest`, or `api`. All three parse and validate today; `directory` support (search/install) is implemented now, `manifest`/`api` ship in later releases. |
+| `type`      | string  | yes      | Source type: `directory`, `manifest`, or `api`. All three parse and validate today; `directory` and `manifest` are fully supported (search/install/updates), `api` is planned for a later release. |
 | `allow_http` | boolean | no       | If `true`, allow unencrypted http:// URLs (default `false`, HTTPS only)            |
 
 ### Directory Sources
@@ -296,6 +296,107 @@ games:
       donovan-mods: "" # directory sources ignore this value
 ```
 
+### Manifest Sources
+
+A `manifest` source treats a JSON or YAML document you publish — an `https://` URL, or a local file path — as a full mod list: search, install, within-source dependency resolution, and update checks all work against it, the same as a built-in source.
+
+```yaml
+id: my-repo
+name: My Mod Repo
+type: manifest
+manifest:
+  url: https://example.com/mods.yaml   # https:// URL, or a local path (~ expanded)
+  refresh: 15m                         # optional cache TTL for remote URLs (default 15m)
+```
+
+- **Remote URLs** (`https://...`) are fetched on demand and cached in memory for `refresh` — a Go duration string like `30s`, `15m`, or `2h` (default `15m` when omitted). **Local file paths** are read fresh on every operation instead of being cached, so edits show up immediately.
+- Fetch/parse problems (unreachable URL, malformed document, unsupported `version`) surface as an operation error naming the source and the manifest URL, at the point something actually uses the source. This is different from a broken *definition* file, which is caught at load time and skipped with a warning before lmm ever starts (see above).
+- `https://` is required for the manifest `url`, and for every file `url` inside the document, unless the definition sets `allow_http: true`; local paths are exempt.
+
+The manifest document itself:
+
+```yaml
+version: 1
+mods:
+  - id: cool-mod
+    name: Cool Mod
+    version: 1.2.0
+    author: someone
+    summary: Makes things cooler
+    game_ids: [skyrimspecialedition]         # matched against this source's mapped `sources:` value
+    url: https://example.com/mods/cool-mod   # optional web page
+    updated_at: 2026-07-01T00:00:00Z         # optional, RFC 3339
+    dependencies: [other-mod]                # optional, IDs of other mods in this manifest
+    files:
+      - id: main
+        name: Main File
+        filename: cool-mod-1.2.0.zip
+        version: 1.2.0
+        size: 123456
+        url: https://example.com/files/cool-mod-1.2.0.zip
+        sha256: <hex digest>                 # optional; verified on download if present
+        primary: true
+```
+
+`version: 1` is the only manifest version lmm understands today; any other value is rejected.
+
+**`mods[]` fields:**
+
+| Field          | Type     | Required | Description                                                                                                                                                                                            |
+| -------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`           | string   | **yes**  | Unique mod ID within this manifest; also its dependency-reference ID                                                                                                                                  |
+| `name`         | string   | **yes**  | Display name                                                                                                                                                                                            |
+| `version`      | string   | no       | Compared against installed versions for update checks                                                                                                                                                  |
+| `author`       | string   | no       | —                                                                                                                                                                                                        |
+| `summary`      | string   | no       | Shown in search results                                                                                                                                                                                 |
+| `game_ids`     | []string | no       | Restricts the mod to specific games, matched against the value that game maps for this source under its `sources:` block in `games.yaml` (same convention as NexusMods/CurseForge IDs); omitted or empty matches every game that maps this source |
+| `url`          | string   | no       | Web page for the mod (informational only)                                                                                                                                                              |
+| `updated_at`   | string   | no       | RFC 3339 timestamp; an unparseable value is silently treated as unset rather than an error                                                                                                             |
+| `dependencies` | []string | no       | Other mods' `id`s within this same manifest; resolved automatically like NexusMods dependencies                                                                                                        |
+| `files`        | []object | no       | Downloadable files for this mod, see below                                                                                                                                                              |
+
+**`files[]` fields:**
+
+| Field      | Type    | Required | Description                                                                                                                 |
+| ---------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `id`       | string  | **yes**  | File ID, used to request a download                                                                                         |
+| `filename` | string  | **yes**  | Name given to the downloaded/cached file                                                                                    |
+| `url`      | string  | **yes**  | Download URL (`https://` unless `allow_http: true`)                                                                         |
+| `name`     | string  | no       | Display name                                                                                                                 |
+| `version`  | string  | no       | —                                                                                                                             |
+| `size`     | integer | no       | Size in bytes                                                                                                                |
+| `sha256`   | string  | no       | Hex-encoded SHA-256 checksum; when present, lmm verifies it after download and **aborts the install if it doesn't match**   |
+| `primary`  | boolean | no       | Marks the default file when a mod publishes more than one                                                                    |
+
+To use a manifest source with a game, map it under that game's `sources:` block in `games.yaml`, the same as any built-in source — the mapped value should match the IDs used in the manifest's `game_ids` (unlike `directory` sources, this value is not ignored):
+
+```yaml
+games:
+  skyrim-se:
+    sources:
+      nexusmods: skyrimspecialedition
+      my-repo: skyrimspecialedition
+```
+
+### Authentication
+
+A custom source can require an API key, attached to every request as either a header or a query parameter. Today this is available to `manifest` sources (`directory` sources need no auth; `api` sources will reuse the same block when they ship):
+
+```yaml
+manifest:
+  url: https://example.com/mods.yaml
+  auth:
+    api_key:
+      in: header      # "header" or "query"
+      name: X-API-Key # header name, or query parameter name, the key is sent as
+```
+
+- **Key resolution**, checked in order:
+  1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
+  2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store.
+- The resolved key is attached to **both** the manifest fetch and every file download from that source, using the same `in`/`name` the definition declares.
+- Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth status` masks stored keys to their first/last 3 characters. (`lmm auth status` currently only reports on built-in sources — nexusmods and curseforge.)
+
 ### Source Management Commands
 
 List all sources (built-in and custom):
@@ -311,6 +412,7 @@ ID            NAME                    TYPE       AUTH  CAPABILITIES             
 nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth
 curseforge    CurseForge              built-in   yes   search,deps,updates,auth
 donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates
+my-repo       My Mod Repo             manifest   no    search,deps,updates,auth
 ```
 
 Validate a source definition file before use:
@@ -367,7 +469,7 @@ Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
    lmm install --source my-local-mods --id BiggerBackpack -g skyrim-se
    ```
 
-A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
+A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A `manifest` source shows `search,deps,updates` (plus `auth` if the definition declares one, with the `AUTH` column reporting `yes`/`no` once a key is or isn't configured). Either type will show as an `error` row if construction fails (e.g. a directory source's path doesn't exist). A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
 
 ## CLI Reference
 

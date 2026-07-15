@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 
@@ -109,7 +111,7 @@ func promptForSource() (string, error) {
 
 func runAuthLogin(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		sourceID, err := selectAuthSource(args)
+		sourceID, err := selectAuthSource(service, args)
 		if err != nil {
 			return err
 		}
@@ -124,28 +126,60 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("API key cannot be empty")
 		}
 
-		fmt.Print("Validating... ")
-		if err := validateAPIKey(ctx, sourceID, apiKey); err != nil {
-			fmt.Println("failed")
-			return fmt.Errorf("invalid API key: %w", err)
+		if isSupportedSource(sourceID) {
+			fmt.Print("Validating... ")
+			if err := validateAPIKey(ctx, sourceID, apiKey); err != nil {
+				fmt.Println("failed")
+				return fmt.Errorf("invalid API key: %w", err)
+			}
+			fmt.Println("done")
 		}
-		fmt.Println("done")
 
 		if err := service.SaveSourceToken(sourceID, apiKey); err != nil {
 			return fmt.Errorf("saving token: %w", err)
 		}
-
-		fmt.Printf("Successfully authenticated with %s!\n", getSourceDisplayName(sourceID))
+		printLoginResult(os.Stdout, sourceID)
+		printAuthLoginSuccess(os.Stdout, sourceID)
 		return nil
 	})
 }
 
-// selectAuthSource resolves the source from args or prompts the user.
-func selectAuthSource(args []string) (string, error) {
+// printLoginResult reports the outcome of storing credentials for sourceID.
+// Built-in sources (nexusmods, curseforge) were actively validated via a real
+// API call just above ("Validating... done"), so nothing more is needed here.
+// Custom sources have no generic validation endpoint (validateAPIKey is a
+// no-op for them) — printing the same "Validating... done" sequence would be
+// a fabricated result, so they get an honest message instead: the key is
+// simply stored and will be exercised on first use.
+func printLoginResult(w io.Writer, sourceID string) {
+	if isSupportedSource(sourceID) {
+		return
+	}
+	fmt.Fprintln(w, "Stored (validated on first use).")
+}
+
+// printAuthLoginSuccess prints the final confirmation line for a completed
+// login. Built-in sources were actively validated via a real API call
+// earlier in the flow ("Validating... done"), so "Successfully
+// authenticated" is accurate. Custom sources have no generic validation
+// endpoint — printing that same claim would fabricate a result that never
+// happened, so they get an honest "stored" message instead.
+func printAuthLoginSuccess(w io.Writer, sourceID string) {
+	if isSupportedSource(sourceID) {
+		fmt.Fprintf(w, "Successfully authenticated with %s!\n", getSourceDisplayName(sourceID))
+		return
+	}
+	fmt.Fprintf(w, "API key stored for %s.\n", sourceID)
+}
+
+// selectAuthSource resolves the source from args or prompts the user. The
+// service is used to recognize registered custom sources that declare auth
+// support; the interactive prompt path only ever offers built-ins.
+func selectAuthSource(service *core.Service, args []string) (string, error) {
 	if len(args) > 0 {
 		sourceID := args[0]
-		if !isSupportedSource(sourceID) {
-			return "", fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
+		if !isAuthCapableSource(service, sourceID) {
+			return "", fmt.Errorf("unsupported source: %s (supported: %s, or a registered custom source with auth declared)", sourceID, strings.Join(supportedSources, ", "))
 		}
 		return sourceID, nil
 	}
@@ -157,9 +191,23 @@ func selectAuthSource(args []string) (string, error) {
 	return sourceID, nil
 }
 
+// isAuthCapableSource reports whether sourceID can hold an API key: either a
+// built-in from supportedSources, or a registered custom source whose
+// definition declares auth.
+func isAuthCapableSource(service *core.Service, sourceID string) bool {
+	if isSupportedSource(sourceID) {
+		return true
+	}
+	src, err := service.GetSource(sourceID)
+	if err != nil {
+		return false
+	}
+	return source.CapabilitiesOf(src).Auth
+}
+
 func runAuthLogout(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		sourceID, err := selectAuthSource(args)
+		sourceID, err := selectAuthSource(service, args)
 		if err != nil {
 			return err
 		}
@@ -242,6 +290,9 @@ func printAuthInstructions(sourceID string) {
 		fmt.Println("1. Visit https://console.curseforge.com/")
 		fmt.Println("2. Create a project and generate an API key")
 		fmt.Println("3. Copy your API key")
+	default:
+		fmt.Printf("Enter the API key for %s.\n", sourceID)
+		fmt.Printf("(Alternatively, set the %s environment variable.)\n", envKeyForSourceID(sourceID))
 	}
 	fmt.Println()
 }
@@ -261,7 +312,10 @@ func validateAPIKey(ctx context.Context, sourceID, apiKey string) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown source: %s", sourceID)
+		// Custom sources have no generic validation endpoint. By the time we
+		// get here the source has already passed isAuthCapableSource, so the
+		// key is simply stored and exercised on first fetch.
+		return nil
 	}
 }
 
@@ -273,8 +327,14 @@ func getEnvKeyForSource(sourceID string) string {
 	case "curseforge":
 		return "CURSEFORGE_API_KEY"
 	default:
-		return ""
+		return envKeyForSourceID(sourceID)
 	}
+}
+
+// envKeyForSourceID derives the env var that can supply a custom source's API
+// key: LMM_<ID>_API_KEY with the ID uppercased and dashes as underscores.
+func envKeyForSourceID(sourceID string) string {
+	return "LMM_" + strings.ReplaceAll(strings.ToUpper(sourceID), "-", "_") + "_API_KEY"
 }
 
 // readAPIKey prompts for and reads an API key from the terminal

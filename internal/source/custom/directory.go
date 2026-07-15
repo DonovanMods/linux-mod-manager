@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -173,55 +172,11 @@ func (d *Directory) Search(ctx context.Context, query source.SearchQuery) (sourc
 	if err != nil {
 		return source.SearchResult{}, err
 	}
-
-	q := strings.ToLower(query.Query)
-	type ranked struct {
-		mod       domain.Mod
-		nameMatch bool
-	}
-	var matches []ranked
+	mods := make([]domain.Mod, 0, len(scanned))
 	for _, dm := range scanned {
-		nameMatch := q == "" || strings.Contains(strings.ToLower(dm.mod.Name), q) || strings.Contains(strings.ToLower(dm.mod.ID), q)
-		summaryMatch := strings.Contains(strings.ToLower(dm.mod.Summary), q)
-		if !nameMatch && !summaryMatch {
-			continue
-		}
-		matches = append(matches, ranked{mod: dm.mod, nameMatch: nameMatch})
+		mods = append(mods, dm.mod)
 	}
-
-	sort.SliceStable(matches, func(i, j int) bool {
-		if matches[i].nameMatch != matches[j].nameMatch {
-			return matches[i].nameMatch
-		}
-		return matches[i].mod.Name < matches[j].mod.Name
-	})
-
-	pageSize := query.PageSize
-	if pageSize <= 0 {
-		pageSize = 20
-	}
-	start := query.Page * pageSize
-	if start < 0 {
-		start = 0
-	}
-	end := min(start+pageSize, len(matches))
-	if start > len(matches) {
-		start = len(matches)
-	}
-
-	mods := make([]domain.Mod, 0, end-start)
-	for _, m := range matches[start:end] {
-		mod := m.mod
-		mod.GameID = query.GameID
-		mods = append(mods, mod)
-	}
-
-	return source.SearchResult{
-		Mods:       mods,
-		TotalCount: len(matches),
-		Page:       query.Page,
-		PageSize:   pageSize,
-	}, nil
+	return searchMods(mods, query), nil
 }
 
 // GetMod implements source.ModSource. gameID is accepted from any game and not
