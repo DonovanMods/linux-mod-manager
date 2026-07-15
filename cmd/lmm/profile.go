@@ -492,7 +492,10 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 				continue
 			}
 
-			// Save to DB
+			// Save to DB. Normalize GameID to the lmm game (not the
+			// source-mapped value Service.GetMod stamped onto mod.GameID for
+			// querying the source) so every DB read, which queries by the
+			// lmm game ID, can find this row again.
 			installedMod := &domain.InstalledMod{
 				Mod:          *mod,
 				ProfileName:  targetName,
@@ -500,6 +503,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 				Enabled:      true,
 				FileIDs:      downloadedFileIDs,
 			}
+			installedMod.Mod.GameID = game.ID
 			if err := service.SaveInstalledMod(installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
 				continue
@@ -749,7 +753,8 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			continue
 		}
 
-		// Save to DB
+		// Save to DB. Normalize GameID to the lmm game (see comment on the
+		// doProfileSwitch save site for why).
 		installedMod := &domain.InstalledMod{
 			Mod:          *mod,
 			ProfileName:  profile.Name,
@@ -757,6 +762,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			Enabled:      true,
 			FileIDs:      downloadedFileIDs,
 		}
+		installedMod.Mod.GameID = game.ID
 		if err := service.SaveInstalledMod(installedMod); err != nil {
 			fmt.Printf("    Error: save failed: %v\n", err)
 			failedCount++
@@ -1302,7 +1308,8 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				continue
 			}
 
-			// Save to DB
+			// Save to DB. Normalize GameID to the lmm game (see comment on
+			// the doProfileSwitch save site for why).
 			installedMod := &domain.InstalledMod{
 				Mod:          *mod,
 				ProfileName:  profileName,
@@ -1310,6 +1317,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				Enabled:      true,
 				FileIDs:      downloadedFileIDs,
 			}
+			installedMod.Mod.GameID = game.ID
 			if err := service.SaveInstalledMod(installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
 				continue
