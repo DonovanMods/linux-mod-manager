@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -125,20 +126,37 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("API key cannot be empty")
 		}
 
-		fmt.Print("Validating... ")
-		if err := validateAPIKey(ctx, sourceID, apiKey); err != nil {
-			fmt.Println("failed")
-			return fmt.Errorf("invalid API key: %w", err)
+		if isSupportedSource(sourceID) {
+			fmt.Print("Validating... ")
+			if err := validateAPIKey(ctx, sourceID, apiKey); err != nil {
+				fmt.Println("failed")
+				return fmt.Errorf("invalid API key: %w", err)
+			}
+			fmt.Println("done")
 		}
-		fmt.Println("done")
 
 		if err := service.SaveSourceToken(sourceID, apiKey); err != nil {
 			return fmt.Errorf("saving token: %w", err)
 		}
+		printLoginResult(os.Stdout, sourceID)
 
 		fmt.Printf("Successfully authenticated with %s!\n", getSourceDisplayName(sourceID))
 		return nil
 	})
+}
+
+// printLoginResult reports the outcome of storing credentials for sourceID.
+// Built-in sources (nexusmods, curseforge) were actively validated via a real
+// API call just above ("Validating... done"), so nothing more is needed here.
+// Custom sources have no generic validation endpoint (validateAPIKey is a
+// no-op for them) — printing the same "Validating... done" sequence would be
+// a fabricated result, so they get an honest message instead: the key is
+// simply stored and will be exercised on first use.
+func printLoginResult(w io.Writer, sourceID string) {
+	if isSupportedSource(sourceID) {
+		return
+	}
+	fmt.Fprintln(w, "Stored (validated on first use).")
 }
 
 // selectAuthSource resolves the source from args or prompts the user. The
@@ -148,7 +166,7 @@ func selectAuthSource(service *core.Service, args []string) (string, error) {
 	if len(args) > 0 {
 		sourceID := args[0]
 		if !isAuthCapableSource(service, sourceID) {
-			return "", fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
+			return "", fmt.Errorf("unsupported source: %s (supported: %s, or a registered custom source with auth declared)", sourceID, strings.Join(supportedSources, ", "))
 		}
 		return sourceID, nil
 	}

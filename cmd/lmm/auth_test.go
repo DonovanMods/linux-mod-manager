@@ -139,6 +139,29 @@ func TestAuthLoginCmd_UnsupportedSource(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported source")
 }
 
+// TestAuthLoginCmd_UnsupportedSourceMentionsCustomSources pins final-review
+// finding 4: the rejection for an unrecognized source must not read like
+// only nexusmods/curseforge are ever possible — a registered custom source
+// with auth declared is also a valid `lmm auth login <id>` target.
+func TestAuthLoginCmd_UnsupportedSourceMentionsCustomSources(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(authCmd)
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"auth", "login", "unsupported-source"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nexusmods")
+	assert.Contains(t, err.Error(), "curseforge")
+	assert.Contains(t, err.Error(), "registered custom source with auth declared")
+}
+
 // TestAuthLogoutCmd_UnsupportedSource tests logout with unsupported source
 func TestAuthLogoutCmd_UnsupportedSource(t *testing.T) {
 	// Use temp directories
@@ -328,4 +351,31 @@ func TestAuthLogoutCmd_DefaultSource(t *testing.T) {
 func TestEnvKeyForSourceID(t *testing.T) {
 	assert.Equal(t, "LMM_DONOVAN_MODS_API_KEY", envKeyForSourceID("donovan-mods"))
 	assert.Equal(t, "LMM_MY_REPO_API_KEY", envKeyForSourceID("my-repo"))
+}
+
+// TestPrintLoginResult pins final-review finding 4: custom sources have no
+// generic validation endpoint (validateAPIKey is a no-op for them), so
+// runAuthLogin must not print the built-in "Validating... done" sequence for
+// them — that's a fabricated result. Built-ins are actively validated
+// earlier in the flow and need no extra message here; non-built-ins get an
+// honest "stored, checked on first use" message instead.
+func TestPrintLoginResult(t *testing.T) {
+	t.Run("built-in source prints nothing extra", func(t *testing.T) {
+		var buf bytes.Buffer
+		printLoginResult(&buf, "nexusmods")
+		assert.Empty(t, buf.String(), "built-ins are validated via the Validating...done sequence above")
+	})
+
+	t.Run("curseforge prints nothing extra", func(t *testing.T) {
+		var buf bytes.Buffer
+		printLoginResult(&buf, "curseforge")
+		assert.Empty(t, buf.String())
+	})
+
+	t.Run("custom source prints an honest stored message", func(t *testing.T) {
+		var buf bytes.Buffer
+		printLoginResult(&buf, "my-repo")
+		assert.Equal(t, "Stored (validated on first use).\n", buf.String())
+		assert.NotContains(t, buf.String(), "Validating", "must not fabricate a validation step that never ran")
+	})
 }
