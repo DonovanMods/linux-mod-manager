@@ -480,8 +480,11 @@ func TestManifestFetchReturnsDefensiveCopy(t *testing.T) {
 // came from cache, not the network.
 func TestManifestFetchRemoteReturnsDefensiveCopy(t *testing.T) {
 	hits := 0
+	var hitsMu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsMu.Lock()
 		hits++
+		hitsMu.Unlock()
 		_, _ = w.Write([]byte(testManifest))
 	}))
 	defer srv.Close()
@@ -498,7 +501,9 @@ func TestManifestFetchRemoteReturnsDefensiveCopy(t *testing.T) {
 	first, err := m.fetch(ctx)
 	require.NoError(t, err)
 	require.Len(t, first.Mods, 2)
+	hitsMu.Lock()
 	assert.Equal(t, 1, hits, "first fetch must hit the server")
+	hitsMu.Unlock()
 
 	// Mutate everything a caller could plausibly touch.
 	first.Mods[0].Name = "MUTATED"
@@ -513,7 +518,9 @@ func TestManifestFetchRemoteReturnsDefensiveCopy(t *testing.T) {
 	assert.Equal(t, "Cool Mod", second.Mods[0].Name)
 	assert.Equal(t, "skyrim", second.Mods[0].GameIDs[0])
 	assert.NotEqual(t, "MUTATED", second.Mods[0].Files[0].URL)
+	hitsMu.Lock()
 	assert.Equal(t, 1, hits, "second fetch within TTL must use cache, not hit server")
+	hitsMu.Unlock()
 }
 
 func TestManifestFetchConcurrent(t *testing.T) {
