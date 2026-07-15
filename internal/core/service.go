@@ -507,6 +507,13 @@ func (s *Service) DeleteSourceToken(sourceID string) error {
 	return s.db.DeleteToken(sourceID)
 }
 
+// ListSourceTokens returns every stored API token, including ones whose
+// source is no longer registered (e.g. the custom-source definition file
+// was removed) — used by `lmm auth status` to surface orphaned credentials.
+func (s *Service) ListSourceTokens() ([]db.StoredToken, error) {
+	return s.db.ListTokens()
+}
+
 // IsSourceAuthenticated checks if a source has a stored API token
 func (s *Service) IsSourceAuthenticated(sourceID string) bool {
 	has, err := s.db.HasToken(sourceID)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -275,8 +276,19 @@ func doAuthStatus(service *core.Service) error {
 	}
 
 	// Custom sources that declare auth get the same treatment as built-ins.
-	for _, src := range service.ListSources() {
+	// Sorted by ID: registry/ListSources order is map iteration, which Go
+	// randomizes, and this output must be deterministic.
+	customSources := service.ListSources()
+	sort.Slice(customSources, func(i, j int) bool { return customSources[i].ID() < customSources[j].ID() })
+
+	registered := make(map[string]bool, len(supportedSources)+len(customSources))
+	for _, id := range supportedSources {
+		registered[id] = true
+	}
+
+	for _, src := range customSources {
 		id := src.ID()
+		registered[id] = true
 		if isSupportedSource(id) {
 			continue // already reported above
 		}
@@ -298,6 +310,22 @@ func doAuthStatus(service *core.Service) error {
 			continue
 		}
 		fmt.Printf("%s: not authenticated (run: lmm auth login %s)\n", id, id)
+	}
+
+	// Stored tokens whose source matches nothing registered (built-in or
+	// custom) are otherwise invisible — e.g. a custom source's definition
+	// file was deleted after `lmm auth login`. Surface them so the user
+	// knows the credential still exists and how to remove it.
+	tokens, err := service.ListSourceTokens()
+	if err != nil {
+		return fmt.Errorf("listing stored tokens: %w", err)
+	}
+	for _, tok := range tokens {
+		if registered[tok.SourceID] {
+			continue
+		}
+		fmt.Printf("%s: stored token with no matching source (key: %s) — remove with: lmm auth logout %s\n",
+			tok.SourceID, maskAPIKey(tok.APIKey), tok.SourceID)
 	}
 
 	return nil
@@ -408,9 +436,12 @@ func readAPIKey() (string, error) {
 	return strings.TrimSpace(key), nil
 }
 
-// maskAPIKey returns a masked version of the API key (shows first 3 and last 3 chars)
+// maskAPIKey returns a masked version of the API key (shows first 3 and last
+// 3 chars). Keys of 8 characters or fewer are fully masked instead: showing
+// 6 of 7-8 characters exposes most of the key, defeating the point of
+// masking.
 func maskAPIKey(key string) string {
-	if len(key) <= 6 {
+	if len(key) <= 8 {
 		return "***"
 	}
 	return key[:3] + "..." + key[len(key)-3:]

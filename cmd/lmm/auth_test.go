@@ -24,9 +24,19 @@ func TestMaskAPIKey(t *testing.T) {
 			expected: "abc...nop",
 		},
 		{
-			name:     "exactly 7 chars",
+			name:     "exactly 9 chars reveals both ends",
+			input:    "123456789",
+			expected: "123...789",
+		},
+		{
+			name:     "exactly 8 chars fully masked",
+			input:    "12345678",
+			expected: "***",
+		},
+		{
+			name:     "exactly 7 chars fully masked",
 			input:    "1234567",
-			expected: "123...567",
+			expected: "***",
 		},
 		{
 			name:     "6 chars or less returns ***",
@@ -163,8 +173,10 @@ func TestAuthLoginCmd_UnsupportedSourceMentionsCustomSources(t *testing.T) {
 	assert.Contains(t, err.Error(), "registered custom source with auth declared")
 }
 
-// TestAuthLogoutCmd_UnsupportedSource tests logout with unsupported source
-func TestAuthLogoutCmd_UnsupportedSource(t *testing.T) {
+// TestAuthLogoutCmd_NoStoredCredentials tests logout for a source ID that
+// has no stored token and isn't a registered auth-capable source (built-in
+// or custom) — resolveLogoutSource must reject it.
+func TestAuthLogoutCmd_NoStoredCredentials(t *testing.T) {
 	// Use temp directories
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
