@@ -145,7 +145,7 @@ func (c *APIConfig) validateEndpointsAndMappings() error {
 		return errors.New(`mappings.mod: "name" is required`)
 	}
 	if c.Endpoints.ModFiles != nil && c.Mappings.File["id"] == "" {
-		return errors.New(`mappings.file: "id" is required`)
+		return errors.New(`mappings.file: "id" is required when mod_files is defined`)
 	}
 	for k := range c.Mappings.Mod {
 		if !knownModMappingKeys[k] {

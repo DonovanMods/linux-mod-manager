@@ -221,6 +221,12 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 	if !ok {
 		return source.SearchResult{}, fmt.Errorf("source %q: searching: response has no %q array", a.id, ep.List)
 	}
+	if listVal == nil {
+		// A Go-backed API's json.Marshal of a nil slice emits `null`, the
+		// standard zero-hits shape for such APIs — treat it as empty, not
+		// an error.
+		listVal = []any{}
+	}
 	items, ok := listVal.([]any)
 	if !ok {
 		return source.SearchResult{}, fmt.Errorf("source %q: searching: %q is not an array", a.id, ep.List)
@@ -285,6 +291,12 @@ func (a *API) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Downlo
 	listVal, ok := lookupPath(doc, ep.List)
 	if !ok {
 		return nil, fmt.Errorf("source %q: mod %s: response has no %q array", a.id, mod.ID, ep.List)
+	}
+	if listVal == nil {
+		// A Go-backed API's json.Marshal of a nil slice emits `null`, the
+		// standard zero-hits shape for such APIs — treat it as empty, not
+		// an error.
+		listVal = []any{}
 	}
 	items, ok := listVal.([]any)
 	if !ok {

@@ -225,6 +225,37 @@ func TestAPISearchTotalAbsentIsZero(t *testing.T) {
 	assert.Empty(t, res.Mods)
 }
 
+// TestAPISearchNullListIsEmpty guards against Go's json.Marshal encoding a
+// nil slice as `null`: {"results": null} is the standard zero-hits shape
+// for Go-backed REST APIs and must map to empty results, not an error.
+func TestAPISearchNullListIsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"results": null}`))
+	}))
+	defer srv.Close()
+
+	a, err := NewAPI(apiDef(srv.URL))
+	require.NoError(t, err)
+	res, err := a.Search(context.Background(), source.SearchQuery{Query: "x"})
+	require.NoError(t, err)
+	assert.Empty(t, res.Mods)
+	assert.Zero(t, res.TotalCount)
+}
+
+// TestAPISearchNonArrayListFails proves the null-handling fix doesn't
+// over-relax: a present-but-non-array, non-null list value must still error.
+func TestAPISearchNonArrayListFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"results": "nope"}`))
+	}))
+	defer srv.Close()
+
+	a, err := NewAPI(apiDef(srv.URL))
+	require.NoError(t, err)
+	_, err = a.Search(context.Background(), source.SearchQuery{Query: "x"})
+	assert.ErrorContains(t, err, "not an array")
+}
+
 // newTestAPIServer wires a minimal fake REST API for the read ops.
 func newTestAPIServer(t *testing.T) (*httptest.Server, *API) {
 	t.Helper()
@@ -268,6 +299,22 @@ func TestAPIGetModFiles(t *testing.T) {
 	assert.Equal(t, "900", files[0].ID)
 	assert.Equal(t, "cool-1.2.0.zip", files[0].FileName)
 	assert.Equal(t, int64(4), files[0].Size)
+}
+
+// TestAPIGetModFilesNullListIsEmpty mirrors TestAPISearchNullListIsEmpty for
+// the mod_files endpoint: {"files": null} is Go's standard zero-hits shape
+// and must map to an empty files slice, not an error.
+func TestAPIGetModFilesNullListIsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"files": null}`))
+	}))
+	defer srv.Close()
+
+	a, err := NewAPI(apiDef(srv.URL))
+	require.NoError(t, err)
+	files, err := a.GetModFiles(context.Background(), &domain.Mod{ID: "77", GameID: "skyrim"})
+	require.NoError(t, err)
+	assert.Empty(t, files)
 }
 
 func TestAPIGetDownloadURL(t *testing.T) {

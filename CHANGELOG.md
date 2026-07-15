@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - API source type: describe a GET+JSON REST API declaratively (endpoint templates + dot-path mappings) and use it as a mod source — search, install (including install-by-ID-only definitions), and update checks
 - `lmm source validate --probe` — live smoke test for a definition (directory scan, manifest fetch, or API call; `--id` probes get_mod for search-less API definitions)
 
+### Fixed
+
+- API source search and file-listing endpoints no longer error on a JSON `null` list (e.g. `{"results": null}`, the standard zero-hits shape for Go-backed APIs) — it's now treated as an empty result set
+
 ## [1.8.0] - 2026-07-15
 
 ### Added
