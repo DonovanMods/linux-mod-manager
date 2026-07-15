@@ -85,6 +85,9 @@ func (d *Directory) scan() ([]dirMod, error) {
 
 	var mods []dirMod
 	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue // hidden entries (.git, .DS_Store, dotfiles, ...) are never mods
+		}
 		entryPath := filepath.Join(d.path, entry.Name())
 
 		if entry.IsDir() {
@@ -188,6 +191,9 @@ func (d *Directory) Search(ctx context.Context, query source.SearchQuery) (sourc
 		pageSize = 20
 	}
 	start := query.Page * pageSize
+	if start < 0 {
+		start = 0
+	}
 	end := min(start+pageSize, len(matches))
 	if start > len(matches) {
 		start = len(matches)

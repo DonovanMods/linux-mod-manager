@@ -29,6 +29,8 @@ const testModInfo = `<?xml version="1.0" encoding="UTF-8" ?>
 //	PlainMod-0.5/          (no metadata; version from dirname)
 //	archived-mod-2.0.zip   (archive mod)
 //	README.md              (ignored: not a dir or archive)
+//	.git/                  (ignored: dot-prefixed directory)
+//	.hidden-mod.zip        (ignored: dot-prefixed file, even though it's a .zip)
 func newTestDirectory(t *testing.T) *Directory {
 	t.Helper()
 	root := t.TempDir()
@@ -41,6 +43,10 @@ func newTestDirectory(t *testing.T) *Directory {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "PlainMod-0.5"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "archived-mod-2.0.zip"), []byte("zipbytes"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "README.md"), []byte("ignored"), 0644))
+
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".git", "config"), []byte("ignored"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".hidden-mod.zip"), []byte("zipbytes"), 0644))
 
 	def := SourceDefinition{
 		ID:        "my-mods",
@@ -127,6 +133,24 @@ func TestDirectorySearch(t *testing.T) {
 		res, err = d.Search(ctx, source.SearchQuery{Page: 1, PageSize: 2})
 		require.NoError(t, err)
 		assert.Len(t, res.Mods, 1)
+	})
+
+	t.Run("negative page clamps to the first page instead of panicking", func(t *testing.T) {
+		res, err := d.Search(ctx, source.SearchQuery{Page: -1, PageSize: 2})
+		require.NoError(t, err)
+		assert.Len(t, res.Mods, 2)
+		assert.Equal(t, 3, res.TotalCount)
+	})
+
+	t.Run("dot-prefixed entries are skipped", func(t *testing.T) {
+		res, err := d.Search(ctx, source.SearchQuery{})
+		require.NoError(t, err)
+		assert.Equal(t, 3, res.TotalCount, "hidden .git dir and .hidden-mod.zip must not be listed as mods")
+		for _, m := range res.Mods {
+			assert.NotEqual(t, "config", m.ID)
+			assert.NotEqual(t, ".git", m.ID)
+			assert.NotEqual(t, ".hidden-mod", m.ID)
+		}
 	})
 }
 

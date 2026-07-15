@@ -261,6 +261,9 @@ A `directory` source scans a local folder every time it's queried — no indexin
 - A **subdirectory** is a mod whose contents are used as-is.
 - A **`.zip` or `.jar` file** is a mod whose archive is extracted like any downloaded mod.
 - Anything else (loose files, `README.md`, `LICENSE.md`, other subfolders that aren't mods, etc.) is ignored by the scan but still shows up as a listed entry if it happens to be a directory — see the note on metadata fallback below.
+- **Dot-prefixed entries** (`.git`, `.DS_Store`, dotfiles, ...) are always ignored, whether they're a directory or a file.
+
+Because every non-hidden subdirectory becomes an entry, point `directory.path` at a folder dedicated to mods (as in the example below) rather than something like a repository root that also holds unrelated project files — those would otherwise show up as listed (if harmless) entries in `search`/`lmm source list` output.
 
 ```yaml
 id: donovan-mods

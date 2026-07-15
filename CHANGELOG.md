@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - User-defined source definitions loaded from `~/.config/lmm/sources/*.yaml`
 - Directory source type: use a local folder of mods as a first-class source
 
+### Fixed
+
+- **Hidden entries ignored by directory sources**: dot-prefixed entries (`.git`, etc.) under a directory source's path are no longer listed as installable mods
+- Negative `page` values in directory source search no longer panic; they clamp to the first page
+
 ## [1.5.0] - 2026-07-13
 
 ### Added
