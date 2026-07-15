@@ -312,6 +312,7 @@ manifest:
 - **Remote URLs** (`https://...`) are fetched on demand and cached in memory for `refresh` — a Go duration string like `30s`, `15m`, or `2h` (default `15m` when omitted). **Local file paths** are read fresh on every operation instead of being cached, so edits show up immediately.
 - Fetch/parse problems (unreachable URL, malformed document, unsupported `version`) surface as an operation error naming the source and the manifest URL, at the point something actually uses the source. This is different from a broken *definition* file, which is caught at load time and skipped with a warning before lmm ever starts (see above).
 - `https://` is required for the manifest `url`, and for every file `url` inside the document, unless the definition sets `allow_http: true`; local paths are exempt.
+- Remote manifest fetches are bounded by a 30-second timeout, so a hung server can't block other operations indefinitely.
 
 The manifest document itself:
 
@@ -394,8 +395,11 @@ manifest:
 - **Key resolution**, checked in order:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
   2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store.
-- The resolved key is attached to **both** the manifest fetch and every file download from that source, using the same `in`/`name` the definition declares.
-- Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth status` masks stored keys to their first/last 3 characters. (`lmm auth status` currently only reports on built-in sources — nexusmods and curseforge.)
+- The resolved key is always attached to the manifest fetch, and to every file download's URL when `in: query`, using the same `in`/`name` the definition declares.
+- For `in: header` keys, whether a file download also gets the key depends on the manifest's origin:
+  - **Remote manifests** (`https://` URL): the key is only sent to file downloads whose host (host and port, ignoring scheme) matches the manifest URL's host — a manifest pointing files at a third-party CDN never receives the source's key.
+  - **Local-file manifests**: the key is attached to every file download regardless of host, since a local manifest is user-authored and already trusted.
+- Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth status` masks stored keys to their first/last 3 characters. `lmm auth status` also lists any registered custom source whose definition declares `auth`, alongside the built-in nexusmods/curseforge rows. `lmm auth logout <id>` removes a stored token even if the source's definition file has since been removed.
 
 ### Source Management Commands
 
