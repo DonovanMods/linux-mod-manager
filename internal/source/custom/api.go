@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -190,9 +191,59 @@ var (
 	_ source.DownloadHeaderProvider = (*API)(nil)
 )
 
-// Search is implemented in the search task (replaces this stub).
+// Search implements source.ModSource by executing the search endpoint
+// template and mapping the results (design §4). An undefined search endpoint
+// is an unsupported capability.
 func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
-	return source.SearchResult{}, fmt.Errorf("source %q: searching: %w", a.id, source.ErrNotSupported)
+	ep := a.endpoints.Search
+	if ep == nil {
+		return source.SearchResult{}, fmt.Errorf("source %q: searching: %w", a.id, source.ErrNotSupported)
+	}
+
+	pageSize := query.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	vals := map[string]string{
+		"game_id":   query.GameID,
+		"query":     query.Query,
+		"page":      strconv.Itoa(query.Page + a.pageStart),
+		"page_size": strconv.Itoa(pageSize),
+		"offset":    strconv.Itoa(query.Page * pageSize),
+	}
+
+	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))
+	if err != nil {
+		return source.SearchResult{}, fmt.Errorf("searching: %w", err)
+	}
+
+	listVal, ok := lookupPath(doc, ep.List)
+	if !ok {
+		return source.SearchResult{}, fmt.Errorf("source %q: searching: response has no %q array", a.id, ep.List)
+	}
+	items, ok := listVal.([]any)
+	if !ok {
+		return source.SearchResult{}, fmt.Errorf("source %q: searching: %q is not an array", a.id, ep.List)
+	}
+
+	mods := make([]domain.Mod, 0, len(items))
+	for i, item := range items {
+		mod, err := mapMod(item, a.mappings.Mod, a.id)
+		if err != nil {
+			return source.SearchResult{}, fmt.Errorf("source %q: searching: %s[%d]: %w", a.id, ep.List, i, err)
+		}
+		mod.GameID = query.GameID
+		mods = append(mods, mod)
+	}
+
+	total := 0
+	if ep.Total != "" {
+		if v, found := lookupPath(doc, ep.Total); found {
+			total = int(coerceInt64(v))
+		}
+	}
+
+	return source.SearchResult{Mods: mods, TotalCount: total, Page: query.Page, PageSize: pageSize}, nil
 }
 
 // GetMod is implemented in the read-ops task (replaces this stub).

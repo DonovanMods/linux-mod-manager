@@ -146,3 +146,81 @@ func TestAPIDownloadHeaders(t *testing.T) {
 	assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, a.DownloadHeaders("https://api.x.test/dl/1.zip"))
 	assert.Nil(t, a.DownloadHeaders("https://cdn.elsewhere.test/dl/1.zip"), "cross-origin downloads must not receive the key")
 }
+
+const apiSearchResponse = `{
+	"results": [
+		{"id": 1, "name": "Alpha Mod", "latest_version": "1.0.0"},
+		{"id": 2, "name": "Beta Mod", "latest_version": "2.0.0"}
+	],
+	"pagination": {"total": 41}
+}`
+
+func TestAPISearch(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.String()
+		_, _ = w.Write([]byte(apiSearchResponse))
+	}))
+	defer srv.Close()
+
+	def := apiDef(srv.URL)
+	def.API.Endpoints.Search = &EndpointConfig{
+		Path:  "/mods?game={game_id}&q={query}&page={page}&limit={page_size}&skip={offset}",
+		List:  "results",
+		Total: "pagination.total",
+	}
+	a, err := NewAPI(def)
+	require.NoError(t, err)
+
+	res, err := a.Search(context.Background(), source.SearchQuery{
+		GameID: "skyrim", Query: "cool mod", Page: 2, PageSize: 10,
+	})
+	require.NoError(t, err)
+
+	// {page} = 0-based page + page_start(1) = 3; {offset} = 2*10 = 20.
+	assert.Equal(t, "/mods?game=skyrim&q=cool+mod&page=3&limit=10&skip=20", gotPath)
+	require.Len(t, res.Mods, 2)
+	assert.Equal(t, "1", res.Mods[0].ID)
+	assert.Equal(t, "Alpha Mod", res.Mods[0].Name)
+	assert.Equal(t, "my-api", res.Mods[0].SourceID)
+	assert.Equal(t, "skyrim", res.Mods[0].GameID)
+	assert.Equal(t, 41, res.TotalCount)
+	assert.Equal(t, 2, res.Page)
+	assert.Equal(t, 10, res.PageSize)
+}
+
+func TestAPISearchNoEndpoint(t *testing.T) {
+	def := apiDef("https://x.test")
+	def.API.Endpoints.Search = nil
+	a, err := NewAPI(def)
+	require.NoError(t, err)
+
+	_, err = a.Search(context.Background(), source.SearchQuery{Query: "x"})
+	assert.True(t, errors.Is(err, source.ErrNotSupported))
+}
+
+func TestAPISearchMissingListPathFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"unexpected": {}}`))
+	}))
+	defer srv.Close()
+
+	a, err := NewAPI(apiDef(srv.URL))
+	require.NoError(t, err)
+	_, err = a.Search(context.Background(), source.SearchQuery{Query: "x"})
+	assert.ErrorContains(t, err, "results")
+}
+
+func TestAPISearchTotalAbsentIsZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"results": []}`))
+	}))
+	defer srv.Close()
+
+	a, err := NewAPI(apiDef(srv.URL))
+	require.NoError(t, err)
+	res, err := a.Search(context.Background(), source.SearchQuery{Query: "x"})
+	require.NoError(t, err)
+	assert.Zero(t, res.TotalCount)
+	assert.Empty(t, res.Mods)
+}
