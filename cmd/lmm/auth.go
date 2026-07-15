@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 
@@ -109,7 +110,7 @@ func promptForSource() (string, error) {
 
 func runAuthLogin(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		sourceID, err := selectAuthSource(args)
+		sourceID, err := selectAuthSource(service, args)
 		if err != nil {
 			return err
 		}
@@ -140,11 +141,13 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// selectAuthSource resolves the source from args or prompts the user.
-func selectAuthSource(args []string) (string, error) {
+// selectAuthSource resolves the source from args or prompts the user. The
+// service is used to recognize registered custom sources that declare auth
+// support; the interactive prompt path only ever offers built-ins.
+func selectAuthSource(service *core.Service, args []string) (string, error) {
 	if len(args) > 0 {
 		sourceID := args[0]
-		if !isSupportedSource(sourceID) {
+		if !isAuthCapableSource(service, sourceID) {
 			return "", fmt.Errorf("unsupported source: %s (supported: %s)", sourceID, strings.Join(supportedSources, ", "))
 		}
 		return sourceID, nil
@@ -157,9 +160,23 @@ func selectAuthSource(args []string) (string, error) {
 	return sourceID, nil
 }
 
+// isAuthCapableSource reports whether sourceID can hold an API key: either a
+// built-in from supportedSources, or a registered custom source whose
+// definition declares auth.
+func isAuthCapableSource(service *core.Service, sourceID string) bool {
+	if isSupportedSource(sourceID) {
+		return true
+	}
+	src, err := service.GetSource(sourceID)
+	if err != nil {
+		return false
+	}
+	return source.CapabilitiesOf(src).Auth
+}
+
 func runAuthLogout(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		sourceID, err := selectAuthSource(args)
+		sourceID, err := selectAuthSource(service, args)
 		if err != nil {
 			return err
 		}
@@ -242,6 +259,9 @@ func printAuthInstructions(sourceID string) {
 		fmt.Println("1. Visit https://console.curseforge.com/")
 		fmt.Println("2. Create a project and generate an API key")
 		fmt.Println("3. Copy your API key")
+	default:
+		fmt.Printf("Enter the API key for %s.\n", sourceID)
+		fmt.Printf("(Alternatively, set the %s environment variable.)\n", envKeyForSourceID(sourceID))
 	}
 	fmt.Println()
 }
@@ -261,7 +281,10 @@ func validateAPIKey(ctx context.Context, sourceID, apiKey string) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown source: %s", sourceID)
+		// Custom sources have no generic validation endpoint. By the time we
+		// get here the source has already passed isAuthCapableSource, so the
+		// key is simply stored and exercised on first fetch.
+		return nil
 	}
 }
 
@@ -273,8 +296,14 @@ func getEnvKeyForSource(sourceID string) string {
 	case "curseforge":
 		return "CURSEFORGE_API_KEY"
 	default:
-		return ""
+		return envKeyForSourceID(sourceID)
 	}
+}
+
+// envKeyForSourceID derives the env var that can supply a custom source's API
+// key: LMM_<ID>_API_KEY with the ID uppercased and dashes as underscores.
+func envKeyForSourceID(sourceID string) string {
+	return "LMM_" + strings.ReplaceAll(strings.ToUpper(sourceID), "-", "_") + "_API_KEY"
 }
 
 // readAPIKey prompts for and reads an API key from the terminal

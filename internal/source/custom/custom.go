@@ -13,6 +13,8 @@ func New(def SourceDefinition) (source.ModSource, error) {
 	switch def.Type {
 	case TypeDirectory:
 		return NewDirectory(def)
+	case TypeManifest:
+		return NewManifest(def)
 	default:
 		return nil, fmt.Errorf("source type %q is not yet supported", def.Type)
 	}

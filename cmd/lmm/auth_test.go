@@ -65,14 +65,14 @@ func TestGetEnvKeyForSource(t *testing.T) {
 			expected: "NEXUSMODS_API_KEY",
 		},
 		{
-			name:     "unknown source",
+			name:     "unknown source falls back to the derived LMM_*_API_KEY name",
 			sourceID: "unknown",
-			expected: "",
+			expected: "LMM_UNKNOWN_API_KEY",
 		},
 		{
 			name:     "empty source",
 			sourceID: "",
-			expected: "",
+			expected: "LMM__API_KEY",
 		},
 	}
 
@@ -323,4 +323,9 @@ func TestAuthLoginCmd_DefaultSource(t *testing.T) {
 func TestAuthLogoutCmd_DefaultSource(t *testing.T) {
 	// Similar to login, verify it accepts 0 or 1 args
 	assert.NotNil(t, authLogoutCmd.Args, "Args validator should be set")
+}
+
+func TestEnvKeyForSourceID(t *testing.T) {
+	assert.Equal(t, "LMM_DONOVAN_MODS_API_KEY", envKeyForSourceID("donovan-mods"))
+	assert.Equal(t, "LMM_MY_REPO_API_KEY", envKeyForSourceID("my-repo"))
 }

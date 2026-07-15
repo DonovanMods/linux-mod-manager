@@ -19,11 +19,21 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, "my-mods", src.ID())
 	})
 
-	t.Run("unimplemented types return a clear error", func(t *testing.T) {
-		for _, typ := range []string{TypeManifest, TypeAPI} {
-			def := SourceDefinition{ID: "x", Name: "X", Type: typ}
-			_, err := New(def)
-			assert.ErrorContains(t, err, "not yet supported", "type %s", typ)
+	t.Run("manifest type constructs a source", func(t *testing.T) {
+		def := SourceDefinition{
+			ID:       "my-repo",
+			Name:     "My Repo",
+			Type:     TypeManifest,
+			Manifest: &ManifestConfig{URL: "https://x.test/mods.yaml"},
 		}
+		src, err := New(def)
+		assert.NoError(t, err)
+		assert.Equal(t, "my-repo", src.ID())
+	})
+
+	t.Run("unimplemented types return a clear error", func(t *testing.T) {
+		def := SourceDefinition{ID: "x", Name: "X", Type: TypeAPI}
+		_, err := New(def)
+		assert.ErrorContains(t, err, "not yet supported")
 	})
 }
