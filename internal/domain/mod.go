@@ -45,6 +45,7 @@ type DownloadableFile struct {
 	IsPrimary   bool   // Whether this is the primary/main file
 	Category    string // Category: "MAIN", "OPTIONAL", "UPDATE", etc.
 	Description string // File description
+	SHA256      string // Expected SHA-256 of the download (hex); empty = source declares no checksum
 }
 
 // ModReference is a pointer to a mod (used in profiles, dependencies)
