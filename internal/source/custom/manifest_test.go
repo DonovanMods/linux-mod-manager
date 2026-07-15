@@ -387,6 +387,50 @@ func TestManifestFetchReturnsDefensiveCopy(t *testing.T) {
 	assert.NotEqual(t, "MUTATED", second.Mods[0].Files[0].URL)
 }
 
+// TestManifestFetchRemoteReturnsDefensiveCopy pins that callers cannot corrupt
+// the remote cache (m.cached) via the returned pointer. Uses an httptest server,
+// fetches once (populates cache), mutates the returned doc thoroughly (mirroring
+// the local test's mutations), fetches again within TTL (cache hit), and asserts
+// the second result is pristine. Counts server hits to prove the second fetch
+// came from cache, not the network.
+func TestManifestFetchRemoteReturnsDefensiveCopy(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(testManifest))
+	}))
+	defer srv.Close()
+
+	def := manifestDef(srv.URL + "/mods.yaml")
+	def.AllowHTTP = true
+	def.Manifest.Refresh = "15m" // explicit TTL; default is fine
+	m, err := NewManifest(def)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// First fetch: populates cache
+	first, err := m.fetch(ctx)
+	require.NoError(t, err)
+	require.Len(t, first.Mods, 2)
+	assert.Equal(t, 1, hits, "first fetch must hit the server")
+
+	// Mutate everything a caller could plausibly touch.
+	first.Mods[0].Name = "MUTATED"
+	first.Mods[0].GameIDs[0] = "MUTATED"
+	first.Mods[0].Files[0].URL = "MUTATED"
+	first.Mods = nil
+
+	// Second fetch: within TTL, must be from cache
+	second, err := m.fetch(ctx)
+	require.NoError(t, err)
+	require.Len(t, second.Mods, 2)
+	assert.Equal(t, "Cool Mod", second.Mods[0].Name)
+	assert.Equal(t, "skyrim", second.Mods[0].GameIDs[0])
+	assert.NotEqual(t, "MUTATED", second.Mods[0].Files[0].URL)
+	assert.Equal(t, 1, hits, "second fetch within TTL must use cache, not hit server")
+}
+
 func TestManifestFetchConcurrent(t *testing.T) {
 	// Race-detector safety net: concurrent fetches (cache hits and misses)
 	// must be data-race free. Run with -race in CI/the suite.
