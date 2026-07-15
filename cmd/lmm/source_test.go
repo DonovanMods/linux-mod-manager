@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -68,5 +69,80 @@ directory:
 	t.Run("missing argument errors", func(t *testing.T) {
 		_, err := run("source", "validate")
 		assert.Error(t, err)
+	})
+}
+
+// TestSourceListCmd_ErrorRows is a regression test for final-review finding 2:
+// `lmm source list` must not silently drop a definition whose source failed to
+// construct, and must not relabel a built-in source's type just because a
+// custom definition collides with its ID.
+func TestSourceListCmd_ErrorRows(t *testing.T) {
+	runList := func(t *testing.T) []sourceInfo {
+		t.Helper()
+		cmd := &cobra.Command{Use: "test"}
+		cmd.AddCommand(sourceCmd)
+		buf := new(bytes.Buffer)
+		cmd.SetOut(buf)
+		cmd.SetErr(buf)
+		cmd.SetArgs([]string{"source", "list"})
+
+		jsonOutput = true
+		t.Cleanup(func() { jsonOutput = false })
+
+		require.NoError(t, cmd.Execute())
+
+		var rows []sourceInfo
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+		return rows
+	}
+
+	findRow := func(rows []sourceInfo, id, typ string) (sourceInfo, bool) {
+		for _, r := range rows {
+			if r.ID == id && r.Type == typ {
+				return r, true
+			}
+		}
+		return sourceInfo{}, false
+	}
+
+	t.Run("definition with missing path produces an error row", func(t *testing.T) {
+		configDir = t.TempDir()
+		dataDir = t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(configDir, "sources"), 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "broken.yaml"), []byte(`
+id: broken-mods
+name: Broken Mods
+type: directory
+directory:
+  path: `+filepath.Join(t.TempDir(), "does-not-exist")+`
+`), 0644))
+
+		rows := runList(t)
+
+		row, found := findRow(rows, "broken-mods", "error")
+		require.True(t, found, "a definition whose source fails to construct must still produce a row: %+v", rows)
+		assert.NotEmpty(t, row.Error)
+	})
+
+	t.Run("definition colliding with a built-in id keeps the built-in row and adds an error row", func(t *testing.T) {
+		configDir = t.TempDir()
+		dataDir = t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(configDir, "sources"), 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "collide.yaml"), []byte(`
+id: nexusmods
+name: Fake Nexus
+type: directory
+directory:
+  path: `+t.TempDir()+`
+`), 0644))
+
+		rows := runList(t)
+
+		_, builtinFound := findRow(rows, "nexusmods", "built-in")
+		assert.True(t, builtinFound, "a colliding custom definition must not relabel the built-in source's type: %+v", rows)
+
+		errRow, errFound := findRow(rows, "nexusmods", "error")
+		require.True(t, errFound, "an id collision must still produce an error row: %+v", rows)
+		assert.Contains(t, errRow.Error, "already in use")
 	})
 }

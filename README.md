@@ -367,7 +367,7 @@ Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
    lmm install --source my-local-mods --id BiggerBackpack -g skyrim-se
    ```
 
-A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory.
+A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
 
 ## CLI Reference
 

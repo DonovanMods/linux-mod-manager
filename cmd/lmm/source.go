@@ -8,6 +8,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/spf13/cobra"
 )
@@ -43,16 +44,36 @@ var sourceListCmd = &cobra.Command{
 				return fmt.Errorf("loading source definitions: %w", err)
 			}
 
-			defTypes := make(map[string]string, len(defs))
+			// Reclassify each definition against what actually ended up registered
+			// (registerCustomSources may have skipped it on ID collision or
+			// construction failure) so the list reflects reality rather than just
+			// "a definition with this ID exists".
+			customTypes := make(map[string]string, len(defs)) // id -> def.Type, for defs that registered as custom
+			var errRows []sourceInfo
 			for _, d := range defs {
-				defTypes[d.ID] = d.Type
+				registered, err := svc.GetSource(d.ID)
+				switch {
+				case err == nil && isCustomSource(registered):
+					customTypes[d.ID] = d.Type
+				case err == nil:
+					// Something else (a built-in, or another def) already held this ID.
+					errRows = append(errRows, sourceInfo{ID: d.ID, Type: "error", Error: "id already in use"})
+				default:
+					// Nothing registered under this ID: construction must have failed.
+					// Re-run it to recover the actual error for display.
+					if _, cerr := custom.New(d); cerr != nil {
+						errRows = append(errRows, sourceInfo{ID: d.ID, Type: "error", Error: cerr.Error()})
+					}
+				}
 			}
 
 			var rows []sourceInfo
 			for _, src := range svc.ListSources() {
-				typ, isCustom := defTypes[src.ID()]
-				if !isCustom {
-					typ = "built-in"
+				typ := "built-in"
+				if isCustomSource(src) {
+					if t, ok := customTypes[src.ID()]; ok {
+						typ = t
+					}
 				}
 				rows = append(rows, sourceInfo{
 					ID:           src.ID(),
@@ -62,6 +83,7 @@ var sourceListCmd = &cobra.Command{
 					Capabilities: capabilitySummary(source.CapabilitiesOf(src)),
 				})
 			}
+			rows = append(rows, errRows...)
 			for _, le := range loadErrs {
 				rows = append(rows, sourceInfo{
 					ID:    le.File,
@@ -97,6 +119,18 @@ var sourceValidateCmd = &cobra.Command{
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: valid (%s source %q)\n", args[0], def.Type, def.ID)
 		return nil
 	},
+}
+
+// isCustomSource reports whether src was constructed from a user-defined
+// source definition (as opposed to a built-in like NexusMods/CurseForge).
+// Extend this switch as new custom source types (manifest, api) ship.
+func isCustomSource(src source.ModSource) bool {
+	switch src.(type) {
+	case *custom.Directory:
+		return true
+	default:
+		return false
+	}
 }
 
 // authState reports a source's authentication status for display.
