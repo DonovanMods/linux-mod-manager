@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Manifest source type: publish a JSON/YAML mod list (https URL or local file) and use it as a full source — search, install, within-source dependencies, and update checks
+- Declared `sha256` checksums in manifests are verified on download
+- API-key authentication for custom sources (`auth.api_key` in the definition; `LMM_<ID>_API_KEY` env var or `lmm auth login <id>`)
+
 ## [1.6.0] - 2026-07-14
 
 ### Added
