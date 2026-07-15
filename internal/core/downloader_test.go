@@ -410,6 +410,56 @@ func TestDownloadWithHeadersSetsHeaders(t *testing.T) {
 	assert.Equal(t, "sekrit", got)
 }
 
+// TestDownloadWithHeaders_StripsHeaderOnCrossHostRedirect pins final-review
+// finding 1: Go's http.Client automatically strips only Authorization/Cookie
+// on a cross-host redirect — a custom header like X-API-Key is otherwise
+// forwarded verbatim to whatever host the redirect points at. A same-origin
+// URL that 302s to a different host must not ship the key there.
+func TestDownloadWithHeaders_StripsHeaderOnCrossHostRedirect(t *testing.T) {
+	var gotOnB string
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotOnB = r.Header.Get("X-API-Key")
+		_, _ = w.Write([]byte("payload"))
+	}))
+	defer serverB.Close()
+
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, serverB.URL+"/final.zip", http.StatusFound)
+	}))
+	defer serverA.Close()
+
+	d := core.NewDownloader(nil)
+	dest := filepath.Join(t.TempDir(), "out.bin")
+	result, err := d.DownloadWithHeaders(context.Background(), serverA.URL+"/redir.zip", dest, map[string]string{"X-API-Key": "sekrit"}, nil)
+	require.NoError(t, err, "the download itself must still succeed")
+	assert.Equal(t, int64(len("payload")), result.Size)
+	assert.Empty(t, gotOnB, "the API key header must not be forwarded to the redirect target host")
+}
+
+// TestDownloadWithHeaders_KeepsHeaderOnSameHostRedirect proves the fix for
+// the cross-host case doesn't collaterally break the common case of a
+// same-host redirect (e.g. a source's file host 302ing to a versioned path
+// on itself), where the header must still be sent.
+func TestDownloadWithHeaders_KeepsHeaderOnSameHostRedirect(t *testing.T) {
+	var gotOnFinal string
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	mux.HandleFunc("/redir.zip", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/final.zip", http.StatusFound)
+	})
+	mux.HandleFunc("/final.zip", func(w http.ResponseWriter, r *http.Request) {
+		gotOnFinal = r.Header.Get("X-API-Key")
+		_, _ = w.Write([]byte("payload"))
+	})
+
+	d := core.NewDownloader(nil)
+	dest := filepath.Join(t.TempDir(), "out.bin")
+	_, err := d.DownloadWithHeaders(context.Background(), srv.URL+"/redir.zip", dest, map[string]string{"X-API-Key": "sekrit"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "sekrit", gotOnFinal, "a same-host redirect must keep the header")
+}
+
 // TestDownloadWithHeaders_ErrorDoesNotLeakQueryParam pins final-review
 // finding 2's download-path leak: GetDownloadURL bakes an auth key into the
 // URL's query string for query-mode custom sources, and httpClient.Do's

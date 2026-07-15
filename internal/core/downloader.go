@@ -139,6 +139,37 @@ func (e *httpStatusError) Error() string {
 	return e.msg
 }
 
+// redirectSafeClient returns the HTTP client to use for one download
+// attempt. Go's http.Client automatically strips only the Authorization and
+// Cookie headers on a cross-host redirect; any other header we set —
+// notably an API-key header for authenticated custom-source downloads — is
+// otherwise forwarded verbatim to whatever host the redirect points at. When
+// headers are supplied, this returns a shallow copy of the base client with
+// a CheckRedirect that deletes those header names once the redirect leaves
+// the original request's scheme+host (Go re-applies the original request's
+// headers to each redirect, so deleting them here — the documented hook for
+// this — is sufficient) and otherwise preserves the default 10-redirect
+// cap. Calls with no headers (plain Download) use the base client
+// untouched.
+func (d *Downloader) redirectSafeClient(headers map[string]string) *http.Client {
+	if len(headers) == 0 {
+		return d.httpClient
+	}
+	client := *d.httpClient // shallow copy: shares Transport/Timeout/Jar
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
+			for name := range headers {
+				req.Header.Del(name)
+			}
+		}
+		return nil
+	}
+	return &client
+}
+
 // downloadOnce performs a single download attempt (no retries).
 func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, headers map[string]string, progressFn ProgressFunc) (result *DownloadResult, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -149,7 +180,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 		req.Header.Set(name, value)
 	}
 
-	resp, err := d.httpClient.Do(req)
+	resp, err := d.redirectSafeClient(headers).Do(req)
 	if err != nil {
 		// *url.Error's Error() embeds the request URL verbatim, which for
 		// query-mode auth (custom sources' GetDownloadURL) contains the API
