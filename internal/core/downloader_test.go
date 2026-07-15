@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -405,6 +406,63 @@ func TestDownloadWithHeadersSetsHeaders(t *testing.T) {
 	_, err := d.DownloadWithHeaders(context.Background(), srv.URL, dest, map[string]string{"X-API-Key": "sekrit"}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "sekrit", got)
+}
+
+// TestDownloadWithHeaders_ErrorDoesNotLeakQueryParam pins final-review
+// finding 2's download-path leak: GetDownloadURL bakes an auth key into the
+// URL's query string for query-mode custom sources, and httpClient.Do's
+// *url.Error embeds that full authenticated URL in its Error() string.
+// downloadOnce must not report the raw transport error verbatim.
+func TestDownloadWithHeaders_ErrorDoesNotLeakQueryParam(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close()) // now unreachable: connection refused
+
+	url := "http://" + addr + "/file.zip?api_key=LEAKME123"
+
+	d := core.NewDownloader(nil)
+	dest := filepath.Join(t.TempDir(), "out.bin")
+	_, err = d.DownloadWithHeaders(context.Background(), url, dest, nil, nil)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "LEAKME123", "error must not leak the query-auth API key")
+	assert.NotContains(t, err.Error(), "api_key=", "error must not leak the query parameter at all")
+}
+
+// fakeTimeoutError is a minimal net.Error that reports Timeout()==true but is
+// distinct from context.DeadlineExceeded, so it exercises the
+// isRetryableNet "known-transient net error" branch rather than the
+// context-deadline exclusion.
+type fakeTimeoutError struct{}
+
+func (fakeTimeoutError) Error() string   { return "fake i/o timeout" }
+func (fakeTimeoutError) Timeout() bool   { return true }
+func (fakeTimeoutError) Temporary() bool { return true }
+
+// fakeTimeoutRoundTripper always fails with fakeTimeoutError, simulating a
+// transport-level timeout. http.Client.Do wraps RoundTripper errors in
+// *url.Error, which is exactly the wrapping downloadOnce must see through.
+type fakeTimeoutRoundTripper struct{ calls int }
+
+func (f *fakeTimeoutRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	f.calls++
+	return nil, fakeTimeoutError{}
+}
+
+// TestDownloadWithHeaders_RetriesOnWrappedNetTimeout proves the *url.Error
+// unwrap in downloadOnce still preserves the wrapped net.Error chain that
+// isRetryableNet depends on (errors.As(err, &netErr) && netErr.Timeout()) —
+// retries must not silently break as a side effect of redacting the URL.
+func TestDownloadWithHeaders_RetriesOnWrappedNetTimeout(t *testing.T) {
+	rt := &fakeTimeoutRoundTripper{}
+	client := &http.Client{Transport: rt}
+	d := core.NewDownloader(client)
+	dest := filepath.Join(t.TempDir(), "out.bin")
+
+	_, err := d.DownloadWithHeaders(context.Background(), "http://example.invalid/file.zip?api_key=LEAKME123", dest, nil, nil)
+	require.Error(t, err)
+	assert.GreaterOrEqual(t, rt.calls, 2, "a wrapped net timeout error must still be retried after the url.Error unwrap")
+	assert.NotContains(t, err.Error(), "LEAKME123")
 }
 
 func BenchmarkDownloader_Download(b *testing.B) {

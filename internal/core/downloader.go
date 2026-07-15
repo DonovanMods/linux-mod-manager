@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -148,6 +149,20 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
+		// *url.Error's Error() embeds the request URL verbatim, which for
+		// query-mode auth (custom sources' GetDownloadURL) contains the API
+		// key. Unwrap to the transport error and report a query-stripped URL
+		// instead — %w still wraps the inner net error so isRetryableNet's
+		// errors.As(err, &netErr) keeps working for retry classification.
+		var uerr *neturl.Error
+		if errors.As(err, &uerr) {
+			reportURL := uerr.URL
+			if parsed, perr := neturl.Parse(uerr.URL); perr == nil {
+				parsed.RawQuery = ""
+				reportURL = parsed.String()
+			}
+			return nil, fmt.Errorf("executing request to %s: %w", reportURL, uerr.Err)
+		}
 		return nil, fmt.Errorf("executing request: %w", err)
 	}
 	defer func() {

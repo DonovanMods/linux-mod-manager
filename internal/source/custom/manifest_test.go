@@ -3,6 +3,7 @@ package custom
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -176,6 +177,34 @@ func TestManifestFetchRemoteErrorNamesURL(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), srv.URL)
 	assert.Contains(t, err.Error(), "my-repo")
+}
+
+// TestManifestFetchRemoteErrorDoesNotLeakQueryAPIKey pins final-review
+// finding 2: a query-auth manifest source hitting an unreachable server must
+// not leak the API key baked into the authenticated request URL. httpClient.Do
+// returns a *url.Error whose Error() string embeds the full request URL
+// (including the query-string key); fetchRemote must unwrap that before
+// wrapping, not report the raw error verbatim.
+func TestManifestFetchRemoteErrorDoesNotLeakQueryAPIKey(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close()) // now unreachable: connections refused
+
+	unauthURL := "http://" + addr + "/mods.yaml"
+	def := manifestDef(unauthURL)
+	def.AllowHTTP = true
+	def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
+	m, err := NewManifest(def)
+	require.NoError(t, err)
+	m.SetAPIKey("LEAKME123")
+
+	_, err = m.fetch(context.Background())
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "LEAKME123", "error must not leak the query-auth API key")
+	assert.NotContains(t, err.Error(), "api_key=", "error must not leak the query parameter at all")
+	assert.Contains(t, err.Error(), "my-repo", "error must still name the source")
+	assert.Contains(t, err.Error(), unauthURL, "error must still name the (unauthenticated) manifest URL")
 }
 
 func TestManifestIsAuthenticated(t *testing.T) {

@@ -2,6 +2,7 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -157,6 +158,14 @@ func (m *Manifest) fetchRemote(ctx context.Context) (*manifestDoc, error) {
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
+		// *url.Error's Error() embeds the request URL verbatim, which for
+		// query-mode auth contains the API key. Unwrap to the transport
+		// error before reporting so the key never reaches the message; the
+		// (unauthenticated) m.url is still named via the format string.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
 		return nil, fmt.Errorf("source %q: fetching manifest %s: %w", m.id, m.url, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
