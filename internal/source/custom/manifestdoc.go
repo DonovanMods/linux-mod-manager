@@ -2,10 +2,14 @@ package custom
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// sha256Pattern matches a lowercase- or uppercase-hex SHA-256 digest.
+var sha256Pattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 
 // manifestDoc is the lmm-defined manifest format (design §3), version 1.
 // YAML 1.2 is a superset of JSON, so yaml.v3 parses both encodings.
@@ -63,18 +67,29 @@ func parseManifest(data []byte, allowHTTP bool) (*manifestDoc, error) {
 		if m.Name == "" {
 			return nil, fmt.Errorf("mod %q: name is required", m.ID)
 		}
+		seenFile := make(map[string]bool, len(m.Files))
 		for j, f := range m.Files {
 			if f.ID == "" {
 				return nil, fmt.Errorf("mod %q: files[%d]: id is required", m.ID, j)
 			}
+			if seenFile[f.ID] {
+				return nil, fmt.Errorf("mod %q: duplicate file id %q", m.ID, f.ID)
+			}
+			seenFile[f.ID] = true
 			if f.Filename == "" {
 				return nil, fmt.Errorf("mod %q: file %q: filename is required", m.ID, f.ID)
 			}
 			if f.URL == "" {
 				return nil, fmt.Errorf("mod %q: file %q: url is required", m.ID, f.ID)
 			}
+			if !strings.HasPrefix(f.URL, "https://") && !strings.HasPrefix(f.URL, "http://") {
+				return nil, fmt.Errorf("mod %q: file %q: url must be http(s)", m.ID, f.ID)
+			}
 			if strings.HasPrefix(f.URL, "http://") && !allowHTTP {
 				return nil, fmt.Errorf("mod %q: file %q: plain http is disabled; use https or set allow_http: true", m.ID, f.ID)
+			}
+			if f.SHA256 != "" && !sha256Pattern.MatchString(f.SHA256) {
+				return nil, fmt.Errorf("mod %q: file %q: sha256 must be 64 hex characters", m.ID, f.ID)
 			}
 		}
 	}

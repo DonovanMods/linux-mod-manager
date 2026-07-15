@@ -33,7 +33,7 @@ mods:
         version: 1.2.0
         size: 4
         url: https://files.test/cool-mod-1.2.0.zip
-        sha256: aabbcc
+        sha256: aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd
         primary: true
   - id: other-mod
     name: Other Mod
@@ -71,6 +71,16 @@ func TestNewManifestIsPure(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "my-repo", m.ID())
 	assert.Equal(t, "My Repo", m.Name())
+}
+
+// TestNewManifestLocalPathNoScheme is a defensive proof that a schemeless
+// local path still constructs: SourceDefinition.Validate rejects unsupported
+// URL schemes (e.g. ftp://) before a definition ever reaches NewManifest, so
+// NewManifest itself only needs to treat non-http(s) values as local paths.
+func TestNewManifestLocalPathNoScheme(t *testing.T) {
+	m, err := NewManifest(manifestDef("relative/mods.yaml"))
+	require.NoError(t, err)
+	assert.False(t, m.isRemote)
 }
 
 func TestManifestFetchLocal(t *testing.T) {
@@ -296,7 +306,7 @@ func TestManifestFilesAndDownloadURL(t *testing.T) {
 	assert.Equal(t, "cool-mod-1.2.0.zip", f.FileName)
 	assert.Equal(t, "1.2.0", f.Version)
 	assert.Equal(t, int64(4), f.Size)
-	assert.Equal(t, "aabbcc", f.SHA256)
+	assert.Equal(t, "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd", f.SHA256)
 	assert.True(t, f.IsPrimary)
 
 	u, err := m.GetDownloadURL(ctx, mod, "main")

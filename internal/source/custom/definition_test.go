@@ -53,6 +53,11 @@ func TestSourceDefinitionValidate(t *testing.T) {
 			d.AllowHTTP = true
 			d.Manifest = &ManifestConfig{URL: "http://x.test/m.yaml"}
 		}, ""},
+		{"ftp manifest url rejected", func(d *SourceDefinition) {
+			d.Type = TypeManifest
+			d.Directory = nil
+			d.Manifest = &ManifestConfig{URL: "ftp://x.test/m.yaml"}
+		}, "unsupported scheme"},
 		{"bad manifest refresh", func(d *SourceDefinition) {
 			d.Type = TypeManifest
 			d.Directory = nil

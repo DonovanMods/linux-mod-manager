@@ -26,7 +26,7 @@ mods:
         version: 1.2.0
         size: 123456
         url: https://example.com/files/cool-mod-1.2.0.zip
-        sha256: aabbcc
+        sha256: aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd
         primary: true
   - id: other-mod
     name: Other Mod
@@ -50,7 +50,7 @@ func TestParseManifestYAML(t *testing.T) {
 	assert.Equal(t, "main", m.Files[0].ID)
 	assert.Equal(t, "cool-mod-1.2.0.zip", m.Files[0].Filename)
 	assert.Equal(t, int64(123456), m.Files[0].Size)
-	assert.Equal(t, "aabbcc", m.Files[0].SHA256)
+	assert.Equal(t, "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd", m.Files[0].SHA256)
 	assert.True(t, m.Files[0].Primary)
 }
 
@@ -77,6 +77,9 @@ func TestParseManifestErrors(t *testing.T) {
 		{"file missing filename", "version: 1\nmods:\n  - id: x\n    name: X\n    files: [{id: main, url: https://x.test/x.zip}]", `file "main": filename is required`},
 		{"file missing url", "version: 1\nmods:\n  - id: x\n    name: X\n    files: [{id: main, filename: x.zip}]", `file "main": url is required`},
 		{"http file url rejected", "version: 1\nmods:\n  - id: x\n    name: X\n    files: [{id: main, filename: x.zip, url: http://x.test/x.zip}]", "plain http"},
+		{"duplicate file id", "version: 1\nmods:\n  - id: x\n    name: X\n    files: [{id: main, filename: x.zip, url: https://x.test/x.zip}, {id: main, filename: x2.zip, url: https://x.test/x2.zip}]", `mod "x": duplicate file id "main"`},
+		{"ftp file url rejected", "version: 1\nmods:\n  - id: x\n    name: X\n    files: [{id: main, filename: x.zip, url: ftp://x.test/x.zip}]", `mod "x": file "main": url must be http(s)`},
+		{"bad sha256 format", "version: 1\nmods:\n  - id: x\n    name: X\n    files: [{id: main, filename: x.zip, url: https://x.test/x.zip, sha256: nothex}]", `mod "x": file "main": sha256 must be 64 hex characters`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -90,4 +93,11 @@ func TestParseManifestAllowHTTP(t *testing.T) {
 	doc := "version: 1\nmods:\n  - id: x\n    name: X\n    files: [{id: main, filename: x.zip, url: http://x.test/x.zip}]"
 	_, err := parseManifest([]byte(doc), true)
 	assert.NoError(t, err)
+}
+
+func TestParseManifestUppercaseSHA256Allowed(t *testing.T) {
+	doc := "version: 1\nmods:\n  - id: x\n    name: X\n    files: [{id: main, filename: x.zip, url: https://x.test/x.zip, sha256: AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD}]"
+	parsed, err := parseManifest([]byte(doc), false)
+	require.NoError(t, err)
+	assert.Equal(t, "AABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDDAABBCCDD", parsed.Mods[0].Files[0].SHA256)
 }

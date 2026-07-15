@@ -129,6 +129,10 @@ func (d *SourceDefinition) Validate() error {
 		if err := d.checkURL(d.Manifest.URL); err != nil {
 			return fmt.Errorf("manifest.url: %w", err)
 		}
+		if strings.Contains(d.Manifest.URL, "://") &&
+			!strings.HasPrefix(d.Manifest.URL, "http://") && !strings.HasPrefix(d.Manifest.URL, "https://") {
+			return errors.New("manifest.url: unsupported scheme (use https://, http:// with allow_http, or a local path)")
+		}
 		if d.Manifest.Refresh != "" {
 			if _, err := time.ParseDuration(d.Manifest.Refresh); err != nil {
 				return fmt.Errorf("manifest.refresh: %w", err)
