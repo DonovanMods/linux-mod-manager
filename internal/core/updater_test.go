@@ -89,7 +89,7 @@ func TestUpdater_CheckUpdates(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 	assert.Equal(t, "2.0.0", updates[0].NewVersion)
@@ -125,7 +125,7 @@ func TestUpdater_CheckUpdates_NoUpdates(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
 	require.NoError(t, err)
 	assert.Empty(t, updates)
 }
@@ -155,7 +155,7 @@ func TestUpdater_CheckUpdates_PinnedModsSkipped(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
 	require.NoError(t, err)
 	assert.Empty(t, updates, "pinned mods should not show updates")
 }
@@ -177,9 +177,52 @@ func TestUpdater_CheckUpdates_LocalModsSkipped(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
 	require.NoError(t, err)
 	assert.Empty(t, updates, "local mods should not be checked for updates")
+}
+
+// gameIDCapturingSource records the GameIDs it receives in CheckUpdates.
+type gameIDCapturingSource struct {
+	source.ModSource // embed an existing test mock for the other methods
+	id               string
+	received         []string
+}
+
+func (g *gameIDCapturingSource) ID() string { return g.id }
+func (g *gameIDCapturingSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	for _, inst := range installed {
+		g.received = append(g.received, inst.GameID)
+	}
+	return nil, nil
+}
+
+func TestCheckUpdatesTranslatesGameIDPerSourceMapping(t *testing.T) {
+	reg := source.NewRegistry()
+	mapped := &gameIDCapturingSource{id: "nexusmods"}
+	unmapped := &gameIDCapturingSource{id: "my-repo"}
+	reg.Register(mapped)
+	reg.Register(unmapped)
+	u := core.NewUpdater(reg)
+
+	game := &domain.Game{
+		ID: "skyrim-se",
+		SourceIDs: map[string]string{
+			"nexusmods": "skyrimspecialedition",
+			"my-repo":   "", // empty mapping: keep the lmm game id
+		},
+	}
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "a", SourceID: "nexusmods", GameID: "skyrim-se", Version: "1.0"}},
+		{Mod: domain.Mod{ID: "b", SourceID: "my-repo", GameID: "skyrim-se", Version: "1.0"}},
+	}
+
+	_, err := u.CheckUpdates(context.Background(), game, installed)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"skyrimspecialedition"}, mapped.received)
+	assert.Equal(t, []string{"skyrim-se"}, unmapped.received)
+	// Caller's slice must be untouched.
+	assert.Equal(t, "skyrim-se", installed[0].GameID)
 }
 
 func TestCompareVersions(t *testing.T) {

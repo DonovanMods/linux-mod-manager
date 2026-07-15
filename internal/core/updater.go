@@ -21,8 +21,12 @@ func NewUpdater(registry *source.Registry) *Updater {
 	}
 }
 
-// CheckUpdates checks for available updates for installed mods
-func (u *Updater) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+// CheckUpdates checks for available updates for installed mods. game supplies
+// the source-ID mapping: installed rows persist the lmm game ID, but sources
+// like NexusMods address games by their own domain, so each source's batch is
+// translated via game.SourceIDs before the call (empty mapping = keep the lmm
+// id, matching the search-side semantics in Service.SearchMods/GetMod).
+func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod) ([]domain.Update, error) {
 	// Filter out pinned mods and local mods (local mods have no remote source)
 	var checkable []domain.InstalledMod
 	for _, mod := range installed {
@@ -56,6 +60,17 @@ func (u *Updater) CheckUpdates(ctx context.Context, installed []domain.Installed
 		if err != nil {
 			checkErrs = append(checkErrs, fmt.Errorf("source %s: %w", sourceID, err))
 			continue
+		}
+
+		if game != nil {
+			if mappedID, ok := game.SourceIDs[sourceID]; ok && mappedID != "" {
+				translated := make([]domain.InstalledMod, len(mods))
+				copy(translated, mods)
+				for i := range translated {
+					translated[i].GameID = mappedID
+				}
+				mods = translated
+			}
 		}
 
 		updates, err := src.CheckUpdates(ctx, mods)
