@@ -106,10 +106,15 @@ var sourceListCmd = &cobra.Command{
 	},
 }
 
+var (
+	sourceProbe   bool
+	sourceProbeID string
+)
+
 var sourceValidateCmd = &cobra.Command{
 	Use:   "validate <file>",
 	Short: "Validate a source definition file",
-	Long:  "Parse and validate a user-defined source definition YAML file, reporting any problems.",
+	Long:  "Parse and validate a user-defined source definition YAML file, reporting any problems. With --probe, also perform a live smoke test (directory scan, manifest fetch+parse, or an API call).",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		def, err := config.LoadSourceDefinitionFile(args[0])
@@ -117,16 +122,63 @@ var sourceValidateCmd = &cobra.Command{
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: valid (%s source %q)\n", args[0], def.Type, def.ID)
-		return nil
+		if !sourceProbe {
+			return nil
+		}
+		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
+			return probeSource(ctx, cmd, svc, def)
+		})
 	},
+}
+
+// probeSource constructs the definition's source and performs one live
+// operation against it, so users can smoke-test a definition before relying
+// on it (design §8).
+func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def custom.SourceDefinition) error {
+	src, err := custom.New(def)
+	if err != nil {
+		return fmt.Errorf("probe: constructing source: %w", err)
+	}
+	if a, ok := src.(interface{ SetAPIKey(string) }); ok {
+		if key := getSourceAPIKey(svc, def.ID, envKeyForSourceID(def.ID)); key != "" {
+			a.SetAPIKey(key)
+		}
+	}
+
+	switch def.Type {
+	case custom.TypeDirectory, custom.TypeManifest:
+		res, err := src.Search(ctx, source.SearchQuery{PageSize: 1})
+		if err != nil {
+			return fmt.Errorf("probe: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "probe: ok — %d mod(s) visible\n", res.TotalCount)
+	case custom.TypeAPI:
+		if def.API.Endpoints.Search != nil {
+			res, err := src.Search(ctx, source.SearchQuery{PageSize: 1})
+			if err != nil {
+				return fmt.Errorf("probe: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "probe: ok — search responded (%d total reported)\n", res.TotalCount)
+			return nil
+		}
+		if sourceProbeID == "" {
+			return fmt.Errorf("probe: this definition has no search endpoint; provide a known mod id with --id to probe get_mod")
+		}
+		mod, err := src.GetMod(ctx, "", sourceProbeID)
+		if err != nil {
+			return fmt.Errorf("probe: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "probe: ok — get_mod %s returned %q\n", sourceProbeID, mod.Name)
+	}
+	return nil
 }
 
 // isCustomSource reports whether src was constructed from a user-defined
 // source definition (as opposed to a built-in like NexusMods/CurseForge).
-// Extend this switch as new custom source types (manifest, api) ship.
+// Extend this switch if a new custom source type ships.
 func isCustomSource(src source.ModSource) bool {
 	switch src.(type) {
-	case *custom.Directory, *custom.Manifest:
+	case *custom.Directory, *custom.Manifest, *custom.API:
 		return true
 	default:
 		return false
@@ -167,6 +219,9 @@ func capabilitySummary(c source.Capabilities) string {
 }
 
 func init() {
+	sourceValidateCmd.Flags().BoolVar(&sourceProbe, "probe", false, "perform a live smoke test after validation")
+	sourceValidateCmd.Flags().StringVar(&sourceProbeID, "id", "", "mod id to probe with (api definitions without a search endpoint)")
+
 	sourceCmd.AddCommand(sourceListCmd)
 	sourceCmd.AddCommand(sourceValidateCmd)
 	rootCmd.AddCommand(sourceCmd)
