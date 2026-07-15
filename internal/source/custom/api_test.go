@@ -317,3 +317,44 @@ func TestAPIReadOpsMissingEndpoints(t *testing.T) {
 	_, err = a.GetDownloadURL(context.Background(), &domain.Mod{ID: "1"}, "f")
 	assert.True(t, errors.Is(err, source.ErrNotSupported))
 }
+
+func TestAPICheckUpdates(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	mux.HandleFunc("/mods/77", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id": 77, "name": "Cool Mod", "latest_version": "1.2.0"}`))
+	})
+	mux.HandleFunc("/mods/88", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id": 88, "name": "Fresh Mod", "latest_version": "0.9.0"}`))
+	})
+	mux.HandleFunc("/mods/99", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "gone", http.StatusInternalServerError)
+	})
+
+	a, err := NewAPI(apiDef(srv.URL))
+	require.NoError(t, err)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "77", SourceID: "my-api", Version: "1.0.0", GameID: "skyrim"}},
+		{Mod: domain.Mod{ID: "88", SourceID: "my-api", Version: "0.9.0", GameID: "skyrim"}},
+		{Mod: domain.Mod{ID: "99", SourceID: "my-api", Version: "1.0", GameID: "skyrim"}},
+	}
+
+	updates, err := a.CheckUpdates(context.Background(), installed)
+	require.Error(t, err, "the failing mod must surface, not vanish")
+	assert.Contains(t, err.Error(), "99")
+	require.Len(t, updates, 1, "partial results returned alongside the error")
+	assert.Equal(t, "77", updates[0].InstalledMod.ID)
+	assert.Equal(t, "1.2.0", updates[0].NewVersion)
+}
+
+func TestAPICheckUpdatesNoEndpoint(t *testing.T) {
+	def := apiDef("https://x.test")
+	def.API.Endpoints = APIEndpoints{Search: &EndpointConfig{Path: "/mods", List: "results"}}
+	a, err := NewAPI(def)
+	require.NoError(t, err)
+
+	_, err = a.CheckUpdates(context.Background(), []domain.InstalledMod{{Mod: domain.Mod{ID: "1"}}})
+	assert.True(t, errors.Is(err, source.ErrNotSupported))
+}

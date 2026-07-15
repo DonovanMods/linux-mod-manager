@@ -338,7 +338,34 @@ func (a *API) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string
 	return dlURL, nil
 }
 
-// CheckUpdates is implemented in the update-check task (replaces this stub).
+// CheckUpdates implements source.ModSource generically via get_mod + version
+// comparison (design §4). Per-mod fetch failures are collected and returned
+// alongside partial results so a single flaky mod page doesn't hide the rest
+// — and doesn't get silently skipped either.
 func (a *API) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
-	return nil, fmt.Errorf("source %q: update checks: %w", a.id, source.ErrNotSupported)
+	if a.endpoints.GetMod == nil {
+		return nil, fmt.Errorf("source %q: update checks: %w", a.id, source.ErrNotSupported)
+	}
+
+	var updates []domain.Update
+	var errs []error
+	for _, inst := range installed {
+		select {
+		case <-ctx.Done():
+			return updates, ctx.Err()
+		default:
+		}
+		current, err := a.GetMod(ctx, inst.GameID, inst.ID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if domain.IsNewerVersion(inst.Version, current.Version) {
+			updates = append(updates, domain.Update{
+				InstalledMod: inst,
+				NewVersion:   current.Version,
+			})
+		}
+	}
+	return updates, errors.Join(errs...)
 }
