@@ -87,8 +87,9 @@ func CapabilitiesOf(src ModSource) Capabilities {
 
 // DownloadHeaderProvider is implemented by sources whose file downloads need
 // extra HTTP headers (e.g. header-mode API-key auth on a manifest source).
-// Service.DownloadModToCache consults it before downloading. A nil map means
+// Service.DownloadModToCache consults it with the resolved download URL so
+// the source can scope credentials (e.g. same-origin only). A nil map means
 // no extra headers.
 type DownloadHeaderProvider interface {
-	DownloadHeaders() map[string]string
+	DownloadHeaders(fileURL string) map[string]string
 }

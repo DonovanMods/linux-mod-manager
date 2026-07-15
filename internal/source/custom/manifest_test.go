@@ -493,25 +493,48 @@ func TestNewManifestClientHasTimeout(t *testing.T) {
 }
 
 func TestManifestDownloadHeaders(t *testing.T) {
-	t.Run("header auth with key", func(t *testing.T) {
-		def := manifestDef("https://x.test/mods.yaml")
-		def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}}
+	headerAuth := &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}}
+
+	t.Run("remote manifest: same-origin file URL gets the key", func(t *testing.T) {
+		def := manifestDef("https://repo.test/mods.yaml")
+		def.Manifest.Auth = headerAuth
 		m, err := NewManifest(def)
 		require.NoError(t, err)
 		m.SetAPIKey("sekrit")
-		assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, m.DownloadHeaders())
+		assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, m.DownloadHeaders("https://repo.test/files/a.zip"))
+	})
+
+	t.Run("remote manifest: cross-origin file URL gets nothing", func(t *testing.T) {
+		def := manifestDef("https://repo.test/mods.yaml")
+		def.Manifest.Auth = headerAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+		assert.Nil(t, m.DownloadHeaders("https://cdn.example.com/files/a.zip"),
+			"the repo's API key must not be shipped to third-party hosts")
+	})
+
+	t.Run("local manifest: any host gets the key (user-authored, trusted)", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "mods.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(testManifest), 0644))
+		def := manifestDef(path)
+		def.Manifest.Auth = headerAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+		assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, m.DownloadHeaders("https://anywhere.test/a.zip"))
 	})
 
 	t.Run("query auth or no key yields nil", func(t *testing.T) {
-		def := manifestDef("https://x.test/mods.yaml")
+		def := manifestDef("https://repo.test/mods.yaml")
 		def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
 		m, err := NewManifest(def)
 		require.NoError(t, err)
 		m.SetAPIKey("sekrit")
-		assert.Nil(t, m.DownloadHeaders())
+		assert.Nil(t, m.DownloadHeaders("https://repo.test/a.zip"))
 
-		noKey, err := NewManifest(manifestDef("https://x.test/mods.yaml"))
+		noKey, err := NewManifest(manifestDef("https://repo.test/mods.yaml"))
 		require.NoError(t, err)
-		assert.Nil(t, noKey.DownloadHeaders())
+		assert.Nil(t, noKey.DownloadHeaders("https://repo.test/a.zip"))
 	})
 }

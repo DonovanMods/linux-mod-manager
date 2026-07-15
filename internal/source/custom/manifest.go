@@ -427,11 +427,28 @@ func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.Installe
 	return updates, nil
 }
 
-// DownloadHeaders implements source.DownloadHeaderProvider: header-mode auth
-// applies the same key to file downloads as to manifest fetches (design §6).
-func (m *Manifest) DownloadHeaders() map[string]string {
+// DownloadHeaders implements source.DownloadHeaderProvider. Header-mode auth
+// applies the same key to file downloads as to manifest fetches (design §6),
+// but for remote manifests only when the file URL is same-origin with the
+// manifest — a manifest pointing files at a third-party CDN must not ship the
+// repo's key there. Local-path manifests are user-authored and trusted, so
+// their configured key attaches regardless of host.
+func (m *Manifest) DownloadHeaders(fileURL string) map[string]string {
 	if m.auth == nil || m.auth.APIKey.In != "header" || m.apiKey == "" {
 		return nil
+	}
+	if m.isRemote {
+		fu, err := url.Parse(fileURL)
+		if err != nil {
+			return nil
+		}
+		mu, err := url.Parse(m.url)
+		if err != nil {
+			return nil
+		}
+		if fu.Host != mu.Host {
+			return nil
+		}
 	}
 	return map[string]string{m.auth.APIKey.Name: m.apiKey}
 }

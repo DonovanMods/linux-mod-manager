@@ -227,7 +227,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	archivePath := filepath.Join(tempDir, file.FileName)
 	var headers map[string]string
 	if hp, ok := src.(source.DownloadHeaderProvider); ok {
-		headers = hp.DownloadHeaders()
+		headers = hp.DownloadHeaders(url)
 	}
 	downloadResult, err := s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, progressFn)
 	if err != nil {
