@@ -310,7 +310,7 @@ manifest:
 ```
 
 - **Remote URLs** (`https://...`) are fetched on demand and cached in memory for `refresh` — a Go duration string like `30s`, `15m`, or `2h` (default `15m` when omitted). **Local file paths** are read fresh on every operation instead of being cached, so edits show up immediately.
-- Fetch/parse problems (unreachable URL, malformed document, unsupported `version`) surface as an operation error naming the source and the manifest URL; a bad manifest *document* does not stop lmm from starting — only a broken *definition* file does that (see above).
+- Fetch/parse problems (unreachable URL, malformed document, unsupported `version`) surface as an operation error naming the source and the manifest URL, at the point something actually uses the source. This is different from a broken *definition* file, which is caught at load time and skipped with a warning before lmm ever starts (see above).
 - `https://` is required for the manifest `url`, and for every file `url` inside the document, unless the definition sets `allow_http: true`; local paths are exempt.
 
 The manifest document itself:
@@ -395,7 +395,7 @@ manifest:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
   2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store.
 - The resolved key is attached to **both** the manifest fetch and every file download from that source, using the same `in`/`name` the definition declares.
-- Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth login`/`status` mask stored keys to their first/last 3 characters.
+- Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth login` masks stored keys to their first/last 3 characters. (`lmm auth status` currently only reports on built-in sources — nexusmods and curseforge.)
 
 ### Source Management Commands
 
