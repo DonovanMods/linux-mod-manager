@@ -2,6 +2,7 @@ package custom
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -183,4 +185,110 @@ func TestManifestIsAuthenticated(t *testing.T) {
 	assert.False(t, m.IsAuthenticated())
 	m.SetAPIKey("k")
 	assert.True(t, m.IsAuthenticated())
+}
+
+func TestManifestIdentityAndCapabilities(t *testing.T) {
+	m := newLocalManifest(t)
+	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: false}, m.Capabilities())
+	assert.Empty(t, m.AuthURL())
+
+	_, err := m.ExchangeToken(context.Background(), "code")
+	assert.True(t, errors.Is(err, source.ErrNotSupported))
+
+	def := manifestDef("https://x.test/mods.yaml")
+	def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}}
+	authed, err := NewManifest(def)
+	require.NoError(t, err)
+	assert.True(t, authed.Capabilities().Auth)
+}
+
+func TestManifestSearch(t *testing.T) {
+	m := newLocalManifest(t)
+	ctx := context.Background()
+
+	t.Run("empty query returns all mods for a matching game", func(t *testing.T) {
+		res, err := m.Search(ctx, source.SearchQuery{GameID: "skyrim"})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.TotalCount) // cool-mod matches game_ids; other-mod has no game_ids (all games)
+	})
+
+	t.Run("game_ids filters non-matching games", func(t *testing.T) {
+		res, err := m.Search(ctx, source.SearchQuery{GameID: "othergame"})
+		require.NoError(t, err)
+		require.Len(t, res.Mods, 1) // only other-mod (no game_ids = all games)
+		assert.Equal(t, "other-mod", res.Mods[0].ID)
+	})
+
+	t.Run("empty GameID matches everything", func(t *testing.T) {
+		res, err := m.Search(ctx, source.SearchQuery{})
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.TotalCount)
+	})
+
+	t.Run("query matches and mod fields map", func(t *testing.T) {
+		res, err := m.Search(ctx, source.SearchQuery{Query: "cool", GameID: "skyrim"})
+		require.NoError(t, err)
+		require.Len(t, res.Mods, 1)
+		mod := res.Mods[0]
+		assert.Equal(t, "cool-mod", mod.ID)
+		assert.Equal(t, "my-repo", mod.SourceID)
+		assert.Equal(t, "Cool Mod", mod.Name)
+		assert.Equal(t, "1.2.0", mod.Version)
+		assert.Equal(t, "someone", mod.Author)
+		assert.Equal(t, "Makes things cooler", mod.Summary)
+		assert.Equal(t, "skyrim", mod.GameID)
+	})
+}
+
+func TestManifestGetMod(t *testing.T) {
+	m := newLocalManifest(t)
+	mod, err := m.GetMod(context.Background(), "skyrim", "cool-mod")
+	require.NoError(t, err)
+	assert.Equal(t, "Cool Mod", mod.Name)
+	assert.Equal(t, "skyrim", mod.GameID)
+
+	_, err = m.GetMod(context.Background(), "skyrim", "nope")
+	assert.ErrorContains(t, err, "not found")
+}
+
+func TestManifestFilesAndDownloadURL(t *testing.T) {
+	m := newLocalManifest(t)
+	ctx := context.Background()
+
+	mod, err := m.GetMod(ctx, "skyrim", "cool-mod")
+	require.NoError(t, err)
+
+	files, err := m.GetModFiles(ctx, mod)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	f := files[0]
+	assert.Equal(t, "main", f.ID)
+	assert.Equal(t, "cool-mod-1.2.0.zip", f.FileName)
+	assert.Equal(t, "1.2.0", f.Version)
+	assert.Equal(t, int64(4), f.Size)
+	assert.Equal(t, "aabbcc", f.SHA256)
+	assert.True(t, f.IsPrimary)
+
+	u, err := m.GetDownloadURL(ctx, mod, "main")
+	require.NoError(t, err)
+	assert.Equal(t, "https://files.test/cool-mod-1.2.0.zip", u)
+
+	_, err = m.GetDownloadURL(ctx, mod, "nope")
+	assert.ErrorContains(t, err, "not found")
+}
+
+func TestManifestDownloadURLQueryAuth(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mods.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(testManifest), 0644))
+	def := manifestDef(path)
+	def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
+	m, err := NewManifest(def)
+	require.NoError(t, err)
+	m.SetAPIKey("sekrit")
+
+	mod, err := m.GetMod(context.Background(), "skyrim", "cool-mod")
+	require.NoError(t, err)
+	u, err := m.GetDownloadURL(context.Background(), mod, "main")
+	require.NoError(t, err)
+	assert.Equal(t, "https://files.test/cool-mod-1.2.0.zip?api_key=sekrit", u)
 }

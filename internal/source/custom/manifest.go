@@ -11,6 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 )
 
 // defaultManifestRefresh is the remote-manifest cache TTL when the definition
@@ -189,3 +192,157 @@ func addQueryParam(rawURL, name, value string) (string, error) {
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
+
+// AuthURL implements source.ModSource; manifest sources use API keys, not OAuth.
+func (m *Manifest) AuthURL() string { return "" }
+
+// ExchangeToken implements source.ModSource.
+func (m *Manifest) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
+	return nil, fmt.Errorf("source %q: authentication: %w", m.id, source.ErrNotSupported)
+}
+
+// Capabilities implements source.CapabilityReporter. Auth reflects whether the
+// definition declares an auth block.
+func (m *Manifest) Capabilities() source.Capabilities {
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: m.auth != nil}
+}
+
+// toMod converts a manifest entry to a domain.Mod. GameID is stamped by
+// searchMods / the callers, not here.
+func (m *Manifest) toMod(mm manifestMod) domain.Mod {
+	mod := domain.Mod{
+		ID:          mm.ID,
+		SourceID:    m.id,
+		Name:        mm.Name,
+		Version:     mm.Version,
+		Author:      mm.Author,
+		Summary:     mm.Summary,
+		Description: mm.Summary,
+		SourceURL:   mm.URL,
+	}
+	if mm.UpdatedAt != "" {
+		if ts, err := time.Parse(time.RFC3339, mm.UpdatedAt); err == nil {
+			mod.UpdatedAt = ts // unparseable -> zero value, by design
+		}
+	}
+	for _, dep := range mm.Dependencies {
+		mod.Dependencies = append(mod.Dependencies, domain.ModReference{SourceID: m.id, ModID: dep})
+	}
+	return mod
+}
+
+// gameMatches reports whether a manifest entry applies to gameID: an empty
+// game_ids list matches every game, and an empty gameID matches every entry.
+func gameMatches(mm manifestMod, gameID string) bool {
+	if len(mm.GameIDs) == 0 || gameID == "" {
+		return true
+	}
+	for _, g := range mm.GameIDs {
+		if g == gameID {
+			return true
+		}
+	}
+	return false
+}
+
+// Search implements source.ModSource with the shared client-side semantics
+// (design §5), filtered by the manifest's per-mod game_ids.
+func (m *Manifest) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
+	doc, err := m.fetch(ctx)
+	if err != nil {
+		return source.SearchResult{}, err
+	}
+	mods := make([]domain.Mod, 0, len(doc.Mods))
+	for _, mm := range doc.Mods {
+		if !gameMatches(mm, query.GameID) {
+			continue
+		}
+		mods = append(mods, m.toMod(mm))
+	}
+	return searchMods(mods, query), nil
+}
+
+// GetMod implements source.ModSource. gameID does not filter (install-by-ID
+// works from any game); it is echoed onto the returned mod for attribution.
+func (m *Manifest) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
+	mm, err := m.findMod(ctx, modID)
+	if err != nil {
+		return nil, err
+	}
+	mod := m.toMod(*mm)
+	mod.GameID = gameID
+	return &mod, nil
+}
+
+// GetModFiles implements source.ModSource, mapping manifest file entries —
+// including declared sha256 checksums — onto DownloadableFiles.
+func (m *Manifest) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	mm, err := m.findMod(ctx, mod.ID)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]domain.DownloadableFile, 0, len(mm.Files))
+	for _, f := range mm.Files {
+		files = append(files, domain.DownloadableFile{
+			ID:        f.ID,
+			Name:      f.Name,
+			FileName:  f.Filename,
+			Version:   f.Version,
+			Size:      f.Size,
+			IsPrimary: f.Primary,
+			SHA256:    f.SHA256,
+		})
+	}
+	return files, nil
+}
+
+// GetDownloadURL implements source.ModSource. Query-mode auth is appended
+// here; header-mode auth rides via DownloadHeaders (see DownloadHeaderProvider).
+func (m *Manifest) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	mm, err := m.findMod(ctx, mod.ID)
+	if err != nil {
+		return "", err
+	}
+	for _, f := range mm.Files {
+		if f.ID != fileID {
+			continue
+		}
+		u := f.URL
+		if m.auth != nil && m.auth.APIKey.In == "query" && m.apiKey != "" {
+			withKey, err := addQueryParam(u, m.auth.APIKey.Name, m.apiKey)
+			if err != nil {
+				return "", fmt.Errorf("source %q: file %q: %w", m.id, fileID, err)
+			}
+			u = withKey
+		}
+		return u, nil
+	}
+	return "", fmt.Errorf("source %q: mod %q: file not found: %s", m.id, mod.ID, fileID)
+}
+
+// findMod fetches the manifest and returns the entry with the given ID.
+func (m *Manifest) findMod(ctx context.Context, modID string) (*manifestMod, error) {
+	doc, err := m.fetch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range doc.Mods {
+		if doc.Mods[i].ID == modID {
+			return &doc.Mods[i], nil
+		}
+	}
+	return nil, fmt.Errorf("source %q: mod not found: %s", m.id, modID)
+}
+
+// GetDependencies is implemented in the dependencies task (replaces this stub).
+func (m *Manifest) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
+	return nil, fmt.Errorf("source %q: dependencies: %w", m.id, source.ErrNotSupported)
+}
+
+// CheckUpdates is implemented in the update-check task (replaces this stub).
+func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, fmt.Errorf("source %q: update checks: %w", m.id, source.ErrNotSupported)
+}
+
+var _ source.ModSource = (*Manifest)(nil)
+var _ source.CapabilityReporter = (*Manifest)(nil)
