@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-15
+
+### Added
+
+- API source type: describe a GET+JSON REST API declaratively (endpoint templates + dot-path mappings) and use it as a mod source — search, install (including install-by-ID-only definitions), and update checks
+- `lmm source validate --probe` — live smoke test for a definition (directory scan, manifest fetch, or API call; `--id` probes get_mod for search-less API definitions)
+
 ## [1.8.0] - 2026-07-15
 
 ### Added
@@ -711,7 +718,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.5.0...v1.6.0
