@@ -280,7 +280,7 @@ directory:
    - **V1**: fields nested in `<ModInfo>` — `<xml><ModInfo><Name value="..."/>...</ModInfo></xml>`
 2. **Dirname parsing**, if no `ModInfo.xml` (or it fails to parse): the directory name is split into a name and version, e.g. `PlainMod-0.5` → name `PlainMod`, version `0.5`. If no version-like suffix is found, the whole name is used as-is and the version is empty.
 
-Archive files (`.zip`/`.jar`) always use dirname-style parsing on the filename — there's no archive-metadata format supported yet.
+Archive files (`.zip`/`.jar`) get the same metadata resolution: lmm looks for `ModInfo.xml` inside the archive (at its root or exactly one directory deep, e.g. `donovan-aio.zip` containing `donovan-aio/ModInfo.xml`) before falling back to dirname-style parsing on the filename.
 
 **The mod ID is the directory (or archive) name, verbatim.** There is no separate ID field — `BiggerBackpack/` is mod `BiggerBackpack`. This means **renaming the directory creates a new mod identity**: lmm has no way to know `BiggerBackpack/` and `Bigger-Backpack/` are the same mod, so a rename shows up as the old mod disappearing (update checks silently stop finding it) and a new, unrelated mod appearing. Keep directory names stable once you've installed from them.
 

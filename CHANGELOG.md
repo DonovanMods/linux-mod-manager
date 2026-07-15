@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Hidden entries ignored by directory sources**: dot-prefixed entries (`.git`, etc.) under a directory source's path are no longer listed as installable mods
 - **Local file ingest restricted to directory sources**: a `file://` download URL is now only trusted from directory sources, closing a path where any other source returning `file://` could pull arbitrary local files into the cache
 - Negative `page` values in directory source search no longer panic; they clamp to the first page
+- **Archive mods now read embedded `ModInfo.xml` metadata**: a `.zip`/`.jar` mod in a directory source (e.g. `donovan-aio.zip` containing `donovan-aio/ModInfo.xml`) now resolves name/version/summary/author from the archived `ModInfo.xml` instead of saving an empty record with only a filename-derived name and version
 
 ## [1.5.0] - 2026-07-13
 

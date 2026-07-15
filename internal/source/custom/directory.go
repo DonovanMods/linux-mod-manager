@@ -104,14 +104,14 @@ func (d *Directory) scan() ([]dirMod, error) {
 			return nil, fmt.Errorf("source %q: stat %s: %w", d.id, entryPath, err)
 		}
 		base := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		name, version := nameAndVersionFrom(base)
+		mod := domain.Mod{ID: base, SourceID: d.id}
+		if meta := metadata.ResolveArchive(entryPath); meta != nil {
+			applyMetadata(&mod, meta)
+		} else {
+			mod.Name, mod.Version = nameAndVersionFrom(base)
+		}
 		mods = append(mods, dirMod{
-			mod: domain.Mod{
-				ID:       base,
-				SourceID: d.id,
-				Name:     name,
-				Version:  version,
-			},
+			mod:       mod,
 			path:      entryPath,
 			isArchive: true,
 			size:      info.Size(),
@@ -127,19 +127,27 @@ func (d *Directory) scanDir(dirName, dirPath string) dirMod {
 	mod := domain.Mod{ID: dirName, SourceID: d.id}
 
 	if info := metadata.Resolve(dirPath); info != nil {
-		mod.Name = info.DisplayName
-		if mod.Name == "" {
-			mod.Name = info.Name
-		}
-		mod.Version = info.Version
-		mod.Summary = info.Summary
-		mod.Description = info.Summary
-		mod.Author = info.Author
+		applyMetadata(&mod, info)
 	} else {
 		mod.Name, mod.Version = nameAndVersionFrom(dirName)
 	}
 
 	return dirMod{mod: mod, path: dirPath}
+}
+
+// applyMetadata copies well-known metadata fields onto mod, used by both
+// directory mods (metadata.Resolve) and archive mods (metadata.ResolveArchive)
+// so they share the same precedence: DisplayName wins, falling back to Name,
+// and metadata always wins over any filename-derived guess.
+func applyMetadata(mod *domain.Mod, info *metadata.Info) {
+	mod.Name = info.DisplayName
+	if mod.Name == "" {
+		mod.Name = info.Name
+	}
+	mod.Version = info.Version
+	mod.Summary = info.Summary
+	mod.Description = info.Summary
+	mod.Author = info.Author
 }
 
 // nameAndVersionFrom splits a directory/file base name into a display name and

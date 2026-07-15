@@ -1,6 +1,7 @@
 package custom
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
 	"os"
@@ -200,6 +201,68 @@ func TestDirectoryFilesAndDownloadURL(t *testing.T) {
 	require.Len(t, zipFiles, 1)
 	assert.Equal(t, "archived-mod-2.0.zip", zipFiles[0].FileName)
 	assert.Equal(t, int64(8), zipFiles[0].Size) // len("zipbytes")
+}
+
+// writeTestZip builds a real zip file at path containing entryPath -> content.
+func writeTestZip(t *testing.T, path, entryPath, content string) {
+	t.Helper()
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	defer f.Close()
+
+	w := zip.NewWriter(f)
+	fw, err := w.Create(entryPath)
+	require.NoError(t, err)
+	_, err = fw.Write([]byte(content))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+}
+
+// TestDirectoryArchiveMetadata verifies that .zip mods with an embedded
+// ModInfo.xml (7 Days to Die's standard wrapper-folder layout) surface real
+// metadata instead of filename-derived guesses, while archives without
+// readable metadata still fall back to filename parsing.
+func TestDirectoryArchiveMetadata(t *testing.T) {
+	root := t.TempDir()
+
+	// Real zip: donovan-aio.zip containing donovan-aio/ModInfo.xml.
+	writeTestZip(t, filepath.Join(root, "donovan-aio.zip"), "donovan-aio/ModInfo.xml", testModInfo)
+
+	// Not a real zip (fake bytes) - must keep falling back to filename parsing.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "archived-mod-2.0.zip"), []byte("zipbytes"), 0644))
+
+	def := SourceDefinition{
+		ID:        "my-mods",
+		Name:      "My Mods",
+		Type:      TypeDirectory,
+		Directory: &DirectoryConfig{Path: root},
+	}
+	d, err := NewDirectory(def)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	t.Run("archive with embedded ModInfo.xml surfaces metadata", func(t *testing.T) {
+		mod, err := d.GetMod(ctx, "7dtd", "donovan-aio")
+		require.NoError(t, err)
+		assert.Equal(t, "donovan-aio", mod.ID, "mod ID stays the archive base name")
+		assert.Equal(t, "Bigger Backpack", mod.Name)
+		assert.Equal(t, "1.2.0", mod.Version)
+		assert.Equal(t, "Carry more stuff", mod.Summary)
+		assert.Equal(t, "Donovan", mod.Author)
+	})
+
+	t.Run("archive with no readable metadata falls back to filename parsing", func(t *testing.T) {
+		mod, err := d.GetMod(ctx, "7dtd", "archived-mod-2.0")
+		require.NoError(t, err)
+		assert.Equal(t, "archived-mod-2.0", mod.ID)
+		assert.Equal(t, "archived-mod", mod.Name)
+		assert.Equal(t, "2.0", mod.Version)
+
+		files, err := d.GetModFiles(ctx, mod)
+		require.NoError(t, err)
+		require.Len(t, files, 1)
+		assert.Equal(t, int64(8), files[0].Size, `len("zipbytes")`)
+	})
 }
 
 func TestDirectoryCheckUpdates(t *testing.T) {

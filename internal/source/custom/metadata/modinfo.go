@@ -44,6 +44,13 @@ func (ModInfoXML) Read(path string) (*Info, error) {
 		return nil, fmt.Errorf("reading ModInfo.xml: %w", err)
 	}
 
+	return parseModInfo(data)
+}
+
+// parseModInfo parses ModInfo.xml content shared by both the on-disk (Read)
+// and in-archive (ResolveArchive) paths, so file and archive mods use the
+// exact same V1/V2 layout handling.
+func parseModInfo(data []byte) (*Info, error) {
 	var doc modInfoDoc
 	if err := xml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parsing ModInfo.xml: %w", err)
