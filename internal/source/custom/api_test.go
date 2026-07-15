@@ -224,3 +224,96 @@ func TestAPISearchTotalAbsentIsZero(t *testing.T) {
 	assert.Zero(t, res.TotalCount)
 	assert.Empty(t, res.Mods)
 }
+
+// newTestAPIServer wires a minimal fake REST API for the read ops.
+func newTestAPIServer(t *testing.T) (*httptest.Server, *API) {
+	t.Helper()
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	mux.HandleFunc("/mods/77", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id": 77, "name": "Cool Mod", "latest_version": "1.2.0"}`))
+	})
+	mux.HandleFunc("/mods/77/files", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"files": [{"id": 900, "file_name": "cool-1.2.0.zip", "version": "1.2.0", "size_bytes": 4}]}`))
+	})
+	mux.HandleFunc("/files/900/download", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"url": "` + srv.URL + `/dl/cool-1.2.0.zip"}`))
+	})
+
+	a, err := NewAPI(apiDef(srv.URL))
+	require.NoError(t, err)
+	return srv, a
+}
+
+func TestAPIGetMod(t *testing.T) {
+	_, a := newTestAPIServer(t)
+
+	mod, err := a.GetMod(context.Background(), "skyrim", "77")
+	require.NoError(t, err)
+	assert.Equal(t, "77", mod.ID)
+	assert.Equal(t, "Cool Mod", mod.Name)
+	assert.Equal(t, "1.2.0", mod.Version)
+	assert.Equal(t, "skyrim", mod.GameID)
+	assert.Equal(t, "my-api", mod.SourceID)
+}
+
+func TestAPIGetModFiles(t *testing.T) {
+	_, a := newTestAPIServer(t)
+
+	files, err := a.GetModFiles(context.Background(), &domain.Mod{ID: "77", GameID: "skyrim"})
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "900", files[0].ID)
+	assert.Equal(t, "cool-1.2.0.zip", files[0].FileName)
+	assert.Equal(t, int64(4), files[0].Size)
+}
+
+func TestAPIGetDownloadURL(t *testing.T) {
+	srv, a := newTestAPIServer(t)
+
+	u, err := a.GetDownloadURL(context.Background(), &domain.Mod{ID: "77", GameID: "skyrim"}, "900")
+	require.NoError(t, err)
+	assert.Equal(t, srv.URL+"/dl/cool-1.2.0.zip", u)
+}
+
+func TestAPIGetDownloadURLQueryAuthSameOriginOnly(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	sameOrigin := srv.URL + "/dl/a.zip"
+	mux.HandleFunc("/files/1/download", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"url": "` + sameOrigin + `"}`))
+	})
+	mux.HandleFunc("/files/2/download", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"url": "https://cdn.elsewhere.test/b.zip"}`))
+	})
+
+	def := apiDef(srv.URL)
+	def.API.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
+	a, err := NewAPI(def)
+	require.NoError(t, err)
+	a.SetAPIKey("sekrit")
+
+	u, err := a.GetDownloadURL(context.Background(), &domain.Mod{ID: "x"}, "1")
+	require.NoError(t, err)
+	assert.Contains(t, u, "api_key=sekrit", "same-origin download URL gets the query key")
+
+	u, err = a.GetDownloadURL(context.Background(), &domain.Mod{ID: "x"}, "2")
+	require.NoError(t, err)
+	assert.NotContains(t, u, "sekrit", "cross-origin download URL must not carry the key")
+}
+
+func TestAPIReadOpsMissingEndpoints(t *testing.T) {
+	def := apiDef("https://x.test")
+	def.API.Endpoints = APIEndpoints{GetMod: &EndpointConfig{Path: "/mods/{mod_id}"}}
+	a, err := NewAPI(def)
+	require.NoError(t, err)
+
+	_, err = a.GetModFiles(context.Background(), &domain.Mod{ID: "1"})
+	assert.True(t, errors.Is(err, source.ErrNotSupported))
+	_, err = a.GetDownloadURL(context.Background(), &domain.Mod{ID: "1"}, "f")
+	assert.True(t, errors.Is(err, source.ErrNotSupported))
+}

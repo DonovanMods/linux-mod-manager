@@ -30,7 +30,7 @@ func validAPIDef() SourceDefinition {
 			},
 			Mappings: APIMappings{
 				Mod:  map[string]string{"id": "id", "name": "name", "version": "latest_version"},
-				File: map[string]string{"id": "id", "filename": "file_name"},
+				File: map[string]string{"id": "id", "filename": "file_name", "size": "size_bytes"},
 			},
 		},
 	}

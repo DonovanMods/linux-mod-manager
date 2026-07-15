@@ -246,19 +246,96 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 	return source.SearchResult{Mods: mods, TotalCount: total, Page: query.Page, PageSize: pageSize}, nil
 }
 
-// GetMod is implemented in the read-ops task (replaces this stub).
+// GetMod implements source.ModSource via the get_mod endpoint. gameID feeds
+// the {game_id} placeholder and is echoed onto the returned mod for
+// downstream attribution (the persisted row is normalized by the installer).
 func (a *API) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
-	return nil, fmt.Errorf("source %q: fetching mod: %w", a.id, source.ErrNotSupported)
+	ep := a.endpoints.GetMod
+	if ep == nil {
+		return nil, fmt.Errorf("source %q: fetching mod: %w", a.id, source.ErrNotSupported)
+	}
+
+	vals := map[string]string{"mod_id": modID, "game_id": gameID}
+	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))
+	if err != nil {
+		return nil, fmt.Errorf("fetching mod %s: %w", modID, err)
+	}
+
+	mod, err := mapMod(doc, a.mappings.Mod, a.id)
+	if err != nil {
+		return nil, fmt.Errorf("source %q: mod %s: %w", a.id, modID, err)
+	}
+	mod.GameID = gameID
+	return &mod, nil
 }
 
-// GetModFiles is implemented in the read-ops task (replaces this stub).
+// GetModFiles implements source.ModSource via the mod_files endpoint.
 func (a *API) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
-	return nil, fmt.Errorf("source %q: listing files: %w", a.id, source.ErrNotSupported)
+	ep := a.endpoints.ModFiles
+	if ep == nil {
+		return nil, fmt.Errorf("source %q: listing files: %w", a.id, source.ErrNotSupported)
+	}
+
+	vals := map[string]string{"mod_id": mod.ID, "game_id": mod.GameID}
+	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))
+	if err != nil {
+		return nil, fmt.Errorf("listing files for %s: %w", mod.ID, err)
+	}
+
+	listVal, ok := lookupPath(doc, ep.List)
+	if !ok {
+		return nil, fmt.Errorf("source %q: mod %s: response has no %q array", a.id, mod.ID, ep.List)
+	}
+	items, ok := listVal.([]any)
+	if !ok {
+		return nil, fmt.Errorf("source %q: mod %s: %q is not an array", a.id, mod.ID, ep.List)
+	}
+
+	files := make([]domain.DownloadableFile, 0, len(items))
+	for i, item := range items {
+		f, err := mapFile(item, a.mappings.File)
+		if err != nil {
+			return nil, fmt.Errorf("source %q: mod %s: %s[%d]: %w", a.id, mod.ID, ep.List, i, err)
+		}
+		files = append(files, f)
+	}
+	if len(files) == 1 {
+		files[0].IsPrimary = true // a single file is trivially the primary one
+	}
+	return files, nil
 }
 
-// GetDownloadURL is implemented in the read-ops task (replaces this stub).
+// GetDownloadURL implements source.ModSource via the download_url endpoint.
+// Query-mode keys are appended only for same-origin download URLs (design §9).
 func (a *API) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
-	return "", fmt.Errorf("source %q: download URL: %w", a.id, source.ErrNotSupported)
+	ep := a.endpoints.DownloadURL
+	if ep == nil {
+		return "", fmt.Errorf("source %q: download URL: %w", a.id, source.ErrNotSupported)
+	}
+
+	vals := map[string]string{"file_id": fileID, "mod_id": mod.ID, "game_id": mod.GameID}
+	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))
+	if err != nil {
+		return "", fmt.Errorf("download URL for file %s: %w", fileID, err)
+	}
+
+	v, ok := lookupPath(doc, ep.Field)
+	if !ok {
+		return "", fmt.Errorf("source %q: file %s: response has no %q field", a.id, fileID, ep.Field)
+	}
+	dlURL := coerceString(v)
+	if dlURL == "" {
+		return "", fmt.Errorf("source %q: file %s: %q is not a URL string", a.id, fileID, ep.Field)
+	}
+
+	if a.auth != nil && a.auth.APIKey.In == "query" && a.apiKey != "" && sameOriginURLs(dlURL, a.baseURL) {
+		withKey, err := addQueryParam(dlURL, a.auth.APIKey.Name, a.apiKey)
+		if err != nil {
+			return "", fmt.Errorf("source %q: file %s: %w", a.id, fileID, err)
+		}
+		dlURL = withKey
+	}
+	return dlURL, nil
 }
 
 // CheckUpdates is implemented in the update-check task (replaces this stub).
