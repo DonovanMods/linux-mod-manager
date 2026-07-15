@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -35,7 +36,8 @@ type ProgressFunc func(DownloadProgress)
 type DownloadResult struct {
 	Path     string // Final file path
 	Size     int64  // Bytes downloaded
-	Checksum string // MD5 hash of downloaded file
+	Checksum string // MD5 hash of downloaded file (recorded in the DB)
+	SHA256   string // SHA-256 of downloaded file (compared against source-declared checksums)
 }
 
 // Downloader handles HTTP file downloads with progress tracking
@@ -196,13 +198,14 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 	}()
 
 	totalBytes := resp.ContentLength
-	hasher := md5.New()
+	md5Hasher := md5.New()
+	shaHasher := sha256.New()
 	reader := &progressReader{
 		reader:     resp.Body,
 		totalBytes: totalBytes,
 		progressFn: progressFn,
 	}
-	teeReader := io.TeeReader(reader, hasher)
+	teeReader := io.TeeReader(reader, io.MultiWriter(md5Hasher, shaHasher))
 
 	written, err := io.Copy(file, teeReader)
 	if err != nil {
@@ -221,7 +224,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 	return &DownloadResult{
 		Path:     destPath,
 		Size:     written,
-		Checksum: hex.EncodeToString(hasher.Sum(nil)),
+		Checksum: hex.EncodeToString(md5Hasher.Sum(nil)),
+		SHA256:   hex.EncodeToString(shaHasher.Sum(nil)),
 	}, nil
 }
 

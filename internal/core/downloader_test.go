@@ -2,6 +2,8 @@ package core_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net"
 	"net/http"
@@ -502,4 +504,21 @@ func (r *contentReader) Read(p []byte) (n int, err error) {
 	n = copy(p, r.content[r.pos:])
 	r.pos += n
 	return n, nil
+}
+
+func TestDownloadComputesSHA256(t *testing.T) {
+	content := []byte("payload for hashing")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer srv.Close()
+
+	d := core.NewDownloader(nil)
+	dest := filepath.Join(t.TempDir(), "out.bin")
+	result, err := d.Download(context.Background(), srv.URL, dest, nil)
+	require.NoError(t, err)
+
+	sum := sha256.Sum256(content)
+	assert.Equal(t, hex.EncodeToString(sum[:]), result.SHA256)
+	assert.NotEmpty(t, result.Checksum) // MD5 still present
 }
