@@ -38,8 +38,22 @@ type DirectoryConfig struct {
 
 // ManifestConfig configures a manifest source (Phase 3).
 type ManifestConfig struct {
-	URL     string `yaml:"url"`
-	Refresh string `yaml:"refresh"` // Go duration string, e.g. "15m"; empty = default
+	URL     string      `yaml:"url"`
+	Refresh string      `yaml:"refresh"` // Go duration string, e.g. "15m"; empty = default
+	Auth    *AuthConfig `yaml:"auth"`
+}
+
+// AuthConfig configures optional API-key authentication for a custom source.
+// The key itself is never stored in the definition; it comes from the
+// LMM_<ID>_API_KEY env var or the DB token store at startup.
+type AuthConfig struct {
+	APIKey *APIKeyConfig `yaml:"api_key"`
+}
+
+// APIKeyConfig says where the API key is attached on requests.
+type APIKeyConfig struct {
+	In   string `yaml:"in"`   // "header" or "query"
+	Name string `yaml:"name"` // header name or query parameter name
 }
 
 // APIConfig configures a declarative REST source (expanded in Phase 4).
@@ -48,6 +62,24 @@ type APIConfig struct {
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// validateAuth checks an optional auth block. Shared by manifest (Phase 3)
+// and api (Phase 4) validation.
+func validateAuth(a *AuthConfig) error {
+	if a == nil {
+		return nil
+	}
+	if a.APIKey == nil {
+		return errors.New("auth.api_key is required when auth is set")
+	}
+	if a.APIKey.In != "header" && a.APIKey.In != "query" {
+		return fmt.Errorf(`auth.api_key.in must be "header" or "query", got %q`, a.APIKey.In)
+	}
+	if a.APIKey.Name == "" {
+		return errors.New("auth.api_key.name is required")
+	}
+	return nil
+}
 
 // Validate checks the definition for structural errors. It does not touch the
 // filesystem or network; existence checks happen when the source is constructed.
@@ -101,6 +133,9 @@ func (d *SourceDefinition) Validate() error {
 			if _, err := time.ParseDuration(d.Manifest.Refresh); err != nil {
 				return fmt.Errorf("manifest.refresh: %w", err)
 			}
+		}
+		if err := validateAuth(d.Manifest.Auth); err != nil {
+			return fmt.Errorf("manifest: %w", err)
 		}
 	case TypeAPI:
 		if d.API == nil {
