@@ -11,6 +11,12 @@ import (
 // (see issue #52).
 const modInfoFileName = "ModInfo.xml"
 
+// maxModInfoSize is the maximum allowed size (in bytes) for a ModInfo.xml entry
+// when extracted from an archive. Real ModInfo.xml files are typically a few KB;
+// this limit prevents decompression bomb attacks where a small compressed entry
+// expands to gigabytes during extraction.
+const maxModInfoSize = 1 << 20 // 1 MiB
+
 // ResolveArchive extracts metadata from a .zip or .jar archive whose
 // ModInfo.xml lives at the archive root or exactly one directory deep - the
 // common "wrapper folder" layout used by 7 Days to Die mods (e.g. a
@@ -35,8 +41,13 @@ func ResolveArchive(archivePath string) *Info {
 	}
 	defer rc.Close()
 
-	data, err := io.ReadAll(rc)
+	data, err := io.ReadAll(io.LimitReader(rc, maxModInfoSize+1))
 	if err != nil {
+		return nil
+	}
+
+	// Reject entries larger than the cap to prevent decompression bombs
+	if len(data) > maxModInfoSize {
 		return nil
 	}
 

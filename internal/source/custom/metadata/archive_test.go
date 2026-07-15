@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -82,4 +83,40 @@ func TestResolveArchiveFirstNestedMatchWinsInDeterministicOrder(t *testing.T) {
 	info := ResolveArchive(path)
 	require.NotNil(t, info)
 	assert.Equal(t, "BiggerBackpack", info.Name, "the first one-deep match in archive order should win")
+}
+
+func TestResolveArchiveTooDeepNesting(t *testing.T) {
+	path := writeZip(t, [][2]string{{"a/b/ModInfo.xml", modInfoV2}})
+	assert.Nil(t, ResolveArchive(path), "ModInfo.xml two directories deep must return nil")
+}
+
+func TestResolveArchiveDecompressionBomb(t *testing.T) {
+	// Create a zip with a ModInfo.xml entry that decompresses to >1 MiB.
+	// Use a valid XML structure but pad it with a multi-MiB comment to exceed the cap
+	// while remaining valid XML if fully read.
+	f, err := os.Create(filepath.Join(t.TempDir(), "bomb.zip"))
+	require.NoError(t, err)
+	defer f.Close()
+
+	w := zip.NewWriter(f)
+	// Create a large valid XML document with padding comment
+	header := `<?xml version="1.0" encoding="UTF-8" ?>
+<xml>
+	<Name value="BiggerBackpack"/>
+	<!-- `
+	footer := ` -->
+</xml>`
+	// Padding of ~1.1 MiB (spaces compress well in a zip)
+	padding := strings.Repeat("X", 1100000)
+	largeXML := header + padding + footer
+
+	fw, err := w.Create("ModInfo.xml")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte(largeXML))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	// Should return nil because the decompressed size exceeds the cap
+	info := ResolveArchive(f.Name())
+	assert.Nil(t, info, "oversized ModInfo.xml must return nil to prevent decompression bomb")
 }
