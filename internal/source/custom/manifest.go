@@ -26,6 +26,11 @@ const defaultManifestRefresh = 15 * time.Minute
 // server from exhausting memory.
 const maxManifestSize = 10 << 20 // 10 MiB
 
+// manifestFetchTimeout bounds a remote manifest fetch. Without it a hung
+// server would block the fetching goroutine indefinitely (and, before the
+// lock rework, every other operation on this source).
+const manifestFetchTimeout = 30 * time.Second
+
 // Manifest is a ModSource backed by a published mod-list document (design §3).
 // Remote manifests are fetched on demand and cached in memory for the
 // configured TTL; local paths are read on every operation (cheap).
@@ -88,7 +93,7 @@ func NewManifest(def SourceDefinition) (*Manifest, error) {
 		refresh:    refresh,
 		allowHTTP:  def.AllowHTTP,
 		auth:       cfg.Auth,
-		httpClient: http.DefaultClient,
+		httpClient: &http.Client{Timeout: manifestFetchTimeout},
 		now:        time.Now,
 	}, nil
 }
@@ -107,13 +112,22 @@ func (m *Manifest) SetAPIKey(key string) { m.apiKey = key }
 func (m *Manifest) IsAuthenticated() bool { return m.apiKey != "" }
 
 // fetch returns the parsed manifest, honoring the TTL cache for remote URLs.
-// Errors name the source and manifest URL so users can act on them.
+// The returned document is a deep copy the caller owns exclusively — mutating
+// it can never corrupt the cache. m.mu guards only the cache check and store;
+// it is never held across the network call, so two goroutines racing past an
+// expired TTL may both fetch remotely. That duplication is acceptable (and
+// idempotent) — it trades a rare extra request for never blocking readers of
+// the cached copy behind a slow server. Errors name the source and manifest
+// URL so users can act on them.
 func (m *Manifest) fetch(ctx context.Context) (*manifestDoc, error) {
 	if !m.isRemote {
 		data, err := os.ReadFile(m.url)
 		if err != nil {
 			return nil, fmt.Errorf("source %q: reading manifest %s: %w", m.id, m.url, err)
 		}
+		// parseManifest returns a freshly allocated doc on every call (the
+		// file is re-read each time), so it is already caller-owned; no
+		// defensive copy is needed here.
 		doc, err := parseManifest(data, m.allowHTTP)
 		if err != nil {
 			return nil, fmt.Errorf("source %q: manifest %s: %w", m.id, m.url, err)
@@ -122,22 +136,30 @@ func (m *Manifest) fetch(ctx context.Context) (*manifestDoc, error) {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.cached != nil && m.now().Sub(m.fetchedAt) < m.refresh {
-		return m.cached, nil
+		doc := m.cached
+		m.mu.Unlock()
+		return deepCopyManifest(doc), nil
 	}
+	m.mu.Unlock()
 
+	// Network I/O happens outside the lock. Two goroutines racing past the
+	// TTL check may both fetch — an acceptable, idempotent duplication that
+	// keeps a slow server from blocking readers of the cached copy.
 	doc, err := m.fetchRemote(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	m.mu.Lock()
 	m.cached = doc
 	m.fetchedAt = m.now()
-	return doc, nil
+	m.mu.Unlock()
+	return deepCopyManifest(doc), nil
 }
 
-// fetchRemote downloads and parses the manifest document. Callers hold m.mu.
+// fetchRemote downloads and parses the manifest document. Called without
+// m.mu held: this method performs the network I/O.
 func (m *Manifest) fetchRemote(ctx context.Context) (*manifestDoc, error) {
 	reqURL := m.url
 	if m.auth != nil && m.auth.APIKey.In == "query" && m.apiKey != "" {
@@ -187,6 +209,21 @@ func (m *Manifest) fetchRemote(ctx context.Context) (*manifestDoc, error) {
 		return nil, fmt.Errorf("source %q: manifest %s: %w", m.id, m.url, err)
 	}
 	return doc, nil
+}
+
+// deepCopyManifest returns a copy of doc that shares no mutable memory with
+// the cached original, so callers can never corrupt the cache between TTL
+// refreshes.
+func deepCopyManifest(doc *manifestDoc) *manifestDoc {
+	out := &manifestDoc{Version: doc.Version, Mods: make([]manifestMod, len(doc.Mods))}
+	for i, m := range doc.Mods {
+		cm := m // struct copy; now fix up slice fields
+		cm.GameIDs = append([]string(nil), m.GameIDs...)
+		cm.Dependencies = append([]string(nil), m.Dependencies...)
+		cm.Files = append([]manifestFile(nil), m.Files...)
+		out.Mods[i] = cm
+	}
+	return out
 }
 
 // addQueryParam returns rawURL with name=value appended to its query string,

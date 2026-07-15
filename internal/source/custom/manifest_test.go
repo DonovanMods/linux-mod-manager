@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -364,6 +365,87 @@ func TestManifestCheckUpdates(t *testing.T) {
 	require.Len(t, updates, 1)
 	assert.Equal(t, "cool-mod", updates[0].InstalledMod.ID)
 	assert.Equal(t, "1.2.0", updates[0].NewVersion)
+}
+
+func TestManifestFetchReturnsDefensiveCopy(t *testing.T) {
+	m := newLocalManifest(t)
+	ctx := context.Background()
+
+	first, err := m.fetch(ctx)
+	require.NoError(t, err)
+	// Mutate everything a caller could plausibly touch.
+	first.Mods[0].Name = "MUTATED"
+	first.Mods[0].GameIDs[0] = "MUTATED"
+	first.Mods[0].Files[0].URL = "MUTATED"
+	first.Mods = nil
+
+	second, err := m.fetch(ctx)
+	require.NoError(t, err)
+	require.Len(t, second.Mods, 2)
+	assert.Equal(t, "Cool Mod", second.Mods[0].Name)
+	assert.Equal(t, "skyrim", second.Mods[0].GameIDs[0])
+	assert.NotEqual(t, "MUTATED", second.Mods[0].Files[0].URL)
+}
+
+func TestManifestFetchConcurrent(t *testing.T) {
+	// Race-detector safety net: concurrent fetches (cache hits and misses)
+	// must be data-race free. Run with -race in CI/the suite.
+	hits := 0
+	var srvMu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srvMu.Lock()
+		hits++
+		srvMu.Unlock()
+		_, _ = w.Write([]byte(testManifest))
+	}))
+	defer srv.Close()
+
+	def := manifestDef(srv.URL + "/mods.yaml")
+	def.AllowHTTP = true
+	m, err := NewManifest(def)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, ferr := m.fetch(context.Background())
+			assert.NoError(t, ferr)
+		}()
+	}
+	wg.Wait()
+	srvMu.Lock()
+	defer srvMu.Unlock()
+	assert.GreaterOrEqual(t, hits, 1)
+}
+
+func TestManifestFetchDoesNotBlockOnHungServer(t *testing.T) {
+	// A hung server must be bounded by the client timeout, not hang forever.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release // hang until test cleanup
+	}))
+	defer func() { close(release); srv.Close() }()
+
+	def := manifestDef(srv.URL + "/mods.yaml")
+	def.AllowHTTP = true
+	m, err := NewManifest(def)
+	require.NoError(t, err)
+	m.httpClient = &http.Client{Timeout: 200 * time.Millisecond}
+
+	start := time.Now()
+	_, err = m.fetch(context.Background())
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second)
+	assert.NotContains(t, err.Error(), "api_key")
+}
+
+func TestNewManifestClientHasTimeout(t *testing.T) {
+	m, err := NewManifest(manifestDef("https://x.test/mods.yaml"))
+	require.NoError(t, err)
+	require.NotNil(t, m.httpClient)
+	assert.Equal(t, manifestFetchTimeout, m.httpClient.Timeout)
 }
 
 func TestManifestDownloadHeaders(t *testing.T) {
