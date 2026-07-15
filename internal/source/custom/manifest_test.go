@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -291,4 +292,37 @@ func TestManifestDownloadURLQueryAuth(t *testing.T) {
 	u, err := m.GetDownloadURL(context.Background(), mod, "main")
 	require.NoError(t, err)
 	assert.Equal(t, "https://files.test/cool-mod-1.2.0.zip?api_key=sekrit", u)
+}
+
+func TestManifestGetDependencies(t *testing.T) {
+	m := newLocalManifest(t)
+
+	mod, err := m.GetMod(context.Background(), "skyrim", "cool-mod")
+	require.NoError(t, err)
+	deps, err := m.GetDependencies(context.Background(), mod)
+	require.NoError(t, err)
+	require.Len(t, deps, 1)
+	assert.Equal(t, domain.ModReference{SourceID: "my-repo", ModID: "other-mod"}, deps[0])
+
+	other, err := m.GetMod(context.Background(), "skyrim", "other-mod")
+	require.NoError(t, err)
+	deps, err = m.GetDependencies(context.Background(), other)
+	require.NoError(t, err)
+	assert.Empty(t, deps)
+}
+
+func TestManifestCheckUpdates(t *testing.T) {
+	m := newLocalManifest(t) // cool-mod is at 1.2.0
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "cool-mod", SourceID: "my-repo", Version: "1.0.0"}},
+		{Mod: domain.Mod{ID: "other-mod", SourceID: "my-repo", Version: "0.9.0"}},
+		{Mod: domain.Mod{ID: "removed", SourceID: "my-repo", Version: "1.0"}},
+	}
+
+	updates, err := m.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	assert.Equal(t, "cool-mod", updates[0].InstalledMod.ID)
+	assert.Equal(t, "1.2.0", updates[0].NewVersion)
 }

@@ -334,14 +334,51 @@ func (m *Manifest) findMod(ctx context.Context, modID string) (*manifestMod, err
 	return nil, fmt.Errorf("source %q: mod not found: %s", m.id, modID)
 }
 
-// GetDependencies is implemented in the dependencies task (replaces this stub).
+// GetDependencies implements source.ModSource: manifest dependencies are IDs
+// within this source, returned as ModReferences for the resolver.
 func (m *Manifest) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
-	return nil, fmt.Errorf("source %q: dependencies: %w", m.id, source.ErrNotSupported)
+	mm, err := m.findMod(ctx, mod.ID)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]domain.ModReference, 0, len(mm.Dependencies))
+	for _, dep := range mm.Dependencies {
+		refs = append(refs, domain.ModReference{SourceID: m.id, ModID: dep})
+	}
+	return refs, nil
 }
 
-// CheckUpdates is implemented in the update-check task (replaces this stub).
+// CheckUpdates implements source.ModSource by comparing installed versions to
+// the current manifest.
 func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
-	return nil, fmt.Errorf("source %q: update checks: %w", m.id, source.ErrNotSupported)
+	doc, err := m.fetch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]manifestMod, len(doc.Mods))
+	for _, mm := range doc.Mods {
+		byID[mm.ID] = mm
+	}
+
+	var updates []domain.Update
+	for _, inst := range installed {
+		select {
+		case <-ctx.Done():
+			return updates, ctx.Err()
+		default:
+		}
+		current, ok := byID[inst.ID]
+		if !ok {
+			continue // mod removed from the manifest; nothing to offer
+		}
+		if domain.IsNewerVersion(inst.Version, current.Version) {
+			updates = append(updates, domain.Update{
+				InstalledMod: inst,
+				NewVersion:   current.Version,
+			})
+		}
+	}
+	return updates, nil
 }
 
 var _ source.ModSource = (*Manifest)(nil)
