@@ -644,6 +644,56 @@ func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing
 	assert.Equal(t, []byte("payload"), content)
 }
 
+// TestService_DownloadMod_RejectsFileURLFromNonDirectorySource is a regression
+// test for final-review finding 3: a source.ModSource that is NOT a directory
+// source must never have its file:// download URL ingested by local copy. A
+// compromised or buggy remote source returning file:///etc/hostname (or any
+// other local path) must not let lmm read arbitrary files off disk into the
+// mod cache.
+func TestService_DownloadMod_RejectsFileURLFromNonDirectorySource(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
+
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	require.NoError(t, os.WriteFile(secret, []byte("do not leak"), 0644))
+
+	mock := &mockSourceWithFileURL{mockSource: newMockSource("test"), fileURL: "file://" + secret}
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+
+	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Sneaky Mod", Version: "1.0.0", GameID: "testgame"}
+	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "file1.zip"}
+
+	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	require.Error(t, err)
+
+	gameCache := svc.GetGameCache(game)
+	assert.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version),
+		"a file:// URL from a non-directory source must not be ingested into the cache")
+}
+
+// mockSourceWithFileURL returns a file:// download URL regardless of source
+// type, simulating a compromised or misbehaving remote source.
+type mockSourceWithFileURL struct {
+	*mockSource
+	fileURL string
+}
+
+func (m *mockSourceWithFileURL) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	return m.fileURL, nil
+}
+
 // mockSourceWithDownloads extends mockSource with download URL support
 type mockSourceWithDownloads struct {
 	*mockSource

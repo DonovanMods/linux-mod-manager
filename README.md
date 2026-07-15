@@ -226,6 +226,149 @@ The mod cache location is determined by:
 
 This allows you to store different games' mods on different drives (e.g., large games on HDD, frequently accessed games on SSD).
 
+## Custom Sources
+
+In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. The `directory` type is fully implemented — point it at a local folder of mods and use it from `search`/`install` like any built-in source. `manifest` and `api` definitions parse and validate today, but their source types (fetching mods over HTTP) ship in later releases.
+
+Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml` (or `*.yml`). Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
+
+### Source Definition Format
+
+```yaml
+id: donovan-mods              # required; must match ^[a-z0-9-]+$ and be unique
+name: Donovan's 7D2D Modlets  # required display name
+type: directory               # required: directory (local folders) | manifest | api
+allow_http: false             # optional; permit http:// URLs (default false)
+
+# Type-specific configuration (one block required, must match type)
+directory:
+  path: ~/Projects/mods/7dtd/donovan-7d2d-modlets
+```
+
+### Common Fields
+
+| Field       | Type    | Required | Description                                                                         |
+| ----------- | ------- | -------- | ----------------------------------------------------------------------------------- |
+| `id`        | string  | yes      | Unique source identifier; must contain only lowercase letters, numbers, and hyphens |
+| `name`      | string  | yes      | Display name shown in source lists and commands                                     |
+| `type`      | string  | yes      | Source type: `directory`, `manifest`, or `api`. All three parse and validate today; `directory` support (search/install) is implemented now, `manifest`/`api` ship in later releases. |
+| `allow_http` | boolean | no       | If `true`, allow unencrypted http:// URLs (default `false`, HTTPS only)            |
+
+### Directory Sources
+
+A `directory` source scans a local folder every time it's queried — no indexing, no caching of the listing — so edits to the folder show up immediately without restarting lmm. Each entry directly under the configured path becomes one mod:
+
+- A **subdirectory** is a mod whose contents are used as-is.
+- A **`.zip` or `.jar` file** is a mod whose archive is extracted like any downloaded mod.
+- Anything else (loose files, `README.md`, `LICENSE.md`, other subfolders that aren't mods, etc.) is ignored by the scan but still shows up as a listed entry if it happens to be a directory — see the note on metadata fallback below.
+- **Dot-prefixed entries** (`.git`, `.DS_Store`, dotfiles, ...) are always ignored, whether they're a directory or a file.
+
+Because every non-hidden subdirectory becomes an entry, point `directory.path` at a folder dedicated to mods (as in the example below) rather than something like a repository root that also holds unrelated project files — those would otherwise show up as listed (if harmless) entries in `search`/`lmm source list` output.
+
+```yaml
+id: donovan-mods
+name: Donovan's 7D2D Modlets
+type: directory
+directory:
+  path: ~/Projects/mods/7dtd/donovan-7d2d-modlets
+```
+
+**Metadata resolution** — for each subdirectory, lmm resolves name/version/summary/author in this order:
+
+1. **`ModInfo.xml`** (7 Days to Die's mod metadata format), if present. Both layouts are supported:
+   - **V2**: fields directly under `<xml>` — `<xml><Name value="..."/><Version value="..."/>...</xml>`
+   - **V1**: fields nested in `<ModInfo>` — `<xml><ModInfo><Name value="..."/>...</ModInfo></xml>`
+2. **Dirname parsing**, if no `ModInfo.xml` (or it fails to parse): the directory name is split into a name and version, e.g. `PlainMod-0.5` → name `PlainMod`, version `0.5`. If no version-like suffix is found, the whole name is used as-is and the version is empty.
+
+Archive files (`.zip`/`.jar`) get the same metadata resolution: lmm looks for `ModInfo.xml` inside the archive (at its root or exactly one directory deep, e.g. `donovan-aio.zip` containing `donovan-aio/ModInfo.xml`) before falling back to dirname-style parsing on the filename.
+
+**The mod ID is the directory (or archive) name, verbatim.** There is no separate ID field — `BiggerBackpack/` is mod `BiggerBackpack`. This means **renaming the directory creates a new mod identity**: lmm has no way to know `BiggerBackpack/` and `Bigger-Backpack/` are the same mod, so a rename shows up as the old mod disappearing (update checks silently stop finding it) and a new, unrelated mod appearing. Keep directory names stable once you've installed from them.
+
+Directory sources support search, file listing, downloads (via local copy, no network), and update checks. They do not support dependency resolution (`GetDependencies` returns "not supported") since there's no manifest to declare dependencies from.
+
+To use a directory source with a specific game, map it under that game's `sources:` block in `games.yaml` (the value is ignored — directory sources apply to any game that maps them — but the key must be present):
+
+```yaml
+games:
+  7daystodie:
+    sources:
+      nexusmods: 7daystodie
+      donovan-mods: "" # directory sources ignore this value
+```
+
+### Source Management Commands
+
+List all sources (built-in and custom):
+
+```bash
+lmm source list
+```
+
+Output:
+
+```
+ID            NAME                    TYPE       AUTH  CAPABILITIES              ERROR
+nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth
+curseforge    CurseForge              built-in   yes   search,deps,updates,auth
+donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates
+```
+
+Validate a source definition file before use:
+
+```bash
+lmm source validate ~/.config/lmm/sources/my-source.yaml
+```
+
+On success:
+```
+~/.config/lmm/sources/my-source.yaml: valid (directory source "my-source")
+```
+
+On error (exits with code 1):
+```
+Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
+```
+
+### Adding a Custom Source
+
+1. Create `~/.config/lmm/sources/` if it doesn't exist:
+   ```bash
+   mkdir -p ~/.config/lmm/sources
+   ```
+
+2. Create a YAML file with your source definition:
+   ```bash
+   cat > ~/.config/lmm/sources/my-mods.yaml <<'EOF'
+   id: my-local-mods
+   name: My Local Mods
+   type: directory
+   directory:
+     path: ~/projects/mods
+   EOF
+   ```
+
+3. Validate the definition:
+   ```bash
+   lmm source validate ~/.config/lmm/sources/my-mods.yaml
+   ```
+
+4. Map it under the game(s) that should use it in `games.yaml` (see [Directory Sources](#directory-sources) above):
+   ```yaml
+   games:
+     skyrim-se:
+       sources:
+         nexusmods: skyrimspecialedition
+         my-local-mods: ""
+   ```
+
+5. Search and install from it like any built-in source:
+   ```bash
+   lmm search bigger -g skyrim-se --source my-local-mods
+   lmm install --source my-local-mods --id BiggerBackpack -g skyrim-se
+   ```
+
+A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
+
 ## CLI Reference
 
 ### Global Flags
@@ -289,6 +432,8 @@ This allows you to store different games' mods on different drives (e.g., large 
 | `lmm deploy --purge`                   | Purge then deploy all mods                           |
 | `lmm purge`                            | Remove all mods from game directory                  |
 | `lmm conflicts`                        | Show file conflicts in current profile               |
+| `lmm source list`                      | List built-in and user-defined mod sources           |
+| `lmm source validate <file>`           | Validate a user-defined source definition           |
 
 ### Update check behavior
 
@@ -326,11 +471,12 @@ internal/
 
 ## File Locations
 
-| Type      | Path                                  |
-| --------- | ------------------------------------- |
-| Config    | `~/.config/lmm/`                      |
-| Database  | `~/.local/share/lmm/lmm.db`           |
-| Mod Cache | `~/.local/share/lmm/cache/` (default) |
+| Type           | Path                                   |
+| -------------- | --------------------------------------- |
+| Config         | `~/.config/lmm/`                       |
+| Custom Sources | `~/.config/lmm/sources/*.yaml`         |
+| Database       | `~/.local/share/lmm/lmm.db`            |
+| Mod Cache      | `~/.local/share/lmm/cache/` (default)  |
 
 The mod cache location can be customized via `cache_path` in `config.yaml`.
 

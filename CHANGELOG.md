@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-14
+
+### Added
+
+- `lmm source list` — list built-in and user-defined mod sources
+- `lmm source validate <file>` — validate a user-defined source definition
+- User-defined source definitions loaded from `~/.config/lmm/sources/*.yaml`
+- Directory source type: use a local folder of mods as a first-class source
+
+### Fixed
+
+- **Directory source installs no longer orphaned**: mods found through a directory source mapped with the README-documented empty value (`sources: {my-mods: ""}`) now carry the correct game ID end-to-end, so `lmm list`/`update`/`uninstall` can see them after install
+- **`lmm source list` shows every definition**: a definition whose source fails to construct (e.g. missing directory path) now shows as an `error` row instead of being silently dropped, and a definition colliding with a built-in source ID no longer relabels the built-in's row — the built-in stays `built-in` and the collision gets its own `error` row
+- **Hidden entries ignored by directory sources**: dot-prefixed entries (`.git`, etc.) under a directory source's path are no longer listed as installable mods
+- **Local file ingest restricted to directory sources**: a `file://` download URL is now only trusted from directory sources, closing a path where any other source returning `file://` could pull arbitrary local files into the cache
+- Negative `page` values in directory source search no longer panic; they clamp to the first page
+- **Archive mods now read embedded `ModInfo.xml` metadata**: a `.zip`/`.jar` mod in a directory source (e.g. `donovan-aio.zip` containing `donovan-aio/ModInfo.xml`) now resolves name/version/summary/author from the archived `ModInfo.xml` instead of saving an empty record with only a filename-derived name and version
+
 ## [1.5.0] - 2026-07-13
 
 ### Added
@@ -656,7 +674,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.10...v1.4.0
 [1.3.10]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.3.9...v1.3.10

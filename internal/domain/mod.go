@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -161,4 +162,20 @@ func parseVersionParts(v string) []int {
 	}
 
 	return result
+}
+
+// versionPattern matches version-like strings such as 1.2.3, v1.2.3, or
+// 1.0.0-beta2. The optional suffix must start with a letter so compound
+// strings like "1.20.1-15.3.0" parse as two versions, not one.
+var versionPattern = regexp.MustCompile(`[vV]?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?(?:[-+][a-zA-Z][\w.]*)?)`)
+
+// ExtractVersionFromName extracts the last version-like pattern from a file or
+// directory name (mod version typically follows the game version in names like
+// "jei-1.20.1-15.3.0"). Returns "" when no version is present.
+func ExtractVersionFromName(name string) string {
+	matches := versionPattern.FindAllStringSubmatch(name, -1)
+	if len(matches) > 0 {
+		return matches[len(matches)-1][1]
+	}
+	return ""
 }
