@@ -395,11 +395,12 @@ manifest:
 - **Key resolution**, checked in order:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
   2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store.
-- The resolved key is always attached to the manifest fetch, and to every file download's URL when `in: query`, using the same `in`/`name` the definition declares.
-- For `in: header` keys, whether a file download also gets the key depends on the manifest's origin:
-  - **Remote manifests** (`https://` URL): the key is only sent to file downloads whose host (host and port, ignoring scheme) matches the manifest URL's host — a manifest pointing files at a third-party CDN never receives the source's key.
+- The resolved key is always attached to the manifest fetch itself (the request for the mod list document).
+- File downloads follow the same same-origin rule regardless of whether the key is `in: header` or `in: query`:
+  - **Remote manifests** (`https://` URL): the key (as a header, or appended to the URL) is only sent to file downloads whose scheme and host match the manifest URL's — a manifest pointing files at a third-party CDN never receives the source's key, in either form.
   - **Local-file manifests**: the key is attached to every file download regardless of host, since a local manifest is user-authored and already trusted.
-- Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth status` masks stored keys to their first/last 3 characters. `lmm auth status` also lists any registered custom source whose definition declares `auth`, alongside the built-in nexusmods/curseforge rows. `lmm auth logout <id>` removes a stored token even if the source's definition file has since been removed.
+- If a file download is redirected to a different scheme or host, an `in: header` key is stripped before the redirect is followed — Go's HTTP client otherwise forwards custom headers across redirects even when it would strip `Authorization`/`Cookie`.
+- Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth status` masks stored keys to their first/last 3 characters (keys of 8 characters or fewer are fully masked). `lmm auth status` also lists any registered custom source whose definition declares `auth`, alongside the built-in nexusmods/curseforge rows, plus any stored token whose source is no longer registered (with a hint to remove it). `lmm auth logout <id>` removes a stored token even if the source's definition file has since been removed.
 
 ### Source Management Commands
 

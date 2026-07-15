@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `lmm auth status` reports auth-capable custom sources (stored token or env var, masked)
+- `lmm auth status` lists stored tokens whose source is no longer registered (e.g. a removed custom-source definition file), with a `lmm auth logout` hint to remove them
 
 ### Fixed
 
@@ -21,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Header-mode API keys are only sent to file downloads on the manifest's own host
+- Header- and query-mode manifest API keys are only sent to file downloads on the manifest's own scheme+host (a manifest pointing files at a third-party CDN no longer leaks its key there, in either form)
+- Header-mode API keys are stripped before a file download follows a redirect off the original request's scheme+host (Go's HTTP client otherwise forwards custom headers across redirects)
+- `maskAPIKey` fully masks keys of 8 characters or fewer instead of 7, so short keys no longer expose most of their characters
 
 ### Changed
 
