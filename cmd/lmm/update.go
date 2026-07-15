@@ -137,7 +137,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// Check for updates (partial results returned even when some mods fail to fetch)
 	updater := service.NewUpdater()
-	updates, err := updater.CheckUpdates(ctx, installed)
+	updates, err := updater.CheckUpdates(ctx, game, installed)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
@@ -282,7 +282,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, profileName string) error {
 	// Check for update for this specific mod
 	updater := service.NewUpdater()
-	updates, err := updater.CheckUpdates(ctx, []domain.InstalledMod{*mod})
+	updates, err := updater.CheckUpdates(ctx, game, []domain.InstalledMod{*mod})
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)

@@ -119,6 +119,30 @@ func TestHasToken(t *testing.T) {
 	assert.False(t, has)
 }
 
+func TestListTokens(t *testing.T) {
+	db := setupTestDB(t)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
+
+	// No tokens initially.
+	tokens, err := db.ListTokens()
+	require.NoError(t, err)
+	assert.Empty(t, tokens)
+
+	require.NoError(t, db.SaveToken("nexusmods", "key-a"))
+	require.NoError(t, db.SaveToken("ghost-repo", "key-b"))
+
+	tokens, err = db.ListTokens()
+	require.NoError(t, err)
+	require.Len(t, tokens, 2)
+	// Ordered by source_id so callers get deterministic output.
+	assert.Equal(t, "ghost-repo", tokens[0].SourceID)
+	assert.Equal(t, "key-b", tokens[0].APIKey)
+	assert.Equal(t, "nexusmods", tokens[1].SourceID)
+	assert.Equal(t, "key-a", tokens[1].APIKey)
+}
+
 func setupTestDB(t *testing.T) *DB {
 	t.Helper()
 	db, err := New(":memory:")

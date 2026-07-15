@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-07-15
+
+### Added
+
+- `lmm auth status` reports auth-capable custom sources (stored token or env var, masked)
+- `lmm auth status` lists stored tokens whose source is no longer registered (e.g. a removed custom-source definition file), with a `lmm auth logout` hint to remove them
+
+### Fixed
+
+- `lmm auth logout` works for sources whose definition file was removed
+- Update checks translate installed mods to each source's mapped game ID (fixes NexusMods update checks for games whose lmm ID differs from the Nexus domain)
+- Remote manifest fetches are bounded by a 30-second timeout and no longer block other operations on the same source
+
+### Security
+
+- Header- and query-mode manifest API keys are only sent to file downloads on the manifest's own scheme+host (a manifest pointing files at a third-party CDN no longer leaks its key there, in either form)
+- Header-mode API keys are stripped before a file download follows a redirect off the original request's scheme+host (Go's HTTP client otherwise forwards custom headers across redirects)
+- `maskAPIKey` fully masks keys of 8 characters or fewer instead of 7, so short keys no longer expose most of their characters
+
+### Changed
+
+- Download checksums (MD5 + SHA-256) are computed in a single streaming pass
+
 ## [1.7.0] - 2026-07-14
 
 ### Added
@@ -688,7 +711,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.4.0...v1.5.0

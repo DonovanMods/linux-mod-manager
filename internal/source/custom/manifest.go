@@ -26,6 +26,11 @@ const defaultManifestRefresh = 15 * time.Minute
 // server from exhausting memory.
 const maxManifestSize = 10 << 20 // 10 MiB
 
+// manifestFetchTimeout bounds a remote manifest fetch. Without it a hung
+// server would block the fetching goroutine indefinitely (and, before the
+// lock rework, every other operation on this source).
+const manifestFetchTimeout = 30 * time.Second
+
 // Manifest is a ModSource backed by a published mod-list document (design §3).
 // Remote manifests are fetched on demand and cached in memory for the
 // configured TTL; local paths are read on every operation (cheap).
@@ -88,7 +93,7 @@ func NewManifest(def SourceDefinition) (*Manifest, error) {
 		refresh:    refresh,
 		allowHTTP:  def.AllowHTTP,
 		auth:       cfg.Auth,
-		httpClient: http.DefaultClient,
+		httpClient: &http.Client{Timeout: manifestFetchTimeout},
 		now:        time.Now,
 	}, nil
 }
@@ -107,13 +112,22 @@ func (m *Manifest) SetAPIKey(key string) { m.apiKey = key }
 func (m *Manifest) IsAuthenticated() bool { return m.apiKey != "" }
 
 // fetch returns the parsed manifest, honoring the TTL cache for remote URLs.
-// Errors name the source and manifest URL so users can act on them.
+// The returned document is a deep copy the caller owns exclusively — mutating
+// it can never corrupt the cache. m.mu guards only the cache check and store;
+// it is never held across the network call, so two goroutines racing past an
+// expired TTL may both fetch remotely. That duplication is acceptable (and
+// idempotent) — it trades a rare extra request for never blocking readers of
+// the cached copy behind a slow server. Errors name the source and manifest
+// URL so users can act on them.
 func (m *Manifest) fetch(ctx context.Context) (*manifestDoc, error) {
 	if !m.isRemote {
 		data, err := os.ReadFile(m.url)
 		if err != nil {
 			return nil, fmt.Errorf("source %q: reading manifest %s: %w", m.id, m.url, err)
 		}
+		// parseManifest returns a freshly allocated doc on every call (the
+		// file is re-read each time), so it is already caller-owned; no
+		// defensive copy is needed here.
 		doc, err := parseManifest(data, m.allowHTTP)
 		if err != nil {
 			return nil, fmt.Errorf("source %q: manifest %s: %w", m.id, m.url, err)
@@ -122,22 +136,30 @@ func (m *Manifest) fetch(ctx context.Context) (*manifestDoc, error) {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.cached != nil && m.now().Sub(m.fetchedAt) < m.refresh {
-		return m.cached, nil
+		doc := m.cached
+		m.mu.Unlock()
+		return deepCopyManifest(doc), nil
 	}
+	m.mu.Unlock()
 
+	// Network I/O happens outside the lock. Two goroutines racing past the
+	// TTL check may both fetch — an acceptable, idempotent duplication that
+	// keeps a slow server from blocking readers of the cached copy.
 	doc, err := m.fetchRemote(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	m.mu.Lock()
 	m.cached = doc
 	m.fetchedAt = m.now()
-	return doc, nil
+	m.mu.Unlock()
+	return deepCopyManifest(doc), nil
 }
 
-// fetchRemote downloads and parses the manifest document. Callers hold m.mu.
+// fetchRemote downloads and parses the manifest document. Called without
+// m.mu held: this method performs the network I/O.
 func (m *Manifest) fetchRemote(ctx context.Context) (*manifestDoc, error) {
 	reqURL := m.url
 	if m.auth != nil && m.auth.APIKey.In == "query" && m.apiKey != "" {
@@ -187,6 +209,21 @@ func (m *Manifest) fetchRemote(ctx context.Context) (*manifestDoc, error) {
 		return nil, fmt.Errorf("source %q: manifest %s: %w", m.id, m.url, err)
 	}
 	return doc, nil
+}
+
+// deepCopyManifest returns a copy of doc that shares no mutable memory with
+// the cached original, so callers can never corrupt the cache between TTL
+// refreshes.
+func deepCopyManifest(doc *manifestDoc) *manifestDoc {
+	out := &manifestDoc{Version: doc.Version, Mods: make([]manifestMod, len(doc.Mods))}
+	for i, m := range doc.Mods {
+		cm := m // struct copy; now fix up slice fields
+		cm.GameIDs = append([]string(nil), m.GameIDs...)
+		cm.Dependencies = append([]string(nil), m.Dependencies...)
+		cm.Files = append([]manifestFile(nil), m.Files...)
+		out.Mods[i] = cm
+	}
+	return out
 }
 
 // addQueryParam returns rawURL with name=value appended to its query string,
@@ -306,7 +343,11 @@ func (m *Manifest) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.D
 }
 
 // GetDownloadURL implements source.ModSource. Query-mode auth is appended
-// here; header-mode auth rides via DownloadHeaders (see DownloadHeaderProvider).
+// here — for remote manifests, only when the file URL is same-origin with
+// the manifest (see sameOrigin); a manifest pointing files at a third-party
+// CDN must not ship the repo's key there via the URL either. Header-mode
+// auth rides via DownloadHeaders (see DownloadHeaderProvider) under the same
+// rule.
 func (m *Manifest) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	mm, err := m.findMod(ctx, mod.ID)
 	if err != nil {
@@ -317,7 +358,7 @@ func (m *Manifest) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID s
 			continue
 		}
 		u := f.URL
-		if m.auth != nil && m.auth.APIKey.In == "query" && m.apiKey != "" {
+		if m.auth != nil && m.auth.APIKey.In == "query" && m.apiKey != "" && (!m.isRemote || m.sameOrigin(u)) {
 			withKey, err := addQueryParam(u, m.auth.APIKey.Name, m.apiKey)
 			if err != nil {
 				return "", fmt.Errorf("source %q: file %q: %w", m.id, fileID, err)
@@ -327,6 +368,41 @@ func (m *Manifest) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID s
 		return u, nil
 	}
 	return "", fmt.Errorf("source %q: mod %q: file not found: %s", m.id, mod.ID, fileID)
+}
+
+// sameOrigin reports whether fileURL shares scheme and host with the
+// manifest's own URL. Ports are normalized before comparing: an explicit
+// default port (:443 on https, :80 on http) matches a URL with no port at
+// all, so "https://repo.test" and "https://repo.test:443" are the same
+// origin; any other explicit port must still match exactly. Only meaningful
+// for remote manifests (m.isRemote); callers guard local-path manifests
+// separately, since a local path has no URL origin to compare and is
+// trusted regardless of the file's host.
+func (m *Manifest) sameOrigin(fileURL string) bool {
+	fu, err := url.Parse(fileURL)
+	if err != nil {
+		return false
+	}
+	mu, err := url.Parse(m.url)
+	if err != nil {
+		return false
+	}
+	return fu.Scheme == mu.Scheme && normalizedHost(fu) == normalizedHost(mu)
+}
+
+// normalizedHost returns u's hostname, with an explicit port stripped when
+// it is the scheme's default (443 for https, 80 for http). This lets
+// sameOrigin treat a bare host and that same host with its default port
+// spelled out as identical origins.
+func normalizedHost(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		return u.Hostname()
+	}
+	if (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
+		return u.Hostname()
+	}
+	return u.Hostname() + ":" + port
 }
 
 // findMod fetches the manifest and returns the entry with the given ID.
@@ -390,10 +466,18 @@ func (m *Manifest) CheckUpdates(ctx context.Context, installed []domain.Installe
 	return updates, nil
 }
 
-// DownloadHeaders implements source.DownloadHeaderProvider: header-mode auth
-// applies the same key to file downloads as to manifest fetches (design §6).
-func (m *Manifest) DownloadHeaders() map[string]string {
+// DownloadHeaders implements source.DownloadHeaderProvider. Header-mode auth
+// applies the same key to file downloads as to manifest fetches (design §6),
+// but for remote manifests only when the file URL is same-origin (scheme and
+// host, via sameOrigin) with the manifest — a manifest pointing files at a
+// third-party CDN, or downgrading from https to http on the same host, must
+// not ship the repo's key there. Local-path manifests are user-authored and
+// trusted, so their configured key attaches regardless of host.
+func (m *Manifest) DownloadHeaders(fileURL string) map[string]string {
 	if m.auth == nil || m.auth.APIKey.In != "header" || m.apiKey == "" {
+		return nil
+	}
+	if m.isRemote && !m.sameOrigin(fileURL) {
 		return nil
 	}
 	return map[string]string{m.auth.APIKey.Name: m.apiKey}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -191,6 +192,28 @@ func selectAuthSource(service *core.Service, args []string) (string, error) {
 	return sourceID, nil
 }
 
+// resolveLogoutSource picks the source to log out. Unlike login, logout must
+// also work for sources that are no longer registered (definition file
+// deleted after a key was stored) — otherwise the stored token becomes
+// unremovable via the CLI.
+func resolveLogoutSource(service *core.Service, args []string) (string, error) {
+	if len(args) == 0 {
+		return selectAuthSource(service, args) // interactive prompt path unchanged
+	}
+	sourceID := args[0]
+	if isAuthCapableSource(service, sourceID) {
+		return sourceID, nil
+	}
+	token, err := service.GetSourceToken(sourceID)
+	if err != nil {
+		return "", fmt.Errorf("checking stored credentials for %s: %w", sourceID, err)
+	}
+	if token != nil {
+		return sourceID, nil
+	}
+	return "", fmt.Errorf("no stored credentials for %q and it is not a registered auth-capable source", sourceID)
+}
+
 // isAuthCapableSource reports whether sourceID can hold an API key: either a
 // built-in from supportedSources, or a registered custom source whose
 // definition declares auth.
@@ -207,7 +230,7 @@ func isAuthCapableSource(service *core.Service, sourceID string) bool {
 
 func runAuthLogout(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		sourceID, err := selectAuthSource(service, args)
+		sourceID, err := resolveLogoutSource(service, args)
 		if err != nil {
 			return err
 		}
@@ -250,6 +273,59 @@ func doAuthStatus(service *core.Service) error {
 		}
 
 		fmt.Printf("%s: not authenticated\n", getSourceDisplayName(sourceID))
+	}
+
+	// Custom sources that declare auth get the same treatment as built-ins.
+	// Sorted by ID: registry/ListSources order is map iteration, which Go
+	// randomizes, and this output must be deterministic.
+	customSources := service.ListSources()
+	sort.Slice(customSources, func(i, j int) bool { return customSources[i].ID() < customSources[j].ID() })
+
+	registered := make(map[string]bool, len(supportedSources)+len(customSources))
+	for _, id := range supportedSources {
+		registered[id] = true
+	}
+
+	for _, src := range customSources {
+		id := src.ID()
+		registered[id] = true
+		if isSupportedSource(id) {
+			continue // already reported above
+		}
+		if !source.CapabilitiesOf(src).Auth {
+			continue // directory sources, auth-less manifests: nothing to report
+		}
+
+		token, err := service.GetSourceToken(id)
+		if err != nil {
+			return fmt.Errorf("checking %s: %w", id, err)
+		}
+		if token != nil {
+			fmt.Printf("%s: authenticated (key: %s)\n", id, maskAPIKey(token.APIKey))
+			continue
+		}
+		envKey := envKeyForSourceID(id)
+		if apiKey := os.Getenv(envKey); apiKey != "" {
+			fmt.Printf("%s: authenticated via %s (key: %s)\n", id, envKey, maskAPIKey(apiKey))
+			continue
+		}
+		fmt.Printf("%s: not authenticated (run: lmm auth login %s)\n", id, id)
+	}
+
+	// Stored tokens whose source matches nothing registered (built-in or
+	// custom) are otherwise invisible — e.g. a custom source's definition
+	// file was deleted after `lmm auth login`. Surface them so the user
+	// knows the credential still exists and how to remove it.
+	tokens, err := service.ListSourceTokens()
+	if err != nil {
+		return fmt.Errorf("listing stored tokens: %w", err)
+	}
+	for _, tok := range tokens {
+		if registered[tok.SourceID] {
+			continue
+		}
+		fmt.Printf("%s: stored token with no matching source (key: %s) — remove with: lmm auth logout %s\n",
+			tok.SourceID, maskAPIKey(tok.APIKey), tok.SourceID)
 	}
 
 	return nil
@@ -360,9 +436,12 @@ func readAPIKey() (string, error) {
 	return strings.TrimSpace(key), nil
 }
 
-// maskAPIKey returns a masked version of the API key (shows first 3 and last 3 chars)
+// maskAPIKey returns a masked version of the API key (shows first 3 and last
+// 3 chars). Keys of 8 characters or fewer are fully masked instead: showing
+// 6 of 7-8 characters exposes most of the key, defeating the point of
+// masking.
 func maskAPIKey(key string) string {
-	if len(key) <= 6 {
+	if len(key) <= 8 {
 		return "***"
 	}
 	return key[:3] + "..." + key[len(key)-3:]

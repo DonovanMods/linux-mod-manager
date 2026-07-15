@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -35,7 +36,8 @@ type ProgressFunc func(DownloadProgress)
 type DownloadResult struct {
 	Path     string // Final file path
 	Size     int64  // Bytes downloaded
-	Checksum string // MD5 hash of downloaded file
+	Checksum string // MD5 hash of downloaded file (recorded in the DB)
+	SHA256   string // SHA-256 of downloaded file (compared against source-declared checksums)
 }
 
 // Downloader handles HTTP file downloads with progress tracking
@@ -137,6 +139,44 @@ func (e *httpStatusError) Error() string {
 	return e.msg
 }
 
+// redirectSafeClient returns the HTTP client to use for one download
+// attempt. Go's http.Client automatically strips only the Authorization and
+// Cookie headers on a cross-host redirect; any other header we set —
+// notably an API-key header for authenticated custom-source downloads — is
+// otherwise forwarded verbatim to whatever host the redirect points at. When
+// headers are supplied, this returns a shallow copy of the base client with
+// a CheckRedirect that deletes those header names once the redirect leaves
+// the original request's scheme+host (Go re-applies the original request's
+// headers to each redirect, so deleting them here — the documented hook for
+// this — is sufficient) and enforces the default 10-redirect cap. If the
+// base client already had its own CheckRedirect, it is chained: our
+// header-stripping and redirect-cap logic runs first, then the base policy
+// runs and its error (if any) is returned — a base client's own redirect
+// policy must never be silently discarded. Calls with no headers (plain
+// Download) use the base client untouched.
+func (d *Downloader) redirectSafeClient(headers map[string]string) *http.Client {
+	if len(headers) == 0 {
+		return d.httpClient
+	}
+	client := *d.httpClient // shallow copy: shares Transport/Timeout/Jar
+	baseCheckRedirect := d.httpClient.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
+			for name := range headers {
+				req.Header.Del(name)
+			}
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if baseCheckRedirect != nil {
+			return baseCheckRedirect(req, via)
+		}
+		return nil
+	}
+	return &client
+}
+
 // downloadOnce performs a single download attempt (no retries).
 func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, headers map[string]string, progressFn ProgressFunc) (result *DownloadResult, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -147,7 +187,7 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 		req.Header.Set(name, value)
 	}
 
-	resp, err := d.httpClient.Do(req)
+	resp, err := d.redirectSafeClient(headers).Do(req)
 	if err != nil {
 		// *url.Error's Error() embeds the request URL verbatim, which for
 		// query-mode auth (custom sources' GetDownloadURL) contains the API
@@ -196,13 +236,14 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 	}()
 
 	totalBytes := resp.ContentLength
-	hasher := md5.New()
+	md5Hasher := md5.New()
+	shaHasher := sha256.New()
 	reader := &progressReader{
 		reader:     resp.Body,
 		totalBytes: totalBytes,
 		progressFn: progressFn,
 	}
-	teeReader := io.TeeReader(reader, hasher)
+	teeReader := io.TeeReader(reader, io.MultiWriter(md5Hasher, shaHasher))
 
 	written, err := io.Copy(file, teeReader)
 	if err != nil {
@@ -221,7 +262,8 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 	return &DownloadResult{
 		Path:     destPath,
 		Size:     written,
-		Checksum: hex.EncodeToString(hasher.Sum(nil)),
+		Checksum: hex.EncodeToString(md5Hasher.Sum(nil)),
+		SHA256:   hex.EncodeToString(shaHasher.Sum(nil)),
 	}, nil
 }
 

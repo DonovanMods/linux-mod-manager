@@ -64,3 +64,32 @@ func (d *DB) HasToken(sourceID string) (bool, error) {
 	}
 	return count > 0, nil
 }
+
+// ListTokens returns every stored API token, ordered by source ID,
+// regardless of whether that source is still registered. `lmm auth status`
+// uses this to surface orphaned tokens (source removed or renamed) that
+// would otherwise be invisible.
+func (d *DB) ListTokens() ([]StoredToken, error) {
+	rows, err := d.Query(`
+        SELECT source_id, token_data, updated_at
+        FROM auth_tokens
+        ORDER BY source_id
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("listing tokens: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var tokens []StoredToken
+	for rows.Next() {
+		var token StoredToken
+		if err := rows.Scan(&token.SourceID, &token.APIKey, &token.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning token: %w", err)
+		}
+		tokens = append(tokens, token)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing tokens: %w", err)
+	}
+	return tokens, nil
+}

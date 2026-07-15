@@ -3,11 +3,13 @@ package custom
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,6 +45,21 @@ mods:
       - id: main
         filename: other-mod.zip
         url: https://files.test/other-mod.zip
+`
+
+// originManifestFmt is a single-mod manifest template used to control a
+// file's URL precisely, for same-origin/cross-origin comparisons against the
+// manifest's own URL.
+const originManifestFmt = `
+version: 1
+mods:
+  - id: mod-a
+    name: Mod A
+    version: 1.0.0
+    files:
+      - id: main
+        filename: a.zip
+        url: %s
 `
 
 func manifestDef(url string) SourceDefinition {
@@ -318,6 +335,9 @@ func TestManifestFilesAndDownloadURL(t *testing.T) {
 }
 
 func TestManifestDownloadURLQueryAuth(t *testing.T) {
+	// This manifest is local (a temp-file path, not a remote URL), so — per
+	// the same-origin rule — the query key attaches regardless of the file
+	// URL's host: local manifests are user-authored and trusted.
 	path := filepath.Join(t.TempDir(), "mods.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(testManifest), 0644))
 	def := manifestDef(path)
@@ -331,6 +351,160 @@ func TestManifestDownloadURLQueryAuth(t *testing.T) {
 	u, err := m.GetDownloadURL(context.Background(), mod, "main")
 	require.NoError(t, err)
 	assert.Equal(t, "https://files.test/cool-mod-1.2.0.zip?api_key=sekrit", u)
+}
+
+// TestManifestGetDownloadURLQueryAuthOrigin pins the same-origin rule for
+// query-mode auth (final-review finding 2a): a remote manifest must only
+// attach its key to file URLs on its own scheme+host, exactly mirroring the
+// header-mode rule. Local manifests keep attaching regardless of host.
+func TestManifestGetDownloadURLQueryAuthOrigin(t *testing.T) {
+	queryAuth := &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
+
+	t.Run("remote manifest: same-origin file URL gets the key", func(t *testing.T) {
+		var srv *httptest.Server
+		srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprintf(w, originManifestFmt, srv.URL+"/files/a.zip")
+		}))
+		defer srv.Close()
+
+		def := manifestDef(srv.URL + "/mods.yaml")
+		def.AllowHTTP = true
+		def.Manifest.Auth = queryAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+
+		mod, err := m.GetMod(context.Background(), "", "mod-a")
+		require.NoError(t, err)
+		u, err := m.GetDownloadURL(context.Background(), mod, "main")
+		require.NoError(t, err)
+		assert.Equal(t, srv.URL+"/files/a.zip?api_key=sekrit", u)
+	})
+
+	t.Run("remote manifest: cross-origin file URL gets nothing", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprintf(w, originManifestFmt, "https://cdn.example.com/files/a.zip")
+		}))
+		defer srv.Close()
+
+		def := manifestDef(srv.URL + "/mods.yaml")
+		def.AllowHTTP = true
+		def.Manifest.Auth = queryAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+
+		mod, err := m.GetMod(context.Background(), "", "mod-a")
+		require.NoError(t, err)
+		u, err := m.GetDownloadURL(context.Background(), mod, "main")
+		require.NoError(t, err)
+		assert.Equal(t, "https://cdn.example.com/files/a.zip", u,
+			"the repo's API key must not be shipped to third-party hosts")
+	})
+
+	t.Run("local manifest: any host gets the key (user-authored, trusted)", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "mods.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf(originManifestFmt, "https://anywhere.test/a.zip")), 0644))
+		def := manifestDef(path)
+		def.Manifest.Auth = queryAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+
+		mod, err := m.GetMod(context.Background(), "", "mod-a")
+		require.NoError(t, err)
+		u, err := m.GetDownloadURL(context.Background(), mod, "main")
+		require.NoError(t, err)
+		assert.Equal(t, "https://anywhere.test/a.zip?api_key=sekrit", u)
+	})
+}
+
+// TestManifestSameOriginNormalizesDefaultPorts pins PR #55 review comment 2:
+// an explicit default port (:443 on https, :80 on http) must compare equal
+// to a bare host with an implicit default port — the prior byte-for-byte
+// Host comparison treated them as cross-origin, a fail-closed false negative
+// (the key gets withheld, not leaked) that still breaks legitimate
+// same-origin file URLs. An explicit non-default port must still mismatch.
+// Both header-mode (DownloadHeaders) and query-mode (GetDownloadURL) auth
+// flow through the shared sameOrigin helper, so both are exercised here.
+func TestManifestSameOriginNormalizesDefaultPorts(t *testing.T) {
+	tests := []struct {
+		name        string
+		manifestURL string
+		fileURL     string
+		wantMatch   bool
+	}{
+		{
+			name:        "https explicit :443 matches implicit default",
+			manifestURL: "https://repo.test/mods.yaml",
+			fileURL:     "https://repo.test:443/a.zip",
+			wantMatch:   true,
+		},
+		{
+			name:        "http explicit :80 matches implicit default",
+			manifestURL: "http://repo.test/mods.yaml",
+			fileURL:     "http://repo.test:80/a.zip",
+			wantMatch:   true,
+		},
+		{
+			name:        "https explicit non-default port still mismatches",
+			manifestURL: "https://repo.test/mods.yaml",
+			fileURL:     "https://repo.test:8443/a.zip",
+			wantMatch:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Run("header mode", func(t *testing.T) {
+				def := manifestDef(tt.manifestURL)
+				def.AllowHTTP = true
+				def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}}
+				m, err := NewManifest(def)
+				require.NoError(t, err)
+				m.SetAPIKey("sekrit")
+
+				headers := m.DownloadHeaders(tt.fileURL)
+				if tt.wantMatch {
+					assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, headers)
+				} else {
+					assert.Nil(t, headers)
+				}
+			})
+
+			t.Run("query mode", func(t *testing.T) {
+				def := manifestDef(tt.manifestURL)
+				def.AllowHTTP = true
+				def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
+				m, err := NewManifest(def)
+				require.NoError(t, err)
+				m.SetAPIKey("sekrit")
+
+				// Pre-populate the TTL cache so fetch() never hits the network —
+				// only sameOrigin's port normalization is under test here.
+				m.mu.Lock()
+				m.cached = &manifestDoc{
+					Version: 1,
+					Mods: []manifestMod{{
+						ID: "mod-a", Name: "Mod A", Version: "1.0.0",
+						Files: []manifestFile{{ID: "main", Filename: "a.zip", URL: tt.fileURL}},
+					}},
+				}
+				m.fetchedAt = m.now()
+				m.mu.Unlock()
+
+				mod, err := m.GetMod(context.Background(), "", "mod-a")
+				require.NoError(t, err)
+				u, err := m.GetDownloadURL(context.Background(), mod, "main")
+				require.NoError(t, err)
+				if tt.wantMatch {
+					assert.Equal(t, tt.fileURL+"?api_key=sekrit", u)
+				} else {
+					assert.Equal(t, tt.fileURL, u)
+				}
+			})
+		})
+	}
 }
 
 func TestManifestGetDependencies(t *testing.T) {
@@ -366,26 +540,191 @@ func TestManifestCheckUpdates(t *testing.T) {
 	assert.Equal(t, "1.2.0", updates[0].NewVersion)
 }
 
+func TestManifestFetchReturnsDefensiveCopy(t *testing.T) {
+	m := newLocalManifest(t)
+	ctx := context.Background()
+
+	first, err := m.fetch(ctx)
+	require.NoError(t, err)
+	// Mutate everything a caller could plausibly touch.
+	first.Mods[0].Name = "MUTATED"
+	first.Mods[0].GameIDs[0] = "MUTATED"
+	first.Mods[0].Files[0].URL = "MUTATED"
+	first.Mods = nil
+
+	second, err := m.fetch(ctx)
+	require.NoError(t, err)
+	require.Len(t, second.Mods, 2)
+	assert.Equal(t, "Cool Mod", second.Mods[0].Name)
+	assert.Equal(t, "skyrim", second.Mods[0].GameIDs[0])
+	assert.NotEqual(t, "MUTATED", second.Mods[0].Files[0].URL)
+}
+
+// TestManifestFetchRemoteReturnsDefensiveCopy pins that callers cannot corrupt
+// the remote cache (m.cached) via the returned pointer. Uses an httptest server,
+// fetches once (populates cache), mutates the returned doc thoroughly (mirroring
+// the local test's mutations), fetches again within TTL (cache hit), and asserts
+// the second result is pristine. Counts server hits to prove the second fetch
+// came from cache, not the network.
+func TestManifestFetchRemoteReturnsDefensiveCopy(t *testing.T) {
+	hits := 0
+	var hitsMu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsMu.Lock()
+		hits++
+		hitsMu.Unlock()
+		_, _ = w.Write([]byte(testManifest))
+	}))
+	defer srv.Close()
+
+	def := manifestDef(srv.URL + "/mods.yaml")
+	def.AllowHTTP = true
+	def.Manifest.Refresh = "15m" // explicit TTL; default is fine
+	m, err := NewManifest(def)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// First fetch: populates cache
+	first, err := m.fetch(ctx)
+	require.NoError(t, err)
+	require.Len(t, first.Mods, 2)
+	hitsMu.Lock()
+	assert.Equal(t, 1, hits, "first fetch must hit the server")
+	hitsMu.Unlock()
+
+	// Mutate everything a caller could plausibly touch.
+	first.Mods[0].Name = "MUTATED"
+	first.Mods[0].GameIDs[0] = "MUTATED"
+	first.Mods[0].Files[0].URL = "MUTATED"
+	first.Mods = nil
+
+	// Second fetch: within TTL, must be from cache
+	second, err := m.fetch(ctx)
+	require.NoError(t, err)
+	require.Len(t, second.Mods, 2)
+	assert.Equal(t, "Cool Mod", second.Mods[0].Name)
+	assert.Equal(t, "skyrim", second.Mods[0].GameIDs[0])
+	assert.NotEqual(t, "MUTATED", second.Mods[0].Files[0].URL)
+	hitsMu.Lock()
+	assert.Equal(t, 1, hits, "second fetch within TTL must use cache, not hit server")
+	hitsMu.Unlock()
+}
+
+func TestManifestFetchConcurrent(t *testing.T) {
+	// Race-detector safety net: concurrent fetches (cache hits and misses)
+	// must be data-race free. Run with -race in CI/the suite.
+	hits := 0
+	var srvMu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		srvMu.Lock()
+		hits++
+		srvMu.Unlock()
+		_, _ = w.Write([]byte(testManifest))
+	}))
+	defer srv.Close()
+
+	def := manifestDef(srv.URL + "/mods.yaml")
+	def.AllowHTTP = true
+	m, err := NewManifest(def)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, ferr := m.fetch(context.Background())
+			assert.NoError(t, ferr)
+		}()
+	}
+	wg.Wait()
+	srvMu.Lock()
+	defer srvMu.Unlock()
+	assert.GreaterOrEqual(t, hits, 1)
+}
+
+func TestManifestFetchDoesNotBlockOnHungServer(t *testing.T) {
+	// A hung server must be bounded by the client timeout, not hang forever.
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release // hang until test cleanup
+	}))
+	defer func() { close(release); srv.Close() }()
+
+	def := manifestDef(srv.URL + "/mods.yaml")
+	def.AllowHTTP = true
+	m, err := NewManifest(def)
+	require.NoError(t, err)
+	m.httpClient = &http.Client{Timeout: 200 * time.Millisecond}
+
+	start := time.Now()
+	_, err = m.fetch(context.Background())
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second)
+	assert.NotContains(t, err.Error(), "api_key")
+}
+
+func TestNewManifestClientHasTimeout(t *testing.T) {
+	m, err := NewManifest(manifestDef("https://x.test/mods.yaml"))
+	require.NoError(t, err)
+	require.NotNil(t, m.httpClient)
+	assert.Equal(t, manifestFetchTimeout, m.httpClient.Timeout)
+}
+
 func TestManifestDownloadHeaders(t *testing.T) {
-	t.Run("header auth with key", func(t *testing.T) {
-		def := manifestDef("https://x.test/mods.yaml")
-		def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}}
+	headerAuth := &AuthConfig{APIKey: &APIKeyConfig{In: "header", Name: "X-API-Key"}}
+
+	t.Run("remote manifest: same-origin file URL gets the key", func(t *testing.T) {
+		def := manifestDef("https://repo.test/mods.yaml")
+		def.Manifest.Auth = headerAuth
 		m, err := NewManifest(def)
 		require.NoError(t, err)
 		m.SetAPIKey("sekrit")
-		assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, m.DownloadHeaders())
+		assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, m.DownloadHeaders("https://repo.test/files/a.zip"))
+	})
+
+	t.Run("remote manifest: cross-origin file URL gets nothing", func(t *testing.T) {
+		def := manifestDef("https://repo.test/mods.yaml")
+		def.Manifest.Auth = headerAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+		assert.Nil(t, m.DownloadHeaders("https://cdn.example.com/files/a.zip"),
+			"the repo's API key must not be shipped to third-party hosts")
+	})
+
+	t.Run("local manifest: any host gets the key (user-authored, trusted)", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "mods.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(testManifest), 0644))
+		def := manifestDef(path)
+		def.Manifest.Auth = headerAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+		assert.Equal(t, map[string]string{"X-API-Key": "sekrit"}, m.DownloadHeaders("https://anywhere.test/a.zip"))
+	})
+
+	t.Run("remote manifest: same host but different scheme gets nothing", func(t *testing.T) {
+		def := manifestDef("https://repo.test/mods.yaml")
+		def.Manifest.Auth = headerAuth
+		m, err := NewManifest(def)
+		require.NoError(t, err)
+		m.SetAPIKey("sekrit")
+		assert.Nil(t, m.DownloadHeaders("http://repo.test/files/a.zip"),
+			"a scheme downgrade must not carry the key even though the host matches")
 	})
 
 	t.Run("query auth or no key yields nil", func(t *testing.T) {
-		def := manifestDef("https://x.test/mods.yaml")
+		def := manifestDef("https://repo.test/mods.yaml")
 		def.Manifest.Auth = &AuthConfig{APIKey: &APIKeyConfig{In: "query", Name: "api_key"}}
 		m, err := NewManifest(def)
 		require.NoError(t, err)
 		m.SetAPIKey("sekrit")
-		assert.Nil(t, m.DownloadHeaders())
+		assert.Nil(t, m.DownloadHeaders("https://repo.test/a.zip"))
 
-		noKey, err := NewManifest(manifestDef("https://x.test/mods.yaml"))
+		noKey, err := NewManifest(manifestDef("https://repo.test/mods.yaml"))
 		require.NoError(t, err)
-		assert.Nil(t, noKey.DownloadHeaders())
+		assert.Nil(t, noKey.DownloadHeaders("https://repo.test/a.zip"))
 	})
 }
