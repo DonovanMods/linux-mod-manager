@@ -58,10 +58,12 @@ func TestAPIIdentityAndCapabilities(t *testing.T) {
 }
 
 func TestBuildEndpointURL(t *testing.T) {
-	got := buildEndpointURL("/mods?q={query}&page={page}&x={unknown}", map[string]string{
-		"query": "cool mod & more", "page": "2",
+	// Empty values are substituted (e.g. game= for empty game_id), but absent keys
+	// are left as {placeholder} literals.
+	got := buildEndpointURL("/mods?q={query}&page={page}&game={game_id}&x={unknown}", map[string]string{
+		"query": "cool mod & more", "page": "2", "game_id": "",
 	})
-	assert.Equal(t, "/mods?q=cool+mod+%26+more&page=2&x={unknown}", got)
+	assert.Equal(t, "/mods?q=cool+mod+%26+more&page=2&game=&x={unknown}", got)
 }
 
 func TestGetJSONAuthAndErrors(t *testing.T) {

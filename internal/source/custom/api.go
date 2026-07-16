@@ -110,8 +110,10 @@ func (a *API) DownloadHeaders(fileURL string) map[string]string {
 }
 
 // buildEndpointURL substitutes {placeholder} tokens in an endpoint path
-// template with URL-escaped values. Placeholders without a value are left
-// intact (they will typically 404 loudly rather than silently matching).
+// template with URL-escaped values. Empty values substitute as empty strings
+// (an unset game id yields "game="), which is the correct query-parameter
+// semantics; only placeholders whose key is absent from vals entirely are
+// left intact (they will typically 404 loudly rather than silently matching).
 func buildEndpointURL(pathTemplate string, vals map[string]string) string {
 	out := pathTemplate
 	for name, value := range vals {
