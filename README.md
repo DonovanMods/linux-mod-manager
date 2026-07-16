@@ -228,7 +228,7 @@ This allows you to store different games' mods on different drives (e.g., large 
 
 ## Custom Sources
 
-In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. Two types are fully implemented: `directory` (a local folder of mods) and `manifest` (a JSON/YAML mod list you publish, over `https://` or as a local file) — both work from `search`/`install`/`update` like any built-in source, and `manifest` sources also support optional API-key authentication. `api` definitions parse and validate today, but the declarative-REST source type itself ships in a later release.
+In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. Three types are fully implemented: `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list you publish, over `https://` or as a local file), and `api` (a GET+JSON REST API described declaratively) — all three work from `search`/`install`/`update` like any built-in source (within each type's capabilities), and `manifest`/`api` sources also support optional API-key authentication.
 
 Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml` (or `*.yml`). Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
 
@@ -251,7 +251,7 @@ directory:
 | ----------- | ------- | -------- | ----------------------------------------------------------------------------------- |
 | `id`        | string  | yes      | Unique source identifier; must contain only lowercase letters, numbers, and hyphens |
 | `name`      | string  | yes      | Display name shown in source lists and commands                                     |
-| `type`      | string  | yes      | Source type: `directory`, `manifest`, or `api`. All three parse and validate today; `directory` and `manifest` are fully supported (search/install/updates), `api` is planned for a later release. |
+| `type`      | string  | yes      | Source type: `directory`, `manifest`, or `api`. All three are fully supported, each within its own capabilities (see the sections below; `api` in particular can be install-by-ID-only if its definition omits a `search` endpoint). |
 | `allow_http` | boolean | no       | If `true`, allow unencrypted http:// URLs (default `false`, HTTPS only)            |
 
 ### Directory Sources
@@ -379,9 +379,113 @@ games:
       my-repo: skyrimspecialedition
 ```
 
+### API Sources
+
+An `api` source describes a GET+JSON REST API declaratively — endpoint URL templates plus JSON dot-path mappings — and lmm calls it directly: search, install, and update checks all work without writing a client. Every endpoint is optional; a definition with only enough endpoints to fetch and download a mod by a known ID (no `search`) is a valid "install-by-ID-only" source.
+
+```yaml
+id: esoui
+name: ESOUI
+type: api
+api:
+  base_url: https://api.example.com
+  page_start: 1                  # optional; first page number the API expects (default 1)
+  auth:                          # optional, same block as manifest sources
+    api_key:
+      in: header                 # "header" or "query"
+      name: X-API-Key
+  endpoints:                     # each endpoint is optional; an undefined one is a capability gap (see below)
+    search:
+      path: /mods?game={game_id}&q={query}&page={page}&limit={page_size}
+      list: results               # required: dot-path to the results array
+      total: pagination.total     # optional: dot-path to a total-count field
+    get_mod:
+      path: /mods/{mod_id}
+    mod_files:
+      path: /mods/{mod_id}/files
+      list: files                 # required: dot-path to the files array
+    download_url:
+      path: /files/{file_id}/download
+      field: url                  # required: dot-path to the URL string in the response
+  mappings:
+    mod:                          # domain field -> JSON dot-path
+      id: id
+      name: name
+      version: latest_version
+      author: author.name
+      summary: description
+      downloads: download_count
+      updated_at: updated         # RFC 3339 expected; unparseable is left unset
+      url: web_url
+    file:                         # domain field -> JSON dot-path
+      id: id
+      name: title
+      filename: file_name
+      version: version
+      size: size_bytes
+```
+
+**Placeholders** — every `{placeholder}` in an endpoint's `path` is substituted with a URL-escaped value before the request is made; a placeholder with no value for that request is left in the URL as-is:
+
+| Placeholder   | Value                                                                        | Used by                                          |
+| ------------- | ----------------------------------------------------------------------------- | ------------------------------------------------- |
+| `{game_id}`   | The current game's ID for this source (from the search query, the mod being fetched/installed, or an installed mod during update checks) | `search`, `get_mod`, `mod_files`, `download_url` |
+| `{query}`     | The search text                                                               | `search`                                          |
+| `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)             | `search`                                          |
+| `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)              | `search`                                          |
+| `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs | `search`                                          |
+| `{mod_id}`    | The mod ID                                                                    | `get_mod`, `mod_files`, `download_url`            |
+| `{file_id}`   | The file ID                                                                   | `download_url`                                    |
+
+**`mappings.mod` keys** (`id` and `name` are required; every other key is optional and left at its zero value when unmapped or the path doesn't resolve):
+
+| Key           | Required | Domain field                                                |
+| ------------- | -------- | ------------------------------------------------------------- |
+| `id`          | **yes**  | Mod ID                                                         |
+| `name`        | **yes**  | Display name                                                    |
+| `version`     | no       | Compared against installed versions for update checks            |
+| `author`      | no       | —                                                                  |
+| `summary`     | no       | Shown in search results                                             |
+| `description` | no       | Falls back to `summary` when unmapped or empty                       |
+| `downloads`   | no       | Download count                                                        |
+| `updated_at`  | no       | RFC 3339 timestamp; unparseable is silently left unset                 |
+| `url`         | no       | Web page for the mod                                                    |
+| `picture_url` | no       | Main image URL                                                           |
+
+**`mappings.file` keys** (`id` is required only when `mod_files` is defined):
+
+| Key        | Required                     | Domain field              |
+| ---------- | ------------------------------ | --------------------------- |
+| `id`       | **yes** (when `mod_files` set)  | File ID, used to request a download |
+| `name`     | no                               | Display name                          |
+| `filename` | no                               | Name given to the downloaded/cached file |
+| `version`  | no                               | —                                          |
+| `size`     | no                               | Size in bytes                               |
+
+Unknown keys anywhere in `mappings.mod` or `mappings.file` fail validation at load time (typo detection) instead of silently mapping to nothing.
+
+**Capability gaps** — an endpoint you don't define makes the corresponding operation report "not supported" instead of failing at load time:
+
+- no `search` → searching is unsupported (a valid install-by-ID-only source; probe one with `lmm source validate --probe --id <mod-id>`, see below)
+- no `get_mod` → fetching a single mod is unsupported, and so are update checks (`api` sources check for updates by calling `get_mod` on each installed mod and comparing versions)
+- no `mod_files` → listing a mod's files is unsupported
+- no `download_url` → resolving a download URL is unsupported
+- dependency resolution (`GetDependencies`) is **always** unsupported for `api` sources — there is no dependency endpoint in v1
+
+`lmm source list`'s `CAPABILITIES` column reflects exactly this: a definition with only `get_mod` shows `updates`; adding `search` adds `search` to that list; `auth` appears only when the definition declares an `auth` block.
+
+**Guardrails:**
+
+- Requests are `GET` only, and only JSON responses are understood — no POST, GraphQL, or scraping.
+- `api.base_url` must be `https://` unless the definition sets `allow_http: true` (same rule as `manifest` sources).
+- Every request is bounded by a 30-second timeout.
+- Responses are capped at 10 MiB; a larger response fails the operation instead of being read into memory.
+
+**Credentials** — `api` sources use the same `auth.api_key` block as `manifest` sources (see [Authentication](#authentication) below): the resolved key is attached to every API request per `in: header` / `in: query`. For downloads, both header- and query-mode keys are only sent when the URL returned by `download_url` shares scheme and host with `api.base_url` — an endpoint that hands back a third-party CDN URL never receives the source's key, in either form. If a download is redirected to a different scheme or host, a header-mode key is stripped before the redirect is followed (the same v1.8.0 machinery `manifest` sources use).
+
 ### Authentication
 
-A custom source can require an API key, attached to every request as either a header or a query parameter. Today this is available to `manifest` sources (`directory` sources need no auth; `api` sources will reuse the same block when they ship):
+A custom source can require an API key, attached to every request as either a header or a query parameter. Today this is available to `manifest` and `api` sources (`directory` sources need no auth):
 
 ```yaml
 manifest:
@@ -395,10 +499,11 @@ manifest:
 - **Key resolution**, checked in order:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
   2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store.
-- The resolved key is always attached to the manifest fetch itself (the request for the mod list document).
+- The resolved key is always attached to the manifest fetch itself (the request for the mod list document); for `api` sources, it's attached to every request built from an `endpoints.*.path` template (search, get_mod, mod_files, download_url).
 - File downloads follow the same same-origin rule regardless of whether the key is `in: header` or `in: query`:
   - **Remote manifests** (`https://` URL): the key (as a header, or appended to the URL) is only sent to file downloads whose scheme and host match the manifest URL's — a manifest pointing files at a third-party CDN never receives the source's key, in either form.
   - **Local-file manifests**: the key is attached to every file download regardless of host, since a local manifest is user-authored and already trusted.
+  - **`api` sources**: the key is only sent to a `download_url` response whose scheme and host match `api.base_url`'s — see [API Sources](#api-sources) above.
 - If a file download is redirected to a different scheme or host, an `in: header` key is stripped before the redirect is followed — Go's HTTP client otherwise forwards custom headers across redirects even when it would strip `Authorization`/`Cookie`.
 - Keys are never printed or logged; `lmm source list` only reports whether one is configured (`AUTH` column: `yes` / `no` / `n/a`), and `lmm auth status` masks stored keys to their first/last 3 characters (keys of 8 characters or fewer are fully masked). `lmm auth status` also lists any registered custom source whose definition declares `auth`, alongside the built-in nexusmods/curseforge rows, plus any stored token whose source is no longer registered (with a hint to remove it). `lmm auth logout <id>` removes a stored token even if the source's definition file has since been removed.
 
@@ -418,6 +523,7 @@ nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth
 curseforge    CurseForge              built-in   yes   search,deps,updates,auth
 donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates
 my-repo       My Mod Repo             manifest   no    search,deps,updates,auth
+esoui         ESOUI                   api        no    search,updates,auth
 ```
 
 Validate a source definition file before use:
@@ -434,6 +540,26 @@ On success:
 On error (exits with code 1):
 ```
 Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
+```
+
+Add `--probe` to also perform a live smoke test — a directory scan, a manifest fetch+parse, or an API call, depending on the definition's `type`:
+
+```bash
+lmm source validate --probe ~/.config/lmm/sources/my-source.yaml
+```
+
+For an `api` definition with no `search` endpoint (install-by-ID-only), pass `--id` with a known mod ID so `--probe` has something to call `get_mod` with. Captured against a local test definition (a `get_mod`-only `api` source pointed at a throwaway local server):
+
+```
+$ lmm source validate --probe --id 42 demo-api.yaml
+demo-api.yaml: valid (api source "demo-api")
+probe: ok — get_mod 42 returned "Cool Mod"
+```
+
+Without `--id` on a search-less `api` definition, `--probe` fails with a clear message instead of silently doing nothing:
+
+```
+Error: probe: this definition has no search endpoint; provide a known mod id with --id to probe get_mod
 ```
 
 ### Adding a Custom Source
@@ -474,7 +600,7 @@ Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
    lmm install --source my-local-mods --id BiggerBackpack -g skyrim-se
    ```
 
-A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A `manifest` source shows `search,deps,updates` (plus `auth` if the definition declares one, with the `AUTH` column reporting `yes`/`no` once a key is or isn't configured). Either type will show as an `error` row if construction fails (e.g. a directory source's path doesn't exist). A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
+A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A `manifest` source shows `search,deps,updates` (plus `auth` if the definition declares one, with the `AUTH` column reporting `yes`/`no` once a key is or isn't configured). An `api` source shows only the capabilities its defined endpoints provide — `updates` alone for a `get_mod`-only definition, `search,updates` once a `search` endpoint is added, plus `auth` if the definition declares one — and never `deps` (dependency resolution isn't supported for `api` sources). Any type will show as an `error` row if construction fails (e.g. a directory source's path doesn't exist). A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
 
 ## CLI Reference
 
@@ -541,6 +667,8 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm conflicts`                        | Show file conflicts in current profile               |
 | `lmm source list`                      | List built-in and user-defined mod sources           |
 | `lmm source validate <file>`           | Validate a user-defined source definition           |
+| `lmm source validate --probe <file>`   | Also live-smoke-test the definition (scan/fetch/API call) |
+| `lmm source validate --probe --id <mod-id> <file>` | Probe an `api` definition that has no `search` endpoint |
 
 ### Update check behavior
 

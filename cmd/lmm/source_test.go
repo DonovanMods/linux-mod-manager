@@ -24,18 +24,34 @@ func TestSourceCmd_Structure(t *testing.T) {
 	assert.Contains(t, names, "validate")
 }
 
-func TestSourceValidateCmd(t *testing.T) {
-	run := func(args ...string) (string, error) {
-		cmd := &cobra.Command{Use: "test"}
-		cmd.AddCommand(sourceCmd)
-		buf := new(bytes.Buffer)
-		cmd.SetOut(buf)
-		cmd.SetErr(buf)
-		cmd.SetArgs(args)
-		err := cmd.Execute()
-		return buf.String(), err
-	}
+// runSourceCmd executes the source command tree with args against a fresh
+// cobra root, capturing combined stdout/stderr. Shared by TestSourceValidateCmd
+// and TestSourceValidateProbe so both drive the real command wiring rather
+// than duplicating the harness.
+func runSourceCmd(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(sourceCmd)
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return buf.String(), err
+}
 
+// resetSourceProbeFlags restores the package-level --probe/--id flag vars to
+// their zero values. cobra flag vars persist across Execute() calls within a
+// test binary since Parse only touches flags actually present in argv, so
+// tests that don't pass --probe would otherwise see a value left behind by an
+// earlier subtest.
+func resetSourceProbeFlags(t *testing.T) {
+	t.Helper()
+	sourceProbe = false
+	sourceProbeID = ""
+}
+
+func TestSourceValidateCmd(t *testing.T) {
 	t.Run("valid file passes", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "good.yaml")
 		require.NoError(t, os.WriteFile(path, []byte(`
@@ -46,7 +62,7 @@ directory:
   path: ~/mods
 `), 0644))
 
-		out, err := run("source", "validate", path)
+		out, err := runSourceCmd(t, "source", "validate", path)
 		assert.NoError(t, err)
 		assert.Contains(t, out, "valid")
 	})
@@ -61,14 +77,93 @@ directory:
   path: ~/x
 `), 0644))
 
-		_, err := run("source", "validate", path)
+		_, err := runSourceCmd(t, "source", "validate", path)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "must match")
 	})
 
 	t.Run("missing argument errors", func(t *testing.T) {
-		_, err := run("source", "validate")
+		_, err := runSourceCmd(t, "source", "validate")
 		assert.Error(t, err)
+	})
+}
+
+func TestSourceValidateProbe(t *testing.T) {
+	t.Run("probe directory source reports mod count", func(t *testing.T) {
+		resetSourceProbeFlags(t)
+		t.Cleanup(func() { resetSourceProbeFlags(t) })
+
+		configDir = t.TempDir()
+		dataDir = t.TempDir()
+
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "SomeMod"), 0755))
+		path := filepath.Join(t.TempDir(), "dir.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(`
+id: probe-dir
+name: Probe Dir
+type: directory
+directory:
+  path: `+root+`
+`), 0644))
+
+		out, err := runSourceCmd(t, "source", "validate", path, "--probe")
+		assert.NoError(t, err)
+		assert.Contains(t, out, "probe: ok")
+		assert.Contains(t, out, "1 mod(s)")
+	})
+
+	t.Run("probe api without search requires --id", func(t *testing.T) {
+		resetSourceProbeFlags(t)
+		t.Cleanup(func() { resetSourceProbeFlags(t) })
+
+		// probeSource resolves the API key via the service (a local DB read,
+		// no network) before reaching the --id check, so withService still
+		// needs a real, isolated config/data dir here rather than the
+		// caller's actual home directory.
+		configDir = t.TempDir()
+		dataDir = t.TempDir()
+
+		path := filepath.Join(t.TempDir(), "api.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(`
+id: probe-api
+name: Probe API
+type: api
+api:
+  base_url: https://api.x.test
+  endpoints:
+    get_mod:
+      path: /mods/{mod_id}
+  mappings:
+    mod:
+      id: id
+      name: name
+`), 0644))
+
+		_, err := runSourceCmd(t, "source", "validate", path, "--probe")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--id")
+	})
+
+	t.Run("probe failure exits non-zero", func(t *testing.T) {
+		resetSourceProbeFlags(t)
+		t.Cleanup(func() { resetSourceProbeFlags(t) })
+
+		configDir = t.TempDir()
+		dataDir = t.TempDir()
+
+		path := filepath.Join(t.TempDir(), "bad.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(`
+id: probe-bad
+name: Probe Bad
+type: manifest
+manifest:
+  url: `+filepath.Join(t.TempDir(), "missing.yaml")+`
+`), 0644))
+
+		_, err := runSourceCmd(t, "source", "validate", path, "--probe")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "probe-bad")
 	})
 }
 

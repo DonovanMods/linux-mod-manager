@@ -31,8 +31,15 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, "my-repo", src.ID())
 	})
 
-	t.Run("unimplemented types return a clear error", func(t *testing.T) {
-		def := SourceDefinition{ID: "x", Name: "X", Type: TypeAPI}
+	t.Run("api type constructs a source", func(t *testing.T) {
+		def := validAPIDef()
+		src, err := New(def)
+		assert.NoError(t, err)
+		assert.Equal(t, "my-api", src.ID())
+	})
+
+	t.Run("unknown type is rejected", func(t *testing.T) {
+		def := SourceDefinition{ID: "x", Name: "X", Type: "ftp"}
 		_, err := New(def)
 		assert.ErrorContains(t, err, "not yet supported")
 	})

@@ -58,10 +58,107 @@ type APIKeyConfig struct {
 
 // APIConfig configures a declarative REST source (expanded in Phase 4).
 type APIConfig struct {
-	BaseURL string `yaml:"base_url"`
+	BaseURL   string       `yaml:"base_url"`
+	PageStart *int         `yaml:"page_start"` // nil = default 1; explicit 0 respected
+	Auth      *AuthConfig  `yaml:"auth"`
+	Endpoints APIEndpoints `yaml:"endpoints"`
+	Mappings  APIMappings  `yaml:"mappings"`
+}
+
+// APIEndpoints defines optional endpoint configurations for an API source.
+type APIEndpoints struct {
+	Search      *EndpointConfig `yaml:"search"`
+	GetMod      *EndpointConfig `yaml:"get_mod"`
+	ModFiles    *EndpointConfig `yaml:"mod_files"`
+	DownloadURL *EndpointConfig `yaml:"download_url"`
+}
+
+// EndpointConfig configures a single API endpoint.
+type EndpointConfig struct {
+	Path  string `yaml:"path"`  // required; may contain {placeholders}
+	List  string `yaml:"list"`  // dot-path to results array (required for search & mod_files)
+	Total string `yaml:"total"` // optional dot-path to total count (search only)
+	Field string `yaml:"field"` // dot-path to a scalar (required for download_url)
+}
+
+// APIMappings maps domain field keys to JSON dot-paths.
+type APIMappings struct {
+	Mod  map[string]string `yaml:"mod"` // domain field key -> JSON dot-path
+	File map[string]string `yaml:"file"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// knownModMappingKeys / knownFileMappingKeys are the domain fields a mapping
+// may target. Unknown keys are validation errors so typos surface at load
+// time instead of silently producing empty fields.
+var knownModMappingKeys = map[string]bool{
+	"id": true, "name": true, "version": true, "author": true, "summary": true,
+	"description": true, "downloads": true, "updated_at": true, "url": true, "picture_url": true,
+}
+
+var knownFileMappingKeys = map[string]bool{
+	"id": true, "name": true, "filename": true, "version": true, "size": true,
+}
+
+// validateEndpointsAndMappings checks the api block's endpoint/mapping rules
+// (design §4): at least one endpoint, per-endpoint required fields, required
+// mapping keys, and no unknown mapping keys.
+func (c *APIConfig) validateEndpointsAndMappings() error {
+	eps := []struct {
+		name string
+		ep   *EndpointConfig
+	}{
+		{"search", c.Endpoints.Search},
+		{"get_mod", c.Endpoints.GetMod},
+		{"mod_files", c.Endpoints.ModFiles},
+		{"download_url", c.Endpoints.DownloadURL},
+	}
+
+	defined := false
+	for _, e := range eps {
+		if e.ep == nil {
+			continue
+		}
+		defined = true
+		if e.ep.Path == "" {
+			return fmt.Errorf("endpoints.%s: path is required", e.name)
+		}
+	}
+	if !defined {
+		return errors.New("endpoints: at least one endpoint must be defined")
+	}
+	if c.Endpoints.Search != nil && c.Endpoints.Search.List == "" {
+		return errors.New("endpoints.search: list is required")
+	}
+	if c.Endpoints.ModFiles != nil && c.Endpoints.ModFiles.List == "" {
+		return errors.New("endpoints.mod_files: list is required")
+	}
+	if c.Endpoints.DownloadURL != nil && c.Endpoints.DownloadURL.Field == "" {
+		return errors.New("endpoints.download_url: field is required")
+	}
+
+	if c.Mappings.Mod["id"] == "" {
+		return errors.New(`mappings.mod: "id" is required`)
+	}
+	if c.Mappings.Mod["name"] == "" {
+		return errors.New(`mappings.mod: "name" is required`)
+	}
+	if c.Endpoints.ModFiles != nil && c.Mappings.File["id"] == "" {
+		return errors.New(`mappings.file: "id" is required when mod_files is defined`)
+	}
+	for k := range c.Mappings.Mod {
+		if !knownModMappingKeys[k] {
+			return fmt.Errorf("mappings.mod: unknown key %q", k)
+		}
+	}
+	for k := range c.Mappings.File {
+		if !knownFileMappingKeys[k] {
+			return fmt.Errorf("mappings.file: unknown key %q", k)
+		}
+	}
+	return nil
+}
 
 // validateAuth checks an optional auth block. Shared by manifest (Phase 3)
 // and api (Phase 4) validation.
@@ -153,6 +250,12 @@ func (d *SourceDefinition) Validate() error {
 		}
 		if err := d.checkURL(d.API.BaseURL); err != nil {
 			return fmt.Errorf("api.base_url: %w", err)
+		}
+		if err := validateAuth(d.API.Auth); err != nil {
+			return fmt.Errorf("api: %w", err)
+		}
+		if err := d.API.validateEndpointsAndMappings(); err != nil {
+			return fmt.Errorf("api: %w", err)
 		}
 	default:
 		return fmt.Errorf("unknown type %q (expected %s, %s, or %s)", d.Type, TypeDirectory, TypeManifest, TypeAPI)
