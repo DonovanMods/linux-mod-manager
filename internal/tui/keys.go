@@ -15,6 +15,7 @@ type KeyMap struct {
 	Dashboard     key.Binding
 	InstalledMods key.Binding
 	Profiles      key.Binding
+	Sources       key.Binding
 	Select        key.Binding
 	Submit        key.Binding
 	Blur          key.Binding
@@ -69,6 +70,10 @@ func DefaultKeyMap() KeyMap {
 		Profiles: key.NewBinding(
 			key.WithKeys("4"),
 			key.WithHelp("4", "profiles"),
+		),
+		Sources: key.NewBinding(
+			key.WithKeys("5"),
+			key.WithHelp("5", "sources"),
 		),
 		Select: key.NewBinding(
 			key.WithKeys("enter"),

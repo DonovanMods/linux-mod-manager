@@ -304,7 +304,8 @@ func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {
 	require.NoError(t, err)
 
 	// Move to the last entry (Conflict Oracle) — no screen exists for it yet.
-	for range 3 {
+	// 4 presses: Installed Mods -> Search -> Profiles -> Sources -> Oracle.
+	for range 4 {
 		model = updateWithRunes(t, model, "j")
 	}
 	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -329,6 +330,7 @@ func (f failingProvider) Overview(context.Context) (Summary, []ModItem, error) {
 }
 func (f failingProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, f.err }
 func (f failingProvider) Sources() []string                               { return []string{"nexusmods"} }
+func (f failingProvider) SourceInfos() []SourceInfo                       { return nil }
 func (f failingProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, f.err
 }
@@ -384,6 +386,7 @@ func (emptyProvider) Overview(context.Context) (Summary, []ModItem, error) {
 }
 func (emptyProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (emptyProvider) Sources() []string                               { return []string{"nexusmods"} }
+func (emptyProvider) SourceInfos() []SourceInfo                       { return nil }
 func (emptyProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
@@ -424,6 +427,10 @@ func (r recordingProvider) Profiles(ctx context.Context) ([]ProfileItem, error) 
 
 func (r recordingProvider) Sources() []string {
 	return r.delegate.Sources()
+}
+
+func (r recordingProvider) SourceInfos() []SourceInfo {
+	return r.delegate.SourceInfos()
 }
 
 func (r recordingProvider) Search(ctx context.Context, source, query string, page int) (SearchPage, error) {

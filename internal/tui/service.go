@@ -33,6 +33,20 @@ type ModItem struct {
 	HasEndorsements bool
 }
 
+// SourceInfo is one renderable source-registry row, mirroring the columns of
+// `lmm source list` (cmd/lmm/source.go) minus its Error column: the Sources
+// screen only lists sources that are actually REGISTERED with the service.
+// Source-definition load failures (a malformed YAML file, an ID collision)
+// never produce a registered source, so they have no row here and remain a
+// CLI-only diagnostic (`lmm source list` / `lmm source validate`).
+type SourceInfo struct {
+	ID           string
+	Name         string
+	Type         string // "built-in", "directory", "manifest", or "api"
+	Auth         string // "yes", "no", or "n/a" (source has no auth capability)
+	Capabilities string // compact list, e.g. "search,updates"
+}
+
 // ProfileItem is one renderable profile row.
 type ProfileItem struct {
 	Name     string
@@ -65,6 +79,10 @@ type DataProvider interface {
 	// Sources lists the game's configured source IDs, sorted; index 0 is the
 	// default (mirrors the CLI's resolveSource).
 	Sources() []string
+	// SourceInfos lists every source registered with the service (built-in
+	// and user-defined), sorted by ID, for the read-only Sources screen. See
+	// SourceInfo's doc comment for how this differs from Sources.
+	SourceInfos() []SourceInfo
 	// Search queries one source, or every one of the game's configured
 	// sources when source is "" (the documented all-sources sentinel).
 	Search(ctx context.Context, source, query string, page int) (SearchPage, error)
@@ -95,6 +113,14 @@ func (p prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, erro
 
 func (p prototypeProvider) Sources() []string {
 	return []string{"nexusmods"}
+}
+
+func (p prototypeProvider) SourceInfos() []SourceInfo {
+	return []SourceInfo{
+		{ID: "curseforge", Name: "CurseForge", Type: "built-in", Auth: "n/a", Capabilities: "search,updates"},
+		{ID: "local-mods", Name: "Local Mods", Type: "directory", Auth: "n/a", Capabilities: "search,updates"},
+		{ID: "nexusmods", Name: "Nexus Mods", Type: "built-in", Auth: "yes", Capabilities: "search,deps,updates,auth"},
+	}
 }
 
 func (p prototypeProvider) Search(_ context.Context, source, query string, _ int) (SearchPage, error) {

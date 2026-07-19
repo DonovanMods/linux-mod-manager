@@ -62,6 +62,7 @@ type Model struct {
 	summary  Summary
 	mods     []ModItem
 	profiles []ProfileItem
+	sources  []SourceInfo
 	search   searchModel
 
 	screen   Screen
@@ -113,11 +114,17 @@ func NewModel(options Options) (Model, error) {
 		state:    stateLoading,
 		screen:   ScreenDashboard,
 		search:   newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize()),
+		// sources is seeded synchronously (like search's source list above)
+		// rather than through loadData/dataLoadedMsg: SourceInfos is a
+		// read-only view of already-registered sources, not an I/O call that
+		// can fail, so it needs no async load state or error path.
+		sources: options.Provider.SourceInfos(),
 		selected: map[Screen]int{
 			ScreenDashboard:     0,
 			ScreenInstalledMods: 0,
 			ScreenSearch:        0,
 			ScreenProfiles:      0,
+			ScreenSources:       0,
 		},
 	}, nil
 }
@@ -134,6 +141,7 @@ func (m Model) dashboardMenu() []menuItem {
 			{label: "RUN SPELLBOOK SCAN", target: ScreenInstalledMods, hasTarget: true},
 			{label: "QUERY ARCHIVE INDEX", target: ScreenSearch, hasTarget: true},
 			{label: "LOAD PROFILE ROSTER", target: ScreenProfiles, hasTarget: true},
+			{label: "SCRY SOURCE REGISTRY", target: ScreenSources, hasTarget: true},
 			{label: "ASK CONFLICT ORACLE"},
 		}
 	}
@@ -141,6 +149,7 @@ func (m Model) dashboardMenu() []menuItem {
 		{label: "Installed Mods", target: ScreenInstalledMods, hasTarget: true},
 		{label: "Search Archives", target: ScreenSearch, hasTarget: true},
 		{label: "Profiles", target: ScreenProfiles, hasTarget: true},
+		{label: "Sources", target: ScreenSources, hasTarget: true},
 		{label: "Consult Conflict Oracle"},
 	}
 }
@@ -308,6 +317,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Profiles):
 		m.screen = ScreenProfiles
 		return m, nil
+	case key.Matches(msg, m.keys.Sources):
+		m.screen = ScreenSources
+		return m, nil
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 		return m, nil
@@ -402,6 +414,8 @@ func (m Model) itemCount(screen Screen) int {
 		return len(m.search.page.Results)
 	case ScreenProfiles:
 		return len(m.profiles)
+	case ScreenSources:
+		return len(m.sources)
 	default:
 		return len(m.dashboardMenu())
 	}
@@ -445,6 +459,8 @@ func (m Model) screenView() string {
 		return m.searchView()
 	case ScreenProfiles:
 		return m.profilesView()
+	case ScreenSources:
+		return m.sourcesView()
 	default:
 		return m.dashboardView()
 	}
@@ -821,12 +837,33 @@ func (m Model) profilesView() string {
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// sourcesView renders the read-only source registry: every source
+// registered with the DataProvider (built-in and user-defined), one row
+// each, in the single-pane list style profilesView uses. Unlike
+// `lmm source list`, there is no error/status column — see SourceInfo's doc
+// comment for why definition-load failures never reach this screen.
+func (m Model) sourcesView() string {
+	// "  " matches m.row()'s 2-column selection-marker prefix ("> "/"  ") so
+	// the header lines up with the data columns below it instead of starting
+	// two columns to their left.
+	header := "  " + fmt.Sprintf("%-20s %-12s %-6s %s", "ID", "TYPE", "AUTH", "CAPABILITIES")
+	rows := []string{
+		m.theme.PanelTitle.Render("SOURCE REGISTRY"),
+		m.theme.MutedText.Render(header),
+	}
+	for i, src := range m.sources {
+		line := fmt.Sprintf("%-20s %-12s %-6s %s", src.ID, src.Type, src.Auth, src.Capabilities)
+		rows = append(rows, m.row(i, line))
+	}
+	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+}
+
 func (m Model) helpView() string {
 	return m.panel(m.availableWidth()).Render(strings.Join([]string{
 		m.theme.PanelTitle.Render("HELP"),
 		"arrows / hjkl       move or switch screens",
 		"tab / shift+tab     cycle top-level screens",
-		"1-4                 jump to a screen",
+		"1-5                 jump to a screen",
 		"/                   search from anywhere (jumps + focuses input)",
 		"enter               search",
 		"esc                 cancel input",

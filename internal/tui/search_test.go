@@ -329,6 +329,7 @@ func (noSourcesProvider) Overview(context.Context) (Summary, []ModItem, error) {
 }
 func (noSourcesProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (noSourcesProvider) Sources() []string                               { return nil }
+func (noSourcesProvider) SourceInfos() []SourceInfo                       { return nil }
 func (noSourcesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }

@@ -10,6 +10,7 @@ const (
 	ScreenInstalledMods
 	ScreenSearch
 	ScreenProfiles
+	ScreenSources
 )
 
 var screens = []Screen{
@@ -17,6 +18,7 @@ var screens = []Screen{
 	ScreenInstalledMods,
 	ScreenSearch,
 	ScreenProfiles,
+	ScreenSources,
 }
 
 // String returns a human-readable screen name.
@@ -30,6 +32,8 @@ func (s Screen) String() string {
 		return "Search"
 	case ScreenProfiles:
 		return "Profiles"
+	case ScreenSources:
+		return "Sources"
 	default:
 		return fmt.Sprintf("Screen(%d)", s)
 	}
