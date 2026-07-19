@@ -407,3 +407,29 @@ func TestAPICheckUpdatesNoEndpoint(t *testing.T) {
 	_, err = a.CheckUpdates(context.Background(), []domain.InstalledMod{{Mod: domain.Mod{ID: "1"}}})
 	assert.True(t, errors.Is(err, source.ErrNotSupported))
 }
+
+func TestAPISearchNegativePageClamped(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.String()
+		_, _ = w.Write([]byte(`{"results": []}`))
+	}))
+	defer srv.Close()
+
+	// The default validAPIDef() search path has no {offset} placeholder, so
+	// override it (as TestAPISearch does) to actually exercise the offset
+	// clamp this test is asserting on.
+	def := apiDef(srv.URL)
+	def.API.Endpoints.Search = &EndpointConfig{
+		Path: "/mods?q={query}&page={page}&skip={offset}",
+		List: "results",
+	}
+	a, err := NewAPI(def)
+	require.NoError(t, err)
+
+	_, err = a.Search(context.Background(), source.SearchQuery{Query: "x", Page: -3, PageSize: 10})
+	require.NoError(t, err)
+	// Negative pages clamp to page 0: {page} = 0 + pageStart(1) = 1, {offset} = 0.
+	assert.Contains(t, gotPath, "page=1")
+	assert.Contains(t, gotPath, "skip=0")
+}

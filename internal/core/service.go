@@ -2,9 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -14,6 +16,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
+	"golang.org/x/sync/errgroup"
 )
 
 // ServiceConfig holds configuration for the core service
@@ -128,6 +131,126 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 		Tags:     tags,
 		Page:     page,
 		PageSize: pageSize,
+	})
+}
+
+// SourceWarning reports a per-source failure during an aggregate operation.
+type SourceWarning struct {
+	SourceID string
+	Err      error
+}
+
+// AggregateSearchResult is the merged outcome of searching every source
+// configured for a game.
+type AggregateSearchResult struct {
+	Mods       []domain.Mod    // merged, ranked; each Mod carries its SourceID
+	TotalCount int             // sum of per-source totals (sources reporting 0/unknown contribute 0)
+	Warnings   []SourceWarning // per-source failures (design §5: warnings, not errors)
+}
+
+// SearchAllSources searches every source configured for a game concurrently
+// and merges the results (design §5). Per-source failures become Warnings —
+// one flaky API must not hide local modlets; only all-sources-failed is an
+// error. Sources without search capability are skipped silently. Pagination
+// is per-source: page N requests page N from each source and merges.
+func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
+	game, ok := s.games[gameID]
+	if !ok {
+		return AggregateSearchResult{}, fmt.Errorf("game not found: %s", gameID)
+	}
+
+	sourceIDs := make([]string, 0, len(game.SourceIDs))
+	for id := range game.SourceIDs {
+		sourceIDs = append(sourceIDs, id)
+	}
+	sort.Strings(sourceIDs)
+
+	var result AggregateSearchResult
+	type slot struct {
+		res source.SearchResult
+		err error
+	}
+	slots := make([]slot, len(sourceIDs))
+	attempted := make([]bool, len(sourceIDs))
+
+	g, gctx := errgroup.WithContext(ctx)
+	for i, sourceID := range sourceIDs {
+		src, err := s.registry.Get(sourceID)
+		if err != nil {
+			slots[i].err = err
+			attempted[i] = true
+			continue
+		}
+		if !source.CapabilitiesOf(src).Search {
+			continue // silent skip (design §5)
+		}
+		attempted[i] = true
+		i, sourceID := i, sourceID
+		g.Go(func() error {
+			res, err := s.SearchMods(gctx, sourceID, gameID, query, category, tags, page, pageSize)
+			if err != nil {
+				if errors.Is(err, source.ErrNotSupported) {
+					attempted[i] = false // runtime capability gap: silent skip, not a warning
+					return nil
+				}
+				slots[i].err = err
+				return nil // never abort the group: siblings keep searching
+			}
+			slots[i].res = res
+			return nil
+		})
+	}
+	_ = g.Wait() // goroutines always return nil; errors live in slots
+
+	succeeded := 0
+	for i, sourceID := range sourceIDs {
+		if !attempted[i] {
+			continue
+		}
+		if slots[i].err != nil {
+			result.Warnings = append(result.Warnings, SourceWarning{SourceID: sourceID, Err: slots[i].err})
+			continue
+		}
+		succeeded++
+		result.Mods = append(result.Mods, slots[i].res.Mods...)
+		result.TotalCount += slots[i].res.TotalCount
+	}
+
+	rankAggregate(result.Mods, query)
+
+	attemptedCount := 0
+	for _, a := range attempted {
+		if a {
+			attemptedCount++
+		}
+	}
+	if attemptedCount > 0 && succeeded == 0 {
+		errs := make([]error, 0, len(result.Warnings))
+		for _, w := range result.Warnings {
+			errs = append(errs, fmt.Errorf("source %s: %w", w.SourceID, w.Err))
+		}
+		return result, fmt.Errorf("all %d source(s) failed: %w", attemptedCount, errors.Join(errs...))
+	}
+	return result, nil
+}
+
+// rankAggregate orders merged results: query-name matches first, then by
+// Downloads descending, then Name ascending — deterministic regardless of
+// which source responded first (design §5: no global re-ranking beyond this).
+func rankAggregate(mods []domain.Mod, query string) {
+	q := strings.ToLower(query)
+	nameMatch := func(m domain.Mod) bool {
+		return q != "" && (strings.Contains(strings.ToLower(m.Name), q) || strings.Contains(strings.ToLower(m.ID), q))
+	}
+	sort.SliceStable(mods, func(i, j int) bool {
+		mi, mj := nameMatch(mods[i]), nameMatch(mods[j])
+		if mi != mj {
+			return mi
+		}
+		if mods[i].Downloads != mods[j].Downloads {
+			return mods[i].Downloads > mods[j].Downloads
+		}
+		return mods[i].Name < mods[j].Name
 	})
 }
 
