@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -370,6 +371,36 @@ func TestSearchReadyViewFitsNarrowTerminals(t *testing.T) {
 			Results: []ModItem{{Name: "SkyUI", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "UI overhaul."}},
 		}
 		require.Equal(t, model.availableWidth(), lipgloss.Width(model.screenView()), "width %d", width)
+	}
+}
+
+// TestZeroResultsWarningFitsPanelWidth guards the zero-results branch of
+// searchView, where the warning line renders INSIDE searchSinglePanel
+// instead of outside a panel like searchReadyView's header. The panel's
+// content width is narrower than availableWidth() by its horizontal frame
+// size (border + padding), so a warning line truncated only to
+// availableWidth() can still overflow the panel and get re-wrapped by
+// lipgloss, growing the view past the fixed height budget — this test
+// reproduces that with a long per-source warning at a narrow terminal width.
+func TestZeroResultsWarningFitsPanelWidth(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 40, 12)
+	model = updateWithRunes(t, model, "3") // jump to search screen
+	model.search.state = searchReady
+	model.search.page = SearchPage{
+		Query:  "sky",
+		Source: "",
+		Warnings: []string{
+			`dead-repo: source "dead-repo": fetching manifest https://example.com/mods/registry/manifest.json: context deadline exceeded`,
+		},
+	}
+
+	view := model.screenView()
+	require.Equal(t, model.availableContentHeight(), lipgloss.Height(view),
+		"an overlong warning must not wrap and grow the zero-results panel past its height budget")
+	for _, line := range strings.Split(view, "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), model.availableWidth(), "no rendered line exceeds terminal width")
 	}
 }
 

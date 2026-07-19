@@ -139,6 +139,43 @@ func TestSearchCmdStructure(t *testing.T) {
 	}
 }
 
+// TestLimitResults_NegativeLimitDoesNotPanic reproduces a pre-existing panic:
+// `lmm search --limit -1` reaches `mods[:searchLimit]` with a negative
+// index, which is a slice-bounds panic in Go. A negative (or otherwise
+// non-positive) limit should mean "no truncation," not "truncate to a
+// nonsensical bound."
+func TestLimitResults_NegativeLimitDoesNotPanic(t *testing.T) {
+	mods := []domain.Mod{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+
+	assert.NotPanics(t, func() {
+		result := limitResults(mods, -1)
+		assert.Equal(t, mods, result, "a negative limit must not truncate")
+	})
+}
+
+func TestLimitResults_ZeroLimitDoesNotPanic(t *testing.T) {
+	mods := []domain.Mod{{ID: "a"}, {ID: "b"}}
+
+	assert.NotPanics(t, func() {
+		result := limitResults(mods, 0)
+		assert.Equal(t, mods, result, "a zero limit must not truncate")
+	})
+}
+
+func TestLimitResults_PositiveLimitTruncates(t *testing.T) {
+	mods := []domain.Mod{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+
+	result := limitResults(mods, 2)
+	assert.Equal(t, []domain.Mod{{ID: "a"}, {ID: "b"}}, result)
+}
+
+func TestLimitResults_LimitAboveLenIsNoop(t *testing.T) {
+	mods := []domain.Mod{{ID: "a"}}
+
+	result := limitResults(mods, 10)
+	assert.Equal(t, mods, result)
+}
+
 func TestCapabilityGapNotice(t *testing.T) {
 	err := fmt.Errorf("source %q: searching: %w", "id-only", source.ErrNotSupported)
 	notice, ok := capabilityGapNotice("id-only", err)

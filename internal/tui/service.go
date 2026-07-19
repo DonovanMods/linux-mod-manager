@@ -76,8 +76,11 @@ type DataProvider interface {
 	// single underlying fetch.
 	Overview(ctx context.Context) (Summary, []ModItem, error)
 	Profiles(ctx context.Context) ([]ProfileItem, error)
-	// Sources lists the game's configured source IDs, sorted; index 0 is the
-	// default (mirrors the CLI's resolveSource).
+	// Sources lists the game's configured real source IDs, sorted. The TUI
+	// prepends the all-sources sentinel ("") ahead of these (see
+	// newSearchModel); the CLI instead defaults to an aggregate search
+	// across all of them when --source is omitted (see doSearch in
+	// cmd/lmm/search.go).
 	Sources() []string
 	// SourceInfos lists every source registered with the service (built-in
 	// and user-defined), sorted by ID, for the read-only Sources screen. See

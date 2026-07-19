@@ -595,12 +595,21 @@ func (m Model) searchHeaderLines() []string {
 }
 
 // searchWarningLine renders m.search.page.Warnings — per-source failures
-// surfaced by all-sources searches, see SearchPage.Warnings — as one
-// truncated status line, or "" when there are none. Only meaningful in
+// surfaced by all-sources searches, see SearchPage.Warnings — as one status
+// line truncated to width, or "" when there are none. Only meaningful in
 // searchReady (the only state where page is guaranteed to describe the
 // on-screen results; see searchHeaderLines's source-label comment for the
 // same reasoning applied to the source label).
-func (m Model) searchWarningLine() string {
+//
+// width must match where the caller places the line: searchReadyView's
+// header sits OUTSIDE any Width()-constrained panel, so it truncates to
+// m.availableWidth(); the zero-results branch of searchView places it
+// INSIDE searchSinglePanel, whose content width is narrower by the panel's
+// horizontal frame size (border + padding, see searchInputWidthFor's
+// equivalent math). Passing the wrong width lets a still-overlong line
+// reach a narrower panel, where lipgloss re-wraps it into extra physical
+// lines and grows the view past the fixed height budget.
+func (m Model) searchWarningLine(width int) string {
 	warnings := m.search.page.Warnings
 	if len(warnings) == 0 {
 		return ""
@@ -610,7 +619,7 @@ func (m Model) searchWarningLine() string {
 		noun = "sources"
 	}
 	line := fmt.Sprintf("⚠ %d %s unavailable: %s", len(warnings), noun, strings.Join(warnings, "; "))
-	return truncate(m.theme.WarningText.Render(line), m.availableWidth())
+	return truncate(m.theme.WarningText.Render(line), width)
 }
 
 // searchSinglePanel wraps header+body lines in one full-bounds panel, used by
@@ -634,13 +643,20 @@ func (m Model) searchView() string {
 	case searchFailed:
 		return m.searchSinglePanel(append(header, m.theme.DangerText.Render(m.search.err.Error())))
 	case searchReady:
-		if warning := m.searchWarningLine(); warning != "" {
-			header = append(header, warning)
-		}
 		if len(m.search.page.Results) == 0 {
+			// Placed inside searchSinglePanel below, so the warning must
+			// truncate to the panel's content width, not the full terminal
+			// width — see searchWarningLine's doc comment.
+			panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+			if warning := m.searchWarningLine(panelContentWidth); warning != "" {
+				header = append(header, warning)
+			}
 			return m.searchSinglePanel(append(header,
 				m.theme.MutedText.Render(fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, sourceLabel(m.search.page.Source))),
 			))
+		}
+		if warning := m.searchWarningLine(m.availableWidth()); warning != "" {
+			header = append(header, warning)
 		}
 		return m.searchReadyView(header)
 	default: // searchIdle

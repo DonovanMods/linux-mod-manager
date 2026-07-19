@@ -90,6 +90,17 @@ func capabilityGapNotice(sourceID string, err error) (string, bool) {
 	return fmt.Sprintf("source %q does not support searching; install by ID instead: lmm install --source %s --id <mod-id>", sourceID, sourceID), true
 }
 
+// limitResults truncates mods to at most limit entries for display. A
+// non-positive limit (e.g. --limit 0 or a negative value) leaves mods
+// untouched instead of truncating to nothing or panicking on a negative
+// slice bound (mods[:-1]).
+func limitResults(mods []domain.Mod, limit int) []domain.Mod {
+	if limit > 0 && len(mods) > limit {
+		mods = mods[:limit]
+	}
+	return mods
+}
+
 func doSearch(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	query := args[0]
 	if len(args) > 1 {
@@ -175,9 +186,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Apply result limit for display (totalResults captured earlier per-branch for "Showing X of Y")
-	if len(mods) > searchLimit {
-		mods = mods[:searchLimit]
-	}
+	mods = limitResults(mods, searchLimit)
 
 	if jsonOutput {
 		out := searchJSONOutput{GameID: game.ID, Query: query, Mods: make([]searchModJSON, len(mods)), Warnings: warningStrs}

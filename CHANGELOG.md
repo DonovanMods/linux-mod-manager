@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Search results (CLI and TUI) show each mod's source; the TUI search defaults to "All sources"
 - TUI Sources screen (key `5`) mirroring `lmm source list`
 
+### Fixed
+
+- TUI search: a long per-source warning on a zero-results all-sources search no longer wraps inside the results panel and grows it past its height budget
+- `lmm search --limit -1` (or any negative value) no longer panics; a non-positive `--limit` now shows all results instead of crashing (or, for `0`, silently returning none)
+
 ## [1.9.0] - 2026-07-15
 
 ### Added
