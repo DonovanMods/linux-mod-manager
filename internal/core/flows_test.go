@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -270,6 +271,7 @@ func TestService_UninstallMod_FullUninstall(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Empty(t, result.Warnings)
+	assert.Empty(t, result.Notes)
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err), "deployed file should be undeployed")
@@ -300,6 +302,8 @@ func TestService_UninstallMod_KeepCache(t *testing.T) {
 	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{KeepCache: true})
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	assert.Empty(t, result.Warnings)
+	assert.Empty(t, result.Notes)
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err), "deployed file should still be undeployed")
@@ -376,6 +380,7 @@ exit 0`)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Empty(t, result.Warnings)
+	assert.Empty(t, result.Notes)
 
 	logContent, err := os.ReadFile(callLog)
 	require.NoError(t, err)
@@ -441,6 +446,62 @@ exit 1`)
 	})
 }
 
+// TestService_UninstallMod_BeforeAllHookFails_AbortsUnlessForce mirrors
+// TestService_UninstallMod_BeforeEachHookFails_AbortsUnlessForce for the
+// uninstall.before_all branch, which is a separate hand-duplicated code path
+// in UninstallMod (see the review that flagged it as untested).
+func TestService_UninstallMod_BeforeAllHookFails_AbortsUnlessForce(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
+
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
+echo "boom" >&2
+exit 1`)
+	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	t.Run("fatal without Force", func(t *testing.T) {
+		result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
+			Hooks:      hooks,
+			HookRunner: runner,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "uninstall.before_all hook failed")
+		assert.Nil(t, result)
+
+		// Nothing should have changed: mod still installed, file still deployed.
+		_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+		assert.NoError(t, err, "deployed file must survive a fatal before_all failure")
+		_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+		assert.NoError(t, err, "DB row must survive a fatal before_all failure")
+	})
+
+	t.Run("forced continues with a warning", func(t *testing.T) {
+		result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
+			Hooks:      hooks,
+			HookRunner: runner,
+			Force:      true,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Warnings, 1)
+		assert.Contains(t, result.Warnings[0], "uninstall.before_all hook failed")
+		assert.Contains(t, result.Warnings[0], "forced")
+
+		_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+		assert.ErrorIs(t, err, domain.ErrModNotFound, "forced uninstall must still remove the DB row")
+	})
+}
+
 func TestService_UninstallMod_UnknownModReturnsErrModNotFound(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
@@ -454,8 +515,12 @@ func TestService_UninstallMod_UnknownModReturnsErrModNotFound(t *testing.T) {
 // TestService_UninstallMod_ProfileDesyncWarnsAndContinues guards the
 // "don't fail if not in profile" partial-failure path from the
 // pre-extraction doUninstall: if the DB row exists but the profile can't be
-// updated (e.g. no profile file, or the mod isn't listed in it), that is a
-// warning, not a fatal error - the DB row is still removed.
+// updated (e.g. no profile file, or the mod isn't listed in it), that is
+// recorded as a Note (not a Warning, and not a fatal error) - the DB row is
+// still removed. UninstallMod records this unconditionally: there is no
+// verbosity concept in core (UninstallOptions has no Verbose field) - the
+// CLI is solely responsible for deciding whether to display it, under
+// --verbose, matching the pre-extraction CLI's "Note: %v" (gated) print.
 func TestService_UninstallMod_ProfileDesyncWarnsAndContinues(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -466,45 +531,89 @@ func TestService_UninstallMod_ProfileDesyncWarnsAndContinues(t *testing.T) {
 		"plugin.esp": []byte("data"),
 	})
 
-	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{Verbose: true})
+	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
 	require.NoError(t, err, "a profile-removal failure must not fail the uninstall")
 	require.NotNil(t, result)
-	require.Len(t, result.Warnings, 1)
-	assert.Contains(t, result.Warnings[0], domain.ErrProfileNotFound.Error())
+	assert.Empty(t, result.Warnings, "the profile-removal diagnostic must not leak into Warnings")
+	require.Len(t, result.Notes, 1)
+	assert.True(t, strings.HasPrefix(result.Notes[0], "Note: "), "must carry its historical CLI prefix: %q", result.Notes[0])
+	assert.Contains(t, result.Notes[0], domain.ErrProfileNotFound.Error())
 
 	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
-	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed despite the profile warning")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed despite the profile note")
 }
 
-// TestService_UninstallMod_VerboseGatesOperationalWarnings guards the
-// deliberate behavior-preservation decision (documented in the task
-// report): the pre-extraction CLI only printed the undeploy-failure,
-// cache-delete-failure, and profile-removal notes when --verbose was set.
-// UninstallOptions.Verbose reproduces that gating for the Warnings that
-// come from those three call sites; hook after_* failures are always
-// recorded regardless of Verbose (see TestService_UninstallMod_HookOrder's
-// sibling assertions and the AfterHookFailure test below).
-func TestService_UninstallMod_VerboseGatesOperationalWarnings(t *testing.T) {
+// TestService_UninstallMod_UndeployFailure_RecordedAsNoteWithHistoricalPrefix
+// guards the exact text (including its historical "Warning: " prefix) of the
+// undeploy-failure diagnostic. The mod is never actually cached, so
+// Installer.Uninstall's cache.ListFiles call fails deterministically
+// (directory does not exist) without relying on filesystem permissions. The
+// profile is pre-seeded so profile removal succeeds silently, isolating this
+// one diagnostic.
+func TestService_UninstallMod_UndeployFailure_RecordedAsNoteWithHistoricalPrefix(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{
-		"plugin.esp": []byte("data"),
-	})
-	// No profile created, so pm.RemoveMod always fails with ErrProfileNotFound.
+	// No cache files stored (files: nil) - Installer.Uninstall's
+	// cache.ListFiles call fails because the mod's cache directory was
+	// never created.
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, nil)
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{Verbose: false})
-	require.NoError(t, err)
+	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
+	require.NoError(t, err, "an undeploy failure must not fail the uninstall")
 	require.NotNil(t, result)
-	assert.Empty(t, result.Warnings, "non-verbose run must not surface the operational profile-removal note")
+	assert.Empty(t, result.Warnings, "the undeploy diagnostic must not leak into Warnings")
+	require.Len(t, result.Notes, 1)
+	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to undeploy some files: "), "must carry its historical CLI prefix: %q", result.Notes[0])
+
+	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed despite the undeploy note")
+}
+
+// TestService_UninstallMod_UndeployAndCacheDeleteFailures_RecordedAsNotesWithHistoricalPrefixes
+// guards the exact text (including historical "Warning: " prefixes) of the
+// undeploy-failure and cache-delete-failure diagnostics together. Both
+// Installer.Uninstall (via cache.ListFiles) and Cache.Delete (via
+// os.RemoveAll) resolve the identical on-disk mod path, so a single
+// structural obstruction - a regular file in place of the mod's cache
+// directory - deterministically fails both without relying on filesystem
+// permissions (unlike a read-only directory, this also fails when tests run
+// as root).
+func TestService_UninstallMod_UndeployAndCacheDeleteFailures_RecordedAsNotesWithHistoricalPrefixes(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	// No cache files stored (files: nil); the mod's cache directory is
+	// created below only as a blocking regular file, never a real directory.
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, nil)
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	modPath := svc.GetGameCache(game).ModPath("g1", "src", "1", "1.0")
+	blockedParent := filepath.Dir(modPath) // .../g1/src-1, normally a directory
+	require.NoError(t, os.MkdirAll(filepath.Dir(blockedParent), 0755))
+	require.NoError(t, os.WriteFile(blockedParent, []byte("blocked"), 0644))
+
+	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
+	require.NoError(t, err, "undeploy and cache-delete failures must not fail the uninstall")
+	require.NotNil(t, result)
+	assert.Empty(t, result.Warnings, "operational diagnostics must not leak into Warnings")
+	require.Len(t, result.Notes, 2)
+	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to undeploy some files: "), "note[0] must carry its historical CLI prefix: %q", result.Notes[0])
+	assert.True(t, strings.HasPrefix(result.Notes[1], "Warning: failed to clean cache: "), "note[1] must carry its historical CLI prefix: %q", result.Notes[1])
+
+	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed despite the failures")
 }
 
 // TestService_UninstallMod_AfterEachHookFailure_IsNonFatalWarning guards
 // that after_each/after_all hook failures never fail the uninstall (they
 // run after every other step has already committed) and are always
-// recorded in Warnings regardless of Verbose, matching the pre-extraction
-// CLI's unconditional printHookWarnings behavior.
+// recorded in Warnings, matching the pre-extraction CLI's unconditional
+// printHookWarnings behavior. Unlike Notes, Warnings entries are printed by
+// the CLI unconditionally (regardless of --verbose).
 func TestService_UninstallMod_AfterEachHookFailure_IsNonFatalWarning(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -528,7 +637,6 @@ exit 1`)
 	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
 		Hooks:      hooks,
 		HookRunner: runner,
-		Verbose:    false,
 	})
 	require.NoError(t, err, "after_each failures must not fail UninstallMod")
 	require.NotNil(t, result)
