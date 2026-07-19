@@ -51,6 +51,12 @@ type searchFailedMsg struct {
 	source string
 }
 
+// errNoSourcesConfigured is surfaced whenever a game has zero real (i.e.
+// non-sentinel) configured sources, both proactively at model construction
+// (newSearchModel) and defensively if startSearch is somehow reached in that
+// state. It mirrors the CLI's noSourcesConfiguredErr diagnostic.
+var errNoSourcesConfigured = errors.New("no mod sources configured for this game; add one with 'lmm game add' or edit games.yaml")
+
 // searchInputPromptAllowance reserves room for the query input's "> " prompt
 // plus its trailing cursor cell, so searchInputWidthFor's value-viewport
 // width keeps prompt+value+cursor inside the panel's content width. Without
@@ -70,25 +76,51 @@ func searchInputWidthFor(availableWidth, panelHorizontalFrameSize int) int {
 }
 
 // newSearchModel builds the search sub-model, seeding its source list from
-// the DataProvider. The input's Width defaults from defaultContentWidth (the
-// same zero-size fallback availableWidth uses) so the input stays bounded
-// even in tests that never send a tea.WindowSizeMsg; Update's
-// tea.WindowSizeMsg case recomputes it once real terminal dimensions arrive.
+// the DataProvider with the all-sources sentinel ("") prepended, so index 0
+// — the default sourceIdx — targets "search every configured source" rather
+// than an arbitrary real one. The input's Width defaults from
+// defaultContentWidth (the same zero-size fallback availableWidth uses) so
+// the input stays bounded even in tests that never send a
+// tea.WindowSizeMsg; Update's tea.WindowSizeMsg case recomputes it once real
+// terminal dimensions arrive.
+//
+// When the provider has zero real sources, the sentinel is meaningless (there
+// is nothing to search), so the model starts in searchFailed with the
+// configured-sources diagnostic rather than silently offering a dead "All
+// sources" default (CARRIED REVIEW NOTE from issue #54 hardening).
 func newSearchModel(provider DataProvider, panelHorizontalFrameSize int) searchModel {
 	input := textinput.New()
 	input.Placeholder = "search the archives"
 	input.CharLimit = 120
 	input.Width = searchInputWidthFor(defaultContentWidth, panelHorizontalFrameSize)
-	return searchModel{input: input, sources: provider.Sources()}
+
+	realSources := provider.Sources()
+	s := searchModel{input: input, sources: append([]string{""}, realSources...)}
+	if len(realSources) == 0 {
+		s.state = searchFailed
+		s.err = errNoSourcesConfigured
+	}
+	return s
 }
 
-// source returns the currently selected source ID, or "" when the game has
-// no configured sources.
+// source returns the currently selected source ID: "" is the all-sources
+// sentinel, meaning "search every configured source". Also "" when the
+// sources list itself is empty/unset (defensive: see startSearch's guard for
+// the real "no sources configured" case).
 func (s searchModel) source() string {
 	if len(s.sources) == 0 {
 		return ""
 	}
 	return s.sources[s.sourceIdx]
+}
+
+// sourceLabel renders a source ID for display: the all-sources sentinel ""
+// becomes "All sources"; any real source ID renders as itself.
+func sourceLabel(source string) string {
+	if source == "" {
+		return "All sources"
+	}
+	return source
 }
 
 // hasNextPage reports whether another page of results is available for the
@@ -103,10 +135,14 @@ func (s searchModel) hasNextPage() bool {
 // startSearch cancels any in-flight search, bumps the generation, and returns
 // the model plus a command executing the new query.
 func (m Model) startSearch(query string, page int) (Model, tea.Cmd) {
-	// Guard: no sources configured for this game
-	if m.search.source() == "" {
+	// Guard: no REAL sources configured for this game. The "" sentinel is
+	// now a valid search target (meaning "search every configured source"),
+	// so this can no longer key off source() == "": sources always contains
+	// at least the sentinel once newSearchModel has run. The actual invalid
+	// case is zero real sources, i.e. the sentinel-only (or empty) list.
+	if len(m.search.sources) <= 1 {
 		m.search.state = searchFailed
-		m.search.err = errors.New("no mod sources configured for this game; add one with 'lmm game add' or edit games.yaml")
+		m.search.err = errNoSourcesConfigured
 		return m, nil
 	}
 

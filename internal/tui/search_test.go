@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -244,6 +245,75 @@ func TestSearchViewRendersStates(t *testing.T) {
 	model.search.page = SearchPage{Query: "nothing", Source: "nexusmods", PageSize: 10}
 	view = model.View()
 	require.Contains(t, view, "No archives matched", "zero-result state renders honest copy")
+}
+
+func TestSearchDefaultsToAllSources(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	require.Equal(t, "", model.search.sources[0], "the all-sources sentinel is prepended")
+	require.Equal(t, "", model.search.source(), "default target is All sources")
+
+	model = updateWithRunes(t, model, "3") // jump to search screen (blurred)
+	require.Contains(t, model.View(), "All sources", "header labels the sentinel for humans")
+}
+
+func TestCycleSourceRotatesThroughAllThenReal(t *testing.T) {
+	t.Parallel()
+
+	// Prototype provider has exactly one real source ("nexusmods"), so the
+	// sentinel-prefixed list is ["", "nexusmods"].
+	model := searchScreenModel(t)
+	require.Equal(t, "", model.search.source(), "starts on All sources")
+
+	model = updateWithRunes(t, model, "s")
+	require.Equal(t, "nexusmods", model.search.source(), "cycles to the one real source")
+
+	model = updateWithRunes(t, model, "s")
+	require.Equal(t, "", model.search.source(), "wraps back to All sources")
+}
+
+func TestSearchWarningLineRendered(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.gen = 1
+	updated, _ := model.Update(searchResultMsg{gen: 1, page: SearchPage{
+		Query: "sky", Source: "", PageSize: 10, TotalCount: 1,
+		Results:  []ModItem{{Name: "SkyUI", Source: "nexusmods", Status: "available"}},
+		Warnings: []string{"curseforge: connection refused"},
+	}})
+	m := updated.(Model)
+
+	view := m.searchView()
+	require.Contains(t, view, "⚠", "warning marker renders")
+	require.Contains(t, view, "curseforge", "warning names the failing source")
+}
+
+// noSourcesProvider has zero configured sources, exercising the
+// zero-real-sources diagnostic path (see newSearchModel).
+type noSourcesProvider struct{}
+
+func (noSourcesProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{}, nil, nil
+}
+func (noSourcesProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (noSourcesProvider) Sources() []string                               { return nil }
+func (noSourcesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
+
+func TestZeroRealSourcesShowsConfiguredSourcesDiagnosticOnConstruction(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: noSourcesProvider{}})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	model = updateWithRunes(t, model, "3") // jump to search screen; no submit
+	require.Equal(t, searchFailed, model.search.state, "diagnostic fires at construction, not just on submit")
+	require.Contains(t, model.View(), "no mod sources configured")
 }
 
 func TestSearchViewStaysWithinBounds(t *testing.T) {

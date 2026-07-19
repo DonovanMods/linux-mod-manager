@@ -569,8 +569,27 @@ func (m Model) searchHeaderLines() []string {
 	if m.search.state == searchReady {
 		source = m.search.page.Source
 	}
-	meta := m.theme.MutedText.Render(fmt.Sprintf("[source: %s  (s cycles)]", source))
+	meta := m.theme.MutedText.Render(fmt.Sprintf("[source: %s  (s cycles)]", sourceLabel(source)))
 	return []string{title + "  " + meta, m.search.input.View()}
+}
+
+// searchWarningLine renders m.search.page.Warnings — per-source failures
+// surfaced by all-sources searches, see SearchPage.Warnings — as one
+// truncated status line, or "" when there are none. Only meaningful in
+// searchReady (the only state where page is guaranteed to describe the
+// on-screen results; see searchHeaderLines's source-label comment for the
+// same reasoning applied to the source label).
+func (m Model) searchWarningLine() string {
+	warnings := m.search.page.Warnings
+	if len(warnings) == 0 {
+		return ""
+	}
+	noun := "source"
+	if len(warnings) != 1 {
+		noun = "sources"
+	}
+	line := fmt.Sprintf("⚠ %d %s unavailable: %s", len(warnings), noun, strings.Join(warnings, "; "))
+	return truncate(m.theme.WarningText.Render(line), m.availableWidth())
 }
 
 // searchSinglePanel wraps header+body lines in one full-bounds panel, used by
@@ -594,9 +613,12 @@ func (m Model) searchView() string {
 	case searchFailed:
 		return m.searchSinglePanel(append(header, m.theme.DangerText.Render(m.search.err.Error())))
 	case searchReady:
+		if warning := m.searchWarningLine(); warning != "" {
+			header = append(header, warning)
+		}
 		if len(m.search.page.Results) == 0 {
 			return m.searchSinglePanel(append(header,
-				m.theme.MutedText.Render(fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, m.search.page.Source)),
+				m.theme.MutedText.Render(fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, sourceLabel(m.search.page.Source))),
 			))
 		}
 		return m.searchReadyView(header)
@@ -644,24 +666,37 @@ func (m Model) searchReadyView(header []string) string {
 }
 
 // searchResultsPane renders the selectable result rows: name / version /
-// status, with "installed" statuses styled to pop. Column widths are derived
-// from the pane's actual content width (rather than fixed constants) and the
-// name column always absorbs whatever's left, so the three columns can never
-// sum past innerWidth. Overflowing values truncate instead of overflowing
-// into lipgloss's automatic line wrap, which would silently break the
-// exact-height layout invariant. Rows beyond maxLines are omitted for the
-// same reason (a full page of results can outnumber the available rows on a
-// short terminal).
+// status, with "installed" statuses styled to pop. In all-sources mode
+// (m.search.source() == "", i.e. the search that produced page targeted
+// every configured source), a source column is added so results from
+// different sources can be told apart; single-source mode's columns are
+// unchanged. Column widths are derived from the pane's actual content width
+// (rather than fixed constants) and the name column always absorbs
+// whatever's left, so the columns can never sum past innerWidth. Overflowing
+// values truncate instead of overflowing into lipgloss's automatic line
+// wrap, which would silently break the exact-height layout invariant. Rows
+// beyond maxLines are omitted for the same reason (a full page of results
+// can outnumber the available rows on a short terminal).
 func (m Model) searchResultsPane(width, maxLines int) string {
-	const (
-		prefixWidth = 2 // m.row()'s "> "/"  " selection marker
-		gaps        = 2 // the two separating spaces between columns
-	)
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+
+	withSource := m.search.source() == ""
+	gaps := 2 // separating spaces between columns (name|version|status)
+	minAvail := 3
+	if withSource {
+		gaps = 3 // one more separator for the added source column
+		minAvail = 4
+	}
+
 	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	avail := max(innerWidth-prefixWidth-gaps, 3)
+	avail := max(innerWidth-prefixWidth-gaps, minAvail)
 	statusWidth := min(max(avail/4, 1), 9) // "installed"/"available" are 9 runes
 	versionWidth := min(max(avail/4, 1), 8)
-	nameWidth := max(avail-statusWidth-versionWidth, 1)
+	sourceWidth := 0
+	if withSource {
+		sourceWidth = min(max(avail/5, 1), 10)
+	}
+	nameWidth := max(avail-statusWidth-versionWidth-sourceWidth, 1)
 
 	results := m.search.page.Results
 	if len(results) > maxLines {
@@ -674,10 +709,19 @@ func (m Model) searchResultsPane(width, maxLines int) string {
 		if item.Status == "installed" {
 			status = m.theme.WarningText.Render(status)
 		}
-		line := fmt.Sprintf("%-*s %-*s %s",
-			nameWidth, truncate(item.Name, nameWidth),
-			versionWidth, truncate(item.Version, versionWidth),
-			status)
+		var line string
+		if withSource {
+			line = fmt.Sprintf("%-*s %-*s %-*s %s",
+				nameWidth, truncate(item.Name, nameWidth),
+				versionWidth, truncate(item.Version, versionWidth),
+				sourceWidth, truncate(item.Source, sourceWidth),
+				status)
+		} else {
+			line = fmt.Sprintf("%-*s %-*s %s",
+				nameWidth, truncate(item.Name, nameWidth),
+				versionWidth, truncate(item.Version, versionWidth),
+				status)
+		}
 		rows = append(rows, m.row(i, line))
 	}
 	return strings.Join(rows, "\n")
