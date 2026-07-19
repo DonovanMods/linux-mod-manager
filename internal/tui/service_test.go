@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
@@ -52,6 +53,18 @@ func TestPrototypeProviderSearchFiltersCannedResults(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, none.Results, "no match returns an empty page")
 	require.Equal(t, 0, none.TotalCount)
+}
+
+func TestPrototypeProviderSearchAllSources(t *testing.T) {
+	t.Parallel()
+
+	p := NewPrototypeProvider()
+	page, err := p.Search(context.Background(), "", "", 0)
+	require.NoError(t, err)
+	assert.NotEmpty(t, page.Results)
+	for _, item := range page.Results {
+		assert.NotEmpty(t, item.Source)
+	}
 }
 
 func TestPrototypeProviderProfiles(t *testing.T) {

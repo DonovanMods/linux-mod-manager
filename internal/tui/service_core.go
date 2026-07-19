@@ -65,25 +65,76 @@ func (p *coreProvider) Sources() []string {
 	return sources
 }
 
-// Search queries the given source and marks results already installed in
-// the active profile.
+// Search queries the given source, or every one of the game's configured
+// sources when sourceID is "" (the all-sources sentinel), and marks results
+// already installed in the active profile.
 func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page int) (SearchPage, error) {
+	if sourceID == "" {
+		agg, err := p.svc.SearchAllSources(ctx, p.game.ID, query, "", nil, page, SearchPageSize)
+		if err != nil {
+			return SearchPage{}, fmt.Errorf("searching all sources for %q: %w", query, err)
+		}
+
+		installedKeys, err := p.installedModKeys()
+		if err != nil {
+			return SearchPage{}, err
+		}
+
+		warnings := make([]string, 0, len(agg.Warnings))
+		for _, w := range agg.Warnings {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", w.SourceID, w.Err))
+		}
+
+		return SearchPage{
+			Results:    p.modsToItems(agg.Mods, installedKeys),
+			Query:      query,
+			Source:     sourceID,
+			Page:       page,
+			PageSize:   SearchPageSize,
+			TotalCount: agg.TotalCount,
+			Warnings:   warnings,
+		}, nil
+	}
+
 	result, err := p.svc.SearchMods(ctx, sourceID, p.game.ID, query, "", nil, page, SearchPageSize)
 	if err != nil {
 		return SearchPage{}, fmt.Errorf("searching %s for %q: %w", sourceID, query, err)
 	}
 
-	installed, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
+	installedKeys, err := p.installedModKeys()
 	if err != nil {
-		return SearchPage{}, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
-	}
-	installedKeys := make(map[string]bool, len(installed))
-	for _, mod := range installed {
-		installedKeys[domain.ModKey(mod.SourceID, mod.ID)] = true
+		return SearchPage{}, err
 	}
 
-	items := make([]ModItem, 0, len(result.Mods))
-	for _, mod := range result.Mods {
+	return SearchPage{
+		Results:    p.modsToItems(result.Mods, installedKeys),
+		Query:      query,
+		Source:     sourceID,
+		Page:       page,
+		PageSize:   SearchPageSize,
+		TotalCount: result.TotalCount,
+	}, nil
+}
+
+// installedModKeys returns the set of domain.ModKey(sourceID, modID) values
+// installed in the active profile, used to mark search results as installed.
+func (p *coreProvider) installedModKeys() (map[string]bool, error) {
+	installed, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
+	if err != nil {
+		return nil, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
+	}
+	keys := make(map[string]bool, len(installed))
+	for _, mod := range installed {
+		keys[domain.ModKey(mod.SourceID, mod.ID)] = true
+	}
+	return keys, nil
+}
+
+// modsToItems maps source search results to renderable rows, marking each
+// as installed via domain.ModKey(sourceID, modID) against installedKeys.
+func (p *coreProvider) modsToItems(mods []domain.Mod, installedKeys map[string]bool) []ModItem {
+	items := make([]ModItem, 0, len(mods))
+	for _, mod := range mods {
 		status := "available"
 		if installedKeys[domain.ModKey(mod.SourceID, mod.ID)] {
 			status = "installed"
@@ -103,15 +154,7 @@ func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page 
 		}
 		items = append(items, item)
 	}
-
-	return SearchPage{
-		Results:    items,
-		Query:      query,
-		Source:     sourceID,
-		Page:       page,
-		PageSize:   SearchPageSize,
-		TotalCount: result.TotalCount,
-	}, nil
+	return items
 }
 
 func (p *coreProvider) Profiles(_ context.Context) ([]ProfileItem, error) {

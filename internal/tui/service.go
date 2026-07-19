@@ -48,6 +48,10 @@ type SearchPage struct {
 	Page       int // 0-based
 	PageSize   int
 	TotalCount int // 0 if the source doesn't report totals
+	// Warnings holds per-source failures in all-sources mode, already
+	// formatted for display (e.g. "<sourceID>: <err>"). Empty for
+	// single-source searches.
+	Warnings []string
 }
 
 // DataProvider is the narrow, read-only boundary between the TUI and app
@@ -61,6 +65,8 @@ type DataProvider interface {
 	// Sources lists the game's configured source IDs, sorted; index 0 is the
 	// default (mirrors the CLI's resolveSource).
 	Sources() []string
+	// Search queries one source, or every one of the game's configured
+	// sources when source is "" (the documented all-sources sentinel).
 	Search(ctx context.Context, source, query string, page int) (SearchPage, error)
 }
 
