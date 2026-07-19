@@ -210,32 +210,20 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 
 	profileName := profileOrDefault(modProfile)
 
-	// Get the mod to verify it exists
+	// Get the mod to verify it exists and get its name for display
 	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
-	if mod.Enabled {
+	changed, err := service.EnableMod(ctx, game, profileName, modSource, modID)
+	if err != nil {
+		return err
+	}
+
+	if !changed {
 		fmt.Printf("%s is already enabled.\n", mod.Name)
 		return nil
-	}
-
-	// Check if mod is in cache
-	if !service.GetGameCache(game).Exists(game.ID, modSource, modID, mod.Version) {
-		return fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
-	}
-
-	// Deploy mod files from cache
-	installer := service.GetInstaller(game)
-
-	if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
-		return fmt.Errorf("failed to deploy mod: %w", err)
-	}
-
-	// Update enabled flag in database
-	if err := service.SetModEnabled(modSource, modID, game.ID, profileName, true); err != nil {
-		return fmt.Errorf("failed to update mod status: %w", err)
 	}
 
 	fmt.Printf("✓ Enabled: %s\n", mod.Name)
@@ -258,30 +246,20 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 
 	profileName := profileOrDefault(modProfile)
 
-	// Get the mod to verify it exists
+	// Get the mod to verify it exists and get its name for display
 	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
-	if !mod.Enabled {
+	changed, err := service.DisableMod(ctx, game, profileName, modSource, modID)
+	if err != nil {
+		return err
+	}
+
+	if !changed {
 		fmt.Printf("%s is already disabled.\n", mod.Name)
 		return nil
-	}
-
-	// Undeploy mod files from game directory
-	installer := service.GetInstaller(game)
-
-	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
-		// Warn but continue - files may have been manually removed
-		if verbose {
-			fmt.Printf("  Warning: failed to undeploy some files: %v\n", err)
-		}
-	}
-
-	// Update enabled flag in database
-	if err := service.SetModEnabled(modSource, modID, game.ID, profileName, false); err != nil {
-		return fmt.Errorf("failed to update mod status: %w", err)
 	}
 
 	fmt.Printf("✓ Disabled: %s (files removed from game, kept in cache)\n", mod.Name)
