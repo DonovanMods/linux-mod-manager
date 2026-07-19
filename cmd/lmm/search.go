@@ -70,6 +70,16 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// noSourcesConfiguredErr returns an error if the game has no configured sources.
+// Used by the aggregate search path (when --source is not specified) to provide
+// the same diagnostic as resolveSource in the single-source path.
+func noSourcesConfiguredErr(game *domain.Game) error {
+	if len(game.SourceIDs) == 0 {
+		return fmt.Errorf("no mod sources configured for %s; add sources with 'lmm game add' or edit games.yaml", game.Name)
+	}
+	return nil
+}
+
 // capabilityGapNotice turns an ErrNotSupported search failure into a clean
 // one-line notice (design §7) instead of a wrapped-error dump. ok is false
 // for every other error.
@@ -94,6 +104,11 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	var totalResults int
 
 	if searchSource == "" {
+		// Guard: game must have at least one configured source
+		if err := noSourcesConfiguredErr(game); err != nil {
+			return err
+		}
+
 		if verbose {
 			fmt.Printf("Searching for %q in %s (all sources)...\n", query, game.Name)
 		}
@@ -159,7 +174,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		installedKeys[domain.ModKey(im.SourceID, im.ID)] = true
 	}
 
-	// Capture total count before limiting for "Showing X of Y"
+	// Apply result limit for display (totalResults captured earlier per-branch for "Showing X of Y")
 	if len(mods) > searchLimit {
 		mods = mods[:searchLimit]
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -149,4 +150,49 @@ func TestCapabilityGapNotice(t *testing.T) {
 
 	_, ok = capabilityGapNotice("x", errors.New("network down"))
 	assert.False(t, ok)
+}
+
+// TestNoSourcesConfiguredErr tests the no-sources-configured guard
+func TestNoSourcesConfiguredErr(t *testing.T) {
+	tests := []struct {
+		name    string
+		game    *domain.Game
+		wantErr bool
+		wantMsg string
+	}{
+		{
+			name: "empty sources returns error",
+			game: &domain.Game{
+				ID:        "test-game",
+				Name:      "Test Game",
+				SourceIDs: map[string]string{},
+			},
+			wantErr: true,
+			wantMsg: "no mod sources configured",
+		},
+		{
+			name: "non-empty sources returns nil",
+			game: &domain.Game{
+				ID:   "test-game",
+				Name: "Test Game",
+				SourceIDs: map[string]string{
+					"nexusmods": "skyrimspecialedition",
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := noSourcesConfiguredErr(tt.game)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantMsg)
+				assert.Contains(t, err.Error(), "add sources with 'lmm game add' or edit games.yaml")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }
