@@ -87,94 +87,23 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 		}
 	}
 
-	// Set up hooks
-	hookRunner := getHookRunner(service)
-	resolvedHooks := getResolvedHooks(service, game, profileName)
-	hookCtx := makeHookContext(game)
-	var hookErrors []error
-
-	// Run uninstall.before_all hook (for single mod, this also serves as before_each)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.BeforeAll != "" {
-		hookCtx.HookName = "uninstall.before_all"
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.BeforeAll, hookCtx); err != nil {
-			if !uninstallForce {
-				return fmt.Errorf("uninstall.before_all hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: uninstall.before_all hook failed (forced): %v\n", err)
-		}
+	opts := core.UninstallOptions{
+		KeepCache:   uninstallKeep,
+		Hooks:       getResolvedHooks(service, game, profileName),
+		HookRunner:  getHookRunner(service),
+		HookContext: makeHookContext(game),
+		Force:       uninstallForce,
+		Verbose:     verbose,
 	}
 
-	// Run uninstall.before_each hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.BeforeEach != "" {
-		hookCtx.HookName = "uninstall.before_each"
-		hookCtx.ModID = installedMod.ID
-		hookCtx.ModName = installedMod.Name
-		hookCtx.ModVersion = installedMod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.BeforeEach, hookCtx); err != nil {
-			if !uninstallForce {
-				return fmt.Errorf("uninstall.before_each hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: uninstall.before_each hook failed (forced): %v\n", err)
-		}
+	result, err := service.UninstallMod(ctx, game, profileName, installedMod.SourceID, modID, opts)
+	if err != nil {
+		return err
 	}
 
-	// Undeploy files from game directory
-	installer := service.GetInstaller(game)
-
-	if err := installer.Uninstall(ctx, game, &installedMod.Mod, profileName); err != nil {
-		// Warn but continue - files may have been manually removed
-		if verbose {
-			fmt.Printf("  Warning: failed to undeploy some files: %v\n", err)
-		}
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", w)
 	}
-
-	// Clean up cache unless --keep-cache is set
-	if !uninstallKeep {
-		if err := service.GetGameCache(game).Delete(game.ID, installedMod.SourceID, modID, installedMod.Version); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to clean cache: %v\n", err)
-			}
-		}
-	}
-
-	// Remove from database
-	if err := service.DeleteInstalledMod(installedMod.SourceID, modID, game.ID, profileName); err != nil {
-		return fmt.Errorf("failed to remove mod record: %w", err)
-	}
-
-	// Remove from profile
-	pm := getProfileManager(service)
-	if err := pm.RemoveMod(game.ID, profileName, installedMod.SourceID, modID); err != nil {
-		// Don't fail if not in profile
-		if verbose {
-			fmt.Printf("  Note: %v\n", err)
-		}
-	}
-
-	// Run uninstall.after_each hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
-		hookCtx.HookName = "uninstall.after_each"
-		hookCtx.ModID = installedMod.ID
-		hookCtx.ModName = installedMod.Name
-		hookCtx.ModVersion = installedMod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed: %w", err))
-		}
-	}
-
-	// Run uninstall.after_all hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterAll != "" {
-		hookCtx.HookName = "uninstall.after_all"
-		hookCtx.ModID = ""
-		hookCtx.ModName = ""
-		hookCtx.ModVersion = ""
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterAll, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_all hook failed: %w", err))
-		}
-	}
-
-	// Print hook warnings
-	printHookWarnings(hookErrors)
 
 	fmt.Printf("✓ Uninstalled: %s\n", installedMod.Name)
 	fmt.Printf("  Removed from profile: %s\n", profileName)
