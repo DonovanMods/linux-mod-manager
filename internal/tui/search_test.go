@@ -125,6 +125,36 @@ func TestAuthRequiredBecomesFirstClassState(t *testing.T) {
 	require.Equal(t, "nexusmods", m.search.authSource)
 }
 
+// TestAllSourcesAuthFailureShowsPerSourceDetail covers the sentinel
+// ("" == all sources) case: when every source fails on auth, the joined
+// error still satisfies errors.Is(err, domain.ErrAuthRequired), but routing
+// it to searchAuthRequired would render "Authentication required for ." and
+// a broken "lmm auth login " hint (msg.source is the sentinel, not a real
+// source). It must fall through to searchFailed instead, whose rendering
+// already names each failing source.
+func TestAllSourcesAuthFailureShowsPerSourceDetail(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.gen = 1
+	joined := errors.Join(
+		fmt.Errorf("source nexusmods: %w", domain.ErrAuthRequired),
+		fmt.Errorf("source curseforge: %w", domain.ErrAuthRequired),
+	)
+	updated, _ := model.Update(searchFailedMsg{
+		gen:    1,
+		err:    fmt.Errorf("all 2 source(s) failed: %w", joined),
+		source: "",
+	})
+	m := updated.(Model)
+	require.Equal(t, searchFailed, m.search.state, "sentinel source must not route to the single-source auth state")
+
+	view := m.View()
+	require.Contains(t, view, "nexusmods", "failed view must retain the per-source detail")
+	require.NotContains(t, view, "Authentication required for .", "must not render the broken sentinel message")
+	require.NotContains(t, view, "lmm auth login '", "must not render a broken auth-login hint for an empty source")
+}
+
 func TestCycleSourceKey(t *testing.T) {
 	t.Parallel()
 

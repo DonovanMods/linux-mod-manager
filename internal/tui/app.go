@@ -210,7 +210,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.search.gen {
 			return m, nil
 		}
-		if errors.Is(msg.err, domain.ErrAuthRequired) {
+		// The sentinel source ("" == all sources) has no single source name to
+		// report; routing it here would render "Authentication required for ."
+		// and a broken "lmm auth login " hint. Fall through to searchFailed,
+		// whose rendering already names each failing source (see
+		// core.Service.SearchAllSources' joined per-source errors).
+		if msg.source != "" && errors.Is(msg.err, domain.ErrAuthRequired) {
 			m.search.state = searchAuthRequired
 			m.search.authSource = msg.source
 			return m, nil
