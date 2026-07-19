@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-07-18
+
+### Added
+
+- Aggregate search: `lmm search` without `--source` now queries every source configured for the game concurrently, with per-source failures reported as warnings
+- Search results (CLI and TUI) show each mod's source; the TUI search defaults to "All sources"
+- TUI Sources screen (key `5`) mirroring `lmm source list`
+
 ## [1.9.0] - 2026-07-15
 
 ### Added
@@ -722,7 +730,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.6.0...v1.7.0
