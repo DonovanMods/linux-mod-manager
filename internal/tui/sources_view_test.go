@@ -3,8 +3,11 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -150,4 +153,61 @@ func TestCoreProviderSourceInfos(t *testing.T) {
 	require.Equal(t, "zzz-directory", infos[1].ID)
 	require.Equal(t, "directory", infos[1].Type)
 	require.Equal(t, "n/a", infos[1].Auth, "directory sources report no auth capability")
+}
+
+// longSourcesProvider returns sources with long IDs and capabilities to test
+// truncation in narrow terminals.
+type longSourcesProvider struct{}
+
+func (longSourcesProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{}, nil, nil
+}
+func (longSourcesProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (longSourcesProvider) Sources() []string                               { return nil }
+func (longSourcesProvider) SourceInfos() []SourceInfo {
+	return []SourceInfo{
+		{
+			ID:           "extremely-long-custom-source-identifier-that-exceeds-normal-widths",
+			Name:         "Long Source",
+			Type:         "custom",
+			Auth:         "yes",
+			Capabilities: "search,deps,updates,auth,conflict-detection,manifest-verification,auto-dependencies",
+		},
+		{
+			ID:           "another-overly-verbose-identifier-for-testing-purposes-in-narrow-terminals",
+			Name:         "Another Long",
+			Type:         "built-in",
+			Auth:         "no",
+			Capabilities: "search,updates,manifest-fetching,advanced-filtering,batch-operations",
+		},
+	}
+}
+func (longSourcesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
+
+// TestSourcesViewFitsPanelWidthNarrowTerminal guards that sourcesView rows
+// truncate to the panel's content width (not the full terminal width) to
+// prevent overlong source IDs or capability lists from re-wrapping inside
+// the panel and growing the view past its fixed height budget. This mirrors
+// the fix applied to searchView's zero-results warning in commit 2c075e3.
+func TestSourcesViewFitsPanelWidthNarrowTerminal(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: longSourcesProvider{}})
+	require.NoError(t, err)
+
+	loaded, _ := model.Update(model.Init()())
+	updated, _ := loaded.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	model = updated.(Model)
+
+	model = updateWithRunes(t, model, "5") // jump to sources screen
+	require.Equal(t, ScreenSources, model.CurrentScreen())
+
+	view := model.screenView()
+	require.Equal(t, model.availableContentHeight(), lipgloss.Height(view),
+		"an overlong source ID or capability list must not wrap and grow the sources panel past its height budget")
+	for _, line := range strings.Split(view, "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), model.availableWidth(), "no rendered line exceeds terminal width")
+	}
 }

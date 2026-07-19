@@ -859,16 +859,26 @@ func (m Model) profilesView() string {
 // `lmm source list`, there is no error/status column — see SourceInfo's doc
 // comment for why definition-load failures never reach this screen.
 func (m Model) sourcesView() string {
+	// Calculate the panel's content width, which is narrower than availableWidth()
+	// by the panel's horizontal frame size (border + padding). Rows that render
+	// INSIDE this panel must be truncated to this width to prevent lipgloss from
+	// re-wrapping overlong lines and growing the view past its fixed height
+	// budget; see the fix in commit 2c075e3 for the same issue in searchView's
+	// zero-results warning.
+	panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+
 	// "  " matches m.row()'s 2-column selection-marker prefix ("> "/"  ") so
 	// the header lines up with the data columns below it instead of starting
 	// two columns to their left.
-	header := "  " + fmt.Sprintf("%-20s %-12s %-6s %s", "ID", "TYPE", "AUTH", "CAPABILITIES")
+	headerLine := "  " + fmt.Sprintf("%-20s %-12s %-6s %s", "ID", "TYPE", "AUTH", "CAPABILITIES")
+	headerLine = truncate(headerLine, panelContentWidth)
 	rows := []string{
 		m.theme.PanelTitle.Render("SOURCE REGISTRY"),
-		m.theme.MutedText.Render(header),
+		m.theme.MutedText.Render(headerLine),
 	}
 	for i, src := range m.sources {
 		line := fmt.Sprintf("%-20s %-12s %-6s %s", src.ID, src.Type, src.Auth, src.Capabilities)
+		line = truncate(line, panelContentWidth)
 		rows = append(rows, m.row(i, line))
 	}
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
