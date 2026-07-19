@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
 // EnableMod deploys an installed-but-disabled mod's files from the cache to
@@ -135,7 +137,7 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 	result := &UninstallResult{}
 	hookCtx := opts.HookContext
 
-	if err := runUninstallHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_all", opts.Hooks.GetUninstallBeforeAll()); err != nil {
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_all", opts.Hooks.GetUninstallBeforeAll()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("uninstall.before_all hook failed: %w", err)
 		}
@@ -145,7 +147,7 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 	hookCtx.ModID = mod.ID
 	hookCtx.ModName = mod.Name
 	hookCtx.ModVersion = mod.Version
-	if err := runUninstallHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("uninstall.before_each hook failed: %w", err)
 		}
@@ -176,28 +178,460 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Notes = append(result.Notes, fmt.Sprintf("Note: %v", err))
 	}
 
-	if err := runUninstallHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_each hook failed: %v", err))
 	}
 
 	hookCtx.ModID = ""
 	hookCtx.ModName = ""
 	hookCtx.ModVersion = ""
-	if err := runUninstallHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_all", opts.Hooks.GetUninstallAfterAll()); err != nil {
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_all", opts.Hooks.GetUninstallAfterAll()); err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_all hook failed: %v", err))
 	}
 
 	return result, nil
 }
 
-// runUninstallHook runs command (a hook script path) via runner if both are
-// set, updating hookCtx.HookName first. No-op if runner is nil or command
-// is empty (hooks disabled, or that particular hook isn't configured).
-func runUninstallHook(ctx context.Context, runner *HookRunner, hookCtx *HookContext, hookName, command string) error {
+// runHook runs command (a hook script path) via runner if both are set,
+// updating hookCtx.HookName first. No-op if runner is nil or command is
+// empty (hooks disabled, or that particular hook isn't configured). Shared
+// by UninstallMod and DeployProfile - hookName ("install.before_all",
+// "uninstall.after_each", ...) is just a label passed through to the script
+// environment, so one helper covers both hook namespaces.
+func runHook(ctx context.Context, runner *HookRunner, hookCtx *HookContext, hookName, command string) error {
 	if runner == nil || command == "" {
 		return nil
 	}
 	hookCtx.HookName = hookName
 	_, err := runner.Run(ctx, command, *hookCtx)
 	return err
+}
+
+// DeployOptions configures DeployProfile.
+type DeployOptions struct {
+	Purge bool // --purge: undeploy every installed mod (regardless of ModID/All) before deploying, remembering which were enabled beforehand for the profile-wide selection below.
+
+	// LinkMethod overrides the link method used for this deploy (--method).
+	// nil (the zero value) means "use the game's effective link method" via
+	// Service.GetGameLinkMethod. A pointer is used, rather than a bare
+	// domain.LinkMethod with its zero value as the "unset" sentinel, because
+	// domain.LinkMethod's zero value (LinkSymlink) is itself a valid,
+	// explicit choice - it cannot double as "no override" without losing
+	// the ability to explicitly request symlink. See the task report.
+	LinkMethod *domain.LinkMethod
+
+	// ModID/SourceID restrict the deploy to a single mod (`lmm deploy
+	// <mod-id>`). Both empty (the default) deploys every mod in profile
+	// order, subject to All. SourceID selects which source's copy of ModID
+	// to deploy - the CLI's --source flag, default "nexusmods".
+	ModID    string
+	SourceID string
+
+	All bool // --all: include disabled mods in a full-profile deploy, or allow deploying a disabled ModID.
+
+	// Hook plumbing, mirroring UninstallOptions. Hooks and/or HookRunner may
+	// be nil to skip hook execution entirely (e.g. --no-hooks). The deploy
+	// pass runs install.* hooks; the purge pass (when Purge is set) runs
+	// uninstall.* hooks, matching the pre-extraction CLI's doDeploy/
+	// purgeDeployedMods split.
+	Hooks       *ResolvedHooks
+	HookRunner  *HookRunner
+	HookContext HookContext
+	Force       bool // continue past a failing before_* hook (warn instead of fail)
+}
+
+// DeployPhase identifies what DeployProfile is doing for the mod named in a
+// DeployProgress event (or, for DeployPurging, for the purge pass as a
+// whole), letting callers (CLI, TUI) render phase-appropriate UI without
+// needing to know how a deploy is actually carried out.
+type DeployPhase int
+
+const (
+	// DeployPurging fires once, before any purge-phase mod is touched, when
+	// Purge is set and there is at least one installed mod to purge. Total
+	// is the number of mods being purged; Index and ModName are zero/empty.
+	DeployPurging DeployPhase = iota
+	// DeployBeforeEachSkipped: install.before_each failed for ModName: the
+	// mod is skipped (added to DeployResult.Skipped). Detail is the reason.
+	DeployBeforeEachSkipped
+	// DeployRedownloading: ModName's cache entry is missing; DeployProfile
+	// is re-fetching it from source.
+	DeployRedownloading
+	// DeployFallbackUsed: ModName's stored file IDs were not found on the
+	// source; falling back to the primary file.
+	DeployFallbackUsed
+	// DeployDownloading: a file for ModName is downloading. Percent is the
+	// 0-100 completion (only reported once the source declares a total
+	// size, matching the pre-extraction CLI's progress callback gating).
+	DeployDownloading
+	// DeployDownloadFailed: a file for ModName failed to download; the mod
+	// is skipped. Detail is the reason.
+	DeployDownloadFailed
+	// DeploySkipped: ModName was skipped for a reason other than a hook or
+	// download failure (fetch failure, no files available, file-selection
+	// failure, or an outright deploy/install failure). Detail is the reason.
+	DeploySkipped
+	// DeployDeployed: ModName was (re)deployed successfully.
+	DeployDeployed
+)
+
+// DeployProgress reports incremental status during DeployProfile. Index and
+// Total describe ModName's position among the mods being deployed (both
+// zero for the DeployPurging event, which precedes and is independent of
+// that count). Detail and Percent are populated only for the phases
+// documented on DeployPhase's constants; both are zero otherwise.
+type DeployProgress struct {
+	Index, Total int
+	ModName      string
+	Phase        DeployPhase
+	Detail       string
+	Percent      float64
+}
+
+// DeployResult reports the outcome of DeployProfile. As with UninstallResult
+// (see its doc comment), every entry below is always recorded - there is no
+// verbosity concept in core - but Warnings and Notes carry the same two
+// display contracts Task 2 established:
+//
+//   - Warnings holds diagnostics the pre-extraction CLI printed
+//     unconditionally to stderr: install.before_all (when forced),
+//     install.after_each/after_all hook failures, and a profile-overrides
+//     application failure. Callers should print each entry to stderr,
+//     unconditionally, e.g. `fmt.Fprintf(os.Stderr, "Warning: %v\n", w)`.
+//   - Notes holds operational diagnostics the pre-extraction CLI only
+//     printed under --verbose: a failed undeploy-before-redeploy, a failed
+//     SetModLinkMethod, and a failed SetModDeployed, all per mod, plus (for
+//     a --purge pass) the equivalent per-mod undeploy/SetModDeployed
+//     failures from purging. Each entry already carries its historical
+//     prefix ("Warning: " for the deploy-loop trio, "⚠ " for the purge
+//     trio) baked into the text, matching each one's pre-extraction
+//     wording; a caller wanting byte-identical pre-extraction output should
+//     print each entry to stdout ONLY under --verbose, verbatim, e.g.
+//     `fmt.Printf("  %s\n", n)`. See the task report for why these are
+//     accumulated-and-printed-at-the-end rather than interleaved with the
+//     progress callback's real-time per-mod output (as they were,
+//     inconsistently, pre-extraction).
+//
+// Skipped carries one "<mod name>: <reason>" entry per mod that did not
+// deploy, for any reason (hook failure, download failure, install
+// failure); the pre-extraction CLI printed each of these unconditionally
+// as it happened; DeployProgress's DeployBeforeEachSkipped/
+// DeployDownloadFailed/DeploySkipped events carry the same reason text in
+// real time for callers that want to print them as they occur instead of
+// (or in addition to) at the end.
+//
+// On error, the returned result carries any diagnostics accumulated before
+// the failure; callers should surface them alongside the error.
+type DeployResult struct {
+	Deployed int
+	Skipped  []string
+	Warnings []string
+	Notes    []string
+}
+
+// errNoDeployFiles mirrors cmd/lmm's errNoDownloadableFiles for the
+// redeploy-after-cache-miss path. DeployProfile duplicates a small slice of
+// cmd/lmm/profile.go's selectFilesToDownload/selectPrimaryFile logic here
+// (see selectDeployFiles below) instead of importing it, because
+// internal/core cannot import cmd/lmm and this task's scope explicitly
+// excludes touching profile.go to hoist it out; see the task report.
+var errNoDeployFiles = fmt.Errorf("no downloadable files")
+
+// selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
+// the files matching storedFileIDs if any are found, else the primary file
+// (first file with IsPrimary, or simply the first file), reporting whether
+// it had to fall back. Mirrors cmd/lmm/profile.go's selectFilesToDownload.
+func selectDeployFiles(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, bool, error) {
+	if len(files) == 0 {
+		return nil, false, errNoDeployFiles
+	}
+	primary := func() *domain.DownloadableFile {
+		for i := range files {
+			if files[i].IsPrimary {
+				return &files[i]
+			}
+		}
+		return &files[0]
+	}
+	if len(storedFileIDs) > 0 {
+		idSet := make(map[string]bool, len(storedFileIDs))
+		for _, id := range storedFileIDs {
+			idSet[id] = true
+		}
+		var found []*domain.DownloadableFile
+		for i := range files {
+			if idSet[files[i].ID] {
+				found = append(found, &files[i])
+			}
+		}
+		if len(found) > 0 {
+			return found, false, nil
+		}
+		return []*domain.DownloadableFile{primary()}, true, nil
+	}
+	return []*domain.DownloadableFile{primary()}, false, nil
+}
+
+// DeployProfile redeploys the mods of a profile in profile order: an
+// optional --purge pass first (undeploying every installed mod), then for
+// each mod to deploy - re-downloading from source if its cache entry is
+// missing - an undeploy-then-install cycle recording the effective link
+// method and deployed state, and finally applying any profile overrides.
+// This is a behavior-preserving extraction of the pre-extraction CLI's
+// doDeploy (cmd/lmm/deploy.go) and purgeDeployedMods (cmd/lmm/purge.go, the
+// --purge-before-deploy call only - the standalone `lmm purge` command is
+// untouched by this extraction); see the task report for the exact mapping.
+//
+// progress may be nil. When non-nil, it is called synchronously from this
+// function for every notable event - see DeployPhase's constants for what
+// each one means and what Detail/Percent carry.
+func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions, progress func(DeployProgress)) (*DeployResult, error) {
+	result := &DeployResult{}
+	emit := func(p DeployProgress) {
+		if progress != nil {
+			progress(p)
+		}
+	}
+
+	var enabledBeforePurge map[string]bool
+	if opts.Purge {
+		mods, err := s.GetInstalledMods(game.ID, profileName)
+		if err != nil {
+			return result, fmt.Errorf("getting installed mods: %w", err)
+		}
+		enabledBeforePurge = make(map[string]bool)
+		for _, m := range mods {
+			if m.Enabled {
+				enabledBeforePurge[domain.ModKey(m.SourceID, m.ID)] = true
+			}
+		}
+		if err := s.purgeForDeploy(ctx, game, profileName, mods, opts, result, emit); err != nil {
+			return result, fmt.Errorf("purging mods: %w", err)
+		}
+	}
+
+	linkMethod := s.GetGameLinkMethod(game)
+	if opts.LinkMethod != nil {
+		linkMethod = *opts.LinkMethod
+	}
+	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
+
+	var modsToDeploy []*domain.InstalledMod
+	if opts.ModID != "" {
+		mod, err := s.GetInstalledMod(opts.SourceID, opts.ModID, game.ID, profileName)
+		if err != nil {
+			return result, fmt.Errorf("mod not found: %s", opts.ModID)
+		}
+		if !mod.Enabled && !opts.All {
+			return result, fmt.Errorf("mod %s is disabled - use --all to deploy disabled mods, or enable it with 'lmm mod enable %s'", mod.Name, opts.ModID)
+		}
+		modsToDeploy = append(modsToDeploy, mod)
+	} else {
+		mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+		if err != nil {
+			return result, fmt.Errorf("getting installed mods: %w", err)
+		}
+		for i := range mods {
+			var shouldDeploy bool
+			switch {
+			case opts.All:
+				shouldDeploy = true
+			case enabledBeforePurge != nil:
+				shouldDeploy = enabledBeforePurge[domain.ModKey(mods[i].SourceID, mods[i].ID)]
+			default:
+				shouldDeploy = mods[i].Enabled
+			}
+			if shouldDeploy {
+				modsToDeploy = append(modsToDeploy, &mods[i])
+			}
+		}
+	}
+
+	if len(modsToDeploy) == 0 {
+		return result, nil
+	}
+
+	hookCtx := opts.HookContext
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_all", opts.Hooks.GetInstallBeforeAll()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("install.before_all hook failed: %w", err)
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf("install.before_all hook failed (forced): %v", err))
+	}
+
+	total := len(modsToDeploy)
+	for idx, mod := range modsToDeploy {
+		base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name}
+
+		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+		if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+			reason := fmt.Sprintf("install.before_each hook failed: %v", err)
+			evt := base
+			evt.Phase, evt.Detail = DeployBeforeEachSkipped, reason
+			emit(evt)
+			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
+			continue
+		}
+
+		if !s.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+			if skipped := s.redeployFromSource(ctx, game, mod, base, emit, result); skipped {
+				continue
+			}
+		}
+
+		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
+			result.Notes = append(result.Notes, fmt.Sprintf("Warning: undeploy %s: %v", mod.Name, err))
+		}
+
+		if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
+			reason := err.Error()
+			evt := base
+			evt.Phase, evt.Detail = DeploySkipped, reason
+			emit(evt)
+			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
+			continue
+		}
+
+		if err := s.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
+			result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not update link method: %v", err))
+		}
+		if err := s.SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, true); err != nil {
+			result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as deployed: %v", err))
+		}
+
+		result.Deployed++
+		evt := base
+		evt.Phase = DeployDeployed
+		emit(evt)
+
+		if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("install.after_each hook failed for %s: %v", mod.ID, err))
+		}
+	}
+
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_all", opts.Hooks.GetInstallAfterAll()); err != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("install.after_all hook failed: %v", err))
+	}
+
+	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil && len(profile.Overrides) > 0 {
+		if err := ApplyProfileOverrides(game, profile); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("applying profile overrides: %v", err))
+		}
+	}
+
+	return result, nil
+}
+
+// redeployFromSource re-fetches mod from source and downloads its file(s)
+// into the cache when DeployProfile finds the cache entry missing,
+// mirroring doDeploy's cache-miss branch exactly, including its one
+// preserved quirk: the freshly-fetched *domain.Mod (not the InstalledMod's
+// own, possibly-stale, Mod) is what gets downloaded, while the InstalledMod
+// row's own Mod is what DeployProfile installs from afterward - see the
+// task report. Returns true if the mod was skipped (added to
+// result.Skipped and reported via emit) and the caller must not proceed to
+// undeploy/install it.
+func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod *domain.InstalledMod, base DeployProgress, emit func(DeployProgress), result *DeployResult) bool {
+	skip := func(reason string) bool {
+		evt := base
+		evt.Phase, evt.Detail = DeploySkipped, reason
+		emit(evt)
+		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
+		return true
+	}
+
+	redl := base
+	redl.Phase = DeployRedownloading
+	emit(redl)
+
+	fetchedMod, err := s.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
+	if err != nil {
+		return skip(fmt.Sprintf("failed to fetch: %v", err))
+	}
+
+	files, err := s.GetModFiles(ctx, mod.SourceID, fetchedMod)
+	if err != nil || len(files) == 0 {
+		return skip("no files available")
+	}
+
+	filesToDownload, usedFallback, err := selectDeployFiles(files, mod.FileIDs)
+	if err != nil {
+		return skip(err.Error())
+	}
+	if usedFallback {
+		fb := base
+		fb.Phase = DeployFallbackUsed
+		emit(fb)
+	}
+
+	for _, file := range filesToDownload {
+		progressFn := func(p DownloadProgress) {
+			if p.TotalBytes > 0 {
+				dl := base
+				dl.Phase, dl.Percent = DeployDownloading, p.Percentage
+				emit(dl)
+			}
+		}
+		if _, err := s.DownloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn); err != nil {
+			return skip(fmt.Sprintf("download failed: %v", err))
+		}
+	}
+
+	return false
+}
+
+// purgeForDeploy undeploys every currently-installed mod in profileName
+// before DeployProfile redeploys them, mirroring the pre-extraction CLI's
+// purgeDeployedMods (used only by `lmm deploy --purge`; the standalone `lmm
+// purge` command, and its own purgeDeployedMods call site, are untouched by
+// this task). See DeployResult's doc comment for where each diagnostic
+// below ends up.
+func (s *Service) purgeForDeploy(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts DeployOptions, result *DeployResult, emit func(DeployProgress)) error {
+	if len(mods) == 0 {
+		return nil
+	}
+
+	hookCtx := opts.HookContext
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_all", opts.Hooks.GetUninstallBeforeAll()); err != nil {
+		if !opts.Force {
+			return fmt.Errorf("uninstall.before_all hook failed: %w", err)
+		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_all hook failed (forced): %v", err))
+	}
+
+	installer := s.GetInstaller(game)
+	emit(DeployProgress{Phase: DeployPurging, Total: len(mods)})
+
+	for _, mod := range mods {
+		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+		if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
+			// Matches purgeDeployedMods: skip this mod (leave it deployed),
+			// keep going. The pre-extraction CLI printed this unconditionally
+			// to stdout ("  Skipped: ..."); recorded here as a Warning
+			// (unconditional, stderr) instead - see the task report.
+			result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed for %s during purge (not purged): %v", mod.Name, err))
+			continue
+		}
+
+		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
+			result.Notes = append(result.Notes, fmt.Sprintf("⚠ %s - %v", mod.Name, err))
+		}
+
+		if err := s.SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
+			result.Notes = append(result.Notes, fmt.Sprintf("⚠ %s - failed to mark as not deployed: %v", mod.Name, err))
+		}
+
+		if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_each hook failed for %s: %v", mod.ID, err))
+		}
+	}
+
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_all", opts.Hooks.GetUninstallAfterAll()); err != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_all hook failed: %v", err))
+	}
+
+	linker.CleanupEmptyDirs(game.ModPath)
+	return nil
 }

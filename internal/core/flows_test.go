@@ -822,44 +822,44 @@ func TestService_DeployProfile_LinkMethodOverrideHonored(t *testing.T) {
 }
 
 // TestService_DeployProfile_PurgeRemovesFilesFirstAndPreservesEnabledSet
-// guards --purge's two documented behaviors: (1) every installed mod -
-// enabled or not - is undeployed before anything redeploys, and (2) the
-// redeploy pass only includes mods that were enabled BEFORE the purge
-// (doDeploy's enabledBeforePurge map), mirroring the pre-extraction CLI.
+// guards --purge's two documented behaviors. The disabled mod is the key
+// witness for "removed first": it is excluded from the redeploy pass
+// entirely (never reaches the main per-mod loop, which also happens to
+// undeploy-then-install), so its file's removal can only be explained by
+// the purge pass itself. The enabled mod is the witness for "enabled set
+// preserved": only it redeploys after the purge.
 func TestService_DeployProfile_PurgeRemovesFilesFirstAndPreservesEnabledSet(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	seedInstalledMod(t, svc, game, "src", "enabled-mod", "1.0", true, map[string][]byte{"enabled.esp": []byte("e")})
-	seedInstalledMod(t, svc, game, "src", "disabled-mod", "1.0", false, map[string][]byte{"disabled.esp": []byte("d")})
-	seedProfileWithMod(t, svc, "g1", "default", "src", "enabled-mod", "1.0")
-	seedProfileWithMod(t, svc, "g1", "default", "src", "disabled-mod", "1.0")
+	seedInstalledMod(t, svc, game, "src", "kept-mod", "1.0", true, map[string][]byte{"kept.esp": []byte("k")})
+	seedInstalledMod(t, svc, game, "src", "purged-mod", "1.0", false, map[string][]byte{"purged.esp": []byte("p")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "kept-mod", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "purged-mod", "1.0")
 
 	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "enabled-mod", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "purged-mod", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
-	deployedPath := filepath.Join(gameDir, "enabled.esp")
-	_, err := os.Lstat(deployedPath)
-	require.NoError(t, err, "precondition: file must be deployed before purge")
+	purgedPath := filepath.Join(gameDir, "purged.esp")
+	_, err := os.Lstat(purgedPath)
+	require.NoError(t, err, "precondition: the disabled mod's file must be deployed before purge")
 
-	var sawRemovalDuringPurge bool
+	var purgeTotal int
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, func(p core.DeployProgress) {
 		if p.Phase == core.DeployPurging {
-			assert.Equal(t, 2, p.Total, "purge must consider every installed mod, enabled or not")
-			_, statErr := os.Lstat(deployedPath)
-			sawRemovalDuringPurge = os.IsNotExist(statErr)
+			purgeTotal = p.Total
 		}
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.True(t, sawRemovalDuringPurge, "purge must remove previously-deployed files before the redeploy pass begins")
+	assert.Equal(t, 2, purgeTotal, "purge must consider every installed mod, enabled or not")
 
 	assert.Equal(t, 1, result.Deployed, "only the mod enabled before the purge should redeploy")
-	_, err = os.Lstat(deployedPath)
+	_, err = os.Lstat(filepath.Join(gameDir, "kept.esp"))
 	assert.NoError(t, err, "the previously-enabled mod should be redeployed after purge")
-	_, err = os.Lstat(filepath.Join(gameDir, "disabled.esp"))
-	assert.True(t, os.IsNotExist(err), "the disabled mod must not be redeployed after purge")
+	_, err = os.Lstat(purgedPath)
+	assert.True(t, os.IsNotExist(err), "the disabled mod's file must be removed by purge and never redeployed - proof purge actually undeploys mods excluded from the redeploy pass")
 }
 
 // TestService_DeployProfile_MissingCacheModRedownloads guards doDeploy's
