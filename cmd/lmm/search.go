@@ -101,6 +101,21 @@ func limitResults(mods []domain.Mod, limit int) []domain.Mod {
 	return mods
 }
 
+// searchPageSize turns --limit into the page size requested from sources. A
+// positive limit is requested verbatim so `--limit 30` can actually fetch 30
+// results instead of being capped at each source's own default page size
+// (20 — see internal/source/custom/search.go and internal/source/nexusmods)
+// and then merely truncating an already-short list; there is no --page flag,
+// so that default has otherwise been an invisible, unreachable ceiling. A
+// non-positive limit (0, or the historical --limit -1 case) falls back to 0
+// so sources keep applying their own default, matching prior behavior.
+func searchPageSize(limit int) int {
+	if limit > 0 {
+		return limit
+	}
+	return 0
+}
+
 func doSearch(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	query := args[0]
 	if len(args) > 1 {
@@ -123,7 +138,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if verbose {
 			fmt.Printf("Searching for %q in %s (all sources)...\n", query, game.Name)
 		}
-		agg, err := service.SearchAllSources(ctx, game.ID, query, searchCategory, searchTags, 0, 0)
+		agg, err := service.SearchAllSources(ctx, game.ID, query, searchCategory, searchTags, 0, searchPageSize(searchLimit))
 		if err != nil {
 			// No ErrAuthRequired special-case here: an all-sources failure's
 			// joined error already names each source and its reason (including
@@ -143,7 +158,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if verbose {
 			fmt.Printf("Searching for %q in %s (%s)...\n", query, game.Name, sourceToUse)
 		}
-		searchResult, err := service.SearchMods(ctx, sourceToUse, game.ID, query, searchCategory, searchTags, 0, 0)
+		searchResult, err := service.SearchMods(ctx, sourceToUse, game.ID, query, searchCategory, searchTags, 0, searchPageSize(searchLimit))
 		if err != nil {
 			if notice, ok := capabilityGapNotice(sourceToUse, err); ok {
 				return errors.New(notice)

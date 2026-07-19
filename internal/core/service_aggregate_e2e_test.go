@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -134,4 +135,53 @@ func TestAggregateSearchEndToEndSingleSourceStillWorks(t *testing.T) {
 	assert.Equal(t, "manifest-repo", res.Mods[0].SourceID)
 	assert.Equal(t, "cool-remote", res.Mods[0].ID)
 	assert.Equal(t, game.ID, res.Mods[0].GameID)
+}
+
+// TestSearchAllSources_PageSizeAboveDefaultReturnsMoreThanDefaultCap is a
+// characterization test for the #57 CLI paging regression: it pins that
+// SearchAllSources (and, transitively, a real Directory source's Search)
+// already honors a requested pageSize above the source-internal default of
+// 20 (internal/source/custom/search.go's searchMods). It passes with or
+// without the cmd/lmm/search.go fix — the bug was entirely in the CLI layer
+// always requesting pageSize 0, never in this core/source plumbing.
+func TestSearchAllSources_PageSizeAboveDefaultReturnsMoreThanDefaultCap(t *testing.T) {
+	dirRoot := t.TempDir()
+	for i := 1; i <= 30; i++ {
+		require.NoError(t, os.MkdirAll(filepath.Join(dirRoot, fmt.Sprintf("TestMod%02d", i)), 0755))
+	}
+	dirSrc, err := custom.New(custom.SourceDefinition{
+		ID:        "big-dir",
+		Name:      "Big Directory",
+		Type:      custom.TypeDirectory,
+		Directory: &custom.DirectoryConfig{Path: dirRoot},
+	})
+	require.NoError(t, err)
+
+	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(dirSrc)
+
+	game := &domain.Game{
+		ID:         "testgame",
+		Name:       "Test Game",
+		ModPath:    t.TempDir(),
+		DeployMode: domain.DeployCopy,
+		SourceIDs:  map[string]string{"big-dir": ""},
+	}
+	require.NoError(t, svc.AddGame(game))
+
+	// pageSize 0 (the CLI's pre-fix default): capped at the source's
+	// internal default of 20, even though 30 mods match.
+	capped, err := svc.SearchAllSources(context.Background(), game.ID, "testmod", "", nil, 0, 0)
+	require.NoError(t, err)
+	assert.Len(t, capped.Mods, 20, "pageSize 0 must fall back to the source default cap")
+
+	// pageSize 30 (what the CLI now sends for --limit 30): all 30 matches
+	// come back, proving the ceiling is a CLI-layer default, not a
+	// core/source limitation.
+	full, err := svc.SearchAllSources(context.Background(), game.ID, "testmod", "", nil, 0, 30)
+	require.NoError(t, err)
+	assert.Len(t, full.Mods, 30, "pageSize 30 must return all 30 matching mods")
 }

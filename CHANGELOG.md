@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - TUI search: a long per-source warning on a zero-results all-sources search no longer wraps inside the results panel and grows it past its height budget
 - `lmm search --limit -1` (or any negative value) no longer panics; a non-positive `--limit` now shows all results instead of crashing (or, for `0`, silently returning none)
+- `lmm search --limit N` now requests `N` results from each source instead of always requesting a source's internal default (20) and only truncating downward; a query with more than 20 true matches was previously stuck at the first 20 with no way to see more, regardless of `--limit`
 
 ## [1.9.0] - 2026-07-15
 
