@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 
 	"github.com/spf13/cobra"
 )
@@ -23,9 +24,10 @@ var (
 )
 
 type searchJSONOutput struct {
-	GameID string          `json:"game_id"`
-	Query  string          `json:"query"`
-	Mods   []searchModJSON `json:"mods"`
+	GameID   string          `json:"game_id"`
+	Query    string          `json:"query"`
+	Mods     []searchModJSON `json:"mods"`
+	Warnings []string        `json:"warnings,omitempty"`
 }
 
 type searchModJSON struct {
@@ -33,6 +35,7 @@ type searchModJSON struct {
 	Name      string `json:"name"`
 	Author    string `json:"author"`
 	Version   string `json:"version"`
+	Source    string `json:"source"`
 	Installed bool   `json:"installed"`
 }
 
@@ -41,7 +44,8 @@ var searchCmd = &cobra.Command{
 	Short: "Search for mods",
 	Long: `Search for mods in the configured sources.
 
-If --source is not specified, uses the first configured source for the game.
+If --source is not specified, all configured sources for the game are
+searched concurrently and the results are merged.
 
 Examples:
   lmm search skyui --game skyrim-se
@@ -51,7 +55,7 @@ Examples:
 }
 
 func init() {
-	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "", "mod source to search (default: first configured source alphabetically)")
+	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "", "mod source to search (default: all configured sources)")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "l", 10, "maximum number of results")
 	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
 	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (source-specific ID or name)")
@@ -66,6 +70,16 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// capabilityGapNotice turns an ErrNotSupported search failure into a clean
+// one-line notice (design §7) instead of a wrapped-error dump. ok is false
+// for every other error.
+func capabilityGapNotice(sourceID string, err error) (string, bool) {
+	if !errors.Is(err, source.ErrNotSupported) {
+		return "", false
+	}
+	return fmt.Sprintf("source %q does not support searching; install by ID instead: lmm install --source %s --id <mod-id>", sourceID, sourceID), true
+}
+
 func doSearch(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	query := args[0]
 	if len(args) > 1 {
@@ -75,30 +89,59 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 	}
 
-	// Determine source: use flag if set, otherwise first configured source
-	sourceToUse, err := resolveSource(game, searchSource, false)
-	if err != nil {
-		return err
-	}
+	var mods []domain.Mod
+	var warnings []core.SourceWarning
+	var totalResults int
 
-	if verbose {
-		fmt.Printf("Searching for \"%s\" in %s (%s)...\n", query, game.Name, sourceToUse)
-	}
-
-	searchResult, err := service.SearchMods(ctx, sourceToUse, game.ID, query, searchCategory, searchTags, 0, 0)
-	if err != nil {
-		if errors.Is(err, domain.ErrAuthRequired) {
-			return authPromptError(sourceToUse)
+	if searchSource == "" {
+		if verbose {
+			fmt.Printf("Searching for %q in %s (all sources)...\n", query, game.Name)
 		}
-		return fmt.Errorf("search failed: %w", err)
+		agg, err := service.SearchAllSources(ctx, game.ID, query, searchCategory, searchTags, 0, 0)
+		if err != nil {
+			// No ErrAuthRequired special-case here: an all-sources failure's
+			// joined error already names each source and its reason (including
+			// auth), and a per-source auth hint lives in the warnings path.
+			return fmt.Errorf("search failed: %w", err)
+		}
+		mods, warnings = agg.Mods, agg.Warnings
+		totalResults = len(mods)
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
+		}
+	} else {
+		sourceToUse, err := resolveSource(game, searchSource, false)
+		if err != nil {
+			return err
+		}
+		if verbose {
+			fmt.Printf("Searching for %q in %s (%s)...\n", query, game.Name, sourceToUse)
+		}
+		searchResult, err := service.SearchMods(ctx, sourceToUse, game.ID, query, searchCategory, searchTags, 0, 0)
+		if err != nil {
+			if notice, ok := capabilityGapNotice(sourceToUse, err); ok {
+				return errors.New(notice)
+			}
+			if errors.Is(err, domain.ErrAuthRequired) {
+				return authPromptError(sourceToUse)
+			}
+			return fmt.Errorf("search failed: %w", err)
+		}
+		mods = searchResult.Mods
+		totalResults = len(mods)
 	}
 
-	mods := searchResult.Mods
+	warningStrs := make([]string, len(warnings))
+	for i, w := range warnings {
+		warningStrs[i] = fmt.Sprintf("source %s: %v", w.SourceID, w.Err)
+	}
+
 	if len(mods) == 0 {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(searchJSONOutput{GameID: game.ID, Query: query, Mods: []searchModJSON{}}); err != nil {
+			out := searchJSONOutput{GameID: game.ID, Query: query, Mods: []searchModJSON{}, Warnings: warningStrs}
+			if err := enc.Encode(out); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
 			return nil
@@ -107,31 +150,30 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return nil
 	}
 
-	// Get installed mods to mark already-installed ones
+	// Get installed mods to mark already-installed ones (source-aware: a mod
+	// ID is only unique within its source, so key on both).
 	profileName := profileOrDefault(searchProfile)
 	installedMods, _ := service.GetInstalledMods(game.ID, profileName)
-	installedIDs := make(map[string]bool)
+	installedKeys := make(map[string]bool)
 	for _, im := range installedMods {
-		if im.SourceID == sourceToUse {
-			installedIDs[im.ID] = true
-		}
+		installedKeys[domain.ModKey(im.SourceID, im.ID)] = true
 	}
 
 	// Capture total count before limiting for "Showing X of Y"
-	totalResults := len(mods)
 	if len(mods) > searchLimit {
 		mods = mods[:searchLimit]
 	}
 
 	if jsonOutput {
-		out := searchJSONOutput{GameID: game.ID, Query: query, Mods: make([]searchModJSON, len(mods))}
+		out := searchJSONOutput{GameID: game.ID, Query: query, Mods: make([]searchModJSON, len(mods)), Warnings: warningStrs}
 		for i, mod := range mods {
 			out.Mods[i] = searchModJSON{
 				ID:        mod.ID,
 				Name:      mod.Name,
 				Author:    mod.Author,
 				Version:   mod.Version,
-				Installed: installedIDs[mod.ID],
+				Source:    mod.SourceID,
+				Installed: installedKeys[domain.ModKey(mod.SourceID, mod.ID)],
 			}
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -144,23 +186,24 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// Print results
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\t"); err != nil {
+	if _, err := fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\tSOURCE\t"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
-	if _, err := fmt.Fprintln(w, "--\t----\t------\t-------\t"); err != nil {
+	if _, err := fmt.Fprintln(w, "--\t----\t------\t-------\t------\t"); err != nil {
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
 	for _, mod := range mods {
 		installedMark := ""
-		if installedIDs[mod.ID] {
+		if installedKeys[domain.ModKey(mod.SourceID, mod.ID)] {
 			installedMark = "[installed]"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			mod.ID,
 			truncate(mod.Name, 40),
 			truncate(mod.Author, 20),
 			mod.Version,
+			mod.SourceID,
 			installedMark,
 		); err != nil {
 			return fmt.Errorf("writing row: %w", err)

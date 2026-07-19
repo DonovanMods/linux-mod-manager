@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
@@ -124,4 +127,26 @@ func TestSearchCmd_DefaultFlags(t *testing.T) {
 
 	limitFlag := searchCmd.Flags().Lookup("limit")
 	assert.Equal(t, "10", limitFlag.DefValue)
+}
+
+func TestSearchCmdStructure(t *testing.T) {
+	assert.Equal(t, "search <query>", searchCmd.Use)
+	flag := searchCmd.Flags().Lookup("source")
+	if assert.NotNil(t, flag) {
+		assert.Contains(t, flag.Usage, "all configured sources",
+			"help text must reflect the new aggregate default")
+	}
+}
+
+func TestCapabilityGapNotice(t *testing.T) {
+	err := fmt.Errorf("source %q: searching: %w", "id-only", source.ErrNotSupported)
+	notice, ok := capabilityGapNotice("id-only", err)
+	assert.True(t, ok)
+	assert.Contains(t, notice, "does not support searching")
+	assert.Contains(t, notice, "lmm install --source id-only")
+	assert.NotContains(t, notice, "operation not supported by this source",
+		"the raw wrapped error must not leak into the notice")
+
+	_, ok = capabilityGapNotice("x", errors.New("network down"))
+	assert.False(t, ok)
 }
