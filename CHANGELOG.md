@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Search results (CLI and TUI) show each mod's source; the TUI search defaults to "All sources"
 - TUI Sources screen (key `5`) mirroring `lmm source list`
 
+### Changed
+
+- TUI: every entry path into the Search screen (`3`, tab-cycling, the dashboard menu, and `/`) now focuses the search input immediately, so typing can start right away; `Esc` unfocuses it so screen-level keys (`s` source cycling, navigation, `n`/`p` paging) work again
+
 ### Fixed
 
 - TUI search: a long per-source warning on a zero-results all-sources search no longer wraps inside the results panel and grows it past its height budget

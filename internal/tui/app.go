@@ -163,17 +163,34 @@ func (m Model) dashboardMenuRows() []string {
 	return rows
 }
 
-func (m Model) openSelectedMenuEntry() Model {
+func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 	if m.screen != ScreenDashboard {
-		return m
+		return m, nil
 	}
 	items := m.dashboardMenu()
 	selected := m.selected[ScreenDashboard]
 	if selected >= len(items) || !items[selected].hasTarget {
-		return m
+		return m, nil
 	}
-	m.screen = items[selected].target
-	return m
+	return m.gotoScreen(items[selected].target)
+}
+
+// gotoScreen switches to the target screen. Every entry path into
+// ScreenSearch — number/tab-cycling navigation, the dashboard menu, and "/"
+// — must leave the user ready to type immediately, so this is the single
+// place that focuses the search input on entry. Esc (the Blur binding) is
+// the only way back out of focus; once blurred, screen-level keys (s, n/p,
+// navigation) reach updateKey's outer switch again. Non-search targets are a
+// no-op beyond the screen assignment: the input is already unfocused in
+// every reachable case, since updateKey's focused-input branch swallows the
+// keys that would otherwise get here while ScreenSearch is still focused.
+func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
+	m.screen = screen
+	if screen != ScreenSearch {
+		return m, nil
+	}
+	m.search.input.Focus()
+	return m, textinput.Blink
 }
 
 func (m Model) Init() tea.Cmd {
@@ -269,24 +286,15 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = !m.showHelp
 		return m, nil
 	case key.Matches(msg, m.keys.NextScreen):
-		m.screen = screenAt((m.screenIndex() + 1) % len(screens))
-		return m, nil
+		return m.gotoScreen(screenAt((m.screenIndex() + 1) % len(screens)))
 	case key.Matches(msg, m.keys.PrevScreen):
-		m.screen = screenAt((m.screenIndex() - 1 + len(screens)) % len(screens))
-		return m, nil
+		return m.gotoScreen(screenAt((m.screenIndex() - 1 + len(screens)) % len(screens)))
 	case key.Matches(msg, m.keys.Dashboard):
-		m.screen = ScreenDashboard
-		return m, nil
+		return m.gotoScreen(ScreenDashboard)
 	case key.Matches(msg, m.keys.InstalledMods):
-		m.screen = ScreenInstalledMods
-		return m, nil
-	case key.Matches(msg, m.keys.Search):
-		m.screen = ScreenSearch
-		m.search.input.Focus()
-		return m, textinput.Blink
-	case key.Matches(msg, m.keys.SearchScreen):
-		m.screen = ScreenSearch
-		return m, nil
+		return m.gotoScreen(ScreenInstalledMods)
+	case key.Matches(msg, m.keys.Search), key.Matches(msg, m.keys.SearchScreen):
+		return m.gotoScreen(ScreenSearch)
 	case key.Matches(msg, m.keys.NextPage):
 		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.hasNextPage() {
 			return m.startSearch(m.search.page.Query, m.search.page.Page+1)
@@ -315,11 +323,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Profiles):
-		m.screen = ScreenProfiles
-		return m, nil
+		return m.gotoScreen(ScreenProfiles)
 	case key.Matches(msg, m.keys.Sources):
-		m.screen = ScreenSources
-		return m, nil
+		return m.gotoScreen(ScreenSources)
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 		return m, nil
@@ -327,7 +333,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(1)
 		return m, nil
 	case key.Matches(msg, m.keys.Select):
-		return m.openSelectedMenuEntry(), nil
+		return m.openSelectedMenuEntry()
 	default:
 		return m, nil
 	}
@@ -660,7 +666,15 @@ func (m Model) searchView() string {
 		}
 		return m.searchReadyView(header)
 	default: // searchIdle
-		return m.searchSinglePanel(append(header, m.theme.MutedText.Render("/ focus · enter search · s source")))
+		// Every entry path into ScreenSearch already focuses the input (see
+		// gotoScreen), so the idle hint only needs to mention "/ focus" when
+		// Esc has since blurred it — otherwise it would tell the user to do
+		// something that's already done.
+		hint := "enter search · s source · esc unfocus"
+		if !m.search.input.Focused() {
+			hint = "/ focus · s source"
+		}
+		return m.searchSinglePanel(append(header, m.theme.MutedText.Render(hint)))
 	}
 }
 
@@ -889,10 +903,10 @@ func (m Model) helpView() string {
 		m.theme.PanelTitle.Render("HELP"),
 		"arrows / hjkl       move or switch screens",
 		"tab / shift+tab     cycle top-level screens",
-		"1-5                 jump to a screen",
+		"1-5                 jump to a screen (3 focuses search)",
 		"/                   search from anywhere (jumps + focuses input)",
 		"enter               search",
-		"esc                 cancel input",
+		"esc                 unfocus search input",
 		"n/p                 result pages",
 		"s                   cycle source",
 		"?                   toggle this help",

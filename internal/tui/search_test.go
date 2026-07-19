@@ -23,13 +23,22 @@ func keyRunes(s string) tea.KeyMsg {
 func searchScreenModel(t *testing.T) Model {
 	t.Helper()
 	model := sizedPrototypeModel(t, "wizardry", 100, 30)
-	return updateWithRunes(t, model, "3") // jump to search screen (blurred)
+	return updateWithRunes(t, model, "3") // jump to search screen (focused)
 }
 
-func TestSlashFocusesSearchInputOnSearchScreen(t *testing.T) {
+// TestSlashRefocusesSearchInputAfterEsc covers "/"'s refocus behavior from
+// within the search screen itself: entering via "3" already focuses (see
+// TestNumberThreeJumpsAndFocuses), so this exercises the Esc-then-"/" path
+// instead of a no-op re-press of "/" on an already-focused input.
+func TestSlashRefocusesSearchInputAfterEsc(t *testing.T) {
 	t.Parallel()
 
 	model := searchScreenModel(t)
+	require.True(t, model.search.input.Focused(), "entering via 3 already focuses")
+
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.False(t, model.search.input.Focused())
+
 	model = updateWithRunes(t, model, "/")
 	require.True(t, model.search.input.Focused())
 }
@@ -50,20 +59,38 @@ func TestSlashFromAnyScreenJumpsAndFocuses(t *testing.T) {
 	require.Equal(t, "sky", model.search.input.Value())
 }
 
-func TestNumberThreeJumpsWithoutFocusing(t *testing.T) {
+func TestNumberThreeJumpsAndFocuses(t *testing.T) {
 	t.Parallel()
 
 	model := sizedPrototypeModel(t, "wizardry", 100, 30)
 	model = updateWithRunes(t, model, "3")
 	require.Equal(t, ScreenSearch, model.CurrentScreen())
-	require.False(t, model.search.input.Focused(), "3 is pure navigation")
+	require.True(t, model.search.input.Focused(), "3 must focus the input like every other entry path")
+}
+
+// TestEscThenSCyclesSourceProvingScreenKeysWork covers the other half of the
+// entry-focuses/Esc-blurs contract: once blurred, screen-level keys (here,
+// CycleSource's "s") must reach updateKey's outer switch instead of being
+// swallowed as literal input.
+func TestEscThenSCyclesSourceProvingScreenKeysWork(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t) // "3": ScreenSearch, focused
+	model.search.sources = []string{"curseforge", "nexusmods"}
+	require.True(t, model.search.input.Focused())
+
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.Equal(t, ScreenSearch, model.CurrentScreen())
+	require.False(t, model.search.input.Focused())
+
+	model = updateWithRunes(t, model, "s")
+	require.Equal(t, 1, model.search.sourceIdx, "s must cycle the source once unfocused")
 }
 
 func TestTypingWhileFocusedDoesNotTriggerGlobalKeys(t *testing.T) {
 	t.Parallel()
 
-	model := searchScreenModel(t)
-	model = updateWithRunes(t, model, "/")
+	model := searchScreenModel(t)  // "3" already focused the input
 	for _, r := range "quest124" { // q would quit; 1/2/4 would jump screens
 		model = updateWithRunes(t, model, string(r))
 	}
@@ -74,8 +101,7 @@ func TestTypingWhileFocusedDoesNotTriggerGlobalKeys(t *testing.T) {
 func TestEscBlursSearchInput(t *testing.T) {
 	t.Parallel()
 
-	model := searchScreenModel(t)
-	model = updateWithRunes(t, model, "/")
+	model := searchScreenModel(t) // "3" already focused the input
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	require.False(t, updated.(Model).search.input.Focused())
 }
@@ -83,8 +109,7 @@ func TestEscBlursSearchInput(t *testing.T) {
 func TestEnterSubmitsSearchAndRendersResults(t *testing.T) {
 	t.Parallel()
 
-	model := searchScreenModel(t)
-	model = updateWithRunes(t, model, "/")
+	model := searchScreenModel(t) // "3" already focused the input
 	for _, r := range "frost" {
 		model = updateWithRunes(t, model, string(r))
 	}
@@ -161,6 +186,7 @@ func TestCycleSourceKey(t *testing.T) {
 
 	model := searchScreenModel(t)
 	model.search.sources = []string{"curseforge", "nexusmods"}
+	model = updateWithKeyType(t, model, tea.KeyEsc) // s is a screen-level key; only reaches CycleSource once blurred
 	model = updateWithRunes(t, model, "s")
 	require.Equal(t, 1, model.search.sourceIdx)
 	model = updateWithRunes(t, model, "s")
@@ -175,6 +201,7 @@ func TestCycleSourceInvalidatesInFlightAndResults(t *testing.T) {
 	model.search.state = searchLoading
 	model.search.gen = 3
 
+	model = updateWithKeyType(t, model, tea.KeyEsc) // s is a screen-level key; only reaches CycleSource once blurred
 	model = updateWithRunes(t, model, "s")
 	require.Equal(t, searchIdle, model.search.state, "cycling resets state")
 	require.Greater(t, model.search.gen, 3, "gen bumped so in-flight results are stale")
@@ -202,8 +229,7 @@ func TestLongQueryDoesNotBreakSearchHeightInvariant(t *testing.T) {
 
 	for _, width := range []int{44, 48, 60, 80} {
 		model := sizedPrototypeModel(t, "wizardry", width, 24)
-		model = updateWithRunes(t, model, "3")
-		model = updateWithRunes(t, model, "/")
+		model = updateWithRunes(t, model, "3") // already focused
 		for range 100 {
 			model = updateWithRunes(t, model, "x")
 		}
@@ -216,6 +242,7 @@ func TestPaginationKeysRequeryWithinBounds(t *testing.T) {
 	t.Parallel()
 
 	model := searchScreenModel(t)
+	model = updateWithKeyType(t, model, tea.KeyEsc) // n/p are screen-level keys; only reach pagination once blurred
 	model.search.state = searchReady
 	model.search.page = SearchPage{Query: "q", Source: "nexusmods", Page: 0, PageSize: 10, TotalCount: 25}
 
@@ -230,8 +257,7 @@ func TestPaginationKeysRequeryWithinBounds(t *testing.T) {
 
 func TestCtrlCQuitsWhileSearchInputFocused(t *testing.T) {
 	t.Parallel()
-	model := searchScreenModel(t)
-	model = updateWithRunes(t, model, "/") // focus
+	model := searchScreenModel(t) // "3" already focused the input
 	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	require.NotNil(t, cmd)
 	require.Equal(t, tea.Quit(), cmd())
@@ -285,7 +311,7 @@ func TestSearchDefaultsToAllSources(t *testing.T) {
 	require.Equal(t, "", model.search.sources[0], "the all-sources sentinel is prepended")
 	require.Equal(t, "", model.search.source(), "default target is All sources")
 
-	model = updateWithRunes(t, model, "3") // jump to search screen (blurred)
+	model = updateWithRunes(t, model, "3") // jump to search screen (focused)
 	require.Contains(t, model.View(), "All sources", "header labels the sentinel for humans")
 }
 
@@ -297,6 +323,7 @@ func TestCycleSourceRotatesThroughAllThenReal(t *testing.T) {
 	model := searchScreenModel(t)
 	require.Equal(t, "", model.search.source(), "starts on All sources")
 
+	model = updateWithKeyType(t, model, tea.KeyEsc) // s is a screen-level key; only reaches CycleSource once blurred
 	model = updateWithRunes(t, model, "s")
 	require.Equal(t, "nexusmods", model.search.source(), "cycles to the one real source")
 
@@ -414,9 +441,8 @@ func TestTruncateIsDisplayWidthAware(t *testing.T) {
 func TestSubmitWithNoConfiguredSourcesFailsClearly(t *testing.T) {
 	t.Parallel()
 
-	model := searchScreenModel(t)
+	model := searchScreenModel(t) // "3" already focused the input
 	model.search.sources = nil
-	model = updateWithRunes(t, model, "/")
 	for _, r := range "sky" {
 		model = updateWithRunes(t, model, string(r))
 	}
