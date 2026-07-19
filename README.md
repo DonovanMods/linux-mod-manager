@@ -97,10 +97,10 @@ lmm game clear-default
 
 ### Basic Usage
 
-**Source auto-detection:** Commands automatically use the mod source configured for your game. If a game has multiple sources, you will be prompted to choose (or use `-y` to auto-select, or `--source` to specify explicitly).
+**Source auto-detection:** Commands automatically use the mod source configured for your game. If a game has multiple sources, you will be prompted to choose (or use `-y` to auto-select, or `--source` to specify explicitly) — **except `search`**, which queries every configured source concurrently by default instead of prompting (see [Search](#search) below).
 
 ```bash
-# Search for mods
+# Search for mods (all configured sources by default)
 lmm search "skyui" --game skyrim-se
 
 # Install a mod (interactive selection)
@@ -145,7 +145,7 @@ lmm mod set-update 12345 --game skyrim-se --pin
 
 ### Terminal UI
 
-Browse your configured game, installed mods, and profiles interactively, and search mod sources:
+Browse your configured game, installed mods, and profiles interactively, search mod sources, and inspect the source registry:
 
 ```bash
 lmm tui                     # real data, read-only
@@ -153,12 +153,27 @@ lmm tui --theme amber       # themes: wizardry (default), amber, dos, green
 lmm tui --prototype         # demo mode with static fake data
 ```
 
-Keys: `tab`/`h`/`l` cycle screens, `1`–`4` jump (`3` alone jumps to Search without
-focusing input), `↑↓`/`j`/`k` move, `enter` open/select,
-`/` searches from anywhere (jumps to the Search screen and focuses the input;
-type query, `enter` to search, `esc` returns to navigation),
-`n`/`p` next/previous page, `s` cycle sources, `?` help, `q` quit.
-Results mark already-installed mods; selecting a result shows a detail panel.
+Keys: `tab`/`h`/`l` cycle screens, `1`–`5` jump, `3` jumps to Search (any
+entry path focuses the input immediately; `5` opens Sources), `↑↓`/`j`/`k`
+move, `enter` open/select, `/` focus search from anywhere, type query,
+`enter` to search, `esc` unfocus (clears focus; afterward `s` cycles sources,
+number keys switch screens), `n`/`p` next/previous page, `?` help, `q` quit.
+
+The Search screen defaults to **All sources**, mirroring the CLI: the typed
+query runs concurrently against every source configured for the game. Press
+`s` to cycle to a single source and back to "All sources". While "All
+sources" is selected, results carry a source column, and if any source
+failed, a one-line warning (e.g. `⚠ 1 source unavailable: my-repo: ...`)
+appears above the results — the sources that succeeded are still shown.
+Results mark already-installed mods; selecting a result shows a detail
+panel.
+
+The **Sources** screen (key `5`) lists every source registered with lmm —
+built-in and custom — with the same ID/TYPE/AUTH/CAPABILITIES columns as
+`lmm source list`. It only shows sources that actually registered: a custom
+source whose definition file failed to load (bad YAML, ID collision, etc.)
+has no row here — check `lmm source list` for those.
+
 Browsing and searching are read-only — install/update/deploy actions from the TUI arrive in a later release.
 
 ## Configuration
@@ -228,7 +243,7 @@ This allows you to store different games' mods on different drives (e.g., large 
 
 ## Custom Sources
 
-In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. Three types are fully implemented: `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list you publish, over `https://` or as a local file), and `api` (a GET+JSON REST API described declaratively) — all three work from `search`/`install`/`update` like any built-in source (within each type's capabilities), and `manifest`/`api` sources also support optional API-key authentication.
+In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. Three types are fully implemented: `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list you publish, over `https://` or as a local file), and `api` (a GET+JSON REST API described declaratively) — all three work from `search`/`install`/`update` like any built-in source (within each type's capabilities), and `manifest`/`api` sources also support optional API-key authentication. Because `lmm search` queries every source configured for a game concurrently by default (see [Search](#search)), a game mapping several of these alongside NexusMods/CurseForge surfaces results from all of them in one query.
 
 Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml` (or `*.yml`). Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
 
@@ -620,7 +635,8 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 | Command                                | Description                                          |
 | -------------------------------------- | ---------------------------------------------------- |
-| `lmm search <query>`                   | Search for mods                                      |
+| `lmm search <query>`                   | Search all configured sources concurrently           |
+| `lmm search <query> --source ID`       | Search a single source instead of all configured ones |
 | `lmm search <query> --category ID`     | Filter by NexusMods category                         |
 | `lmm search <query> --tag TAG`         | Filter by tag (repeat for multiple)                  |
 | `lmm install <query>`                  | Search and install a mod                             |
@@ -669,6 +685,49 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm source validate <file>`           | Validate a user-defined source definition           |
 | `lmm source validate --probe <file>`   | Also live-smoke-test the definition (scan/fetch/API call) |
 | `lmm source validate --probe --id <mod-id> <file>` | Probe an `api` definition that has no `search` endpoint |
+
+### Search
+
+`lmm search <query>` queries every source configured for the game concurrently by default — there's no prompt to pick one first, even when several sources are mapped. Results carry a `SOURCE` column so you can tell which source found each mod:
+
+```
+$ lmm search bigger --game skyrim-se
+ID                  NAME             AUTHOR   VERSION  SOURCE
+--                  ----             ------   -------  ------
+BiggerBackpack-2.1  Bigger Backpack  donovan  2.1      donovan-mods
+```
+
+If one source fails, its failure is reported as a warning on stderr and the other sources' results are still returned — a flaky manifest URL doesn't hide results from a source that responded:
+
+```
+warning: source my-repo: source "my-repo": reading manifest /opt/mods/my-repo.yaml: open /opt/mods/my-repo.yaml: no such file or directory
+```
+
+Only when **every** configured source fails does the command return an error, which names each source's failure:
+
+```
+Error: search failed: all 1 source(s) failed: source my-repo: source "my-repo": reading manifest /opt/mods/my-repo.yaml: open /opt/mods/my-repo.yaml: no such file or directory
+```
+
+Use `--source <id>` to search a single configured source instead of aggregating:
+
+```bash
+lmm search bigger --game skyrim-se --source donovan-mods
+```
+
+A source that doesn't support searching (e.g. an `api` source defined without a `search` endpoint — see [API Sources](#api-sources)) is silently skipped when aggregating, but targeting it directly with `--source` reports a clear notice instead of a generic error:
+
+```
+Error: source "demo-api" does not support searching; install by ID instead: lmm install --source demo-api --id <mod-id>
+```
+
+A game with no configured sources at all fails fast with a diagnostic instead of an empty result:
+
+```
+Error: no mod sources configured for Skyrim Special Edition; add sources with 'lmm game add' or edit games.yaml
+```
+
+`--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`.
 
 ### Update check behavior
 

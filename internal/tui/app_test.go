@@ -37,7 +37,11 @@ func TestNumberKeysNavigateScreens(t *testing.T) {
 
 	updated = updateWithRunes(t, updated, "3")
 	require.Equal(t, ScreenSearch, updated.CurrentScreen())
+	require.True(t, updated.search.input.Focused(), "3 focuses the search input so typing starts immediately")
 
+	// Esc blurs so the remaining screen-level number keys reach updateKey's
+	// outer switch instead of being typed into the now-focused input.
+	updated = updateWithKeyType(t, updated, tea.KeyEsc)
 	updated = updateWithRunes(t, updated, "4")
 	require.Equal(t, ScreenProfiles, updated.CurrentScreen())
 
@@ -58,6 +62,23 @@ func TestTabCyclesScreens(t *testing.T) {
 	require.Equal(t, ScreenDashboard, updated.CurrentScreen())
 }
 
+// TestTabCyclingOntoSearchFocuses covers the tab-cycling entry path into
+// ScreenSearch: like every other entry path (number keys, dashboard menu,
+// "/"), it must focus the input immediately.
+func TestTabCyclingOntoSearchFocuses(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+
+	updated := updateWithKeyType(t, model, tea.KeyTab)
+	require.Equal(t, ScreenInstalledMods, updated.CurrentScreen())
+
+	updated = updateWithKeyType(t, updated, tea.KeyTab)
+	require.Equal(t, ScreenSearch, updated.CurrentScreen())
+	require.True(t, updated.search.input.Focused(), "tab-cycling onto search must focus the input")
+}
+
 func TestArrowAndVimKeysNavigateScreens(t *testing.T) {
 	t.Parallel()
 
@@ -69,7 +90,11 @@ func TestArrowAndVimKeysNavigateScreens(t *testing.T) {
 
 	model = updateWithRunes(t, model, "l")
 	require.Equal(t, ScreenSearch, model.CurrentScreen())
+	require.True(t, model.search.input.Focused(), "cycling onto search focuses the input")
 
+	// Esc blurs so the remaining screen-level arrow/vim keys reach updateKey's
+	// outer switch instead of moving the cursor inside the now-focused input.
+	model = updateWithKeyType(t, model, tea.KeyEsc)
 	model = updateWithKeyType(t, model, tea.KeyLeft)
 	require.Equal(t, ScreenInstalledMods, model.CurrentScreen())
 
@@ -291,10 +316,11 @@ func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
 	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 
-	// Second entry opens Search.
+	// Second entry opens Search, focused like every other entry path.
 	moved := updateWithRunes(t, model, "j")
 	opened, _ = moved.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, ScreenSearch, opened.(Model).CurrentScreen())
+	require.True(t, opened.(Model).search.input.Focused(), "dashboard menu entry into search must focus the input")
 }
 
 func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {
@@ -304,7 +330,8 @@ func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {
 	require.NoError(t, err)
 
 	// Move to the last entry (Conflict Oracle) — no screen exists for it yet.
-	for range 3 {
+	// 4 presses: Installed Mods -> Search -> Profiles -> Sources -> Oracle.
+	for range 4 {
 		model = updateWithRunes(t, model, "j")
 	}
 	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -329,6 +356,7 @@ func (f failingProvider) Overview(context.Context) (Summary, []ModItem, error) {
 }
 func (f failingProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, f.err }
 func (f failingProvider) Sources() []string                               { return []string{"nexusmods"} }
+func (f failingProvider) SourceInfos() []SourceInfo                       { return nil }
 func (f failingProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, f.err
 }
@@ -384,6 +412,7 @@ func (emptyProvider) Overview(context.Context) (Summary, []ModItem, error) {
 }
 func (emptyProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (emptyProvider) Sources() []string                               { return []string{"nexusmods"} }
+func (emptyProvider) SourceInfos() []SourceInfo                       { return nil }
 func (emptyProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
@@ -401,7 +430,10 @@ func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	require.Contains(t, model.View(), "No mods installed yet. 'lmm install <mod>' begins the quest.")
 
 	model = updateWithRunes(t, model, "3")
-	require.Contains(t, model.View(), "/ focus · enter search · s source")
+	require.Contains(t, model.View(), "enter search · esc unfocus", "3 already focused the input")
+
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.Contains(t, model.View(), "/ focus · s source", "unfocused idle hint still tells the user how to refocus")
 }
 
 // recordingProvider wraps a delegate DataProvider and records the context
@@ -424,6 +456,10 @@ func (r recordingProvider) Profiles(ctx context.Context) ([]ProfileItem, error) 
 
 func (r recordingProvider) Sources() []string {
 	return r.delegate.Sources()
+}
+
+func (r recordingProvider) SourceInfos() []SourceInfo {
+	return r.delegate.SourceInfos()
 }
 
 func (r recordingProvider) Search(ctx context.Context, source, query string, page int) (SearchPage, error) {

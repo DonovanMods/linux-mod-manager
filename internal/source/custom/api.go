@@ -202,6 +202,11 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 		return source.SearchResult{}, fmt.Errorf("source %q: searching: %w", a.id, source.ErrNotSupported)
 	}
 
+	page := query.Page
+	if page < 0 {
+		page = 0 // match the shared searchMods clamp; never send negative paging upstream
+	}
+
 	pageSize := query.PageSize
 	if pageSize <= 0 {
 		pageSize = 20
@@ -209,9 +214,9 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 	vals := map[string]string{
 		"game_id":   query.GameID,
 		"query":     query.Query,
-		"page":      strconv.Itoa(query.Page + a.pageStart),
+		"page":      strconv.Itoa(page + a.pageStart),
 		"page_size": strconv.Itoa(pageSize),
-		"offset":    strconv.Itoa(query.Page * pageSize),
+		"offset":    strconv.Itoa(page * pageSize),
 	}
 
 	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))
@@ -251,7 +256,7 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 		}
 	}
 
-	return source.SearchResult{Mods: mods, TotalCount: total, Page: query.Page, PageSize: pageSize}, nil
+	return source.SearchResult{Mods: mods, TotalCount: total, Page: page, PageSize: pageSize}, nil
 }
 
 // GetMod implements source.ModSource via the get_mod endpoint. gameID feeds

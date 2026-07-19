@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -16,13 +17,21 @@ import (
 
 // stubSource implements source.ModSource with canned search results.
 // Only Search and identity methods matter; the rest are unreachable in
-// these tests.
+// these tests. id defaults to "stub" when unset, preserving existing
+// single-source test fixtures; set it to register multiple distinct stubs
+// (e.g. for all-sources search tests).
 type stubSource struct {
+	id     string
 	result source.SearchResult
 	err    error
 }
 
-func (s *stubSource) ID() string      { return "stub" }
+func (s *stubSource) ID() string {
+	if s.id != "" {
+		return s.id
+	}
+	return "stub"
+}
 func (s *stubSource) Name() string    { return "Stub Source" }
 func (s *stubSource) AuthURL() string { return "" }
 func (s *stubSource) ExchangeToken(context.Context, string) (*source.Token, error) {
@@ -208,4 +217,43 @@ func TestCoreProviderSearchPropagatesAuthRequired(t *testing.T) {
 
 	_, err := provider.Search(context.Background(), "stub", "x", 0)
 	require.ErrorIs(t, err, domain.ErrAuthRequired)
+}
+
+func TestCoreProviderSearchAllSources(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"alpha": "testgame", "beta": "testgame"}
+	svc.RegisterSource(&stubSource{id: "alpha", result: source.SearchResult{
+		Mods:       []domain.Mod{{ID: "a1", SourceID: "alpha", Name: "Alpha Mod", Version: "1.0"}},
+		TotalCount: 1,
+	}})
+	svc.RegisterSource(&stubSource{id: "beta", result: source.SearchResult{
+		Mods:       []domain.Mod{{ID: "b1", SourceID: "beta", Name: "Beta Mod", Version: "1.0"}},
+		TotalCount: 1,
+	}})
+
+	page, err := provider.Search(context.Background(), "", "quer", 0)
+	require.NoError(t, err)
+	// Results from both sources present, each row's Source set:
+	sources := map[string]bool{}
+	for _, item := range page.Results {
+		sources[item.Source] = true
+	}
+	assert.Len(t, sources, 2)
+}
+
+func TestCoreProviderSearchAllSourcesWarnings(t *testing.T) {
+	const failingSourceID = "flaky"
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"good": "testgame", failingSourceID: "testgame"}
+	svc.RegisterSource(&stubSource{id: "good", result: source.SearchResult{
+		Mods:       []domain.Mod{{ID: "g1", SourceID: "good", Name: "Good Mod", Version: "1.0"}},
+		TotalCount: 1,
+	}})
+	svc.RegisterSource(&stubSource{id: failingSourceID, err: errors.New("connection refused")})
+
+	page, err := provider.Search(context.Background(), "", "quer", 0)
+	require.NoError(t, err)
+	require.Len(t, page.Warnings, 1)
+	assert.Contains(t, page.Warnings[0], failingSourceID)
+	assert.NotEmpty(t, page.Results, "good source's results survive the failure")
 }

@@ -62,6 +62,7 @@ type Model struct {
 	summary  Summary
 	mods     []ModItem
 	profiles []ProfileItem
+	sources  []SourceInfo
 	search   searchModel
 
 	screen   Screen
@@ -113,11 +114,17 @@ func NewModel(options Options) (Model, error) {
 		state:    stateLoading,
 		screen:   ScreenDashboard,
 		search:   newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize()),
+		// sources is seeded synchronously (like search's source list above)
+		// rather than through loadData/dataLoadedMsg: SourceInfos is a
+		// read-only view of already-registered sources, not an I/O call that
+		// can fail, so it needs no async load state or error path.
+		sources: options.Provider.SourceInfos(),
 		selected: map[Screen]int{
 			ScreenDashboard:     0,
 			ScreenInstalledMods: 0,
 			ScreenSearch:        0,
 			ScreenProfiles:      0,
+			ScreenSources:       0,
 		},
 	}, nil
 }
@@ -134,6 +141,7 @@ func (m Model) dashboardMenu() []menuItem {
 			{label: "RUN SPELLBOOK SCAN", target: ScreenInstalledMods, hasTarget: true},
 			{label: "QUERY ARCHIVE INDEX", target: ScreenSearch, hasTarget: true},
 			{label: "LOAD PROFILE ROSTER", target: ScreenProfiles, hasTarget: true},
+			{label: "SCRY SOURCE REGISTRY", target: ScreenSources, hasTarget: true},
 			{label: "ASK CONFLICT ORACLE"},
 		}
 	}
@@ -141,6 +149,7 @@ func (m Model) dashboardMenu() []menuItem {
 		{label: "Installed Mods", target: ScreenInstalledMods, hasTarget: true},
 		{label: "Search Archives", target: ScreenSearch, hasTarget: true},
 		{label: "Profiles", target: ScreenProfiles, hasTarget: true},
+		{label: "Sources", target: ScreenSources, hasTarget: true},
 		{label: "Consult Conflict Oracle"},
 	}
 }
@@ -154,17 +163,34 @@ func (m Model) dashboardMenuRows() []string {
 	return rows
 }
 
-func (m Model) openSelectedMenuEntry() Model {
+func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 	if m.screen != ScreenDashboard {
-		return m
+		return m, nil
 	}
 	items := m.dashboardMenu()
 	selected := m.selected[ScreenDashboard]
 	if selected >= len(items) || !items[selected].hasTarget {
-		return m
+		return m, nil
 	}
-	m.screen = items[selected].target
-	return m
+	return m.gotoScreen(items[selected].target)
+}
+
+// gotoScreen switches to the target screen. Every entry path into
+// ScreenSearch — number/tab-cycling navigation, the dashboard menu, and "/"
+// — must leave the user ready to type immediately, so this is the single
+// place that focuses the search input on entry. Esc (the Blur binding) is
+// the only way back out of focus; once blurred, screen-level keys (s, n/p,
+// navigation) reach updateKey's outer switch again. Non-search targets are a
+// no-op beyond the screen assignment: the input is already unfocused in
+// every reachable case, since updateKey's focused-input branch swallows the
+// keys that would otherwise get here while ScreenSearch is still focused.
+func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
+	m.screen = screen
+	if screen != ScreenSearch {
+		return m, nil
+	}
+	m.search.input.Focus()
+	return m, textinput.Blink
 }
 
 func (m Model) Init() tea.Cmd {
@@ -210,7 +236,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.search.gen {
 			return m, nil
 		}
-		if errors.Is(msg.err, domain.ErrAuthRequired) {
+		// The sentinel source ("" == all sources) has no single source name to
+		// report; routing it here would render "Authentication required for ."
+		// and a broken "lmm auth login " hint. Fall through to searchFailed,
+		// whose rendering already names each failing source (see
+		// core.Service.SearchAllSources' joined per-source errors).
+		if msg.source != "" && errors.Is(msg.err, domain.ErrAuthRequired) {
 			m.search.state = searchAuthRequired
 			m.search.authSource = msg.source
 			return m, nil
@@ -255,24 +286,15 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = !m.showHelp
 		return m, nil
 	case key.Matches(msg, m.keys.NextScreen):
-		m.screen = screenAt((m.screenIndex() + 1) % len(screens))
-		return m, nil
+		return m.gotoScreen(screenAt((m.screenIndex() + 1) % len(screens)))
 	case key.Matches(msg, m.keys.PrevScreen):
-		m.screen = screenAt((m.screenIndex() - 1 + len(screens)) % len(screens))
-		return m, nil
+		return m.gotoScreen(screenAt((m.screenIndex() - 1 + len(screens)) % len(screens)))
 	case key.Matches(msg, m.keys.Dashboard):
-		m.screen = ScreenDashboard
-		return m, nil
+		return m.gotoScreen(ScreenDashboard)
 	case key.Matches(msg, m.keys.InstalledMods):
-		m.screen = ScreenInstalledMods
-		return m, nil
-	case key.Matches(msg, m.keys.Search):
-		m.screen = ScreenSearch
-		m.search.input.Focus()
-		return m, textinput.Blink
-	case key.Matches(msg, m.keys.SearchScreen):
-		m.screen = ScreenSearch
-		return m, nil
+		return m.gotoScreen(ScreenInstalledMods)
+	case key.Matches(msg, m.keys.Search), key.Matches(msg, m.keys.SearchScreen):
+		return m.gotoScreen(ScreenSearch)
 	case key.Matches(msg, m.keys.NextPage):
 		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.hasNextPage() {
 			return m.startSearch(m.search.page.Query, m.search.page.Page+1)
@@ -301,8 +323,9 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Profiles):
-		m.screen = ScreenProfiles
-		return m, nil
+		return m.gotoScreen(ScreenProfiles)
+	case key.Matches(msg, m.keys.Sources):
+		return m.gotoScreen(ScreenSources)
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 		return m, nil
@@ -310,7 +333,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(1)
 		return m, nil
 	case key.Matches(msg, m.keys.Select):
-		return m.openSelectedMenuEntry(), nil
+		return m.openSelectedMenuEntry()
 	default:
 		return m, nil
 	}
@@ -397,6 +420,8 @@ func (m Model) itemCount(screen Screen) int {
 		return len(m.search.page.Results)
 	case ScreenProfiles:
 		return len(m.profiles)
+	case ScreenSources:
+		return len(m.sources)
 	default:
 		return len(m.dashboardMenu())
 	}
@@ -440,6 +465,8 @@ func (m Model) screenView() string {
 		return m.searchView()
 	case ScreenProfiles:
 		return m.profilesView()
+	case ScreenSources:
+		return m.sourcesView()
 	default:
 		return m.dashboardView()
 	}
@@ -569,8 +596,36 @@ func (m Model) searchHeaderLines() []string {
 	if m.search.state == searchReady {
 		source = m.search.page.Source
 	}
-	meta := m.theme.MutedText.Render(fmt.Sprintf("[source: %s  (s cycles)]", source))
+	meta := m.theme.MutedText.Render(fmt.Sprintf("[source: %s  (s cycles)]", sourceLabel(source)))
 	return []string{title + "  " + meta, m.search.input.View()}
+}
+
+// searchWarningLine renders m.search.page.Warnings — per-source failures
+// surfaced by all-sources searches, see SearchPage.Warnings — as one status
+// line truncated to width, or "" when there are none. Only meaningful in
+// searchReady (the only state where page is guaranteed to describe the
+// on-screen results; see searchHeaderLines's source-label comment for the
+// same reasoning applied to the source label).
+//
+// width must match where the caller places the line: searchReadyView's
+// header sits OUTSIDE any Width()-constrained panel, so it truncates to
+// m.availableWidth(); the zero-results branch of searchView places it
+// INSIDE searchSinglePanel, whose content width is narrower by the panel's
+// horizontal frame size (border + padding, see searchInputWidthFor's
+// equivalent math). Passing the wrong width lets a still-overlong line
+// reach a narrower panel, where lipgloss re-wraps it into extra physical
+// lines and grows the view past the fixed height budget.
+func (m Model) searchWarningLine(width int) string {
+	warnings := m.search.page.Warnings
+	if len(warnings) == 0 {
+		return ""
+	}
+	noun := "source"
+	if len(warnings) != 1 {
+		noun = "sources"
+	}
+	line := fmt.Sprintf("⚠ %d %s unavailable: %s", len(warnings), noun, strings.Join(warnings, "; "))
+	return truncate(m.theme.WarningText.Render(line), width)
 }
 
 // searchSinglePanel wraps header+body lines in one full-bounds panel, used by
@@ -595,13 +650,32 @@ func (m Model) searchView() string {
 		return m.searchSinglePanel(append(header, m.theme.DangerText.Render(m.search.err.Error())))
 	case searchReady:
 		if len(m.search.page.Results) == 0 {
+			// Placed inside searchSinglePanel below, so the warning must
+			// truncate to the panel's content width, not the full terminal
+			// width — see searchWarningLine's doc comment.
+			panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+			if warning := m.searchWarningLine(panelContentWidth); warning != "" {
+				header = append(header, warning)
+			}
 			return m.searchSinglePanel(append(header,
-				m.theme.MutedText.Render(fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, m.search.page.Source)),
+				m.theme.MutedText.Render(fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, sourceLabel(m.search.page.Source))),
 			))
+		}
+		if warning := m.searchWarningLine(m.availableWidth()); warning != "" {
+			header = append(header, warning)
 		}
 		return m.searchReadyView(header)
 	default: // searchIdle
-		return m.searchSinglePanel(append(header, m.theme.MutedText.Render("/ focus · enter search · s source")))
+		// Every entry path into ScreenSearch already focuses the input (see
+		// gotoScreen), so the idle hint only needs to mention "/ focus" when
+		// Esc has since blurred it — otherwise it would tell the user to do
+		// something that's already done. While focused, 's' types into the
+		// query (not a source-cycle shortcut), so exclude it from the focused hint.
+		hint := "enter search · esc unfocus"
+		if !m.search.input.Focused() {
+			hint = "/ focus · s source"
+		}
+		return m.searchSinglePanel(append(header, m.theme.MutedText.Render(hint)))
 	}
 }
 
@@ -644,24 +718,37 @@ func (m Model) searchReadyView(header []string) string {
 }
 
 // searchResultsPane renders the selectable result rows: name / version /
-// status, with "installed" statuses styled to pop. Column widths are derived
-// from the pane's actual content width (rather than fixed constants) and the
-// name column always absorbs whatever's left, so the three columns can never
-// sum past innerWidth. Overflowing values truncate instead of overflowing
-// into lipgloss's automatic line wrap, which would silently break the
-// exact-height layout invariant. Rows beyond maxLines are omitted for the
-// same reason (a full page of results can outnumber the available rows on a
-// short terminal).
+// status, with "installed" statuses styled to pop. In all-sources mode
+// (m.search.source() == "", i.e. the search that produced page targeted
+// every configured source), a source column is added so results from
+// different sources can be told apart; single-source mode's columns are
+// unchanged. Column widths are derived from the pane's actual content width
+// (rather than fixed constants) and the name column always absorbs
+// whatever's left, so the columns can never sum past innerWidth. Overflowing
+// values truncate instead of overflowing into lipgloss's automatic line
+// wrap, which would silently break the exact-height layout invariant. Rows
+// beyond maxLines are omitted for the same reason (a full page of results
+// can outnumber the available rows on a short terminal).
 func (m Model) searchResultsPane(width, maxLines int) string {
-	const (
-		prefixWidth = 2 // m.row()'s "> "/"  " selection marker
-		gaps        = 2 // the two separating spaces between columns
-	)
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+
+	withSource := m.search.source() == ""
+	gaps := 2 // separating spaces between columns (name|version|status)
+	minAvail := 3
+	if withSource {
+		gaps = 3 // one more separator for the added source column
+		minAvail = 4
+	}
+
 	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	avail := max(innerWidth-prefixWidth-gaps, 3)
+	avail := max(innerWidth-prefixWidth-gaps, minAvail)
 	statusWidth := min(max(avail/4, 1), 9) // "installed"/"available" are 9 runes
 	versionWidth := min(max(avail/4, 1), 8)
-	nameWidth := max(avail-statusWidth-versionWidth, 1)
+	sourceWidth := 0
+	if withSource {
+		sourceWidth = min(max(avail/5, 1), 10)
+	}
+	nameWidth := max(avail-statusWidth-versionWidth-sourceWidth, 1)
 
 	results := m.search.page.Results
 	if len(results) > maxLines {
@@ -674,10 +761,19 @@ func (m Model) searchResultsPane(width, maxLines int) string {
 		if item.Status == "installed" {
 			status = m.theme.WarningText.Render(status)
 		}
-		line := fmt.Sprintf("%-*s %-*s %s",
-			nameWidth, truncate(item.Name, nameWidth),
-			versionWidth, truncate(item.Version, versionWidth),
-			status)
+		var line string
+		if withSource {
+			line = fmt.Sprintf("%-*s %-*s %-*s %s",
+				nameWidth, truncate(item.Name, nameWidth),
+				versionWidth, truncate(item.Version, versionWidth),
+				sourceWidth, truncate(item.Source, sourceWidth),
+				status)
+		} else {
+			line = fmt.Sprintf("%-*s %-*s %s",
+				nameWidth, truncate(item.Name, nameWidth),
+				versionWidth, truncate(item.Version, versionWidth),
+				status)
+		}
 		rows = append(rows, m.row(i, line))
 	}
 	return strings.Join(rows, "\n")
@@ -772,15 +868,46 @@ func (m Model) profilesView() string {
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// sourcesView renders the read-only source registry: every source
+// registered with the DataProvider (built-in and user-defined), one row
+// each, in the single-pane list style profilesView uses. Unlike
+// `lmm source list`, there is no error/status column — see SourceInfo's doc
+// comment for why definition-load failures never reach this screen.
+func (m Model) sourcesView() string {
+	// Calculate the panel's content width, which is narrower than availableWidth()
+	// by the panel's horizontal frame size (border + padding). Rows that render
+	// INSIDE this panel must be truncated to this width to prevent lipgloss from
+	// re-wrapping overlong lines and growing the view past its fixed height
+	// budget; see the fix in commit 2c075e3 for the same issue in searchView's
+	// zero-results warning.
+	panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+
+	// "  " matches m.row()'s 2-column selection-marker prefix ("> "/"  ") so
+	// the header lines up with the data columns below it instead of starting
+	// two columns to their left.
+	headerLine := "  " + fmt.Sprintf("%-20s %-12s %-6s %s", "ID", "TYPE", "AUTH", "CAPABILITIES")
+	headerLine = truncate(headerLine, panelContentWidth)
+	rows := []string{
+		m.theme.PanelTitle.Render("SOURCE REGISTRY"),
+		m.theme.MutedText.Render(headerLine),
+	}
+	for i, src := range m.sources {
+		line := fmt.Sprintf("%-20s %-12s %-6s %s", src.ID, src.Type, src.Auth, src.Capabilities)
+		line = truncate(line, panelContentWidth)
+		rows = append(rows, m.row(i, line))
+	}
+	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+}
+
 func (m Model) helpView() string {
 	return m.panel(m.availableWidth()).Render(strings.Join([]string{
 		m.theme.PanelTitle.Render("HELP"),
 		"arrows / hjkl       move or switch screens",
 		"tab / shift+tab     cycle top-level screens",
-		"1-4                 jump to a screen",
+		"1-5                 jump to a screen (3 focuses search)",
 		"/                   search from anywhere (jumps + focuses input)",
 		"enter               search",
-		"esc                 cancel input",
+		"esc                 unfocus search input",
 		"n/p                 result pages",
 		"s                   cycle source",
 		"?                   toggle this help",

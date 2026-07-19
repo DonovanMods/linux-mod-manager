@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,13 +23,22 @@ func keyRunes(s string) tea.KeyMsg {
 func searchScreenModel(t *testing.T) Model {
 	t.Helper()
 	model := sizedPrototypeModel(t, "wizardry", 100, 30)
-	return updateWithRunes(t, model, "3") // jump to search screen (blurred)
+	return updateWithRunes(t, model, "3") // jump to search screen (focused)
 }
 
-func TestSlashFocusesSearchInputOnSearchScreen(t *testing.T) {
+// TestSlashRefocusesSearchInputAfterEsc covers "/"'s refocus behavior from
+// within the search screen itself: entering via "3" already focuses (see
+// TestNumberThreeJumpsAndFocuses), so this exercises the Esc-then-"/" path
+// instead of a no-op re-press of "/" on an already-focused input.
+func TestSlashRefocusesSearchInputAfterEsc(t *testing.T) {
 	t.Parallel()
 
 	model := searchScreenModel(t)
+	require.True(t, model.search.input.Focused(), "entering via 3 already focuses")
+
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.False(t, model.search.input.Focused())
+
 	model = updateWithRunes(t, model, "/")
 	require.True(t, model.search.input.Focused())
 }
@@ -48,20 +59,38 @@ func TestSlashFromAnyScreenJumpsAndFocuses(t *testing.T) {
 	require.Equal(t, "sky", model.search.input.Value())
 }
 
-func TestNumberThreeJumpsWithoutFocusing(t *testing.T) {
+func TestNumberThreeJumpsAndFocuses(t *testing.T) {
 	t.Parallel()
 
 	model := sizedPrototypeModel(t, "wizardry", 100, 30)
 	model = updateWithRunes(t, model, "3")
 	require.Equal(t, ScreenSearch, model.CurrentScreen())
-	require.False(t, model.search.input.Focused(), "3 is pure navigation")
+	require.True(t, model.search.input.Focused(), "3 must focus the input like every other entry path")
+}
+
+// TestEscThenSCyclesSourceProvingScreenKeysWork covers the other half of the
+// entry-focuses/Esc-blurs contract: once blurred, screen-level keys (here,
+// CycleSource's "s") must reach updateKey's outer switch instead of being
+// swallowed as literal input.
+func TestEscThenSCyclesSourceProvingScreenKeysWork(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t) // "3": ScreenSearch, focused
+	model.search.sources = []string{"curseforge", "nexusmods"}
+	require.True(t, model.search.input.Focused())
+
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.Equal(t, ScreenSearch, model.CurrentScreen())
+	require.False(t, model.search.input.Focused())
+
+	model = updateWithRunes(t, model, "s")
+	require.Equal(t, 1, model.search.sourceIdx, "s must cycle the source once unfocused")
 }
 
 func TestTypingWhileFocusedDoesNotTriggerGlobalKeys(t *testing.T) {
 	t.Parallel()
 
-	model := searchScreenModel(t)
-	model = updateWithRunes(t, model, "/")
+	model := searchScreenModel(t)  // "3" already focused the input
 	for _, r := range "quest124" { // q would quit; 1/2/4 would jump screens
 		model = updateWithRunes(t, model, string(r))
 	}
@@ -72,8 +101,7 @@ func TestTypingWhileFocusedDoesNotTriggerGlobalKeys(t *testing.T) {
 func TestEscBlursSearchInput(t *testing.T) {
 	t.Parallel()
 
-	model := searchScreenModel(t)
-	model = updateWithRunes(t, model, "/")
+	model := searchScreenModel(t) // "3" already focused the input
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	require.False(t, updated.(Model).search.input.Focused())
 }
@@ -81,8 +109,7 @@ func TestEscBlursSearchInput(t *testing.T) {
 func TestEnterSubmitsSearchAndRendersResults(t *testing.T) {
 	t.Parallel()
 
-	model := searchScreenModel(t)
-	model = updateWithRunes(t, model, "/")
+	model := searchScreenModel(t) // "3" already focused the input
 	for _, r := range "frost" {
 		model = updateWithRunes(t, model, string(r))
 	}
@@ -124,11 +151,42 @@ func TestAuthRequiredBecomesFirstClassState(t *testing.T) {
 	require.Equal(t, "nexusmods", m.search.authSource)
 }
 
+// TestAllSourcesAuthFailureShowsPerSourceDetail covers the sentinel
+// ("" == all sources) case: when every source fails on auth, the joined
+// error still satisfies errors.Is(err, domain.ErrAuthRequired), but routing
+// it to searchAuthRequired would render "Authentication required for ." and
+// a broken "lmm auth login " hint (msg.source is the sentinel, not a real
+// source). It must fall through to searchFailed instead, whose rendering
+// already names each failing source.
+func TestAllSourcesAuthFailureShowsPerSourceDetail(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.gen = 1
+	joined := errors.Join(
+		fmt.Errorf("source nexusmods: %w", domain.ErrAuthRequired),
+		fmt.Errorf("source curseforge: %w", domain.ErrAuthRequired),
+	)
+	updated, _ := model.Update(searchFailedMsg{
+		gen:    1,
+		err:    fmt.Errorf("all 2 source(s) failed: %w", joined),
+		source: "",
+	})
+	m := updated.(Model)
+	require.Equal(t, searchFailed, m.search.state, "sentinel source must not route to the single-source auth state")
+
+	view := m.View()
+	require.Contains(t, view, "nexusmods", "failed view must retain the per-source detail")
+	require.NotContains(t, view, "Authentication required for .", "must not render the broken sentinel message")
+	require.NotContains(t, view, "lmm auth login '", "must not render a broken auth-login hint for an empty source")
+}
+
 func TestCycleSourceKey(t *testing.T) {
 	t.Parallel()
 
 	model := searchScreenModel(t)
 	model.search.sources = []string{"curseforge", "nexusmods"}
+	model = updateWithKeyType(t, model, tea.KeyEsc) // s is a screen-level key; only reaches CycleSource once blurred
 	model = updateWithRunes(t, model, "s")
 	require.Equal(t, 1, model.search.sourceIdx)
 	model = updateWithRunes(t, model, "s")
@@ -143,6 +201,7 @@ func TestCycleSourceInvalidatesInFlightAndResults(t *testing.T) {
 	model.search.state = searchLoading
 	model.search.gen = 3
 
+	model = updateWithKeyType(t, model, tea.KeyEsc) // s is a screen-level key; only reaches CycleSource once blurred
 	model = updateWithRunes(t, model, "s")
 	require.Equal(t, searchIdle, model.search.state, "cycling resets state")
 	require.Greater(t, model.search.gen, 3, "gen bumped so in-flight results are stale")
@@ -170,8 +229,7 @@ func TestLongQueryDoesNotBreakSearchHeightInvariant(t *testing.T) {
 
 	for _, width := range []int{44, 48, 60, 80} {
 		model := sizedPrototypeModel(t, "wizardry", width, 24)
-		model = updateWithRunes(t, model, "3")
-		model = updateWithRunes(t, model, "/")
+		model = updateWithRunes(t, model, "3") // already focused
 		for range 100 {
 			model = updateWithRunes(t, model, "x")
 		}
@@ -184,6 +242,7 @@ func TestPaginationKeysRequeryWithinBounds(t *testing.T) {
 	t.Parallel()
 
 	model := searchScreenModel(t)
+	model = updateWithKeyType(t, model, tea.KeyEsc) // n/p are screen-level keys; only reach pagination once blurred
 	model.search.state = searchReady
 	model.search.page = SearchPage{Query: "q", Source: "nexusmods", Page: 0, PageSize: 10, TotalCount: 25}
 
@@ -198,8 +257,7 @@ func TestPaginationKeysRequeryWithinBounds(t *testing.T) {
 
 func TestCtrlCQuitsWhileSearchInputFocused(t *testing.T) {
 	t.Parallel()
-	model := searchScreenModel(t)
-	model = updateWithRunes(t, model, "/") // focus
+	model := searchScreenModel(t) // "3" already focused the input
 	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	require.NotNil(t, cmd)
 	require.Equal(t, tea.Quit(), cmd())
@@ -246,6 +304,77 @@ func TestSearchViewRendersStates(t *testing.T) {
 	require.Contains(t, view, "No archives matched", "zero-result state renders honest copy")
 }
 
+func TestSearchDefaultsToAllSources(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	require.Equal(t, "", model.search.sources[0], "the all-sources sentinel is prepended")
+	require.Equal(t, "", model.search.source(), "default target is All sources")
+
+	model = updateWithRunes(t, model, "3") // jump to search screen (focused)
+	require.Contains(t, model.View(), "All sources", "header labels the sentinel for humans")
+}
+
+func TestCycleSourceRotatesThroughAllThenReal(t *testing.T) {
+	t.Parallel()
+
+	// Prototype provider has exactly one real source ("nexusmods"), so the
+	// sentinel-prefixed list is ["", "nexusmods"].
+	model := searchScreenModel(t)
+	require.Equal(t, "", model.search.source(), "starts on All sources")
+
+	model = updateWithKeyType(t, model, tea.KeyEsc) // s is a screen-level key; only reaches CycleSource once blurred
+	model = updateWithRunes(t, model, "s")
+	require.Equal(t, "nexusmods", model.search.source(), "cycles to the one real source")
+
+	model = updateWithRunes(t, model, "s")
+	require.Equal(t, "", model.search.source(), "wraps back to All sources")
+}
+
+func TestSearchWarningLineRendered(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.gen = 1
+	updated, _ := model.Update(searchResultMsg{gen: 1, page: SearchPage{
+		Query: "sky", Source: "", PageSize: 10, TotalCount: 1,
+		Results:  []ModItem{{Name: "SkyUI", Source: "nexusmods", Status: "available"}},
+		Warnings: []string{"curseforge: connection refused"},
+	}})
+	m := updated.(Model)
+
+	view := m.searchView()
+	require.Contains(t, view, "⚠", "warning marker renders")
+	require.Contains(t, view, "curseforge", "warning names the failing source")
+}
+
+// noSourcesProvider has zero configured sources, exercising the
+// zero-real-sources diagnostic path (see newSearchModel).
+type noSourcesProvider struct{}
+
+func (noSourcesProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{}, nil, nil
+}
+func (noSourcesProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (noSourcesProvider) Sources() []string                               { return nil }
+func (noSourcesProvider) SourceInfos() []SourceInfo                       { return nil }
+func (noSourcesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
+
+func TestZeroRealSourcesShowsConfiguredSourcesDiagnosticOnConstruction(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: noSourcesProvider{}})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	model = updateWithRunes(t, model, "3") // jump to search screen; no submit
+	require.Equal(t, searchFailed, model.search.state, "diagnostic fires at construction, not just on submit")
+	require.Contains(t, model.View(), "no mod sources configured")
+}
+
 func TestSearchViewStaysWithinBounds(t *testing.T) {
 	t.Parallel()
 
@@ -272,6 +401,36 @@ func TestSearchReadyViewFitsNarrowTerminals(t *testing.T) {
 	}
 }
 
+// TestZeroResultsWarningFitsPanelWidth guards the zero-results branch of
+// searchView, where the warning line renders INSIDE searchSinglePanel
+// instead of outside a panel like searchReadyView's header. The panel's
+// content width is narrower than availableWidth() by its horizontal frame
+// size (border + padding), so a warning line truncated only to
+// availableWidth() can still overflow the panel and get re-wrapped by
+// lipgloss, growing the view past the fixed height budget — this test
+// reproduces that with a long per-source warning at a narrow terminal width.
+func TestZeroResultsWarningFitsPanelWidth(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 40, 12)
+	model = updateWithRunes(t, model, "3") // jump to search screen
+	model.search.state = searchReady
+	model.search.page = SearchPage{
+		Query:  "sky",
+		Source: "",
+		Warnings: []string{
+			`dead-repo: source "dead-repo": fetching manifest https://example.com/mods/registry/manifest.json: context deadline exceeded`,
+		},
+	}
+
+	view := model.screenView()
+	require.Equal(t, model.availableContentHeight(), lipgloss.Height(view),
+		"an overlong warning must not wrap and grow the zero-results panel past its height budget")
+	for _, line := range strings.Split(view, "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), model.availableWidth(), "no rendered line exceeds terminal width")
+	}
+}
+
 func TestTruncateIsDisplayWidthAware(t *testing.T) {
 	t.Parallel()
 
@@ -282,9 +441,8 @@ func TestTruncateIsDisplayWidthAware(t *testing.T) {
 func TestSubmitWithNoConfiguredSourcesFailsClearly(t *testing.T) {
 	t.Parallel()
 
-	model := searchScreenModel(t)
+	model := searchScreenModel(t) // "3" already focused the input
 	model.search.sources = nil
-	model = updateWithRunes(t, model, "/")
 	for _, r := range "sky" {
 		model = updateWithRunes(t, model, string(r))
 	}
