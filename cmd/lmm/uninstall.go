@@ -93,12 +93,20 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 		HookRunner:  getHookRunner(service),
 		HookContext: makeHookContext(game),
 		Force:       uninstallForce,
-		Verbose:     verbose,
 	}
 
 	result, err := service.UninstallMod(ctx, game, profileName, installedMod.SourceID, modID, opts)
 	if err != nil {
 		return err
+	}
+
+	// Notes already carry their historical prefix word ("Warning: "/
+	// "Note: ") and are only ever shown under --verbose, matching the
+	// pre-extraction CLI's `if verbose { ... }` gating exactly.
+	if verbose {
+		for _, n := range result.Notes {
+			fmt.Printf("  %s\n", n)
+		}
 	}
 
 	for _, w := range result.Warnings {

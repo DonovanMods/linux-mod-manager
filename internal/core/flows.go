@@ -76,19 +76,34 @@ type UninstallOptions struct {
 	HookContext HookContext
 	Force       bool // continue past a failing uninstall.before_* hook (warn instead of fail)
 
-	// Verbose gates the operational (non-hook) diagnostics recorded in
-	// Warnings — undeploy failure, cache-delete failure, and the
-	// profile-removal note — mirroring the pre-extraction CLI's `if
-	// verbose { ... }` guards around those three messages. Hook after_*
-	// failures are always recorded regardless of Verbose, matching the
-	// CLI's unconditional printHookWarnings behavior. Callers that always
-	// want full diagnostics (e.g. the TUI) should set Verbose: true.
-	Verbose bool
+	// No verbosity concept lives here: core never gates or prints
+	// diagnostics. UninstallResult.Notes and .Warnings are always fully
+	// populated; it is the caller's (CLI's/TUI's) job to decide what to
+	// display and under what conditions. See UninstallResult's doc comment.
 }
 
-// UninstallResult reports the outcome of UninstallMod.
+// UninstallResult reports the outcome of UninstallMod. Every entry in both
+// slices below is always recorded — UninstallMod has no verbosity concept —
+// but the two slices carry different display contracts for callers to honor
+// (this is the convention Tasks 3-4 should follow too):
+//
+//   - Warnings holds diagnostics the pre-extraction CLI printed
+//     unconditionally to stderr regardless of --verbose (hook failures:
+//     uninstall.before_* when Force is set, and uninstall.after_*, which is
+//     always non-fatal). Callers should print each entry to stderr,
+//     unconditionally, e.g. `fmt.Fprintf(os.Stderr, "Warning: %v\n", w)`.
+//   - Notes holds operational diagnostics the pre-extraction CLI only
+//     printed under --verbose (undeploy failure, cache-delete failure, and
+//     a failure to remove the mod from the profile). Each entry already
+//     carries its historical prefix word baked into the text ("Warning: "
+//     for undeploy/cache-delete, "Note: " for the profile-removal message,
+//     matching the pre-extraction CLI's exact wording for each), so a
+//     caller that wants byte-identical pre-extraction output should print
+//     each entry to stdout ONLY under --verbose, verbatim, e.g.
+//     `fmt.Printf("  %s\n", n)`.
 type UninstallResult struct {
-	Warnings []string // non-fatal issues encountered while uninstalling
+	Warnings []string // unconditional, stderr, audience: operator/always-visible
+	Notes    []string // --verbose-gated, stdout, audience: diagnostic detail
 }
 
 // UninstallMod removes a mod from the profile: runs uninstall hooks,
@@ -98,14 +113,16 @@ type UninstallResult struct {
 // Hook failure semantics (matching the pre-extraction CLI's doUninstall):
 //   - uninstall.before_all / uninstall.before_each: a failure aborts the
 //     operation with an error, unless Force is set, in which case it is
-//     recorded as a warning and the uninstall proceeds.
+//     recorded in Warnings and the uninstall proceeds.
 //   - uninstall.after_each / uninstall.after_all: always non-fatal; a
-//     failure is recorded as a warning after every other step has already
+//     failure is recorded in Warnings after every other step has already
 //     committed.
 //
 // Undeploy failures, cache-delete failures, and a failure to remove the mod
 // from the profile (e.g. the DB and profile have drifted out of sync) are
-// all non-fatal and recorded as warnings; the operation still completes.
+// all non-fatal and always recorded in Notes; the operation still
+// completes. See UninstallResult's doc comment for the Warnings/Notes
+// display contract.
 func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallResult, error) {
 	mod, err := s.GetInstalledMod(sourceID, modID, game.ID, profileName)
 	if err != nil {
@@ -134,17 +151,15 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 
 	installer := s.GetInstaller(game)
 	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
-		// Warn but continue - files may have been manually removed.
-		if opts.Verbose {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("failed to undeploy some files: %v", err))
-		}
+		// Non-fatal - files may have been manually removed. Always
+		// recorded; the historical "Warning: " prefix is baked into the
+		// text itself (see UninstallResult's doc comment).
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to undeploy some files: %v", err))
 	}
 
 	if !opts.KeepCache {
 		if err := s.GetGameCache(game).Delete(game.ID, mod.SourceID, modID, mod.Version); err != nil {
-			if opts.Verbose {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("failed to clean cache: %v", err))
-			}
+			result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to clean cache: %v", err))
 		}
 	}
 
@@ -153,10 +168,9 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 	}
 
 	if err := s.NewProfileManager().RemoveMod(game.ID, profileName, mod.SourceID, modID); err != nil {
-		// Don't fail if not in profile.
-		if opts.Verbose {
-			result.Warnings = append(result.Warnings, err.Error())
-		}
+		// Don't fail if not in profile. Always recorded, historical "Note: "
+		// prefix baked into the text (see UninstallResult's doc comment).
+		result.Notes = append(result.Notes, fmt.Sprintf("Note: %v", err))
 	}
 
 	if err := runUninstallHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
