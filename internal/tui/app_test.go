@@ -430,7 +430,7 @@ func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	require.Contains(t, model.View(), "No mods installed yet. 'lmm install <mod>' begins the quest.")
 
 	model = updateWithRunes(t, model, "3")
-	require.Contains(t, model.View(), "enter search · s source · esc unfocus", "3 already focused the input")
+	require.Contains(t, model.View(), "enter search · esc unfocus", "3 already focused the input")
 
 	model = updateWithKeyType(t, model, tea.KeyEsc)
 	require.Contains(t, model.View(), "/ focus · s source", "unfocused idle hint still tells the user how to refocus")

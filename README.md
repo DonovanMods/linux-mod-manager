@@ -153,12 +153,11 @@ lmm tui --theme amber       # themes: wizardry (default), amber, dos, green
 lmm tui --prototype         # demo mode with static fake data
 ```
 
-Keys: `tab`/`h`/`l` cycle screens, `1`–`5` jump (`3` alone jumps to Search
-without focusing input; `5` opens Sources), `↑↓`/`j`/`k` move, `enter`
-open/select, `/` searches from anywhere (jumps to the Search screen and
-focuses the input; type query, `enter` to search, `esc` returns to
-navigation), `n`/`p` next/previous page, `s` cycle sources, `?` help, `q`
-quit.
+Keys: `tab`/`h`/`l` cycle screens, `1`–`5` jump, `3` jumps to Search (any
+entry path focuses the input immediately; `5` opens Sources), `↑↓`/`j`/`k`
+move, `enter` open/select, `/` focus search from anywhere, type query,
+`enter` to search, `esc` unfocus (clears focus; afterward `s` cycles sources,
+number keys switch screens), `n`/`p` next/previous page, `?` help, `q` quit.
 
 The Search screen defaults to **All sources**, mirroring the CLI: the typed
 query runs concurrently against every source configured for the game. Press

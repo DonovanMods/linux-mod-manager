@@ -669,8 +669,9 @@ func (m Model) searchView() string {
 		// Every entry path into ScreenSearch already focuses the input (see
 		// gotoScreen), so the idle hint only needs to mention "/ focus" when
 		// Esc has since blurred it — otherwise it would tell the user to do
-		// something that's already done.
-		hint := "enter search · s source · esc unfocus"
+		// something that's already done. While focused, 's' types into the
+		// query (not a source-cycle shortcut), so exclude it from the focused hint.
+		hint := "enter search · esc unfocus"
 		if !m.search.input.Focused() {
 			hint = "/ focus · s source"
 		}
