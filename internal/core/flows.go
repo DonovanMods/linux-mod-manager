@@ -101,6 +101,9 @@ type UninstallOptions struct {
 //     caller that wants byte-identical pre-extraction output should print
 //     each entry to stdout ONLY under --verbose, verbatim, e.g.
 //     `fmt.Printf("  %s\n", n)`.
+//
+// On error, the returned result carries any diagnostics accumulated before
+// the failure; callers should surface them alongside the error.
 type UninstallResult struct {
 	Warnings []string // unconditional, stderr, audience: operator/always-visible
 	Notes    []string // --verbose-gated, stdout, audience: diagnostic detail
@@ -134,7 +137,7 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 
 	if err := runUninstallHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_all", opts.Hooks.GetUninstallBeforeAll()); err != nil {
 		if !opts.Force {
-			return nil, fmt.Errorf("uninstall.before_all hook failed: %w", err)
+			return result, fmt.Errorf("uninstall.before_all hook failed: %w", err)
 		}
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_all hook failed (forced): %v", err))
 	}
@@ -144,7 +147,7 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 	hookCtx.ModVersion = mod.Version
 	if err := runUninstallHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
 		if !opts.Force {
-			return nil, fmt.Errorf("uninstall.before_each hook failed: %w", err)
+			return result, fmt.Errorf("uninstall.before_each hook failed: %w", err)
 		}
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err))
 	}
@@ -164,7 +167,7 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 	}
 
 	if err := s.DeleteInstalledMod(mod.SourceID, modID, game.ID, profileName); err != nil {
-		return nil, fmt.Errorf("failed to remove mod record: %w", err)
+		return result, fmt.Errorf("failed to remove mod record: %w", err)
 	}
 
 	if err := s.NewProfileManager().RemoveMod(game.ID, profileName, mod.SourceID, modID); err != nil {

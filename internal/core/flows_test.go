@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
 // newFlowsTestService returns a *core.Service backed by fresh temp dirs
@@ -420,7 +422,9 @@ exit 1`)
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_each hook failed")
-		assert.Nil(t, result)
+		require.NotNil(t, result, "the (empty) result must still be returned alongside a fatal error, not discarded")
+		assert.Empty(t, result.Warnings)
+		assert.Empty(t, result.Notes)
 
 		// Nothing should have changed: mod still installed, file still deployed.
 		_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
@@ -476,7 +480,9 @@ exit 1`)
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_all hook failed")
-		assert.Nil(t, result)
+		require.NotNil(t, result, "the (empty) result must still be returned alongside a fatal error, not discarded")
+		assert.Empty(t, result.Warnings)
+		assert.Empty(t, result.Notes)
 
 		// Nothing should have changed: mod still installed, file still deployed.
 		_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
@@ -500,6 +506,77 @@ exit 1`)
 		_, err = svc.GetInstalledMod("src", "1", "g1", "default")
 		assert.ErrorIs(t, err, domain.ErrModNotFound, "forced uninstall must still remove the DB row")
 	})
+}
+
+// TestService_UninstallMod_FatalErrorAfterAccumulatedDiagnostic_ReturnsPartialResult
+// guards the error-path convention amendment flagged by the Task 2 review:
+// once the result struct exists, every fatal return must carry the
+// partially-populated result instead of discarding it (see
+// UninstallResult's doc comment), so the CLI can still surface diagnostics
+// that already "happened" before the fatal error hit.
+//
+// DeleteInstalledMod is the only fatal step in UninstallMod that can be
+// reached *after* a diagnostic has already been recorded: before_all/
+// before_each are fatal-by-default (nothing accumulated yet when they
+// abort) unless Force is set, in which case their failures become Warnings
+// and execution continues - and DeleteInstalledMod is the sole remaining
+// fatal step downstream of that. This test forces it to fail by holding a
+// real write lock on the same SQLite file - a dedicated second connection
+// issues "BEGIN IMMEDIATE" directly (a plain sql.Tx's default deferred
+// BEGIN does NOT take a lock until its first statement runs, so it doesn't
+// work here) and never commits, for the call's duration. WAL-mode readers
+// (GetInstalledMod) proceed unaffected, but the writer (DeleteInstalledMod)
+// deterministically gets SQLITE_BUSY (busy_timeout defaults to 0, so it's
+// an immediate error, not a timing-dependent race).
+func TestService_UninstallMod_FatalErrorAfterAccumulatedDiagnostic_ReturnsPartialResult(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	failScript := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "boom" >&2
+exit 1`)
+	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: failScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	dbPath := filepath.Join(dataDir, "lmm.db")
+	locker, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	defer locker.Close()
+	locker.SetMaxOpenConns(1)
+	conn, err := locker.Conn(context.Background())
+	require.NoError(t, err)
+	defer conn.Close()
+	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+	defer conn.ExecContext(context.Background(), "ROLLBACK") //nolint:errcheck // best-effort cleanup
+
+	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
+		Hooks:      hooks,
+		HookRunner: runner,
+		Force:      true,
+	})
+	require.Error(t, err, "DeleteInstalledMod must fail while another writer holds the file lock")
+	assert.Contains(t, err.Error(), "failed to remove mod record")
+	require.NotNil(t, result, "the result accumulated before the fatal error must not be discarded")
+	require.Len(t, result.Warnings, 1, "the forced before_each hook failure must have been recorded before the later fatal error")
+	assert.Contains(t, result.Warnings[0], "uninstall.before_each hook failed")
+	assert.Contains(t, result.Warnings[0], "forced")
 }
 
 func TestService_UninstallMod_UnknownModReturnsErrModNotFound(t *testing.T) {

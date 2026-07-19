@@ -97,21 +97,15 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 
 	result, err := service.UninstallMod(ctx, game, profileName, installedMod.SourceID, modID, opts)
 	if err != nil {
+		// UninstallMod's error-path convention returns any diagnostics
+		// accumulated before the fatal error alongside it (see
+		// UninstallResult's doc comment); print them now, or they'd
+		// otherwise be lost even though they already happened.
+		printUninstallDiagnostics(result)
 		return err
 	}
 
-	// Notes already carry their historical prefix word ("Warning: "/
-	// "Note: ") and are only ever shown under --verbose, matching the
-	// pre-extraction CLI's `if verbose { ... }` gating exactly.
-	if verbose {
-		for _, n := range result.Notes {
-			fmt.Printf("  %s\n", n)
-		}
-	}
-
-	for _, w := range result.Warnings {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", w)
-	}
+	printUninstallDiagnostics(result)
 
 	fmt.Printf("✓ Uninstalled: %s\n", installedMod.Name)
 	fmt.Printf("  Removed from profile: %s\n", profileName)
@@ -121,4 +115,26 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	return nil
+}
+
+// printUninstallDiagnostics prints result's accumulated diagnostics using
+// the display contract documented on core.UninstallResult: Notes go to
+// stdout, only under --verbose (each entry already carries its historical
+// prefix word); Warnings go to stderr, unconditionally. Safe to call with a
+// nil result (nothing to print) - result is nil only when UninstallMod
+// failed before it could allocate the result struct.
+func printUninstallDiagnostics(result *core.UninstallResult) {
+	if result == nil {
+		return
+	}
+
+	if verbose {
+		for _, n := range result.Notes {
+			fmt.Printf("  %s\n", n)
+		}
+	}
+
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", w)
+	}
 }
