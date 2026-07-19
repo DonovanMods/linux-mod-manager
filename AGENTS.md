@@ -135,9 +135,9 @@ Core types in `internal/domain/` have no external dependencies:
 
 When in doubt, bump MINOR for new functionality, PATCH for fixes.
 
-## Implementation Plan
+## Implementation Plans
 
-The detailed implementation plan is in [docs/plans/2026-01-22-lmm-implementation.md](docs/plans/2026-01-22-lmm-implementation.md). Follow TDD: write failing test → implement → verify pass.
+In-flight plan documents live in `docs/plans/`; completed plans are kept for historical reference in [docs/plans/archive/](docs/plans/archive/) (the original v1.0 implementation plan is [2026-01-22-lmm-implementation.md](docs/plans/archive/2026-01-22-lmm-implementation.md)). Follow TDD: write failing test → implement → verify pass.
 
 Both the CLI and TUI interfaces should be equally considered first-class interfaces. As such, functional modifications should be reflected in both (new commands, change in core functionality, etc.) when appropriate.
 
