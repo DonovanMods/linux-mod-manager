@@ -88,6 +88,40 @@ func TestConfirmKeysDispatchActionAndClearPending(t *testing.T) {
 	}
 }
 
+func TestConfirmClosureMapsProviderErrorToActionFailedMsg(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("provider error: deployment failed")
+	failing := failingActions{Err: sentinel}
+	model := modelWithActions(t, failing)
+	item := ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"}
+
+	// buildAction increments gen and captures it in the closure
+	model, pa := model.buildAction(actionUninstall, `Uninstall "SkyUI"?`, nil,
+		func(ctx context.Context) (ActionOutcome, error) { return failing.UninstallMod(ctx, item) })
+
+	genAtBuild := model.action.gen
+	model = model.promptAction(pa)
+
+	// Confirm via key, which dispatches pa.confirm() and sets running
+	updated, cmd := model.Update(keyRunes("y"))
+	model = updated.(Model)
+
+	require.Nil(t, model.action.pending, "pending must clear on confirm")
+	require.True(t, model.action.running, "running must be set on confirm")
+	require.NotNil(t, cmd)
+
+	// Run the cmd to trigger the provider call and error path
+	msg := cmd()
+
+	// Assert the error branch maps to actionFailedMsg correctly
+	require.IsType(t, actionFailedMsg{}, msg, "provider error must produce actionFailedMsg")
+	failedMsg := msg.(actionFailedMsg)
+	require.Equal(t, genAtBuild, failedMsg.gen, "actionFailedMsg must carry the gen from buildAction")
+	require.Equal(t, actionUninstall, failedMsg.kind, "actionFailedMsg must carry the action kind")
+	require.Equal(t, sentinel, failedMsg.err, "actionFailedMsg must carry the provider's error")
+}
+
 func TestCancelKeysLeaveStateUntouched(t *testing.T) {
 	t.Parallel()
 
