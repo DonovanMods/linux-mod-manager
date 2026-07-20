@@ -276,8 +276,8 @@ const (
 	// its ApplyProfileSwitch analog (SwitchDownloadDone), which fires on
 	// both success and failure since doProfileSwitch's equivalent Println
 	// sat unconditionally after its own loop, redeployFromSource's failure
-	// path returns immediately via a DeploySkipped event instead (see
-	// skip() below) without reaching this point - so this phase covers the
+	// path returns immediately via a DeployDownloadFailed event instead (see
+	// below) without reaching this point - so this phase covers the
 	// success path only.
 	DeployDownloadDone
 	// DeploySkipped: ModName was skipped for a reason other than a hook or
@@ -784,7 +784,12 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			}
 		}
 		if _, err := s.DownloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn); err != nil {
-			return skip(fmt.Sprintf("download failed: %v", err))
+			reason := fmt.Sprintf("download failed: %v", err)
+			evt := base
+			evt.Phase, evt.Detail = DeployDownloadFailed, reason
+			emit(evt)
+			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
+			return true
 		}
 	}
 
