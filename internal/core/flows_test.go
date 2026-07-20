@@ -283,6 +283,30 @@ func seedProfileWithMod(t *testing.T, svc *core.Service, gameID, profileName, so
 	require.NoError(t, pm.AddMod(gameID, profileName, domain.ModReference{SourceID: sourceID, ModID: modID, Version: version}))
 }
 
+// installBlockingTrigger opens a second connection to the SQLite file at
+// dbPath and installs a trigger that makes any UPDATE touching
+// installed_mods.link_method or installed_mods.deployed fail - used to
+// deterministically force SetModLinkMethod/SetModDeployed to error without
+// affecting any other table or column (see the technique note on
+// TestService_DeployProfile_PerModNoteDiagnostics_CarryModAttributionAndPrecedeSuccessEvent).
+// Must be called after the *core.Service that owns dbPath has already run
+// its migrations (so the installed_mods table exists).
+func installBlockingTrigger(t *testing.T, dbPath string) {
+	t.Helper()
+	conn, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	_, err = conn.Exec(`
+		CREATE TRIGGER block_link_method_and_deployed_updates
+		BEFORE UPDATE OF link_method, deployed ON installed_mods
+		BEGIN
+			SELECT RAISE(ABORT, 'blocked for test');
+		END;
+	`)
+	require.NoError(t, err)
+}
+
 func TestService_UninstallMod_FullUninstall(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -1249,4 +1273,361 @@ exit 0`)
 
 	_, err = os.Stat(callLog)
 	assert.True(t, os.IsNotExist(err), "install.before_all must not fire when there is nothing to deploy")
+}
+
+// --- Fix wave 1: progress-event positioning (review findings) ---
+//
+// The tests below guard DeployProgress events added to restore the
+// pre-extraction CLI's console positioning for diagnostics that Task 3
+// correctly accumulated into DeployResult.Warnings/Notes but only surfaced
+// via progress events for a subset of cases (DeployBeforeEachSkipped/
+// DeployDownloadFailed/DeploySkipped). See the task-3-report.md "Fix wave 1"
+// entry for the full mapping.
+
+// TestService_DeployProfile_ForcedBeforeAllWarning_EmitsEventBeforeAnythingElse
+// guards finding 1 (deploy side): a forced install.before_all failure must
+// be reported via a DeployBeforeAllForced event before any other event -
+// the pre-extraction CLI printed this warning as the very first line of
+// output, before the "Deploying N mod(s)..." header.
+func TestService_DeployProfile_ForcedBeforeAllWarning_EmitsEventBeforeAnythingElse(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
+echo "boom" >&2
+exit 1`)
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: failScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	var events []core.DeployProgress
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
+		Hooks: hooks, HookRunner: runner, Force: true,
+	}, func(p core.DeployProgress) { events = append(events, p) })
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.NotEmpty(t, events)
+	assert.Equal(t, core.DeployBeforeAllForced, events[0].Phase, "the forced before_all warning must be the first event emitted")
+	assert.Contains(t, events[0].Detail, "install.before_all hook failed")
+	assert.Contains(t, events[0].Detail, "forced")
+	assert.Equal(t, events[0].Detail, result.Warnings[0], "the event's Detail must match the recorded Warning text verbatim")
+
+	require.Greater(t, len(events), 1, "at least one later event (the mod itself deploying) must exist")
+	assert.NotEqual(t, core.DeployBeforeAllForced, events[1].Phase)
+}
+
+// TestService_DeployProfile_PurgeForcedBeforeAllWarning_EmitsEventBeforePurgingEvent
+// guards finding 1 (purge side): a forced uninstall.before_all failure
+// during --purge must be reported before the DeployPurging event (which the
+// CLI uses to print the "Purging N mod(s) before deploy..." header).
+func TestService_DeployProfile_PurgeForcedBeforeAllWarning_EmitsEventBeforePurgingEvent(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
+echo "boom" >&2
+exit 1`)
+	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	var events []core.DeployProgress
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
+		Purge: true, Hooks: hooks, HookRunner: runner, Force: true,
+	}, func(p core.DeployProgress) { events = append(events, p) })
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, core.DeployBeforeAllForced, events[0].Phase)
+	assert.Contains(t, events[0].Detail, "uninstall.before_all hook failed")
+	assert.Contains(t, events[0].Detail, "forced")
+	assert.Equal(t, core.DeployPurging, events[1].Phase, "the purge header event must come right after the forced warning")
+}
+
+// TestService_DeployProfile_PerModNoteDiagnostics_CarryModAttributionAndPrecedeSuccessEvent
+// guards finding 3 (deploy loop): a failed SetModLinkMethod and a failed
+// SetModDeployed both produce text with NO mod identity in it
+// ("Warning: could not update link method: ..."), so position (via the
+// event's ModName/ModID and its place in the event stream, before that same
+// mod's DeployDeployed event) is the ONLY way to attribute either
+// diagnostic to a mod. Two mods are seeded so a batched/misattributed
+// implementation is distinguishable from a correctly-interleaved one: both
+// mods' Note events must appear before THEIR OWN DeployDeployed event, not
+// after both mods have already "succeeded".
+//
+// SetModLinkMethod/SetModDeployed are both plain UPDATEs against
+// installed_mods, but Install/Uninstall also write to the DB (deployed_files,
+// via SaveDeployedFile/DeleteDeployedFiles) - so a blanket write-lock
+// (the BEGIN IMMEDIATE technique
+// TestService_UninstallMod_FatalErrorAfterAccumulatedDiagnostic_ReturnsPartialResult
+// uses) would fail Install itself before ever reaching SetModLinkMethod/
+// SetModDeployed, defeating the test. Instead, a second connection installs
+// a real SQLite trigger that aborts ONLY updates to installed_mods'
+// link_method/deployed columns, leaving every other table (deployed_files)
+// and every other installed_mods column untouched - deterministic, and
+// narrow enough that Install/Uninstall still succeed normally.
+func TestService_DeployProfile_PerModNoteDiagnostics_CarryModAttributionAndPrecedeSuccessEvent(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("a")})
+	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "1.0", true, map[string][]byte{"b.esp": []byte("b")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "b", "1.0")
+
+	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	var events []core.DeployProgress
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err, "SetModLinkMethod/SetModDeployed failures must not fail the deploy")
+	require.NotNil(t, result)
+	assert.Equal(t, 2, result.Deployed, "both mods must still deploy despite the bookkeeping failures")
+	require.Len(t, result.Notes, 4, "2 mods x (link-method + mark-deployed) failures")
+
+	// Find each mod's DeployDeployed index and confirm its two DeployNote
+	// events (with matching ModName/ModID) both appear before it.
+	for _, modName := range []string{"Mod A", "Mod B"} {
+		var noteIdxs []int
+		var deployedIdx = -1
+		for i, e := range events {
+			if e.ModName != modName {
+				continue
+			}
+			switch e.Phase {
+			case core.DeployNote:
+				noteIdxs = append(noteIdxs, i)
+			case core.DeployDeployed:
+				deployedIdx = i
+			}
+		}
+		require.Len(t, noteIdxs, 2, "%s must have exactly 2 DeployNote events (link-method + mark-deployed)", modName)
+		require.NotEqual(t, -1, deployedIdx, "%s must have a DeployDeployed event", modName)
+		for _, ni := range noteIdxs {
+			assert.Less(t, ni, deployedIdx, "%s's Note events must precede its own DeployDeployed event", modName)
+		}
+	}
+}
+
+// TestService_DeployProfile_UndeployFailureEmitsNoteEventBeforeSuccessEvent
+// guards finding 3's third deploy-loop diagnostic (undeploy-before-redeploy
+// failure, flows.go's "Warning: undeploy %s: %v" - the only one of the
+// three whose text DOES carry a mod name already), corrupting a previously
+// deployed symlink into a plain file so the redeploy's own undeploy step
+// fails deterministically, mirroring
+// TestService_DisableMod_UndeployFailureIsNonFatal.
+func TestService_DeployProfile_UndeployFailureEmitsNoteEventBeforeSuccessEvent(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	deployedPath := filepath.Join(gameDir, "plugin.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+
+	var events []core.DeployProgress
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Deployed)
+	require.Len(t, result.Notes, 1)
+	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: undeploy Test Mod: "))
+
+	require.Len(t, events, 2)
+	assert.Equal(t, core.DeployNote, events[0].Phase)
+	assert.Equal(t, "Test Mod", events[0].ModName)
+	assert.Equal(t, "1", events[0].ModID)
+	assert.Equal(t, result.Notes[0], events[0].Detail)
+	assert.Equal(t, core.DeployDeployed, events[1].Phase, "the Note event must precede the success event")
+}
+
+// TestService_DeployProfile_PurgeBeforeEachSkip_EmitsWarningEventWithModAttribution
+// guards finding 3's purge-side case: purgeForDeploy's before_each-skip
+// diagnostic must fire a PurgeWarning event with the skipped mod's
+// attribution, at the point it happens (inline with that mod), not batched.
+func TestService_DeployProfile_PurgeBeforeEachSkip_EmitsWarningEventWithModAttribution(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "bad", "Bad Mod", "1.0", true, map[string][]byte{"bad.esp": []byte("b")})
+	seedNamedInstalledMod(t, svc, game, "src", "good", "Good Mod", "1.0", true, map[string][]byte{"good.esp": []byte("g")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "bad", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "good", "1.0")
+
+	beforeEachScript := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+if [ "$LMM_MOD_ID" = "bad" ]; then
+  echo "boom" >&2
+  exit 1
+fi
+exit 0`)
+	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	var events []core.DeployProgress
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
+		Purge: true, All: true, Hooks: hooks, HookRunner: runner,
+	}, func(p core.DeployProgress) { events = append(events, p) })
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var found *core.DeployProgress
+	for i := range events {
+		if events[i].Phase == core.PurgeWarning && events[i].ModName == "Bad Mod" {
+			found = &events[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "expected a PurgeWarning event attributed to Bad Mod")
+	assert.Equal(t, "bad", found.ModID)
+	assert.Contains(t, found.Detail, "uninstall.before_each hook failed")
+	assert.Contains(t, result.Warnings, found.Detail, "the event's Detail must match the recorded Warning text verbatim")
+}
+
+// TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent guards
+// finding 3's "finish the pattern" scope: purgeForDeploy's own per-mod ⚠
+// undeploy-failure Note (previously batched, same as the deploy loop's
+// equivalent) must fire inline via a PurgeNote event. Reuses the
+// symlink-corruption technique, then triggers a --purge deploy so purge's
+// own Uninstall call hits the same "not a symlink" failure.
+func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	deployedPath := filepath.Join(gameDir, "plugin.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+
+	var events []core.DeployProgress
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var found *core.DeployProgress
+	for i := range events {
+		if events[i].Phase == core.PurgeNote {
+			found = &events[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "expected a PurgeNote event for the purge-phase undeploy failure")
+	assert.Equal(t, "Test Mod", found.ModName)
+	assert.True(t, strings.HasPrefix(found.Detail, "⚠ Test Mod - "))
+	assert.Contains(t, result.Notes, found.Detail)
+
+	// PurgeNote must be emitted before DeployPurging's redeploy-phase
+	// events (it belongs to the purge phase).
+	purgingIdx, noteIdx := -1, -1
+	for i, e := range events {
+		if e.Phase == core.DeployPurging {
+			purgingIdx = i
+		}
+		if e.Phase == core.PurgeNote && noteIdx == -1 {
+			noteIdx = i
+		}
+	}
+	require.NotEqual(t, -1, purgingIdx)
+	assert.Greater(t, noteIdx, purgingIdx, "the purge-phase note must come after the DeployPurging header event, still within the purge phase")
+}
+
+// TestService_DeployProfile_OverridesWarningEmittedBeforeDeferredHookWarnings
+// guards finding 2: the pre-extraction CLI printed the profile-overrides
+// warning (computed and printed immediately once the deploy loop and
+// install.after_all hook had already run) BEFORE its batched hook-warning
+// print (install.after_each entries in mod order, then install.after_all) -
+// even though, in both the pre-extraction CLI and this flow, after_each/
+// after_all are computed earlier in the function than the overrides check.
+// DeployProfile reproduces this by deferring the after_each/after_all
+// DeployWarning events (queued, not emitted immediately) until after the
+// overrides DeployWarning has been emitted - execution order (and the
+// Warnings slice's append order) is unchanged; only the moment each event
+// is *emitted* (and hence printed) is deferred.
+func TestService_DeployProfile_OverridesWarningEmittedBeforeDeferredHookWarnings(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	installDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, InstallPath: installDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	profile, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	// An absolute override path is rejected by ApplyProfileOverrides
+	// deterministically, with no filesystem trickery required.
+	profile.Overrides = map[string][]byte{"/etc/passwd": []byte("x")}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+
+	afterEachScript := createTestScript(t, scriptsDir, "after_each.sh", `#!/bin/bash
+echo "boom" >&2
+exit 1`)
+	afterAllScript := createTestScript(t, scriptsDir, "after_all.sh", `#!/bin/bash
+echo "boom" >&2
+exit 1`)
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{AfterEach: afterEachScript, AfterAll: afterAllScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	var events []core.DeployProgress
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
+		Hooks: hooks, HookRunner: runner,
+	}, func(p core.DeployProgress) { events = append(events, p) })
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Deployed)
+	require.Len(t, result.Warnings, 3, "after_each + after_all + overrides")
+
+	overridesIdx, afterEachIdx, afterAllIdx := -1, -1, -1
+	for i, e := range events {
+		if e.Phase != core.DeployWarning {
+			continue
+		}
+		switch {
+		case strings.Contains(e.Detail, "applying profile overrides"):
+			overridesIdx = i
+		case strings.Contains(e.Detail, "after_each"):
+			afterEachIdx = i
+		case strings.Contains(e.Detail, "after_all"):
+			afterAllIdx = i
+		}
+	}
+	require.NotEqual(t, -1, overridesIdx, "expected an overrides DeployWarning event")
+	require.NotEqual(t, -1, afterEachIdx, "expected an after_each DeployWarning event")
+	require.NotEqual(t, -1, afterAllIdx, "expected an after_all DeployWarning event")
+	assert.Less(t, overridesIdx, afterEachIdx, "overrides warning must be emitted before the after_each hook warning")
+	assert.Less(t, overridesIdx, afterAllIdx, "overrides warning must be emitted before the after_all hook warning")
 }

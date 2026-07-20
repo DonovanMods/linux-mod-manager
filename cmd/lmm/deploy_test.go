@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,9 +12,11 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
 func TestDeployCmd_Structure(t *testing.T) {
@@ -49,6 +53,30 @@ func TestDeployCmd_NoGame(t *testing.T) {
 	err := cmd.Execute()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no game specified")
+}
+
+// installBlockingTrigger opens a second connection to the SQLite file at
+// dbPath and installs a trigger that makes any UPDATE touching
+// installed_mods.link_method or installed_mods.deployed fail - used to
+// deterministically force SetModLinkMethod/SetModDeployed to error without
+// affecting any other table or column. Must be called after the
+// *core.Service that owns dbPath has already run its migrations (so the
+// installed_mods table exists). Mirrors the identically-named helper in
+// internal/core/flows_test.go.
+func installBlockingTrigger(t *testing.T, dbPath string) {
+	t.Helper()
+	conn, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	_, err = conn.Exec(`
+		CREATE TRIGGER block_link_method_and_deployed_updates
+		BEFORE UPDATE OF link_method, deployed ON installed_mods
+		BEGIN
+			SELECT RAISE(ABORT, 'blocked for test');
+		END;
+	`)
+	require.NoError(t, err)
 }
 
 // setupDoDeployTest builds a *core.Service plus a game and resets deploy's
@@ -202,6 +230,9 @@ func TestDoDeploy_Verbose_PrintsUndeployWarningNoteWithHistoricalPrefix(t *testi
 	assert.Contains(t, out, "  Warning: undeploy Test Mod: ")
 	assert.Contains(t, out, "  ✓ Test Mod\n")
 	assert.Contains(t, out, "\nDeployed: 1\n")
+	assert.Equal(t, 1, strings.Count(out, "Warning: undeploy Test Mod:"), "must print exactly once, not double-printed via both an inline event and the end-of-run batch")
+	assert.Less(t, strings.Index(out, "Warning: undeploy Test Mod:"), strings.Index(out, "✓ Test Mod"),
+		"the undeploy warning must print inline, immediately before THIS mod's own success line - not batched at the end of the run (review finding 3)")
 }
 
 // TestDoDeploy_NonVerbose_DoesNotPrintNotes guards the other half of the
@@ -226,4 +257,246 @@ func TestDoDeploy_NonVerbose_DoesNotPrintNotes(t *testing.T) {
 
 	assert.NotContains(t, out, "Warning: undeploy")
 	assert.Contains(t, out, "  ✓ Test Mod\n")
+}
+
+// --- Fix wave 1: console-output positioning (review findings) ---
+
+// captureCombined redirects both os.Stdout and os.Stderr to the same pipe
+// for the duration of fn, preserving the relative order writes to either
+// stream occurred in - necessary to assert cross-stream ordering (e.g.
+// "does the forced before_all warning on stderr print before the header on
+// stdout"), which captureStdout/captureStderrErr can't do since each only
+// captures one stream. fn is expected to succeed; use captureStdout/
+// captureStderrErr directly for error-path assertions.
+func captureCombined(t *testing.T, fn func() error) string {
+	t.Helper()
+	oldOut, oldErr := os.Stdout, os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout, os.Stderr = w, w
+	defer func() { os.Stdout, os.Stderr = oldOut, oldErr }()
+
+	fnErr := fn()
+	require.NoError(t, w.Close(), "closing write end of the pipe")
+	out, readErr := io.ReadAll(r)
+	require.NoError(t, r.Close())
+
+	require.NoError(t, fnErr)
+	require.NoError(t, readErr)
+	return string(out)
+}
+
+// allIndexes returns the start index of every non-overlapping occurrence of
+// substr in s.
+func allIndexes(s, substr string) []int {
+	var idxs []int
+	for offset := 0; ; {
+		i := strings.Index(s[offset:], substr)
+		if i == -1 {
+			return idxs
+		}
+		idxs = append(idxs, offset+i)
+		offset += i + len(substr)
+	}
+}
+
+// TestDoDeploy_ForcedBeforeAllWarning_PrintsBeforeDeployHeader guards review
+// finding 1 (deploy side): a forced install.before_all hook failure must be
+// the FIRST thing doDeploy prints, before the "Deploying N mod(s)..."
+// header - it was the first line of output in the pre-extraction CLI
+// (git show 45470e8:cmd/lmm/deploy.go). Printed unconditionally (no
+// --verbose needed), matching the Warnings display contract.
+func TestDoDeploy_ForcedBeforeAllWarning_PrintsBeforeDeployHeader(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	scriptsDir := t.TempDir()
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\necho boom >&2\nexit 1\n"), 0755))
+	game.Hooks = domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}}
+
+	oldForce := deployForce
+	deployForce = true
+	t.Cleanup(func() { deployForce = oldForce })
+
+	out := captureCombined(t, func() error {
+		return doDeploy(context.Background(), svc, game, nil)
+	})
+
+	warnIdx := strings.Index(out, "Warning: install.before_all hook failed (forced): ")
+	headerIdx := strings.Index(out, "Deploying 1 mod(s) using symlink...")
+	require.NotEqual(t, -1, warnIdx, "missing forced before_all warning; got:\n%s", out)
+	require.NotEqual(t, -1, headerIdx, "missing deploy header; got:\n%s", out)
+	assert.Less(t, warnIdx, headerIdx, "the forced before_all warning must print before the deploy header")
+}
+
+// TestDoDeploy_ForcedPurgeBeforeAllWarning_PrintsBeforePurgeHeader guards
+// review finding 1 (purge side): a forced uninstall.before_all hook failure
+// during --purge must print before the "Purging N mod(s) before
+// deploy..." header, mirroring the pre-extraction purgeDeployedMods
+// (git show 45470e8:cmd/lmm/purge.go).
+func TestDoDeploy_ForcedPurgeBeforeAllWarning_PrintsBeforePurgeHeader(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	scriptsDir := t.TempDir()
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\necho boom >&2\nexit 1\n"), 0755))
+	game.Hooks = domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
+
+	oldPurge, oldForce := deployPurge, deployForce
+	deployPurge = true
+	deployForce = true
+	t.Cleanup(func() { deployPurge, deployForce = oldPurge, oldForce })
+
+	out := captureCombined(t, func() error {
+		return doDeploy(context.Background(), svc, game, nil)
+	})
+
+	warnIdx := strings.Index(out, "Warning: uninstall.before_all hook failed (forced): ")
+	purgeHeaderIdx := strings.Index(out, "Purging 1 mod(s) before deploy...")
+	require.NotEqual(t, -1, warnIdx, "missing forced purge before_all warning; got:\n%s", out)
+	require.NotEqual(t, -1, purgeHeaderIdx, "missing purge header; got:\n%s", out)
+	assert.Less(t, warnIdx, purgeHeaderIdx, "the forced purge before_all warning must print before the purge header")
+}
+
+// TestDoDeploy_Verbose_LinkMethodAndMarkDeployedWarnings_PrintAdjacentToTheirMod
+// guards review finding 3's other two deploy-loop diagnostics: a failed
+// SetModLinkMethod and a failed SetModDeployed both produce text with NO
+// mod identity in it ("Warning: could not update link method: ..."), so
+// console position - printed immediately before THAT mod's own "✓" line -
+// was the ONLY attribution mechanism pre-extraction. Two mods are seeded so
+// a batched (mis-attributed) implementation is distinguishable from a
+// correctly interleaved one.
+//
+// SetModLinkMethod/SetModDeployed are plain UPDATEs against installed_mods,
+// but Install/Uninstall also write to the DB (deployed_files) - so a
+// blanket write-lock would fail Install itself before ever reaching
+// SetModLinkMethod/SetModDeployed, defeating the test. Instead, a second
+// connection installs a real SQLite trigger that aborts ONLY updates to
+// installed_mods' link_method/deployed columns (see installBlockingTrigger),
+// leaving deployed_files and every other installed_mods column untouched -
+// deterministic, and narrow enough that Install/Uninstall still succeed.
+func TestDoDeploy_Verbose_LinkMethodAndMarkDeployedWarnings_PrintAdjacentToTheirMod(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
+
+	oldVerbose := verbose
+	verbose = true
+	t.Cleanup(func() { verbose = oldVerbose })
+
+	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	out := captureStdout(t, func() error {
+		return doDeploy(context.Background(), svc, game, nil)
+	})
+
+	modAIdx := strings.Index(out, "✓ Mod A")
+	modBIdx := strings.Index(out, "✓ Mod B")
+	require.NotEqual(t, -1, modAIdx, "missing Mod A success line; got:\n%s", out)
+	require.NotEqual(t, -1, modBIdx, "missing Mod B success line; got:\n%s", out)
+
+	linkWarnings := allIndexes(out, "Warning: could not update link method:")
+	deployedWarnings := allIndexes(out, "Warning: could not mark as deployed:")
+	require.Len(t, linkWarnings, 2, "one link-method warning per mod; got:\n%s", out)
+	require.Len(t, deployedWarnings, 2, "one mark-deployed warning per mod; got:\n%s", out)
+
+	// Mod A's pair must both precede "✓ Mod A"; Mod B's pair must both fall
+	// strictly between "✓ Mod A" and "✓ Mod B" - proof they're interleaved
+	// per-mod, not batched at the end (which would put all four warnings
+	// after both ✓ lines, and be indistinguishable from each other).
+	assert.Less(t, linkWarnings[0], modAIdx)
+	assert.Less(t, deployedWarnings[0], modAIdx)
+	assert.Greater(t, linkWarnings[1], modAIdx)
+	assert.Less(t, linkWarnings[1], modBIdx)
+	assert.Greater(t, deployedWarnings[1], modAIdx)
+	assert.Less(t, deployedWarnings[1], modBIdx)
+}
+
+// TestDoDeploy_OverridesWarning_PrintsBeforeAfterEachAfterAllHookWarnings
+// guards review finding 2: the pre-extraction CLI printed the
+// profile-overrides warning before its batched after_each/after_all hook
+// warnings, even though (both pre- and post-extraction) after_each/
+// after_all are computed earlier in the function than the overrides check -
+// the overrides warning was printed immediately when computed, while the
+// hook warnings were accumulated and only printed afterward via
+// printHookWarnings. All three land on stderr, unconditionally.
+func TestDoDeploy_OverridesWarning_PrintsBeforeAfterEachAfterAllHookWarnings(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	// An absolute override path is rejected by ApplyProfileOverrides
+	// deterministically - no filesystem trickery required.
+	profile.Overrides = map[string][]byte{"/etc/passwd": []byte("x")}
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
+
+	scriptsDir := t.TempDir()
+	afterEachScript := filepath.Join(scriptsDir, "after_each.sh")
+	require.NoError(t, os.WriteFile(afterEachScript, []byte("#!/bin/bash\necho boom >&2\nexit 1\n"), 0755))
+	afterAllScript := filepath.Join(scriptsDir, "after_all.sh")
+	require.NoError(t, os.WriteFile(afterAllScript, []byte("#!/bin/bash\necho boom >&2\nexit 1\n"), 0755))
+	game.Hooks = domain.GameHooks{Install: domain.HookConfig{AfterEach: afterEachScript, AfterAll: afterAllScript}}
+
+	stderr, cmdErr := captureStderrErr(t, func() error {
+		captureStdout(t, func() error { //nolint:errcheck // stdout content unused; the deploy itself must still succeed
+			return doDeploy(context.Background(), svc, game, nil)
+		})
+		return nil
+	})
+	require.NoError(t, cmdErr)
+
+	overridesIdx := strings.Index(stderr, "Warning: applying profile overrides:")
+	afterEachIdx := strings.Index(stderr, "Warning: install.after_each hook failed")
+	afterAllIdx := strings.Index(stderr, "Warning: install.after_all hook failed")
+	require.NotEqual(t, -1, overridesIdx, "missing overrides warning; got:\n%s", stderr)
+	require.NotEqual(t, -1, afterEachIdx, "missing after_each warning; got:\n%s", stderr)
+	require.NotEqual(t, -1, afterAllIdx, "missing after_all warning; got:\n%s", stderr)
+	assert.Less(t, overridesIdx, afterEachIdx, "overrides warning must print before the after_each hook warning")
+	assert.Less(t, overridesIdx, afterAllIdx, "overrides warning must print before the after_all hook warning")
+}
+
+// TestDoDeploy_Verbose_PurgeBlankLine_AppearsAfterInlineDiagnosticsNotImmediatelyAfterHeader
+// guards review finding 4: the pre-extraction purgeDeployedMods printed its
+// closing blank line at the END of the purge phase (after any inline
+// purge diagnostics), not immediately after the "Purging N mod(s) before
+// deploy..." header. Corrupts a previously-deployed symlink into a plain
+// file so purge's own Uninstall call fails deterministically ("not a
+// symlink"), producing an inline --verbose purge diagnostic to place the
+// blank line after.
+func TestDoDeploy_Verbose_PurgeBlankLine_AppearsAfterInlineDiagnosticsNotImmediatelyAfterHeader(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
+	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+
+	oldPurge, oldVerbose := deployPurge, verbose
+	deployPurge = true
+	verbose = true
+	t.Cleanup(func() { deployPurge, verbose = oldPurge, oldVerbose })
+
+	out := captureStdout(t, func() error {
+		return doDeploy(context.Background(), svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "Purging 1 mod(s) before deploy...\n\n",
+		"no blank line may appear immediately after the purge header - it belongs after any inline purge diagnostics")
+
+	purgeHeaderIdx := strings.Index(out, "Purging 1 mod(s) before deploy...")
+	diagIdx := strings.Index(out, "⚠ Test Mod")
+	deployHeaderIdx := strings.Index(out, "Deploying 1 mod(s) using symlink...")
+	require.NotEqual(t, -1, purgeHeaderIdx, "missing purge header; got:\n%s", out)
+	require.NotEqual(t, -1, diagIdx, "missing inline purge diagnostic; got:\n%s", out)
+	require.NotEqual(t, -1, deployHeaderIdx, "missing deploy header; got:\n%s", out)
+	require.Less(t, purgeHeaderIdx, diagIdx)
+	require.Less(t, diagIdx, deployHeaderIdx)
+
+	between := out[diagIdx:deployHeaderIdx]
+	assert.Contains(t, between, "\n\n", "the blank line must appear after the inline purge diagnostic, before the deploy header")
 }
