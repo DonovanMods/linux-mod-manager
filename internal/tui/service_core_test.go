@@ -562,7 +562,10 @@ func TestCoreProviderActions_DeployProfile_NotesAppearInWarnings(t *testing.T) {
 // and fails - no source is registered for "src", so the GetMod fetch
 // mirrors internal/core/flows_test.go's
 // TestService_DeployProfile_MissingCacheAndFetchFailure_SkipsMod arrangement,
-// one level up - proving the mixed deployed/failed count renders correctly.
+// one level up - proving the mixed deployed/failed count renders correctly,
+// and (Task 7 addition) that the skip reason itself surfaces in
+// Outcome.Warnings so the TUI status line can explain WHY a mod failed
+// rather than just how many did.
 func TestCoreProviderActions_DeployProfile_ReportsFailedCount(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	seedActionMod(t, svc, game, "src", "1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("1")})
@@ -576,7 +579,9 @@ func TestCoreProviderActions_DeployProfile_ReportsFailedCount(t *testing.T) {
 	outcome, err := actions.DeployProfile(context.Background())
 	require.NoError(t, err, "a per-mod fetch failure must not fail the whole deploy")
 	assert.Equal(t, "Deployed 1 mod(s), 1 failed", outcome.Message)
-	assert.Empty(t, outcome.Warnings, "a redownload fetch failure is recorded in DeployResult.Skipped, not Warnings/Notes, so it does not surface in Outcome.Warnings")
+	require.Len(t, outcome.Warnings, 1, "the skip reason (DeployResult.Skipped) must be appended to Outcome.Warnings")
+	assert.Contains(t, outcome.Warnings[0], "Mod Two")
+	assert.Contains(t, outcome.Warnings[0], "failed to fetch")
 
 	_, err = os.Lstat(filepath.Join(game.ModPath, "one.esp"))
 	assert.NoError(t, err, "the mod with an intact cache entry should still deploy")

@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
 
 // --- prototypeProvider: ActionProvider ---
@@ -146,6 +148,37 @@ func TestPrototypeProviderActions_PlanProfileSwitch_AlreadyActive(t *testing.T) 
 	assert.True(t, view.AlreadyActive)
 	assert.Equal(t, "survival", view.From)
 	assert.Equal(t, "survival", view.To)
+}
+
+// TestPrototypeProviderActions_PlanProfileSwitch_NeedsDownloadsCannedScenario
+// guards the Task 7 mandated prototype data addition: the one canned
+// profile whose Mods list references an ID absent from InstalledMods
+// (prototype.NeedsDownloadProfileName) must produce a NeedsDownloads plan,
+// unlike every other canned profile (see the "vanilla-plus" test above,
+// which asserts the opposite for the general case).
+func TestPrototypeProviderActions_PlanProfileSwitch_NeedsDownloadsCannedScenario(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	view, err := actions.PlanProfileSwitch(context.Background(), prototype.NeedsDownloadProfileName)
+	require.NoError(t, err)
+	assert.Equal(t, "survival", view.From)
+	assert.Equal(t, prototype.NeedsDownloadProfileName, view.To)
+	assert.False(t, view.AlreadyActive)
+	assert.NotEmpty(t, view.NeedsDownloads)
+}
+
+// TestPrototypeProviderActions_ApplyProfileSwitch_RefusesNeedsDownloadsCannedScenario
+// proves the refusal is enforced at Apply time too, mirroring
+// coreProvider's own NeedsDownloads refusal test.
+func TestPrototypeProviderActions_ApplyProfileSwitch_RefusesNeedsDownloadsCannedScenario(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	_, err := actions.ApplyProfileSwitch(context.Background(), prototype.NeedsDownloadProfileName)
+	require.ErrorIs(t, err, errProfileNeedsDownloads)
 }
 
 func TestPrototypeProviderActions_PlanProfileSwitch_UnknownProfileErrors(t *testing.T) {
