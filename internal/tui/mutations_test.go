@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -642,6 +643,127 @@ func TestPrototypeSwitchPlanNeedsDownloadsCannedScenario(t *testing.T) {
 	require.Nil(t, model.action.pending, "must not open a modal")
 	require.True(t, model.action.statusIsError)
 	require.Equal(t, errProfileNeedsDownloads.Error(), model.action.status)
+}
+
+// --- Profile rebind after switch (C1) ---
+
+// fakeSwitchableProvider is a minimal DataProvider that also implements the
+// profileRebinder hook (see app.go's rebindProfile), letting these tests
+// simulate coreProvider's per-instance p.profile binding - including the
+// two-SEPARATE-instances wiring cmd/lmm/tui.go actually uses
+// (NewCoreProvider and NewCoreActions each build their own *coreProvider;
+// see their doc comments in service_core.go) - without a real
+// core.Service/SQLite sandbox (that integration is covered directly by
+// service_core_test.go). Profiles()'s Active flag is derived from
+// `current`, which only SetProfile ever changes, so a test can prove
+// app.go's rebindProfile is what moved it, not some other code path.
+type fakeSwitchableProvider struct {
+	names   []string
+	current string
+}
+
+func (f *fakeSwitchableProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{GameName: "Game", ProfileName: f.current}, nil, nil
+}
+
+func (f *fakeSwitchableProvider) Sources() []string         { return nil }
+func (f *fakeSwitchableProvider) SourceInfos() []SourceInfo { return nil }
+
+func (f *fakeSwitchableProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
+
+func (f *fakeSwitchableProvider) Profiles(context.Context) ([]ProfileItem, error) {
+	items := make([]ProfileItem, 0, len(f.names))
+	for _, name := range f.names {
+		items = append(items, ProfileItem{Name: name, Active: name == f.current})
+	}
+	return items, nil
+}
+
+// SetProfile implements app.go's profileRebinder hook.
+func (f *fakeSwitchableProvider) SetProfile(name string) { f.current = name }
+
+// TestSwitchDoneRebindsProviderSoOldActiveProfileReopensPlanModal guards
+// finding C1 end to end at the Model level: a completed switch must rebind
+// which profile the DataProvider reports Active BEFORE the post-action
+// refresh reads it, so Profiles() reflects the target immediately - and a
+// second 'enter' on the now-inactive OLD profile must dispatch a fresh plan
+// fetch instead of hitting switchSelectedProfile's Already-on-profile
+// pre-filter (mutations.go). That pre-filter dead end is exactly what C1
+// reported: without the rebind, the old profile keeps reading Active
+// forever and the user can never switch back to it.
+func TestSwitchDoneRebindsProviderSoOldActiveProfileReopensPlanModal(t *testing.T) {
+	t.Parallel()
+
+	provider := &fakeSwitchableProvider{names: []string{"survival", "vanilla-plus"}, current: "survival"}
+	rec := &recordingActions{
+		PlanView:     SwitchPlanView{From: "survival", To: "vanilla-plus", NoChanges: true},
+		ApplyOutcome: ActionOutcome{Message: `Switched to "vanilla-plus"`},
+	}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: rec})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+	model.screen = ScreenProfiles
+	model.selected[ScreenProfiles] = 1 // "vanilla-plus", not active yet
+	require.False(t, model.profiles[1].Active)
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	updated, _ = model.Update(cmd())
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending, "a NoChanges plan still opens a confirmation modal")
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	doneMsg := confirmCmd()
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, refreshCmd := model.Update(doneMsg)
+	model = updated.(Model)
+	require.NotNil(t, refreshCmd)
+	require.Equal(t, "vanilla-plus", provider.current, "the actionDoneMsg handler must rebind the provider before the refresh runs")
+
+	updated, _ = model.Update(refreshCmd())
+	model = updated.(Model)
+	require.True(t, model.profiles[1].Active, "Profiles() must mark the switch target Active after refresh")
+	require.False(t, model.profiles[0].Active, "the old profile must no longer read as active")
+
+	model.selected[ScreenProfiles] = 0 // "survival", the former active profile
+	updated, cmd2 := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd2, "must dispatch an async plan fetch for the now-inactive old profile, not hit the Already-on-profile dead end")
+	require.NotEqual(t, `Already on profile "survival"`, model.action.status)
+}
+
+// TestStaleSwitchDoneMsgNeverRebindsProfile extends Rule 4's staleness
+// guard (actions_test.go) to the switchedTo field added for C1: a
+// superseded actionDoneMsg must be discarded whole, including its switch
+// target - a stale rebind would silently move the session to a profile the
+// user never actually finished switching to.
+func TestStaleSwitchDoneMsgNeverRebindsProfile(t *testing.T) {
+	t.Parallel()
+
+	provider := &fakeSwitchableProvider{names: []string{"survival", "vanilla-plus"}, current: "survival"}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: &recordingActions{}})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+	model.action.gen = 5
+	model.action.running = true
+
+	updated, cmd := model.Update(actionDoneMsg{
+		gen: 4, kind: actionSwitch,
+		outcome:    ActionOutcome{Message: `Switched to "vanilla-plus"`},
+		switchedTo: "vanilla-plus",
+	})
+	m := updated.(Model)
+	require.Nil(t, cmd, "a stale result must not dispatch a refresh")
+	require.True(t, m.action.running, "stale result must not clear running")
+	require.Equal(t, "survival", provider.current, "a stale switchedTo must never rebind the provider")
 }
 
 // --- Help/footer content ---

@@ -661,6 +661,78 @@ func TestCoreProviderActions_ApplyProfileSwitch_RefusesWhenNeedsDownloads(t *tes
 	assert.Len(t, target.Mods, 1, "the target profile YAML must be untouched by the refused apply")
 }
 
+// --- C1: profile rebind after a TUI-driven switch ---
+
+// TestCoreProviderSetProfile_RebindsWhichProfileProfilesMarksActive guards
+// finding C1's DataProvider half: coreProvider.profile is fixed at
+// NewCoreProvider construction time and, absent a rebind hook, never
+// reflects a later profile switch even though core.Service.
+// ApplyProfileSwitch persists the new default profile via
+// ProfileManager.SetDefault (see ApplyProfileSwitch's own doc comment in
+// internal/core/flows.go). SetProfile is the optional profileRebinder hook
+// app.go's actionDoneMsg handler calls after a successful switch; this test
+// drives it directly against a real coreProvider/temp sandbox, independent
+// of the Model-level wiring covered by mutations_test.go's fakes.
+func TestCoreProviderSetProfile_RebindsWhichProfileProfilesMarksActive(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "hardcore")
+	require.NoError(t, err)
+
+	rebinder, ok := provider.(interface{ SetProfile(string) })
+	require.True(t, ok, "coreProvider must implement the profileRebinder hook (SetProfile(string))")
+	rebinder.SetProfile("hardcore")
+
+	profiles, err := provider.Profiles(context.Background())
+	require.NoError(t, err)
+	byName := map[string]tui.ProfileItem{}
+	for _, p := range profiles {
+		byName[p.Name] = p
+	}
+	require.True(t, byName["hardcore"].Active, "SetProfile must rebind which profile Profiles() marks Active")
+	require.False(t, byName["default"].Active, "the profile bound at construction must no longer read as active")
+}
+
+// TestCoreProviderActions_SetProfile_RebindsSubsequentMutationsToNewProfile
+// guards finding C1's ActionProvider half: after SetProfile retargets the
+// session, EnableMod (and by extension every other ActionProvider method
+// keyed on p.profile) must address the NEW profile's DB row, not the
+// profile bound at NewCoreActions construction time. recordingActions can't
+// catch this class of bug - it never touches a real DB - so this drives the
+// real coreProvider against a temp sandbox, mirroring this file's other
+// ActionProvider tests.
+func TestCoreProviderActions_SetProfile_RebindsSubsequentMutationsToNewProfile(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+
+	// Installed under "target" only - NewCoreActions (via
+	// newCoreActionsFixture) was bound to "default".
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "target",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      false,
+	}))
+	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+
+	rebinder, ok := actions.(interface{ SetProfile(string) })
+	require.True(t, ok, "coreProvider must implement the profileRebinder hook (SetProfile(string))")
+	rebinder.SetProfile("target")
+
+	_, err = actions.EnableMod(context.Background(), tui.ModItem{ID: "1", Source: "src", Name: "Test Mod"})
+	require.NoError(t, err)
+
+	targetMod, err := svc.GetInstalledMod("src", "1", game.ID, "target")
+	require.NoError(t, err)
+	assert.True(t, targetMod.Enabled, "EnableMod after SetProfile must enable the mod under the TARGET profile")
+
+	_, err = svc.GetInstalledMod("src", "1", game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "EnableMod must not fall back to the profile bound at construction time")
+}
+
 func TestCoreProviderActions_ApplyProfileSwitch_AppliesAndReturnsMessage(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	pm := svc.NewProfileManager()
