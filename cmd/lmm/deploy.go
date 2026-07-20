@@ -115,11 +115,36 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		fmt.Printf("Deploying %d mod(s) using %s...\n\n", total, methodName)
 	}
 
+	// progress prints every diagnostic and per-mod status line at its exact
+	// point of occurrence, driven entirely by core.DeployProfile's progress
+	// events - including diagnostics that also land in result.Warnings/
+	// .Notes (see core.DeployResult's doc comment). Those slices are never
+	// separately batch-printed below: every entry has a corresponding event
+	// here, so doing so would double-print. Phases that occur before the
+	// deploy loop starts (a forced before_all warning, anything from the
+	// --purge pass) return early, without calling printDeployHeaderOnce -
+	// they must print before "Deploying N mod(s)..." even exists.
 	progress := func(p core.DeployProgress) {
-		if p.Phase == core.DeployPurging {
-			fmt.Printf("Purging %d mod(s) before deploy...\n\n", p.Total)
+		switch p.Phase {
+		case core.DeployBeforeAllForced:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+			return
+		case core.DeployPurging:
+			fmt.Printf("Purging %d mod(s) before deploy...\n", p.Total)
+			return
+		case core.PurgeWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+			return
+		case core.PurgeNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+			return
+		case core.PurgeComplete:
+			fmt.Println()
 			return
 		}
+
 		printDeployHeaderOnce(p.Total)
 		switch p.Phase {
 		case core.DeployBeforeEachSkipped:
@@ -138,15 +163,20 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Printf("  %s %s - %s\n", colorRed("✗"), p.ModName, p.Detail)
 		case core.DeployDeployed:
 			fmt.Printf("  %s %s\n", colorGreen("✓"), p.ModName)
+		case core.DeployNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		case core.DeployWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		}
 	}
 
 	result, err := service.DeployProfile(ctx, game, profileName, opts, progress)
 	if err != nil {
-		// DeployProfile's error-path convention returns any diagnostics
-		// accumulated before the fatal error alongside it; print them now,
-		// or they'd otherwise be lost even though they already happened.
-		printDeployDiagnostics(result)
+		// Diagnostics accumulated before a fatal error (DeployProfile's
+		// error-path convention returns them alongside it) were already
+		// printed above, live, via progress - nothing left to print here.
 		return err
 	}
 
@@ -158,8 +188,6 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 		return nil
 	}
-
-	printDeployDiagnostics(result)
 
 	fmt.Printf("\nDeployed: %d", result.Deployed)
 	if failed := len(result.Skipped); failed > 0 {
@@ -173,27 +201,6 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	return nil
-}
-
-// printDeployDiagnostics prints result's accumulated diagnostics using the
-// display contract documented on core.DeployResult: Notes go to stdout,
-// only under --verbose (each entry already carries its historical prefix);
-// Warnings go to stderr, unconditionally. Safe to call with a nil result.
-// Mirrors printUninstallDiagnostics.
-func printDeployDiagnostics(result *core.DeployResult) {
-	if result == nil {
-		return
-	}
-
-	if verbose {
-		for _, n := range result.Notes {
-			fmt.Printf("  %s\n", n)
-		}
-	}
-
-	for _, w := range result.Warnings {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", w)
-	}
 }
 
 // findFilesByIDs finds downloadable files matching the given IDs

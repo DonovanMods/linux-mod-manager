@@ -273,16 +273,79 @@ const (
 	DeploySkipped
 	// DeployDeployed: ModName was (re)deployed successfully.
 	DeployDeployed
+
+	// --- Fix wave 1: every remaining Warnings/Notes diagnostic gets an
+	// event at its exact point of occurrence, restoring the pre-extraction
+	// CLI's console positioning (see DeployResult's doc comment for the
+	// full Warnings/Notes -> event mapping and task-3-report.md's "Fix
+	// wave 1" entry for the review findings these fix). ---
+
+	// DeployBeforeAllForced fires once, immediately, when install.before_all
+	// (a deploy) or uninstall.before_all (a --purge pass) fails and Force is
+	// set: the pre-extraction CLI printed this warning as the very first
+	// line of output, before anything else (the "Purging..."/"Deploying..."
+	// header included) - so this event always precedes DeployPurging and
+	// any other event. No mod is in scope (Index/Total/ModName/ModID are
+	// zero); Detail matches the DeployResult.Warnings entry verbatim.
+	DeployBeforeAllForced
+	// DeployNote fires wherever DeployProfile appends an entry to
+	// DeployResult.Notes for a specific mod during the main deploy loop
+	// (a failed undeploy-before-redeploy, a failed SetModLinkMethod, or a
+	// failed SetModDeployed), at the exact point it happens - always
+	// before that same mod's own DeployDeployed event, matching the
+	// pre-extraction CLI's inline ordering. ModName/ModID identify the
+	// mod; for the latter two diagnostics, whose historical text carries
+	// no mod identity at all, the event's ModName/ModID are the ONLY way
+	// to attribute the diagnostic to a mod.
+	DeployNote
+	// DeployWarning fires wherever DeployProfile appends an entry to
+	// DeployResult.Warnings other than a DeployBeforeAllForced one: a
+	// failed install.after_each hook (ModName/ModID set), a failed
+	// install.after_all hook, or a failed ApplyProfileOverrides (neither
+	// has a mod in scope). The pre-extraction CLI printed the overrides
+	// warning immediately once computed, then its batched hook warnings
+	// (after_each in mod order, then after_all) right after - so
+	// DeployProfile emits the overrides DeployWarning (if any) first, then
+	// the after_each/after_all ones, reproducing that print order without
+	// changing when each check actually runs (see DeployProfile's body).
+	DeployWarning
+	// PurgeWarning fires wherever a --purge pass appends an entry to
+	// DeployResult.Warnings: a skipped uninstall.before_each mod (fires
+	// inline, per mod, as it happens), or a failed uninstall.after_each/
+	// after_all hook (fires after the whole purge loop has finished, in
+	// mod order then after_all - mirroring the pre-extraction
+	// purgeDeployedMods, which accumulated these and printed them
+	// together, after every per-mod line, via printHookWarnings).
+	PurgeWarning
+	// PurgeNote fires wherever a --purge pass appends an entry to
+	// DeployResult.Notes for a specific mod (a failed undeploy, or a
+	// failed SetModDeployed(false)), inline, immediately after that
+	// operation - mirroring the pre-extraction purgeDeployedMods's
+	// --verbose-gated "⚠ " lines.
+	PurgeNote
+	// PurgeComplete fires once, after a non-empty --purge pass has
+	// finished everything (including its own hook warnings) but before
+	// DeployProfile moves on to gathering mods to deploy. It carries no
+	// data; a caller wanting byte-identical pre-extraction output prints
+	// exactly one blank line here - purgeDeployedMods's own final
+	// `fmt.Println()`, which the initial extraction had misplaced
+	// immediately after the purge header instead of at the end of the
+	// purge phase.
+	PurgeComplete
 )
 
 // DeployProgress reports incremental status during DeployProfile. Index and
 // Total describe ModName's position among the mods being deployed (both
-// zero for the DeployPurging event, which precedes and is independent of
-// that count). Detail and Percent are populated only for the phases
-// documented on DeployPhase's constants; both are zero otherwise.
+// zero for phases with no mod/count in scope - see each DeployPhase
+// constant's doc comment). ModID accompanies ModName wherever a specific
+// mod is in scope; for phases whose historical text carries no mod name at
+// all (DeployNote's link-method/mark-deployed cases), it is the only
+// attribution available. Detail and Percent are populated only for the
+// phases documented on DeployPhase's constants; both are zero otherwise.
 type DeployProgress struct {
 	Index, Total int
 	ModName      string
+	ModID        string
 	Phase        DeployPhase
 	Detail       string
 	Percent      float64
@@ -294,10 +357,12 @@ type DeployProgress struct {
 // display contracts Task 2 established:
 //
 //   - Warnings holds diagnostics the pre-extraction CLI printed
-//     unconditionally to stderr: install.before_all (when forced),
-//     install.after_each/after_all hook failures, and a profile-overrides
-//     application failure. Callers should print each entry to stderr,
-//     unconditionally, e.g. `fmt.Fprintf(os.Stderr, "Warning: %v\n", w)`.
+//     unconditionally to stderr: install.before_all/uninstall.before_all
+//     (when forced), a skipped uninstall.before_each during purge,
+//     install/uninstall after_each/after_all hook failures, and a
+//     profile-overrides application failure. Callers should print each
+//     entry to stderr, unconditionally, e.g.
+//     `fmt.Fprintf(os.Stderr, "Warning: %v\n", w)`.
 //   - Notes holds operational diagnostics the pre-extraction CLI only
 //     printed under --verbose: a failed undeploy-before-redeploy, a failed
 //     SetModLinkMethod, and a failed SetModDeployed, all per mod, plus (for
@@ -307,10 +372,17 @@ type DeployProgress struct {
 //     trio) baked into the text, matching each one's pre-extraction
 //     wording; a caller wanting byte-identical pre-extraction output should
 //     print each entry to stdout ONLY under --verbose, verbatim, e.g.
-//     `fmt.Printf("  %s\n", n)`. See the task report for why these are
-//     accumulated-and-printed-at-the-end rather than interleaved with the
-//     progress callback's real-time per-mod output (as they were,
-//     inconsistently, pre-extraction).
+//     `fmt.Printf("  %s\n", n)`.
+//
+// Every entry in both slices is ALSO reported via the progress callback at
+// the exact point it is appended (DeployBeforeAllForced/DeployNote/
+// DeployWarning/PurgeWarning/PurgeNote - see each DeployPhase constant's
+// doc comment for which), with Detail equal to the slice entry verbatim and
+// the phase itself indicating which display contract above applies. A
+// caller driving its console output entirely from progress events (as
+// cmd/lmm's doDeploy does) gets pre-extraction-accurate positioning; the
+// slices remain here, unconditionally, for callers that only want the
+// final, order-independent summary.
 //
 // Skipped carries one "<mod name>: <reason>" entry per mod that did not
 // deploy, for any reason (hook failure, download failure, install
@@ -456,12 +528,23 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		if !opts.Force {
 			return result, fmt.Errorf("install.before_all hook failed: %w", err)
 		}
-		result.Warnings = append(result.Warnings, fmt.Sprintf("install.before_all hook failed (forced): %v", err))
+		msg := fmt.Sprintf("install.before_all hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: DeployBeforeAllForced, Detail: msg})
 	}
+
+	// deferredWarnings holds install.after_each (per mod, in loop order)
+	// and install.after_all DeployWarning events: the pre-extraction CLI
+	// printed these together, AFTER the profile-overrides warning below,
+	// even though both hooks run earlier in the function - see
+	// DeployWarning's doc comment. Emission (and therefore printing) is
+	// deferred to preserve that order; the Warnings slice itself is still
+	// appended to at the natural point, unchanged.
+	var deferredWarnings []DeployProgress
 
 	total := len(modsToDeploy)
 	for idx, mod := range modsToDeploy {
-		base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name}
+		base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name, ModID: mod.ID}
 
 		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
 		if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
@@ -480,7 +563,11 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 
 		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
-			result.Notes = append(result.Notes, fmt.Sprintf("Warning: undeploy %s: %v", mod.Name, err))
+			msg := fmt.Sprintf("Warning: undeploy %s: %v", mod.Name, err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = DeployNote, msg
+			emit(evt)
 		}
 
 		if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
@@ -493,10 +580,18 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 
 		if err := s.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
-			result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not update link method: %v", err))
+			msg := fmt.Sprintf("Warning: could not update link method: %v", err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = DeployNote, msg
+			emit(evt)
 		}
 		if err := s.SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, true); err != nil {
-			result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as deployed: %v", err))
+			msg := fmt.Sprintf("Warning: could not mark as deployed: %v", err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = DeployNote, msg
+			emit(evt)
 		}
 
 		result.Deployed++
@@ -505,19 +600,31 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		emit(evt)
 
 		if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("install.after_each hook failed for %s: %v", mod.ID, err))
+			msg := fmt.Sprintf("install.after_each hook failed for %s: %v", mod.ID, err)
+			result.Warnings = append(result.Warnings, msg)
+			evt := base
+			evt.Phase, evt.Detail = DeployWarning, msg
+			deferredWarnings = append(deferredWarnings, evt)
 		}
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_all", opts.Hooks.GetInstallAfterAll()); err != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("install.after_all hook failed: %v", err))
+		msg := fmt.Sprintf("install.after_all hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		deferredWarnings = append(deferredWarnings, DeployProgress{Phase: DeployWarning, Detail: msg})
 	}
 
 	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil && len(profile.Overrides) > 0 {
 		if err := ApplyProfileOverrides(game, profile); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("applying profile overrides: %v", err))
+			msg := fmt.Sprintf("applying profile overrides: %v", err)
+			result.Warnings = append(result.Warnings, msg)
+			emit(DeployProgress{Phase: DeployWarning, Detail: msg})
 		}
+	}
+
+	for _, w := range deferredWarnings {
+		emit(w)
 	}
 
 	return result, nil
@@ -597,11 +704,24 @@ func (s *Service) purgeForDeploy(ctx context.Context, game *domain.Game, profile
 		if !opts.Force {
 			return fmt.Errorf("uninstall.before_all hook failed: %w", err)
 		}
-		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_all hook failed (forced): %v", err))
+		msg := fmt.Sprintf("uninstall.before_all hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: DeployBeforeAllForced, Detail: msg})
 	}
 
 	installer := s.GetInstaller(game)
 	emit(DeployProgress{Phase: DeployPurging, Total: len(mods)})
+
+	// deferredWarnings holds uninstall.after_each (per mod, in loop order)
+	// and uninstall.after_all PurgeWarning events: the pre-extraction
+	// purgeDeployedMods accumulated these during/after the loop and only
+	// printed them together, via printHookWarnings, once the whole loop
+	// had finished - so emission is deferred to right after the loop,
+	// mirroring that. Unlike DeployProfile's deploy-loop equivalent,
+	// nothing else needs to print between the loop ending and these -
+	// purgeDeployedMods went straight from printHookWarnings to
+	// CleanupEmptyDirs/the closing blank line.
+	var deferredWarnings []DeployProgress
 
 	for _, mod := range mods {
 		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
@@ -610,28 +730,43 @@ func (s *Service) purgeForDeploy(ctx context.Context, game *domain.Game, profile
 			// keep going. The pre-extraction CLI printed this unconditionally
 			// to stdout ("  Skipped: ..."); recorded here as a Warning
 			// (unconditional, stderr) instead - see the task report.
-			result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed for %s during purge (not purged): %v", mod.Name, err))
+			msg := fmt.Sprintf("uninstall.before_each hook failed for %s during purge (not purged): %v", mod.Name, err)
+			result.Warnings = append(result.Warnings, msg)
+			emit(DeployProgress{Phase: PurgeWarning, ModName: mod.Name, ModID: mod.ID, Detail: msg})
 			continue
 		}
 
 		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
-			result.Notes = append(result.Notes, fmt.Sprintf("⚠ %s - %v", mod.Name, err))
+			msg := fmt.Sprintf("⚠ %s - %v", mod.Name, err)
+			result.Notes = append(result.Notes, msg)
+			emit(DeployProgress{Phase: PurgeNote, ModName: mod.Name, ModID: mod.ID, Detail: msg})
 		}
 
 		if err := s.SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
-			result.Notes = append(result.Notes, fmt.Sprintf("⚠ %s - failed to mark as not deployed: %v", mod.Name, err))
+			msg := fmt.Sprintf("⚠ %s - failed to mark as not deployed: %v", mod.Name, err)
+			result.Notes = append(result.Notes, msg)
+			emit(DeployProgress{Phase: PurgeNote, ModName: mod.Name, ModID: mod.ID, Detail: msg})
 		}
 
 		if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_each hook failed for %s: %v", mod.ID, err))
+			msg := fmt.Sprintf("uninstall.after_each hook failed for %s: %v", mod.ID, err)
+			result.Warnings = append(result.Warnings, msg)
+			deferredWarnings = append(deferredWarnings, DeployProgress{Phase: PurgeWarning, ModName: mod.Name, ModID: mod.ID, Detail: msg})
 		}
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_all", opts.Hooks.GetUninstallAfterAll()); err != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_all hook failed: %v", err))
+		msg := fmt.Sprintf("uninstall.after_all hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		deferredWarnings = append(deferredWarnings, DeployProgress{Phase: PurgeWarning, Detail: msg})
+	}
+
+	for _, w := range deferredWarnings {
+		emit(w)
 	}
 
 	linker.CleanupEmptyDirs(game.ModPath)
+	emit(DeployProgress{Phase: PurgeComplete})
 	return nil
 }
