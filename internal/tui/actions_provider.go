@@ -15,10 +15,15 @@ import (
 // each on its own single struct (see NewCoreActions and NewPrototypeProvider
 // for how a caller obtains each role).
 //
-// Every method that returns an error must not mutate anything: EnableMod/
-// DisableMod/UninstallMod/DeployProfile propagate the underlying flow's own
-// error-path guarantees, and ApplyProfileSwitch's own NeedsDownloads refusal
-// (see its doc comment) is checked before any mutation is attempted.
+// Error semantics: an error does NOT imply nothing changed. The underlying
+// flows are multi-step (deploy files then flip DB state; undeploy, delete
+// cache, then delete the DB row; whole per-mod loops before SetDefault); a
+// failure partway leaves earlier steps applied. Callers must treat any error
+// as "state may have partially changed": refresh data after every action,
+// success or failure, and never offer undo/retry affordances that assume a
+// failed action was a no-op. PlanProfileSwitch is the exception: planning is
+// pure and never mutates. ApplyProfileSwitch's NeedsDownloads refusal is
+// also mutation-free (it refuses before executing).
 type ActionProvider interface {
 	EnableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
 	DisableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
