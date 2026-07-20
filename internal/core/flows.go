@@ -984,11 +984,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 
 // SwitchResult reports the outcome of ApplyProfileSwitch. As with
 // DeployResult/UninstallResult, every Notes entry is always recorded - there
-// is no verbosity concept in core. Unlike those two flows, doProfileSwitch
-// never printed anything to stderr, so SwitchResult has no diagnostic that
-// belongs in a Warnings bucket; the field exists only for API consistency
-// with DeployResult/UninstallResult and is always empty for this flow (see
-// the task report).
+// is no verbosity concept in core.
 //
 //   - Notes holds every diagnostic doProfileSwitch only printed under
 //     --verbose: failed Uninstall/SetModEnabled during the disable loop,
@@ -1009,7 +1005,6 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 // before the failure; callers should surface them alongside the error.
 type SwitchResult struct {
 	Disabled, Enabled, Installed int
-	Warnings                     []string // always empty for this flow; see doc comment
 	Notes                        []string
 }
 
