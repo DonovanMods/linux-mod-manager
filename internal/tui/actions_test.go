@@ -453,6 +453,47 @@ func TestNonModalNonQuitKeypressClearsStatus(t *testing.T) {
 	require.Empty(t, updated.(Model).action.status)
 }
 
+// TestRunningActionKeypressDoesNotClearStatus covers a gap rule 8 missed:
+// while an action is in flight (m.action.running == true — set for both a
+// running mutation and an in-flight plan fetch like "Planning switch…", see
+// planProfileSwitch in mutations.go), a navigation keypress must not wipe
+// the in-flight status message. Without an in-flight indicator, the user has
+// no sign that anything is happening until the action resolves.
+func TestRunningActionKeypressDoesNotClearStatus(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.status = "Planning switch…"
+	model.action.running = true
+
+	updated, _ := model.Update(keyRunes("j"))
+	require.Equal(t, "Planning switch…", updated.(Model).action.status,
+		"an in-flight action's status must survive a navigation keypress")
+	require.False(t, updated.(Model).action.statusIsError)
+}
+
+// TestActionDoneRestoresNormalStatusClearing proves the rule-8 clearing
+// behavior resumes as soon as the in-flight action finishes: once
+// actionDoneMsg lands (which sets m.action.running back to false), the next
+// non-modal, non-quit keypress clears the status line exactly as it always
+// has.
+func TestActionDoneRestoresNormalStatusClearing(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.status = "Planning switch…"
+	model.action.running = true
+
+	finished, _ := model.Update(actionDoneMsg{gen: model.action.gen, outcome: ActionOutcome{Message: "Switched to vanilla-plus"}})
+	finishedModel := finished.(Model)
+	require.False(t, finishedModel.action.running)
+	require.Equal(t, "Switched to vanilla-plus", finishedModel.action.status)
+
+	cleared, _ := finishedModel.Update(keyRunes("j"))
+	require.Empty(t, cleared.(Model).action.status,
+		"status must clear normally once the action is no longer running")
+}
+
 func TestQuitKeypressDoesNotClearStatus(t *testing.T) {
 	t.Parallel()
 

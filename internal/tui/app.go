@@ -329,7 +329,13 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// before this point is ever reached) and isn't quit clears the status
 	// line. isQuitKey (not the bare Quit binding) is used so a "q" that's
 	// actually being typed into the focused search input still clears it.
-	if !m.isQuitKey(msg) {
+	// m.action.running gates this too: it covers both a running mutation and
+	// an in-flight plan fetch (planProfileSwitch in mutations.go sets it
+	// alongside "Planning switch…" before any pendingAction confirmation
+	// exists), so a navigation keypress mid-flight must not wipe the only
+	// sign that work is in progress. actionDoneMsg/actionFailedMsg clear
+	// running when the action settles, restoring normal clearing below.
+	if !m.isQuitKey(msg) && !m.action.running {
 		m.action.status = ""
 		m.action.statusIsError = false
 	}
