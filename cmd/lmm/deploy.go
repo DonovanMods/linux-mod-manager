@@ -155,6 +155,8 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Printf("  %s %s - stored file IDs not found, using primary\n", colorYellow("⚠"), p.ModName)
 		case core.DeployDownloading:
 			fmt.Printf("\r  ⬇ %s: %.1f%%", p.ModName, p.Percent)
+		case core.DeployDownloadDone:
+			fmt.Println()
 		case core.DeployDownloadFailed:
 			fmt.Println()
 			fmt.Printf("  %s %s - %s\n", colorRed("✗"), p.ModName, p.Detail)

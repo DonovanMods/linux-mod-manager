@@ -267,6 +267,19 @@ const (
 	// DeployDownloadFailed: a file for ModName failed to download; the mod
 	// is skipped. Detail is the reason.
 	DeployDownloadFailed
+	// DeployDownloadDone fires once, after a cache-miss mod's redownload
+	// loop finishes without error, mirroring the pre-extraction CLI's
+	// unconditional `fmt.Println() // Clear progress line` immediately
+	// after the download loop (git show b2ad559:cmd/lmm/deploy.go) - it
+	// terminates DeployDownloading's carriage-returned progress line with a
+	// real newline before the mod's own DeployDeployed line prints. Unlike
+	// its ApplyProfileSwitch analog (SwitchDownloadDone), which fires on
+	// both success and failure since doProfileSwitch's equivalent Println
+	// sat unconditionally after its own loop, redeployFromSource's failure
+	// path returns immediately via a DeploySkipped event instead (see
+	// skip() below) without reaching this point - so this phase covers the
+	// success path only.
+	DeployDownloadDone
 	// DeploySkipped: ModName was skipped for a reason other than a hook or
 	// download failure (fetch failure, no files available, file-selection
 	// failure, or an outright deploy/install failure). Detail is the reason.
@@ -774,6 +787,10 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			return skip(fmt.Sprintf("download failed: %v", err))
 		}
 	}
+
+	done := base
+	done.Phase = DeployDownloadDone
+	emit(done)
 
 	return false
 }
