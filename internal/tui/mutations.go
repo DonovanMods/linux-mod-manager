@@ -110,7 +110,7 @@ func (m Model) deployActiveProfile() (Model, tea.Cmd) {
 	title := fmt.Sprintf("Deploy profile %q?", m.summary.ProfileName)
 	detail := []string{
 		fmt.Sprintf("Game: %s", m.summary.GameName),
-		fmt.Sprintf("Mods: %d", m.summary.Installed),
+		fmt.Sprintf("Mods: %d enabled", m.summary.Enabled),
 	}
 	model, pa := m.buildAction(actionDeploy, title, detail, func(ctx context.Context) (ActionOutcome, error) {
 		return m.actions.DeployProfile(ctx)

@@ -300,6 +300,7 @@ func TestDeployKeyFromDashboardPromptsAndConfirmCallsProvider(t *testing.T) {
 	require.Equal(t, actionDeploy, model.action.pending.kind)
 	require.Equal(t, `Deploy profile "survival"?`, model.action.pending.title)
 	require.Contains(t, model.action.pending.detail, "Game: Skyrim Special Edition")
+	require.Contains(t, model.action.pending.detail, "Mods: 39 enabled")
 
 	confirmed, confirmCmd := model.Update(keyRunes("y"))
 	model = confirmed.(Model)
