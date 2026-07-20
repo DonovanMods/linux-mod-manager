@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -499,4 +503,91 @@ func TestDoDeploy_Verbose_PurgeBlankLine_AppearsAfterInlineDiagnosticsNotImmedia
 
 	between := out[diagIdx:deployHeaderIdx]
 	assert.Contains(t, between, "\n\n", "the blank line must appear after the inline purge diagnostic, before the deploy header")
+}
+
+// TestDoDeploy_MissingCacheRedownloadSuccess_PrintsBlankLineAfterDownload
+// guards finding F2 (CLI parity regression): the pre-extraction CLI printed
+// an unconditional `fmt.Println() // Clear progress line` immediately after
+// a cache-miss mod's redownload loop, on the success path (git show
+// b2ad559:cmd/lmm/deploy.go) - a blank line between "cache missing,
+// re-downloading..." and the mod's own "✓" success line. The extracted
+// flow (internal/core/flows.go's redeployFromSource) emits no event for
+// this on success, so doDeploy has nothing to print it from. A real custom
+// manifest source served over httptest provides a working redownload
+// (mockSourceWithDownloads/createTestZip are internal/core-only test
+// helpers, not available to cmd/lmm - mirrors
+// TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput's
+// pattern in profile_test.go), so the mod actually reaches its "✓" line
+// instead of being skipped.
+func TestDoDeploy_MissingCacheRedownloadSuccess_PrintsBlankLineAfterDownload(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	manifest := fmt.Sprintf(`
+version: 1
+mods:
+  - id: redl
+    name: Redownload Mod
+    version: "1.0"
+    summary: A mod to redownload
+    files:
+      - id: main
+        filename: redownload.dat
+        version: "1.0"
+        url: %s/files/redownload.dat
+        primary: true
+`, srv.URL)
+	mux.HandleFunc("/mods.yaml", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(manifest)) })
+	mux.HandleFunc("/files/", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("archive bytes")) })
+	src, err := custom.New(custom.SourceDefinition{
+		ID:        "e2e-repo",
+		Name:      "E2E Repo",
+		Type:      custom.TypeManifest,
+		AllowHTTP: true,
+		Manifest:  &custom.ManifestConfig{URL: srv.URL + "/mods.yaml"},
+	})
+	require.NoError(t, err)
+	svc.RegisterSource(src)
+
+	// InstalledMod row exists (enabled, in the profile) but nothing was
+	// ever stored in the cache - forces DeployProfile's redownload branch.
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "redl", SourceID: "e2e-repo", Name: "Redownload Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "e2e-repo", ModID: "redl", Version: "1.0"}))
+
+	oldVerbose := verbose
+	verbose = false
+	t.Cleanup(func() { verbose = oldVerbose })
+
+	out := captureStdout(t, func() error {
+		return doDeploy(context.Background(), svc, game, nil)
+	})
+
+	redownloadIdx := strings.Index(out, "cache missing, re-downloading...")
+	successIdx := strings.Index(out, "✓ Redownload Mod")
+	require.NotEqual(t, -1, redownloadIdx, "missing redownload diagnostic; got:\n%s", out)
+	require.NotEqual(t, -1, successIdx, "mod must actually redeploy successfully; got:\n%s", out)
+	require.Less(t, redownloadIdx, successIdx)
+
+	// The source reports Content-Length, so the download's progress readout
+	// prints via a bare '\r' (no trailing newline - core.DeployDownloading's
+	// handler above). The pre-extraction CLI's unconditional
+	// `fmt.Println() // Clear progress line` after the download loop (git
+	// show b2ad559:cmd/lmm/deploy.go) is what terminates that line with a
+	// real '\n' before the mod's own "✓" success line prints - without it,
+	// the percent readout and "✓ Redownload Mod" run together on one
+	// physical line.
+	assert.Contains(t, out, "\n  ✓ Redownload Mod", "the mod's success line must start on its own line, not run together with the redownload's progress readout")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "redownload.dat"))
+	assert.NoError(t, err, "the redownloaded mod must still be deployed")
 }
