@@ -40,6 +40,11 @@ const (
 type Options struct {
 	Theme    string
 	Provider DataProvider
+	// Actions is the write-side ActionProvider seam (see actions_provider.go).
+	// Optional: a nil Actions means no mutation can be confirmed through
+	// promptAction/buildAction, which is fine for tests that only exercise
+	// the read-only DataProvider surface.
+	Actions ActionProvider
 	// Ctx seeds Model.ctx; see that field for why the context is stored
 	// rather than threaded as a parameter.
 	Ctx context.Context
@@ -51,6 +56,7 @@ type Model struct {
 	layout   Layout
 	keys     KeyMap
 	provider DataProvider
+	actions  ActionProvider
 	// ctx deviates from "don't store contexts in structs": Bubble Tea's
 	// Init/Update/View take no context parameter, so commands (e.g.
 	// startSearch) close over m.ctx to reach it from goroutines.
@@ -64,6 +70,7 @@ type Model struct {
 	profiles []ProfileItem
 	sources  []SourceInfo
 	search   searchModel
+	action   actionModel
 
 	screen   Screen
 	selected map[Screen]int
@@ -110,6 +117,7 @@ func NewModel(options Options) (Model, error) {
 		layout:   layoutForTheme(t.Name),
 		keys:     DefaultKeyMap(),
 		provider: options.Provider,
+		actions:  options.Actions,
 		ctx:      options.Ctx,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
@@ -130,8 +138,16 @@ func NewModel(options Options) (Model, error) {
 }
 
 // NewPrototypeModel creates a side-effect-free TUI model backed by fake data.
+// Provider and Actions are wired from the SAME prototypeProvider instance
+// (see NewPrototypeProvider's doc comment), so actions confirmed through
+// the returned Model are visible in its own subsequent reads — whatever the
+// caller passed in either field is discarded.
 func NewPrototypeModel(options Options) (Model, error) {
-	options.Provider = NewPrototypeProvider()
+	provider := NewPrototypeProvider()
+	options.Provider = provider
+	if actions, ok := provider.(ActionProvider); ok {
+		options.Actions = actions
+	}
 	return NewModel(options)
 }
 
@@ -219,7 +235,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.summary = msg.summary
 		m.mods = msg.mods
 		m.profiles = msg.profiles
+		m.clampSelections()
 		return m, nil
+	case actionDoneMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		m.action.running = false
+		if m.action.cancel != nil {
+			m.action.cancel()
+			m.action.cancel = nil
+		}
+		m.action.status = formatOutcomeStatus(msg.outcome)
+		m.action.statusIsError = false
+		return m, m.loadData
+	case actionFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		m.action.running = false
+		if m.action.cancel != nil {
+			m.action.cancel()
+			m.action.cancel = nil
+		}
+		m.action.status = singleLine(msg.err.Error())
+		m.action.statusIsError = true
+		return m, m.loadData
 	case loadFailedMsg:
 		m.state = stateFailed
 		m.loadErr = msg.err
@@ -262,10 +303,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.action.pending != nil {
+		return m.updatePendingActionKey(msg)
+	}
+
+	// Rule 8: any keypress that isn't a modal response (handled above,
+	// before this point is ever reached) and isn't quit clears the status
+	// line. isQuitKey (not the bare Quit binding) is used so a "q" that's
+	// actually being typed into the focused search input still clears it.
+	if !m.isQuitKey(msg) {
+		m.action.status = ""
+		m.action.statusIsError = false
+	}
+
 	if m.screen == ScreenSearch && m.search.input.Focused() {
 		switch {
-		case key.Matches(msg, m.keys.Quit) && msg.String() == "ctrl+c":
-			return m, tea.Quit
+		case m.isQuitKey(msg): // only ctrl+c while focused — see isQuitKey
+			return m, m.quitCmd()
 		case key.Matches(msg, m.keys.Blur):
 			m.search.input.Blur()
 			return m, nil
@@ -281,7 +335,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		return m, tea.Quit
+		return m, m.quitCmd()
 	case key.Matches(msg, m.keys.Help):
 		m.showHelp = !m.showHelp
 		return m, nil
@@ -348,6 +402,14 @@ func (m Model) View() string {
 	b.WriteString("\n\n")
 
 	b.WriteString(m.screenView())
+
+	// Exactly one extra line when a status is set (see
+	// contentChromeHeight's matching statusHeight accounting); none when
+	// it's "".
+	if status := m.statusLine(); status != "" {
+		b.WriteString("\n")
+		b.WriteString(status)
+	}
 
 	b.WriteString("\n\n")
 	if m.showHelp {
@@ -442,6 +504,10 @@ func (m Model) nav() string {
 }
 
 func (m Model) screenView() string {
+	if m.action.pending != nil {
+		return m.actionModalView()
+	}
+
 	switch m.state {
 	case stateLoading:
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
@@ -960,8 +1026,16 @@ func (m Model) contentChromeHeight() int {
 		footerHeight = lipgloss.Height(m.helpView())
 	}
 
+	// The action status line (rule 8) occupies exactly one row above the
+	// footer, and only when set — see statusLine's matching "" ⇒ nothing
+	// rendered contract in View().
+	statusHeight := 0
+	if m.action.status != "" {
+		statusHeight = 1
+	}
+
 	const titleNavAndSpacerHeight = 4 // title, nav, and the spacer lines around content.
-	return titleNavAndSpacerHeight + footerHeight
+	return titleNavAndSpacerHeight + footerHeight + statusHeight
 }
 
 // countLabel renders n, or "?" when n is negative (unknown, e.g. no update

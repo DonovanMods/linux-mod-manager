@@ -22,6 +22,8 @@ type KeyMap struct {
 	NextPage      key.Binding
 	PrevPage      key.Binding
 	CycleSource   key.Binding
+	ConfirmAction key.Binding
+	CancelAction  key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -98,6 +100,14 @@ func DefaultKeyMap() KeyMap {
 		CycleSource: key.NewBinding(
 			key.WithKeys("s"),
 			key.WithHelp("s", "cycle source"),
+		),
+		ConfirmAction: key.NewBinding(
+			key.WithKeys("y", "enter"),
+			key.WithHelp("y/enter", "confirm"),
+		),
+		CancelAction: key.NewBinding(
+			key.WithKeys("n", "esc"),
+			key.WithHelp("n/esc", "cancel"),
 		),
 	}
 }
