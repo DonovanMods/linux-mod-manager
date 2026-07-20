@@ -380,9 +380,16 @@ func (p *coreProvider) DeployProfile(ctx context.Context) (ActionOutcome, error)
 	if len(result.Skipped) > 0 {
 		msg += fmt.Sprintf(", %d failed", len(result.Skipped))
 	}
+	// result.Skipped carries one "<mod name>: <reason>" entry per mod that
+	// didn't deploy (see DeployResult.Skipped's doc comment); appended after
+	// the flow Warnings/Notes mergeDiagnostics already composed so the
+	// status line's warning suffix can explain WHY a mod failed, not just
+	// that one did. Appending an empty result.Skipped to a nil merge leaves
+	// Warnings nil, matching every other DataProvider method's "no
+	// diagnostics" convention.
 	return ActionOutcome{
 		Message:  msg,
-		Warnings: mergeDiagnostics(result.Warnings, result.Notes),
+		Warnings: append(mergeDiagnostics(result.Warnings, result.Notes), result.Skipped...),
 	}, nil
 }
 

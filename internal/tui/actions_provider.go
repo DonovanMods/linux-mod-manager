@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
 
 // ActionProvider is the write-side seam over the core mutation flows
@@ -84,10 +86,11 @@ func mergeDiagnostics(warnings, notes []string) []string {
 // adjust Stats.Enabled/Installed accordingly; DeployProfile and the profile
 // switch pair report plausible, data-derived Outcomes. PlanProfileSwitch's
 // diff is fake but consistent - it never invents a phantom ToInstall entry
-// (there is no real "mod exists on some source but isn't cached" concept in
-// canned data), so ApplyProfileSwitch's NeedsDownloads refusal exists here
-// purely for interface-contract parity with coreProvider and is not
-// exercised by the prototype's own deterministic planner.
+// out of thin air; the ONE exception is prototype.NeedsDownloadProfileName,
+// a canned profile whose Mods list deliberately references an ID absent
+// from InstalledMods (see prototype/data.go) so --prototype mode can demo
+// ApplyProfileSwitch's NeedsDownloads refusal end to end. Every other
+// canned profile leaves Mods unset and is unaffected.
 
 // findInstalledIndex returns the index of the InstalledMods entry matching
 // (sourceID, id), or -1 if none matches.
@@ -162,28 +165,56 @@ func (p *prototypeProvider) activeProfileName() string {
 	return p.data.Profile.Name
 }
 
-func (p *prototypeProvider) profileExists(name string) bool {
+// findProfile returns the canned Profiles entry named name, or false if
+// none matches.
+func (p *prototypeProvider) findProfile(name string) (prototype.Profile, bool) {
 	for _, pr := range p.data.Profiles {
 		if pr.Name == name {
-			return true
+			return pr, true
 		}
 	}
-	return false
+	return prototype.Profile{}, false
+}
+
+// needsDownloads reports, for each ID in profile.Mods, whether it names an
+// InstalledMods entry - and returns a NeedsDownloads-shaped entry for every
+// one that doesn't. All canned mods use source "nexusmods" (see
+// prototype/data.go), so that source is hardcoded here; this is demo-only
+// plumbing, not a general (source, id) reference. Every profile except
+// prototype.NeedsDownloadProfileName leaves Mods unset, so this returns nil
+// for them - the alternating Enable/Disable plan below is unaffected.
+func (p *prototypeProvider) needsDownloads(profile prototype.Profile) []string {
+	var needs []string
+	for _, id := range profile.Mods {
+		if p.findInstalledIndex("nexusmods", id) < 0 {
+			needs = append(needs, fmt.Sprintf("nexusmods:%s v1.0", id))
+		}
+	}
+	return needs
 }
 
 // PlanProfileSwitch computes a fake-but-consistent plan from prototype
 // data: alternating InstalledMods entries (by index) toggle between the two
 // buckets, giving a plausible, deterministic, non-empty mix of Enable/
-// Disable for any target profile other than the active one. See this file's
-// package doc comment on why NeedsDownloads is always empty here.
+// Disable for any target profile other than the active one. The one
+// exception is prototype.NeedsDownloadProfileName (see needsDownloads and
+// this file's package doc comment), which short-circuits straight to a
+// NeedsDownloads-only plan instead - ApplyProfileSwitch refuses on that
+// alone, so there's no need to also compute a bucket split that could never
+// be applied.
 func (p *prototypeProvider) PlanProfileSwitch(_ context.Context, profileName string) (SwitchPlanView, error) {
-	if !p.profileExists(profileName) {
+	target, ok := p.findProfile(profileName)
+	if !ok {
 		return SwitchPlanView{}, fmt.Errorf("profile not found: %s", profileName)
 	}
 
 	current := p.activeProfileName()
 	if profileName == current {
 		return SwitchPlanView{From: current, To: profileName, AlreadyActive: true}, nil
+	}
+
+	if needs := p.needsDownloads(target); len(needs) > 0 {
+		return SwitchPlanView{From: current, To: profileName, NeedsDownloads: needs}, nil
 	}
 
 	var enable, disable []string
@@ -206,10 +237,10 @@ func (p *prototypeProvider) PlanProfileSwitch(_ context.Context, profileName str
 	}, nil
 }
 
-// ApplyProfileSwitch re-plans and applies, refusing (mirroring coreProvider,
-// for interface-contract parity - see this file's package doc comment on
-// why this branch is unreachable via the prototype's own planner today) if
-// the fresh plan has NeedsDownloads entries.
+// ApplyProfileSwitch re-plans and applies, refusing (mirroring coreProvider)
+// if the fresh plan has NeedsDownloads entries - reachable via the
+// prototype's own planner for prototype.NeedsDownloadProfileName (see this
+// file's package doc comment).
 func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName string) (ActionOutcome, error) {
 	view, err := p.PlanProfileSwitch(ctx, profileName)
 	if err != nil {

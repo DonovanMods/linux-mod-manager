@@ -19,7 +19,21 @@ type Profile struct {
 	Name     string
 	Active   bool
 	ModCount int
+	// Mods is optional: installed-mod IDs this profile references, used
+	// only to seed PlanProfileSwitch's NeedsDownloads demo scenario (see
+	// NeedsDownloadProfileName below and actions_provider.go's
+	// prototypeProvider.PlanProfileSwitch). Every other canned profile
+	// leaves this nil - the alternating Enable/Disable plan logic never
+	// consults it.
+	Mods []string
 }
+
+// NeedsDownloadProfileName names the one canned profile (see Load) whose
+// Mods list references an ID absent from InstalledMods, so
+// prototypeProvider.PlanProfileSwitch (actions_provider.go) can produce a
+// NeedsDownloads plan and --prototype mode can demo the refusal state
+// without any core.Service.
+const NeedsDownloadProfileName = "requiem-overhaul"
 
 type Stats struct {
 	Installed int
@@ -70,6 +84,10 @@ func Load() Data {
 			{Name: "vanilla-plus", Active: false, ModCount: 18},
 			{Name: "graphics-overkill", Active: false, ModCount: 96},
 			{Name: "testing", Active: false, ModCount: 7},
+			// requiem-legendary is not in InstalledMods above - switching
+			// here always yields a NeedsDownloads plan (see
+			// NeedsDownloadProfileName's doc comment).
+			{Name: NeedsDownloadProfileName, Active: false, ModCount: 2, Mods: []string{"skyui", "requiem-legendary"}},
 		},
 	}
 }

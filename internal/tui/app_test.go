@@ -208,12 +208,19 @@ func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 120, 36)
+	// Height bumped 36->37 for Task 7's new e/x/D help line: the party-sheet
+	// dashboard's COMMANDS menu panel already fit height=36's help-visible
+	// content budget with exactly zero slack (6 content lines against a
+	// panelContentHeight of exactly 6), so ANY help-overlay growth needs one
+	// more terminal row here to keep the exact-height invariant this test
+	// guards - see task-7-brief.md's "height/help tests may need justified
+	// adjustment for new hint lines" allowance.
+	model := sizedPrototypeModel(t, "wizardry", 120, 37)
 	model = updateWithRunes(t, model, "?")
 
 	view := model.View()
 	require.Equal(t, 120, lipgloss.Width(view))
-	require.Equal(t, 36, lipgloss.Height(view))
+	require.Equal(t, 37, lipgloss.Height(view))
 }
 
 func TestThemesUseDistinctLayouts(t *testing.T) {

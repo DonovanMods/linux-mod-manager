@@ -261,6 +261,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.action.status = singleLine(msg.err.Error())
 		m.action.statusIsError = true
 		return m, m.loadData
+	case planResultMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolvePlanResult(msg)
+	case planFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolvePlanFailure(msg)
 	case loadFailedMsg:
 		m.state = stateFailed
 		m.loadErr = msg.err
@@ -387,7 +397,20 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(1)
 		return m, nil
 	case key.Matches(msg, m.keys.Select):
+		// Select ("enter") is context-dependent: it opens a dashboard menu
+		// entry everywhere except Profiles, where Task 7 repurposes it to
+		// switch to the selected (non-active) profile - see mutations.go's
+		// switchSelectedProfile.
+		if m.screen == ScreenProfiles {
+			return m.switchSelectedProfile()
+		}
 		return m.openSelectedMenuEntry()
+	case key.Matches(msg, m.keys.ToggleEnable):
+		return m.toggleSelectedModEnable()
+	case key.Matches(msg, m.keys.Uninstall):
+		return m.uninstallSelectedMod()
+	case key.Matches(msg, m.keys.Deploy):
+		return m.deployActiveProfile()
 	default:
 		return m, nil
 	}
@@ -415,7 +438,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		b.WriteString(m.helpView())
 	} else {
-		b.WriteString(m.theme.Help.Render("?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  q: quit"))
+		b.WriteString(m.theme.Help.Render("?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  e/x/D: mutate  enter: switch  q: quit"))
 	}
 
 	app := m.theme.App
@@ -972,14 +995,15 @@ func (m Model) helpView() string {
 		"tab / shift+tab     cycle top-level screens",
 		"1-5                 jump to a screen (3 focuses search)",
 		"/                   search from anywhere (jumps + focuses input)",
-		"enter               search",
+		"enter               open menu entry / search / switch profile",
 		"esc                 unfocus search input",
 		"n/p                 result pages",
 		"s                   cycle source",
+		"e/x/D               toggle enable/disable / uninstall selected mod / deploy active profile",
 		"?                   toggle this help",
 		"q / ctrl+c           quit",
 		"",
-		"Browsing is read-only. Nothing is installed, updated, or deployed from this screen.",
+		"Enable, disable, uninstall, deploy, and profile switch all confirm through a modal before anything changes.",
 	}, "\n"))
 }
 
