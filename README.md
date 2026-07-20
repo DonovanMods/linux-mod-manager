@@ -145,19 +145,21 @@ lmm mod set-update 12345 --game skyrim-se --pin
 
 ### Terminal UI
 
-Browse your configured game, installed mods, and profiles interactively, search mod sources, and inspect the source registry:
+Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, and switch profiles — with every mutating action behind a confirmation prompt:
 
 ```bash
-lmm tui                     # real data, read-only
+lmm tui                     # real data
 lmm tui --theme amber       # themes: wizardry (default), amber, dos, green
 lmm tui --prototype         # demo mode with static fake data
 ```
 
 Keys: `tab`/`h`/`l` cycle screens, `1`–`5` jump, `3` jumps to Search (any
 entry path focuses the input immediately; `5` opens Sources), `↑↓`/`j`/`k`
-move, `enter` open/select, `/` focus search from anywhere, type query,
-`enter` to search, `esc` unfocus (clears focus; afterward `s` cycles sources,
-number keys switch screens), `n`/`p` next/previous page, `?` help, `q` quit.
+move, `enter` open/select (on Profiles, switch to the selected profile),
+`/` focus search from anywhere, type query, `enter` to search, `esc` unfocus
+(clears focus; afterward `s` cycles sources, number keys switch screens),
+`n`/`p` next/previous page, `e`/`x`/`D` enable-disable/uninstall/deploy (see
+below), `?` help, `q` quit.
 
 The Search screen defaults to **All sources**, mirroring the CLI: the typed
 query runs concurrently against every source configured for the game. Press
@@ -174,7 +176,33 @@ built-in and custom — with the same ID/TYPE/AUTH/CAPABILITIES columns as
 source whose definition file failed to load (bad YAML, ID collision, etc.)
 has no row here — check `lmm source list` for those.
 
-Browsing and searching are read-only — install/update/deploy actions from the TUI arrive in a later release.
+On **Installed Mods**, `e` toggles the selected mod's enable/disable state
+(the direction follows its current status: disabled mods enable, everything
+else disables) and `x` uninstalls it — removing deployed files, cache, and
+its profile entry, running uninstall hooks along the way. `D` deploys the
+active profile (using its current enabled mods) from either Installed Mods
+or the Dashboard.
+
+On **Profiles**, `enter` on a profile other than the active one plans the
+switch and shows a preview: mods to enable/disable, or "No mod changes; set
+as default." when nothing would change. `enter` on the already-active
+profile just reports "Already on profile ..." with no modal. If the plan
+would need to download anything not already installed, the switch is
+refused with a message pointing at `lmm profile switch` — installing from
+the TUI is coming in a later phase.
+
+Every mutating action — enable/disable, uninstall, deploy, profile switch —
+opens a confirmation panel describing what will change before it runs:
+`y`/`enter` confirms, `n`/`esc` cancels, and only one action can be in
+flight at a time. Once it finishes, a one-line status message reports the
+outcome (including a warning count, if the flow reported any) and clears on
+your next keypress. `--prototype` mode demos all of these actions against
+simulated data, including one canned profile that always exercises the
+needs-downloads refusal.
+
+Installing a mod from search results and checking/applying updates from the
+TUI aren't available yet — use `lmm install` and `lmm update` for those
+until a later release.
 
 ## Configuration
 

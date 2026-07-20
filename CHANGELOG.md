@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-07-20
+
+### Added
+
+- TUI mutating actions behind confirmation prompts: enable/disable (`e`), uninstall (`x`), and deploy (`D`) on Installed Mods (`D` also works from the Dashboard), and profile switch (`enter` on a non-active Profiles row) with a plan preview — every action opens a confirmation modal (`y`/`enter` confirms, `n`/`esc` cancels) and reports its outcome on a status line, including a warning count when the underlying flow reported any
+- `--prototype` mode demos all of the above against simulated data, including a canned profile that demonstrates the profile-switch needs-downloads refusal
+- Core: mutation flows extracted from the CLI into `internal/core` (`EnableMod`/`DisableMod`, `UninstallMod`, `DeployProfile`, `PlanProfileSwitch`/`ApplyProfileSwitch`) so the TUI and CLI share the same logic; CLI behavior is unchanged
+
+### Changed
+
+- `lmm deploy --purge`'s per-mod `uninstall.before_each` hook-skip diagnostic now prints to stderr with the mod's name attached (was an unattributed line on stdout) — the one intentional CLI output change from this phase's core extraction
+
+### Fixed
+
+- TUI quit now cancels any in-flight search or action context instead of leaving it running past program exit (#42 lifecycle item)
+
 ## [1.10.0] - 2026-07-18
 
 ### Added
@@ -740,7 +756,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.7.0...v1.8.0
