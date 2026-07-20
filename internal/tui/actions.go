@@ -54,6 +54,12 @@ type actionDoneMsg struct {
 	gen     int
 	kind    actionKind
 	outcome ActionOutcome
+	// switchedTo is set only by the profile-switch action (actionSwitch, via
+	// buildAction's switchedTo parameter - see resolvePlanResult in
+	// mutations.go), naming the profile the switch just applied. Every other
+	// action leaves it "" (the zero value), which app.go's actionDoneMsg
+	// handler treats as "nothing to rebind" - see rebindProfile.
+	switchedTo string
 }
 
 // actionFailedMsg carries a failed action's error, tagged like
@@ -100,7 +106,12 @@ const actionModalMaxDetailLines = 8
 // normal two-step usage) can never corrupt an in-flight action's bookkeeping
 // even if it forgets to check the guard itself — promptAction's own refusal
 // to show the no-op pendingAction is just belt-and-suspenders on top.
-func (m Model) buildAction(kind actionKind, title string, detail []string, do func(context.Context) (ActionOutcome, error)) (Model, pendingAction) {
+//
+// switchedTo is carried verbatim into the eventual actionDoneMsg (see that
+// type's doc comment): every caller except resolvePlanResult's actionSwitch
+// build passes "" here, since only a profile switch has a session-rebind
+// consequence for app.go's actionDoneMsg handler to act on.
+func (m Model) buildAction(kind actionKind, title string, detail []string, switchedTo string, do func(context.Context) (ActionOutcome, error)) (Model, pendingAction) {
 	if m.action.running || m.action.pending != nil {
 		return m, pendingAction{kind: kind, title: title, detail: detail, confirm: func() tea.Cmd { return nil }}
 	}
@@ -123,11 +134,44 @@ func (m Model) buildAction(kind actionKind, title string, detail []string, do fu
 				if err != nil {
 					return actionFailedMsg{gen: gen, kind: kind, err: err}
 				}
-				return actionDoneMsg{gen: gen, kind: kind, outcome: outcome}
+				return actionDoneMsg{gen: gen, kind: kind, outcome: outcome, switchedTo: switchedTo}
 			}
 		},
 	}
 	return m, pa
+}
+
+// profileRebinder is implemented by DataProvider/ActionProvider values that
+// carry a per-session active-profile binding (currently *coreProvider only
+// - see service_core.go's SetProfile), letting a successful TUI-driven
+// profile switch rebind the session without reconstructing the provider.
+// It's deliberately NOT part of the DataProvider/ActionProvider interfaces
+// themselves (both stay frozen at their documented read-only/write-only
+// contracts) - rebindProfile below reaches it via an optional type
+// assertion instead. prototypeProvider does not implement this: its own
+// ApplyProfileSwitch already flips the canned data's Active profile
+// in-place (see actions_provider.go), so a second flip here would
+// double-apply; simply not implementing the interface makes rebindProfile a
+// no-op for it, with no special-casing required.
+type profileRebinder interface {
+	SetProfile(name string)
+}
+
+// rebindProfile rebinds every provider/actions instance that supports it
+// (see profileRebinder) to name. cmd/lmm/tui.go currently wires m.provider
+// and m.actions from two SEPARATE *coreProvider instances - one per
+// NewCoreProvider/NewCoreActions call (see their doc comments in
+// service_core.go) - so both are rebound independently here rather than
+// assuming they're the same pointer; this stays correct even if a future
+// wiring change shares one instance between both fields, since rebinding
+// the same pointer twice is a harmless no-op.
+func (m Model) rebindProfile(name string) {
+	if rb, ok := m.provider.(profileRebinder); ok {
+		rb.SetProfile(name)
+	}
+	if rb, ok := m.actions.(profileRebinder); ok {
+		rb.SetProfile(name)
+	}
 }
 
 // promptAction shows pa as the confirmation modal (rule 1): this is the only

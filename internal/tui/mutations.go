@@ -62,7 +62,7 @@ func (m Model) toggleSelectedModEnable() (Model, tea.Cmd) {
 func (m Model) promptEnable(item ModItem) (Model, tea.Cmd) {
 	title := fmt.Sprintf("Enable %q?", item.Name)
 	detail := m.gameProfileDetail("Files will be deployed to the game directory.")
-	model, pa := m.buildAction(actionEnable, title, detail, func(ctx context.Context) (ActionOutcome, error) {
+	model, pa := m.buildAction(actionEnable, title, detail, "", func(ctx context.Context) (ActionOutcome, error) {
 		return m.actions.EnableMod(ctx, item)
 	})
 	return model.promptAction(pa), nil
@@ -71,7 +71,7 @@ func (m Model) promptEnable(item ModItem) (Model, tea.Cmd) {
 func (m Model) promptDisable(item ModItem) (Model, tea.Cmd) {
 	title := fmt.Sprintf("Disable %q?", item.Name)
 	detail := m.gameProfileDetail("Files will be removed from the game directory (cache kept).")
-	model, pa := m.buildAction(actionDisable, title, detail, func(ctx context.Context) (ActionOutcome, error) {
+	model, pa := m.buildAction(actionDisable, title, detail, "", func(ctx context.Context) (ActionOutcome, error) {
 		return m.actions.DisableMod(ctx, item)
 	})
 	return model.promptAction(pa), nil
@@ -89,7 +89,7 @@ func (m Model) uninstallSelectedMod() (Model, tea.Cmd) {
 	}
 	title := fmt.Sprintf("Uninstall %q?", item.Name)
 	detail := m.gameProfileDetail("Removes deployed files, cache, and profile entry. Uninstall hooks will run.")
-	model, pa := m.buildAction(actionUninstall, title, detail, func(ctx context.Context) (ActionOutcome, error) {
+	model, pa := m.buildAction(actionUninstall, title, detail, "", func(ctx context.Context) (ActionOutcome, error) {
 		return m.actions.UninstallMod(ctx, item)
 	})
 	return model.promptAction(pa), nil
@@ -112,7 +112,7 @@ func (m Model) deployActiveProfile() (Model, tea.Cmd) {
 		fmt.Sprintf("Game: %s", m.summary.GameName),
 		fmt.Sprintf("Mods: %d enabled", m.summary.Enabled),
 	}
-	model, pa := m.buildAction(actionDeploy, title, detail, func(ctx context.Context) (ActionOutcome, error) {
+	model, pa := m.buildAction(actionDeploy, title, detail, "", func(ctx context.Context) (ActionOutcome, error) {
 		return m.actions.DeployProfile(ctx)
 	})
 	return model.promptAction(pa), nil
@@ -216,7 +216,7 @@ func (m Model) resolvePlanResult(msg planResultMsg) (Model, tea.Cmd) {
 		return m, nil
 	default:
 		title := fmt.Sprintf("Switch to %q?", view.To)
-		model, pa := m.buildAction(actionSwitch, title, switchDetailLines(view), func(ctx context.Context) (ActionOutcome, error) {
+		model, pa := m.buildAction(actionSwitch, title, switchDetailLines(view), view.To, func(ctx context.Context) (ActionOutcome, error) {
 			return m.actions.ApplyProfileSwitch(ctx, view.To)
 		})
 		return model.promptAction(pa), nil

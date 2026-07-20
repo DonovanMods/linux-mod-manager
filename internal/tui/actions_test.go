@@ -41,7 +41,7 @@ func TestPromptActionShowsModalWithoutMutating(t *testing.T) {
 	model := modelWithActions(t, rec)
 	item := ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"}
 
-	model, pa := model.buildAction(actionUninstall, `Uninstall "SkyUI"?`, []string{"Removes SkyUI from the active profile."},
+	model, pa := model.buildAction(actionUninstall, `Uninstall "SkyUI"?`, []string{"Removes SkyUI from the active profile."}, "",
 		func(ctx context.Context) (ActionOutcome, error) { return rec.UninstallMod(ctx, item) })
 	model = model.promptAction(pa)
 
@@ -62,7 +62,7 @@ func TestConfirmKeysDispatchActionAndClearPending(t *testing.T) {
 			rec := &recordingActions{UninstallOutcome: ActionOutcome{Message: `Uninstalled "SkyUI"`}}
 			model := modelWithActions(t, rec)
 			item := ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"}
-			model, pa := model.buildAction(actionUninstall, `Uninstall "SkyUI"?`, nil,
+			model, pa := model.buildAction(actionUninstall, `Uninstall "SkyUI"?`, nil, "",
 				func(ctx context.Context) (ActionOutcome, error) { return rec.UninstallMod(ctx, item) })
 			model = model.promptAction(pa)
 
@@ -97,7 +97,7 @@ func TestConfirmClosureMapsProviderErrorToActionFailedMsg(t *testing.T) {
 	item := ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"}
 
 	// buildAction increments gen and captures it in the closure
-	model, pa := model.buildAction(actionUninstall, `Uninstall "SkyUI"?`, nil,
+	model, pa := model.buildAction(actionUninstall, `Uninstall "SkyUI"?`, nil, "",
 		func(ctx context.Context) (ActionOutcome, error) { return failing.UninstallMod(ctx, item) })
 
 	genAtBuild := model.action.gen
@@ -131,7 +131,7 @@ func TestCancelKeysLeaveStateUntouched(t *testing.T) {
 
 			rec := &recordingActions{}
 			model := modelWithActions(t, rec)
-			model, pa := model.buildAction(actionDeploy, "Deploy?", nil,
+			model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "",
 				func(ctx context.Context) (ActionOutcome, error) { return rec.DeployProfile(ctx) })
 			model = model.promptAction(pa)
 			genBefore := model.action.gen
@@ -161,7 +161,7 @@ func TestPendingModalIgnoresNavigationButQuitStillQuits(t *testing.T) {
 	model := modelWithActions(t, rec)
 	model.screen = ScreenDashboard
 	model.selected[ScreenDashboard] = 0
-	model, pa := model.buildAction(actionDeploy, "Deploy?", nil,
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "",
 		func(ctx context.Context) (ActionOutcome, error) { return rec.DeployProfile(ctx) })
 	model = model.promptAction(pa)
 
@@ -188,7 +188,7 @@ func TestSingleFlightBlocksNewPromptsWhileRunning(t *testing.T) {
 
 	rec := &recordingActions{}
 	model := modelWithActions(t, rec)
-	model, pa := model.buildAction(actionDeploy, "Deploy?", nil,
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "",
 		func(ctx context.Context) (ActionOutcome, error) { return rec.DeployProfile(ctx) })
 	model = model.promptAction(pa)
 	updated, cmd := model.Update(keyRunes("y"))
@@ -199,7 +199,7 @@ func TestSingleFlightBlocksNewPromptsWhileRunning(t *testing.T) {
 
 	// A second action attempted while the first is still running must not
 	// disturb the in-flight action's gen or show a modal.
-	model2, pa2 := model.buildAction(actionEnable, "Enable something?", nil,
+	model2, pa2 := model.buildAction(actionEnable, "Enable something?", nil, "",
 		func(ctx context.Context) (ActionOutcome, error) { return rec.EnableMod(ctx, ModItem{}) })
 	model2 = model2.promptAction(pa2)
 	require.Nil(t, model2.action.pending, "single-flight must ignore the new prompt")
@@ -357,7 +357,7 @@ func TestActionModalReplacesContentAreaAndKeepsChrome(t *testing.T) {
 
 	model := sizedModelWithActions(t, &recordingActions{}, 100, 30)
 	model.screen = ScreenInstalledMods
-	model, pa := model.buildAction(actionUninstall, `Uninstall "SkyUI"?`, []string{"Removes SkyUI."}, func(context.Context) (ActionOutcome, error) {
+	model, pa := model.buildAction(actionUninstall, `Uninstall "SkyUI"?`, []string{"Removes SkyUI."}, "", func(context.Context) (ActionOutcome, error) {
 		return ActionOutcome{}, nil
 	})
 	model = model.promptAction(pa)
@@ -374,7 +374,7 @@ func TestActionModalTruncatesDetailToPanelContentWidth(t *testing.T) {
 
 	model := sizedModelWithActions(t, &recordingActions{}, 40, 24)
 	long := strings.Repeat("mod-name-", 20)
-	model, pa := model.buildAction(actionUninstall, "Uninstall?", []string{long}, func(context.Context) (ActionOutcome, error) {
+	model, pa := model.buildAction(actionUninstall, "Uninstall?", []string{long}, "", func(context.Context) (ActionOutcome, error) {
 		return ActionOutcome{}, nil
 	})
 	model = model.promptAction(pa)
@@ -392,7 +392,7 @@ func TestActionModalCollapsesLongDetailListWithMoreLine(t *testing.T) {
 	for i := range detail {
 		detail[i] = fmt.Sprintf("mod-%02d", i)
 	}
-	model, pa := model.buildAction(actionSwitch, "Switch profile?", detail, func(context.Context) (ActionOutcome, error) {
+	model, pa := model.buildAction(actionSwitch, "Switch profile?", detail, "", func(context.Context) (ActionOutcome, error) {
 		return ActionOutcome{}, nil
 	})
 	model = model.promptAction(pa)
@@ -415,7 +415,7 @@ func TestActionModalHeightInvariantAt80x24AndWidthFloor40(t *testing.T) {
 		t.Run(fmt.Sprintf("width-%d", width), func(t *testing.T) {
 			t.Parallel()
 			model := sizedModelWithActions(t, &recordingActions{}, width, 24)
-			model, pa := model.buildAction(actionSwitch, "Switch to vanilla-plus?", detail, func(context.Context) (ActionOutcome, error) {
+			model, pa := model.buildAction(actionSwitch, "Switch to vanilla-plus?", detail, "", func(context.Context) (ActionOutcome, error) {
 				return ActionOutcome{}, nil
 			})
 			model = model.promptAction(pa)
@@ -471,7 +471,7 @@ func TestQuitCancelsInFlightActionContext(t *testing.T) {
 
 	model := modelWithActions(t, &recordingActions{})
 	var capturedCtx context.Context
-	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, func(ctx context.Context) (ActionOutcome, error) {
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(ctx context.Context) (ActionOutcome, error) {
 		capturedCtx = ctx
 		return ActionOutcome{Message: "ok"}, nil
 	})
@@ -521,7 +521,7 @@ func TestPrototypeEndToEndPromptConfirmDoneRefreshChangesOverview(t *testing.T) 
 	require.Equal(t, "disabled", before.Status)
 
 	actions := model.actions
-	model, pa := model.buildAction(actionEnable, fmt.Sprintf("Enable %q?", before.Name), nil,
+	model, pa := model.buildAction(actionEnable, fmt.Sprintf("Enable %q?", before.Name), nil, "",
 		func(ctx context.Context) (ActionOutcome, error) { return actions.EnableMod(ctx, before) })
 	model = model.promptAction(pa)
 

@@ -250,6 +250,22 @@ func (p *coreProvider) modsToItems(mods []domain.Mod, installedKeys map[string]b
 	return items
 }
 
+// SetProfile rebinds the session to a new active profile: after a
+// successful TUI-driven switch, core.Service.ApplyProfileSwitch has already
+// persisted the new default profile (see its own doc comment in flows.go),
+// but THIS instance's p.profile - fixed at NewCoreProvider/NewCoreActions
+// construction time and read by every method on this type - would
+// otherwise never find out, leaving Profiles()/Overview() starring the OLD
+// profile and every mutation still targeting it. Implements app.go's
+// optional profileRebinder hook via a plain method, not part of
+// DataProvider/ActionProvider (both stay frozen at their documented
+// contracts); see rebindProfile there for why both the Provider and Actions
+// instances (cmd/lmm/tui.go wires two SEPARATE *coreProvider values, one
+// per constructor) must each be rebound independently.
+func (p *coreProvider) SetProfile(name string) {
+	p.profile = name
+}
+
 func (p *coreProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
 	profiles, err := p.svc.NewProfileManager().List(p.game.ID)
 	if err != nil {

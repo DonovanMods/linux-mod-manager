@@ -248,6 +248,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.action.status = formatOutcomeStatus(msg.outcome)
 		m.action.statusIsError = false
+		// A fresh switch's target must rebind the session's active-profile
+		// providers BEFORE the refresh below reads them (see rebindProfile
+		// and profileRebinder in actions.go) - otherwise Profiles() keeps
+		// starring the OLD profile forever, and subsequent mutations keep
+		// targeting it too (finding C1).
+		if msg.switchedTo != "" {
+			m.rebindProfile(msg.switchedTo)
+		}
 		return m, m.loadData
 	case actionFailedMsg:
 		if msg.gen != m.action.gen {
