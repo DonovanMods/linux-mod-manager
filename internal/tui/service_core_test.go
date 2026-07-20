@@ -555,6 +555,35 @@ func TestCoreProviderActions_DeployProfile_NotesAppearInWarnings(t *testing.T) {
 	}
 }
 
+// TestCoreProviderActions_DeployProfile_ReportsFailedCount guards the
+// ", %d failed" branch of coreProvider.DeployProfile's Message composition
+// (service_core.go), which had zero coverage: one mod deploys normally, the
+// other's cache entry is deleted so the deploy loop's redownload path runs
+// and fails - no source is registered for "src", so the GetMod fetch
+// mirrors internal/core/flows_test.go's
+// TestService_DeployProfile_MissingCacheAndFetchFailure_SkipsMod arrangement,
+// one level up - proving the mixed deployed/failed count renders correctly.
+func TestCoreProviderActions_DeployProfile_ReportsFailedCount(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("1")})
+	seedActionMod(t, svc, game, "src", "2", "Mod Two", "1.0", true, map[string][]byte{"two.esp": []byte("2")})
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "1", "1.0")
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "2", "1.0")
+
+	require.NoError(t, svc.GetGameCache(game).Delete(game.ID, "src", "2", "1.0"),
+		"deleting mod 2's cache entry forces the redownload path, which fails since no source named \"src\" is registered")
+
+	outcome, err := actions.DeployProfile(context.Background())
+	require.NoError(t, err, "a per-mod fetch failure must not fail the whole deploy")
+	assert.Equal(t, "Deployed 1 mod(s), 1 failed", outcome.Message)
+	assert.Empty(t, outcome.Warnings, "a redownload fetch failure is recorded in DeployResult.Skipped, not Warnings/Notes, so it does not surface in Outcome.Warnings")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "one.esp"))
+	assert.NoError(t, err, "the mod with an intact cache entry should still deploy")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "two.esp"))
+	assert.True(t, os.IsNotExist(err), "the mod whose redownload failed must not be deployed")
+}
+
 func TestCoreProviderActions_PlanProfileSwitch_MapsBucketsToDisplayStrings(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	pm := svc.NewProfileManager()
