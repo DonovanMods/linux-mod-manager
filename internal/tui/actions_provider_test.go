@@ -209,6 +209,94 @@ func requireModByID(t *testing.T, mods []ModItem, id string) ModItem {
 
 // --- Test fakes for Tasks 6-7 ---
 
+// recordingActions implements ActionProvider, recording every call's
+// arguments and returning caller-configured outcomes/errors - for Tasks 6-7
+// to verify keybinding/modal wiring calls the right method with the right
+// arguments, without needing a real core.Service or the prototype dataset.
+// Mirrors app_test.go's recordingProvider (the equivalent DataProvider
+// fake), one field set per method rather than a single delegate+hook, since
+// ActionProvider callers need to configure a distinct outcome per method.
+type recordingActions struct {
+	EnableCalls    []ModItem
+	DisableCalls   []ModItem
+	UninstallCalls []ModItem
+	DeployCalls    int
+	PlanCalls      []string
+	ApplyCalls     []string
+
+	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
+	PlanView                                                                     SwitchPlanView
+
+	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
+}
+
+func (r *recordingActions) EnableMod(_ context.Context, item ModItem) (ActionOutcome, error) {
+	r.EnableCalls = append(r.EnableCalls, item)
+	return r.EnableOutcome, r.EnableErr
+}
+
+func (r *recordingActions) DisableMod(_ context.Context, item ModItem) (ActionOutcome, error) {
+	r.DisableCalls = append(r.DisableCalls, item)
+	return r.DisableOutcome, r.DisableErr
+}
+
+func (r *recordingActions) UninstallMod(_ context.Context, item ModItem) (ActionOutcome, error) {
+	r.UninstallCalls = append(r.UninstallCalls, item)
+	return r.UninstallOutcome, r.UninstallErr
+}
+
+func (r *recordingActions) DeployProfile(_ context.Context) (ActionOutcome, error) {
+	r.DeployCalls++
+	return r.DeployOutcome, r.DeployErr
+}
+
+func (r *recordingActions) PlanProfileSwitch(_ context.Context, profile string) (SwitchPlanView, error) {
+	r.PlanCalls = append(r.PlanCalls, profile)
+	return r.PlanView, r.PlanErr
+}
+
+func (r *recordingActions) ApplyProfileSwitch(_ context.Context, profile string) (ActionOutcome, error) {
+	r.ApplyCalls = append(r.ApplyCalls, profile)
+	return r.ApplyOutcome, r.ApplyErr
+}
+
+// failingActions implements ActionProvider with every method returning a
+// fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
+// verify error-path UI (status line rendering, modal dismissal) without
+// per-test stubbing.
+type failingActions struct{ Err error }
+
+func (f failingActions) err() error {
+	if f.Err != nil {
+		return f.Err
+	}
+	return errors.New("failingActions: forced failure")
+}
+
+func (f failingActions) EnableMod(context.Context, ModItem) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) DisableMod(context.Context, ModItem) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) UninstallMod(context.Context, ModItem) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) DeployProfile(context.Context) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) PlanProfileSwitch(context.Context, string) (SwitchPlanView, error) {
+	return SwitchPlanView{}, f.err()
+}
+
+func (f failingActions) ApplyProfileSwitch(context.Context, string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
 func TestRecordingActionsRecordsCallsAndReturnsConfiguredOutcomes(t *testing.T) {
 	t.Parallel()
 

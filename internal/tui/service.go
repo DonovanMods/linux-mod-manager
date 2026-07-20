@@ -20,8 +20,11 @@ type Summary struct {
 	Conflicts   int // -1 = unknown
 }
 
-// ModItem is one renderable mod row.
+// ModItem is one renderable mod row. ID, together with Source, fully
+// addresses the mod for core mutations keyed on (sourceID, modID) - see
+// ActionProvider.
 type ModItem struct {
+	ID              string
 	Name            string
 	Author          string
 	Version         string
@@ -98,12 +101,17 @@ type prototypeProvider struct {
 }
 
 // NewPrototypeProvider returns the side-effect-free demo DataProvider used
-// by --prototype mode and tests.
+// by --prototype mode and tests. The returned value also implements
+// ActionProvider (see actions_provider.go's prototypeProvider methods): a
+// caller that needs both roles for one demo session should type-assert the
+// single returned value (`provider.(ActionProvider)`) rather than calling
+// this constructor twice, since each call seeds an independent in-memory
+// dataset - two calls would silently diverge instead of sharing state.
 func NewPrototypeProvider() DataProvider {
-	return prototypeProvider{data: prototype.Load()}
+	return &prototypeProvider{data: prototype.Load()}
 }
 
-func (p prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
+func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 	return Summary{
 		GameName:    p.data.Game.Name,
 		ProfileName: p.data.Profile.Name,
@@ -114,11 +122,11 @@ func (p prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, erro
 	}, modItems(p.data.InstalledMods), nil
 }
 
-func (p prototypeProvider) Sources() []string {
+func (p *prototypeProvider) Sources() []string {
 	return []string{"nexusmods"}
 }
 
-func (p prototypeProvider) SourceInfos() []SourceInfo {
+func (p *prototypeProvider) SourceInfos() []SourceInfo {
 	return []SourceInfo{
 		{ID: "curseforge", Name: "CurseForge", Type: "built-in", Auth: "n/a", Capabilities: "search,updates"},
 		{ID: "local-mods", Name: "Local Mods", Type: "directory", Auth: "n/a", Capabilities: "search,updates"},
@@ -126,7 +134,7 @@ func (p prototypeProvider) SourceInfos() []SourceInfo {
 	}
 }
 
-func (p prototypeProvider) Search(_ context.Context, source, query string, _ int) (SearchPage, error) {
+func (p *prototypeProvider) Search(_ context.Context, source, query string, _ int) (SearchPage, error) {
 	all := modItems(p.data.SearchResults)
 	matched := make([]ModItem, 0, len(all))
 	for _, item := range all {
@@ -144,7 +152,7 @@ func (p prototypeProvider) Search(_ context.Context, source, query string, _ int
 	}, nil
 }
 
-func (p prototypeProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
+func (p *prototypeProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(p.data.Profiles))
 	for _, profile := range p.data.Profiles {
 		items = append(items, ProfileItem{
@@ -160,6 +168,7 @@ func modItems(mods []prototype.Mod) []ModItem {
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {
 		items = append(items, ModItem{
+			ID:              mod.ID,
 			Name:            mod.Name,
 			Author:          mod.Author,
 			Version:         mod.Version,
