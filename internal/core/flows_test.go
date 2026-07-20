@@ -951,6 +951,64 @@ func TestService_DeployProfile_MissingCacheAndFetchFailure_SkipsMod(t *testing.T
 	assert.Contains(t, result.Skipped[0], "failed to fetch")
 }
 
+// TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloadFailedEvent
+// guards finding D1: when the redownload itself starts (GetMod/GetModFiles
+// succeed) but the actual file download fails, redeployFromSource must emit
+// a DeployDownloadFailed event - not DeploySkipped - so cmd/lmm's dedicated
+// DeployDownloadFailed handler (blank line / "✗ <mod> - <detail>" / blank
+// line, matching the pre-extraction CLI) actually fires instead of
+// DeploySkipped's bare, unpadded "✗" line. result.Skipped accounting must be
+// unchanged (the mod still gets exactly one "<mod>: <reason>" entry), and
+// DeploySkipped must NOT also fire for this mod - that would double-print
+// under cmd/lmm's handler. Uses mockSourceWithDownloads without ever calling
+// AddDownload, so its httptest server 404s the file request deterministically.
+func TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloadFailedEvent(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	// Deliberately no AddDownload call - the mock's httptest server 404s any
+	// file request, making the download fail deterministically.
+
+	mockMod := &domain.Mod{ID: "1", SourceID: "src", Name: "Download Fail Mod", Version: "1.0", GameID: "g1"}
+	mock.AddMod("g1", mockMod)
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          *mockMod,
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	var events []core.DeployProgress
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err, "a per-mod download failure must not fail the whole deploy")
+	require.NotNil(t, result)
+
+	assert.Equal(t, 0, result.Deployed)
+	require.Len(t, result.Skipped, 1, "accounting must be unchanged: exactly one Skipped entry")
+	assert.Contains(t, result.Skipped[0], "Download Fail Mod: download failed:")
+
+	var failEvt *core.DeployProgress
+	for i := range events {
+		assert.NotEqual(t, core.DeploySkipped, events[i].Phase,
+			"DeploySkipped must not also fire for a download failure - see DeploySkipped's doc comment ('a reason other than a hook or download failure') and cmd/lmm/deploy.go's DeploySkipped handler, which would double-print alongside DeployDownloadFailed's")
+		if events[i].Phase == core.DeployDownloadFailed {
+			failEvt = &events[i]
+		}
+	}
+	require.NotNil(t, failEvt, "DeployDownloadFailed event must fire on download failure")
+	assert.Equal(t, "Download Fail Mod", failEvt.ModName)
+	assert.Equal(t, "1", failEvt.ModID)
+	assert.Contains(t, failEvt.Detail, "download failed:")
+}
+
 // TestService_DeployProfile_HookOrder proves install.before_all ->
 // install.before_each -> (deploy) -> install.after_each -> install.after_all
 // ordering, mirroring TestService_UninstallMod_HookOrder.

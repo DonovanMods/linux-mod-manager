@@ -591,3 +591,88 @@ mods:
 	_, err = os.Lstat(filepath.Join(game.ModPath, "redownload.dat"))
 	assert.NoError(t, err, "the redownloaded mod must still be deployed")
 }
+
+// TestDoDeploy_MissingCacheRedownloadFailure_PrintsBlankLinesAroundDownloadError
+// guards finding D1: core.DeployProfile's cache-miss redownload path must
+// emit a DeployDownloadFailed event (not DeploySkipped) when the redownload
+// itself fails, so cmd/lmm's dedicated DeployDownloadFailed handler (which
+// prints a blank line, the "✗ <mod> - <detail>" line, then another blank
+// line) actually fires. Reference bytes (git show
+// b2ad559:cmd/lmm/deploy.go, the download-failure branch): "⚠
+// re-downloading..." / blank / "✗ <mod> - download failed: ..." / blank /
+// blank / "Deployed: 0, Failed: 1" - the pre-fix extraction lost both blank
+// lines around the ✗ line because the failure routed through DeploySkipped
+// instead, whose handler prints the ✗ line with no surrounding blank lines.
+// Mirrors TestDoDeploy_MissingCacheRedownloadSuccess_PrintsBlankLineAfterDownload's
+// real custom-manifest-source-over-httptest harness, but deliberately
+// registers no handler for the file URL so the download 404s deterministically.
+func TestDoDeploy_MissingCacheRedownloadFailure_PrintsBlankLinesAroundDownloadError(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	manifest := fmt.Sprintf(`
+version: 1
+mods:
+  - id: redlfail
+    name: Redownload Fail Mod
+    version: "1.0"
+    summary: A mod whose redownload fails
+    files:
+      - id: main
+        filename: redownload.dat
+        version: "1.0"
+        url: %s/files/redownload.dat
+        primary: true
+`, srv.URL)
+	mux.HandleFunc("/mods.yaml", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(manifest)) })
+	// Deliberately no handler registered for /files/ - the manifest's file
+	// URL 404s via the mux's default handler, making the redownload fail
+	// deterministically without needing to fake a network error.
+	src, err := custom.New(custom.SourceDefinition{
+		ID:        "e2e-repo-fail",
+		Name:      "E2E Repo Fail",
+		Type:      custom.TypeManifest,
+		AllowHTTP: true,
+		Manifest:  &custom.ManifestConfig{URL: srv.URL + "/mods.yaml"},
+	})
+	require.NoError(t, err)
+	svc.RegisterSource(src)
+
+	// InstalledMod row exists (enabled, in the profile) but nothing was ever
+	// stored in the cache - forces DeployProfile's redownload branch.
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "redlfail", SourceID: "e2e-repo-fail", Name: "Redownload Fail Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "e2e-repo-fail", ModID: "redlfail", Version: "1.0"}))
+
+	oldVerbose := verbose
+	verbose = false
+	t.Cleanup(func() { verbose = oldVerbose })
+
+	out := captureStdout(t, func() error {
+		return doDeploy(context.Background(), svc, game, nil)
+	})
+
+	redownloadIdx := strings.Index(out, "cache missing, re-downloading...")
+	failIdx := strings.Index(out, "✗ Redownload Fail Mod - download failed:")
+	deployedIdx := strings.Index(out, "Deployed: 0, Failed: 1")
+	require.NotEqual(t, -1, redownloadIdx, "missing redownload diagnostic; got:\n%s", out)
+	require.NotEqual(t, -1, failIdx, "missing download-failure line; got:\n%s", out)
+	require.NotEqual(t, -1, deployedIdx, "missing summary line; got:\n%s", out)
+	require.Less(t, redownloadIdx, failIdx)
+	require.Less(t, failIdx, deployedIdx)
+
+	between1 := out[redownloadIdx:failIdx]
+	assert.Contains(t, between1, "\n\n", "a blank line must separate the re-downloading diagnostic from the ✗ line")
+
+	between2 := out[failIdx:deployedIdx]
+	assert.Contains(t, between2, "\n\n\n", "two blank lines must separate the ✗ line from the summary line (one from the ✗ handler's trailing blank, one from the summary line's own leading blank)")
+}
