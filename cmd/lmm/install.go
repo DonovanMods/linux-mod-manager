@@ -501,17 +501,6 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		switch p.Phase {
 		case core.InstallBeforeAllForced, core.InstallBeforeEachForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
-		case core.InstallDepInstalling:
-			fmt.Printf("\n[%d/%d] Installing dependency: %s\n", p.Index, p.Total, p.ModName)
-		case core.InstallDepSkipped:
-			fmt.Printf("  Skipped: %s: %s\n", p.ModName, p.Detail)
-		case core.InstallDepConflictWarning:
-			fmt.Printf("  ⚠ %s\n", p.Detail)
-		case core.InstallDepDownloading:
-			bar := progressBar(p.Percent, 20)
-			fmt.Printf("\r  [%s] %.1f%%", bar, p.Percent)
-		case core.InstallDepInstalled:
-			fmt.Printf("\n  ✓ Installed: %s\n", p.ModName)
 		case core.InstallDownloadStarted:
 			if p.Total > 1 {
 				fmt.Printf("\n[%d/%d] Downloading %s...\n", p.Index, p.Total, displayFileLabel(*p.File))
