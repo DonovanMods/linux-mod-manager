@@ -402,13 +402,17 @@ func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
 	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 
-	// Second entry opens Search. Per Finding 1, dashboard-menu selection is a
-	// navigation/jump path, not one of the two EXPLICIT "go search" bindings
-	// ("/" and "3"), so it must NOT auto-focus the input either.
+	// Second entry opens Search. Per the reporter's governing principle
+	// (mop-up follow-up to Finding 1): EXPLICIT search intent focuses ("/"
+	// and "3" already do); passive screen-cycling doesn't. Selecting "Search
+	// Archives" from the dashboard menu via Enter IS explicit intent — the
+	// user picked "search" by name — so this path must focus, unlike
+	// NextScreen/PrevScreen/direct-jump cycling landing on Search in
+	// passing (see TestTabCyclingOntoSearchDoesNotFocus).
 	moved := updateWithRunes(t, model, "j")
 	opened, _ = moved.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, ScreenSearch, opened.(Model).CurrentScreen())
-	require.False(t, opened.(Model).search.input.Focused(), "dashboard menu entry into search must not auto-focus")
+	require.True(t, opened.(Model).search.input.Focused(), "dashboard menu's explicit Search Archives entry must auto-focus")
 }
 
 func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {
