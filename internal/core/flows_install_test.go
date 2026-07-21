@@ -722,6 +722,41 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "2.0", installed.Version)
 	})
+
+	t.Run("same-version reinstall whose download fails leaves the original deployed content untouched", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
+		installer := svc.GetInstaller(game)
+		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+		defer mock.Close()
+		svc.RegisterSource(mock)
+		mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+		// Deliberately no AddDownload - the reinstall's download 404s, so
+		// the reinstall-cache-transaction's deferred Rollback (Activate
+		// never ran) must leave the live cache/deployed file untouched.
+
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+		require.NoError(t, err)
+		require.NotNil(t, plan.Replaces)
+
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+		require.Error(t, err)
+		require.NotNil(t, result, "a partial result must be returned alongside the error")
+		assert.Empty(t, result.Installed)
+
+		content, err := os.ReadFile(filepath.Join(gameDir, "mod1.esp"))
+		require.NoError(t, err, "the originally-deployed file must survive untouched")
+		assert.Equal(t, "original-content", string(content))
+
+		installed, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		require.NoError(t, err)
+		assert.Equal(t, "1.0", installed.Version, "DB row must be unchanged")
+	})
 }
 
 // TestService_ApplyInstall_DownloadFailure covers the primary's download
