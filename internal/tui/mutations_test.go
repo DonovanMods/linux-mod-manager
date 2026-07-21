@@ -1009,3 +1009,608 @@ func TestFooterFitsNarrowTerminalViaTruncation(t *testing.T) {
 	require.Equal(t, 80, lipgloss.Width(view))
 	require.Equal(t, 24, lipgloss.Height(view))
 }
+
+// --- Install from search ('i' on Search, blurred, a result selected) ---
+
+// searchReadyModel returns a Model on ScreenSearch with a searchReady page
+// (input blurred, textinput's default focus state) containing results - the
+// precondition installSelectedSearchResult requires.
+func searchReadyModel(t *testing.T, actions ActionProvider, results []ModItem) Model {
+	t.Helper()
+	model := modelWithActions(t, actions)
+	model.screen = ScreenSearch
+	model.search.state = searchReady
+	model.search.page = SearchPage{Query: "q", Source: "nexusmods", PageSize: 10, Results: results}
+	model.selected[ScreenSearch] = 0
+	return model
+}
+
+// TestInstallKeyDispatchesAsyncPlanFetch proves 'i' on a selected search
+// result shows a "Planning install…" status and returns a command instead
+// of synchronously calling the provider - mirroring
+// TestSwitchKeyDispatchesAsyncPlanFetch's shape for switch.
+func TestInstallKeyDispatchesAsyncPlanFetch(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	rec := &recordingActions{InstallPlanViewOut: InstallPlanView{Name: "Campfire", Version: "1.12", Source: "nexusmods", SizeLabel: "4.5 MB"}}
+	model := searchReadyModel(t, rec, []ModItem{item})
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	require.True(t, model.action.running)
+	require.Equal(t, "Planning install…", model.action.status)
+	require.False(t, model.action.statusIsError)
+	require.Nil(t, model.action.pending)
+	require.Empty(t, rec.PlanInstallCalls, "the provider call happens when the returned cmd runs, not synchronously")
+
+	msg := cmd()
+	require.IsType(t, installPlanResultMsg{}, msg)
+	require.Equal(t, []ModItem{item}, rec.PlanInstallCalls)
+}
+
+// TestInstallKeyOpensPlanModalFreshItem covers the fresh-item modal variant:
+// title "Install ...?" and the version/size/source/files detail lines.
+func TestInstallKeyOpensPlanModalFreshItem(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	rec := &recordingActions{InstallPlanViewOut: InstallPlanView{
+		Name: "Campfire", Version: "1.12", Source: "nexusmods", SizeLabel: "4.5 MB",
+		Files: []string{"campfire.7z"},
+	}}
+	model := searchReadyModel(t, rec, []ModItem{item})
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, cmd2 := model.Update(msg)
+	model = updated.(Model)
+	require.Nil(t, cmd2)
+
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, actionInstall, model.action.pending.kind)
+	require.Equal(t, `Install "Campfire"?`, model.action.pending.title)
+	require.Contains(t, model.action.pending.detail, "Version: 1.12 (4.5 MB)")
+	require.Contains(t, model.action.pending.detail, "Source: nexusmods")
+	require.Contains(t, model.action.pending.detail, "Files: campfire.7z")
+}
+
+// TestInstallKeyOpensReinstallModalForAlreadyInstalledItem covers the
+// Reinstall title variant: the same 'i' key on an item InstallPlanView
+// reports as already installed.
+func TestInstallKeyOpensReinstallModalForAlreadyInstalledItem(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"}
+	rec := &recordingActions{InstallPlanViewOut: InstallPlanView{Name: "SkyUI", Version: "5.3", Source: "nexusmods", SizeLabel: "size unknown", Reinstall: true}}
+	model := searchReadyModel(t, rec, []ModItem{item})
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, `Reinstall "SkyUI"?`, model.action.pending.title)
+}
+
+// TestInstallDetailLinesIncludesDependenciesDownloadDisclosure and its
+// siblings below exercise installDetailLines directly for each modal
+// content variant task-5-brief.md enumerates, independent of the async key
+// flow above.
+func TestInstallDetailLinesIncludesDependenciesDownloadDisclosure(t *testing.T) {
+	t.Parallel()
+
+	lines := installDetailLines(InstallPlanView{
+		Version: "1.0", SizeLabel: "1.2 MiB", Source: "nexusmods",
+		Files:        []string{"mod.7z"},
+		Dependencies: []string{"SKSE64 v2.0", "Address Library v1.0"},
+	})
+
+	require.Contains(t, lines, "Dependencies: SKSE64 v2.0, Address Library v1.0")
+	require.Contains(t, lines, "Will download & install 2 mod(s)")
+}
+
+func TestInstallDetailLinesIncludesConflictLines(t *testing.T) {
+	t.Parallel()
+
+	lines := installDetailLines(InstallPlanView{
+		Version: "1.0", SizeLabel: "1.2 MiB", Source: "nexusmods",
+		Conflicts: []string{"textures/frost.dds (owned by ussep)", "meshes/foo.nif (owned by bar)"},
+	})
+
+	require.Contains(t, lines, "Conflicts: textures/frost.dds (owned by ussep)")
+	require.Contains(t, lines, "Conflicts: meshes/foo.nif (owned by bar)")
+}
+
+func TestInstallDetailLinesIncludesMissingDependencyWarning(t *testing.T) {
+	t.Parallel()
+
+	lines := installDetailLines(InstallPlanView{
+		Version: "1.0", SizeLabel: "1.2 MiB", Source: "nexusmods",
+		MissingDependencies: []string{"nexusmods:missing-dep"},
+	})
+
+	require.Contains(t, lines, "⚠ 1 dependency(ies) unavailable")
+}
+
+func TestInstallDetailLinesIncludesCycleWarning(t *testing.T) {
+	t.Parallel()
+
+	lines := installDetailLines(InstallPlanView{
+		Version: "1.0", SizeLabel: "1.2 MiB", Source: "nexusmods",
+		CycleWarning: true,
+	})
+
+	require.Contains(t, lines, "⚠ circular dependency detected")
+}
+
+// TestInstallConfirmCallsApplyInstallWithSelectedItemThenRefreshes covers
+// the full happy path: plan -> modal -> confirm -> ApplyInstall(SELECTED
+// item) -> refresh.
+func TestInstallConfirmCallsApplyInstallWithSelectedItemThenRefreshes(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	rec := &recordingActions{
+		InstallPlanViewOut:  InstallPlanView{Name: "Campfire", Version: "1.12", Source: "nexusmods", SizeLabel: "4.5 MB"},
+		ApplyInstallOutcome: ActionOutcome{Message: `Installed "Campfire"`},
+	}
+	model := searchReadyModel(t, rec, []ModItem{item})
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+	require.Equal(t, []ModItem{item}, rec.ApplyInstallCalls)
+
+	updated, refreshCmd := model.Update(doneMsg)
+	model = updated.(Model)
+	require.NotNil(t, refreshCmd)
+	require.Equal(t, `Installed "Campfire"`, model.action.status)
+}
+
+func TestInstallCancelDoesNotCallApplyInstall(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	rec := &recordingActions{InstallPlanViewOut: InstallPlanView{Name: "Campfire"}}
+	model := searchReadyModel(t, rec, []ModItem{item})
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+
+	updated, cmd2 := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(Model)
+	require.Nil(t, cmd2)
+	require.Nil(t, model.action.pending)
+	require.Empty(t, rec.ApplyInstallCalls)
+}
+
+// --- Install: inert-key matrix ---
+
+// TestInstallKeyTypesIntoFocusedSearchInput proves 'i' types into the search
+// box instead of triggering an install while ScreenSearch is focused -
+// mirrors TestToggleEnableKeyInertWhileSearchFocused's shape.
+func TestInstallKeyTypesIntoFocusedSearchInput(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	updated := updateWithRunes(t, model, "3") // jump to search, focused
+	updated = updateWithRunes(t, updated, "i")
+
+	require.True(t, updated.search.input.Focused())
+	require.Contains(t, updated.search.input.Value(), "i")
+	require.Nil(t, updated.action.pending)
+}
+
+func TestInstallKeyEmptyResultsIsNoop(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := searchReadyModel(t, rec, nil)
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.False(t, model.action.running)
+	require.Empty(t, rec.PlanInstallCalls)
+}
+
+func TestInstallKeyWrongScreenIsNoop(t *testing.T) {
+	t.Parallel()
+
+	for _, screen := range []Screen{ScreenDashboard, ScreenInstalledMods, ScreenProfiles, ScreenSources} {
+		rec := &recordingActions{}
+		model := modelWithActions(t, rec)
+		model.screen = screen
+
+		updated, cmd := model.Update(keyRunes("i"))
+		model = updated.(Model)
+		require.Nil(t, cmd, "screen %v", screen)
+		require.False(t, model.action.running, "screen %v", screen)
+		require.Empty(t, rec.PlanInstallCalls, "screen %v", screen)
+	}
+}
+
+func TestInstallKeyInertWhileRunning(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	rec := &recordingActions{}
+	model := searchReadyModel(t, rec, []ModItem{item})
+	model.action.running = true
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.action.pending)
+	require.Empty(t, rec.PlanInstallCalls)
+}
+
+func TestInstallKeyInertWhileAnotherModalPending(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	rec := &recordingActions{}
+	model := searchReadyModel(t, rec, []ModItem{item})
+	// A pending action from a different flow (Deploy, a convenient
+	// stand-in - any pending modal must block a new 'i') must remain
+	// untouched.
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return ActionOutcome{}, nil
+	})
+	model = model.promptAction(pa)
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, actionDeploy, model.action.pending.kind, "the original modal must still be showing")
+	require.Empty(t, rec.PlanInstallCalls)
+}
+
+// --- Install: stale plan-fetch discard + plan error ---
+
+// TestInstallPlanStaleResultDiscarded mirrors TestSwitchPlanStaleResultDiscarded.
+func TestInstallPlanStaleResultDiscarded(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 9
+	model.action.running = true
+	model.action.status = ""
+
+	updated, cmd := model.Update(installPlanResultMsg{gen: 4, item: ModItem{ID: "x"}, view: InstallPlanView{Name: "X"}})
+	m := updated.(Model)
+	require.Nil(t, cmd)
+	require.True(t, m.action.running, "stale result must not clear running")
+	require.Nil(t, m.action.pending, "stale result must never open a modal")
+	require.Empty(t, m.action.status)
+}
+
+func TestInstallPlanStaleFailureDiscarded(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 9
+	model.action.running = true
+
+	updated, cmd := model.Update(installPlanFailedMsg{gen: 1, err: errors.New("boom")})
+	m := updated.(Model)
+	require.Nil(t, cmd)
+	require.True(t, m.action.running)
+	require.Empty(t, m.action.status)
+}
+
+// TestInstallPlanErrorShowsStatusNoModal covers the plan-error path end to
+// end: 'i' -> async fetch -> installPlanFailedMsg -> error status, no modal.
+// err here mirrors the per-action mapped message coreProvider.PlanInstall
+// composes (mapInstallNetworkError, service_core_test.go's own tests cover
+// the mapping itself) - this proves only that the mapped text reaches the
+// status line unmodified.
+func TestInstallPlanErrorShowsStatusNoModal(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	rec := &recordingActions{PlanInstallErr: errors.New(`source "local-mods" does not support installing; use 'lmm install --source local-mods --id campfire' from a shell`)}
+	model := searchReadyModel(t, rec, []ModItem{item})
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	require.IsType(t, installPlanFailedMsg{}, msg)
+
+	updated, cmd2 := model.Update(msg)
+	model = updated.(Model)
+	require.Nil(t, cmd2)
+	require.False(t, model.action.running)
+	require.True(t, model.action.statusIsError)
+	require.Contains(t, model.action.status, "does not support installing")
+	require.Nil(t, model.action.pending)
+}
+
+// --- Install: progress streaming ---
+
+// TestInstallProgressStreamsIntoStatusLine proves ApplyInstall's progress
+// ticks (recordingActions.ApplyInstallTicks - the Task 4 replay fake) reach
+// the status line through the SAME pump every other network action uses
+// (actions.go's Rule 11 machinery, already exhaustively tested there); this
+// only proves the install key's own confirm closure actually wires the
+// progress parameter through, end to end.
+func TestInstallProgressStreamsIntoStatusLine(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	rec := &recordingActions{
+		InstallPlanViewOut:  InstallPlanView{Name: "Campfire"},
+		ApplyInstallOutcome: ActionOutcome{Message: `Installed "Campfire"`},
+		ApplyInstallTicks:   []ActionProgress{{Line: "Installing Campfire: 42%", Percent: 42}},
+	}
+	model := searchReadyModel(t, rec, []ModItem{item})
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	batchMsg := confirmCmd()
+	batch, ok := batchMsg.(tea.BatchMsg)
+	require.True(t, ok)
+	require.Len(t, batch, 2)
+
+	actionMsg := batch[0]()
+	require.IsType(t, actionDoneMsg{}, actionMsg)
+
+	progressMsg := batch[1]()
+	updated, _ = model.Update(progressMsg)
+	model = updated.(Model)
+	require.Contains(t, model.statusLine(), "Installing Campfire: 42%")
+}
+
+// --- Install: refresh covers the search results' installed-flag ---
+
+// TestActionDoneAfterInstallBatchesSearchRefreshWhenSearchReady guards the
+// task-5-brief.md finding: the generic post-action refresh (m.loadData)
+// only re-fetches Overview/Profiles, never the search page, so a completed
+// install used to leave the just-installed search result's "installed"
+// marker stale until the user searched again by hand. An actionDoneMsg
+// tagged actionInstall must batch a search re-run cmd alongside the usual
+// refresh whenever a search is actually ready to refresh.
+func TestActionDoneAfterInstallBatchesSearchRefreshWhenSearchReady(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenSearch
+	model.search.state = searchReady
+	model.search.page = SearchPage{Query: "camp", Source: "nexusmods", PageSize: 10}
+	model.action.gen = 3
+	model.action.running = true
+
+	updated, cmd := model.Update(actionDoneMsg{gen: 3, kind: actionInstall, outcome: ActionOutcome{Message: `Installed "Campfire"`}})
+	m := updated.(Model)
+	require.False(t, m.action.running)
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	require.True(t, ok, "an install refresh with a ready search must batch the data reload with a search re-run")
+	require.Len(t, batch, 2)
+}
+
+// TestActionDoneAfterInstallSkipsSearchRefreshWhenNoSearchIsReady proves the
+// refresh cmd still collapses to the plain (unwrapped) data-reload cmd every
+// OTHER existing test already asserts the type of, when there's no
+// completed search to refresh - guarding against a regression that would
+// batch unconditionally and break every pre-existing
+// `require.IsType(t, dataLoadedMsg{}, refreshCmd())` assertion.
+func TestActionDoneAfterInstallSkipsSearchRefreshWhenNoSearchIsReady(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.action.gen = 3
+	model.action.running = true
+	// model.search.state defaults to searchIdle (zero value): no search to refresh.
+
+	updated, cmd := model.Update(actionDoneMsg{gen: 3, kind: actionInstall, outcome: ActionOutcome{Message: `Installed "Campfire"`}})
+	m := updated.(Model)
+	require.False(t, m.action.running)
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	require.IsType(t, dataLoadedMsg{}, msg, "no ready search to refresh: must collapse to the plain data-reload cmd, unwrapped")
+}
+
+// TestActionDoneAfterNonInstallActionNeverBatchesSearchRefresh proves the
+// search-refresh batching is specific to actionInstall - every other action
+// kind must never trigger it, even with a ready search sitting in the model.
+func TestActionDoneAfterNonInstallActionNeverBatchesSearchRefresh(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenSearch
+	model.search.state = searchReady
+	model.search.page = SearchPage{Query: "camp", Source: "nexusmods", PageSize: 10}
+	model.action.gen = 3
+	model.action.running = true
+
+	updated, cmd := model.Update(actionDoneMsg{gen: 3, kind: actionEnable, outcome: ActionOutcome{Message: `Enabled "SkyUI"`}})
+	m := updated.(Model)
+	require.False(t, m.action.running)
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	require.IsType(t, dataLoadedMsg{}, msg, "a non-install action must never trigger a search refresh, even with a ready search")
+}
+
+// --- Install: prototype end-to-end (task-5-brief.md's Prototype parity) ---
+
+// TestPrototypeInstallEndToEndRefreshesSearchInstalledFlag drives the FULL
+// install flow through the real prototypeProvider (Provider and Actions
+// from the SAME instance, like NewPrototypeModel wires them): search ->
+// select -> 'i' -> plan modal (with campfire's canned dependency, proving
+// the deps/download-disclosure modal variant against real demo data) ->
+// confirm -> ApplyInstall's fake progress ticks -> refresh -> the
+// just-installed result shows "installed" in BOTH the re-run search page
+// and the Installed screen, without any manual re-search.
+func TestPrototypeInstallEndToEndRefreshesSearchInstalledFlag(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	model, cmd := model.startSearch("campfire", 0)
+	require.NotNil(t, cmd)
+	updated, _ := model.Update(cmd())
+	model = updated.(Model)
+	require.Equal(t, searchReady, model.search.state)
+	require.NotEmpty(t, model.search.page.Results)
+	require.Equal(t, "available", requireModByID(t, model.search.page.Results, "campfire").Status)
+
+	model.screen = ScreenSearch
+	model.selected[ScreenSearch] = 0
+
+	updated, cmd = model.Update(keyRunes("i"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "Planning install…", model.action.status)
+
+	msg := cmd()
+	require.IsType(t, installPlanResultMsg{}, msg)
+
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, `Install "Campfire"?`, model.action.pending.title)
+	require.Contains(t, model.action.pending.detail, "Dependencies: SKSE64", "campfire's canned dependency must be visible in the modal")
+	require.Contains(t, model.action.pending.detail, "Will download & install 1 mod(s)")
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, refreshCmd := model.Update(doneMsg)
+	model = updated.(Model)
+	require.NotNil(t, refreshCmd)
+	require.Equal(t, `Installed "Campfire"`, model.action.status)
+
+	refreshMsg := refreshCmd()
+	batch, ok := refreshMsg.(tea.BatchMsg)
+	require.True(t, ok, "install refresh must batch the data reload with a search re-run")
+	require.Len(t, batch, 2)
+	for _, sub := range batch {
+		subMsg := sub()
+		updated, _ = model.Update(subMsg)
+		model = updated.(Model)
+	}
+
+	require.Equal(t, "installed", requireModByID(t, model.search.page.Results, "campfire").Status,
+		"the just-installed search result must show installed after refresh, without a manual re-search")
+	require.Equal(t, "installed", requireModByID(t, model.mods, "campfire").Status,
+		"the Installed screen must also reflect the new mod after refresh")
+}
+
+// TestPrototypeInstallPlanShowsConflictForFrostfall covers the Conflicts
+// modal variant against real prototype demo data (frostfall's canned
+// conflict - prototype/data.go).
+func TestPrototypeInstallPlanShowsConflictForFrostfall(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	model, cmd := model.startSearch("frostfall", 0)
+	require.NotNil(t, cmd)
+	updated, _ := model.Update(cmd())
+	model = updated.(Model)
+	model.screen = ScreenSearch
+	model.selected[ScreenSearch] = 0
+
+	updated, cmd = model.Update(keyRunes("i"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.action.pending)
+	require.Contains(t, model.action.pending.detail, "Conflicts: textures/frost.dds (owned by ussep)")
+}
+
+// TestPrototypeInstallPlanReinstallForSkyUI covers the Reinstall path
+// against real prototype demo data: the skyui SearchResults entry
+// deliberately matches an InstalledMods entry (prototype/data.go) so 'i' on
+// it demos Reinstall without any extra plumbing.
+func TestPrototypeInstallPlanReinstallForSkyUI(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	model, cmd := model.startSearch("skyui", 0)
+	require.NotNil(t, cmd)
+	updated, _ := model.Update(cmd())
+	model = updated.(Model)
+	model.screen = ScreenSearch
+	model.selected[ScreenSearch] = 0
+
+	updated, cmd = model.Update(keyRunes("i"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, `Reinstall "SkyUI"?`, model.action.pending.title)
+}
+
+// --- Install: help/footer content ---
+
+func TestHelpOverlayDocumentsInstallKey(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	model = updateWithRunes(t, model, "?")
+	view := model.View()
+
+	require.Contains(t, view, "install the selected search result")
+}
+
+func TestFooterHintNamesInstallAction(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	view := model.View()
+
+	require.Contains(t, view, "i: install")
+}

@@ -350,19 +350,27 @@ func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	t.Parallel()
 
-	// Height bumped 36->37 for Task 7's new e/x/D help line: the party-sheet
-	// dashboard's COMMANDS menu panel already fit height=36's help-visible
-	// content budget with exactly zero slack (6 content lines against a
-	// panelContentHeight of exactly 6), so ANY help-overlay growth needs one
-	// more terminal row here to keep the exact-height invariant this test
-	// guards - see task-7-brief.md's "height/help tests may need justified
-	// adjustment for new hint lines" allowance.
-	model := sizedPrototypeModel(t, "wizardry", 120, 37)
+	// Height bumped 37->39 for Phase 5b Task 5's new "i" (install) help
+	// line. Verified empirically (a scratch probe sweeping height 34-40,
+	// since removed) the same way 5a proved its own 36->37 bump: below
+	// height=39 the rendered view consistently comes out to 38 rows
+	// regardless of the smaller requested terminal height (lipgloss pads
+	// SHORT content but never clips content taller than the requested
+	// budget) - the party-sheet dashboard's split-panel math
+	// (partyDashboardView's topHeight/menuHeight, both integer divisions of
+	// availableContentHeight) hits its natural minimum before the requested
+	// budget does. Height=39 is the first value where the requested content
+	// budget finally reaches that same natural minimum, so the view fits
+	// with exactly zero slack (40 and above, the content grows to fill the
+	// larger budget instead). This pins the current zero-slack floor - see
+	// task-5-brief.md's "prove pre-existing saturation... like 5a did"
+	// allowance for justified height adjustments.
+	model := sizedPrototypeModel(t, "wizardry", 120, 39)
 	model = updateWithRunes(t, model, "?")
 
 	view := model.View()
 	require.Equal(t, 120, lipgloss.Width(view))
-	require.Equal(t, 37, lipgloss.Height(view))
+	require.Equal(t, 39, lipgloss.Height(view))
 }
 
 func TestThemesUseDistinctLayouts(t *testing.T) {

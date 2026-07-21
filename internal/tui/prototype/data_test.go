@@ -94,3 +94,29 @@ func TestLoadIncludesNeedsDownloadCannedProfile(t *testing.T) {
 	}
 	require.Greater(t, missing, 0, "at least one referenced mod ID must be absent from InstalledMods")
 }
+
+// TestLoadIncludesReinstallDemoSearchResult guards the Phase 5b demo-data
+// addition: at least one SearchResults entry must reuse an InstalledMods
+// (Source, ID) pair, so --prototype mode can demo the install key's
+// Reinstall path (installing an already-installed search result) without
+// any extra plumbing - prototypeProvider.PlanInstall computes Reinstall by
+// checking InstalledMods live against whichever SearchResults entry was
+// selected.
+func TestLoadIncludesReinstallDemoSearchResult(t *testing.T) {
+	t.Parallel()
+
+	data := Load()
+
+	installed := make(map[[2]string]bool, len(data.InstalledMods))
+	for _, mod := range data.InstalledMods {
+		installed[[2]string{mod.Source, mod.ID}] = true
+	}
+
+	found := false
+	for _, mod := range data.SearchResults {
+		if installed[[2]string{mod.Source, mod.ID}] {
+			found = true
+		}
+	}
+	require.True(t, found, "at least one SearchResults entry must match an InstalledMods entry to demo the Reinstall path")
+}
