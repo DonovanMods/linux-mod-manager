@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -450,6 +451,26 @@ func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName strin
 		Message:  fmt.Sprintf("Switched to %q", profileName),
 		Warnings: mergeDiagnostics(nil, result.Notes),
 	}, nil
+}
+
+// TODO(Phase 5b Task 4, part B RED): stubs only - fleshed out in the GREEN
+// commit alongside prototypeProvider's own real implementations and the
+// NeedsDownloads refusal lift above.
+
+func (p *coreProvider) PlanInstall(_ context.Context, _ ModItem) (InstallPlanView, error) {
+	return InstallPlanView{}, errors.New("not implemented")
+}
+
+func (p *coreProvider) ApplyInstall(_ context.Context, _ ModItem, _ func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, errors.New("not implemented")
+}
+
+func (p *coreProvider) CheckUpdates(_ context.Context) (UpdatesView, error) {
+	return UpdatesView{}, errors.New("not implemented")
+}
+
+func (p *coreProvider) ApplyUpdate(_ context.Context, _ UpdateItem, _ func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, errors.New("not implemented")
 }
 
 // switchPlanView maps a core.SwitchPlan to its TUI render model, using the

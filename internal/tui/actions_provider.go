@@ -37,6 +37,22 @@ type ActionProvider interface {
 	// them (Phase 5b Task 4 - see coreProvider/prototypeProvider's own doc
 	// comments on this method).
 	ApplyProfileSwitch(ctx context.Context, profile string, progress func(ActionProgress)) (ActionOutcome, error)
+
+	// PlanInstall computes what installing item would do (files, resolved
+	// dependencies, conflicts, size), without mutating anything - the
+	// install-modal analog of PlanProfileSwitch.
+	PlanInstall(ctx context.Context, item ModItem) (InstallPlanView, error)
+	// ApplyInstall executes the plan PlanInstall would currently compute for
+	// item (coreProvider re-plans at apply time, mirroring
+	// ApplyProfileSwitch's own precedent). progress may be nil.
+	ApplyInstall(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error)
+	// CheckUpdates reports available updates for every checkable installed
+	// mod (pinned/local mods are never checkable - filtered by core, not
+	// re-filtered here).
+	CheckUpdates(ctx context.Context) (UpdatesView, error)
+	// ApplyUpdate applies one update reported by CheckUpdates. progress may
+	// be nil.
+	ApplyUpdate(ctx context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -59,6 +75,36 @@ type SwitchPlanView struct {
 	NeedsDownloads []string // mod refs requiring download - 5a refuses to ApplyProfileSwitch a plan with any of these (see ApplyProfileSwitch's doc comment); Plan itself never refuses, so a modal can still explain why
 	NoChanges      bool
 	AlreadyActive  bool
+}
+
+// InstallPlanView is the render model for the install confirmation modal,
+// mapped from core.InstallPlan (see coreProvider's installPlanView) or
+// computed directly from prototype demo data - the install-modal analog of
+// SwitchPlanView.
+type InstallPlanView struct {
+	Name, Version, Source string
+	Files                 []string // display labels of the file(s) that would be downloaded
+	Dependencies          []string // display names of resolved, not-yet-installed dependencies that would also install
+	Conflicts             []string // "path (owned by <mod-id>)", one per conflicting file
+	MissingDependencies   []string // "sourceID:modID" refs that couldn't be resolved - warn, don't block
+	CycleWarning          bool     // a circular dependency was found among Dependencies; install order is best-effort
+	Reinstall             bool     // item is already installed - applying replaces it rather than installing fresh
+	SizeLabel             string   // "12.3 MiB", or "size unknown" when no selected file declares a size
+}
+
+// UpdateItem is one available update, as reported by CheckUpdates and
+// consumed by ApplyUpdate.
+type UpdateItem struct {
+	Source, ID, Name       string
+	FromVersion, ToVersion string
+}
+
+// UpdatesView is CheckUpdates' result: the available updates plus any
+// non-fatal per-source diagnostics (partial results still populate Updates
+// - see coreProvider.CheckUpdates' doc comment).
+type UpdatesView struct {
+	Updates  []UpdateItem
+	Warnings []string
 }
 
 // errProfileNeedsDownloads is ApplyProfileSwitch's exact refusal error (see
@@ -286,4 +332,24 @@ func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName 
 	p.data.Profile.Name = profileName
 
 	return ActionOutcome{Message: fmt.Sprintf("Switched to %q", profileName)}, nil
+}
+
+// TODO(Phase 5b Task 4, part B RED): stubs only - fleshed out in the GREEN
+// commit alongside coreProvider's own real implementations and the
+// NeedsDownloads refusal lift above.
+
+func (p *prototypeProvider) PlanInstall(_ context.Context, _ ModItem) (InstallPlanView, error) {
+	return InstallPlanView{}, errors.New("not implemented")
+}
+
+func (p *prototypeProvider) ApplyInstall(_ context.Context, _ ModItem, _ func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, errors.New("not implemented")
+}
+
+func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error) {
+	return UpdatesView{}, errors.New("not implemented")
+}
+
+func (p *prototypeProvider) ApplyUpdate(_ context.Context, _ UpdateItem, _ func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, errors.New("not implemented")
 }

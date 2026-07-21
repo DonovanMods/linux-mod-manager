@@ -1,10 +1,14 @@
 package tui_test
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,6 +63,130 @@ func (s *stubSource) GetDownloadURL(context.Context, *domain.Mod, string) (strin
 }
 func (s *stubSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
 	return nil, errors.New("not implemented")
+}
+
+// netSource is a fuller source.ModSource test double than stubSource above:
+// it serves real download content over an httptest.Server, so coreProvider's
+// network-touching ActionProvider methods (PlanInstall/ApplyInstall/
+// CheckUpdates/ApplyUpdate, and ApplyProfileSwitch's install loop) can be
+// exercised end-to-end - real download, extract, deploy, DB write.
+// Mirrors internal/core's own mockSource/mockSourceWithDownloads test
+// doubles (service_test.go there), which are unexported and therefore
+// unreachable from this package (a different package cannot import
+// another's _test.go-only types) - this is a deliberate, minimal
+// duplication of that same pattern for this package's own tests.
+type netSource struct {
+	id   string
+	mods map[string]*domain.Mod // "gameID/modID" -> mod
+
+	// files, if set for a mod ID, overrides the single-primary-file default
+	// GetModFiles otherwise synthesizes from whatever's registered under
+	// downloads[modID].
+	files map[string][]domain.DownloadableFile
+	// deps, if set for a mod ID, is returned verbatim by GetDependencies.
+	deps map[string][]domain.ModReference
+
+	downloads map[string][]byte // fileID -> zip content
+	server    *httptest.Server
+
+	updates []domain.Update
+
+	getModErr, getModFilesErr, checkUpdatesErr error
+}
+
+func newNetSource(t *testing.T, id string) *netSource {
+	t.Helper()
+	s := &netSource{
+		id:        id,
+		mods:      map[string]*domain.Mod{},
+		files:     map[string][]domain.DownloadableFile{},
+		deps:      map[string][]domain.ModReference{},
+		downloads: map[string][]byte{},
+	}
+	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fileID := filepath.Base(r.URL.Path)
+		content, ok := s.downloads[fileID]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(content)
+	}))
+	t.Cleanup(s.server.Close)
+	return s
+}
+
+func (s *netSource) ID() string      { return s.id }
+func (s *netSource) Name() string    { return "Net Source" }
+func (s *netSource) AuthURL() string { return "" }
+func (s *netSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *netSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, nil
+}
+
+func (s *netSource) addMod(gameID string, mod *domain.Mod) {
+	s.mods[gameID+"/"+mod.ID] = mod
+}
+
+func (s *netSource) GetMod(_ context.Context, gameID, modID string) (*domain.Mod, error) {
+	if s.getModErr != nil {
+		return nil, s.getModErr
+	}
+	if mod, ok := s.mods[gameID+"/"+modID]; ok {
+		return mod, nil
+	}
+	return nil, fmt.Errorf("mod not found: %s", modID)
+}
+
+func (s *netSource) GetDependencies(_ context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
+	return s.deps[mod.ID], nil
+}
+
+func (s *netSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	if s.getModFilesErr != nil {
+		return nil, s.getModFilesErr
+	}
+	if files, ok := s.files[mod.ID]; ok {
+		return files, nil
+	}
+	return []domain.DownloadableFile{{
+		ID: mod.ID, Name: mod.Name, FileName: mod.ID + ".zip", IsPrimary: true,
+		Size: int64(len(s.downloads[mod.ID])),
+	}}, nil
+}
+
+func (s *netSource) GetDownloadURL(_ context.Context, _ *domain.Mod, fileID string) (string, error) {
+	return s.server.URL + "/" + fileID, nil
+}
+
+func (s *netSource) CheckUpdates(_ context.Context, _ []domain.InstalledMod) ([]domain.Update, error) {
+	if s.checkUpdatesErr != nil {
+		return nil, s.checkUpdatesErr
+	}
+	return s.updates, nil
+}
+
+func (s *netSource) addDownload(fileID string, zipContent []byte) {
+	s.downloads[fileID] = zipContent
+}
+
+// netSourceTestZip builds a one-file zip archive (relativePath -> content)
+// and returns its bytes, mirroring internal/core/extractor_test.go's
+// createTestZip (unexported there, duplicated here for the same reason
+// netSource itself is).
+func netSourceTestZip(t *testing.T, relativePath, content string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	fw, err := w.Create(relativePath)
+	require.NoError(t, err)
+	_, err = fw.Write([]byte(content))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	return buf.Bytes()
 }
 
 func newCoreProviderFixture(t *testing.T) (tui.DataProvider, *core.Service, *domain.Game) {
@@ -635,30 +763,46 @@ func TestCoreProviderActions_PlanProfileSwitch_UnknownProfileErrors(t *testing.T
 	require.Error(t, err)
 }
 
-// TestCoreProviderActions_ApplyProfileSwitch_RefusesWhenNeedsDownloads
-// guards the 5a scope cut: ApplyProfileSwitch must refuse, with the exact
-// error text specified by the task brief, and must not mutate anything -
-// the default profile stays active and the target profile's YAML is
-// untouched - when the freshly-computed plan has NeedsDownloads entries.
-func TestCoreProviderActions_ApplyProfileSwitch_RefusesWhenNeedsDownloads(t *testing.T) {
+// TestCoreProviderActions_ApplyProfileSwitch_DownloadsAndAppliesNeedsDownloads
+// is the RED test proving the Phase 5b Task 4 switch-refusal LIFT: this
+// EXACT scenario (a target profile referencing a mod with no installed row
+// at all) previously made ApplyProfileSwitch refuse outright
+// (errProfileNeedsDownloads - see this test's prior form, formerly named
+// TestCoreProviderActions_ApplyProfileSwitch_RefusesWhenNeedsDownloads, in
+// this file's git history). With a real fetchable/downloadable source
+// registered, it must now proceed: download and install the missing mod,
+// stream progress for it, and complete the switch (SetDefault) exactly like
+// any other plan. Against the still-refusing implementation (this task's
+// first commit) this fails with the refusal error instead of succeeding.
+func TestCoreProviderActions_ApplyProfileSwitch_DownloadsAndAppliesNeedsDownloads(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "target")
 	require.NoError(t, err)
 	seedActionProfileMod(t, svc, game.ID, "target", "src", "modD", "2.0")
 
-	outcome, err := actions.ApplyProfileSwitch(context.Background(), "target", nil)
-	require.Error(t, err)
-	assert.EqualError(t, err, "profile needs downloads — use 'lmm profile switch' until TUI install ships")
-	assert.Equal(t, tui.ActionOutcome{}, outcome)
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modD", SourceID: "src", Name: "Mod D", Version: "2.0", GameID: game.ID})
+	netSrc.addDownload("modD", netSourceTestZip(t, "modd.esp", "modd-payload"))
+
+	var ticks []tui.ActionProgress
+	outcome, err := actions.ApplyProfileSwitch(context.Background(), "target",
+		func(p tui.ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err, "a plan needing downloads must now proceed instead of being refused")
+	assert.Equal(t, `Switched to "target"`, outcome.Message)
+	assert.NotEmpty(t, ticks, "downloading the missing mod must stream progress")
 
 	def, err := pm.GetDefault(game.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "default", def.Name, "the refusal must not switch the active profile")
+	assert.Equal(t, "target", def.Name, "the switch must actually apply now")
 
-	target, err := pm.Get(game.ID, "target")
+	installed, err := svc.GetInstalledMod("src", "modD", game.ID, "target")
 	require.NoError(t, err)
-	assert.Len(t, target.Mods, 1, "the target profile YAML must be untouched by the refused apply")
+	assert.True(t, installed.Enabled)
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "modd.esp"))
+	assert.NoError(t, err, "the downloaded mod must actually be deployed")
 }
 
 // --- C1: profile rebind after a TUI-driven switch ---
@@ -753,4 +897,277 @@ func TestCoreProviderActions_ApplyProfileSwitch_AppliesAndReturnsMessage(t *test
 	mod, err := svc.GetInstalledMod("src", "modC", game.ID, "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled, "modC must have been disabled by the switch")
+}
+
+// --- coreProvider: PlanInstall/ApplyInstall/CheckUpdates/ApplyUpdate
+// (Phase 5b Task 4) ---
+
+// TestCoreProviderActions_PlanInstall_MapsFilesDepsConflictsAndSize guards
+// coreProvider.PlanInstall's mapping to InstallPlanView against a real
+// core.Service sandbox: files, a resolved dependency, a conflict against an
+// already-deployed OTHER mod's file, and a size label all round-trip.
+func TestCoreProviderActions_PlanInstall_MapsFilesDepsConflictsAndSize(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	// modA is already installed, cached, and deployed under "shared.esp" -
+	// installing modB (which also declares "shared.esp") must report a
+	// conflict against it.
+	seedActionMod(t, svc, game, "src", "modA", "Mod A", "1.0", true, map[string][]byte{"shared.esp": []byte("a")})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "modA", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+
+	netSrc.addMod(game.ID, &domain.Mod{ID: "depX", SourceID: "src", Name: "Dep X", Version: "1.0", GameID: game.ID})
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modB", SourceID: "src", Name: "Mod B", Version: "1.0", GameID: game.ID})
+	netSrc.deps["modB"] = []domain.ModReference{{SourceID: "src", ModID: "depX", Version: "1.0"}}
+	netSrc.files["modB"] = []domain.DownloadableFile{{ID: "fileB", Name: "Mod B Archive", FileName: "modB.zip", IsPrimary: true, Size: 4096}}
+
+	// PlanInstall never downloads (see InstallPlan.Conflicts' doc comment),
+	// so GetConflicts only finds something if modB is ALREADY cached at
+	// this exact version - pre-cache its conflicting file directly.
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "modB", "1.0", "shared.esp", []byte("b")))
+
+	view, err := actions.PlanInstall(context.Background(), tui.ModItem{ID: "modB", Source: "src", Name: "Mod B"})
+	require.NoError(t, err)
+
+	assert.Equal(t, "Mod B", view.Name)
+	assert.Equal(t, "1.0", view.Version)
+	assert.Equal(t, "src", view.Source)
+	require.Len(t, view.Files, 1)
+	assert.Contains(t, view.Files[0], "Mod B Archive")
+	require.Len(t, view.Dependencies, 1)
+	assert.Contains(t, view.Dependencies[0], "Dep X")
+	require.Len(t, view.Conflicts, 1)
+	assert.Contains(t, view.Conflicts[0], "shared.esp")
+	assert.Contains(t, view.Conflicts[0], "modA", "the conflict must name the OTHER mod that owns the file")
+	assert.Equal(t, "4.0 KiB", view.SizeLabel)
+	assert.False(t, view.Reinstall, "modB is not yet installed")
+}
+
+// TestCoreProviderActions_PlanInstall_SizeUnknownWhenFileSizeUnreported
+// guards the "size unknown" branch (InstallPlanView.SizeLabel's doc
+// comment).
+func TestCoreProviderActions_PlanInstall_SizeUnknownWhenFileSizeUnreported(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modI", SourceID: "src", Name: "Mod I", Version: "1.0", GameID: game.ID})
+	netSrc.files["modI"] = []domain.DownloadableFile{{ID: "fileI", Name: "Mod I Archive", FileName: "modI.zip", IsPrimary: true, Size: 0}}
+
+	view, err := actions.PlanInstall(context.Background(), tui.ModItem{ID: "modI", Source: "src", Name: "Mod I"})
+	require.NoError(t, err)
+	assert.Equal(t, "size unknown", view.SizeLabel)
+}
+
+// TestCoreProviderActions_PlanInstall_ReinstallMarksExistingRow guards
+// InstallPlanView.Reinstall: a mod already installed for this profile must
+// report Reinstall true.
+func TestCoreProviderActions_PlanInstall_ReinstallMarksExistingRow(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modJ", "Mod J", "1.0", true, map[string][]byte{"j.esp": []byte("j")})
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modJ", SourceID: "src", Name: "Mod J", Version: "1.0", GameID: game.ID})
+	netSrc.files["modJ"] = []domain.DownloadableFile{{ID: "fileJ", Name: "Mod J Archive", FileName: "modJ.zip", IsPrimary: true, Size: 100}}
+
+	view, err := actions.PlanInstall(context.Background(), tui.ModItem{ID: "modJ", Source: "src", Name: "Mod J"})
+	require.NoError(t, err)
+	assert.True(t, view.Reinstall)
+}
+
+// TestCoreProviderActions_PlanInstall_MapsAuthRequiredError and its
+// not-supported sibling below guard the §7/auth error-mapping contract
+// (task brief: "all four methods"). Every one of PlanInstall/ApplyInstall/
+// CheckUpdates/ApplyUpdate shares the same mapNetworkError helper, so
+// PlanInstall's coverage here (the cheapest call to trigger: a bare GetMod
+// failure) is representative of the shared mapping logic; ApplyUpdate's own
+// dedicated auth test below additionally proves it end-to-end through a
+// DIFFERENT call site (CheckUpdates, not GetMod).
+func TestCoreProviderActions_PlanInstall_MapsAuthRequiredError(t *testing.T) {
+	actions, svc, _ := newCoreActionsFixture(t)
+	netSrc := newNetSource(t, "src")
+	netSrc.getModErr = domain.ErrAuthRequired
+	svc.RegisterSource(netSrc)
+
+	_, err := actions.PlanInstall(context.Background(), tui.ModItem{ID: "modK", Source: "src", Name: "Mod K"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Authentication required for src")
+	assert.Contains(t, err.Error(), "lmm auth login src")
+}
+
+func TestCoreProviderActions_PlanInstall_MapsNotSupportedError(t *testing.T) {
+	actions, svc, _ := newCoreActionsFixture(t)
+	netSrc := newNetSource(t, "src")
+	netSrc.getModErr = fmt.Errorf("fetching: %w", source.ErrNotSupported)
+	svc.RegisterSource(netSrc)
+
+	_, err := actions.PlanInstall(context.Background(), tui.ModItem{ID: "modK", Source: "src", Name: "Mod K"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `source "src" does not support`)
+}
+
+// TestCoreProviderActions_ApplyInstall_InstallsForRealWithHookParityAndProgress
+// guards coreProvider.ApplyInstall against a real core.Service sandbox: the
+// mod is genuinely downloaded/extracted/deployed/saved, the CLI's exact
+// install hook configuration runs (a spy before_each hook), and at least
+// one progress line is observed.
+func TestCoreProviderActions_ApplyInstall_InstallsForRealWithHookParityAndProgress(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	scriptsDir := t.TempDir()
+	callLog := filepath.Join(scriptsDir, "calls.log")
+	beforeEachScript := createActionsTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "install.before_each:$LMM_MOD_ID" >> `+callLog+`
+exit 0`)
+	game.Hooks.Install.BeforeEach = beforeEachScript
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modE", SourceID: "src", Name: "Mod E", Version: "1.0", GameID: game.ID})
+	netSrc.addDownload("modE", netSourceTestZip(t, "mode.esp", "payload"))
+
+	item := tui.ModItem{ID: "modE", Source: "src", Name: "Mod E"}
+	var ticks []tui.ActionProgress
+	outcome, err := actions.ApplyInstall(context.Background(), item, func(p tui.ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, `Installed "Mod E"`, outcome.Message)
+	assert.NotEmpty(t, ticks, "must observe at least one progress line")
+
+	installed, err := svc.GetInstalledMod("src", "modE", game.ID, "default")
+	require.NoError(t, err)
+	assert.True(t, installed.Enabled)
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mode.esp"))
+	assert.NoError(t, err, "the mod must actually be deployed")
+
+	logContent, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	assert.Equal(t, "install.before_each:modE\n", string(logContent),
+		"ApplyInstall must run the CLI's exact install hook configuration")
+}
+
+// TestCoreProviderActions_CheckUpdates_OneUpdateAndOneErroringSourceSurfacesWarning
+// guards coreProvider.CheckUpdates against a real core.Service sandbox with
+// two sources: one reports a real update, the other fails outright - the
+// good source's update must still surface, with the failure as a Warning
+// naming the failing source (Updater.CheckUpdates' own partial-results
+// contract).
+func TestCoreProviderActions_CheckUpdates_OneUpdateAndOneErroringSourceSurfacesWarning(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	seedActionMod(t, svc, game, "good", "modF", "Mod F", "1.0", true, nil)
+	goodSrc := newNetSource(t, "good")
+	svc.RegisterSource(goodSrc)
+	goodSrc.updates = []domain.Update{{
+		InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: "modF", SourceID: "good", Name: "Mod F", Version: "1.0"}},
+		NewVersion:   "1.1",
+	}}
+
+	seedActionMod(t, svc, game, "flaky", "modG", "Mod G", "1.0", true, nil)
+	flakySrc := newNetSource(t, "flaky")
+	flakySrc.checkUpdatesErr = errors.New("connection refused")
+	svc.RegisterSource(flakySrc)
+
+	view, err := actions.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	require.Len(t, view.Updates, 1)
+	assert.Equal(t, "modF", view.Updates[0].ID)
+	assert.Equal(t, "1.0", view.Updates[0].FromVersion)
+	assert.Equal(t, "1.1", view.Updates[0].ToVersion)
+	require.NotEmpty(t, view.Warnings)
+	assert.Contains(t, view.Warnings[0], "flaky")
+}
+
+// TestCoreProviderActions_CheckUpdates_MapsAuthRequiredError guards the
+// §7/auth mapping for CheckUpdates specifically: unlike the other three
+// methods, CheckUpdates' failure is a JOINED multi-source error (Updater.
+// CheckUpdates' own contract), so the auth-hint wording here can't name one
+// specific source the way PlanInstall/ApplyInstall/ApplyUpdate's mapping
+// does - see coreProvider.CheckUpdates' doc comment for why.
+func TestCoreProviderActions_CheckUpdates_MapsAuthRequiredError(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modL", "Mod L", "1.0", true, nil)
+
+	netSrc := newNetSource(t, "src")
+	netSrc.checkUpdatesErr = domain.ErrAuthRequired
+	svc.RegisterSource(netSrc)
+
+	view, err := actions.CheckUpdates(context.Background())
+	require.NoError(t, err, "a source failure is a Warning, never a hard error")
+	require.NotEmpty(t, view.Warnings)
+	assert.Contains(t, view.Warnings[0], "Authentication required")
+	assert.Contains(t, view.Warnings[0], "lmm auth login")
+}
+
+// TestCoreProviderActions_ApplyUpdate_AppliesForRealAndPreservesRollbackPrecondition
+// guards coreProvider.ApplyUpdate against a real core.Service sandbox,
+// reusing Task 3's rollback-precondition arrangement
+// (TestService_ApplyUpdate_RollbackPreconditionPreserved in
+// internal/core/flows_update_test.go) one level up: the update genuinely
+// applies (download, deploy, DB/profile writes), progress is observed, and
+// 'lmm update rollback's precondition still holds afterward (the OLD
+// version's cache entry survives, and PreviousVersion is recorded).
+func TestCoreProviderActions_ApplyUpdate_AppliesForRealAndPreservesRollbackPrecondition(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "modH", "1.0", "modh-old.esp", []byte("old-content")))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "modH", SourceID: "src", Name: "Mod H", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"old-1"},
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "modH", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modH", SourceID: "src", Name: "Mod H", Version: "2.0", GameID: game.ID})
+	netSrc.files["modH"] = []domain.DownloadableFile{{ID: "new-1", Name: "New File", FileName: "modh-new.esp", IsPrimary: true}}
+	netSrc.addDownload("new-1", netSourceTestZip(t, "modh-new.esp", "new-content"))
+	netSrc.updates = []domain.Update{{
+		InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: "modH", SourceID: "src", Name: "Mod H", Version: "1.0"}},
+		NewVersion:   "2.0",
+	}}
+
+	item := tui.UpdateItem{Source: "src", ID: "modH", Name: "Mod H", FromVersion: "1.0", ToVersion: "2.0"}
+	var ticks []tui.ActionProgress
+	outcome, err := actions.ApplyUpdate(context.Background(), item, func(p tui.ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Contains(t, outcome.Message, "2.0")
+
+	assert.True(t, svc.GetGameCache(game).Exists(game.ID, "src", "modH", "1.0"),
+		"the previous version's cache entry must survive an update, for rollback")
+
+	updated, err := svc.GetInstalledMod("src", "modH", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated.Version)
+	assert.Equal(t, "1.0", updated.PreviousVersion, "rollback precondition: PreviousVersion must be set")
+	assert.True(t, svc.GetGameCache(game).Exists(game.ID, updated.SourceID, updated.ID, updated.PreviousVersion),
+		"rollback precondition: the previous version must still be cached")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "modh-new.esp"))
+	assert.NoError(t, err, "the new version's file must be deployed")
+}
+
+// TestCoreProviderActions_ApplyUpdate_MapsAuthRequiredError guards the
+// §7/auth mapping for ApplyUpdate, triggered via its own re-check call
+// (mirroring cmd/lmm/update.go's applySingleUpdate - see ApplyUpdate's doc
+// comment for why it re-checks rather than reconstructing a domain.Update).
+func TestCoreProviderActions_ApplyUpdate_MapsAuthRequiredError(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modM", "Mod M", "1.0", true, nil)
+
+	netSrc := newNetSource(t, "src")
+	netSrc.checkUpdatesErr = domain.ErrAuthRequired
+	svc.RegisterSource(netSrc)
+
+	_, err := actions.ApplyUpdate(context.Background(), tui.UpdateItem{Source: "src", ID: "modM", Name: "Mod M", FromVersion: "1.0", ToVersion: "1.1"}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Authentication required for src")
+	assert.Contains(t, err.Error(), "lmm auth login src")
 }
