@@ -514,27 +514,58 @@ func updateProgressLine(modName string, p core.DeployProgress) (ActionProgress, 
 	return ActionProgress{}, false
 }
 
-// mapNetworkError classifies err from any network-touching ActionProvider
-// call (PlanInstall/ApplyInstall/CheckUpdates/ApplyUpdate) into the design's
-// §7 + auth error contract: source.ErrNotSupported becomes a clean one-line
-// capability-gap notice mirroring cmd/lmm/search.go's capabilityGapNotice
-// (adapted wording, naming sourceID and a CLI fallback); domain.ErrAuthRequired
-// becomes the auth-hint wording the TUI search path already renders
-// (app.go's searchAuthRequired case: "Authentication required for %s." /
-// "Run 'lmm auth login %s' in a shell, then search again.") - collapsed to
-// one line here (these are one-line status/error text, not a multi-line
-// view) and reworded "try again" since none of these four actions are a
-// search. Everything else is wrapped with %w under action, a short
-// present-participle label (e.g. "planning install of SkyUI").
-func mapNetworkError(action, sourceID string, err error) error {
+// mapNetworkError classifies err from a network-touching ActionProvider call
+// into the design's §7 + auth error contract: domain.ErrAuthRequired becomes
+// the auth-hint wording the TUI search path already renders (app.go's
+// searchAuthRequired case: "Authentication required for %s." / "Run 'lmm
+// auth login %s' in a shell, then search again.") - collapsed to one line
+// here (these are one-line status/error text, not a multi-line view) and
+// reworded "try again" since none of these callers are a search.
+// source.ErrNotSupported becomes a clean one-line capability-gap notice
+// mirroring cmd/lmm/search.go's capabilityGapNotice, naming sourceID plus
+// capability (what the source can't do) and fallback (the correct CLI
+// command for the ACTUAL action the caller was performing - see the review
+// finding this fixes below). Everything else is wrapped with %w under
+// action, a short present-participle label (e.g. "planning install of
+// SkyUI").
+//
+// mapNetworkError is deliberately unexported and only called through the
+// per-action wrappers below (mapInstallNetworkError/mapUpdateNetworkError):
+// a single shared "does not support this; use lmm install..." message for
+// every call site used to suggest the install-path fallback even when the
+// actual failure was an updates-capability gap surfaced through ApplyUpdate's
+// CheckUpdates re-check (Phase 5b Task 4 review finding) - clearly wrong
+// advice. Each wrapper supplies capability/fallback text matching what its
+// own callers are actually trying to do, so the notice can never point at
+// the wrong CLI command again.
+func mapNetworkError(action, sourceID, capability, fallback string, err error) error {
 	switch {
 	case errors.Is(err, source.ErrNotSupported):
-		return fmt.Errorf("source %q does not support this; use 'lmm install --source %s --id <mod-id>' from a shell", sourceID, sourceID)
+		return fmt.Errorf("source %q does not support %s; %s", sourceID, capability, fallback)
 	case errors.Is(err, domain.ErrAuthRequired):
 		return fmt.Errorf("Authentication required for %s. Run 'lmm auth login %s' in a shell, then try again.", sourceID, sourceID)
 	default:
 		return fmt.Errorf("%s: %w", action, err)
 	}
+}
+
+// mapInstallNetworkError is mapNetworkError for the install-path callers
+// (PlanInstall, ApplyInstall's re-plan and apply steps): a capability gap
+// here means the source can't be planned/installed against, and the correct
+// CLI fallback is the CLI's own single-mod install command.
+func mapInstallNetworkError(action, sourceID string, err error) error {
+	return mapNetworkError(action, sourceID, "installing",
+		fmt.Sprintf("use 'lmm install --source %s --id <mod-id>' from a shell", sourceID), err)
+}
+
+// mapUpdateNetworkError is mapNetworkError for the update-path callers
+// (ApplyUpdate's CheckUpdates re-check and apply steps): a capability gap
+// here means the source can't report or apply updates - naming "installing"
+// or suggesting 'lmm install' would be wrong advice for this gap (the Task 4
+// review finding this fixes), so this names updates and points at the CLI's
+// own update command instead.
+func mapUpdateNetworkError(action, sourceID string, err error) error {
+	return mapNetworkError(action, sourceID, "checking for updates", "run 'lmm update' from a shell instead", err)
 }
 
 // fileDisplayLabel renders a domain.DownloadableFile as a short display
@@ -586,7 +617,7 @@ func installPlanView(plan *core.InstallPlan) InstallPlanView {
 func (p *coreProvider) PlanInstall(ctx context.Context, item ModItem) (InstallPlanView, error) {
 	plan, err := p.svc.PlanInstall(ctx, p.game, p.profile, item.Source, item.ID, false)
 	if err != nil {
-		return InstallPlanView{}, mapNetworkError(fmt.Sprintf("planning install of %s", item.Name), item.Source, err)
+		return InstallPlanView{}, mapInstallNetworkError(fmt.Sprintf("planning install of %s", item.Name), item.Source, err)
 	}
 	return installPlanView(plan), nil
 }
@@ -601,7 +632,7 @@ func (p *coreProvider) PlanInstall(ctx context.Context, item ModItem) (InstallPl
 func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
 	plan, err := p.svc.PlanInstall(ctx, p.game, p.profile, item.Source, item.ID, false)
 	if err != nil {
-		return ActionOutcome{}, mapNetworkError(fmt.Sprintf("planning install of %s", item.Name), item.Source, err)
+		return ActionOutcome{}, mapInstallNetworkError(fmt.Sprintf("planning install of %s", item.Name), item.Source, err)
 	}
 
 	opts := core.InstallOptions{
@@ -617,7 +648,7 @@ func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress 
 	})
 	result, err := p.svc.ApplyInstall(ctx, p.game, plan, opts, adapter)
 	if err != nil {
-		return ActionOutcome{}, mapNetworkError(fmt.Sprintf("installing %s", item.Name), item.Source, err)
+		return ActionOutcome{}, mapInstallNetworkError(fmt.Sprintf("installing %s", item.Name), item.Source, err)
 	}
 
 	// Warnings = result Warnings + Notes (mergeDiagnostics' documented
@@ -690,7 +721,7 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 
 	updates, err := p.svc.NewUpdater().CheckUpdates(ctx, p.game, []domain.InstalledMod{*mod})
 	if err != nil {
-		return ActionOutcome{}, mapNetworkError(fmt.Sprintf("checking update for %s", u.Name), u.Source, err)
+		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("checking update for %s", u.Name), u.Source, err)
 	}
 	if len(updates) == 0 {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already up to date", u.Name)}, nil
@@ -709,7 +740,7 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 	})
 	result, err := p.svc.ApplyUpdate(ctx, p.game, p.profile, upd, opts, adapter)
 	if err != nil {
-		return ActionOutcome{}, mapNetworkError(fmt.Sprintf("updating %s", u.Name), u.Source, err)
+		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("updating %s", u.Name), u.Source, err)
 	}
 	return ActionOutcome{
 		Message:  fmt.Sprintf("Updated %q to %s", u.Name, upd.NewVersion),
