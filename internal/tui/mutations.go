@@ -201,9 +201,10 @@ func (m Model) switchSelectedProfile() (Model, tea.Cmd) {
 // single-flight guard passes cleanly. The progress adapter buildAction
 // wires in is threaded straight through to ApplyProfileSwitch, so a plan
 // that needs downloads streams them via the same pump every other network
-// action uses. switchDetailLines does not yet render the NeedsDownloads
-// list itself - Task 5/7 polish, out of this task's scope - so today's
-// modal shows only the Enable/Disable buckets for such a plan.
+// action uses. switchDetailLines renders a download-disclosure header plus
+// one line per NeedsDownloads ref (see its own doc comment), so the modal
+// makes it clear confirming a purely-downloading plan starts network
+// downloads before the user commits.
 func (m Model) resolvePlanResult(msg planResultMsg) (Model, tea.Cmd) {
 	m.action.running = false
 	if m.action.cancel != nil {
@@ -246,6 +247,17 @@ func (m Model) resolvePlanFailure(msg planFailedMsg) (Model, tea.Cmd) {
 // existing "+N more" overflow collapsing (actionModalView) applies per mod
 // instead of truncating one giant joined line. NoChanges plans render a
 // single explanatory line instead, per task-7-brief.md.
+//
+// A plan with NeedsDownloads entries (Phase 5b Task 4 lifted the refusal
+// that used to short-circuit these here - ApplyProfileSwitch downloads and
+// installs them itself now) additionally appends a "Will download & install
+// N mod(s):" header plus one "↓ <ref>" line per entry, mirroring the CLI's
+// own pre-confirm disclosure (cmd/lmm/profile.go's doProfileSwitch: "Will
+// install %d mod(s):" + "  ↓ %s:%s v%s\n" per ref) - without this, the modal
+// would open with no indication that confirming starts network downloads.
+// These lines append to (not replace) any Enable/Disable lines above, and
+// flow into the same flat detail slice actionModalView already truncates
+// with "+N more" when it overflows the panel's height budget.
 func switchDetailLines(view SwitchPlanView) []string {
 	if view.NoChanges {
 		return []string{fmt.Sprintf("From: %s", view.From), "No mod changes; set as default."}
@@ -256,6 +268,12 @@ func switchDetailLines(view SwitchPlanView) []string {
 	}
 	for _, name := range view.Disable {
 		lines = append(lines, fmt.Sprintf("- %s", name))
+	}
+	if len(view.NeedsDownloads) > 0 {
+		lines = append(lines, fmt.Sprintf("Will download & install %d mod(s):", len(view.NeedsDownloads)))
+		for _, ref := range view.NeedsDownloads {
+			lines = append(lines, fmt.Sprintf("↓ %s", ref))
+		}
 	}
 	return lines
 }
