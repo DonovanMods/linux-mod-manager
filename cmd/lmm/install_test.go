@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -557,10 +558,22 @@ func TestDoInstall_DependencyConfirmPrompt_DeclinedYieldsZeroMutations(t *testin
 }
 
 // TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary guards
-// the accepted-confirm path: both the dependency and the primary must
-// actually install (via ApplyInstall's unified dependency+primary
-// mechanics), with SOME visible progress for the dependency install phase -
-// not the silent gap a forgotten progress-event case would produce.
+// the accepted-confirm path against the review's Fix wave 1 finding: a
+// dependency-having install must reproduce cmd/lmm/install.go's
+// pre-extraction batchInstallMods console output byte-for-byte (git show
+// 5243286:cmd/lmm/install.go, lines ~1175-1347) - the primary treated
+// EXACTLY like the dependency, not doInstall's own single-mod mechanics -
+// see task-2-report.md's "Fix wave 1" entry for the full review trace this
+// pins:
+//
+//  1. the "Installing N mod(s)..." banner once, up front (Total = deps+1)
+//  2. per-mod "[%d/%d] Installing: %s v%s" headers - SAME text and
+//     Index/Total spanning the WHOLE list for both the dependency and the
+//     primary (not "Installing dependency: %s")
+//  3. per-mod "File: %s" lines
+//  4. per-mod "Checksum: %s" lines
+//  5. per-mod "✓ Installed (%d files)" (a file COUNT, not the mod's name)
+//  6. the terminal "--- Summary ---\nInstalled: %d\n" block
 func TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary(t *testing.T) {
 	svc, game, src := setupDoInstallTest(t)
 	installYes = true // auto-confirm the "Install N mod(s)?" prompt
@@ -577,9 +590,17 @@ func TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary(t *testi
 		return doInstall(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, "Installing dependency: Dep One")
-	assert.Contains(t, out, "✓ Installed: Dep One")
-	assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
+	assert.Contains(t, out, "\nInstalling 2 mod(s)...\n", "the banner must print once, up front")
+	assert.Contains(t, out, "\n[1/2] Installing: Dep One v1.0\n", "restored header text, with version, Index/Total across the WHOLE list")
+	assert.Contains(t, out, "\n[2/2] Installing: Mod One v1.0\n", "the primary uses the SAME header text as a dependency")
+	assert.Contains(t, out, "  File: dep1.esp\n")
+	assert.Contains(t, out, "  File: mod1.esp\n")
+	assert.Contains(t, out, "  Checksum: ")
+	assert.Contains(t, out, "  ✓ Installed (1 files)\n", "restored file-count form, not the mod's name")
+	assert.NotContains(t, out, "Installing dependency:", "Task 2's invented wording must be gone")
+	assert.Contains(t, out, "\n--- Summary ---\nInstalled: 2\n")
+	assert.NotContains(t, out, "Extracting to cache...", "the BATCH path never prints the STRICT path's status lines")
+	assert.NotContains(t, out, "Deploying to game directory...")
 
 	_, err := os.Lstat(filepath.Join(game.ModPath, "dep1.esp"))
 	assert.NoError(t, err, "dependency file must be deployed")
@@ -590,6 +611,156 @@ func TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary(t *testi
 	assert.NoError(t, dbErr, "dependency must be installed")
 	_, dbErr = svc.GetInstalledMod("test-src", "mod1", "g1", "default")
 	assert.NoError(t, dbErr, "primary must be installed")
+}
+
+// TestDoInstall_DependencyPath_ReinstallPrintsRemovingPreviousInstallation
+// pins the restored "  Removing previous installation..." line (Fix wave 1,
+// row 4): reinstalling the PRIMARY as part of a dependency-having batch must
+// print it unconditionally (not --verbose-gated), matching
+// batchInstallMods, and must use a fresh Install (never Replace) - the old
+// file must be gone, the new one deployed.
+func TestDoInstall_DependencyPath_ReinstallPrintsRemovingPreviousInstallation(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = true
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "mod1-old.esp", []byte("old")))
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+
+	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}}
+	src.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", FileName: "dep1.esp", IsPrimary: true}})
+	src.AddDownload("dep-file", []byte("dep content"))
+	src.AddMod(root, []domain.DownloadableFile{{ID: "main", FileName: "mod1-new.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("root content"))
+
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "  Removing previous installation...\n")
+
+	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.True(t, os.IsNotExist(err), "old file must be undeployed - a fresh Install, not Replace")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-new.esp"))
+	assert.NoError(t, err, "new file must be deployed")
+}
+
+// TestDoInstall_DependencyPath_DownloadFailureUsesErrorNotSkippedWording
+// pins the restored download-failure wording (Fix wave 1, row 7): "Error:
+// download failed" - NOT "Skipped:" - preceded by a blank line clearing the
+// progress bar (the unconditional post-download Println, row 6b), matching
+// batchInstallMods exactly. The dependency's failure must skip-and-continue
+// - the primary still installs.
+func TestDoInstall_DependencyPath_DownloadFailureUsesErrorNotSkippedWording(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = true
+
+	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}}
+	src.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", FileName: "dep1.esp", IsPrimary: true}})
+	// Deliberately no AddDownload for dep-file - its download 404s.
+	src.AddMod(root, []domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("root content"))
+
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "\n  Error: download failed: ", "restored wording - never \"Skipped:\" for a download failure")
+	assert.NotContains(t, out, "Skipped: download failed")
+	assert.Contains(t, out, "\n--- Summary ---\nInstalled: 1\nFailed: 1 (Dep One)\n")
+
+	_, dbErr := svc.GetInstalledMod("test-src", "dep1", "g1", "default")
+	assert.Error(t, dbErr, "the failed dependency must not be saved")
+	_, dbErr = svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	assert.NoError(t, dbErr, "the primary must still install despite the dependency's failure")
+}
+
+// TestDoInstall_DependencyPath_ConflictsNeverBlockStdin is the MANDATORY
+// no-stdin-blocking regression test (task-2-report.md's Fix wave 1, row 9):
+// a dependency-having install with a file conflict and NO --force must
+// complete WITHOUT EVER READING STDIN - the automation-breaking regression
+// this fix wave exists to kill (a scripted/CI install with dependencies
+// must never hang waiting for a "Continue? [y/N]" nobody will answer).
+// Proven by replacing os.Stdin with the READ end of a pipe that is NEVER
+// written to or closed for the call's duration: any stdin read blocks
+// forever, so doInstall completing within the deadline is direct,
+// deterministic proof it never tried.
+func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = true // auto-confirm the (legitimate) "Install N mod(s)?" prompt
+	installForce = false
+
+	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}}
+	src.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", FileName: "dep1.esp", IsPrimary: true}})
+	src.AddDownload("dep-file", []byte("dep content"))
+	src.AddMod(root, []domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("root content"))
+
+	// The primary's own file ("mod1.esp") conflicts with an already
+	// installed and deployed, unrelated mod ("other").
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "mod1.esp", []byte("o")))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+
+	oldStdin := os.Stdin
+	stdinR, stdinW, perr := os.Pipe()
+	require.NoError(t, perr)
+	os.Stdin = stdinR
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		_ = stdinW.Close()
+		_ = stdinR.Close()
+	})
+
+	oldStdout := os.Stdout
+	outR, outW, perr := os.Pipe()
+	require.NoError(t, perr)
+	os.Stdout = outW
+
+	done := make(chan error, 1)
+	go func() {
+		done <- doInstall(context.Background(), svc, game, nil)
+	}()
+
+	var doInstallErr error
+	select {
+	case doInstallErr = <-done:
+	case <-time.After(5 * time.Second):
+		os.Stdout = oldStdout
+		t.Fatal("doInstall blocked reading stdin - a dependency-having install's conflict warning must never prompt")
+	}
+
+	os.Stdout = oldStdout
+	require.NoError(t, outW.Close())
+	outBytes, readErr := io.ReadAll(outR)
+	require.NoError(t, readErr)
+	out := string(outBytes)
+
+	require.NoError(t, doInstallErr)
+	assert.Contains(t, out, "Installing 2 mod(s)...")
+	assert.NotContains(t, out, "Continue? [y/N]", "the BATCH path must never show the blocking conflict prompt")
+	assert.Contains(t, out, "⚠ 1 file conflict(s) - will overwrite", "the conflict must still surface as a non-blocking inline warning")
+
+	_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	assert.NoError(t, dbErr, "the primary must still install despite the conflict")
 }
 
 // seedConflictingMod installs and deploys "other", owning shared.esp, then
