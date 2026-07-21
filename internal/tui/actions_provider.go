@@ -24,6 +24,15 @@ import (
 // success or failure, and never offer undo/retry affordances that assume a
 // failed action was a no-op. PlanProfileSwitch and PlanInstall are the
 // exceptions: planning is pure and never mutates either way.
+//
+// Progress-callback lifetime: the progress func(ActionProgress) argument
+// ApplyProfileSwitch/ApplyInstall/ApplyUpdate accept must never be called
+// after the method itself has returned. buildAction (actions.go) closes the
+// channel progress writes into immediately once the method returns, so an
+// implementation that reports progress from a detached goroutine outliving
+// the call risks a send-on-closed-channel panic - progress must only be
+// invoked synchronously within the method's own call stack (or from a
+// goroutine fully joined before returning).
 type ActionProvider interface {
 	EnableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
 	DisableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
