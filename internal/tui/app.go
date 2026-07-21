@@ -690,7 +690,7 @@ func (m Model) modsView() string {
 		rows = append(rows, m.theme.MutedText.Render("No mods installed yet. 'lmm install <mod>' begins the quest."))
 	}
 	for i, mod := range m.mods {
-		rows = append(rows, m.modRow(i, mod))
+		rows = append(rows, m.modRow(i, m.availableWidth(), mod))
 	}
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
@@ -1040,8 +1040,33 @@ func (m Model) row(index int, label string) string {
 	return prefix + label
 }
 
-func (m Model) modRow(index int, mod ModItem) string {
-	line := fmt.Sprintf("%-28s %-11s %-16s %7s", mod.Name, mod.Status, mod.Author, mod.Version)
+// modRow renders one Installed Mods row: name / status / author / version.
+// Finding 2 (smoke test): the name column used to be a fixed 28 runes with
+// no truncation, so a longer name overflowed it and shifted every
+// subsequent column to the right, breaking row alignment. Status/author/
+// version get proportional (clamped) shares of the panel's width - the same
+// pattern searchResultsPane already uses - and the name column absorbs
+// whatever's left, so it grows with the panel instead of staying a small
+// fixed number. truncate() (ANSI-safe, hard cutoff with an ellipsis) is
+// applied to every field so an overlong value can never push a later column
+// out of place, matching searchResultsPane's reasoning for why overflow must
+// never reach lipgloss's automatic line-wrap.
+func (m Model) modRow(index, width int, mod ModItem) string {
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+	const gaps = 3        // separating spaces between the 4 columns
+	const minName = 8
+
+	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth-gaps, minName)
+	statusWidth := min(11, max(avail/6, 1)) // "disabled"/"deployed" are 8 runes
+	authorWidth := min(16, max(avail/5, 1))
+	versionWidth := min(7, max(avail/8, 1))
+	nameWidth := max(avail-statusWidth-authorWidth-versionWidth, minName)
+
+	line := fmt.Sprintf("%-*s %-*s %-*s %*s",
+		nameWidth, truncate(mod.Name, nameWidth),
+		statusWidth, truncate(mod.Status, statusWidth),
+		authorWidth, truncate(mod.Author, authorWidth),
+		versionWidth, truncate(mod.Version, versionWidth))
 	return m.row(index, line)
 }
 

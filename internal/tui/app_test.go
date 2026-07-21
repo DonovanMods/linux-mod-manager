@@ -226,8 +226,14 @@ func TestModRowColumnsAlignRegardlessOfNameLength(t *testing.T) {
 			longIdx := strings.Index(longRow, "disabled")
 			require.Greater(t, shortIdx, 0, "status column must be present in the short-name row")
 			require.Greater(t, longIdx, 0, "status column must be present in the long-name row")
-			require.Equal(t, shortIdx, longIdx,
-				"the Status column must start at the same offset regardless of name length")
+			// Compare DISPLAY columns (lipgloss.Width), not byte offsets: the
+			// truncated long name ends in a multi-byte "…" ellipsis rune, so a
+			// byte-offset comparison would report a false mismatch even though
+			// the row aligns visually - which is the actual bug being fixed.
+			shortCol := lipgloss.Width(shortRow[:shortIdx])
+			longCol := lipgloss.Width(longRow[:longIdx])
+			require.Equal(t, shortCol, longCol,
+				"the Status column must start at the same display column regardless of name length")
 
 			require.LessOrEqual(t, lipgloss.Width(longRow), model.availableWidth(),
 				"an overlong name must be hard-truncated, never overflow the row")
