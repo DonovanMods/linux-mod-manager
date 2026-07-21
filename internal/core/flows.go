@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
@@ -512,6 +514,53 @@ type DeployResult struct {
 // internal/core cannot import cmd/lmm and this task's scope explicitly
 // excludes touching profile.go to hoist it out; see the task report.
 var errNoDeployFiles = fmt.Errorf("no downloadable files")
+
+// filterAndSortInstallFiles is PlanInstall's faithful port of
+// cmd/lmm/install.go's filterAndSortFiles (duplicated rather than shared for
+// the same reason selectDeployFiles duplicates selectFilesToDownload:
+// internal/core cannot import cmd/lmm - see errNoDeployFiles above): unless
+// showArchived, drops any file whose Category (case-insensitive) is
+// ARCHIVED, OLD_VERSION, or DELETED, then stable-sorts the remainder by
+// category priority - MAIN, then OPTIONAL, then UPDATE, then MISCELLANEOUS,
+// then anything else (archived categories sort last, but they're already
+// gone unless showArchived kept them). Same category sets, same order, same
+// stable sort as the CLI, so PlanInstall's file-selection step (the one
+// ported here) picks the identical file the CLI's doInstall would.
+func filterAndSortInstallFiles(files []domain.DownloadableFile, showArchived bool) []domain.DownloadableFile {
+	var filtered []domain.DownloadableFile
+	for _, f := range files {
+		category := strings.ToUpper(f.Category)
+		if !showArchived && (category == "ARCHIVED" || category == "OLD_VERSION" || category == "DELETED") {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return installFileCategoryPriority(filtered[i].Category) < installFileCategoryPriority(filtered[j].Category)
+	})
+
+	return filtered
+}
+
+// installFileCategoryPriority is filterAndSortInstallFiles' sort key,
+// ported from cmd/lmm/install.go's fileCategoryPriority (lower sorts first).
+func installFileCategoryPriority(category string) int {
+	switch strings.ToUpper(category) {
+	case "MAIN":
+		return 0
+	case "OPTIONAL":
+		return 1
+	case "UPDATE":
+		return 2
+	case "MISCELLANEOUS":
+		return 3
+	case "ARCHIVED", "OLD_VERSION", "DELETED":
+		return 99
+	default:
+		return 50
+	}
+}
 
 // selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
 // the files matching storedFileIDs if any are found, else the primary file
@@ -1234,9 +1283,12 @@ type InstallPlan struct {
 
 	Mod domain.Mod // the mod that would be installed, freshly fetched via GetMod
 
-	// Files is the file(s) that WOULD be downloaded: the same non-interactive
+	// Files is the file(s) that WOULD be downloaded: GetModFiles' result
+	// after filterAndSortInstallFiles (doInstall's filterAndSortFiles,
+	// ported - strips ARCHIVED/OLD_VERSION/DELETED unless showArchived, sorts
+	// MAIN>OPTIONAL>UPDATE>MISCELLANEOUS>other), then the same non-interactive
 	// default cmd/lmm/install.go's selectInstallFiles falls back to (the
-	// primary file, or the sole file) absent --file or an interactive
+	// primary file, or the sole/first file) absent --file or an interactive
 	// choice - reusing selectDeployFiles rather than porting
 	// selectInstallFiles verbatim, since selectInstallFiles's --file flag and
 	// interactive prompt both consume a plan rather than being part of one
@@ -1319,10 +1371,23 @@ type InstallPlan struct {
 //   - --no-deps: a caller that wants to skip Dependencies can simply ignore
 //     or clear them before calling ApplyInstall.
 //
+// showArchived mirrors doInstall's --show-archived flag exactly: it is
+// threaded straight into filterAndSortInstallFiles (the faithful port of
+// cmd/lmm/install.go's filterAndSortFiles - same ARCHIVED/OLD_VERSION/DELETED
+// filter set, same MAIN>OPTIONAL>UPDATE>MISCELLANEOUS>other sort), which runs
+// BEFORE the "no downloadable files" check and BEFORE selectDeployFiles - so
+// a mod whose files are all archived reports the CLI's exact error instead
+// of a plan, and the no-IsPrimary fallback picks the CLI's post-sort file,
+// not GetModFiles' raw-order first. This parameter exists so Task 2's CLI
+// refit can pass installShowArchived straight through without re-porting
+// filterAndSortFiles into cmd/lmm a second time - see the task report's Fix
+// wave 1 for why a parameter (rather than a hardcoded false, or a separate
+// options type/overload) is the shape picked here.
+//
 // Network reads (GetMod, GetDependencies, GetModFiles) are expected; no DB
 // write, filesystem write, cache write, hook execution, or download ever
 // happens here - see TestService_PlanInstall_PerformsZeroMutations.
-func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*InstallPlan, error) {
+func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, showArchived bool) (*InstallPlan, error) {
 	mod, err := s.GetMod(ctx, sourceID, game.ID, modID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch mod: %w", err)
@@ -1347,6 +1412,12 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 		return nil, fmt.Errorf("checking existing installed mod: %w", err)
 	}
 
+	// NOTE: kept for doInstall fidelity (cmd/lmm/install.go:478 gates
+	// dependency resolution the same way); unreachable via any registered
+	// source today - domain.SourceLocal is never a source.ModSource's own
+	// ID (see internal/source/registry.go), only a marker other commands
+	// (list/verify/import/uninstall) stamp onto locally-imported mods, so
+	// GetMod's returned mod.SourceID here can never equal it in practice.
 	if mod.SourceID != domain.SourceLocal {
 		// installedMods error ignored, matching doInstall/PlanProfileSwitch's
 		// own "a missing/unreadable profile is simply empty" convention.
@@ -1362,6 +1433,12 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mod files: %w", err)
 	}
+	files = filterAndSortInstallFiles(files, showArchived)
+	// This explicit check is intentionally NOT redundant with
+	// selectDeployFiles's own len==0 guard below: that guard returns
+	// errNoDeployFiles ("no downloadable files"), which is NOT byte-identical
+	// to doInstall's message - so it stays here to reproduce doInstall's
+	// exact wording on the FILTERED list.
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no downloadable files available for this mod")
 	}

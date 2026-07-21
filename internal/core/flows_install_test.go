@@ -108,7 +108,7 @@ func TestService_PlanInstall_FreshInstallPlan(t *testing.T) {
 	svc.RegisterSource(mock)
 	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 
@@ -138,7 +138,7 @@ func TestService_PlanInstall_AlreadyInstalledModPopulatesReplaces(t *testing.T) 
 	svc.RegisterSource(mock)
 	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
 	require.NotNil(t, plan.Replaces)
 	assert.Equal(t, "1.0", plan.Replaces.Version)
@@ -169,7 +169,7 @@ func TestService_PlanInstall_ConflictingFilesListsPathAndOwningMod(t *testing.T)
 	svc.RegisterSource(mock)
 	mock.AddMod("g1", &domain.Mod{ID: "newmod", SourceID: "src", Name: "New Mod", Version: "1.0", GameID: "g1"})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
 	require.NoError(t, err)
 	require.Len(t, plan.Conflicts, 1)
 	assert.Equal(t, "shared.esp", plan.Conflicts[0].RelativePath)
@@ -195,7 +195,7 @@ func TestService_PlanInstall_DependenciesResolvedInOrder(t *testing.T) {
 	mock.AddMod("g1", dep1)
 	mock.AddMod("g1", root)
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
 	require.NoError(t, err)
 	require.Len(t, plan.Dependencies, 2)
 	assert.Equal(t, *dep2, plan.Dependencies[0], "deepest dependency must resolve first")
@@ -219,7 +219,7 @@ func TestService_PlanInstall_AlreadyInstalledDependencyIsSkipped(t *testing.T) {
 	mock.AddMod("g1", &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
 		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
 	require.NoError(t, err)
 	assert.Empty(t, plan.Dependencies)
 }
@@ -247,7 +247,7 @@ func TestService_PlanInstall_MissingAndCyclicDependenciesRecordedNotFatal(t *tes
 			{SourceID: "src", ModID: "root2"},                     // self-reference - cycle
 		}})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root2")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root2", false)
 	require.NoError(t, err)
 	assert.Empty(t, plan.Dependencies)
 	assert.True(t, plan.CycleDetected)
@@ -268,7 +268,7 @@ func TestService_PlanInstall_SourceWithoutDependenciesCapabilityDegradesToEmpty(
 	svc.RegisterSource(mock)
 	mock.AddMod("g1", &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1"})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
 	require.NoError(t, err)
 	assert.Empty(t, plan.Dependencies)
 	assert.Empty(t, plan.MissingDependencies)
@@ -284,7 +284,7 @@ func TestService_PlanInstall_UnknownModReturnsErrModNotFound(t *testing.T) {
 	mock := newMockSource("src")
 	svc.RegisterSource(mock)
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "ghost")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "ghost", false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 	assert.Nil(t, plan)
@@ -304,7 +304,7 @@ func TestService_PlanInstall_UnknownProfileIsNotAnError(t *testing.T) {
 	svc.RegisterSource(mock)
 	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "never-seen-before", "src", "mod1")
+	plan, err := svc.PlanInstall(context.Background(), game, "never-seen-before", "src", "mod1", false)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	assert.Nil(t, plan.Replaces)
@@ -323,7 +323,7 @@ func TestService_PlanInstall_TotalDownloadBytes(t *testing.T) {
 		svc.RegisterSource(mock)
 		mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
 
-		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 		require.NoError(t, err)
 		assert.Equal(t, int64(12345), plan.TotalDownloadBytes)
 	})
@@ -336,7 +336,7 @@ func TestService_PlanInstall_TotalDownloadBytes(t *testing.T) {
 		svc.RegisterSource(mock)
 		mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
 
-		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 		require.NoError(t, err)
 		assert.Equal(t, int64(-1), plan.TotalDownloadBytes)
 	})
@@ -363,7 +363,7 @@ func TestService_PlanInstall_AllArchivedFilesReturnsNoDownloadableFilesError(t *
 	svc.RegisterSource(mock)
 	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.Error(t, err)
 	assert.EqualError(t, err, "no downloadable files available for this mod")
 	assert.Nil(t, plan)
@@ -389,7 +389,7 @@ func TestService_PlanInstall_MixedCategoriesNoPrimaryPicksMainFile(t *testing.T)
 	svc.RegisterSource(mock)
 	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
 	require.Len(t, plan.Files, 1)
 	assert.Equal(t, "main-1", plan.Files[0].ID, "post-sort MAIN file must win the no-IsPrimary fallback, matching the CLI's filterAndSortFiles+selectInstallFiles order")
@@ -405,7 +405,7 @@ func TestService_PlanInstall_AuthRequiredSourceWrapsErrAuthRequired(t *testing.T
 
 	svc.RegisterSource(&authFailingSource{id: "src"})
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrAuthRequired)
 	assert.Nil(t, plan)
@@ -442,7 +442,7 @@ func TestService_PlanInstall_PerformsZeroMutations(t *testing.T) {
 	beforeMods, err := svc.GetInstalledMods("g1", "default")
 	require.NoError(t, err)
 
-	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 
