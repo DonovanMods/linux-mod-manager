@@ -153,13 +153,15 @@ lmm tui --theme amber       # themes: wizardry (default), amber, dos, green
 lmm tui --prototype         # demo mode with static fake data
 ```
 
-Keys: `tab`/`h`/`l` cycle screens, `1`–`5` jump, `3` jumps to Search (any
-entry path focuses the input immediately; `5` opens Sources), `↑↓`/`j`/`k`
-move, `enter` open/select (on Profiles, switch to the selected profile),
-`/` focus search from anywhere, type query, `enter` to search, `esc` unfocus
-(clears focus; afterward `s` cycles sources, number keys switch screens),
-`n`/`p` next/previous page, `e`/`x`/`D` enable-disable/uninstall/deploy (see
-below), `?` help, `q` quit.
+Keys: `tab`/`h`/`l` cycle screens (landing on Search this way does not focus
+the input), `1`–`5` jump directly (`3` focuses search immediately, like `/`;
+`5` opens Sources), `↑↓`/`j`/`k` move, `enter` open/select (on Profiles,
+switch to the selected profile; selecting "Search Archives" from the
+Dashboard menu also focuses search — explicit search intent focuses,
+passive cycling doesn't), `/` focus search from anywhere, type query,
+`enter` to search, `esc` unfocus (clears focus; afterward `s` cycles
+sources, number keys switch screens), `n`/`p` next/previous page, `e`/`x`/`D`
+enable-disable/uninstall/deploy (see below), `?` help, `q` quit.
 
 The Search screen defaults to **All sources**, mirroring the CLI: the typed
 query runs concurrently against every source configured for the game. Press

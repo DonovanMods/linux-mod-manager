@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - TUI quit now cancels any in-flight search or action context instead of leaving it running past program exit (#42 lifecycle item)
+- TUI: screen-cycling (`tab`/`shift+tab`, `↑↓`/`h`/`l`, and the direct screen-jump keys) no longer auto-focuses the search input when it lands on Search — only `/`, `3`, and selecting "Search Archives" from the Dashboard menu do (all three are explicit search intent); `Esc` still blurs. Corrects 1.10.0's Changed entry below, which described the old always-focus behavior as intentional
+- TUI: Installed Mods and Profiles rows no longer misalign on long names — both now derive proportional column widths from the panel width and hard-truncate every field instead of a fixed-width column with no truncation
+- TUI: the footer's opaque `e/x/D: mutate` hint is now explicit (`e: enable/disable · x: uninstall · D: deploy`), and no longer risks the footer line overflowing the terminal by one row on narrow widths
 
 ## [1.10.0] - 2026-07-18
 
