@@ -227,9 +227,9 @@ func TestService_PlanInstall_MissingAndCyclicDependenciesRecordedNotFatal(t *tes
 	mock.AddMod("g1", &domain.Mod{ID: "cross-source-dep", SourceID: "src", Name: "Cross", Version: "1.0", GameID: "g1"})
 	mock.AddMod("g1", &domain.Mod{ID: "root2", SourceID: "src", Name: "Root Two", Version: "1.0", GameID: "g1",
 		Dependencies: []domain.ModReference{
-			{SourceID: "src", ModID: "missing-dep"},          // never registered - fetch fails
+			{SourceID: "src", ModID: "missing-dep"},               // never registered - fetch fails
 			{SourceID: "other-source", ModID: "cross-source-dep"}, // SourceID mismatch
-			{SourceID: "src", ModID: "root2"},                // self-reference - cycle
+			{SourceID: "src", ModID: "root2"},                     // self-reference - cycle
 		}})
 
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root2")

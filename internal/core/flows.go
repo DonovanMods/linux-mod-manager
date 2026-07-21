@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -1218,4 +1219,261 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	}
 
 	return result, nil
+}
+
+// --- PlanInstall (Phase 5b Task 1) ---
+
+// InstallPlan is the pure, displayable result of PlanInstall: everything the
+// pre-extraction CLI's pre-install prompts (dependency tree, conflict
+// warnings, "already installed" notice) and the TUI's future install modal
+// need to render before a caller decides whether to proceed (Phase 5b Task 2
+// adds ApplyInstall to actually execute one of these). Computed with zero
+// side effects - see PlanInstall's doc comment.
+type InstallPlan struct {
+	SourceID, GameID, Profile string
+
+	Mod domain.Mod // the mod that would be installed, freshly fetched via GetMod
+
+	// Files is the file(s) that WOULD be downloaded: the same non-interactive
+	// default cmd/lmm/install.go's selectInstallFiles falls back to (the
+	// primary file, or the sole file) absent --file or an interactive
+	// choice - reusing selectDeployFiles rather than porting
+	// selectInstallFiles verbatim, since selectInstallFiles's --file flag and
+	// interactive prompt both consume a plan rather than being part of one
+	// (see the task report). Always exactly one file in practice: neither
+	// selectDeployFiles nor this non-interactive default ever picks more
+	// than one without a stored/explicit multi-file selection.
+	Files []domain.DownloadableFile
+
+	// Dependencies is target's resolved, not-yet-installed dependency chain,
+	// deepest dependency first (install order) - target itself is excluded
+	// (it's Mod, above). Mirrors cmd/lmm/install.go's resolveDependencies
+	// exactly, including one quirk worth calling out: every dependency is
+	// fetched using the TOP-LEVEL SourceID field above, not each
+	// ModReference's own SourceID - a dependency listed for a different
+	// source therefore always ends up in MissingDependencies unless that
+	// source happens to stamp the same SourceID onto the Mod it returns (see
+	// resolveInstallDependencies). Empty (with a nil error) whenever the
+	// source lacks the Dependencies capability, returns
+	// source.ErrNotSupported, or Mod is a local (domain.SourceLocal) mod -
+	// resolveDependencies swallows ANY GetDependencies error the same way,
+	// degrading to "no dependencies" rather than failing the plan.
+	Dependencies []domain.Mod
+
+	// MissingDependencies records dependency references resolveDependencies
+	// found but couldn't resolve (source fetch failure, or a SourceID
+	// mismatch - see Dependencies) - the pre-extraction CLI's showInstallPlan
+	// printed these as a warning, never a failure. Not part of the task
+	// brief's directional API struct; added because the brief's own framing
+	// ("output contains everything the CLI's pre-install prompts... need to
+	// display") requires it to reproduce that warning - see the task report.
+	MissingDependencies []domain.ModReference
+	// CycleDetected mirrors resolveDependencies' cycleDetected: a circular
+	// reference was found while resolving Dependencies (install order is
+	// best-effort). Same rationale as MissingDependencies.
+	CycleDetected bool
+
+	// Conflicts lists files installing Mod would overwrite from OTHER
+	// installed mods, exactly as installer.GetConflicts reports them - but
+	// ONLY when Mod's exact (SourceID, ID, Version) is already cached:
+	// GetConflicts inspects the cache's extracted file list, and PlanInstall
+	// must never download to populate it (see the function doc comment). A
+	// mod that has never been downloaded before therefore always reports
+	// empty Conflicts here; this mirrors the pre-extraction CLI's own
+	// confirmInstallConflicts, which likewise treats ANY GetConflicts error
+	// (a cache-miss included) as "no conflicts, continue" rather than an
+	// install-blocking failure - see the task report.
+	Conflicts []Conflict
+
+	// Replaces is the currently-installed row for (SourceID, Mod.ID,
+	// Profile), if any - non-nil means installing this plan would use
+	// Installer.Replace (or its reinstall-cache-transaction variants, an
+	// Apply-time concern) rather than Installer.Install. Mirrors doInstall's
+	// existingMod exactly: populated regardless of whether the installed
+	// version matches Mod.Version, so both a same-version reinstall and a
+	// version upgrade set this.
+	Replaces *domain.InstalledMod
+
+	// TotalDownloadBytes is the sum of Files' declared sizes, or -1 if any
+	// selected file's size is unreported (Size <= 0, matching the
+	// DownloadProgress convention used elsewhere in this file: only a
+	// positive TotalBytes/Size is treated as "known").
+	TotalDownloadBytes int64
+}
+
+// PlanInstall computes what installing (sourceID, modID) into profileName
+// would do - the pure, read-only half of the pre-extraction CLI's doInstall
+// (cmd/lmm/install.go), extracted with zero mutations so a caller (the CLI,
+// or the TUI's future install modal) can render it and decide whether to
+// proceed before Phase 5b Task 2's ApplyInstall executes it. See
+// InstallPlan's doc comment for what each field means, and the task report
+// for the exact mapping back to doInstall.
+//
+// Deliberately NOT reproduced here (both consume a plan rather than being
+// part of one, matching PlanProfileSwitch's precedent):
+//   - doInstall's interactive file picking / --file flag (selectInstallFiles)
+//     and its "Install N mod(s)? [Y/n]" dependency confirm prompt - Files
+//     always reflects the same non-interactive default cmd/lmm's own --yes
+//     flag would pick; a CLI/TUI caller that resolves a different selection
+//     overrides plan.Files before calling ApplyInstall.
+//   - --no-deps: a caller that wants to skip Dependencies can simply ignore
+//     or clear them before calling ApplyInstall.
+//
+// Network reads (GetMod, GetDependencies, GetModFiles) are expected; no DB
+// write, filesystem write, cache write, hook execution, or download ever
+// happens here - see TestService_PlanInstall_PerformsZeroMutations.
+func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*InstallPlan, error) {
+	mod, err := s.GetMod(ctx, sourceID, game.ID, modID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch mod: %w", err)
+	}
+
+	plan := &InstallPlan{
+		SourceID: sourceID,
+		GameID:   game.ID,
+		Profile:  profileName,
+		Mod:      *mod,
+	}
+
+	existing, err := s.GetInstalledMod(sourceID, modID, game.ID, profileName)
+	switch {
+	case err == nil:
+		plan.Replaces = existing
+	case errors.Is(err, domain.ErrModNotFound):
+		// Not installed anywhere for this profile - Replaces stays nil,
+		// matching doInstall's own errors.Is(err, domain.ErrModNotFound)
+		// branch exactly.
+	default:
+		return nil, fmt.Errorf("checking existing installed mod: %w", err)
+	}
+
+	if mod.SourceID != domain.SourceLocal {
+		// installedMods error ignored, matching doInstall/PlanProfileSwitch's
+		// own "a missing/unreadable profile is simply empty" convention.
+		installedMods, _ := s.GetInstalledMods(game.ID, profileName)
+		installedIDs := make(map[string]bool, len(installedMods))
+		for _, im := range installedMods {
+			installedIDs[domain.ModKey(im.SourceID, im.ID)] = true
+		}
+		plan.Dependencies, plan.MissingDependencies, plan.CycleDetected = s.resolveInstallDependencies(ctx, sourceID, mod, installedIDs)
+	}
+
+	files, err := s.GetModFiles(ctx, sourceID, mod)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mod files: %w", err)
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no downloadable files available for this mod")
+	}
+	selected, _, err := selectDeployFiles(files, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select files: %w", err)
+	}
+	plan.Files = make([]domain.DownloadableFile, len(selected))
+	var totalBytes int64
+	unknownSize := false
+	for i, f := range selected {
+		plan.Files[i] = *f
+		if f.Size <= 0 {
+			unknownSize = true
+			continue
+		}
+		totalBytes += f.Size
+	}
+	if unknownSize {
+		plan.TotalDownloadBytes = -1
+	} else {
+		plan.TotalDownloadBytes = totalBytes
+	}
+
+	// Conflict detection mirrors confirmInstallConflicts exactly: ANY
+	// GetConflicts error - including "mod not in cache" for a mod PlanInstall
+	// has (by construction) never downloaded - degrades to "no conflicts
+	// detected", never fails the plan. See Conflicts' doc comment.
+	if conflicts, err := s.GetInstaller(game).GetConflicts(ctx, game, mod, profileName); err == nil {
+		plan.Conflicts = conflicts
+	}
+
+	return plan, nil
+}
+
+// resolveInstallDependencies is PlanInstall's copy of cmd/lmm/install.go's
+// resolveDependencies (duplicated rather than shared for the same reason
+// selectDeployFiles duplicates cmd/lmm/profile.go's selectFilesToDownload:
+// internal/core cannot import cmd/lmm, and hoisting the CLI helper out is
+// outside this task's scope - see the task report): a depth-first,
+// cycle-detecting traversal of target's dependency graph that returns
+// resolved dependencies in install order (deepest first). Every fetch uses
+// sourceID - NOT each domain.ModReference's own SourceID - matching
+// serviceDepFetcher's own fixed-source behavior exactly (see Dependencies'
+// doc comment). Already-installed dependencies (per installedIDs) are
+// skipped; a dependency this can't resolve (source fetch failure, or a
+// SourceID mismatch) is recorded in missing rather than failing the whole
+// resolution; a circular reference sets cycleDetected and is otherwise
+// skipped.
+func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID string, target *domain.Mod, installedIDs map[string]bool) (deps []domain.Mod, missing []domain.ModReference, cycleDetected bool) {
+	visited := make(map[string]bool)
+	stack := make(map[string]bool) // keys currently being visited (cycle detection)
+
+	var collect func(mod *domain.Mod)
+	collect = func(mod *domain.Mod) {
+		key := domain.ModKey(mod.SourceID, mod.ID)
+		if visited[key] {
+			return
+		}
+		visited[key] = true
+		stack[key] = true
+		defer delete(stack, key)
+
+		modDeps, err := s.GetDependencies(ctx, sourceID, mod)
+		if err != nil {
+			// Degrade to "no dependencies for this mod" - matches
+			// resolveDependencies, which swallows ANY error here (a
+			// capability gap, source.ErrNotSupported, or anything else).
+			return
+		}
+
+		for _, ref := range modDeps {
+			depKey := domain.ModKey(ref.SourceID, ref.ModID)
+
+			switch {
+			case installedIDs[depKey]:
+				continue
+			case stack[depKey]:
+				cycleDetected = true
+				continue
+			case visited[depKey]:
+				continue
+			}
+
+			gameIDForFetch := target.GameID
+			if gameIDForFetch == "" {
+				gameIDForFetch = mod.GameID
+			}
+			depMod, err := s.GetMod(ctx, sourceID, gameIDForFetch, ref.ModID)
+			if err != nil {
+				// Dependency not available on this source (e.g. an external
+				// requirement like SKSE).
+				missing = append(missing, ref)
+				continue
+			}
+			if depMod.SourceID != "" && depMod.SourceID != ref.SourceID {
+				// Listed for a different source than the one that actually
+				// served it.
+				missing = append(missing, ref)
+				continue
+			}
+			if depMod.SourceID == "" {
+				depMod.SourceID = ref.SourceID
+			}
+
+			// Recurse into transitive dependencies before recording this
+			// one, so Dependencies ends up deepest-first (install order).
+			collect(depMod)
+			deps = append(deps, *depMod)
+		}
+	}
+
+	collect(target)
+	return deps, missing, cycleDetected
 }
