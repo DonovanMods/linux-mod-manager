@@ -524,13 +524,41 @@ func TestSwitchPlanAlreadyActiveDefensive(t *testing.T) {
 	require.False(t, m.action.statusIsError)
 }
 
+// TestSwitchDetailLinesIncludesDownloadDisclosureForNeedsDownloads guards
+// the Task 4 review finding: switchDetailLines rendered only the
+// Enable/Disable/NoChanges buckets, never NeedsDownloads - since Task 4
+// lifted the switch refusal, a purely-downloading profile switch opened its
+// confirmation modal with NO indication that confirming starts network
+// downloads, less disclosure than the CLI's own "Will install N mod(s):" +
+// per-ref lines before its Proceed? prompt (cmd/lmm/profile.go's
+// doProfileSwitch, the fidelity reference). switchDetailLines must append a
+// download-disclosure header plus one line per ref, in the SAME "%s:%s
+// v%s" display form switchPlanView already produces, when NeedsDownloads is
+// non-empty.
+func TestSwitchDetailLinesIncludesDownloadDisclosureForNeedsDownloads(t *testing.T) {
+	t.Parallel()
+
+	lines := switchDetailLines(SwitchPlanView{
+		From:           "survival",
+		To:             "vanilla-plus",
+		NeedsDownloads: []string{"nexusmods:foo v1.0", "nexusmods:bar v2.0"},
+	})
+
+	require.Contains(t, lines, "From: survival")
+	require.Contains(t, lines, "Will download & install 2 mod(s):")
+	require.Contains(t, lines, "↓ nexusmods:foo v1.0")
+	require.Contains(t, lines, "↓ nexusmods:bar v2.0")
+}
+
 // TestSwitchPlanNeedsDownloadsOpensModalAndAppliesOnConfirm covers the
 // Phase 5b Task 4 switch-refusal LIFT at the Model level: a plan with
 // NeedsDownloads entries used to short-circuit to a no-modal refusal status
 // (see this test's prior form, formerly named
 // TestSwitchPlanNeedsDownloadsRefusesNoModal, in this file's git history);
-// it now opens the SAME confirmation modal as any other plan, and
-// confirming it calls ApplyProfileSwitch with a progress callback (the
+// it now opens the SAME confirmation modal as any other plan, its detail
+// lines carry the download disclosure (see
+// TestSwitchDetailLinesIncludesDownloadDisclosureForNeedsDownloads above),
+// and confirming it calls ApplyProfileSwitch with a progress callback (the
 // pump), exactly like the NoChanges/Enable-Disable cases below.
 func TestSwitchPlanNeedsDownloadsOpensModalAndAppliesOnConfirm(t *testing.T) {
 	t.Parallel()
@@ -552,6 +580,9 @@ func TestSwitchPlanNeedsDownloadsOpensModalAndAppliesOnConfirm(t *testing.T) {
 	require.Nil(t, cmd2)
 	require.NotNil(t, model.action.pending, "a NeedsDownloads plan must now open the confirmation modal like any other")
 	require.Equal(t, actionSwitch, model.action.pending.kind)
+	require.Contains(t, model.action.pending.detail, "Will download & install 1 mod(s):",
+		"the modal must disclose that confirming starts a network download, not just show Enable/Disable")
+	require.Contains(t, model.action.pending.detail, "↓ nexusmods:foo v1.0")
 
 	confirmed, confirmCmd := model.Update(keyRunes("y"))
 	model = confirmed.(Model)
@@ -658,6 +689,9 @@ func TestPrototypeSwitchPlanNeedsDownloadsCannedScenario(t *testing.T) {
 	model = updated.(Model)
 	require.Nil(t, cmd2)
 	require.NotNil(t, model.action.pending, "a NeedsDownloads plan must now open the confirmation modal like any other")
+	require.Contains(t, model.action.pending.detail, "Will download & install 1 mod(s):",
+		"the modal must disclose that confirming starts a network download, not just show Enable/Disable")
+	require.Contains(t, model.action.pending.detail, "↓ nexusmods:requiem-legendary v1.0")
 
 	confirmed, confirmCmd := model.Update(keyRunes("y"))
 	model = confirmed.(Model)
