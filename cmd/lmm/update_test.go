@@ -492,3 +492,85 @@ func captureStdoutOnlyErr(t *testing.T, fn func() error) error {
 	defer func() { os.Stdout = old }()
 	return fn()
 }
+
+// TestApplyUpdate_ForcedBeforeEachHookFailure_PrintsWarningAndApplies guards
+// the one gap the Task 3 review found in the applyUpdate refit: no committed
+// test drove update.go's applyUpdate closure itself (as opposed to
+// applySingleUpdate/doUpdate, which only exercise it indirectly) far enough
+// to observe its progress-callback switch translate a core.UpdateBeforeEachForced
+// event into a printed line. With --force, a failing uninstall.before_each
+// hook must produce the exact "Warning: uninstall.before_each hook failed
+// (forced): <err>" line on stderr (see update.go's `case
+// core.UpdateBeforeEachForced, core.UpdateWarning:` - `fmt.Fprintf(os.Stderr,
+// "Warning: %s\n", p.Detail)` - and core's ApplyUpdate, which formats
+// p.Detail as "uninstall.before_each hook failed (forced): %v"), and the
+// update must still apply (Force downgrades the hook failure to a warning
+// rather than aborting).
+func TestApplyUpdate_ForcedBeforeEachHookFailure_PrintsWarningAndApplies(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+	updateForce = true
+
+	scriptsDir := t.TempDir()
+	failScript := filepath.Join(scriptsDir, "before_each.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\nexit 1\n"), 0o755))
+	game.Hooks = domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failScript}}
+
+	mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
+	src.AddDownload("new-1", []byte("new-content"))
+
+	upd := domain.Update{InstalledMod: *mod, NewVersion: "2.0"}
+	stderr, err := captureStderrErr(t, func() error {
+		return applyUpdate(context.Background(), svc, game, upd, "default")
+	})
+
+	require.NoError(t, err, "a forced before_each hook failure must not abort the update")
+	assert.Contains(t, stderr,
+		"Warning: uninstall.before_each hook failed (forced): hook failed with exit code 1: "+failScript+"\n")
+
+	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated.Version, "the update must still apply despite the forced hook failure")
+}
+
+// TestApplyUpdate_AfterEachHookFailures_PrintWarningsAndSucceed guards the
+// applyUpdate closure's other branch of the same review finding: both
+// after_each hooks are always non-fatal (regardless of Force - unlike the
+// before_each hooks above), so their core.UpdateWarning progress events must
+// each still reach stderr as a "Warning: <hook> hook failed: <err>" line, and
+// the update must succeed overall.
+func TestApplyUpdate_AfterEachHookFailures_PrintWarningsAndSucceed(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+	updateForce = false // after_each hooks are non-fatal even without --force
+
+	scriptsDir := t.TempDir()
+	uninstallScript := filepath.Join(scriptsDir, "uninstall_after_each.sh")
+	installScript := filepath.Join(scriptsDir, "install_after_each.sh")
+	require.NoError(t, os.WriteFile(uninstallScript, []byte("#!/bin/bash\nexit 1\n"), 0o755))
+	require.NoError(t, os.WriteFile(installScript, []byte("#!/bin/bash\nexit 1\n"), 0o755))
+	game.Hooks = domain.GameHooks{
+		Uninstall: domain.HookConfig{AfterEach: uninstallScript},
+		Install:   domain.HookConfig{AfterEach: installScript},
+	}
+
+	mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
+	src.AddDownload("new-1", []byte("new-content"))
+
+	upd := domain.Update{InstalledMod: *mod, NewVersion: "2.0"}
+	stderr, err := captureStderrErr(t, func() error {
+		return applyUpdate(context.Background(), svc, game, upd, "default")
+	})
+
+	require.NoError(t, err, "after_each hook failures must never fail the update")
+	assert.Contains(t, stderr,
+		"Warning: uninstall.after_each hook failed: hook failed with exit code 1: "+uninstallScript+"\n")
+	assert.Contains(t, stderr,
+		"Warning: install.after_each hook failed: hook failed with exit code 1: "+installScript+"\n")
+
+	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated.Version, "the update must have applied despite both after_each hook failures")
+}
