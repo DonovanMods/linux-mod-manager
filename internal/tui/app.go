@@ -179,6 +179,13 @@ func (m Model) dashboardMenuRows() []string {
 	return rows
 }
 
+// openSelectedMenuEntry jumps to the selected dashboard-menu item's target
+// screen. Choosing "Search Archives" by name is an EXPLICIT request to
+// search — the same category as the "/" and SearchScreen ("3") bindings —
+// so that one target routes through gotoScreenFocused; every other menu
+// target (Installed Mods, Profiles, Sources) is a plain screen jump and
+// keeps using gotoScreen. See gotoScreen's doc comment for why passive
+// jumps must never focus.
 func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 	if m.screen != ScreenDashboard {
 		return m, nil
@@ -188,29 +195,34 @@ func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 	if selected >= len(items) || !items[selected].hasTarget {
 		return m, nil
 	}
-	return m.gotoScreen(items[selected].target)
+	target := items[selected].target
+	if target == ScreenSearch {
+		return m.gotoScreenFocused(target)
+	}
+	return m.gotoScreen(target)
 }
 
 // gotoScreen switches to the target screen without touching the search
 // input's focus state. This is the entry path for screen-cycling
-// (NextScreen/PrevScreen), the direct screen-jump bindings (Dashboard,
-// InstalledMods, Profiles, Sources), and dashboard-menu selection
-// (openSelectedMenuEntry) — none of these are an explicit request to search,
-// so landing on ScreenSearch through them must NOT focus the input. A
-// focused input swallows every keystroke (see updateKey's focused-input
-// branch), so auto-focusing here trapped a user cycling through screens with
-// tab/shift-tab/left/right/h/l on Search until they pressed Esc (smoke-test
-// Finding 1). See gotoScreenFocused for the two bindings that DO focus.
+// (NextScreen/PrevScreen) and the direct screen-jump bindings (Dashboard,
+// InstalledMods, Profiles, Sources) — none of these are an explicit request
+// to search, so landing on ScreenSearch through them must NOT focus the
+// input. A focused input swallows every keystroke (see updateKey's
+// focused-input branch), so auto-focusing here trapped a user cycling
+// through screens with tab/shift-tab/left/right/h/l on Search until they
+// pressed Esc (smoke-test Finding 1). See gotoScreenFocused for the bindings
+// that DO focus.
 func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
 	m.screen = screen
 	return m, nil
 }
 
 // gotoScreenFocused switches to ScreenSearch and focuses the input
-// immediately. Reserved for the two EXPLICIT "go search" bindings — Search
-// ("/") and SearchScreen ("3") — so pressing either is enough to start
-// typing right away. Esc (the Blur binding) is the only way back out of
-// focus; once blurred, screen-level keys (s, n/p, navigation) reach
+// immediately. Reserved for EXPLICIT "go search" intent: the Search ("/")
+// and SearchScreen ("3") bindings, and selecting "Search Archives" from the
+// dashboard menu (openSelectedMenuEntry) — picking "search" by name is
+// intent, not passive cycling. Esc (the Blur binding) is the only way back
+// out of focus; once blurred, screen-level keys (s, n/p, navigation) reach
 // updateKey's outer switch again.
 func (m Model) gotoScreenFocused(screen Screen) (Model, tea.Cmd) {
 	m, _ = m.gotoScreen(screen)
@@ -795,8 +807,9 @@ func (m Model) searchView() string {
 		}
 		return m.searchReadyView(header)
 	default: // searchIdle
-		// Only "/" and "3" (gotoScreenFocused) focus the input on entry; every
-		// other path here (cycling, dashboard menu, jump keys) leaves it
+		// Only the EXPLICIT "go search" paths (gotoScreenFocused: "/", "3", and
+		// the dashboard menu's "Search Archives" entry) focus the input on
+		// entry; passive screen-cycling and the other direct jump keys leave it
 		// unfocused, so the hint always needs to mention "/ focus" unless the
 		// input happens to already be focused. While focused, 's' types into
 		// the query (not a source-cycle shortcut), so exclude it from the
