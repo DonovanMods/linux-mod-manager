@@ -19,7 +19,21 @@ type Profile struct {
 	Name     string
 	Active   bool
 	ModCount int
+	// Mods is optional: installed-mod IDs this profile references, used
+	// only to seed PlanProfileSwitch's NeedsDownloads demo scenario (see
+	// NeedsDownloadProfileName below and actions_provider.go's
+	// prototypeProvider.PlanProfileSwitch). Every other canned profile
+	// leaves this nil - the alternating Enable/Disable plan logic never
+	// consults it.
+	Mods []string
 }
+
+// NeedsDownloadProfileName names the one canned profile (see Load) whose
+// Mods list references an ID absent from InstalledMods, so
+// prototypeProvider.PlanProfileSwitch (actions_provider.go) can produce a
+// NeedsDownloads plan and --prototype mode can demo the refusal state
+// without any core.Service.
+const NeedsDownloadProfileName = "requiem-overhaul"
 
 type Stats struct {
 	Installed int
@@ -29,6 +43,7 @@ type Stats struct {
 }
 
 type Mod struct {
+	ID              string // stable, invented demo identifier - addresses the mod alongside Source for action calls
 	Name            string
 	Source          string
 	Author          string
@@ -52,23 +67,27 @@ func Load() Data {
 			Conflicts: 1,
 		},
 		InstalledMods: []Mod{
-			{Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true},
-			{Name: "USSEP", Source: "nexusmods", Author: "Arthmoor", Version: "4.3", Status: "update", Summary: "Unofficial Skyrim Special Edition Patch.", Downloads: 11_000_000, Endorsements: 420_000, HasEndorsements: true},
-			{Name: "SKSE Address Library", Source: "nexusmods", Author: "meh321", Version: "11", Status: "installed", Summary: "Address library for SKSE plugins.", Downloads: 8_900_000, Endorsements: 150_000, HasEndorsements: true},
-			{Name: "Immersive Armors", Source: "nexusmods", Author: "hothtrooper44", Version: "8.1", Status: "conflict", Summary: "Adds hundreds of new armor variants.", Downloads: 6_700_000, Endorsements: 380_000, HasEndorsements: true},
-			{Name: "Alternate Start", Source: "nexusmods", Author: "Arthmoor", Version: "4.2", Status: "disabled", Summary: "Alternative character start scenarios.", Downloads: 5_200_000, Endorsements: 220_000, HasEndorsements: true},
+			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true},
+			{ID: "ussep", Name: "USSEP", Source: "nexusmods", Author: "Arthmoor", Version: "4.3", Status: "update", Summary: "Unofficial Skyrim Special Edition Patch.", Downloads: 11_000_000, Endorsements: 420_000, HasEndorsements: true},
+			{ID: "skse-address-library", Name: "SKSE Address Library", Source: "nexusmods", Author: "meh321", Version: "11", Status: "installed", Summary: "Address library for SKSE plugins.", Downloads: 8_900_000, Endorsements: 150_000, HasEndorsements: true},
+			{ID: "immersive-armors", Name: "Immersive Armors", Source: "nexusmods", Author: "hothtrooper44", Version: "8.1", Status: "conflict", Summary: "Adds hundreds of new armor variants.", Downloads: 6_700_000, Endorsements: 380_000, HasEndorsements: true},
+			{ID: "alternate-start", Name: "Alternate Start", Source: "nexusmods", Author: "Arthmoor", Version: "4.2", Status: "disabled", Summary: "Alternative character start scenarios.", Downloads: 5_200_000, Endorsements: 220_000, HasEndorsements: true},
 		},
 		SearchResults: []Mod{
-			{Name: "Campfire", Source: "nexusmods", Author: "Chesko", Version: "1.12", Status: "available", Summary: "Camping and survival skill system.", Downloads: 4_200_000, Endorsements: 180_000, HasEndorsements: true},
-			{Name: "Frostfall", Source: "nexusmods", Author: "Chesko", Version: "3.4", Status: "available", Summary: "Hypothermia and survival overhaul.", Downloads: 3_800_000, Endorsements: 165_000, HasEndorsements: true},
-			{Name: "Hunterborn", Source: "nexusmods", Author: "unuroboros", Version: "1.6", Status: "available", Summary: "Hunting and harvesting overhaul.", Downloads: 2_900_000, Endorsements: 95_000, HasEndorsements: true},
-			{Name: "Legacy of the Dragonborn", Source: "nexusmods", Author: "icecreamassassin", Version: "6.5", Status: "available", Summary: "Museum and player home museum.", Downloads: 2_100_000, Endorsements: 78_000, HasEndorsements: true},
+			{ID: "campfire", Name: "Campfire", Source: "nexusmods", Author: "Chesko", Version: "1.12", Status: "available", Summary: "Camping and survival skill system.", Downloads: 4_200_000, Endorsements: 180_000, HasEndorsements: true},
+			{ID: "frostfall", Name: "Frostfall", Source: "nexusmods", Author: "Chesko", Version: "3.4", Status: "available", Summary: "Hypothermia and survival overhaul.", Downloads: 3_800_000, Endorsements: 165_000, HasEndorsements: true},
+			{ID: "hunterborn", Name: "Hunterborn", Source: "nexusmods", Author: "unuroboros", Version: "1.6", Status: "available", Summary: "Hunting and harvesting overhaul.", Downloads: 2_900_000, Endorsements: 95_000, HasEndorsements: true},
+			{ID: "legacy-of-the-dragonborn", Name: "Legacy of the Dragonborn", Source: "nexusmods", Author: "icecreamassassin", Version: "6.5", Status: "available", Summary: "Museum and player home museum.", Downloads: 2_100_000, Endorsements: 78_000, HasEndorsements: true},
 		},
 		Profiles: []Profile{
 			{Name: "survival", Active: true, ModCount: 42},
 			{Name: "vanilla-plus", Active: false, ModCount: 18},
 			{Name: "graphics-overkill", Active: false, ModCount: 96},
 			{Name: "testing", Active: false, ModCount: 7},
+			// requiem-legendary is not in InstalledMods above - switching
+			// here always yields a NeedsDownloads plan (see
+			// NeedsDownloadProfileName's doc comment).
+			{Name: NeedsDownloadProfileName, Active: false, ModCount: 2, Mods: []string{"skyui", "requiem-legendary"}},
 		},
 	}
 }

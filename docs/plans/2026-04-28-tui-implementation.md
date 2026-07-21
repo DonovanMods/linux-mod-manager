@@ -4,18 +4,27 @@
 **Scope:** Add a Bubble Tea/Lip Gloss TUI to `lmm`, starting with visual prototypes and iterating toward a real service-backed interface.
 **Out of scope:** Replacing the existing CLI, changing config formats, implementing image thumbnails, background update daemons, or redesigning core mod-management behavior.
 
-> **Status (2026-07-13): Phases 0–4 are COMPLETE** — Phases 0–3 shipped as **v1.4.0**
+> **Status (2026-07-20): Phases 0–5a are COMPLETE** — Phases 0–3 shipped as **v1.4.0**
 > (PRs #31/#33/#34/#36/#38; issues #30/#32/#35), Phase 4 (search and detail browsing)
-> shipped as **v1.5.0** (PR #41; issue #40; tag `v1.5.0`).
-> **Phase 5 (safe mutating actions) is next.** Before planning it, read:
+> shipped as **v1.5.0** (PR #41; issue #40; tag `v1.5.0`), and **Phase 5a** (enable/
+> disable, uninstall, deploy, and profile switch, each behind a confirmation modal,
+> plus the async action machinery, status line, and `--prototype` parity) shipped as
+> **v1.11.0**.
+> **Phase 5b (install selected search result; check/apply updates — network actions
+> that need real progress reporting) is next.** Before planning it, read:
 >
-> - this file's Phase 5 section AND the **"CLI-parity coverage and roadmap gaps"**
->   tables below (the audit ADDED `uninstall` to Phase 5),
-> - **issue #37** (Phase 5/6 scope additions + lifecycle carry-forwards),
-> - **issue #42** (short/narrow-terminal hardening + polish backlog), and
+> - this file's Phase 5 section, now annotated with what 5a delivered vs. what's
+>   left for 5b, AND the **"CLI-parity coverage and roadmap gaps"** tables below,
+> - **issue #37** (Phase 5/6 scope additions + lifecycle carry-forwards — still
+>   open; 5a shipped the `uninstall` addition it called out, the remaining items
+>   are Phase 6),
+> - **issue #42** (short/narrow-terminal hardening + polish backlog — 5a closed the
+>   "quit doesn't cancel in-flight search/action contexts" lifecycle item), and
 > - the Phase 4 review note: `tui.ModItem` has no mod `ID` field — add it before
 >   install-from-search; mutations belong in a separate writer interface so the
->   read-only `DataProvider` stays provably read-only.
+>   read-only `DataProvider` stays provably read-only. (5a added `ModItem.ID` and
+>   the `ActionProvider` write-side seam described there; 5b builds directly on
+>   both.)
 >
 > Branches come off `main` (protected — PRs only). Execution records (local-only):
 > `docs/plans/2026-07-13-tui-phase2-close-and-phase3.md`,
@@ -400,15 +409,24 @@ lmm tui --prototype --theme dos
 
 ## Phase 5 — Safe mutating actions
 
+> **Phase 5a ✅ (complete, v1.11.0):** enable/disable, uninstall, deploy, and
+> profile switch, each behind a confirmation modal. **Phase 5b (not started):**
+> install selected search result; check/apply updates. See the annotations
+> below for exactly what's delivered vs. remaining.
+
 **Goal:** Add install/update/enable/disable/profile actions behind explicit confirmations.
 
 **Initial action set:**
 
-- Enable/disable installed mod.
-- Switch profile.
-- Deploy current profile.
-- Install selected search result.
-- Check/apply updates.
+- Enable/disable installed mod. — **5a**: `e` on Installed Mods.
+- Switch profile. — **5a**: `enter` on a non-active Profiles row, with a plan
+  preview (mods to enable/disable, or "no changes"); refuses instead of
+  downloading if the plan needs mods the TUI doesn't have installed yet.
+- Deploy current profile. — **5a**: `D` on Installed Mods or Dashboard.
+- Uninstall installed mod. — **5a**: `x` on Installed Mods. Added to this set
+  by the CLI-parity audit below (issue #37); not in the phase's original scope.
+- Install selected search result. — **5b**, not started.
+- Check/apply updates. — **5b**, not started.
 
 **Tasks:**
 
@@ -417,20 +435,48 @@ lmm tui --prototype --theme dos
    - affected game/profile/mods
    - expected file impact when known
    - confirm/cancel keys
+   - **5a: delivered** — `actionModalView` (internal/tui/actions.go) renders
+     title, game/profile/mods detail lines (with qualitative file impact,
+     e.g. "Files will be deployed to the game directory."), and the
+     confirm/cancel hint, for all four 5a actions.
 2. Add async command execution pattern for long-running operations.
+   - **5a: delivered** — `buildAction`/`promptAction` dispatch each
+     confirmed action as a cancelable `tea.Cmd`, staleness-tagged by
+     generation.
 3. Add progress/status messages for downloads, deploys, and updates.
+   - **5a: partial** — a static "working" status while an action is in
+     flight, plus a one-line outcome/warning summary on completion; deploy
+     has no live per-mod progress yet (`coreProvider.DeployProfile` passes a
+     nil progress callback). Downloads and updates aren't in 5a's action set
+     at all. Real progress streaming (`core.DeployProgress`, download
+     percentages) is **5b** work.
 4. Prevent duplicate actions while one is running.
+   - **5a: delivered** — single-flight guard in `buildAction`/`promptAction`.
 5. Refresh affected views after successful action.
+   - **5a: delivered**, and broader than originally scoped — 5a refreshes
+     (`m.loadData`) after every action outcome, success **or** failure, since
+     the underlying flows are multi-step and an error doesn't imply nothing
+     changed.
 6. Surface failure details without losing the user's current screen.
+   - **5a: delivered** — failures render as an error-styled status line; the
+     screen underneath is untouched.
 7. Add tests for confirmation routing and cancellation.
+   - **5a: delivered** — `internal/tui/actions_test.go`, `mutations_test.go`.
 
-**Exit criteria:**
+**Exit criteria** (scoped to 5a's action set — enable/disable, uninstall,
+deploy, profile switch):
 
-- Mutating actions require confirmation.
-- Cancelling leaves state unchanged.
-- Successful actions refresh visible data.
-- Errors are visible and recoverable.
-- `go test ./...` passes.
+- Mutating actions require confirmation. — **satisfied**
+- Cancelling leaves state unchanged. — **satisfied** (`n`/`esc` clears the
+  pending modal without calling the provider)
+- Successful actions refresh visible data. — **satisfied** (see Task 5 note:
+  failed actions refresh too)
+- Errors are visible and recoverable. — **satisfied** (status line, no lost
+  screen)
+- `go test ./...` passes. — **satisfied**
+
+5b (install-from-search, check/apply updates) will need its own pass at
+these criteria once real network/progress actions exist.
 
 ---
 

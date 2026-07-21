@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-07-20
+
+### Added
+
+- TUI mutating actions behind confirmation prompts: enable/disable (`e`), uninstall (`x`), and deploy (`D`) on Installed Mods (`D` also works from the Dashboard), and profile switch (`enter` on a non-active Profiles row) with a plan preview — every action opens a confirmation modal (`y`/`enter` confirms, `n`/`esc` cancels) and reports its outcome on a status line, including a warning count when the underlying flow reported any
+- `--prototype` mode demos all of the above against simulated data, including a canned profile that demonstrates the profile-switch needs-downloads refusal
+- Core: mutation flows extracted from the CLI into `internal/core` (`EnableMod`/`DisableMod`, `UninstallMod`, `DeployProfile`, `PlanProfileSwitch`/`ApplyProfileSwitch`) so the TUI and CLI share the same logic; CLI behavior is unchanged
+
+### Changed
+
+- `lmm deploy --purge`'s per-mod `uninstall.before_each` hook-skip diagnostic now prints to stderr with the mod's name attached (was an unattributed line on stdout) — the one intentional CLI output change from this phase's core extraction
+
+### Fixed
+
+- TUI quit now cancels any in-flight search or action context instead of leaving it running past program exit (#42 lifecycle item)
+- TUI: screen-cycling (`tab`/`shift+tab`, `↑↓`/`h`/`l`, and the direct screen-jump keys) no longer auto-focuses the search input when it lands on Search — only `/`, `3`, and selecting "Search Archives" from the Dashboard menu do (all three are explicit search intent); `Esc` still blurs. Corrects 1.10.0's Changed entry below, which described the old always-focus behavior as intentional
+- TUI: Installed Mods and Profiles rows no longer misalign on long names — both now derive proportional column widths from the panel width and hard-truncate every field instead of a fixed-width column with no truncation
+- TUI: the footer's opaque `e/x/D: mutate` hint is now explicit (`e: enable/disable · x: uninstall · D: deploy`), and no longer risks the footer line overflowing the terminal by one row on narrow widths
+
 ## [1.10.0] - 2026-07-18
 
 ### Added
@@ -740,7 +759,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.7.0...v1.8.0

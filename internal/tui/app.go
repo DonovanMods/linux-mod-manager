@@ -40,6 +40,11 @@ const (
 type Options struct {
 	Theme    string
 	Provider DataProvider
+	// Actions is the write-side ActionProvider seam (see actions_provider.go).
+	// Optional: a nil Actions means no mutation can be confirmed through
+	// promptAction/buildAction, which is fine for tests that only exercise
+	// the read-only DataProvider surface.
+	Actions ActionProvider
 	// Ctx seeds Model.ctx; see that field for why the context is stored
 	// rather than threaded as a parameter.
 	Ctx context.Context
@@ -51,6 +56,7 @@ type Model struct {
 	layout   Layout
 	keys     KeyMap
 	provider DataProvider
+	actions  ActionProvider
 	// ctx deviates from "don't store contexts in structs": Bubble Tea's
 	// Init/Update/View take no context parameter, so commands (e.g.
 	// startSearch) close over m.ctx to reach it from goroutines.
@@ -64,6 +70,7 @@ type Model struct {
 	profiles []ProfileItem
 	sources  []SourceInfo
 	search   searchModel
+	action   actionModel
 
 	screen   Screen
 	selected map[Screen]int
@@ -110,6 +117,7 @@ func NewModel(options Options) (Model, error) {
 		layout:   layoutForTheme(t.Name),
 		keys:     DefaultKeyMap(),
 		provider: options.Provider,
+		actions:  options.Actions,
 		ctx:      options.Ctx,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
@@ -130,8 +138,16 @@ func NewModel(options Options) (Model, error) {
 }
 
 // NewPrototypeModel creates a side-effect-free TUI model backed by fake data.
+// Provider and Actions are wired from the SAME prototypeProvider instance
+// (see NewPrototypeProvider's doc comment), so actions confirmed through
+// the returned Model are visible in its own subsequent reads — whatever the
+// caller passed in either field is discarded.
 func NewPrototypeModel(options Options) (Model, error) {
-	options.Provider = NewPrototypeProvider()
+	provider := NewPrototypeProvider()
+	options.Provider = provider
+	if actions, ok := provider.(ActionProvider); ok {
+		options.Actions = actions
+	}
 	return NewModel(options)
 }
 
@@ -163,6 +179,13 @@ func (m Model) dashboardMenuRows() []string {
 	return rows
 }
 
+// openSelectedMenuEntry jumps to the selected dashboard-menu item's target
+// screen. Choosing "Search Archives" by name is an EXPLICIT request to
+// search — the same category as the "/" and SearchScreen ("3") bindings —
+// so that one target routes through gotoScreenFocused; every other menu
+// target (Installed Mods, Profiles, Sources) is a plain screen jump and
+// keeps using gotoScreen. See gotoScreen's doc comment for why passive
+// jumps must never focus.
 func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 	if m.screen != ScreenDashboard {
 		return m, nil
@@ -172,23 +195,37 @@ func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 	if selected >= len(items) || !items[selected].hasTarget {
 		return m, nil
 	}
-	return m.gotoScreen(items[selected].target)
+	target := items[selected].target
+	if target == ScreenSearch {
+		return m.gotoScreenFocused(target)
+	}
+	return m.gotoScreen(target)
 }
 
-// gotoScreen switches to the target screen. Every entry path into
-// ScreenSearch — number/tab-cycling navigation, the dashboard menu, and "/"
-// — must leave the user ready to type immediately, so this is the single
-// place that focuses the search input on entry. Esc (the Blur binding) is
-// the only way back out of focus; once blurred, screen-level keys (s, n/p,
-// navigation) reach updateKey's outer switch again. Non-search targets are a
-// no-op beyond the screen assignment: the input is already unfocused in
-// every reachable case, since updateKey's focused-input branch swallows the
-// keys that would otherwise get here while ScreenSearch is still focused.
+// gotoScreen switches to the target screen without touching the search
+// input's focus state. This is the entry path for screen-cycling
+// (NextScreen/PrevScreen) and the direct screen-jump bindings (Dashboard,
+// InstalledMods, Profiles, Sources) — none of these are an explicit request
+// to search, so landing on ScreenSearch through them must NOT focus the
+// input. A focused input swallows every keystroke (see updateKey's
+// focused-input branch), so auto-focusing here trapped a user cycling
+// through screens with tab/shift-tab/left/right/h/l on Search until they
+// pressed Esc (smoke-test Finding 1). See gotoScreenFocused for the bindings
+// that DO focus.
 func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
 	m.screen = screen
-	if screen != ScreenSearch {
-		return m, nil
-	}
+	return m, nil
+}
+
+// gotoScreenFocused switches to ScreenSearch and focuses the input
+// immediately. Reserved for EXPLICIT "go search" intent: the Search ("/")
+// and SearchScreen ("3") bindings, and selecting "Search Archives" from the
+// dashboard menu (openSelectedMenuEntry) — picking "search" by name is
+// intent, not passive cycling. Esc (the Blur binding) is the only way back
+// out of focus; once blurred, screen-level keys (s, n/p, navigation) reach
+// updateKey's outer switch again.
+func (m Model) gotoScreenFocused(screen Screen) (Model, tea.Cmd) {
+	m, _ = m.gotoScreen(screen)
 	m.search.input.Focus()
 	return m, textinput.Blink
 }
@@ -219,7 +256,50 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.summary = msg.summary
 		m.mods = msg.mods
 		m.profiles = msg.profiles
+		m.clampSelections()
 		return m, nil
+	case actionDoneMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		m.action.running = false
+		if m.action.cancel != nil {
+			m.action.cancel()
+			m.action.cancel = nil
+		}
+		m.action.status = formatOutcomeStatus(msg.outcome)
+		m.action.statusIsError = false
+		// A fresh switch's target must rebind the session's active-profile
+		// providers BEFORE the refresh below reads them (see rebindProfile
+		// and profileRebinder in actions.go) - otherwise Profiles() keeps
+		// starring the OLD profile forever, and subsequent mutations keep
+		// targeting it too (finding C1).
+		if msg.switchedTo != "" {
+			m.rebindProfile(msg.switchedTo)
+		}
+		return m, m.loadData
+	case actionFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		m.action.running = false
+		if m.action.cancel != nil {
+			m.action.cancel()
+			m.action.cancel = nil
+		}
+		m.action.status = singleLine(msg.err.Error())
+		m.action.statusIsError = true
+		return m, m.loadData
+	case planResultMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolvePlanResult(msg)
+	case planFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolvePlanFailure(msg)
 	case loadFailedMsg:
 		m.state = stateFailed
 		m.loadErr = msg.err
@@ -262,10 +342,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.action.pending != nil {
+		return m.updatePendingActionKey(msg)
+	}
+
+	// Rule 8: any keypress that isn't a modal response (handled above,
+	// before this point is ever reached) and isn't quit clears the status
+	// line. isQuitKey (not the bare Quit binding) is used so a "q" that's
+	// actually being typed into the focused search input still clears it.
+	// m.action.running gates this too: it covers both a running mutation and
+	// an in-flight plan fetch (planProfileSwitch in mutations.go sets it
+	// alongside "Planning switch…" before any pendingAction confirmation
+	// exists), so a navigation keypress mid-flight must not wipe the only
+	// sign that work is in progress. actionDoneMsg/actionFailedMsg clear
+	// running when the action settles, restoring normal clearing below.
+	if !m.isQuitKey(msg) && !m.action.running {
+		m.action.status = ""
+		m.action.statusIsError = false
+	}
+
 	if m.screen == ScreenSearch && m.search.input.Focused() {
 		switch {
-		case key.Matches(msg, m.keys.Quit) && msg.String() == "ctrl+c":
-			return m, tea.Quit
+		case m.isQuitKey(msg): // only ctrl+c while focused — see isQuitKey
+			return m, m.quitCmd()
 		case key.Matches(msg, m.keys.Blur):
 			m.search.input.Blur()
 			return m, nil
@@ -281,7 +380,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		return m, tea.Quit
+		return m, m.quitCmd()
 	case key.Matches(msg, m.keys.Help):
 		m.showHelp = !m.showHelp
 		return m, nil
@@ -294,7 +393,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.InstalledMods):
 		return m.gotoScreen(ScreenInstalledMods)
 	case key.Matches(msg, m.keys.Search), key.Matches(msg, m.keys.SearchScreen):
-		return m.gotoScreen(ScreenSearch)
+		return m.gotoScreenFocused(ScreenSearch)
 	case key.Matches(msg, m.keys.NextPage):
 		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.hasNextPage() {
 			return m.startSearch(m.search.page.Query, m.search.page.Page+1)
@@ -333,7 +432,20 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(1)
 		return m, nil
 	case key.Matches(msg, m.keys.Select):
+		// Select ("enter") is context-dependent: it opens a dashboard menu
+		// entry everywhere except Profiles, where Task 7 repurposes it to
+		// switch to the selected (non-active) profile - see mutations.go's
+		// switchSelectedProfile.
+		if m.screen == ScreenProfiles {
+			return m.switchSelectedProfile()
+		}
 		return m.openSelectedMenuEntry()
+	case key.Matches(msg, m.keys.ToggleEnable):
+		return m.toggleSelectedModEnable()
+	case key.Matches(msg, m.keys.Uninstall):
+		return m.uninstallSelectedMod()
+	case key.Matches(msg, m.keys.Deploy):
+		return m.deployActiveProfile()
 	default:
 		return m, nil
 	}
@@ -349,11 +461,19 @@ func (m Model) View() string {
 
 	b.WriteString(m.screenView())
 
+	// Exactly one extra line when a status is set (see
+	// contentChromeHeight's matching statusHeight accounting); none when
+	// it's "".
+	if status := m.statusLine(); status != "" {
+		b.WriteString("\n")
+		b.WriteString(status)
+	}
+
 	b.WriteString("\n\n")
 	if m.showHelp {
 		b.WriteString(m.helpView())
 	} else {
-		b.WriteString(m.theme.Help.Render("?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  q: quit"))
+		b.WriteString(m.footerLine())
 	}
 
 	app := m.theme.App
@@ -365,6 +485,23 @@ func (m Model) View() string {
 	}
 
 	return app.Render(b.String())
+}
+
+// footerLine renders the bottom key-hint line shown whenever the help
+// overlay isn't. Finding 3 (smoke test): the old "e/x/D: mutate" hint named
+// the keys but never said what they DO, so the mutation hints are spelled
+// out explicitly instead, matching the "·"-separated sub-hint style
+// searchFooterLine already uses. The whole line is hard-truncated
+// (ANSI-safe truncate()) to availableWidth() so a narrower terminal
+// degrades by dropping trailing hints rather than word-wrapping into an
+// extra row - which would silently grow the view past contentChromeHeight's
+// fixed footerHeight == 1 assumption. Per the smoke tester's follow-up
+// guidance, 160 columns (not 80) is the normal case the full wording is
+// designed for; narrower terminals are expected to lose some trailing hints
+// to truncation rather than the wording being shortened to fit them.
+func (m Model) footerLine() string {
+	hint := "?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  e: enable/disable · x: uninstall · D: deploy  enter: switch  q: quit"
+	return truncate(m.theme.Help.Render(hint), m.availableWidth())
 }
 
 // CurrentScreen exposes the selected screen for tests.
@@ -442,6 +579,10 @@ func (m Model) nav() string {
 }
 
 func (m Model) screenView() string {
+	if m.action.pending != nil {
+		return m.actionModalView()
+	}
+
 	switch m.state {
 	case stateLoading:
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
@@ -578,7 +719,7 @@ func (m Model) modsView() string {
 		rows = append(rows, m.theme.MutedText.Render("No mods installed yet. 'lmm install <mod>' begins the quest."))
 	}
 	for i, mod := range m.mods {
-		rows = append(rows, m.modRow(i, mod))
+		rows = append(rows, m.modRow(i, m.availableWidth(), mod))
 	}
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
@@ -666,11 +807,13 @@ func (m Model) searchView() string {
 		}
 		return m.searchReadyView(header)
 	default: // searchIdle
-		// Every entry path into ScreenSearch already focuses the input (see
-		// gotoScreen), so the idle hint only needs to mention "/ focus" when
-		// Esc has since blurred it — otherwise it would tell the user to do
-		// something that's already done. While focused, 's' types into the
-		// query (not a source-cycle shortcut), so exclude it from the focused hint.
+		// Only the EXPLICIT "go search" paths (gotoScreenFocused: "/", "3", and
+		// the dashboard menu's "Search Archives" entry) focus the input on
+		// entry; passive screen-cycling and the other direct jump keys leave it
+		// unfocused, so the hint always needs to mention "/ focus" unless the
+		// input happens to already be focused. While focused, 's' types into
+		// the query (not a source-cycle shortcut), so exclude it from the
+		// focused hint.
 		hint := "enter search · esc unfocus"
 		if !m.search.input.Focused() {
 			hint = "/ focus · s source"
@@ -858,14 +1001,42 @@ func (m Model) searchFooterLine() string {
 func (m Model) profilesView() string {
 	rows := []string{m.theme.PanelTitle.Render("PROFILE ROSTER")}
 	for i, profile := range m.profiles {
-		active := " "
-		if profile.Active {
-			active = "*"
-		}
-		line := fmt.Sprintf("%s %-22s %3d mods", active, profile.Name, profile.ModCount)
-		rows = append(rows, m.row(i, line))
+		rows = append(rows, m.profileRow(i, m.availableWidth(), profile))
 	}
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+}
+
+// profileRow renders one Profiles row: active marker / name / mod count.
+// Same defect class modRow was fixed for (see modRow's doc comment): the
+// name column used to be a fixed 22 runes with no truncation
+// ("%s %-22s %3d mods"), so a longer name overflowed it unchecked and
+// shifted the mod-count column out of alignment with shorter rows. The
+// mod-count column gets a proportional (clamped) share of the panel's
+// width and the name column absorbs whatever's left, so it grows with the
+// panel instead of staying a small fixed number. truncate() (ANSI-safe,
+// hard cutoff with an ellipsis) is applied to both fields so an overlong
+// value can never push the mod-count column out of place.
+func (m Model) profileRow(index, width int, profile ProfileItem) string {
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+	const activeWidth = 1 // "*"/" " active marker
+	const gaps = 2        // separating spaces: marker-name, name-count
+	const minName = 8
+
+	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth-activeWidth-gaps, minName)
+	countWidth := min(9, max(avail/6, 4)) // "999 mods" is up to 8 runes
+	nameWidth := max(avail-countWidth, minName)
+
+	active := " "
+	if profile.Active {
+		active = "*"
+	}
+	count := fmt.Sprintf("%d mods", profile.ModCount)
+
+	line := fmt.Sprintf("%s %-*s %-*s",
+		active,
+		nameWidth, truncate(profile.Name, nameWidth),
+		countWidth, truncate(count, countWidth))
+	return m.row(index, line)
 }
 
 // sourcesView renders the read-only source registry: every source
@@ -906,14 +1077,15 @@ func (m Model) helpView() string {
 		"tab / shift+tab     cycle top-level screens",
 		"1-5                 jump to a screen (3 focuses search)",
 		"/                   search from anywhere (jumps + focuses input)",
-		"enter               search",
+		"enter               open menu entry / search / switch profile",
 		"esc                 unfocus search input",
 		"n/p                 result pages",
 		"s                   cycle source",
+		"e/x/D               toggle enable/disable / uninstall selected mod / deploy active profile",
 		"?                   toggle this help",
 		"q / ctrl+c           quit",
 		"",
-		"Browsing is read-only. Nothing is installed, updated, or deployed from this screen.",
+		"Enable, disable, uninstall, deploy, and profile switch all confirm through a modal before anything changes.",
 	}, "\n"))
 }
 
@@ -926,8 +1098,33 @@ func (m Model) row(index int, label string) string {
 	return prefix + label
 }
 
-func (m Model) modRow(index int, mod ModItem) string {
-	line := fmt.Sprintf("%-28s %-11s %-16s %7s", mod.Name, mod.Status, mod.Author, mod.Version)
+// modRow renders one Installed Mods row: name / status / author / version.
+// Finding 2 (smoke test): the name column used to be a fixed 28 runes with
+// no truncation, so a longer name overflowed it and shifted every
+// subsequent column to the right, breaking row alignment. Status/author/
+// version get proportional (clamped) shares of the panel's width - the same
+// pattern searchResultsPane already uses - and the name column absorbs
+// whatever's left, so it grows with the panel instead of staying a small
+// fixed number. truncate() (ANSI-safe, hard cutoff with an ellipsis) is
+// applied to every field so an overlong value can never push a later column
+// out of place, matching searchResultsPane's reasoning for why overflow must
+// never reach lipgloss's automatic line-wrap.
+func (m Model) modRow(index, width int, mod ModItem) string {
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+	const gaps = 3        // separating spaces between the 4 columns
+	const minName = 8
+
+	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth-gaps, minName)
+	statusWidth := min(11, max(avail/6, 1)) // "disabled"/"deployed" are 8 runes
+	authorWidth := min(16, max(avail/5, 1))
+	versionWidth := min(7, max(avail/8, 1))
+	nameWidth := max(avail-statusWidth-authorWidth-versionWidth, minName)
+
+	line := fmt.Sprintf("%-*s %-*s %-*s %*s",
+		nameWidth, truncate(mod.Name, nameWidth),
+		statusWidth, truncate(mod.Status, statusWidth),
+		authorWidth, truncate(mod.Author, authorWidth),
+		versionWidth, truncate(mod.Version, versionWidth))
 	return m.row(index, line)
 }
 
@@ -960,8 +1157,16 @@ func (m Model) contentChromeHeight() int {
 		footerHeight = lipgloss.Height(m.helpView())
 	}
 
+	// The action status line (rule 8) occupies exactly one row above the
+	// footer, and only when set — see statusLine's matching "" ⇒ nothing
+	// rendered contract in View().
+	statusHeight := 0
+	if m.action.status != "" {
+		statusHeight = 1
+	}
+
 	const titleNavAndSpacerHeight = 4 // title, nav, and the spacer lines around content.
-	return titleNavAndSpacerHeight + footerHeight
+	return titleNavAndSpacerHeight + footerHeight + statusHeight
 }
 
 // countLabel renders n, or "?" when n is negative (unknown, e.g. no update

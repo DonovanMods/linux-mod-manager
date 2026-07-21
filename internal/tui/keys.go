@@ -22,6 +22,15 @@ type KeyMap struct {
 	NextPage      key.Binding
 	PrevPage      key.Binding
 	CycleSource   key.Binding
+	ConfirmAction key.Binding
+	CancelAction  key.Binding
+	// ToggleEnable, Uninstall, and Deploy are Phase 5a's Installed
+	// Mods/Dashboard mutation bindings (see mutations.go). Profile switch
+	// deliberately has no binding of its own here - it reuses Select
+	// ("enter"), dispatched by screen in updateKey.
+	ToggleEnable key.Binding
+	Uninstall    key.Binding
+	Deploy       key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -98,6 +107,26 @@ func DefaultKeyMap() KeyMap {
 		CycleSource: key.NewBinding(
 			key.WithKeys("s"),
 			key.WithHelp("s", "cycle source"),
+		),
+		ConfirmAction: key.NewBinding(
+			key.WithKeys("y", "enter"),
+			key.WithHelp("y/enter", "confirm"),
+		),
+		CancelAction: key.NewBinding(
+			key.WithKeys("n", "esc"),
+			key.WithHelp("n/esc", "cancel"),
+		),
+		ToggleEnable: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "toggle enable/disable"),
+		),
+		Uninstall: key.NewBinding(
+			key.WithKeys("x"),
+			key.WithHelp("x", "uninstall"),
+		),
+		Deploy: key.NewBinding(
+			key.WithKeys("D"),
+			key.WithHelp("D", "deploy profile"),
 		),
 	}
 }

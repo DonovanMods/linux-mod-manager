@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -62,10 +64,16 @@ func TestTabCyclesScreens(t *testing.T) {
 	require.Equal(t, ScreenDashboard, updated.CurrentScreen())
 }
 
-// TestTabCyclingOntoSearchFocuses covers the tab-cycling entry path into
-// ScreenSearch: like every other entry path (number keys, dashboard menu,
-// "/"), it must focus the input immediately.
-func TestTabCyclingOntoSearchFocuses(t *testing.T) {
+// TestTabCyclingOntoSearchDoesNotFocus covers the tab-cycling entry path into
+// ScreenSearch. Finding 1 (smoke test): auto-focusing here trapped the user,
+// since a focused input swallows every keystroke (see updateKey's
+// focused-input branch) — they couldn't keep cycling past Search without
+// pressing Esc first. Only the two EXPLICIT "go search" bindings, "/" and
+// "3", may focus (see TestSlashFromAnyScreenJumpsAndFocuses and
+// TestNumberThreeJumpsAndFocuses); screen-cycling must land here unfocused,
+// and a further Tab must keep cycling straight through to the next screen
+// instead of being swallowed as literal text — that's the trap repro.
+func TestTabCyclingOntoSearchDoesNotFocus(t *testing.T) {
 	t.Parallel()
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
@@ -76,7 +84,12 @@ func TestTabCyclingOntoSearchFocuses(t *testing.T) {
 
 	updated = updateWithKeyType(t, updated, tea.KeyTab)
 	require.Equal(t, ScreenSearch, updated.CurrentScreen())
-	require.True(t, updated.search.input.Focused(), "tab-cycling onto search must focus the input")
+	require.False(t, updated.search.input.Focused(), "tab-cycling onto search must NOT focus the input")
+
+	// Trap repro: a further Tab must move on to the next screen, not be
+	// swallowed as literal text by a focused input.
+	updated = updateWithKeyType(t, updated, tea.KeyTab)
+	require.Equal(t, ScreenProfiles, updated.CurrentScreen())
 }
 
 func TestArrowAndVimKeysNavigateScreens(t *testing.T) {
@@ -90,12 +103,18 @@ func TestArrowAndVimKeysNavigateScreens(t *testing.T) {
 
 	model = updateWithRunes(t, model, "l")
 	require.Equal(t, ScreenSearch, model.CurrentScreen())
-	require.True(t, model.search.input.Focused(), "cycling onto search focuses the input")
+	// Finding 1: cycling onto search must NOT focus the input, so the
+	// remaining screen-level arrow/vim keys below keep cycling straight
+	// through — no Esc needed first (that was the trap).
+	require.False(t, model.search.input.Focused(), "cycling onto search must not focus the input")
 
-	// Esc blurs so the remaining screen-level arrow/vim keys reach updateKey's
-	// outer switch instead of moving the cursor inside the now-focused input.
-	model = updateWithKeyType(t, model, tea.KeyEsc)
+	model = updateWithRunes(t, model, "l")
+	require.Equal(t, ScreenProfiles, model.CurrentScreen())
+
 	model = updateWithKeyType(t, model, tea.KeyLeft)
+	require.Equal(t, ScreenSearch, model.CurrentScreen())
+
+	model = updateWithRunes(t, model, "h")
 	require.Equal(t, ScreenInstalledMods, model.CurrentScreen())
 
 	model = updateWithRunes(t, model, "h")
@@ -180,6 +199,129 @@ func TestScreenViewsUseAvailableWidth(t *testing.T) {
 	}
 }
 
+// TestModRowColumnsAlignRegardlessOfNameLength covers Finding 2 (smoke
+// test): a mod name longer than its allotted space used to overflow the
+// fixed-width name column unchecked, shifting every subsequent column to
+// the right so rows didn't line up. modRow must give the name column room
+// proportional to the panel width and hard-truncate any name that still
+// overflows, so the Status column starts at the same offset regardless of
+// name length. Run at both a common 80-column size and the wider ~160
+// columns the smoke test flagged as the normal case.
+func TestModRowColumnsAlignRegardlessOfNameLength(t *testing.T) {
+	t.Parallel()
+
+	sizes := []struct{ width, height int }{{80, 24}, {160, 40}}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			short := ModItem{Name: "Short", Status: "enabled", Author: "Alice", Version: "1.0.0"}
+			long := ModItem{Name: strings.Repeat("VeryLongModName", 6), Status: "disabled", Author: "Bob", Version: "2.1.0"}
+
+			shortRow := model.modRow(0, model.availableWidth(), short)
+			longRow := model.modRow(1, model.availableWidth(), long)
+
+			shortIdx := strings.Index(shortRow, "enabled")
+			longIdx := strings.Index(longRow, "disabled")
+			require.Greater(t, shortIdx, 0, "status column must be present in the short-name row")
+			require.Greater(t, longIdx, 0, "status column must be present in the long-name row")
+			// Compare DISPLAY columns (lipgloss.Width), not byte offsets: the
+			// truncated long name ends in a multi-byte "…" ellipsis rune, so a
+			// byte-offset comparison would report a false mismatch even though
+			// the row aligns visually - which is the actual bug being fixed.
+			shortCol := lipgloss.Width(shortRow[:shortIdx])
+			longCol := lipgloss.Width(longRow[:longIdx])
+			require.Equal(t, shortCol, longCol,
+				"the Status column must start at the same display column regardless of name length")
+
+			require.LessOrEqual(t, lipgloss.Width(longRow), model.availableWidth(),
+				"an overlong name must be hard-truncated, never overflow the row")
+		})
+	}
+}
+
+// TestModRowNameColumnGrowsWithPanelWidth proves the name column is
+// proportional to the panel's width (Finding 2) rather than a small fixed
+// column count: a wider terminal must give the whole row - and so the name
+// column - more room, not just a marginally bigger fixed number.
+func TestModRowNameColumnGrowsWithPanelWidth(t *testing.T) {
+	t.Parallel()
+
+	narrow := sizedPrototypeModel(t, "wizardry", 80, 24)
+	wide := sizedPrototypeModel(t, "wizardry", 160, 40)
+	mod := ModItem{Name: "X", Status: "enabled", Author: "Alice", Version: "1.0.0"}
+
+	narrowRow := narrow.modRow(0, narrow.availableWidth(), mod)
+	wideRow := wide.modRow(0, wide.availableWidth(), mod)
+
+	require.Greater(t, lipgloss.Width(wideRow), lipgloss.Width(narrowRow),
+		"a wider terminal must give the name column more room, proportional to the panel width")
+}
+
+// TestProfileRowColumnsAlignRegardlessOfNameLength covers the same defect
+// class the fix wave fixed in modRow (Finding 2) but flagged as out of scope
+// for profilesView: a profile name longer than its allotted space used to
+// overflow the fixed-width name column unchecked (the old
+// "%s %-22s %3d mods" format had no truncation), shifting the mod-count
+// column out of alignment with shorter rows. profileRow must give the name
+// column room proportional to the panel width and hard-truncate any name
+// that still overflows, so the mod-count column starts at the same offset
+// regardless of name length. Run at both a common 80-column size and the
+// wider ~160 columns the smoke test flagged as the normal case.
+func TestProfileRowColumnsAlignRegardlessOfNameLength(t *testing.T) {
+	t.Parallel()
+
+	sizes := []struct{ width, height int }{{80, 24}, {160, 40}}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			short := ProfileItem{Name: "Short", ModCount: 3}
+			long := ProfileItem{Name: strings.Repeat("VeryLongProfileName", 6), ModCount: 12}
+
+			shortRow := model.profileRow(0, model.availableWidth(), short)
+			longRow := model.profileRow(1, model.availableWidth(), long)
+
+			shortIdx := strings.Index(shortRow, "3 mods")
+			longIdx := strings.Index(longRow, "12 mods")
+			require.Greater(t, shortIdx, 0, "mod-count column must be present in the short-name row")
+			require.Greater(t, longIdx, 0, "mod-count column must be present in the long-name row")
+			// Compare DISPLAY columns (lipgloss.Width), not byte offsets: a
+			// truncated long name ends in a multi-byte "…" ellipsis rune, so a
+			// byte-offset comparison would report a false mismatch even though
+			// the row aligns visually - see modRow's TestModRowColumnsAlign...
+			// for the same pitfall.
+			shortCol := lipgloss.Width(shortRow[:shortIdx])
+			longCol := lipgloss.Width(longRow[:longIdx])
+			require.Equal(t, shortCol, longCol,
+				"the mod-count column must start at the same display column regardless of name length")
+
+			require.LessOrEqual(t, lipgloss.Width(longRow), model.availableWidth(),
+				"an overlong name must be hard-truncated, never overflow the row")
+		})
+	}
+}
+
+// TestProfileRowNameColumnGrowsWithPanelWidth proves the name column is
+// proportional to the panel's width rather than a small fixed column count:
+// a wider terminal must give the whole row - and so the name column - more
+// room, not just a marginally bigger fixed number.
+func TestProfileRowNameColumnGrowsWithPanelWidth(t *testing.T) {
+	t.Parallel()
+
+	narrow := sizedPrototypeModel(t, "wizardry", 80, 24)
+	wide := sizedPrototypeModel(t, "wizardry", 160, 40)
+	profile := ProfileItem{Name: "X", ModCount: 1}
+
+	narrowRow := narrow.profileRow(0, narrow.availableWidth(), profile)
+	wideRow := wide.profileRow(0, wide.availableWidth(), profile)
+
+	require.Greater(t, lipgloss.Width(wideRow), lipgloss.Width(narrowRow),
+		"a wider terminal must give the name column more room, proportional to the panel width")
+}
+
 func TestDashboardLayoutsDoNotOverflowNarrowTerminals(t *testing.T) {
 	t.Parallel()
 
@@ -208,12 +350,19 @@ func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 120, 36)
+	// Height bumped 36->37 for Task 7's new e/x/D help line: the party-sheet
+	// dashboard's COMMANDS menu panel already fit height=36's help-visible
+	// content budget with exactly zero slack (6 content lines against a
+	// panelContentHeight of exactly 6), so ANY help-overlay growth needs one
+	// more terminal row here to keep the exact-height invariant this test
+	// guards - see task-7-brief.md's "height/help tests may need justified
+	// adjustment for new hint lines" allowance.
+	model := sizedPrototypeModel(t, "wizardry", 120, 37)
 	model = updateWithRunes(t, model, "?")
 
 	view := model.View()
 	require.Equal(t, 120, lipgloss.Width(view))
-	require.Equal(t, 36, lipgloss.Height(view))
+	require.Equal(t, 37, lipgloss.Height(view))
 }
 
 func TestThemesUseDistinctLayouts(t *testing.T) {
@@ -316,11 +465,17 @@ func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
 	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 
-	// Second entry opens Search, focused like every other entry path.
+	// Second entry opens Search. Per the reporter's governing principle
+	// (mop-up follow-up to Finding 1): EXPLICIT search intent focuses ("/"
+	// and "3" already do); passive screen-cycling doesn't. Selecting "Search
+	// Archives" from the dashboard menu via Enter IS explicit intent — the
+	// user picked "search" by name — so this path must focus, unlike
+	// NextScreen/PrevScreen/direct-jump cycling landing on Search in
+	// passing (see TestTabCyclingOntoSearchDoesNotFocus).
 	moved := updateWithRunes(t, model, "j")
 	opened, _ = moved.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, ScreenSearch, opened.(Model).CurrentScreen())
-	require.True(t, opened.(Model).search.input.Focused(), "dashboard menu entry into search must focus the input")
+	require.True(t, opened.(Model).search.input.Focused(), "dashboard menu's explicit Search Archives entry must auto-focus")
 }
 
 func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {

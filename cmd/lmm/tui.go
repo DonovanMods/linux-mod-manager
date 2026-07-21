@@ -25,8 +25,11 @@ var tuiCmd = &cobra.Command{
 
 Shows the configured game's installed mods, profiles, and status using the
 same config, database, and game resolution as the CLI commands. Search mod
-sources interactively. Read-only: browsing and searching never install,
-update, deploy, or delete anything.
+sources interactively, inspect the source registry, and manage mods in
+place - enable/disable, uninstall, deploy, and switch profiles - with every
+mutating action behind a confirmation prompt. Installing a mod from search
+results and checking/applying updates aren't available yet - use
+'lmm install' and 'lmm update' for those until a later release.
 
 Use --prototype for a demo mode backed by static fake data:
 
@@ -42,7 +45,7 @@ func init() {
 
 func runTUI(cmd *cobra.Command, args []string) error {
 	if tuiOptions.prototype {
-		model, err := tui.NewModel(tui.Options{Theme: tuiOptions.theme, Provider: tui.NewPrototypeProvider(), Ctx: cmd.Context()})
+		model, err := tui.NewPrototypeModel(tui.Options{Theme: tuiOptions.theme, Ctx: cmd.Context()})
 		if err != nil {
 			return err
 		}
@@ -63,6 +66,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		model, err := tui.NewModel(tui.Options{
 			Theme:    tuiOptions.theme,
 			Provider: tui.NewCoreProvider(svc, game, profileName),
+			Actions:  tui.NewCoreActions(svc, game, profileName),
 			Ctx:      ctx,
 		})
 		if err != nil {

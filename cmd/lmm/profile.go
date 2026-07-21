@@ -259,125 +259,51 @@ func runProfileSwitch(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doProfileSwitch owns plan-printing, the "Proceed?" confirmation prompt,
+// and event-driven console output; the diff computation and execution live
+// in core.PlanProfileSwitch/core.ApplyProfileSwitch (see the task report).
+// The prompt deliberately stays here rather than in core: core never blocks
+// on user input.
 func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Game, targetName string) error {
-	pm := getProfileManager(service)
-
-	// Get target profile
-	targetProfile, err := pm.Get(game.ID, targetName)
+	plan, err := service.PlanProfileSwitch(ctx, game, targetName)
 	if err != nil {
-		return fmt.Errorf("profile not found: %s", targetName)
+		return err
 	}
 
-	// Get current profile
-	currentProfile, err := pm.GetDefault(game.ID)
-	var currentName string
-	if err != nil {
-		currentName = "default"
-	} else {
-		currentName = currentProfile.Name
-	}
-
-	if currentName == targetName {
+	if plan.AlreadyActive {
 		fmt.Printf("Already on profile: %s\n", targetName)
 		return nil
 	}
 
-	// Get installed mods for current profile
-	currentMods, _ := service.GetInstalledMods(game.ID, currentName)
-
-	// Build lookup of current enabled mods
-	currentEnabled := make(map[string]*domain.InstalledMod)
-	for i := range currentMods {
-		if currentMods[i].Enabled {
-			key := currentMods[i].SourceID + ":" + currentMods[i].ID
-			currentEnabled[key] = &currentMods[i]
-		}
-	}
-
-	// Build set of target profile mod keys
-	targetKeys := make(map[string]domain.ModReference)
-	for _, mr := range targetProfile.Mods {
-		key := mr.SourceID + ":" + mr.ModID
-		targetKeys[key] = mr
-	}
-
-	// Get all installed mods (any profile) to check what's available
-	allInstalled := make(map[string]*domain.InstalledMod)
-	allMods, _ := service.GetInstalledMods(game.ID, targetName)
-	for i := range allMods {
-		key := allMods[i].SourceID + ":" + allMods[i].ID
-		allInstalled[key] = &allMods[i]
-	}
-	// Also add from current profile
-	for i := range currentMods {
-		key := currentMods[i].SourceID + ":" + currentMods[i].ID
-		allInstalled[key] = &currentMods[i]
-	}
-
-	// Calculate differences
-	var toDisable []*domain.InstalledMod
-	var toEnable []*domain.InstalledMod
-	var toInstall []domain.ModReference
-	needsRedownloadSet := make(map[string]bool) // Track which mods are re-downloads
-
-	// Mods enabled in current profile but not in target - disable
-	for key, im := range currentEnabled {
-		if _, inTarget := targetKeys[key]; !inTarget {
-			toDisable = append(toDisable, im)
-		}
-	}
-
-	// Mods in target profile
-	for key, ref := range targetKeys {
-		if im, installed := allInstalled[key]; installed {
-			// Already installed - check if cache exists
-			if !service.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version) {
-				// Cache missing - need to re-download, preserve FileIDs from installed mod
-				refWithFileIDs := ref
-				refWithFileIDs.FileIDs = im.FileIDs
-				toInstall = append(toInstall, refWithFileIDs)
-				needsRedownloadSet[key] = true
-			} else if !im.Enabled {
-				toEnable = append(toEnable, im)
-			} else if _, wasCurrent := currentEnabled[key]; !wasCurrent {
-				// Was installed but not in current profile's enabled set
-				toEnable = append(toEnable, im)
-			}
-		} else {
-			// Not installed at all
-			toInstall = append(toInstall, ref)
-		}
-	}
-
-	// Show changes
 	fmt.Printf("Switching to profile: %s\n\n", targetName)
 
-	if len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 {
-		// No mod changes, just switch the default
-		if err := pm.SetDefault(game.ID, targetName); err != nil {
-			return fmt.Errorf("setting default profile: %w", err)
+	if plan.NoChanges {
+		// No mod changes, just switch the default - ApplyProfileSwitch's
+		// three loops are all empty, so this is exactly a SetDefault call.
+		if _, err := service.ApplyProfileSwitch(ctx, game, plan, nil); err != nil {
+			return err
 		}
 		fmt.Printf("✓ Switched to profile: %s\n", targetName)
 		return nil
 	}
 
-	if len(toDisable) > 0 {
-		fmt.Printf("Will disable %d mod(s):\n", len(toDisable))
-		for _, im := range toDisable {
+	if len(plan.ToDisable) > 0 {
+		fmt.Printf("Will disable %d mod(s):\n", len(plan.ToDisable))
+		for _, im := range plan.ToDisable {
 			fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
 		}
 	}
 
-	if len(toEnable) > 0 {
-		fmt.Printf("Will enable %d mod(s):\n", len(toEnable))
-		for _, im := range toEnable {
+	if len(plan.ToEnable) > 0 {
+		fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
+		for _, im := range plan.ToEnable {
 			fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
 		}
 	}
 
-	if len(toInstall) > 0 {
-		fmt.Printf("Will install %d mod(s):\n", len(toInstall))
-		for _, ref := range toInstall {
+	if len(plan.ToInstall) > 0 {
+		fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
+		for _, ref := range plan.ToInstall {
 			fmt.Printf("  ↓ %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
 		}
 	}
@@ -393,142 +319,56 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		return nil
 	}
 
-	installer := service.GetInstaller(game)
-
-	// Disable mods
-	for _, im := range toDisable {
-		if err := installer.Uninstall(ctx, game, &im.Mod, currentName); err != nil {
+	// progress prints every diagnostic and per-mod status line at its exact
+	// point of occurrence, driven entirely by core.ApplyProfileSwitch's
+	// progress events - doProfileSwitch never wrote to stderr, so every
+	// printed diagnostic here is --verbose-gated stdout (a Note), matching
+	// the SwitchResult.Notes display contract. result.Notes is never
+	// separately batch-printed below: every entry has a corresponding event
+	// here already.
+	progress := func(p core.DeployProgress) {
+		switch p.Phase {
+		case core.SwitchDisableNote:
 			if verbose {
-				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
+				fmt.Printf("  %s\n", p.Detail)
 			}
-		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, currentName, false); err != nil {
+		case core.SwitchDisabled:
+			fmt.Printf("  ✓ Disabled: %s\n", p.ModName)
+		case core.SwitchEnableNote:
 			if verbose {
-				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
+				fmt.Printf("  %s\n", p.Detail)
 			}
-		}
-		fmt.Printf("  ✓ Disabled: %s\n", im.Name)
-	}
-
-	// Enable mods
-	for _, im := range toEnable {
-		if err := installer.Install(ctx, game, &im.Mod, targetName); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to deploy %s: %v\n", im.Name, err)
-			}
-			continue
-		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, targetName, true); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
-			}
-		}
-		fmt.Printf("  ✓ Enabled: %s\n", im.Name)
-	}
-
-	// Install missing mods
-	if len(toInstall) > 0 {
-		fmt.Println("\nInstalling missing mods...")
-		for _, ref := range toInstall {
-			fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
-
-			// Fetch mod details
-			mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
-			if err != nil {
-				fmt.Printf("    Error: failed to fetch mod: %v\n", err)
-				continue
-			}
-
-			// Get files
-			files, err := service.GetModFiles(ctx, ref.SourceID, mod)
-			if err != nil {
-				fmt.Printf("    Error: failed to get files: %v\n", err)
-				continue
-			}
-
-			if len(files) == 0 {
-				fmt.Printf("    Error: no downloadable files\n")
-				continue
-			}
-
-			// Select files to download - use FileIDs from ref (populated for re-downloads from installed mod, or from profile for new installs)
-			filesToDownload, usedFallback, err := selectFilesToDownload(files, ref.FileIDs)
-			if err != nil {
-				fmt.Printf("    Error: %v\n", err)
-				continue
-			}
-			if usedFallback && len(ref.FileIDs) > 0 {
-				fmt.Printf("    Warning: stored file IDs not found, using primary\n")
-			}
-
-			// Download each file
-			progressFn := func(p core.DownloadProgress) {
-				if p.TotalBytes > 0 {
-					fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
-				}
-			}
-
-			var downloadedFileIDs []string
-			downloadFailed := false
-			for _, selectedFile := range filesToDownload {
-				_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
-				if err != nil {
-					fmt.Println()
-					fmt.Printf("    Error: download failed: %v\n", err)
-					downloadFailed = true
-					break
-				}
-				downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
-			}
+		case core.SwitchEnabled:
+			fmt.Printf("  ✓ Enabled: %s\n", p.ModName)
+		case core.SwitchInstalling:
+			fmt.Println("\nInstalling missing mods...")
+		case core.SwitchInstallingMod:
+			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
+		case core.SwitchInstallError:
+			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.SwitchFallbackUsed:
+			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
+		case core.SwitchDownloading:
+			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
+		case core.SwitchDownloadFailed:
 			fmt.Println()
-
-			if downloadFailed {
-				continue
+			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.SwitchDownloadDone:
+			fmt.Println()
+		case core.SwitchInstalled:
+			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+		case core.SwitchInstallNote:
+			if verbose {
+				fmt.Printf("    %s\n", p.Detail)
 			}
-
-			// Deploy
-			if err := installer.Install(ctx, game, mod, targetName); err != nil {
-				fmt.Printf("    Error: deploy failed: %v\n", err)
-				continue
-			}
-
-			// Save to DB. Normalize GameID to the lmm game (not the
-			// source-mapped value Service.GetMod stamped onto mod.GameID for
-			// querying the source) so every DB read, which queries by the
-			// lmm game ID, can find this row again.
-			installedMod := &domain.InstalledMod{
-				Mod:          *mod,
-				ProfileName:  targetName,
-				UpdatePolicy: domain.UpdateNotify,
-				Enabled:      true,
-				FileIDs:      downloadedFileIDs,
-			}
-			installedMod.Mod.GameID = game.ID
-			if err := service.SaveInstalledMod(installedMod); err != nil {
-				fmt.Printf("    Error: save failed: %v\n", err)
-				continue
-			}
-
-			// Update profile with actual downloaded FileIDs
-			modRef := domain.ModReference{
-				SourceID: mod.SourceID,
-				ModID:    mod.ID,
-				Version:  mod.Version,
-				FileIDs:  downloadedFileIDs,
-			}
-			if err := pm.UpsertMod(game.ID, targetName, modRef); err != nil {
-				if verbose {
-					fmt.Printf("    Warning: could not update profile: %v\n", err)
-				}
-			}
-
-			fmt.Printf("    ✓ Installed: %s\n", mod.Name)
 		}
 	}
 
-	// Set new profile as default
-	if err := pm.SetDefault(game.ID, targetName); err != nil {
-		return fmt.Errorf("setting default profile: %w", err)
+	if _, err := service.ApplyProfileSwitch(ctx, game, plan, progress); err != nil {
+		// Diagnostics accumulated before a fatal error (ApplyProfileSwitch's
+		// error-path convention returns them alongside it) were already
+		// printed above, live, via progress - nothing left to print here.
+		return err
 	}
 
 	fmt.Printf("\n✓ Switched to profile: %s\n", targetName)

@@ -7,8 +7,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/linker"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -69,85 +67,122 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	profileName := profileOrDefault(deployProfile)
 
-	// If --purge flag is set, purge all deployed mods first
-	// We remember which mods were enabled before purging so we can redeploy them
-	var enabledBeforePurge map[string]bool
-	if deployPurge {
-		// Remember enabled mods before purge
-		mods, err := service.GetInstalledMods(game.ID, profileName)
-		if err != nil {
-			return fmt.Errorf("getting installed mods: %w", err)
-		}
-		enabledBeforePurge = make(map[string]bool)
-		for _, mod := range mods {
-			if mod.Enabled {
-				enabledBeforePurge[mod.SourceID+":"+mod.ID] = true
-			}
-		}
-
-		if err := purgeDeployedMods(ctx, service, game, profileName, deployForce); err != nil {
-			return fmt.Errorf("purging mods: %w", err)
-		}
-	}
-
-	// Determine link method
-	var linkMethod domain.LinkMethod
+	var linkMethodOverride *domain.LinkMethod
 	if deployMethod != "" {
+		var m domain.LinkMethod
 		switch deployMethod {
 		case "symlink":
-			linkMethod = domain.LinkSymlink
+			m = domain.LinkSymlink
 		case "hardlink":
-			linkMethod = domain.LinkHardlink
+			m = domain.LinkHardlink
 		case "copy":
-			linkMethod = domain.LinkCopy
+			m = domain.LinkCopy
 		default:
 			return fmt.Errorf("invalid link method: %s (use: symlink, hardlink, or copy)", deployMethod)
 		}
-	} else {
-		linkMethod = service.GetGameLinkMethod(game)
+		linkMethodOverride = &m
+	}
+	methodName := service.GetGameLinkMethod(game).String()
+	if linkMethodOverride != nil {
+		methodName = linkMethodOverride.String()
 	}
 
-	lnk := linker.New(linkMethod)
-	installer := service.NewInstallerWithLinker(game, lnk)
-
-	// Get mods to deploy
-	var modsToDeploy []*domain.InstalledMod
-
+	opts := core.DeployOptions{
+		Purge:       deployPurge,
+		LinkMethod:  linkMethodOverride,
+		All:         deployAll,
+		Hooks:       getResolvedHooks(service, game, profileName),
+		HookRunner:  getHookRunner(service),
+		HookContext: makeHookContext(game),
+		Force:       deployForce,
+	}
 	if len(args) > 0 {
-		// Specific mod
-		modID := args[0]
-		mod, err := service.GetInstalledMod(deploySource, modID, game.ID, profileName)
-		if err != nil {
-			return fmt.Errorf("mod not found: %s", modID)
+		opts.ModID = args[0]
+		opts.SourceID = deploySource
+	}
+
+	// deployHeaderPrinted tracks whether we ever reached the deploy loop (as
+	// opposed to only a --purge pass, or neither): DeployProfile fires no
+	// per-mod progress events at all when there is nothing to deploy, which
+	// is exactly the "No mods to deploy" case the pre-extraction CLI checked
+	// via len(modsToDeploy) before it had been folded into the flow.
+	deployHeaderPrinted := false
+	printDeployHeaderOnce := func(total int) {
+		if deployHeaderPrinted {
+			return
 		}
-		if !mod.Enabled && !deployAll {
-			return fmt.Errorf("mod %s is disabled - use --all to deploy disabled mods, or enable it with 'lmm mod enable %s'", mod.Name, modID)
-		}
-		modsToDeploy = append(modsToDeploy, mod)
-	} else {
-		// Get mods in profile load order (first = lowest priority)
-		mods, err := service.GetInstalledModsInProfileOrder(game.ID, profileName)
-		if err != nil {
-			return fmt.Errorf("getting installed mods: %w", err)
+		deployHeaderPrinted = true
+		fmt.Printf("Deploying %d mod(s) using %s...\n\n", total, methodName)
+	}
+
+	// progress prints every diagnostic and per-mod status line at its exact
+	// point of occurrence, driven entirely by core.DeployProfile's progress
+	// events - including diagnostics that also land in result.Warnings/
+	// .Notes (see core.DeployResult's doc comment). Those slices are never
+	// separately batch-printed below: every entry has a corresponding event
+	// here, so doing so would double-print. Phases that occur before the
+	// deploy loop starts (a forced before_all warning, anything from the
+	// --purge pass) return early, without calling printDeployHeaderOnce -
+	// they must print before "Deploying N mod(s)..." even exists.
+	progress := func(p core.DeployProgress) {
+		switch p.Phase {
+		case core.DeployBeforeAllForced:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+			return
+		case core.DeployPurging:
+			fmt.Printf("Purging %d mod(s) before deploy...\n", p.Total)
+			return
+		case core.PurgeWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+			return
+		case core.PurgeNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+			return
+		case core.PurgeComplete:
+			fmt.Println()
+			return
 		}
 
-		for i := range mods {
-			shouldDeploy := false
-			if deployAll {
-				shouldDeploy = true
-			} else if enabledBeforePurge != nil {
-				shouldDeploy = enabledBeforePurge[mods[i].SourceID+":"+mods[i].ID]
-			} else {
-				shouldDeploy = mods[i].Enabled
+		printDeployHeaderOnce(p.Total)
+		switch p.Phase {
+		case core.DeployBeforeEachSkipped:
+			fmt.Printf("  Skipped: %s\n", p.Detail)
+		case core.DeployRedownloading:
+			fmt.Printf("  %s %s - cache missing, re-downloading...\n", colorYellow("⚠"), p.ModName)
+		case core.DeployFallbackUsed:
+			fmt.Printf("  %s %s - stored file IDs not found, using primary\n", colorYellow("⚠"), p.ModName)
+		case core.DeployDownloading:
+			fmt.Printf("\r  ⬇ %s: %.1f%%", p.ModName, p.Percent)
+		case core.DeployDownloadDone:
+			fmt.Println()
+		case core.DeployDownloadFailed:
+			fmt.Println()
+			fmt.Printf("  %s %s - %s\n", colorRed("✗"), p.ModName, p.Detail)
+			fmt.Println()
+		case core.DeploySkipped:
+			fmt.Printf("  %s %s - %s\n", colorRed("✗"), p.ModName, p.Detail)
+		case core.DeployDeployed:
+			fmt.Printf("  %s %s\n", colorGreen("✓"), p.ModName)
+		case core.DeployNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
 			}
-
-			if shouldDeploy {
-				modsToDeploy = append(modsToDeploy, &mods[i])
-			}
+		case core.DeployWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		}
 	}
 
-	if len(modsToDeploy) == 0 {
+	result, err := service.DeployProfile(ctx, game, profileName, opts, progress)
+	if err != nil {
+		// Diagnostics accumulated before a fatal error (DeployProfile's
+		// error-path convention returns them alongside it) were already
+		// printed above, live, via progress - nothing left to print here.
+		return err
+	}
+
+	if !deployHeaderPrinted {
 		if deployAll {
 			fmt.Println("No mods to deploy.")
 		} else {
@@ -156,163 +191,8 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return nil
 	}
 
-	// Set up hooks for deploy phase (uses install hooks)
-	hookRunner := getHookRunner(service)
-	resolvedHooks := getResolvedHooks(service, game, profileName)
-	hookCtx := makeHookContext(game)
-	var hookErrors []error
-
-	// Run install.before_all hook (for deploy phase)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
-		hookCtx.HookName = "install.before_all"
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
-			if !deployForce {
-				return fmt.Errorf("install.before_all hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
-		}
-	}
-
-	methodName := linkMethod.String()
-	fmt.Printf("Deploying %d mod(s) using %s...\n\n", len(modsToDeploy), methodName)
-
-	var succeeded, failed int
-
-	for _, mod := range modsToDeploy {
-		// Run install.before_each hook
-		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
-			hookCtx.HookName = "install.before_each"
-			hookCtx.ModID = mod.ID
-			hookCtx.ModName = mod.Name
-			hookCtx.ModVersion = mod.Version
-			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
-				fmt.Printf("  Skipped: install.before_each hook failed: %v\n", err)
-				failed++
-				continue // Skip this mod, continue with others
-			}
-		}
-		// Check if mod is in cache
-		if !service.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-			fmt.Printf("  %s %s - cache missing, re-downloading...\n", colorYellow("⚠"), mod.Name)
-
-			// Fetch mod info from source
-			fetchedMod, err := service.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
-			if err != nil {
-				fmt.Printf("  %s %s - failed to fetch: %v\n", colorRed("✗"), mod.Name, err)
-				failed++
-				continue
-			}
-
-			// Get available files
-			files, err := service.GetModFiles(ctx, mod.SourceID, fetchedMod)
-			if err != nil || len(files) == 0 {
-				fmt.Printf("  %s %s - no files available\n", colorRed("✗"), mod.Name)
-				failed++
-				continue
-			}
-
-			// Find files to download - use stored FileIDs or fall back to primary
-			filesToDownload, usedFallback, err := selectFilesToDownload(files, mod.FileIDs)
-			if err != nil {
-				fmt.Printf("  %s %s - %v\n", colorRed("✗"), mod.Name, err)
-				failed++
-				continue
-			}
-			if usedFallback {
-				fmt.Printf("  %s %s - stored file IDs not found, using primary\n", colorYellow("⚠"), mod.Name)
-			}
-
-			// Download each file
-			downloadFailed := false
-			for _, selectedFile := range filesToDownload {
-				progressFn := func(p core.DownloadProgress) {
-					if p.TotalBytes > 0 {
-						fmt.Printf("\r  ⬇ %s: %.1f%%", mod.Name, p.Percentage)
-					}
-				}
-
-				_, err = service.DownloadMod(ctx, mod.SourceID, game, fetchedMod, selectedFile, progressFn)
-				if err != nil {
-					fmt.Println()
-					fmt.Printf("  %s %s - download failed: %v\n", colorRed("✗"), mod.Name, err)
-					downloadFailed = true
-					break
-				}
-			}
-			fmt.Println() // Clear progress line
-
-			if downloadFailed {
-				failed++
-				continue
-			}
-		}
-
-		// Undeploy first (remove old links/files)
-		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: undeploy %s: %v\n", mod.Name, err)
-			}
-		}
-
-		// Redeploy with new method
-		if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
-			fmt.Printf("  %s %s - %v\n", colorRed("✗"), mod.Name, err)
-			failed++
-			continue
-		}
-
-		// Update the link method in database
-		if err := service.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: could not update link method: %v\n", err)
-			}
-		}
-
-		// Mark mod as deployed (files are now in game directory)
-		if err := service.SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, true); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: could not mark as deployed: %v\n", err)
-			}
-		}
-
-		fmt.Printf("  %s %s\n", colorGreen("✓"), mod.Name)
-		succeeded++
-
-		// Run install.after_each hook
-		if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
-			hookCtx.HookName = "install.after_each"
-			hookCtx.ModID = mod.ID
-			hookCtx.ModName = mod.Name
-			hookCtx.ModVersion = mod.Version
-			if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
-				hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed for %s: %w", mod.ID, err))
-			}
-		}
-	}
-
-	// Run install.after_all hook (for deploy phase)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
-		hookCtx.HookName = "install.after_all"
-		hookCtx.ModID = ""
-		hookCtx.ModName = ""
-		hookCtx.ModVersion = ""
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
-		}
-	}
-
-	// Apply profile overrides (INI tweaks, etc.)
-	if profile, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName); err == nil && len(profile.Overrides) > 0 {
-		if err := core.ApplyProfileOverrides(game, profile); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: applying profile overrides: %v\n", err)
-		}
-	}
-
-	// Print hook warnings
-	printHookWarnings(hookErrors)
-
-	fmt.Printf("\nDeployed: %d", succeeded)
-	if failed > 0 {
+	fmt.Printf("\nDeployed: %d", result.Deployed)
+	if failed := len(result.Skipped); failed > 0 {
 		fmt.Printf(", Failed: %d", failed)
 	}
 	fmt.Println()
