@@ -461,7 +461,7 @@ func (m Model) View() string {
 	if m.showHelp {
 		b.WriteString(m.helpView())
 	} else {
-		b.WriteString(m.theme.Help.Render("?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  e/x/D: mutate  enter: switch  q: quit"))
+		b.WriteString(m.footerLine())
 	}
 
 	app := m.theme.App
@@ -473,6 +473,23 @@ func (m Model) View() string {
 	}
 
 	return app.Render(b.String())
+}
+
+// footerLine renders the bottom key-hint line shown whenever the help
+// overlay isn't. Finding 3 (smoke test): the old "e/x/D: mutate" hint named
+// the keys but never said what they DO, so the mutation hints are spelled
+// out explicitly instead, matching the "·"-separated sub-hint style
+// searchFooterLine already uses. The whole line is hard-truncated
+// (ANSI-safe truncate()) to availableWidth() so a narrower terminal
+// degrades by dropping trailing hints rather than word-wrapping into an
+// extra row - which would silently grow the view past contentChromeHeight's
+// fixed footerHeight == 1 assumption. Per the smoke tester's follow-up
+// guidance, 160 columns (not 80) is the normal case the full wording is
+// designed for; narrower terminals are expected to lose some trailing hints
+// to truncation rather than the wording being shortened to fit them.
+func (m Model) footerLine() string {
+	hint := "?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  e: enable/disable · x: uninstall · D: deploy  enter: switch  q: quit"
+	return truncate(m.theme.Help.Render(hint), m.availableWidth())
 }
 
 // CurrentScreen exposes the selected screen for tests.
