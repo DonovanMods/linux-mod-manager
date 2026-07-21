@@ -191,20 +191,29 @@ func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 	return m.gotoScreen(items[selected].target)
 }
 
-// gotoScreen switches to the target screen. Every entry path into
-// ScreenSearch — number/tab-cycling navigation, the dashboard menu, and "/"
-// — must leave the user ready to type immediately, so this is the single
-// place that focuses the search input on entry. Esc (the Blur binding) is
-// the only way back out of focus; once blurred, screen-level keys (s, n/p,
-// navigation) reach updateKey's outer switch again. Non-search targets are a
-// no-op beyond the screen assignment: the input is already unfocused in
-// every reachable case, since updateKey's focused-input branch swallows the
-// keys that would otherwise get here while ScreenSearch is still focused.
+// gotoScreen switches to the target screen without touching the search
+// input's focus state. This is the entry path for screen-cycling
+// (NextScreen/PrevScreen), the direct screen-jump bindings (Dashboard,
+// InstalledMods, Profiles, Sources), and dashboard-menu selection
+// (openSelectedMenuEntry) — none of these are an explicit request to search,
+// so landing on ScreenSearch through them must NOT focus the input. A
+// focused input swallows every keystroke (see updateKey's focused-input
+// branch), so auto-focusing here trapped a user cycling through screens with
+// tab/shift-tab/left/right/h/l on Search until they pressed Esc (smoke-test
+// Finding 1). See gotoScreenFocused for the two bindings that DO focus.
 func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
 	m.screen = screen
-	if screen != ScreenSearch {
-		return m, nil
-	}
+	return m, nil
+}
+
+// gotoScreenFocused switches to ScreenSearch and focuses the input
+// immediately. Reserved for the two EXPLICIT "go search" bindings — Search
+// ("/") and SearchScreen ("3") — so pressing either is enough to start
+// typing right away. Esc (the Blur binding) is the only way back out of
+// focus; once blurred, screen-level keys (s, n/p, navigation) reach
+// updateKey's outer switch again.
+func (m Model) gotoScreenFocused(screen Screen) (Model, tea.Cmd) {
+	m, _ = m.gotoScreen(screen)
 	m.search.input.Focus()
 	return m, textinput.Blink
 }
@@ -372,7 +381,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.InstalledMods):
 		return m.gotoScreen(ScreenInstalledMods)
 	case key.Matches(msg, m.keys.Search), key.Matches(msg, m.keys.SearchScreen):
-		return m.gotoScreen(ScreenSearch)
+		return m.gotoScreenFocused(ScreenSearch)
 	case key.Matches(msg, m.keys.NextPage):
 		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.hasNextPage() {
 			return m.startSearch(m.search.page.Query, m.search.page.Page+1)
@@ -769,11 +778,12 @@ func (m Model) searchView() string {
 		}
 		return m.searchReadyView(header)
 	default: // searchIdle
-		// Every entry path into ScreenSearch already focuses the input (see
-		// gotoScreen), so the idle hint only needs to mention "/ focus" when
-		// Esc has since blurred it — otherwise it would tell the user to do
-		// something that's already done. While focused, 's' types into the
-		// query (not a source-cycle shortcut), so exclude it from the focused hint.
+		// Only "/" and "3" (gotoScreenFocused) focus the input on entry; every
+		// other path here (cycling, dashboard menu, jump keys) leaves it
+		// unfocused, so the hint always needs to mention "/ focus" unless the
+		// input happens to already be focused. While focused, 's' types into
+		// the query (not a source-cycle shortcut), so exclude it from the
+		// focused hint.
 		hint := "enter search · esc unfocus"
 		if !m.search.input.Focused() {
 			hint = "/ focus · s source"
