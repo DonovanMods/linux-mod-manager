@@ -259,6 +259,69 @@ func TestModRowNameColumnGrowsWithPanelWidth(t *testing.T) {
 		"a wider terminal must give the name column more room, proportional to the panel width")
 }
 
+// TestProfileRowColumnsAlignRegardlessOfNameLength covers the same defect
+// class the fix wave fixed in modRow (Finding 2) but flagged as out of scope
+// for profilesView: a profile name longer than its allotted space used to
+// overflow the fixed-width name column unchecked (the old
+// "%s %-22s %3d mods" format had no truncation), shifting the mod-count
+// column out of alignment with shorter rows. profileRow must give the name
+// column room proportional to the panel width and hard-truncate any name
+// that still overflows, so the mod-count column starts at the same offset
+// regardless of name length. Run at both a common 80-column size and the
+// wider ~160 columns the smoke test flagged as the normal case.
+func TestProfileRowColumnsAlignRegardlessOfNameLength(t *testing.T) {
+	t.Parallel()
+
+	sizes := []struct{ width, height int }{{80, 24}, {160, 40}}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			short := ProfileItem{Name: "Short", ModCount: 3}
+			long := ProfileItem{Name: strings.Repeat("VeryLongProfileName", 6), ModCount: 12}
+
+			shortRow := model.profileRow(0, model.availableWidth(), short)
+			longRow := model.profileRow(1, model.availableWidth(), long)
+
+			shortIdx := strings.Index(shortRow, "3 mods")
+			longIdx := strings.Index(longRow, "12 mods")
+			require.Greater(t, shortIdx, 0, "mod-count column must be present in the short-name row")
+			require.Greater(t, longIdx, 0, "mod-count column must be present in the long-name row")
+			// Compare DISPLAY columns (lipgloss.Width), not byte offsets: a
+			// truncated long name ends in a multi-byte "…" ellipsis rune, so a
+			// byte-offset comparison would report a false mismatch even though
+			// the row aligns visually - see modRow's TestModRowColumnsAlign...
+			// for the same pitfall.
+			shortCol := lipgloss.Width(shortRow[:shortIdx])
+			longCol := lipgloss.Width(longRow[:longIdx])
+			require.Equal(t, shortCol, longCol,
+				"the mod-count column must start at the same display column regardless of name length")
+
+			require.LessOrEqual(t, lipgloss.Width(longRow), model.availableWidth(),
+				"an overlong name must be hard-truncated, never overflow the row")
+		})
+	}
+}
+
+// TestProfileRowNameColumnGrowsWithPanelWidth proves the name column is
+// proportional to the panel's width rather than a small fixed column count:
+// a wider terminal must give the whole row - and so the name column - more
+// room, not just a marginally bigger fixed number.
+func TestProfileRowNameColumnGrowsWithPanelWidth(t *testing.T) {
+	t.Parallel()
+
+	narrow := sizedPrototypeModel(t, "wizardry", 80, 24)
+	wide := sizedPrototypeModel(t, "wizardry", 160, 40)
+	profile := ProfileItem{Name: "X", ModCount: 1}
+
+	narrowRow := narrow.profileRow(0, narrow.availableWidth(), profile)
+	wideRow := wide.profileRow(0, wide.availableWidth(), profile)
+
+	require.Greater(t, lipgloss.Width(wideRow), lipgloss.Width(narrowRow),
+		"a wider terminal must give the name column more room, proportional to the panel width")
+}
+
 func TestDashboardLayoutsDoNotOverflowNarrowTerminals(t *testing.T) {
 	t.Parallel()
 
