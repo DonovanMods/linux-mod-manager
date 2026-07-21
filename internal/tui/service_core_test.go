@@ -999,6 +999,13 @@ func TestCoreProviderActions_PlanInstall_MapsAuthRequiredError(t *testing.T) {
 	assert.Contains(t, err.Error(), "lmm auth login src")
 }
 
+// TestCoreProviderActions_PlanInstall_MapsNotSupportedError additionally
+// pins the install-path CLI fallback wording (mapInstallNetworkError): the
+// notice must name installing and point at 'lmm install --source ... --id
+// ...', the correct fallback for THIS action - see
+// TestCoreProviderActions_ApplyUpdate_MapsNotSupportedError below for the
+// sibling update-path proof that this wording must NOT leak into an
+// updates-capability gap.
 func TestCoreProviderActions_PlanInstall_MapsNotSupportedError(t *testing.T) {
 	actions, svc, _ := newCoreActionsFixture(t)
 	netSrc := newNetSource(t, "src")
@@ -1007,7 +1014,8 @@ func TestCoreProviderActions_PlanInstall_MapsNotSupportedError(t *testing.T) {
 
 	_, err := actions.PlanInstall(context.Background(), tui.ModItem{ID: "modK", Source: "src", Name: "Mod K"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `source "src" does not support`)
+	assert.Contains(t, err.Error(), `source "src" does not support installing`)
+	assert.Contains(t, err.Error(), "lmm install --source src --id <mod-id>")
 }
 
 // TestCoreProviderActions_ApplyInstall_InstallsForRealWithHookParityAndProgress
@@ -1170,4 +1178,29 @@ func TestCoreProviderActions_ApplyUpdate_MapsAuthRequiredError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Authentication required for src")
 	assert.Contains(t, err.Error(), "lmm auth login src")
+}
+
+// TestCoreProviderActions_ApplyUpdate_MapsNotSupportedError guards the fix
+// for the Task 4 review finding: ApplyUpdate re-checks via
+// Updater.CheckUpdates before applying (see ApplyUpdate's doc comment), and
+// a source lacking the Updates capability returns a wrapped
+// source.ErrNotSupported from THAT re-check - previously mapNetworkError
+// unconditionally suggested the install-path fallback ('lmm install
+// --source ... --id ...') for every ErrNotSupported, which is actively
+// wrong advice for an updates-capability gap. The message must name updates
+// and must NOT mention lmm install.
+func TestCoreProviderActions_ApplyUpdate_MapsNotSupportedError(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modN", "Mod N", "1.0", true, nil)
+
+	netSrc := newNetSource(t, "src")
+	netSrc.checkUpdatesErr = fmt.Errorf("checking: %w", source.ErrNotSupported)
+	svc.RegisterSource(netSrc)
+
+	_, err := actions.ApplyUpdate(context.Background(), tui.UpdateItem{Source: "src", ID: "modN", Name: "Mod N", FromVersion: "1.0", ToVersion: "1.1"}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `source "src" does not support checking for updates`)
+	assert.Contains(t, err.Error(), "lmm update")
+	assert.NotContains(t, err.Error(), "lmm install",
+		"an updates-capability gap must never suggest the install-path fallback")
 }
