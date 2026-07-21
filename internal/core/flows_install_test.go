@@ -16,8 +16,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 
@@ -461,4 +465,601 @@ func TestService_PlanInstall_PerformsZeroMutations(t *testing.T) {
 		names[i] = e.Name()
 	}
 	assert.Equal(t, []string{"existing.esp"}, names, "planning must not deploy any files")
+}
+
+// --- ApplyInstall (Phase 5b Task 2) ---
+//
+// These tests reuse mockSourceWithDownloads (service_test.go) - a real
+// httptest-backed source - since, unlike PlanInstall, ApplyInstall actually
+// downloads. Two adapters wrap it for ApplyInstall's own needs:
+//
+//   - perModFileSource keys the single downloadable file by the MOD'S OWN
+//     ID (mockSource.GetModFiles always hardcodes file ID "1"), so a plan
+//     with a dependency AND a primary can register distinct download
+//     content per mod via AddDownload(mod.ID, ...) without colliding.
+//   - multiFileDownloadSource returns a caller-supplied file list verbatim,
+//     for tests exercising a caller-edited (multi-file) plan.Files.
+
+type perModFileSource struct {
+	*mockSourceWithDownloads
+}
+
+func (s *perModFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{ID: mod.ID, Name: mod.Name, FileName: mod.ID + ".zip", IsPrimary: true},
+	}, nil
+}
+
+type multiFileDownloadSource struct {
+	*mockSourceWithDownloads
+	files []domain.DownloadableFile
+}
+
+func (s *multiFileDownloadSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return s.files, nil
+}
+
+// registerDownloadableMod registers mod with mock and stages a one-file zip
+// archive (containing relativePath -> content) as that mod's download,
+// keyed by mod.ID (matching perModFileSource's GetModFiles).
+func registerDownloadableMod(t *testing.T, mock *perModFileSource, mod *domain.Mod, relativePath, content string) {
+	t.Helper()
+	zipPath := createTestZip(t, t.TempDir(), map[string]string{relativePath: content})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload(mod.ID, zipContent)
+	mock.AddMod(mod.GameID, mod)
+}
+
+// TestService_ApplyInstall_FreshInstallEndToEnd covers ApplyInstall's base
+// case end to end: a fresh (no existing, no dependencies) plan's file gets
+// downloaded to cache, deployed to the game directory, saved to the DB with
+// the normalized GameID/Enabled/Deployed/UpdatePolicy defaults, its checksum
+// persisted, and the mod upserted into a profile that didn't exist yet.
+func TestService_ApplyInstall_FreshInstallEndToEnd(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, []string{"Mod One"}, result.Installed)
+	assert.Empty(t, result.Warnings)
+	assert.Empty(t, result.Notes)
+	assert.Empty(t, result.Skipped)
+	assert.Equal(t, 1, result.FilesDeployed)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "mod1.esp"))
+	assert.NoError(t, err, "file should be deployed to the game directory")
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "g1", installed.GameID, "GameID must be normalized to the lmm game, not a source-mapped value")
+	assert.True(t, installed.Enabled)
+	assert.True(t, installed.Deployed)
+	assert.Equal(t, domain.UpdateNotify, installed.UpdatePolicy)
+	assert.Equal(t, domain.LinkSymlink, installed.LinkMethod)
+
+	files, err := svc.GetFilesWithChecksums("g1", "default")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.NotEmpty(t, files[0].Checksum, "the downloaded file's checksum must be saved")
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get("g1", "default")
+	require.NoError(t, err, "the profile must have been created since it didn't exist yet")
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "mod1", profile.Mods[0].ModID)
+}
+
+// TestService_ApplyInstall_HookOrder proves install.before_all ->
+// install.before_each -> (deploy) -> install.after_each -> install.after_all
+// ordering for a single-mod (no dependencies) plan, mirroring
+// TestService_DeployProfile_HookOrder/TestService_UninstallMod_HookOrder.
+func TestService_ApplyInstall_HookOrder(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	callLog := filepath.Join(scriptsDir, "calls.log")
+	beforeAllScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
+echo "before_all" >> `+callLog+`
+exit 0`)
+	beforeEachScript := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "before_each:$LMM_MOD_ID" >> `+callLog+`
+exit 0`)
+	afterEachScript := createTestScript(t, scriptsDir, "after_each.sh", `#!/bin/bash
+echo "after_each:$LMM_MOD_ID" >> `+callLog+`
+exit 0`)
+	afterAllScript := createTestScript(t, scriptsDir, "after_all.sh", `#!/bin/bash
+echo "after_all" >> `+callLog+`
+exit 0`)
+
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{
+		BeforeAll: beforeAllScript, BeforeEach: beforeEachScript,
+		AfterEach: afterEachScript, AfterAll: afterAllScript,
+	}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{
+		Hooks: hooks, HookRunner: runner,
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	logContent, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	assert.Equal(t, "before_all\nbefore_each:mod1\nafter_each:mod1\nafter_all\n", string(logContent))
+}
+
+// TestService_ApplyInstall_DependencyInstallOrder proves dependencies
+// install in plan order (deepest first) BEFORE the primary, all the way
+// through to the DB/cache/deploy - not just that InstallPlan.Dependencies is
+// ordered correctly (already covered by PlanInstall's own tests).
+func TestService_ApplyInstall_DependencyInstallOrder(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	dep2 := &domain.Mod{ID: "dep2", SourceID: "src", Name: "Dep Two", Version: "1.0", GameID: "g1"}
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep2"}}}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+	registerDownloadableMod(t, mock, dep2, "dep2.esp", "payload-dep2")
+	registerDownloadableMod(t, mock, dep1, "dep1.esp", "payload-dep1")
+	registerDownloadableMod(t, mock, root, "root.esp", "payload-root")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 2)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, []string{"Dep Two", "Dep One", "Root"}, result.Installed, "dependencies must install before the primary, deepest first")
+	assert.Empty(t, result.Skipped)
+
+	for _, id := range []string{"dep2", "dep1", "root"} {
+		_, err := svc.GetInstalledMod("src", id, "g1", "default")
+		assert.NoError(t, err, "%s should be installed", id)
+		_, err = os.Lstat(filepath.Join(gameDir, id+".esp"))
+		assert.NoError(t, err, "%s should be deployed", id)
+	}
+}
+
+// TestService_ApplyInstall_ReplacePath covers plan.Replaces' two cache
+// handling variants, both mirroring doInstall's existingMod branch exactly:
+// a same-version reinstall (the reinstall-cache-transaction path) and a
+// version upgrade (a plain Replace, with the old version's cache cleared
+// afterward).
+func TestService_ApplyInstall_ReplacePath(t *testing.T) {
+	t.Run("same-version reinstall replaces deployed content", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("old-content")})
+		installer := svc.GetInstaller(game)
+		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+		defer mock.Close()
+		svc.RegisterSource(mock)
+		registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "new-content")
+
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+		require.NoError(t, err)
+		require.NotNil(t, plan.Replaces)
+		assert.Equal(t, "1.0", plan.Replaces.Version)
+
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Mod One"}, result.Installed)
+
+		content, err := os.ReadFile(filepath.Join(gameDir, "mod1.esp"))
+		require.NoError(t, err)
+		assert.Equal(t, "new-content", string(content), "the reinstalled content must replace the old deployed file")
+	})
+
+	t.Run("version upgrade replaces old cache and deployed files", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+		installer := svc.GetInstaller(game)
+		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+		defer mock.Close()
+		svc.RegisterSource(mock)
+		registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"}, "mod1-new.esp", "new-content")
+
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+		require.NoError(t, err)
+		require.NotNil(t, plan.Replaces)
+		assert.Equal(t, "1.0", plan.Replaces.Version)
+		assert.Equal(t, "2.0", plan.Mod.Version)
+
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Mod One"}, result.Installed)
+
+		_, err = os.Lstat(filepath.Join(gameDir, "mod1-old.esp"))
+		assert.True(t, os.IsNotExist(err), "old version's file must be undeployed")
+		_, err = os.Lstat(filepath.Join(gameDir, "mod1-new.esp"))
+		assert.NoError(t, err, "new version's file must be deployed")
+
+		assert.False(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "old version's cache entry should be cleared after a version upgrade")
+		assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "2.0"))
+
+		installed, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		require.NoError(t, err)
+		assert.Equal(t, "2.0", installed.Version)
+	})
+}
+
+// TestService_ApplyInstall_DownloadFailure covers the primary's download
+// failure (fatal, partial result returned per convention, nothing half-saved)
+// and a dependency's download failure (skip-and-continue, matching
+// batchInstallMods - the primary still installs).
+func TestService_ApplyInstall_DownloadFailure(t *testing.T) {
+	t.Run("primary download failure is fatal with a partial result", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+		defer mock.Close()
+		svc.RegisterSource(mock)
+		// Deliberately no AddDownload - the download 404s deterministically.
+		mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+		require.NoError(t, err)
+
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "download failed")
+		require.NotNil(t, result, "a partial result must be returned alongside the error")
+		assert.Empty(t, result.Installed)
+
+		assert.False(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"))
+		_, dbErr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		assert.Error(t, dbErr, "the mod must not be saved to the DB when its download fails")
+	})
+
+	t.Run("dependency download failure skips the dependency but still installs the primary", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+		defer mock.Close()
+		svc.RegisterSource(mock)
+
+		dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+		root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
+			Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+		mock.AddMod("g1", dep1) // no AddDownload for dep1 - its download 404s
+		registerDownloadableMod(t, mock, root, "root.esp", "payload")
+
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+		require.NoError(t, err)
+		require.Len(t, plan.Dependencies, 1)
+
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+		require.NoError(t, err, "a dependency's download failure must not fail the whole install")
+		require.NotNil(t, result)
+		assert.Equal(t, []string{"Root"}, result.Installed)
+		require.Len(t, result.Skipped, 1)
+		assert.Contains(t, result.Skipped[0], "Dep One: download failed")
+
+		_, err = svc.GetInstalledMod("src", "dep1", "g1", "default")
+		assert.Error(t, err, "the failed dependency must not be saved")
+		_, err = svc.GetInstalledMod("src", "root", "g1", "default")
+		assert.NoError(t, err, "the primary must still install despite the dependency's failure")
+	})
+}
+
+// TestService_ApplyInstall_ProgressEvents covers the download percent
+// sequence, per-mod attribution, and a nil progress callback being safe.
+func TestService_ApplyInstall_ProgressEvents(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}
+	registerDownloadableMod(t, mock, mod, "mod1.esp", strings.Repeat("x", 8192))
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	var events []core.DeployProgress
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var sawStarted, sawDownloading, sawDone, sawInstalled bool
+	for _, e := range events {
+		switch e.Phase {
+		case core.InstallDownloadStarted:
+			sawStarted = true
+			assert.Equal(t, "Mod One", e.ModName)
+			require.NotNil(t, e.File)
+		case core.InstallDownloading:
+			sawDownloading = true
+			assert.GreaterOrEqual(t, e.Percent, 0.0)
+			assert.Greater(t, e.TotalBytes, int64(0))
+		case core.InstallDownloadDone:
+			sawDone = true
+		case core.InstallDone:
+			sawInstalled = true
+			assert.Equal(t, "Mod One", e.ModName)
+		}
+	}
+	assert.True(t, sawStarted, "InstallDownloadStarted must fire")
+	assert.True(t, sawDownloading, "at least one InstallDownloading tick expected for a known-size download")
+	assert.True(t, sawDone, "InstallDownloadDone must fire")
+	assert.True(t, sawInstalled, "InstallDone must fire")
+
+	// A nil progress callback must be safe (no panic).
+	plan2, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	_, err = svc.ApplyInstall(context.Background(), game, plan2, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+}
+
+// TestService_ApplyInstall_BeforeAllHookFailure mirrors
+// TestService_DeployProfile's before_all Force-gate pattern: fatal without
+// Force, a recorded (forced) Warning with Force, matching doInstall exactly
+// (before_all only ever runs once, regardless of Dependencies).
+func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
+	scriptsDir := t.TempDir()
+	failScript := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\necho boom >&2\nexit 1\n")
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: failScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	newPlan := func(t *testing.T) (*core.Service, *domain.Game, *core.InstallPlan) {
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+		t.Cleanup(mock.Close)
+		svc.RegisterSource(mock)
+		registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+		require.NoError(t, err)
+		return svc, game, plan
+	}
+
+	t.Run("fatal without Force", func(t *testing.T) {
+		svc, game, plan := newPlan(t)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "install.before_all hook failed")
+		require.NotNil(t, result)
+		assert.Empty(t, result.Installed)
+		_, dbErr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		assert.Error(t, dbErr)
+	})
+
+	t.Run("forced continues with a warning", func(t *testing.T) {
+		svc, game, plan := newPlan(t)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner, Force: true}, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Warnings, 1)
+		assert.Contains(t, result.Warnings[0], "install.before_all hook failed")
+		assert.Contains(t, result.Warnings[0], "forced")
+		assert.Equal(t, []string{"Mod One"}, result.Installed)
+	})
+}
+
+// TestService_ApplyInstall_PrimaryBeforeEachHookFailure mirrors
+// doInstall's OWN before_each Force-gate for the primary mod (fatal unless
+// Force) - deliberately distinct from a dependency's before_each semantics
+// (always skip-and-continue, never Force-gated - see
+// TestService_ApplyInstall_DependencyBeforeEachHookFailure_SkipsAndContinues).
+func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
+	scriptsDir := t.TempDir()
+	failScript := createTestScript(t, scriptsDir, "before_each.sh", "#!/bin/bash\necho boom >&2\nexit 1\n")
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	newPlan := func(t *testing.T) (*core.Service, *domain.Game, *core.InstallPlan) {
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+		t.Cleanup(mock.Close)
+		svc.RegisterSource(mock)
+		registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+		require.NoError(t, err)
+		return svc, game, plan
+	}
+
+	t.Run("fatal without Force", func(t *testing.T) {
+		svc, game, plan := newPlan(t)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "install.before_each hook failed")
+		require.NotNil(t, result)
+		assert.Empty(t, result.Installed)
+	})
+
+	t.Run("forced continues with a warning", func(t *testing.T) {
+		svc, game, plan := newPlan(t)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner, Force: true}, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Warnings, 1)
+		assert.Contains(t, result.Warnings[0], "install.before_each hook failed")
+		assert.Contains(t, result.Warnings[0], "forced")
+		assert.Equal(t, []string{"Mod One"}, result.Installed)
+	})
+}
+
+// TestService_ApplyInstall_DependencyBeforeEachHookFailure_SkipsAndContinues
+// proves a dependency's before_each hook failure is NEVER Force-gated
+// (unconditional skip-and-continue, matching batchInstallMods, which is what
+// pre-extraction doInstall actually delegated dependency installation to) -
+// the primary still installs even though Force is not set.
+func TestService_ApplyInstall_DependencyBeforeEachHookFailure_SkipsAndContinues(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+	registerDownloadableMod(t, mock, dep1, "dep1.esp", "payload-dep1")
+	registerDownloadableMod(t, mock, root, "root.esp", "payload-root")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	scriptsDir := t.TempDir()
+	// Fails ONLY for dep1 - the primary's own before_each must still succeed,
+	// isolating this test to the dependency's skip-and-continue semantics.
+	failScript := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+if [ "$LMM_MOD_ID" = "dep1" ]; then
+  echo boom >&2
+  exit 1
+fi
+exit 0`)
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+	require.NoError(t, err, "a dependency's before_each failure must never fail the whole install, even without Force")
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Root"}, result.Installed)
+	require.Len(t, result.Skipped, 1)
+	assert.Contains(t, result.Skipped[0], "Dep One: install.before_each hook failed")
+	assert.Empty(t, result.Warnings, "a dependency hook skip is never Force-gated, so it must never produce a Warning")
+}
+
+// TestService_ApplyInstall_EditedPlanFilesHonored proves ApplyInstall
+// installs exactly plan.Files - no re-selection - so a caller (the CLI's
+// interactive/--file override) can freely edit plan.Files between Plan and
+// Apply.
+func TestService_ApplyInstall_EditedPlanFilesHonored(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "main", Name: "Main File", FileName: "main.zip", IsPrimary: true, Category: "MAIN"},
+			{ID: "optional", Name: "Optional File", FileName: "optional.zip", Category: "OPTIONAL"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	mainZip := createTestZip(t, t.TempDir(), map[string]string{"main.esp": "main-payload"})
+	mainContent, err := os.ReadFile(mainZip)
+	require.NoError(t, err)
+	mock.AddDownload("main", mainContent)
+
+	optZip := createTestZip(t, t.TempDir(), map[string]string{"optional.esp": "optional-payload"})
+	optContent, err := os.ReadFile(optZip)
+	require.NoError(t, err)
+	mock.AddDownload("optional", optContent)
+
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Files, 1, "PlanInstall's own default picks just the primary/main file")
+	assert.Equal(t, "main", plan.Files[0].ID)
+
+	// Caller (CLI's interactive/--file override) selects BOTH files instead.
+	plan.Files = mock.files
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Mod One"}, result.Installed)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "main.esp"))
+	assert.NoError(t, err, "main file must be installed")
+	_, err = os.Lstat(filepath.Join(gameDir, "optional.esp"))
+	assert.NoError(t, err, "the caller-added optional file must ALSO be installed - ApplyInstall must install exactly plan.Files, not re-select")
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"main", "optional"}, installed.FileIDs)
+}
+
+// TestService_ApplyInstall_ContextCancellation proves ApplyInstall checks
+// ctx at least once before doing any work, so an already-cancelled context
+// leaves nothing installed - the seam Phase 5b's cancel-then-drain task will
+// build on for mid-run cancellation between mods.
+func TestService_ApplyInstall_ContextCancellation(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+	registerDownloadableMod(t, mock, dep1, "dep1.esp", "payload")
+	registerDownloadableMod(t, mock, root, "root.esp", "payload")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before ApplyInstall even starts
+
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Empty(t, result.Installed)
+
+	_, dbErr := svc.GetInstalledMod("src", "dep1", "g1", "default")
+	assert.Error(t, dbErr, "nothing should be installed once the context is already cancelled")
 }
