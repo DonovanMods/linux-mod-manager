@@ -22,9 +22,8 @@ import (
 // failure partway leaves earlier steps applied. Callers must treat any error
 // as "state may have partially changed": refresh data after every action,
 // success or failure, and never offer undo/retry affordances that assume a
-// failed action was a no-op. PlanProfileSwitch is the exception: planning is
-// pure and never mutates. ApplyProfileSwitch's NeedsDownloads refusal is
-// also mutation-free (it refuses before executing).
+// failed action was a no-op. PlanProfileSwitch and PlanInstall are the
+// exceptions: planning is pure and never mutates either way.
 type ActionProvider interface {
 	EnableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
 	DisableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
@@ -71,7 +70,7 @@ type SwitchPlanView struct {
 	From, To       string
 	Enable         []string // mod names to enable
 	Disable        []string // mod names to disable
-	NeedsDownloads []string // mod refs requiring download - 5a refuses to ApplyProfileSwitch a plan with any of these (see ApplyProfileSwitch's doc comment); Plan itself never refuses, so a modal can still explain why
+	NeedsDownloads []string // mod refs requiring download - ApplyProfileSwitch downloads and installs these itself (Phase 5b Task 4; see its doc comment), streaming progress the same way ApplyInstall/ApplyUpdate do
 	NoChanges      bool
 	AlreadyActive  bool
 }
@@ -156,8 +155,9 @@ func mergeDiagnostics(warnings, notes []string) []string {
 // out of thin air; the ONE exception is prototype.NeedsDownloadProfileName,
 // a canned profile whose Mods list deliberately references an ID absent
 // from InstalledMods (see prototype/data.go) so --prototype mode can demo
-// ApplyProfileSwitch's NeedsDownloads refusal end to end. Every other
-// canned profile leaves Mods unset and is unaffected.
+// ApplyProfileSwitch's downloading-switch path end to end (Phase 5b Task 4 -
+// see that method's own doc comment below). Every other canned profile
+// leaves Mods unset and is unaffected.
 
 // findInstalledIndex returns the index of the InstalledMods entry matching
 // (sourceID, id), or -1 if none matches.
@@ -266,9 +266,10 @@ func (p *prototypeProvider) needsDownloads(profile prototype.Profile) []string {
 // Disable for any target profile other than the active one. The one
 // exception is prototype.NeedsDownloadProfileName (see needsDownloads and
 // this file's package doc comment), which short-circuits straight to a
-// NeedsDownloads-only plan instead - ApplyProfileSwitch refuses on that
-// alone, so there's no need to also compute a bucket split that could never
-// be applied.
+// NeedsDownloads-only plan instead - the missing mod(s) don't exist in
+// InstalledMods yet, so there's nothing yet to bucket into Enable/Disable;
+// ApplyProfileSwitch materializes them and RE-PLANS (see its own doc
+// comment) before this alternating logic ever runs for them.
 func (p *prototypeProvider) PlanProfileSwitch(_ context.Context, profileName string) (SwitchPlanView, error) {
 	target, ok := p.findProfile(profileName)
 	if !ok {
