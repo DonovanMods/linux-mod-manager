@@ -99,6 +99,12 @@ func Load() Data {
 			{ID: "frostfall", Name: "Frostfall", Source: "nexusmods", Author: "Chesko", Version: "3.4", Status: "available", Summary: "Hypothermia and survival overhaul.", Downloads: 3_800_000, Endorsements: 165_000, HasEndorsements: true, Conflicts: []string{"textures/frost.dds (owned by ussep)"}},
 			{ID: "hunterborn", Name: "Hunterborn", Source: "nexusmods", Author: "unuroboros", Version: "1.6", Status: "available", Summary: "Hunting and harvesting overhaul.", Downloads: 2_900_000, Endorsements: 95_000, HasEndorsements: true},
 			{ID: "legacy-of-the-dragonborn", Name: "Legacy of the Dragonborn", Source: "nexusmods", Author: "icecreamassassin", Version: "6.5", Status: "available", Summary: "Museum and player home museum.", Downloads: 2_100_000, Endorsements: 78_000, HasEndorsements: true},
+			// skyui deliberately reuses an InstalledMods (Source, ID) pair so
+			// --prototype mode can demo Phase 5b's Reinstall path (i on an
+			// already-installed search result): prototypeProvider.PlanInstall
+			// computes Reinstall by checking InstalledMods live, so this entry
+			// needs no special-casing beyond simply existing here.
+			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true},
 		},
 		Profiles: []Profile{
 			{Name: "survival", Active: true, ModCount: 42},

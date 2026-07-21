@@ -31,6 +31,12 @@ type KeyMap struct {
 	ToggleEnable key.Binding
 	Uninstall    key.Binding
 	Deploy       key.Binding
+	// Install is Phase 5b's install-from-search binding (see mutations.go's
+	// installSelectedSearchResult): it only fires on ScreenSearch with the
+	// input blurred and a result selected - a focused input swallows "i" as
+	// a typed character (see updateKey's focused-input branch, which runs
+	// before this ever reaches the outer switch).
+	Install key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -127,6 +133,10 @@ func DefaultKeyMap() KeyMap {
 		Deploy: key.NewBinding(
 			key.WithKeys("D"),
 			key.WithHelp("D", "deploy profile"),
+		),
+		Install: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "install selected result"),
 		),
 	}
 }

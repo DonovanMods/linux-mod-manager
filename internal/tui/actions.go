@@ -21,6 +21,12 @@ const (
 	actionUninstall
 	actionDeploy
 	actionSwitch
+	// actionInstall is Phase 5b's install-from-search action kind (see
+	// mutations.go's installSelectedSearchResult). actionDoneMsg's handler
+	// (app.go) branches on it specifically to also refresh the Search
+	// screen's results after a successful install - see
+	// refreshSearchAfterInstall's doc comment.
+	actionInstall
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation

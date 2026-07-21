@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -276,4 +277,191 @@ func switchDetailLines(view SwitchPlanView) []string {
 		}
 	}
 	return lines
+}
+
+// --- Install from search ('i' on Search, blurred, a result selected) ---
+
+// installPlanResultMsg carries a successful PlanInstall result, tagged with
+// the generation established when the fetch was dispatched (see
+// installSelectedSearchResult) so a superseded result can be discarded
+// exactly like planResultMsg. item is the ModItem that was selected at
+// DISPATCH time (not re-read from selection state on arrival): the search
+// result list's selection isn't locked while "Planning install…" is
+// in-flight (running only blocks a NEW buildAction/promptAction call, not
+// plain navigation - see updateKey), so capturing item in the closure that
+// dispatches the fetch, then carrying it through unchanged in this message,
+// is the only way to guarantee ApplyInstall is later called with the SAME
+// mod the user actually pressed 'i' on. InstallPlanView itself carries no
+// (Source, ID) - only display fields - so item is this message's sole
+// source of truth for what to install.
+type installPlanResultMsg struct {
+	gen  int
+	item ModItem
+	view InstallPlanView
+}
+
+// installPlanFailedMsg carries a failed PlanInstall call, tagged like
+// installPlanResultMsg.
+type installPlanFailedMsg struct {
+	gen int
+	err error
+}
+
+// installSelectedSearchResult handles 'i' on Search (task-5-brief.md's
+// Install-from-search flow): a no-op on the wrong screen, with no
+// ActionProvider, with no result selected (covers both an empty page and a
+// stale selected index), or while another action/plan is already in
+// flight. The focused-input case never reaches here at all - updateKey's
+// focused-input branch (app.go) intercepts every key, including 'i', before
+// the outer switch this is dispatched from, so 'i' types into the query
+// exactly like every other letter. Mirrors switchSelectedProfile's async
+// plan-fetch shape (mutations.go's template for this pattern): dispatches
+// PlanInstall and shows a "Planning install…" status instead of a modal
+// until the result arrives.
+func (m Model) installSelectedSearchResult() (Model, tea.Cmd) {
+	if m.screen != ScreenSearch || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+
+	idx := m.selected[ScreenSearch]
+	results := m.search.page.Results
+	if idx < 0 || idx >= len(results) {
+		return m, nil
+	}
+	item := results[idx]
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.action.cancel = cancel
+	m.action.gen++
+	gen := m.action.gen
+	m.action.running = true
+	m.action.status = "Planning install…"
+	m.action.statusIsError = false
+
+	actions := m.actions
+	return m, func() tea.Msg {
+		view, err := actions.PlanInstall(ctx, item)
+		if err != nil {
+			return installPlanFailedMsg{gen: gen, err: err}
+		}
+		return installPlanResultMsg{gen: gen, item: item, view: view}
+	}
+}
+
+// resolveInstallPlanResult handles a fresh (non-stale) installPlanResultMsg:
+// opens the install/reinstall confirmation modal, mirroring
+// resolvePlanResult's shape. Confirming calls ApplyInstall with msg.item -
+// the mod captured when the fetch was dispatched, per installPlanResultMsg's
+// own doc comment - and the progress adapter buildAction wires in, so
+// download/extract/deploy ticks stream into the status line exactly like
+// every other network action.
+func (m Model) resolveInstallPlanResult(msg installPlanResultMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+
+	view := msg.view
+	item := msg.item
+	model, pa := m.buildAction(actionInstall, installTitle(view), installDetailLines(view), "", func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.ApplyInstall(ctx, item, progress)
+	})
+	return model.promptAction(pa), nil
+}
+
+// resolveInstallPlanFailure handles a fresh installPlanFailedMsg: status
+// line error, no modal, mirroring resolvePlanFailure. err is already the
+// per-action mapped message from the provider (mapInstallNetworkError in
+// service_core.go) when backed by coreProvider - this just renders it.
+func (m Model) resolveInstallPlanFailure(msg installPlanFailedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	m.action.status = singleLine(msg.err.Error())
+	m.action.statusIsError = true
+	return m, nil
+}
+
+// installTitle renders an InstallPlanView's modal title: "Reinstall" when
+// the mod is already installed (view.Reinstall), "Install" otherwise - the
+// only distinction task-5-brief.md asks the title to carry for an
+// already-installed search result.
+func installTitle(view InstallPlanView) string {
+	if view.Reinstall {
+		return fmt.Sprintf("Reinstall %q?", view.Name)
+	}
+	return fmt.Sprintf("Install %q?", view.Name)
+}
+
+// installDetailLines renders an InstallPlanView as the install/reinstall
+// modal's detail lines (task-5-brief.md's Install-from-search flow):
+// version+size, source, the file(s) that will download, resolved
+// dependencies with a "Will download & install N mod(s)" disclosure
+// mirroring switchDetailLines' own NeedsDownloads wording, one line per
+// conflicting file, and finally the two warning lines for a
+// missing-dependency or circular-dependency plan.
+//
+// Files and Dependencies are each rendered as ONE comma-joined line rather
+// than one line per entry (unlike switchDetailLines' +/- per-mod lines):
+// task-5-brief.md leaves the choice to the implementer ("pick what reads
+// best at 160 cols, document"). A mod's file/dependency list is typically
+// short and reads naturally as a single sentence at the ~160-col design
+// width, and keeping each to one line leaves more of
+// actionModalMaxDetailLines' budget for the Conflicts/warning lines that
+// matter more to a confirm decision - those stay one line per entry since
+// each conflict is independently actionable information. Overlong lines
+// still truncate individually at render time (actionModalView), same as
+// every other detail line, so this degrades the same way below 160 cols.
+func installDetailLines(view InstallPlanView) []string {
+	lines := []string{
+		fmt.Sprintf("Version: %s (%s)", view.Version, view.SizeLabel),
+		fmt.Sprintf("Source: %s", view.Source),
+	}
+	if len(view.Files) > 0 {
+		lines = append(lines, fmt.Sprintf("Files: %s", strings.Join(view.Files, ", ")))
+	}
+	if len(view.Dependencies) > 0 {
+		lines = append(lines, fmt.Sprintf("Dependencies: %s", strings.Join(view.Dependencies, ", ")))
+		lines = append(lines, fmt.Sprintf("Will download & install %d mod(s)", len(view.Dependencies)))
+	}
+	for _, c := range view.Conflicts {
+		lines = append(lines, fmt.Sprintf("Conflicts: %s", c))
+	}
+	if len(view.MissingDependencies) > 0 {
+		lines = append(lines, fmt.Sprintf("⚠ %d dependency(ies) unavailable", len(view.MissingDependencies)))
+	}
+	if view.CycleWarning {
+		lines = append(lines, "⚠ circular dependency detected")
+	}
+	return lines
+}
+
+// refreshSearchAfterInstall re-issues the CURRENT search query after a
+// successful install, so the just-installed result's "installed" marker
+// updates immediately instead of waiting for the user to search again by
+// hand (task-5-brief.md: "verify the refresh path covers the search
+// results' installed-flag, and fix within internal/tui if not" - the
+// generic post-action refresh, m.loadData, only re-fetches Overview/
+// Profiles, never the search page, since no other mutation needs it to).
+// A no-op (nil cmd, m unchanged) when there's no completed search to
+// refresh (searchIdle/searchLoading/searchFailed/searchAuthRequired) -
+// installSelectedSearchResult can only ever have been reached FROM
+// searchReady (it requires a selected result), but a slow install leaves
+// running enough time for the user to navigate off Search and even start a
+// new query before this runs, so the state is re-checked here rather than
+// assumed.
+func (m Model) refreshSearchAfterInstall() (Model, tea.Cmd) {
+	if m.search.state != searchReady {
+		return m, nil
+	}
+	return m.startSearch(m.search.page.Query, m.search.page.Page)
 }
