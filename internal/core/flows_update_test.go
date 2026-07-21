@@ -343,7 +343,12 @@ func TestService_ApplyUpdate_ProgressEvents(t *testing.T) {
 	defer mock.Close()
 	svc.RegisterSource(mock)
 	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
-	mock.AddDownload("new-1", []byte(strings.Repeat("x", 8192)))
+	// Kept under net/http's bufferBeforeChunkingSize (2048 bytes) so the
+	// httptest server auto-computes Content-Length instead of switching to
+	// chunked transfer encoding - otherwise resp.ContentLength is -1 and
+	// UpdateDownloading's TotalBytes>0 gate (matching applyUpdate's own
+	// verbose-gated print, which required a known total) never fires.
+	mock.AddDownload("new-1", []byte(strings.Repeat("x", 1024)))
 
 	var events []core.DeployProgress
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}

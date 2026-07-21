@@ -614,6 +614,57 @@ const (
 	// ApplyInstall's doc comment - emitted after the whole run, mirroring
 	// DeployWarning/printHookWarnings' batched timing).
 	InstallWarning
+
+	// --- Phase 5b Task 3: ApplyUpdate progress events, extending this same
+	// DeployPhase enum (matching Task 2's own "extend, don't fork"
+	// precedent). ApplyUpdate is a behavior-preserving extraction of
+	// cmd/lmm/update.go's applyUpdate; every phase below corresponds to one
+	// of applyUpdate's own console print sites - see the task report for the
+	// full mapping. Unlike ApplyInstall, applyUpdate never ran an
+	// install.before_all/install.after_all pair at all - each CLI-side
+	// update-loop iteration calls applyUpdate once, per mod, with no
+	// enclosing before_all/after_all of its own - so there is no
+	// UpdateBeforeAllForced counterpart here.
+
+	// UpdateDownloading mirrors applyUpdate's own download-progress readout
+	// ("\r  Downloading: %.1f%%", verbose-gated in the pre-extraction CLI) -
+	// Percent only, gated on a known total size, matching
+	// DeployDownloading/InstallDepDownloading's own gating (no raw
+	// byte-count fallback - applyUpdate never printed one).
+	UpdateDownloading
+	// UpdateDownloadDone fires once, only after EVERY file in the update's
+	// download step has downloaded successfully - mirroring applyUpdate's
+	// own `if verbose { fmt.Println() }`, which terminates the
+	// carriage-returned UpdateDownloading progress line. A download failure
+	// returns immediately instead (see ApplyUpdate's doc comment), so -
+	// like DeployDownloadDone, and unlike InstallDownloadDone - this covers
+	// the success path only. A caller wanting byte-identical pre-extraction
+	// output prints this ONLY under --verbose (the historical gate lived on
+	// the print itself, not just the progress ticks).
+	UpdateDownloadDone
+	// UpdateBeforeEachForced fires when EITHER of the update's two
+	// Force-gated hooks - uninstall.before_each (old version) or
+	// install.before_each (new version) - fails with Force set, mirroring
+	// applyUpdate's own two, textually-near-identical (only the hook name
+	// differs) "Warning: %s hook failed (forced): %v" unconditional stderr
+	// prints. Detail already carries the full, hook-specific message
+	// verbatim.
+	UpdateBeforeEachForced
+	// UpdateWarning fires for either of the update's two after_each hook
+	// failures - uninstall.after_each (old version) or install.after_each
+	// (new version) - mirroring applyUpdate's own hookErrors/
+	// printHookWarnings pair, fired right after both hooks have run
+	// (Replace already succeeded), in hook-run order (uninstall.after_each,
+	// then install.after_each) - unlike DeployWarning/InstallWarning's
+	// end-of-whole-run deferral, since applyUpdate itself prints these
+	// immediately, well before its own DB-update steps below.
+	UpdateWarning
+	// UpdateNote fires when SetModLinkMethod fails after a successful
+	// update - the sole --verbose-gated diagnostic in applyUpdate,
+	// mirroring "  Warning: could not update link method: %v" (2-space
+	// indent, prefix baked into Detail, matching SwitchDisableNote/
+	// SwitchEnableNote's own convention).
+	UpdateNote
 )
 
 // DeployProgress reports incremental status during DeployProfile. Index and
@@ -2487,4 +2538,235 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		return &DeployProgress{Phase: InstallWarning, Detail: msg, ModName: mod.Name, ModID: mod.ID}, nil
 	}
 	return nil, nil
+}
+
+// --- ApplyUpdate (Phase 5b Task 3) ---
+
+// UpdateOptions configures ApplyUpdate. Unlike InstallOptions/DeployOptions,
+// there is no before_all/after_all hook plumbing at all - applyUpdate never
+// ran that pair (see ApplyUpdate's doc comment) - so Force here gates ONLY
+// the two before_each hooks (uninstall.before_each for the old version,
+// install.before_each for the new one), matching applyUpdate's own
+// near-identical Force checks exactly.
+type UpdateOptions struct {
+	// Hook plumbing, mirroring UninstallOptions/DeployOptions/InstallOptions.
+	// Hooks and/or HookRunner may be nil to skip hook execution entirely
+	// (e.g. --no-hooks).
+	Hooks       *ResolvedHooks
+	HookRunner  *HookRunner
+	HookContext HookContext
+	// Force: continue past a failing uninstall.before_each/install.before_each
+	// hook (warn instead of fail), matching applyUpdate's own --force gate.
+	Force bool
+}
+
+// UpdateApplyResult reports the outcome of ApplyUpdate. As with
+// DeployResult/UninstallResult/SwitchResult/InstallResult, every entry below
+// is always recorded - there is no verbosity concept in core.
+//
+//   - Applied holds a single "<name> <old version> → <new version>" entry
+//     (matching what the CLI prints, e.g. "SkyUI 5.1 → 5.2") once the WHOLE
+//     sequence - download, hooks, Replace, and all three DB/profile writes -
+//     has succeeded. Empty on any failure; ApplyUpdate applies exactly one
+//     domain.Update per call (the CLI's own update loop calls it once per
+//     mod), so this is never more than a single entry.
+//   - Warnings holds diagnostics applyUpdate printed unconditionally:
+//     uninstall.before_each/install.before_each (when forced), and
+//     uninstall.after_each/install.after_each hook failures (always
+//     non-fatal). Callers should print each entry to stderr,
+//     unconditionally, e.g. `fmt.Fprintf(os.Stderr, "Warning: %v\n", w)`.
+//   - Notes holds the sole diagnostic applyUpdate only printed under
+//     --verbose: a failed SetModLinkMethod, with the historical "Warning: "
+//     prefix baked into the text already (matching applyUpdate's exact
+//     wording); a caller wanting byte-identical output should print it to
+//     stdout ONLY under --verbose, e.g. `fmt.Printf("  %s\n", n)`.
+//
+// Every entry in both slices is ALSO reported via the progress callback at
+// the exact point it is appended (UpdateBeforeEachForced/UpdateWarning/
+// UpdateNote - see each DeployPhase constant's doc comment), with Detail
+// equal to the slice entry verbatim.
+//
+// On error, the returned result carries any diagnostics accumulated before
+// the failure; callers should surface them alongside the error.
+type UpdateApplyResult struct {
+	Applied  []string
+	Warnings []string
+	Notes    []string
+}
+
+// ApplyUpdate applies upd to the installed mod it references
+// (upd.InstalledMod), following cmd/lmm/update.go's pre-extraction
+// applyUpdate ordering exactly: GetMod (the new version) -> GetModFiles ->
+// resolve FileIDReplacements -> download -> hooks -> installer.Replace ->
+// ApplyModUpdate -> SetModLinkMethod -> UpsertMod. This is a
+// behavior-preserving extraction - see the task report for the full mapping.
+//
+// FileIDReplacements resolution mirrors applyUpdate exactly: each of the
+// installed mod's own FileIDs is looked up in upd.FileIDReplacements; a hit
+// substitutes the new (superseding) file ID, a miss retains the ORIGINAL id
+// verbatim (never silently dropped) - selectDeployFiles' own primary-file
+// fallback only kicks in afterward, if NONE of the resulting IDs are found
+// among the new version's available files at all.
+//
+// A download failure returns immediately - before any hook runs, before
+// Replace, before any DB/profile write - so the old version is left
+// deployed and every row untouched, matching applyUpdate's own bare early
+// return. Installer.Replace never touches the cache (only the game
+// directory and deployed-file tracking - see installer.go), so the OLD
+// version's cache entry always survives an update; ApplyModUpdate records
+// PreviousVersion/PreviousFileIDs before overwriting version/FileIDs - both
+// preconditions `lmm update rollback` (doUpdateRollback, NOT extracted by
+// this task - see the task report) depends on.
+//
+// Hook failure semantics mirror applyUpdate's own two, independently
+// Force-gated before_each hooks (uninstall.before_each for the OLD mod,
+// install.before_each for the NEW mod: fatal unless Force is set, in which
+// case a Warning is recorded and the update proceeds) and its two always-
+// non-fatal after_each hooks (uninstall.after_each, install.after_each -
+// both recorded as Warnings regardless of Force, printed immediately after
+// Replace, well before the DB/profile writes below - see UpdateWarning's
+// doc comment).
+//
+// A failure to write ApplyModUpdate or UpsertMod triggers the same
+// best-effort compensating actions applyUpdate itself performed (a reverse
+// Installer.Replace to restore the old deployment, plus - for UpsertMod - a
+// RollbackModVersion to undo the DB version swap first); a failure to write
+// SetModLinkMethod is NOT rolled back, matching applyUpdate exactly (it only
+// ever produced a --verbose-gated Note).
+//
+// progress may be nil. On error, the returned result carries any
+// diagnostics accumulated before the failure - callers should surface them
+// alongside the error (see UpdateApplyResult's doc comment).
+func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileName string, upd domain.Update, opts UpdateOptions, progress func(DeployProgress)) (*UpdateApplyResult, error) {
+	result := &UpdateApplyResult{}
+	emit := func(p DeployProgress) {
+		if progress != nil {
+			progress(p)
+		}
+	}
+
+	mod := upd.InstalledMod // local, addressable copy - distinct from upd.InstalledMod
+	newVersion := upd.NewVersion
+	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
+
+	newMod, err := s.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
+	if err != nil {
+		return result, fmt.Errorf("fetching new version: %w", err)
+	}
+	if newMod.Version != newVersion {
+		newMod.Version = newVersion
+	}
+
+	files, err := s.GetModFiles(ctx, mod.SourceID, newMod)
+	if err != nil {
+		return result, fmt.Errorf("getting mod files: %w", err)
+	}
+	if len(files) == 0 {
+		return result, fmt.Errorf("no downloadable files available")
+	}
+
+	effectiveFileIDs := mod.FileIDs
+	if len(upd.FileIDReplacements) > 0 {
+		effectiveFileIDs = make([]string, len(mod.FileIDs))
+		for i, fid := range mod.FileIDs {
+			if newID, ok := upd.FileIDReplacements[fid]; ok {
+				effectiveFileIDs[i] = newID
+			} else {
+				effectiveFileIDs[i] = fid
+			}
+		}
+	}
+	filesToDownload, _, err := selectDeployFiles(files, effectiveFileIDs)
+	if err != nil {
+		return result, fmt.Errorf("selecting files to download: %w", err)
+	}
+
+	var downloadedFileIDs []string
+	for _, file := range filesToDownload {
+		progressFn := func(p DownloadProgress) {
+			if p.TotalBytes > 0 {
+				dl := base
+				dl.Phase, dl.Percent = UpdateDownloading, p.Percentage
+				emit(dl)
+			}
+		}
+		if _, err := s.DownloadMod(ctx, mod.SourceID, game, newMod, file, progressFn); err != nil {
+			return result, fmt.Errorf("downloading update: %w", err)
+		}
+		downloadedFileIDs = append(downloadedFileIDs, file.ID)
+	}
+	emit(DeployProgress{Phase: UpdateDownloadDone, ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID})
+
+	hookCtx := opts.HookContext
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("uninstall.before_each hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateBeforeEachForced, msg
+		emit(evt)
+	}
+
+	linkMethod := s.GetGameLinkMethod(game)
+	installer := s.GetInstaller(game)
+
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("install.before_each hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("install.before_each hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateBeforeEachForced, msg
+		emit(evt)
+	}
+
+	if err := installer.Replace(ctx, game, &mod.Mod, newMod, profileName); err != nil {
+		return result, fmt.Errorf("deploying update: %w", err)
+	}
+
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
+		msg := fmt.Sprintf("uninstall.after_each hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateWarning, msg
+		emit(evt)
+	}
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateWarning, msg
+		emit(evt)
+	}
+
+	if err := s.ApplyModUpdate(mod.SourceID, mod.ID, game.ID, profileName, newVersion, downloadedFileIDs); err != nil {
+		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
+		return result, fmt.Errorf("updating database: %w", err)
+	}
+
+	if err := s.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
+		msg := fmt.Sprintf("Warning: could not update link method: %v", err)
+		result.Notes = append(result.Notes, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateNote, msg
+		emit(evt)
+	}
+
+	pm := s.NewProfileManager()
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: newVersion, FileIDs: downloadedFileIDs}
+	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName)      //nolint:errcheck // best-effort recovery on an already-erroring path
+		return result, fmt.Errorf("updating profile: %w", err)
+	}
+
+	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, newVersion))
+	return result, nil
 }
