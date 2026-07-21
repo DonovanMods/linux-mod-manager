@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
@@ -783,12 +784,38 @@ func TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim(t *testing.T
 		"the help copy must no longer claim the TUI is read-only now that mutations exist")
 }
 
-func TestFooterHintMentionsMutationKeys(t *testing.T) {
+// TestFooterHintNamesEachMutationAction covers Finding 3 (smoke test): the
+// old "e/x/D: mutate" hint named the keys but never said what they DO. The
+// footer must spell out each action explicitly instead. Per the smoke
+// tester's follow-up guidance, 160 columns (not 80) is the normal case to
+// design and assert full clarity against — narrower terminals degrade via
+// truncation (see TestFooterFitsNarrowTerminalViaTruncation) rather than by
+// cramming the wording.
+func TestFooterHintNamesEachMutationAction(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 120, 36)
+	model := sizedPrototypeModel(t, "wizardry", 160, 40)
 	view := model.View()
 
-	require.Contains(t, view, "e/x/D: mutate")
+	require.Contains(t, view, "e: enable/disable")
+	require.Contains(t, view, "x: uninstall")
+	require.Contains(t, view, "D: deploy")
 	require.Contains(t, view, "enter: switch")
+	require.NotContains(t, view, "mutate",
+		"the terse, unexplained 'mutate' wording must be gone")
+}
+
+// TestFooterFitsNarrowTerminalViaTruncation proves the footer degrades
+// gracefully at a narrower terminal: it must be hard-truncated to the
+// available width rather than left to lipgloss's automatic word-wrap, which
+// would silently grow the view past its fixed-height budget (see
+// contentChromeHeight's footerHeight == 1 assumption).
+func TestFooterFitsNarrowTerminalViaTruncation(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 80, 24)
+	view := model.View()
+
+	require.Equal(t, 80, lipgloss.Width(view))
+	require.Equal(t, 24, lipgloss.Height(view))
 }
