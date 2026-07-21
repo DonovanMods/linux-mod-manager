@@ -50,6 +50,21 @@ func (s *sizedFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]d
 	}, nil
 }
 
+// categorizedFilesSource wraps mockSource but returns a caller-supplied file
+// list verbatim - real Category values, raw (unsorted) order, no forced
+// IsPrimary - so PlanInstall's filtering/sorting of GetModFiles' result can
+// be tested independently of mockSource's own fixed, single, uncategorized,
+// IsPrimary file (service_test.go:57-66, which can't exercise either the
+// archived-filtering or the category-sort behavior this covers).
+type categorizedFilesSource struct {
+	*mockSource
+	files []domain.DownloadableFile
+}
+
+func (s *categorizedFilesSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return s.files, nil
+}
+
 // authFailingSource is a minimal source.ModSource whose GetMod always fails
 // with domain.ErrAuthRequired, mirroring what a real source does when no API
 // key/token is configured (see internal/source/httpclient's 401 mapping).
@@ -325,6 +340,59 @@ func TestService_PlanInstall_TotalDownloadBytes(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(-1), plan.TotalDownloadBytes)
 	})
+}
+
+// TestService_PlanInstall_AllArchivedFilesReturnsNoDownloadableFilesError
+// covers the review finding (Phase 5b Task 1 fix wave 1): the CLI's
+// doInstall filters out ARCHIVED/OLD_VERSION/DELETED files via
+// filterAndSortFiles BEFORE its "no downloadable files" check
+// (cmd/lmm/install.go:527-531). A mod whose only files are archived must
+// therefore still produce this exact error from PlanInstall - not a "valid"
+// plan pointing at a file the CLI would never let a user pick.
+func TestService_PlanInstall_AllArchivedFilesReturnsNoDownloadableFilesError(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	mock := &categorizedFilesSource{
+		mockSource: newMockSource("src"),
+		files: []domain.DownloadableFile{
+			{ID: "1", Name: "Old Main", FileName: "old.zip", Category: "ARCHIVED"},
+			{ID: "2", Name: "Older Version", FileName: "older.zip", Category: "OLD_VERSION"},
+		},
+	}
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+	require.Error(t, err)
+	assert.EqualError(t, err, "no downloadable files available for this mod")
+	assert.Nil(t, plan)
+}
+
+// TestService_PlanInstall_MixedCategoriesNoPrimaryPicksMainFile covers the
+// review finding's second consequence: with no IsPrimary flag set anywhere,
+// the CLI's doInstall sorts files MAIN > OPTIONAL > UPDATE > MISCELLANEOUS >
+// other (filterAndSortFiles) BEFORE selectInstallFiles's --yes default falls
+// back to files[0] - so the CLI always picks the MAIN file here, never
+// whichever file the source happened to return first.
+func TestService_PlanInstall_MixedCategoriesNoPrimaryPicksMainFile(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	mock := &categorizedFilesSource{
+		mockSource: newMockSource("src"),
+		files: []domain.DownloadableFile{
+			{ID: "optional-1", Name: "Optional Extra", FileName: "optional.zip", Category: "OPTIONAL"},
+			{ID: "main-1", Name: "Main File", FileName: "main.zip", Category: "MAIN"},
+		},
+	}
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1")
+	require.NoError(t, err)
+	require.Len(t, plan.Files, 1)
+	assert.Equal(t, "main-1", plan.Files[0].ID, "post-sort MAIN file must win the no-IsPrimary fallback, matching the CLI's filterAndSortFiles+selectInstallFiles order")
 }
 
 // TestService_PlanInstall_AuthRequiredSourceWrapsErrAuthRequired proves the
