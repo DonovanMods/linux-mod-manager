@@ -428,6 +428,19 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		}
 	}
 
+	// Fix wave 1 (dep-path fidelity): a dependency-having install must
+	// reproduce cmd/lmm/install.go's pre-extraction batchInstallMods
+	// mechanics byte-for-byte for the WHOLE list, primary included - never
+	// the single-mod code below (interactive/--file file selection, the
+	// blocking conflict prompt) - matching doInstall's own pre-extraction
+	// early return ("if len(modsToInstall) > 1: return
+	// installModsWithDeps(...)"), which never reached any of that either.
+	// See doInstallBatch's own doc comment and task-2-report.md's "Fix wave
+	// 1" entry for the full review trace this restores.
+	if len(plan.Dependencies) > 0 {
+		return doInstallBatch(ctx, service, game, plan, profileName)
+	}
+
 	// Get available files for the PRIMARY mod - unchanged, CLI-side:
 	// PlanInstall's own Files already picked its non-interactive default;
 	// interactive/--file selection below overrides plan.Files with exactly
@@ -550,6 +563,94 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
 	fmt.Printf("  Files deployed: %d\n", result.FilesDeployed)
 	fmt.Printf("  Added to profile: %s\n", profileName)
+
+	return nil
+}
+
+// doInstallBatch executes plan's dependency-present install via
+// ApplyInstall's restored BATCH-path semantics (Fix wave 1 - see
+// task-2-report.md's "Fix wave 1 (dep-path fidelity)" entry for the full
+// review trace this fixes): every mod - each dependency, then the primary -
+// is treated COMPLETELY identically, reproducing cmd/lmm/install.go's
+// pre-extraction batchInstallMods console output byte-for-byte (git show
+// 5243286:cmd/lmm/install.go, lines ~1175-1347). In particular, unlike
+// doInstall's own single-mod code above: NO interactive/--file file
+// selection (always the primary-or-first file, re-resolved per mod), NO
+// blocking conflict prompt (a non-blocking inline "⚠ N file conflict(s)"
+// warning only) - doInstall's pre-extraction early return never reached
+// either of those for a dependency-having install, so this function must
+// not either. Must never read stdin - the caller's "Install N mod(s)?"
+// confirm prompt (run before this is ever called) is the only legitimate
+// stdin read anywhere in this path.
+func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Game, plan *core.InstallPlan, profileName string) error {
+	fmt.Printf("\nInstalling %d mod(s)...\n", len(plan.Dependencies)+1)
+
+	opts := core.InstallOptions{
+		SkipVerify:  skipVerify,
+		Hooks:       getResolvedHooks(service, game, profileName),
+		HookRunner:  getHookRunner(service),
+		HookContext: makeHookContext(game),
+		Force:       installForce,
+	}
+
+	// progress prints every diagnostic and status line at its exact point
+	// of occurrence, driven entirely by core.ApplyInstall's BATCH-path
+	// progress events - reproducing batchInstallMods' console output
+	// byte-for-byte. See each Install* constant's doc comment (in
+	// internal/core/flows.go, starting at InstallDepInstalling) for the
+	// exact text/semantics being restored here.
+	progress := func(p core.DeployProgress) {
+		switch p.Phase {
+		case core.InstallBeforeAllForced:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.InstallDepInstalling:
+			fmt.Printf("\n[%d/%d] Installing: %s v%s\n", p.Index, p.Total, p.ModName, p.ModVersion)
+		case core.InstallDepReinstalling:
+			fmt.Printf("  Removing previous installation...\n")
+		case core.InstallDepFileSelected:
+			fmt.Printf("  File: %s\n", displayFileLabel(*p.File))
+		case core.InstallDepDownloading:
+			bar := progressBar(p.Percent, 20)
+			fmt.Printf("\r  [%s] %.1f%%", bar, p.Percent)
+		case core.InstallDepDownloadDone:
+			fmt.Println()
+		case core.InstallDepSkipped:
+			// Detail already carries its restored, failure-type-specific,
+			// fully-prefixed text verbatim ("Skipped: ..." for a hook
+			// failure, "Error: ..." for everything else) - see
+			// InstallDepSkipped's doc comment.
+			fmt.Printf("  %s\n", p.Detail)
+		case core.InstallChecksumComputed:
+			fmt.Printf("  Checksum: %s\n", truncateChecksum(p.Detail))
+		case core.InstallDepConflictWarning:
+			fmt.Printf("  ⚠ %s\n", p.Detail)
+		case core.InstallDepInstalled:
+			fmt.Printf("  ✓ Installed (%d files)\n", p.FilesExtracted)
+		case core.InstallNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		case core.InstallWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		}
+	}
+
+	result, err := service.ApplyInstall(ctx, game, plan, opts, progress)
+	if err != nil {
+		// Diagnostics accumulated before a fatal error (install.before_all,
+		// forced) were already printed above, live, via progress - nothing
+		// left to print here. Unlike the STRICT path, a per-mod failure in
+		// the BATCH path never reaches here - it's recorded in
+		// result.Failed/Skipped and printed via the terminal Summary below
+		// instead (see InstallDepSkipped).
+		return err
+	}
+
+	fmt.Printf("\n--- Summary ---\n")
+	fmt.Printf("Installed: %d\n", len(result.Installed))
+	if len(result.Failed) > 0 {
+		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(result.Failed, ", "))
+	}
 
 	return nil
 }

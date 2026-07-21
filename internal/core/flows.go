@@ -437,123 +437,171 @@ const (
 	// SwitchDisableNote/SwitchEnableNote's 2-space Notes).
 	SwitchInstallNote
 
-	// --- Phase 5b Task 2: ApplyInstall progress events. ApplyInstall
-	// unifies two historically-DIVERGENT pre-extraction execution engines
-	// (see the task report for the full trace):
+	// --- Phase 5b Task 2: ApplyInstall progress events, restored to
+	// byte-for-byte per-path fidelity in Fix wave 1 (see
+	// task-2-report.md's "Fix wave 1 (dep-path fidelity)" entry for the full
+	// review trace). ApplyInstall reproduces the pre-extraction CLI's own
+	// TWO divergent execution engines EXACTLY, gated on
+	// len(plan.Dependencies):
 	//
-	//   - doInstall's OWN single-mod code (cmd/lmm/install.go, reached only
-	//     when there are no dependencies to install) - Force-gated
+	//   - Empty (the STRICT/no-deps path): the primary uses doInstall's own
+	//     single-mod code unchanged from Task 2 - Force-gated
 	//     before_all/before_each, Install-or-Replace (incl. the
 	//     reinstall-cache-transaction for a same-version reinstall),
-	//     interactive/--file file selection, a blocking conflict-confirm
-	//     prompt, SaveFileChecksum, --skip-verify.
-	//   - batchInstallMods (cmd/lmm/install.go), which is what doInstall
-	//     ACTUALLY delegated dependency installation to whenever
-	//     Dependencies was non-empty - before_each is NEVER Force-gated
-	//     (a failure always just skips that one mod and continues), no
-	//     Replace path (always a fresh Install; a same-key existing mod is
-	//     uninstalled+cache-deleted first), no interactive file selection
-	//     (always the primary-or-first file), conflicts are a non-blocking
-	//     inline warning (never a prompt).
-	//
-	// ApplyInstall's per-mod loop applies the FIRST set of semantics to the
-	// primary (plan.Mod) ALWAYS - even when Dependencies is non-empty - and
-	// the SECOND set to every entry in Dependencies. This is a deliberate
-	// unification/simplification (the pre-extraction asymmetry - the
-	// primary silently downgrading to batchInstallMods' simpler mechanics
-	// merely because it happened to have dependencies - was an accident of
-	// code structure, not a deliberate design choice), not a literal port of
-	// batchInstallMods' own "treat every mod in the list identically"
-	// behavior. See the task report for the full justification; none of the
-	// brief's mandatory byte-identical CLI tests exercise the
-	// dependencies-present EXECUTION phase's exact text (only the
-	// pre-Apply plan/prompt, which IS byte-identical).
-
-	// InstallBeforeAllForced fires once, immediately, when install.before_all
-	// fails and Force is set - mirrors DeployBeforeAllForced/
-	// PurgeWarning's "forced" role. No mod in scope.
+	//     interactive/--file file selection and the blocking
+	//     conflict-confirm prompt are the CALLER's job (plan.Files/
+	//     plan.Conflicts), SaveFileChecksum, --skip-verify. See
+	//     InstallDownload*/InstallChecksumComputed/InstallExtracting/
+	//     InstallDeploying/InstallDone below.
+	//   - Non-empty (the BATCH path): EVERY mod in [Dependencies...,
+	//     primary] uses batchInstallMods' lenient mechanics IDENTICALLY -
+	//     the primary is NOT special-cased at all here, matching the
+	//     pre-extraction CLI's own behavior of delegating the WHOLE list,
+	//     target included, to batchInstallMods whenever there were
+	//     dependencies to install (doInstall's "if len(modsToInstall) > 1"
+	//     early return, before any single-mod code - including file
+	//     selection and the conflict prompt - ever ran). before_each is
+	//     NEVER Force-gated (a failure always just skips that one mod and
+	//     continues, primary included), no Replace path (always a fresh
+	//     Install; a same-key existing mod is uninstalled+cache-deleted
+	//     first), no interactive file selection (always the
+	//     primary-or-first file, re-resolved per mod - plan.Files is never
+	//     consulted), conflicts are a non-blocking inline warning (never a
+	//     prompt). See InstallDepInstalling below onward.
 	InstallBeforeAllForced
+
 	// InstallBeforeEachForced fires when the PRIMARY mod's install.before_each
 	// hook fails and Force is set (a forced warning, not a fatal error) -
 	// mirrors doInstall's own before_each Force-gate exactly. ModName/ModID
-	// identify the primary. Dependencies never fire this phase - see
-	// InstallDepSkipped.
+	// identify the primary. ONLY fires in the STRICT (no-deps) path - in the
+	// BATCH path the primary's before_each is never Force-gated at all (see
+	// InstallDepSkipped), matching batchInstallMods exactly.
 	InstallBeforeEachForced
 
-	// InstallDepInstalling fires once per dependency, before before_each
-	// even runs - the only point at which a caller can render a per-
-	// dependency "starting" header (mirrors, in spirit rather than exact
-	// text, batchInstallMods' "[%d/%d] Installing: %s v%s" - see the task
-	// report for why the exact text is a deliberate deviation here).
-	// Index/Total count among Dependencies only, matching InstallDepSkipped.
+	// InstallDepInstalling fires once per mod in the BATCH path's combined
+	// [Dependencies..., primary] list - dependency OR primary alike -
+	// before before_each even runs, mirroring batchInstallMods' own
+	// "\n[%d/%d] Installing: %s v%s\n" byte-for-byte (Fix wave 1 restored
+	// the exact text and the primary's participation; Task 2's original
+	// design fired this for dependencies only, with different wording -
+	// see task-2-report.md). Index/Total count across the WHOLE combined
+	// list (len(plan.Dependencies)+1), matching batchInstallMods' shared
+	// counter; ModVersion carries the version for the restored "v%s" text.
 	InstallDepInstalling
-	// InstallDepSkipped fires whenever a DEPENDENCY is skipped for any
-	// reason (hook failure, fetch/files/download/deploy/save failure) -
-	// unconditional, never Force-gated, matching batchInstallMods exactly.
-	// Index/Total count among Dependencies only (the primary is never
-	// included in this count - a deliberate deviation from
-	// batchInstallMods' shared counter across every mod in its list, part
-	// of the unification above). ModName/ModID identify the dependency;
-	// Detail is the reason (unprefixed - the CLI's handler adds "  Skipped:
-	// ").
-	InstallDepSkipped
-	// InstallDepConflictWarning fires when a dependency's files (already
-	// downloaded/cached at this point) would overwrite files from another
-	// installed mod and Force is NOT set - a non-blocking, informational
-	// warning only (batchInstallMods never prompts for dependencies,
-	// unlike the primary's plan.Conflicts-driven CLI confirm prompt).
-	// Detail is "%d file conflict(s) - will overwrite".
-	InstallDepConflictWarning
-	// InstallDepDownloading mirrors batchInstallMods' dependency download
+	// InstallDepReinstalling fires, unconditionally (not verbose-gated),
+	// when a BATCH-path mod (dependency or primary) already has an existing
+	// installed row for (SourceID, ID, Profile) - mirroring
+	// batchInstallMods' unconditional "  Removing previous installation...".
+	// The existing install is then uninstalled and its cache entry deleted
+	// - never a Replace/reinstall-cache-transaction (that mechanism is
+	// STRICT-path only).
+	InstallDepReinstalling
+	// InstallDepFileSelected fires once a BATCH-path mod's downloadable
+	// files have been fetched, filtered/sorted, and reduced to the
+	// primary-or-first file (never interactive, never --file) - mirroring
+	// batchInstallMods' "  File: %s\n". File identifies which, for the
+	// CLI's own displayFileLabel call.
+	InstallDepFileSelected
+	// InstallDepDownloading mirrors batchInstallMods' per-mod download
 	// progress readout (Percent only, gated on a known total size - no
-	// byte-count fallback line, unlike the primary's InstallDownloading).
+	// byte-count fallback line, unlike the STRICT path's
+	// InstallDownloading). Fires for a dependency OR the primary alike.
 	InstallDepDownloading
-	// InstallDepInstalled fires once a dependency has been fully installed
-	// (downloaded, deployed, saved, profile-upserted).
+	// InstallDepSkipped fires whenever ANY BATCH-path mod (dependency or
+	// primary alike) is skipped for any reason (hook failure, fetch/files/
+	// download/deploy/save failure) - unconditional, never Force-gated,
+	// matching batchInstallMods exactly. Detail already carries the
+	// restored, failure-type-specific, fully-prefixed line text verbatim
+	// ("Skipped: install.before_each hook failed: %v" for a hook failure;
+	// "Error: <reason>" for every other failure type - batchInstallMods
+	// used different wording per failure type, never a uniform "Skipped:
+	// <name>: <reason>" - see task-2-report.md's Fix wave 1 for the
+	// before/after); a caller wanting byte-identical output prints
+	// `fmt.Printf("  %s\n", p.Detail)`. Index/Total count across the whole
+	// combined list, matching InstallDepInstalling.
+	InstallDepSkipped
+	// InstallDepDownloadDone fires, unconditionally (success OR failure
+	// alike), immediately after a BATCH-path mod's DownloadMod call
+	// returns - mirroring batchInstallMods' unconditional `fmt.Println()`
+	// right after the download call, which precedes InstallDepSkipped's
+	// own restored "\n  Error: download failed: %v\n" leading blank line
+	// on failure. A caller wanting byte-identical output prints a bare
+	// `fmt.Println()` here.
+	InstallDepDownloadDone
+	// InstallDepConflictWarning fires when a BATCH-path mod's files
+	// (already downloaded/cached at this point) would overwrite files from
+	// another installed mod and Force is NOT set - a non-blocking,
+	// informational warning only (batchInstallMods never prompts in the
+	// BATCH path, primary included - the blocking plan.Conflicts prompt is
+	// STRICT-path only). Detail is "%d file conflict(s) - will overwrite".
+	InstallDepConflictWarning
+	// InstallDepInstalled fires once a BATCH-path mod (dependency or
+	// primary) has been fully installed (downloaded, deployed, saved,
+	// profile-upserted) - mirroring batchInstallMods' restored
+	// "  ✓ Installed (%d files)\n" (Fix wave 1: Task 2's original design
+	// used the mod's name instead of its file count - see
+	// task-2-report.md). FilesExtracted carries the count.
 	InstallDepInstalled
 
 	// InstallDownloadStarted fires once per one of the PRIMARY's selected
-	// files (plan.Files), before it begins downloading - mirrors
-	// downloadSelectedFiles' "\n[%d/%d] Downloading %s...\n" (or, for a
-	// single file, "\nDownloading %s...\n"). File identifies which (for the
-	// CLI's own displayFileLabel call); Index/Total count among plan.Files.
+	// files (plan.Files) in the STRICT (no-deps) path only, before it
+	// begins downloading - mirrors downloadSelectedFiles'
+	// "\n[%d/%d] Downloading %s...\n" (or, for a single file,
+	// "\nDownloading %s...\n"). File identifies which (for the CLI's own
+	// displayFileLabel call); Index/Total count among plan.Files. The BATCH
+	// path has no equivalent "starting" event - its download progress
+	// begins directly at InstallDepDownloading.
 	InstallDownloadStarted
-	// InstallDownloading mirrors the primary's per-tick download progress -
-	// Downloaded/TotalBytes/Percent carry the raw numbers so the CLI can
-	// reproduce its exact byte-count/percent readout (see DeployProgress's
-	// doc comment on those fields).
+	// InstallDownloading mirrors the STRICT path's primary per-tick
+	// download progress - Downloaded/TotalBytes/Percent carry the raw
+	// numbers so the CLI can reproduce its exact byte-count/percent
+	// readout (see DeployProgress's doc comment on those fields). The
+	// BATCH path's per-mod download progress fires InstallDepDownloading
+	// instead (Percent only, no byte-count fallback).
 	InstallDownloading
-	// InstallDownloadDone fires once a file's download attempt finishes -
-	// success OR failure alike, mirroring downloadSelectedFiles' `
-	// fmt.Println()` that runs unconditionally right after the download
-	// call returns, before branching on its error.
+	// InstallDownloadDone fires once a STRICT-path file's download attempt
+	// finishes - success OR failure alike, mirroring downloadSelectedFiles'
+	// `fmt.Println()` that runs unconditionally right after the download
+	// call returns, before branching on its error. The BATCH path's
+	// equivalent is InstallDepDownloadDone.
 	InstallDownloadDone
-	// InstallDownloadFailed fires when a file download fails; Detail
-	// carries "download failed: %v" (the CLI checks Detail for the
-	// "third-party downloads" substring itself, mirroring doInstall's own
-	// check, to print the manual-install notice using the plan's own
-	// Mod.SourceURL/ID - already in the CLI's enclosing scope, so it isn't
-	// duplicated onto the event).
+	// InstallDownloadFailed fires when a STRICT-path (primary) file
+	// download fails; Detail carries "download failed: %v" (the CLI checks
+	// Detail for the "third-party downloads" substring itself, mirroring
+	// doInstall's own check, to print the manual-install notice using the
+	// plan's own Mod.SourceURL/ID - already in the CLI's enclosing scope,
+	// so it isn't duplicated onto the event). Always fatal - the BATCH
+	// path's equivalent (InstallDepSkipped) never is.
 	InstallDownloadFailed
-	// InstallChecksumComputed fires once per successfully-downloaded
-	// primary file, only when a checksum was computed and !SkipVerify -
-	// Detail carries the full (untruncated) checksum; the CLI applies its
-	// own truncateChecksum.
+	// InstallChecksumComputed fires once a checksum has been computed and
+	// !SkipVerify, for BOTH paths: the STRICT path's primary file(s)
+	// (Index/Total/File populated, matching InstallDownloadStarted) and
+	// the BATCH path's per-mod checksum (Index/Total/ModName populated
+	// instead, File unset - mirroring batchInstallMods' own
+	// "  Checksum: %s\n", fired once per mod right after its download
+	// succeeds). Detail carries the full (untruncated) checksum either
+	// way; the CLI applies its own truncateChecksum.
 	InstallChecksumComputed
 	// InstallExtracting mirrors doInstall's unconditional "Extracting to
-	// cache..." status line, fired once after the primary's download(s)
-	// finish, before Install/Replace.
+	// cache..." status line, fired once after the STRICT-path primary's
+	// download(s) finish, before Install/Replace. The BATCH path never
+	// prints this (batchInstallMods had no equivalent status line).
 	InstallExtracting
 	// InstallDeploying mirrors "Deploying to game directory...", fired once
-	// right before Install/Replace.
+	// right before the STRICT-path primary's Install/Replace. The BATCH
+	// path never prints this.
 	InstallDeploying
-	// InstallDone fires once the primary mod has been fully installed
-	// (deployed, saved, checksum stored, profile upserted).
+	// InstallDone fires once the STRICT-path primary has been fully
+	// installed (deployed, saved, checksum stored, profile upserted). The
+	// BATCH path's equivalent (for every mod, primary included) is
+	// InstallDepInstalled.
 	InstallDone
 
 	// InstallNote fires wherever ApplyInstall appends an entry to
 	// InstallResult.Notes (a failed profile-create, UpsertMod,
-	// reinstall-cache-transaction commit, or old-cache cleanup) - the
+	// reinstall-cache-transaction commit, old-cache cleanup, or - BATCH
+	// path only - a failed Uninstall/cache-Delete while removing a
+	// mod's previous installation, see InstallDepReinstalling) - the
 	// --verbose-gated stdout bucket, mirroring DeployNote/SwitchInstallNote.
 	// Detail equals the Notes entry verbatim; ModName/ModID identify the
 	// mod when relevant.
@@ -607,6 +655,25 @@ type DeployProgress struct {
 	// Populated only for InstallDownloadStarted/InstallDownloading/
 	// InstallDownloadDone/InstallDownloadFailed/InstallChecksumComputed.
 	File *domain.DownloadableFile
+
+	// --- Fix wave 1 (dep-path fidelity): BATCH-mode-only fields, used
+	// exclusively by the Install-batch events (InstallDepInstalling onward)
+	// that fire when plan.Dependencies is non-empty - see ApplyInstall's doc
+	// comment and task-2-report.md's "Fix wave 1" entry for the full trace
+	// back to cmd/lmm/install.go's pre-extraction batchInstallMods. ---
+
+	// ModVersion carries the mod's version for InstallDepInstalling's
+	// restored "Installing: %s v%s" header text (batchInstallMods printed
+	// the version; the strict/no-deps path's own headers are printed
+	// CLI-side from data already in doInstall's scope, so this is a
+	// batch-only field). Zero for every other phase.
+	ModVersion string
+	// FilesExtracted carries the batch-mode mod's own extracted-file count
+	// for InstallDepInstalled's restored "  ✓ Installed (%d files)" text
+	// (batchInstallMods' downloadResult.FilesExtracted) - distinct from
+	// InstallResult.FilesDeployed, which only ever tracks the STRICT path's
+	// primary. Zero for every other phase.
+	FilesExtracted int
 }
 
 // DeployResult reports the outcome of DeployProfile. As with UninstallResult
@@ -1731,15 +1798,17 @@ type InstallOptions struct {
 	// HookRunner may be nil to skip hook execution entirely (e.g.
 	// --no-hooks).
 	//
-	// Force gates ONLY install.before_all (once) and the PRIMARY mod's own
-	// install.before_each, matching doInstall's own single-mod code exactly
-	// (a failure aborts with an error unless Force is set, in which case it
-	// is recorded as a Warning and the install proceeds). A DEPENDENCY's
-	// install.before_each failure is NEVER Force-gated - it unconditionally
-	// skips that one dependency and continues, matching batchInstallMods,
-	// which is what pre-extraction doInstall actually delegated dependency
-	// installation to. See the task report for the full trace and the
-	// unification this represents.
+	// Force gates install.before_all (once, always) and, in the STRICT
+	// (no-deps) path ONLY, the primary's own install.before_each - matching
+	// doInstall's own single-mod code exactly (a failure aborts with an
+	// error unless Force is set, in which case it is recorded as a Warning
+	// and the install proceeds). In the BATCH (Dependencies-present) path,
+	// NO mod's before_each - dependency or primary alike - is EVER
+	// Force-gated: it unconditionally skips that one mod and continues,
+	// matching batchInstallMods exactly (Fix wave 1 - see
+	// task-2-report.md's "Fix wave 1" entry - restored this for the primary
+	// too; pre-extraction doInstall delegated the WHOLE list, target
+	// included, to batchInstallMods whenever Dependencies was non-empty).
 	Hooks       *ResolvedHooks
 	HookRunner  *HookRunner
 	HookContext HookContext
@@ -1751,19 +1820,21 @@ type InstallOptions struct {
 // is no verbosity concept in core.
 //
 //   - Warnings holds diagnostics doInstall/batchInstallMods printed
-//     unconditionally: install.before_all/before_each (primary only, when
-//     forced), a failed SaveFileChecksum (note: unconditional, NOT
-//     --verbose-gated - doInstall prints this one to stderr regardless),
-//     and install.after_each/after_all hook failures. Callers should print
-//     each entry to stderr, unconditionally, e.g.
+//     unconditionally: install.before_all/before_each (STRICT-path primary
+//     only, when forced), a failed SaveFileChecksum (note: unconditional,
+//     NOT --verbose-gated - doInstall/batchInstallMods print this one to
+//     stderr regardless), and install.after_each/after_all hook failures.
+//     Callers should print each entry to stderr, unconditionally, e.g.
 //     `fmt.Fprintf(os.Stderr, "Warning: %v\n", w)`.
-//   - Notes holds diagnostics doInstall only printed under --verbose: a
-//     failed profile-create, a failed UpsertMod, a failed
-//     reinstall-cache-transaction commit, and a failed old-cache cleanup
-//     after a version upgrade - each already carrying its historical
-//     "Warning: " prefix baked into the text, matching doInstall's exact
-//     wording; a caller wanting byte-identical output should print each
-//     entry to stdout ONLY under --verbose, e.g. `fmt.Printf("  %s\n", n)`.
+//   - Notes holds diagnostics doInstall/batchInstallMods only printed under
+//     --verbose: a failed profile-create, a failed UpsertMod, a failed
+//     reinstall-cache-transaction commit, a failed old-cache cleanup after
+//     a version upgrade (all STRICT-path), or - BATCH path only - a failed
+//     Uninstall/cache-Delete while removing a mod's previous installation
+//   - each already carrying its historical "Warning: " prefix baked into
+//     the text, matching the pre-extraction CLI's exact wording; a caller
+//     wanting byte-identical output should print each entry to stdout ONLY
+//     under --verbose, e.g. `fmt.Printf("  %s\n", n)`.
 //
 // Every entry in both slices is ALSO reported via the progress callback at
 // the exact point it is appended (InstallBeforeAllForced/
@@ -1773,14 +1844,34 @@ type InstallOptions struct {
 // On error, the returned result carries any diagnostics/counts accumulated
 // before the failure; callers should surface them alongside the error.
 type InstallResult struct {
-	Installed []string // display names in install order, dependencies first (skip-and-continue on failure), then the primary (fatal on failure)
-	Skipped   []string // "<name>: <reason>" - DEPENDENCIES only; the primary is never in this slice - a primary failure returns an error instead (see InstallOptions' Force doc comment)
+	// Installed holds display names in install order: dependencies first,
+	// then the primary. In the STRICT (no-deps) path, a primary failure is
+	// FATAL - it returns an error instead of appending here. In the BATCH
+	// (Dependencies-present) path, the primary follows the exact same
+	// skip-and-continue semantics as every dependency (Fix wave 1 - see
+	// task-2-report.md's "Fix wave 1" entry) - a primary failure there
+	// populates Failed/Skipped below instead of returning an error.
+	Installed []string
+	// Skipped holds "<name>: <reason>" entries for any mod that failed in
+	// the BATCH (Dependencies-present) path - dependency OR primary alike
+	// (Fix wave 1 restored the primary's participation; see InstallOptions'
+	// Force doc comment). Always empty in the STRICT (no-deps) path, since
+	// a primary failure there returns an error instead.
+	Skipped []string
+	// Failed holds JUST the display names (no reason - see Skipped for
+	// that) of every BATCH-path mod that failed, dependency or primary
+	// alike, in the SAME order Skipped uses - mirrors batchInstallMods' own
+	// `failed []string` accumulator, which the pre-extraction CLI's
+	// restored terminal "--- Summary ---\nInstalled: %d\nFailed: %d (%s)\n"
+	// block joins verbatim (task-2-report.md's Fix wave 1). Always empty
+	// in the STRICT (no-deps) path.
+	Failed []string
 
-	// FilesDeployed is the number of files extracted for the PRIMARY mod
-	// across all of plan.Files - mirrors doInstall's totalFileCount / the
-	// pre-extraction CLI's final "Files deployed: %d" line. Dependencies'
-	// own extracted-file counts are not tracked here (batchInstallMods
-	// never summed them either).
+	// FilesDeployed is the number of files extracted for the STRICT path's
+	// PRIMARY mod across all of plan.Files - mirrors doInstall's
+	// totalFileCount / the pre-extraction CLI's final "Files deployed: %d"
+	// line. Always 0 in the BATCH path (batchInstallMods' terminal summary
+	// never printed a file count, only Installed/Failed - see Failed).
 	FilesDeployed int
 
 	Warnings []string
@@ -1902,19 +1993,35 @@ func (s *reinstallCacheTransaction) Commit() error {
 	return err
 }
 
-// ApplyInstall executes a plan produced by PlanInstall: dependencies (in
-// plan order) install first, then the primary (plan.Mod) - see InstallPlan's
-// doc comment for how ApplyInstall unifies the pre-extraction CLI's two
-// divergent execution engines (doInstall's own single-mod code vs.
-// batchInstallMods, which is what doInstall actually delegated dependency
-// installation to) behind this one entry point; DeployPhase's Install*
-// constants document the exact per-mod mechanics and failure semantics.
+// ApplyInstall executes a plan produced by PlanInstall, gated on
+// len(plan.Dependencies) - see the DeployPhase Install* constants' doc
+// comments (starting at InstallBeforeAllForced) for the full restored-
+// fidelity design this reproduces, and task-2-report.md's "Fix wave 1
+// (dep-path fidelity)" entry for the review trace that drove it:
 //
-// install.before_all runs once, before any mod is touched; install.after_all
-// runs once, only if every step through the primary's own install succeeded
-// (matching doInstall - an early return, e.g. the primary's own fatal
-// before_each/download/deploy/save failure, skips after_all entirely, same
-// as the pre-extraction single-mod code path). progress may be nil.
+//   - Empty: the STRICT (no-deps) path - only plan.Mod installs, via
+//     applyInstallPrimary's doInstall-derived single-mod mechanics,
+//     unchanged since Task 2 (Force-gated hooks, Install-or-Replace,
+//     SaveFileChecksum; interactive/--file selection and the blocking
+//     conflict prompt are the CALLER's job, applied to plan.Files/
+//     plan.Conflicts before this is ever called).
+//   - Non-empty: the BATCH path - plan.Dependencies (in plan order) THEN
+//     plan.Mod all install via applyInstallBatchMod, IDENTICALLY, matching
+//     batchInstallMods' own "every mod in the list is treated the same"
+//     design byte-for-byte - the primary is NOT special-cased here at all
+//     (no Replace, no interactive selection, no blocking conflict prompt -
+//     see applyInstallBatchMod's own doc comment).
+//
+// install.before_all runs once, before any mod is touched, in EITHER path
+// (matching both doInstall's own single-mod code and batchInstallMods,
+// which each had their own, functionally-identical, Force-gated
+// install.before_all call). install.after_all runs once, at the very end:
+// in the STRICT path, only if the primary's own install fully succeeded (an
+// early return skips it entirely, matching doInstall's single-mod code); in
+// the BATCH path, unconditionally once the loop finishes, since no per-mod
+// failure there is ever fatal (matching batchInstallMods, which always
+// reaches its own install.after_all call regardless of how many mods in
+// its list failed). progress may be nil.
 //
 // On error, the returned result carries any diagnostics/Installed entries
 // accumulated before the failure - callers should surface them alongside the
@@ -1944,36 +2051,43 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	linkMethod := s.GetGameLinkMethod(game)
 	pm := s.NewProfileManager()
 
-	// deferredWarnings holds every install.after_each (dependencies in loop
-	// order, then the primary) and the final install.after_all warning,
-	// flushed together at the very end - mirroring DeployProfile/
-	// purgeForDeploy's deferredWarnings pattern (itself modeled on
-	// batchInstallMods' own printHookWarnings, which accumulated hook
-	// errors across the WHOLE loop - deps and primary alike - and printed
-	// them together only after everything else had already happened).
+	// deferredWarnings holds every install.after_each (BATCH path: every mod
+	// in loop order, primary included; STRICT path: the primary's own) and
+	// the final install.after_all warning, flushed together at the very end
+	// - mirroring DeployProfile/purgeForDeploy's deferredWarnings pattern
+	// (itself modeled on batchInstallMods' own printHookWarnings, which
+	// accumulated hook errors across the WHOLE loop - deps and primary
+	// alike - and printed them together only after everything else had
+	// already happened).
 	var deferredWarnings []DeployProgress
 
-	total := len(plan.Dependencies)
-	for idx := range plan.Dependencies {
-		if err := ctx.Err(); err != nil {
+	if len(plan.Dependencies) > 0 {
+		// --- BATCH path: every mod, primary included, treated identically. ---
+		mods := make([]*domain.Mod, 0, len(plan.Dependencies)+1)
+		for i := range plan.Dependencies {
+			mods = append(mods, &plan.Dependencies[i])
+		}
+		primary := plan.Mod // local, addressable copy - distinct from plan.Mod
+		mods = append(mods, &primary)
+
+		total := len(mods)
+		for idx, mod := range mods {
+			if err := ctx.Err(); err != nil {
+				return result, err
+			}
+			if warn := s.applyInstallBatchMod(ctx, game, plan, mod, idx, total, linkMethod, pm, opts, result, emit); warn != nil {
+				deferredWarnings = append(deferredWarnings, *warn)
+			}
+		}
+	} else {
+		// --- STRICT path: only the primary, doInstall's own mechanics. ---
+		afterEachWarning, err := s.applyInstallPrimary(ctx, game, plan, linkMethod, pm, opts, result, emit)
+		if err != nil {
 			return result, err
 		}
-		dep := plan.Dependencies[idx]
-		if warn := s.applyInstallDependency(ctx, game, plan, &dep, idx, total, linkMethod, pm, opts, result, emit); warn != nil {
-			deferredWarnings = append(deferredWarnings, *warn)
+		if afterEachWarning != nil {
+			deferredWarnings = append(deferredWarnings, *afterEachWarning)
 		}
-	}
-
-	if err := ctx.Err(); err != nil {
-		return result, err
-	}
-
-	afterEachWarning, err := s.applyInstallPrimary(ctx, game, plan, linkMethod, pm, opts, result, emit)
-	if err != nil {
-		return result, err
-	}
-	if afterEachWarning != nil {
-		deferredWarnings = append(deferredWarnings, *afterEachWarning)
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
@@ -1990,21 +2104,31 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	return result, nil
 }
 
-// applyInstallDependency installs one entry of plan.Dependencies, matching
-// cmd/lmm/install.go's batchInstallMods per-mod loop exactly (the
-// pre-extraction CLI's actual dependency-installation mechanism - see
-// ApplyInstall's doc comment): any failure (hook, fetch, files, download,
-// conflict aside, deploy, or save) skips this dependency and continues -
-// never Force-gated, never fatal to the overall ApplyInstall call. Returns
+// applyInstallBatchMod installs one mod from the BATCH path's combined
+// [Dependencies..., primary] list - a dependency OR the primary, treated
+// COMPLETELY identically - matching cmd/lmm/install.go's pre-extraction
+// batchInstallMods per-mod loop byte-for-byte (Fix wave 1 restored the
+// primary's participation in this exact mechanism; Task 2's original design
+// special-cased the primary onto applyInstallPrimary's strict mechanics even
+// when Dependencies was non-empty - see task-2-report.md's "Fix wave 1"
+// entry for the review trace this fixes). Any failure (hook, fetch, files,
+// download, conflict aside, deploy, or save) skips this mod and continues -
+// never Force-gated, never fatal to the overall ApplyInstall call, primary
+// included. No Replace/reinstall-cache-transaction (an existing same-key
+// install is uninstalled+cache-deleted first, then a fresh Install always),
+// no interactive/--file file selection (always the filtered list's
+// primary-or-first file, re-resolved here - plan.Files is never consulted),
+// a non-blocking inline conflict warning (never a blocking prompt). Returns
 // the install.after_each warning event to defer (nil if none), matching
 // ApplyInstall's deferredWarnings convention.
-func (s *Service) applyInstallDependency(ctx context.Context, game *domain.Game, plan *InstallPlan, dep *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress)) *DeployProgress {
-	base := DeployProgress{Index: idx + 1, Total: total, ModName: dep.Name, ModID: dep.ID, SourceID: dep.SourceID}
-	skip := func(reason string) {
+func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress)) *DeployProgress {
+	base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name, ModVersion: mod.Version, ModID: mod.ID, SourceID: mod.SourceID}
+	skip := func(label, reason string) {
 		evt := base
-		evt.Phase, evt.Detail = InstallDepSkipped, reason
+		evt.Phase, evt.Detail = InstallDepSkipped, fmt.Sprintf("%s: %s", label, reason)
 		emit(evt)
-		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", dep.Name, reason))
+		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
+		result.Failed = append(result.Failed, mod.Name)
 	}
 
 	installing := base
@@ -2012,39 +2136,59 @@ func (s *Service) applyInstallDependency(ctx context.Context, game *domain.Game,
 	emit(installing)
 
 	hookCtx := opts.HookContext
-	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = dep.ID, dep.Name, dep.Version
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
-		skip(fmt.Sprintf("install.before_each hook failed: %v", err))
+		skip("Skipped", fmt.Sprintf("install.before_each hook failed: %v", err))
 		return nil
 	}
 
 	installer := s.GetInstaller(game)
 
-	// Defensive parity with batchInstallMods, which always re-checks
-	// (rather than trusting its caller) - in practice unreachable via
-	// PlanInstall's own contract, which never lists an already-installed
-	// mod in Dependencies.
-	if existing, err := s.GetInstalledMod(dep.SourceID, dep.ID, game.ID, plan.Profile); err == nil {
-		_ = installer.Uninstall(ctx, game, &existing.Mod, plan.Profile)                            //nolint:errcheck // best-effort, matching batchInstallMods
-		_ = s.GetGameCache(game).Delete(game.ID, existing.SourceID, existing.ID, existing.Version) //nolint:errcheck // best-effort, matching batchInstallMods
+	// mod.SourceID (NOT plan.SourceID) is used for every source call below,
+	// matching batchInstallMods' own `sourceID := mod.SourceID` exactly -
+	// this only ever differs from plan.SourceID in the SourceLocal edge
+	// case InstallPlan.Dependencies' doc comment already documents as
+	// unreachable via any registered source in practice.
+	if existing, err := s.GetInstalledMod(mod.SourceID, mod.ID, game.ID, plan.Profile); err == nil && existing != nil {
+		reinstalling := base
+		reinstalling.Phase = InstallDepReinstalling
+		emit(reinstalling)
+		if err := installer.Uninstall(ctx, game, &existing.Mod, plan.Profile); err != nil {
+			msg := fmt.Sprintf("Warning: could not remove old files: %v", err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = InstallNote, msg
+			emit(evt)
+		}
+		if err := s.GetGameCache(game).Delete(game.ID, existing.SourceID, existing.ID, existing.Version); err != nil {
+			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = InstallNote, msg
+			emit(evt)
+		}
 	}
 
-	files, err := s.GetModFiles(ctx, plan.SourceID, dep)
+	files, err := s.GetModFiles(ctx, mod.SourceID, mod)
 	if err != nil {
-		skip(fmt.Sprintf("failed to get mod files: %v", err))
+		skip("Error", fmt.Sprintf("failed to get mod files: %v", err))
 		return nil
 	}
 	files = filterAndSortInstallFiles(files, plan.ShowArchived)
 	if len(files) == 0 {
-		skip("no downloadable files available")
+		skip("Error", "no downloadable files available")
 		return nil
 	}
 	selected, _, err := selectDeployFiles(files, nil)
 	if err != nil {
-		skip(err.Error())
+		skip("Error", err.Error())
 		return nil
 	}
 	file := selected[0]
+
+	fileEvt := base
+	fileEvt.Phase, fileEvt.File = InstallDepFileSelected, file
+	emit(fileEvt)
 
 	progressFn := func(p DownloadProgress) {
 		if p.TotalBytes > 0 {
@@ -2053,27 +2197,42 @@ func (s *Service) applyInstallDependency(ctx context.Context, game *domain.Game,
 			emit(dl)
 		}
 	}
-	downloadResult, err := s.DownloadMod(ctx, plan.SourceID, game, dep, file, progressFn)
+	downloadResult, err := s.DownloadMod(ctx, mod.SourceID, game, mod, file, progressFn)
+
+	// Unconditional (success OR failure alike), mirroring batchInstallMods'
+	// own `fmt.Println()` immediately after the download call returns -
+	// see InstallDepDownloadDone's doc comment for why this precedes the
+	// failure branch's own InstallDepSkipped event.
+	done := base
+	done.Phase = InstallDepDownloadDone
+	emit(done)
+
 	if err != nil {
-		skip(fmt.Sprintf("download failed: %v", err))
+		skip("Error", fmt.Sprintf("download failed: %v", err))
 		return nil
 	}
 
+	if !opts.SkipVerify && downloadResult.Checksum != "" {
+		evt := base
+		evt.Phase, evt.Detail = InstallChecksumComputed, downloadResult.Checksum
+		emit(evt)
+	}
+
 	if !opts.Force {
-		if conflicts, err := installer.GetConflicts(ctx, game, dep, plan.Profile); err == nil && len(conflicts) > 0 {
+		if conflicts, err := installer.GetConflicts(ctx, game, mod, plan.Profile); err == nil && len(conflicts) > 0 {
 			evt := base
 			evt.Phase, evt.Detail = InstallDepConflictWarning, fmt.Sprintf("%d file conflict(s) - will overwrite", len(conflicts))
 			emit(evt)
 		}
 	}
 
-	if err := installer.Install(ctx, game, dep, plan.Profile); err != nil {
-		skip(fmt.Sprintf("deployment failed: %v", err))
+	if err := installer.Install(ctx, game, mod, plan.Profile); err != nil {
+		skip("Error", fmt.Sprintf("deployment failed: %v", err))
 		return nil
 	}
 
 	installedMod := &domain.InstalledMod{
-		Mod:          *dep,
+		Mod:          *mod,
 		ProfileName:  plan.Profile,
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
@@ -2083,13 +2242,13 @@ func (s *Service) applyInstallDependency(ctx context.Context, game *domain.Game,
 	}
 	installedMod.Mod.GameID = game.ID
 	if err := s.SaveInstalledMod(installedMod); err != nil {
-		skip(fmt.Sprintf("failed to save mod: %v", err))
+		skip("Error", fmt.Sprintf("failed to save mod: %v", err))
 		return nil
 	}
 
 	if !opts.SkipVerify && downloadResult.Checksum != "" {
-		if err := s.SaveFileChecksum(dep.SourceID, dep.ID, game.ID, plan.Profile, file.ID, downloadResult.Checksum); err != nil {
-			msg := fmt.Sprintf("failed to save checksum for file %s: %v", file.ID, err)
+		if err := s.SaveFileChecksum(mod.SourceID, mod.ID, game.ID, plan.Profile, file.ID, downloadResult.Checksum); err != nil {
+			msg := fmt.Sprintf("failed to save checksum: %v", err)
 			result.Warnings = append(result.Warnings, msg)
 			evt := base
 			evt.Phase, evt.Detail = InstallWarning, msg
@@ -2104,7 +2263,7 @@ func (s *Service) applyInstallDependency(ctx context.Context, game *domain.Game,
 		evt.Phase, evt.Detail = InstallNote, msg
 		emit(evt)
 	}
-	modRef := domain.ModReference{SourceID: dep.SourceID, ModID: dep.ID, Version: dep.Version, FileIDs: []string{file.ID}}
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: []string{file.ID}}
 	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
@@ -2113,13 +2272,13 @@ func (s *Service) applyInstallDependency(ctx context.Context, game *domain.Game,
 		emit(evt)
 	}
 
-	result.Installed = append(result.Installed, dep.Name)
+	result.Installed = append(result.Installed, mod.Name)
 	installedEvt := base
-	installedEvt.Phase = InstallDepInstalled
+	installedEvt.Phase, installedEvt.FilesExtracted = InstallDepInstalled, downloadResult.FilesExtracted
 	emit(installedEvt)
 
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
-		msg := fmt.Sprintf("install.after_each hook failed for %s: %v", dep.ID, err)
+		msg := fmt.Sprintf("install.after_each hook failed for %s: %v", mod.ID, err)
 		result.Warnings = append(result.Warnings, msg)
 		evt := base
 		evt.Phase, evt.Detail = InstallWarning, msg
@@ -2141,12 +2300,17 @@ type fileChecksum struct {
 // applyInstallPrimary installs plan.Mod - doInstall's OWN single-mod
 // mechanics (Force-gated before_each, Install-or-Replace incl. the
 // reinstall-cache-transaction for a same-version reinstall,
-// SaveFileChecksum, --skip-verify), applied here regardless of whether
-// Dependencies was non-empty (see ApplyInstall's doc comment for why this
-// deliberately diverges from batchInstallMods' "treat the primary just like
-// any other mod in the list" behavior). Returns the install.after_each
-// warning event to defer (nil if none). A non-nil error is always fatal to
-// ApplyInstall as a whole, matching doInstall's own early returns.
+// SaveFileChecksum, --skip-verify). ONLY ever called from ApplyInstall's
+// STRICT (no-deps) path - see ApplyInstall's doc comment - matching
+// doInstall's own early return: whenever Dependencies was non-empty,
+// pre-extraction doInstall delegated the WHOLE list, target included, to
+// batchInstallMods instead (applyInstallBatchMod, in the BATCH path), and
+// this function never ran at all for that mod (Fix wave 1 - see
+// task-2-report.md's "Fix wave 1" entry - restored this; Task 2's original
+// design incorrectly ran this unconditionally, primary included, even when
+// Dependencies was non-empty). Returns the install.after_each warning event
+// to defer (nil if none). A non-nil error is always fatal to ApplyInstall
+// as a whole, matching doInstall's own early returns.
 func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, plan *InstallPlan, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress)) (*DeployProgress, error) {
 	mod := plan.Mod // local, addressable copy - distinct from plan.Mod
 	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
