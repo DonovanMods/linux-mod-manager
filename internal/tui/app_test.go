@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -195,6 +197,60 @@ func TestScreenViewsUseAvailableWidth(t *testing.T) {
 		model.screen = screen
 		require.Equal(t, model.availableWidth(), lipgloss.Width(model.screenView()), screen.String())
 	}
+}
+
+// TestModRowColumnsAlignRegardlessOfNameLength covers Finding 2 (smoke
+// test): a mod name longer than its allotted space used to overflow the
+// fixed-width name column unchecked, shifting every subsequent column to
+// the right so rows didn't line up. modRow must give the name column room
+// proportional to the panel width and hard-truncate any name that still
+// overflows, so the Status column starts at the same offset regardless of
+// name length. Run at both a common 80-column size and the wider ~160
+// columns the smoke test flagged as the normal case.
+func TestModRowColumnsAlignRegardlessOfNameLength(t *testing.T) {
+	t.Parallel()
+
+	sizes := []struct{ width, height int }{{80, 24}, {160, 40}}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			short := ModItem{Name: "Short", Status: "enabled", Author: "Alice", Version: "1.0.0"}
+			long := ModItem{Name: strings.Repeat("VeryLongModName", 6), Status: "disabled", Author: "Bob", Version: "2.1.0"}
+
+			shortRow := model.modRow(0, model.availableWidth(), short)
+			longRow := model.modRow(1, model.availableWidth(), long)
+
+			shortIdx := strings.Index(shortRow, "enabled")
+			longIdx := strings.Index(longRow, "disabled")
+			require.Greater(t, shortIdx, 0, "status column must be present in the short-name row")
+			require.Greater(t, longIdx, 0, "status column must be present in the long-name row")
+			require.Equal(t, shortIdx, longIdx,
+				"the Status column must start at the same offset regardless of name length")
+
+			require.LessOrEqual(t, lipgloss.Width(longRow), model.availableWidth(),
+				"an overlong name must be hard-truncated, never overflow the row")
+		})
+	}
+}
+
+// TestModRowNameColumnGrowsWithPanelWidth proves the name column is
+// proportional to the panel's width (Finding 2) rather than a small fixed
+// column count: a wider terminal must give the whole row - and so the name
+// column - more room, not just a marginally bigger fixed number.
+func TestModRowNameColumnGrowsWithPanelWidth(t *testing.T) {
+	t.Parallel()
+
+	narrow := sizedPrototypeModel(t, "wizardry", 80, 24)
+	wide := sizedPrototypeModel(t, "wizardry", 160, 40)
+	mod := ModItem{Name: "X", Status: "enabled", Author: "Alice", Version: "1.0.0"}
+
+	narrowRow := narrow.modRow(0, narrow.availableWidth(), mod)
+	wideRow := wide.modRow(0, wide.availableWidth(), mod)
+
+	require.Greater(t, lipgloss.Width(wideRow), lipgloss.Width(narrowRow),
+		"a wider terminal must give the name column more room, proportional to the panel width")
 }
 
 func TestDashboardLayoutsDoNotOverflowNarrowTerminals(t *testing.T) {
