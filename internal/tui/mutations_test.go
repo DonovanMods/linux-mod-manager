@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -523,14 +524,21 @@ func TestSwitchPlanAlreadyActiveDefensive(t *testing.T) {
 	require.False(t, m.action.statusIsError)
 }
 
-// TestSwitchPlanNeedsDownloadsRefusesNoModal covers the core-fake half of
-// the NeedsDownloads refusal: the exact provider-contract message from
-// errProfileNeedsDownloads must reach the status line, in error styling,
-// with no modal and no ApplyProfileSwitch call.
-func TestSwitchPlanNeedsDownloadsRefusesNoModal(t *testing.T) {
+// TestSwitchPlanNeedsDownloadsOpensModalAndAppliesOnConfirm covers the
+// Phase 5b Task 4 switch-refusal LIFT at the Model level: a plan with
+// NeedsDownloads entries used to short-circuit to a no-modal refusal status
+// (see this test's prior form, formerly named
+// TestSwitchPlanNeedsDownloadsRefusesNoModal, in this file's git history);
+// it now opens the SAME confirmation modal as any other plan, and
+// confirming it calls ApplyProfileSwitch with a progress callback (the
+// pump), exactly like the NoChanges/Enable-Disable cases below.
+func TestSwitchPlanNeedsDownloadsOpensModalAndAppliesOnConfirm(t *testing.T) {
 	t.Parallel()
 
-	rec := &recordingActions{PlanView: SwitchPlanView{From: "survival", To: "vanilla-plus", NeedsDownloads: []string{"nexusmods:foo v1.0"}}}
+	rec := &recordingActions{
+		PlanView:     SwitchPlanView{From: "survival", To: "vanilla-plus", NeedsDownloads: []string{"nexusmods:foo v1.0"}},
+		ApplyOutcome: ActionOutcome{Message: `Switched to "vanilla-plus"`},
+	}
 	model := modelWithActions(t, rec)
 	model.screen = ScreenProfiles
 	model.selected[ScreenProfiles] = 1
@@ -542,10 +550,15 @@ func TestSwitchPlanNeedsDownloadsRefusesNoModal(t *testing.T) {
 	updated, cmd2 := model.Update(msg)
 	model = updated.(Model)
 	require.Nil(t, cmd2)
-	require.Nil(t, model.action.pending, "must not open a modal")
-	require.True(t, model.action.statusIsError)
-	require.Equal(t, errProfileNeedsDownloads.Error(), model.action.status)
-	require.Empty(t, rec.ApplyCalls, "must never call ApplyProfileSwitch")
+	require.NotNil(t, model.action.pending, "a NeedsDownloads plan must now open the confirmation modal like any other")
+	require.Equal(t, actionSwitch, model.action.pending.kind)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+	require.Equal(t, []string{"vanilla-plus"}, rec.ApplyCalls, "confirming must call ApplyProfileSwitch")
 }
 
 // TestSwitchPlanNoChangesShowsSetAsDefaultModal covers the NoChanges
@@ -608,11 +621,14 @@ func TestSwitchConfirmCallsApplyProfileSwitchWithTargetName(t *testing.T) {
 	require.Equal(t, `Switched to "vanilla-plus"`, model.action.status)
 }
 
-// TestPrototypeSwitchPlanNeedsDownloadsCannedScenario exercises the
-// mandated prototype demo data addition end to end: a canned profile whose
-// mod list references an ID absent from InstalledMods must drive the exact
-// same refusal path as the core fake above, through the REAL
-// prototypeProvider (not recordingActions).
+// TestPrototypeSwitchPlanNeedsDownloadsCannedScenario exercises the Phase
+// 5b Task 4 switch-refusal LIFT end to end through the REAL
+// prototypeProvider (not recordingActions): a canned profile whose mod list
+// references an ID absent from InstalledMods used to drive a no-modal
+// refusal (see this test's prior form, in this file's git history); it now
+// opens the confirmation modal like any other plan, and confirming it
+// actually completes the switch (prototypeProvider.ApplyProfileSwitch's own
+// working download demo - actions_provider.go).
 func TestPrototypeSwitchPlanNeedsDownloadsCannedScenario(t *testing.T) {
 	t.Parallel()
 
@@ -641,9 +657,18 @@ func TestPrototypeSwitchPlanNeedsDownloadsCannedScenario(t *testing.T) {
 	updated, cmd2 := model.Update(msg)
 	model = updated.(Model)
 	require.Nil(t, cmd2)
-	require.Nil(t, model.action.pending, "must not open a modal")
-	require.True(t, model.action.statusIsError)
-	require.Equal(t, errProfileNeedsDownloads.Error(), model.action.status)
+	require.NotNil(t, model.action.pending, "a NeedsDownloads plan must now open the confirmation modal like any other")
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, _ = model.Update(doneMsg)
+	model = updated.(Model)
+	require.False(t, model.action.statusIsError)
+	require.Equal(t, fmt.Sprintf("Switched to %q", prototype.NeedsDownloadProfileName), model.action.status)
 }
 
 // --- Profile rebind after switch (C1) ---

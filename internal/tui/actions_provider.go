@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
@@ -107,11 +106,29 @@ type UpdatesView struct {
 	Warnings []string
 }
 
-// errProfileNeedsDownloads is ApplyProfileSwitch's exact refusal error (see
-// its doc comment on coreProvider and the prototype implementation below):
-// 5a's TUI has no download/install path yet, so a plan that would require
-// one is refused outright rather than silently doing less than the CLI.
-var errProfileNeedsDownloads = errors.New("profile needs downloads — use 'lmm profile switch' until TUI install ships")
+// installSizeLabel renders bytes as InstallPlanView.SizeLabel's documented
+// "12.3 MiB" format, or "size unknown" when bytes isn't a known positive
+// size - shared by coreProvider (from InstallPlan.TotalDownloadBytes, which
+// is -1 when any selected file's size is unreported) and prototypeProvider
+// (from a canned Mod.SizeBytes, which is 0 for every mod that doesn't
+// declare one). Only a positive value is ever treated as known, matching
+// the same convention DeployProgress's own Downloaded/TotalBytes fields
+// document.
+func installSizeLabel(bytes int64) string {
+	if bytes <= 0 {
+		return "size unknown"
+	}
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
 
 // mergeDiagnostics composes an ActionOutcome.Warnings slice from a flow
 // result's own Warnings and Notes fields, in that order - the contract
@@ -287,17 +304,53 @@ func (p *prototypeProvider) PlanProfileSwitch(_ context.Context, profileName str
 	}, nil
 }
 
-// ApplyProfileSwitch re-plans and applies, refusing (mirroring coreProvider)
-// if the fresh plan has NeedsDownloads entries - reachable via the
-// prototype's own planner for prototype.NeedsDownloadProfileName (see this
-// file's package doc comment).
-//
-// TODO(Phase 5b Task 4, part B): progress is accepted (interface parity with
-// the pump - Part A) but not yet emitted, and the NeedsDownloads refusal
-// below is not yet lifted; both land together in this task's second
-// RED/GREEN pair, which replaces this refusal with a working download demo.
+// fakeProgressTicks emits the classic "0/50/100%" fake progress sequence
+// (the brief's own wording for both ApplyInstall and ApplyUpdate) prefixed
+// with label, if progress is non-nil - shared by every prototypeProvider
+// mutation that streams progress (ApplyProfileSwitch's download loop,
+// ApplyInstall, ApplyUpdate).
+func fakeProgressTicks(progress func(ActionProgress), label string) {
+	if progress == nil {
+		return
+	}
+	for _, pct := range []float64{0, 50, 100} {
+		progress(ActionProgress{Line: fmt.Sprintf("%s: %.0f%%", label, pct), Percent: pct})
+	}
+}
+
+// materializeNeedsDownloads adds a freshly-"installed" (disabled, so the
+// alternating Enable/Disable pass below decides its fate) InstalledMods
+// entry for every one of profileName's referenced mod IDs not already
+// present - simulating the download ApplyProfileSwitch just fake-streamed
+// progress for. All canned mods use source "nexusmods" (see needsDownloads'
+// own doc comment on why that's hardcoded here).
+func (p *prototypeProvider) materializeNeedsDownloads(profileName string) {
+	target, ok := p.findProfile(profileName)
+	if !ok {
+		return
+	}
+	for _, id := range target.Mods {
+		if p.findInstalledIndex("nexusmods", id) >= 0 {
+			continue
+		}
+		p.data.InstalledMods = append(p.data.InstalledMods, prototype.Mod{
+			ID: id, Name: id, Source: "nexusmods", Version: "1.0", Status: "disabled",
+		})
+		p.data.Stats.Installed++
+	}
+}
+
+// ApplyProfileSwitch re-plans and applies. A plan with NeedsDownloads
+// entries - reachable via the prototype's own planner for
+// prototype.NeedsDownloadProfileName (see this file's package doc comment)
+// - USED to refuse outright (5a's TUI had no install/download path yet);
+// Phase 5b Task 4 lifts that refusal into a WORKING demo instead: every
+// missing mod streams a fake 0/50/100% download tick (fakeProgressTicks),
+// is materialized into InstalledMods (materializeNeedsDownloads), and the
+// plan is then RECOMPUTED - mirroring coreProvider's own re-plan-at-apply
+// precedent - so the now-satisfied plan's Enable/Disable buckets (if any)
+// apply exactly like any other switch, below.
 func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName string, progress func(ActionProgress)) (ActionOutcome, error) {
-	_ = progress
 	view, err := p.PlanProfileSwitch(ctx, profileName)
 	if err != nil {
 		return ActionOutcome{}, err
@@ -305,8 +358,17 @@ func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName 
 	if view.AlreadyActive {
 		return ActionOutcome{Message: fmt.Sprintf("Already on profile %q", profileName)}, nil
 	}
+
 	if len(view.NeedsDownloads) > 0 {
-		return ActionOutcome{}, errProfileNeedsDownloads
+		for _, ref := range view.NeedsDownloads {
+			fakeProgressTicks(progress, "Switching: downloading "+ref)
+		}
+		p.materializeNeedsDownloads(profileName)
+
+		view, err = p.PlanProfileSwitch(ctx, profileName)
+		if err != nil {
+			return ActionOutcome{}, err
+		}
 	}
 
 	enable := make(map[string]bool, len(view.Enable))
@@ -334,22 +396,112 @@ func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName 
 	return ActionOutcome{Message: fmt.Sprintf("Switched to %q", profileName)}, nil
 }
 
-// TODO(Phase 5b Task 4, part B RED): stubs only - fleshed out in the GREEN
-// commit alongside coreProvider's own real implementations and the
-// NeedsDownloads refusal lift above.
-
-func (p *prototypeProvider) PlanInstall(_ context.Context, _ ModItem) (InstallPlanView, error) {
-	return InstallPlanView{}, errors.New("not implemented")
+// findSearchResult returns the index of the SearchResults entry matching
+// (sourceID, id), or -1 if none matches - the PlanInstall/ApplyInstall
+// analog of findInstalledIndex.
+func (p *prototypeProvider) findSearchResult(sourceID, id string) int {
+	for i, mod := range p.data.SearchResults {
+		if mod.Source == sourceID && mod.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
-func (p *prototypeProvider) ApplyInstall(_ context.Context, _ ModItem, _ func(ActionProgress)) (ActionOutcome, error) {
-	return ActionOutcome{}, errors.New("not implemented")
+// PlanInstall computes a deterministic fake plan from item's canned
+// SearchResults entry: its own Dependencies/Conflicts/SizeBytes (see
+// prototype.Mod's doc comment - most canned mods leave these unset; a
+// handful deliberately carry one of each so --prototype mode can demo every
+// InstallPlanView field) plus a synthesized single file. Reinstall reports
+// true if item is already installed - PlanInstall never invents a phantom
+// dependency/conflict beyond what's canned, mirroring
+// PlanProfileSwitch's own "never invent a phantom X" convention.
+func (p *prototypeProvider) PlanInstall(_ context.Context, item ModItem) (InstallPlanView, error) {
+	idx := p.findSearchResult(item.Source, item.ID)
+	if idx < 0 {
+		return InstallPlanView{}, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	mod := p.data.SearchResults[idx]
+
+	return InstallPlanView{
+		Name:         mod.Name,
+		Version:      mod.Version,
+		Source:       mod.Source,
+		Files:        []string{mod.Name + ".7z"},
+		Dependencies: mod.Dependencies,
+		Conflicts:    mod.Conflicts,
+		SizeLabel:    installSizeLabel(mod.SizeBytes),
+		Reinstall:    p.findInstalledIndex(item.Source, item.ID) >= 0,
+	}, nil
 }
 
+// ApplyInstall emits the brief's own "0/50/100%" fake progress sequence,
+// then mutates in-memory data so item shows installed in both Overview
+// (InstalledMods) and Search (SearchResults, which ModItem.Status also
+// derives from - see service.go's Search): a fresh InstalledMods row is
+// appended if item wasn't already installed (Reinstall case: just flips its
+// existing row's Status/Version), and the matching SearchResults entry's
+// own Status flips too so a repeated Search reflects it - both through the
+// SAME prototypeProvider instance, mirroring EnableMod/UninstallMod's own
+// "visible in a repeated read" contract.
+func (p *prototypeProvider) ApplyInstall(_ context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	idx := p.findSearchResult(item.Source, item.ID)
+	if idx < 0 {
+		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	mod := p.data.SearchResults[idx]
+
+	fakeProgressTicks(progress, fmt.Sprintf("Installing %s", mod.Name))
+
+	if installedIdx := p.findInstalledIndex(item.Source, item.ID); installedIdx >= 0 {
+		p.data.InstalledMods[installedIdx].Status = "installed"
+		p.data.InstalledMods[installedIdx].Version = mod.Version
+	} else {
+		installed := mod
+		installed.Status = "installed"
+		p.data.InstalledMods = append(p.data.InstalledMods, installed)
+		p.data.Stats.Installed++
+		p.data.Stats.Enabled++
+	}
+	p.data.SearchResults[idx].Status = "installed"
+
+	return ActionOutcome{Message: fmt.Sprintf("Installed %q", mod.Name)}, nil
+}
+
+// CheckUpdates returns the canned update set: every InstalledMods entry
+// with a non-empty AvailableVersion (see prototype.Mod's doc comment -
+// skyui is canned "auto", ussep "notify", giving at least one of each
+// policy for a future keybinding layer to consult, though UpdateItem itself
+// carries no policy field - see its doc comment).
 func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error) {
-	return UpdatesView{}, errors.New("not implemented")
+	var view UpdatesView
+	for _, mod := range p.data.InstalledMods {
+		if mod.AvailableVersion == "" {
+			continue
+		}
+		view.Updates = append(view.Updates, UpdateItem{
+			Source: mod.Source, ID: mod.ID, Name: mod.Name,
+			FromVersion: mod.Version, ToVersion: mod.AvailableVersion,
+		})
+	}
+	return view, nil
 }
 
-func (p *prototypeProvider) ApplyUpdate(_ context.Context, _ UpdateItem, _ func(ActionProgress)) (ActionOutcome, error) {
-	return ActionOutcome{}, errors.New("not implemented")
+// ApplyUpdate emits the brief's own fake progress sequence, then bumps the
+// matching InstalledMods entry's Version to u.ToVersion and clears its
+// AvailableVersion - so a repeated CheckUpdates no longer reports it,
+// mirroring a real update's "already up to date" outcome.
+func (p *prototypeProvider) ApplyUpdate(_ context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	idx := p.findInstalledIndex(u.Source, u.ID)
+	if idx < 0 {
+		return ActionOutcome{}, fmt.Errorf("mod not found: %s", u.ID)
+	}
+
+	fakeProgressTicks(progress, fmt.Sprintf("Updating %s", u.Name))
+
+	p.data.InstalledMods[idx].Version = u.ToVersion
+	p.data.InstalledMods[idx].AvailableVersion = ""
+	p.data.InstalledMods[idx].Status = "installed"
+
+	return ActionOutcome{Message: fmt.Sprintf("Updated %q to %s", u.Name, u.ToVersion)}, nil
 }

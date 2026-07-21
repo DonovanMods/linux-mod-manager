@@ -419,19 +419,16 @@ func (p *coreProvider) PlanProfileSwitch(ctx context.Context, profileName string
 }
 
 // ApplyProfileSwitch re-plans (PlanProfileSwitch is pure/cheap - see its doc
-// comment - so a fresh plan is always current) and, unless the fresh plan
-// needs downloads, applies it. A plan with NeedsDownloads entries is
-// refused outright (no mutation): 5a's TUI has no install/download path
-// yet (that ships in 5b), so honoring such a plan here would silently do
-// less than the CLI equivalent. AlreadyActive plans are reported without
-// calling ApplyProfileSwitch at all, mirroring cmd/lmm/profile.go's
-// doProfileSwitch, which returns before ever calling it in that case.
-// TODO(Phase 5b Task 4, part B): progress is accepted (interface parity
-// with the pump - Part A) but not yet threaded to svc.ApplyProfileSwitch,
-// and the NeedsDownloads refusal below is not yet lifted; both land
-// together in this task's second RED/GREEN pair.
+// comment - so a fresh plan is always current) and applies it, streaming
+// download/install progress for any ToInstall entries through progress
+// (nil-safe). Phase 5b Task 4 LIFTED the NeedsDownloads refusal 5a's TUI
+// used to enforce here (no install/download path existed yet then) - the
+// plan's ToInstall entries now download and install exactly like the CLI's
+// own doProfileSwitch would, via svc.ApplyProfileSwitch's own install loop.
+// AlreadyActive plans are reported without calling ApplyProfileSwitch at
+// all, mirroring cmd/lmm/profile.go's doProfileSwitch, which returns before
+// ever calling it in that case.
 func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName string, progress func(ActionProgress)) (ActionOutcome, error) {
-	_ = progress
 	plan, err := p.svc.PlanProfileSwitch(ctx, p.game, profileName)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("planning switch to %s: %w", profileName, err)
@@ -439,11 +436,8 @@ func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName strin
 	if plan.AlreadyActive {
 		return ActionOutcome{Message: fmt.Sprintf("Already on profile %q", profileName)}, nil
 	}
-	if len(plan.ToInstall) > 0 {
-		return ActionOutcome{}, errProfileNeedsDownloads
-	}
 
-	result, err := p.svc.ApplyProfileSwitch(ctx, p.game, plan, nil)
+	result, err := p.svc.ApplyProfileSwitch(ctx, p.game, plan, deployProgressAdapter(progress, switchProgressLine))
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("switching to %s: %w", profileName, err)
 	}
@@ -453,24 +447,274 @@ func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName strin
 	}, nil
 }
 
-// TODO(Phase 5b Task 4, part B RED): stubs only - fleshed out in the GREEN
-// commit alongside prototypeProvider's own real implementations and the
-// NeedsDownloads refusal lift above.
-
-func (p *coreProvider) PlanInstall(_ context.Context, _ ModItem) (InstallPlanView, error) {
-	return InstallPlanView{}, errors.New("not implemented")
+// deployProgressAdapter wraps a nil-safe ActionProgress callback into a
+// func(core.DeployProgress), applying compose to translate each event into
+// a display line - nil in (progress nil) yields nil out, so
+// ApplyInstall/ApplyUpdate/ApplyProfileSwitch never allocate a wrapper
+// closure they'd have to call at every one of their own emit() sites just
+// to no-op.
+func deployProgressAdapter(progress func(ActionProgress), compose func(core.DeployProgress) (ActionProgress, bool)) func(core.DeployProgress) {
+	if progress == nil {
+		return nil
+	}
+	return func(p core.DeployProgress) {
+		if line, ok := compose(p); ok {
+			progress(line)
+		}
+	}
 }
 
-func (p *coreProvider) ApplyInstall(_ context.Context, _ ModItem, _ func(ActionProgress)) (ActionOutcome, error) {
-	return ActionOutcome{}, errors.New("not implemented")
+// switchProgressLine composes an ActionProgress from one core.DeployProgress
+// event during ApplyProfileSwitch's install loop (the only phases relevant
+// to a TUI status line - see core.DeployPhase's Switch* constants for the
+// full set this deliberately narrows).
+func switchProgressLine(p core.DeployProgress) (ActionProgress, bool) {
+	switch p.Phase {
+	case core.SwitchDownloading:
+		return ActionProgress{Line: fmt.Sprintf("Switching: downloading %s:%s %.0f%%", p.SourceID, p.ModID, p.Percent), Percent: p.Percent}, true
+	case core.SwitchInstallingMod:
+		return ActionProgress{Line: fmt.Sprintf("Switching: installing %s:%s (%d/%d)", p.SourceID, p.ModID, p.Index, p.Total), Percent: -1}, true
+	case core.SwitchEnabled, core.SwitchDisabled, core.SwitchInstalled:
+		return ActionProgress{Line: fmt.Sprintf("Switching: %s (%d/%d)", p.ModName, p.Index, p.Total), Percent: -1}, true
+	default:
+		return ActionProgress{}, false
+	}
 }
 
-func (p *coreProvider) CheckUpdates(_ context.Context) (UpdatesView, error) {
-	return UpdatesView{}, errors.New("not implemented")
+// installProgressLine composes an ActionProgress from one core.DeployProgress
+// event during ApplyInstall, for both the STRICT (primary-only) and BATCH
+// (dependency-inclusive) paths - see core.DeployPhase's Install* constants.
+// modName is the primary mod's display name, used for the STRICT-path-only
+// phases (InstallDownloading/InstallExtracting/InstallDeploying), which have
+// no ModName of their own since they're always about the primary.
+func installProgressLine(modName string, p core.DeployProgress) (ActionProgress, bool) {
+	switch p.Phase {
+	case core.InstallDownloading:
+		return ActionProgress{Line: fmt.Sprintf("Installing %s: %.0f%%", modName, p.Percent), Percent: p.Percent}, true
+	case core.InstallDepDownloading:
+		return ActionProgress{Line: fmt.Sprintf("Installing %s: %.0f%%", p.ModName, p.Percent), Percent: p.Percent}, true
+	case core.InstallExtracting:
+		return ActionProgress{Line: fmt.Sprintf("Installing %s: extracting", modName), Percent: -1}, true
+	case core.InstallDeploying:
+		return ActionProgress{Line: fmt.Sprintf("Installing %s: deploying", modName), Percent: -1}, true
+	case core.InstallDepInstalling:
+		return ActionProgress{Line: fmt.Sprintf("Installing %s (%d/%d)", p.ModName, p.Index, p.Total), Percent: -1}, true
+	default:
+		return ActionProgress{}, false
+	}
 }
 
-func (p *coreProvider) ApplyUpdate(_ context.Context, _ UpdateItem, _ func(ActionProgress)) (ActionOutcome, error) {
-	return ActionOutcome{}, errors.New("not implemented")
+// updateProgressLine composes an ActionProgress from one core.DeployProgress
+// event during ApplyUpdate - only UpdateDownloading carries anything worth
+// a status line (see core.DeployPhase's Update* constants).
+func updateProgressLine(modName string, p core.DeployProgress) (ActionProgress, bool) {
+	if p.Phase == core.UpdateDownloading {
+		return ActionProgress{Line: fmt.Sprintf("Updating %s: %.0f%%", modName, p.Percent), Percent: p.Percent}, true
+	}
+	return ActionProgress{}, false
+}
+
+// mapNetworkError classifies err from any network-touching ActionProvider
+// call (PlanInstall/ApplyInstall/CheckUpdates/ApplyUpdate) into the design's
+// §7 + auth error contract: source.ErrNotSupported becomes a clean one-line
+// capability-gap notice mirroring cmd/lmm/search.go's capabilityGapNotice
+// (adapted wording, naming sourceID and a CLI fallback); domain.ErrAuthRequired
+// becomes the auth-hint wording the TUI search path already renders
+// (app.go's searchAuthRequired case: "Authentication required for %s." /
+// "Run 'lmm auth login %s' in a shell, then search again.") - collapsed to
+// one line here (these are one-line status/error text, not a multi-line
+// view) and reworded "try again" since none of these four actions are a
+// search. Everything else is wrapped with %w under action, a short
+// present-participle label (e.g. "planning install of SkyUI").
+func mapNetworkError(action, sourceID string, err error) error {
+	switch {
+	case errors.Is(err, source.ErrNotSupported):
+		return fmt.Errorf("source %q does not support this; use 'lmm install --source %s --id <mod-id>' from a shell", sourceID, sourceID)
+	case errors.Is(err, domain.ErrAuthRequired):
+		return fmt.Errorf("Authentication required for %s. Run 'lmm auth login %s' in a shell, then try again.", sourceID, sourceID)
+	default:
+		return fmt.Errorf("%s: %w", action, err)
+	}
+}
+
+// fileDisplayLabel renders a domain.DownloadableFile as a short display
+// string for InstallPlanView.Files: its declared Name, falling back to
+// FileName - simpler than cmd/lmm/install.go's own displayFileLabel (which
+// internal/tui cannot import - see customSourceType's doc comment for why
+// CLI-only helpers are duplicated rather than shared), but sufficient for
+// the TUI's one-line-per-file plan display.
+func fileDisplayLabel(f domain.DownloadableFile) string {
+	if f.Name != "" {
+		return f.Name
+	}
+	return f.FileName
+}
+
+// installPlanView maps a core.InstallPlan to its TUI render model.
+// Conflicts render as "path (owned by <mod-id>)" (InstallPlanView.Conflicts'
+// documented format); MissingDependencies render as domain.ModKey(sourceID,
+// modID), mirroring cmd/lmm/install.go's showInstallPlan warning line.
+func installPlanView(plan *core.InstallPlan) InstallPlanView {
+	view := InstallPlanView{
+		Name:         plan.Mod.Name,
+		Version:      plan.Mod.Version,
+		Source:       plan.SourceID,
+		SizeLabel:    installSizeLabel(plan.TotalDownloadBytes),
+		CycleWarning: plan.CycleDetected,
+		Reinstall:    plan.Replaces != nil,
+	}
+	for _, f := range plan.Files {
+		view.Files = append(view.Files, fileDisplayLabel(f))
+	}
+	for _, dep := range plan.Dependencies {
+		view.Dependencies = append(view.Dependencies, fmt.Sprintf("%s v%s", dep.Name, dep.Version))
+	}
+	for _, c := range plan.Conflicts {
+		view.Conflicts = append(view.Conflicts, fmt.Sprintf("%s (owned by %s)", c.RelativePath, c.CurrentModID))
+	}
+	for _, md := range plan.MissingDependencies {
+		view.MissingDependencies = append(view.MissingDependencies, domain.ModKey(md.SourceID, md.ModID))
+	}
+	return view
+}
+
+// PlanInstall computes what installing item would do, mapped from
+// svc.PlanInstall - the install-modal analog of PlanProfileSwitch.
+// showArchived is always false (the TUI has no --show-archived equivalent
+// yet - matching the CLI's own non-interactive default when that flag is
+// omitted).
+func (p *coreProvider) PlanInstall(ctx context.Context, item ModItem) (InstallPlanView, error) {
+	plan, err := p.svc.PlanInstall(ctx, p.game, p.profile, item.Source, item.ID, false)
+	if err != nil {
+		return InstallPlanView{}, mapNetworkError(fmt.Sprintf("planning install of %s", item.Name), item.Source, err)
+	}
+	return installPlanView(plan), nil
+}
+
+// ApplyInstall re-plans (mirroring ApplyProfileSwitch's own re-plan-at-apply
+// precedent) and applies with the SAME hook configuration cmd/lmm/install.go's
+// doInstall passes (Force=false, SkipVerify=false - the CLI's own
+// --force/--skip-verify defaults), installing plan.Files exactly as planned:
+// unlike the CLI, the TUI has no interactive/--file file-selection step, so
+// PlanInstall's own non-interactive default (the primary-or-first file - see
+// InstallPlan.Files' doc comment) is always what gets installed.
+func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	plan, err := p.svc.PlanInstall(ctx, p.game, p.profile, item.Source, item.ID, false)
+	if err != nil {
+		return ActionOutcome{}, mapNetworkError(fmt.Sprintf("planning install of %s", item.Name), item.Source, err)
+	}
+
+	opts := core.InstallOptions{
+		SkipVerify:  false,
+		Hooks:       p.resolvedHooks(),
+		HookRunner:  p.hookRunner(),
+		HookContext: p.hookContext(),
+		Force:       false,
+	}
+
+	adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
+		return installProgressLine(item.Name, p)
+	})
+	result, err := p.svc.ApplyInstall(ctx, p.game, plan, opts, adapter)
+	if err != nil {
+		return ActionOutcome{}, mapNetworkError(fmt.Sprintf("installing %s", item.Name), item.Source, err)
+	}
+
+	// Warnings = result Warnings + Notes (mergeDiagnostics' documented
+	// order), plus - the BATCH path only, when plan.Dependencies is
+	// non-empty - the Failed display names, so a status line surfaces which
+	// mod(s) in a dependency-having install didn't make it (Failed carries
+	// no reason of its own; Skipped does, but is already folded into
+	// Warnings via Notes/Warnings for the STRICT path's single failure mode
+	// - see InstallResult's doc comment).
+	warnings := mergeDiagnostics(result.Warnings, result.Notes)
+	warnings = append(warnings, result.Failed...)
+	return ActionOutcome{
+		Message:  fmt.Sprintf("Installed %q", item.Name),
+		Warnings: warnings,
+	}, nil
+}
+
+// CheckUpdates reports available updates for every checkable installed mod
+// (pinned/local mods are already filtered by core.Updater.CheckUpdates -
+// not re-filtered here). A per-source failure there is a partial-results
+// situation (Updater.CheckUpdates' own doc comment): whatever updates DID
+// resolve still populate Updates, and the failure itself becomes a single
+// Warning - mirroring cmd/lmm/update.go's doUpdate, which does the exact
+// same "Warning: %v\n, then continue showing partial updates" for this
+// error, except for domain.ErrAuthRequired, which doUpdate special-cases
+// via authPromptError(updateSource) - a single resolved --source flag value
+// that isn't always the ACTUAL failing source when checking multiple mods
+// across sources. The TUI has no such flag to name either, so its own
+// ErrAuthRequired Warning names no specific source - every individual
+// per-source failure is still legible inside the underlying joined
+// "source %s: %w" text this doesn't discard.
+func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
+	installed, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
+	if err != nil {
+		return UpdatesView{}, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
+	}
+
+	updates, checkErr := p.svc.NewUpdater().CheckUpdates(ctx, p.game, installed)
+	var view UpdatesView
+	for _, u := range updates {
+		view.Updates = append(view.Updates, UpdateItem{
+			Source: u.InstalledMod.SourceID, ID: u.InstalledMod.ID, Name: u.InstalledMod.Name,
+			FromVersion: u.InstalledMod.Version, ToVersion: u.NewVersion,
+		})
+	}
+	if checkErr != nil {
+		if errors.Is(checkErr, domain.ErrAuthRequired) {
+			view.Warnings = append(view.Warnings, fmt.Sprintf(
+				"Authentication required for one or more sources. Run 'lmm auth login <source>' in a shell, then try again (%v)", checkErr))
+		} else {
+			view.Warnings = append(view.Warnings, checkErr.Error())
+		}
+	}
+	return view, nil
+}
+
+// ApplyUpdate applies u with the SAME hook configuration cmd/lmm/update.go's
+// applyUpdate passes (Force=false, its default). u is re-checked via
+// CheckUpdates for just this one mod first - mirroring
+// cmd/lmm/update.go's applySingleUpdate, which does the same before calling
+// applyUpdate - rather than reconstructing a bare domain.Update from u's own
+// fields: UpdateItem carries no FileIDReplacements (see its doc comment),
+// and a real update may need that superseded-file-ID mapping to install
+// correctly; only a fresh CheckUpdates call can supply it.
+func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	mod, err := p.svc.GetInstalledMod(u.Source, u.ID, p.game.ID, p.profile)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("getting installed mod %s: %w", u.Name, err)
+	}
+
+	updates, err := p.svc.NewUpdater().CheckUpdates(ctx, p.game, []domain.InstalledMod{*mod})
+	if err != nil {
+		return ActionOutcome{}, mapNetworkError(fmt.Sprintf("checking update for %s", u.Name), u.Source, err)
+	}
+	if len(updates) == 0 {
+		return ActionOutcome{Message: fmt.Sprintf("%q is already up to date", u.Name)}, nil
+	}
+	upd := updates[0]
+
+	opts := core.UpdateOptions{
+		Hooks:       p.resolvedHooks(),
+		HookRunner:  p.hookRunner(),
+		HookContext: p.hookContext(),
+		Force:       false,
+	}
+
+	adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
+		return updateProgressLine(u.Name, p)
+	})
+	result, err := p.svc.ApplyUpdate(ctx, p.game, p.profile, upd, opts, adapter)
+	if err != nil {
+		return ActionOutcome{}, mapNetworkError(fmt.Sprintf("updating %s", u.Name), u.Source, err)
+	}
+	return ActionOutcome{
+		Message:  fmt.Sprintf("Updated %q to %s", u.Name, upd.NewVersion),
+		Warnings: mergeDiagnostics(result.Warnings, result.Notes),
+	}, nil
 }
 
 // switchPlanView maps a core.SwitchPlan to its TUI render model, using the

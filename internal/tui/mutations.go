@@ -187,24 +187,23 @@ func (m Model) switchSelectedProfile() (Model, tea.Cmd) {
 }
 
 // resolvePlanResult handles a fresh (non-stale - callers check msg.gen
-// first) planResultMsg. AlreadyActive and NeedsDownloads both resolve to a
-// status-line message with no modal (task-7-brief.md's profile-switch
-// flow); AlreadyActive here is defensive only, since switchSelectedProfile
-// already pre-filters the active profile synchronously and never reaches
-// the async fetch for it. Any other plan opens the switch confirmation
-// modal via buildAction, which establishes its OWN fresh gen/cancel/
-// progress-channel for the eventual ApplyProfileSwitch call - running/
-// cancel from the plan fetch are cleared first, so buildAction's
+// first) planResultMsg. AlreadyActive resolves to a status-line message
+// with no modal (task-7-brief.md's profile-switch flow); this is defensive
+// only, since switchSelectedProfile already pre-filters the active profile
+// synchronously and never reaches the async fetch for it. Any other plan -
+// including one with NeedsDownloads entries (Phase 5b Task 4 LIFTED the
+// refusal that used to short-circuit those here; see
+// errProfileNeedsDownloads's removal in actions_provider.go/
+// service_core.go - ApplyProfileSwitch can download now) - opens the switch
+// confirmation modal via buildAction, which establishes its OWN fresh
+// gen/cancel/progress-channel for the eventual ApplyProfileSwitch call -
+// running/cancel from the plan fetch are cleared first, so buildAction's
 // single-flight guard passes cleanly. The progress adapter buildAction
-// wires in is threaded straight through to ApplyProfileSwitch, unused
-// until it's called (nil-safe throughout).
-//
-// TODO(Phase 5b Task 4, part B): the NeedsDownloads branch below still
-// short-circuits to a no-modal refusal status - this is LIFTED, together
-// with the underlying ActionProvider-level refusal (errProfileNeedsDownloads
-// in actions_provider.go/service_core.go), in this task's second RED/GREEN
-// pair, which replaces this branch with a fallthrough to the normal modal
-// (ApplyProfileSwitch can download now).
+// wires in is threaded straight through to ApplyProfileSwitch, so a plan
+// that needs downloads streams them via the same pump every other network
+// action uses. switchDetailLines does not yet render the NeedsDownloads
+// list itself - Task 5/7 polish, out of this task's scope - so today's
+// modal shows only the Enable/Disable buckets for such a plan.
 func (m Model) resolvePlanResult(msg planResultMsg) (Model, tea.Cmd) {
 	m.action.running = false
 	if m.action.cancel != nil {
@@ -213,24 +212,17 @@ func (m Model) resolvePlanResult(msg planResultMsg) (Model, tea.Cmd) {
 	}
 
 	view := msg.view
-	switch {
-	case view.AlreadyActive:
+	if view.AlreadyActive {
 		m.action.status = fmt.Sprintf("Already on profile %q", view.To)
 		m.action.statusIsError = false
 		return m, nil
-	case len(view.NeedsDownloads) > 0:
-		// The exact provider-contract refusal message (errProfileNeedsDownloads,
-		// actions_provider.go) - listing which mods is 5b polish per the brief.
-		m.action.status = errProfileNeedsDownloads.Error()
-		m.action.statusIsError = true
-		return m, nil
-	default:
-		title := fmt.Sprintf("Switch to %q?", view.To)
-		model, pa := m.buildAction(actionSwitch, title, switchDetailLines(view), view.To, func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
-			return m.actions.ApplyProfileSwitch(ctx, view.To, progress)
-		})
-		return model.promptAction(pa), nil
 	}
+
+	title := fmt.Sprintf("Switch to %q?", view.To)
+	model, pa := m.buildAction(actionSwitch, title, switchDetailLines(view), view.To, func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.ApplyProfileSwitch(ctx, view.To, progress)
+	})
+	return model.promptAction(pa), nil
 }
 
 // resolvePlanFailure handles a fresh planFailedMsg: status line error, no
