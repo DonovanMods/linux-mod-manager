@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
@@ -433,6 +436,129 @@ const (
 	// update profile: %v" (4-space indent, one level deeper than
 	// SwitchDisableNote/SwitchEnableNote's 2-space Notes).
 	SwitchInstallNote
+
+	// --- Phase 5b Task 2: ApplyInstall progress events. ApplyInstall
+	// unifies two historically-DIVERGENT pre-extraction execution engines
+	// (see the task report for the full trace):
+	//
+	//   - doInstall's OWN single-mod code (cmd/lmm/install.go, reached only
+	//     when there are no dependencies to install) - Force-gated
+	//     before_all/before_each, Install-or-Replace (incl. the
+	//     reinstall-cache-transaction for a same-version reinstall),
+	//     interactive/--file file selection, a blocking conflict-confirm
+	//     prompt, SaveFileChecksum, --skip-verify.
+	//   - batchInstallMods (cmd/lmm/install.go), which is what doInstall
+	//     ACTUALLY delegated dependency installation to whenever
+	//     Dependencies was non-empty - before_each is NEVER Force-gated
+	//     (a failure always just skips that one mod and continues), no
+	//     Replace path (always a fresh Install; a same-key existing mod is
+	//     uninstalled+cache-deleted first), no interactive file selection
+	//     (always the primary-or-first file), conflicts are a non-blocking
+	//     inline warning (never a prompt).
+	//
+	// ApplyInstall's per-mod loop applies the FIRST set of semantics to the
+	// primary (plan.Mod) ALWAYS - even when Dependencies is non-empty - and
+	// the SECOND set to every entry in Dependencies. This is a deliberate
+	// unification/simplification (the pre-extraction asymmetry - the
+	// primary silently downgrading to batchInstallMods' simpler mechanics
+	// merely because it happened to have dependencies - was an accident of
+	// code structure, not a deliberate design choice), not a literal port of
+	// batchInstallMods' own "treat every mod in the list identically"
+	// behavior. See the task report for the full justification; none of the
+	// brief's mandatory byte-identical CLI tests exercise the
+	// dependencies-present EXECUTION phase's exact text (only the
+	// pre-Apply plan/prompt, which IS byte-identical).
+
+	// InstallBeforeAllForced fires once, immediately, when install.before_all
+	// fails and Force is set - mirrors DeployBeforeAllForced/
+	// PurgeWarning's "forced" role. No mod in scope.
+	InstallBeforeAllForced
+	// InstallBeforeEachForced fires when the PRIMARY mod's install.before_each
+	// hook fails and Force is set (a forced warning, not a fatal error) -
+	// mirrors doInstall's own before_each Force-gate exactly. ModName/ModID
+	// identify the primary. Dependencies never fire this phase - see
+	// InstallDepSkipped.
+	InstallBeforeEachForced
+
+	// InstallDepSkipped fires whenever a DEPENDENCY is skipped for any
+	// reason (hook failure, fetch/files/download/deploy/save failure) -
+	// unconditional, never Force-gated, matching batchInstallMods exactly.
+	// Index/Total count among Dependencies only (the primary is never
+	// included in this count - a deliberate deviation from
+	// batchInstallMods' shared counter across every mod in its list, part
+	// of the unification above). ModName/ModID identify the dependency;
+	// Detail is the reason (unprefixed - the CLI's handler adds "  Skipped:
+	// ").
+	InstallDepSkipped
+	// InstallDepConflictWarning fires when a dependency's files (already
+	// downloaded/cached at this point) would overwrite files from another
+	// installed mod and Force is NOT set - a non-blocking, informational
+	// warning only (batchInstallMods never prompts for dependencies,
+	// unlike the primary's plan.Conflicts-driven CLI confirm prompt).
+	// Detail is "%d file conflict(s) - will overwrite".
+	InstallDepConflictWarning
+	// InstallDepDownloading mirrors batchInstallMods' dependency download
+	// progress readout (Percent only, gated on a known total size - no
+	// byte-count fallback line, unlike the primary's InstallDownloading).
+	InstallDepDownloading
+	// InstallDepInstalled fires once a dependency has been fully installed
+	// (downloaded, deployed, saved, profile-upserted).
+	InstallDepInstalled
+
+	// InstallDownloadStarted fires once per one of the PRIMARY's selected
+	// files (plan.Files), before it begins downloading - mirrors
+	// downloadSelectedFiles' "\n[%d/%d] Downloading %s...\n" (or, for a
+	// single file, "\nDownloading %s...\n"). File identifies which (for the
+	// CLI's own displayFileLabel call); Index/Total count among plan.Files.
+	InstallDownloadStarted
+	// InstallDownloading mirrors the primary's per-tick download progress -
+	// Downloaded/TotalBytes/Percent carry the raw numbers so the CLI can
+	// reproduce its exact byte-count/percent readout (see DeployProgress's
+	// doc comment on those fields).
+	InstallDownloading
+	// InstallDownloadDone fires once a file's download attempt finishes -
+	// success OR failure alike, mirroring downloadSelectedFiles' `
+	// fmt.Println()` that runs unconditionally right after the download
+	// call returns, before branching on its error.
+	InstallDownloadDone
+	// InstallDownloadFailed fires when a file download fails; Detail
+	// carries "download failed: %v" (the CLI checks Detail for the
+	// "third-party downloads" substring itself, mirroring doInstall's own
+	// check, to print the manual-install notice using the plan's own
+	// Mod.SourceURL/ID - already in the CLI's enclosing scope, so it isn't
+	// duplicated onto the event).
+	InstallDownloadFailed
+	// InstallChecksumComputed fires once per successfully-downloaded
+	// primary file, only when a checksum was computed and !SkipVerify -
+	// Detail carries the full (untruncated) checksum; the CLI applies its
+	// own truncateChecksum.
+	InstallChecksumComputed
+	// InstallExtracting mirrors doInstall's unconditional "Extracting to
+	// cache..." status line, fired once after the primary's download(s)
+	// finish, before Install/Replace.
+	InstallExtracting
+	// InstallDeploying mirrors "Deploying to game directory...", fired once
+	// right before Install/Replace.
+	InstallDeploying
+	// InstallDone fires once the primary mod has been fully installed
+	// (deployed, saved, checksum stored, profile upserted).
+	InstallDone
+
+	// InstallNote fires wherever ApplyInstall appends an entry to
+	// InstallResult.Notes (a failed profile-create, UpsertMod,
+	// reinstall-cache-transaction commit, or old-cache cleanup) - the
+	// --verbose-gated stdout bucket, mirroring DeployNote/SwitchInstallNote.
+	// Detail equals the Notes entry verbatim; ModName/ModID identify the
+	// mod when relevant.
+	InstallNote
+	// InstallWarning fires wherever ApplyInstall appends an entry to
+	// InstallResult.Warnings other than an InstallBeforeAllForced/
+	// InstallBeforeEachForced one: a failed SaveFileChecksum (unconditional
+	// stderr, matching doInstall exactly - NOT verbose-gated), or an
+	// install.after_each/after_all hook failure (deferred - see
+	// ApplyInstall's doc comment - emitted after the whole run, mirroring
+	// DeployWarning/printHookWarnings' batched timing).
+	InstallWarning
 )
 
 // DeployProgress reports incremental status during DeployProfile. Index and
@@ -455,6 +581,25 @@ type DeployProgress struct {
 	Phase    DeployPhase
 	Detail   string
 	Percent  float64
+
+	// --- Phase 5b Task 2: ApplyInstall-only fields ---
+
+	// Downloaded and TotalBytes carry the raw byte counts behind Percent for
+	// the primary mod's own download phases (InstallDownloading) - unlike
+	// DeployDownloading (gated on TotalBytes > 0 and Percent-only),
+	// doInstall's downloadSelectedFiles prints a byte-count readout even
+	// when the total size is unknown ("Downloaded %s" vs "%.1f%% (%s /
+	// %s)"), so the CLI needs the raw numbers, not just Percent, to
+	// reproduce that byte-identically. Zero for every other phase.
+	Downloaded int64
+	TotalBytes int64
+	// File identifies which of the primary mod's selected files an
+	// InstallDownload* event concerns, so the CLI can call its own
+	// displayFileLabel(*File) to reproduce doInstall's exact file-name
+	// formatting without core duplicating that cosmetic, CLI-only helper.
+	// Populated only for InstallDownloadStarted/InstallDownloading/
+	// InstallDownloadDone/InstallDownloadFailed/InstallChecksumComputed.
+	File *domain.DownloadableFile
 }
 
 // DeployResult reports the outcome of DeployProfile. As with UninstallResult
@@ -1351,6 +1496,14 @@ type InstallPlan struct {
 	// DownloadProgress convention used elsewhere in this file: only a
 	// positive TotalBytes/Size is treated as "known").
 	TotalDownloadBytes int64
+
+	// ShowArchived is the showArchived value PlanInstall was called with -
+	// stored on the plan (Phase 5b Task 2) so ApplyInstall can resolve each
+	// Dependencies entry's own downloadable files (at apply time - see
+	// Dependencies' doc comment) using the identical filter the CLI showed
+	// the user at plan time, without a second, possibly-inconsistent
+	// parameter on InstallOptions. "The plan is the contract."
+	ShowArchived bool
 }
 
 // PlanInstall computes what installing (sourceID, modID) into profileName
@@ -1394,10 +1547,11 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	plan := &InstallPlan{
-		SourceID: sourceID,
-		GameID:   game.ID,
-		Profile:  profileName,
-		Mod:      *mod,
+		SourceID:     sourceID,
+		GameID:       game.ID,
+		Profile:      profileName,
+		Mod:          *mod,
+		ShowArchived: showArchived,
 	}
 
 	existing, err := s.GetInstalledMod(sourceID, modID, game.ID, profileName)
@@ -1553,4 +1707,609 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID strin
 
 	collect(target)
 	return deps, missing, cycleDetected
+}
+
+// --- ApplyInstall (Phase 5b Task 2) ---
+
+// InstallOptions configures ApplyInstall.
+type InstallOptions struct {
+	// SkipVerify mirrors doInstall's --skip-verify: when true, a downloaded
+	// file's checksum is neither saved (SaveFileChecksum) nor reported via
+	// an InstallChecksumComputed event, matching downloadSelectedFiles' "if
+	// !skipVerify && checksum != ..." gate exactly for every mod (primary
+	// and dependencies alike - batchInstallMods honors the same flag).
+	SkipVerify bool
+
+	// Hook plumbing, mirroring UninstallOptions/DeployOptions. Hooks and/or
+	// HookRunner may be nil to skip hook execution entirely (e.g.
+	// --no-hooks).
+	//
+	// Force gates ONLY install.before_all (once) and the PRIMARY mod's own
+	// install.before_each, matching doInstall's own single-mod code exactly
+	// (a failure aborts with an error unless Force is set, in which case it
+	// is recorded as a Warning and the install proceeds). A DEPENDENCY's
+	// install.before_each failure is NEVER Force-gated - it unconditionally
+	// skips that one dependency and continues, matching batchInstallMods,
+	// which is what pre-extraction doInstall actually delegated dependency
+	// installation to. See the task report for the full trace and the
+	// unification this represents.
+	Hooks       *ResolvedHooks
+	HookRunner  *HookRunner
+	HookContext HookContext
+	Force       bool
+}
+
+// InstallResult reports the outcome of ApplyInstall. As with DeployResult/
+// UninstallResult/SwitchResult, every entry below is always recorded - there
+// is no verbosity concept in core.
+//
+//   - Warnings holds diagnostics doInstall/batchInstallMods printed
+//     unconditionally: install.before_all/before_each (primary only, when
+//     forced), a failed SaveFileChecksum (note: unconditional, NOT
+//     --verbose-gated - doInstall prints this one to stderr regardless),
+//     and install.after_each/after_all hook failures. Callers should print
+//     each entry to stderr, unconditionally, e.g.
+//     `fmt.Fprintf(os.Stderr, "Warning: %v\n", w)`.
+//   - Notes holds diagnostics doInstall only printed under --verbose: a
+//     failed profile-create, a failed UpsertMod, a failed
+//     reinstall-cache-transaction commit, and a failed old-cache cleanup
+//     after a version upgrade - each already carrying its historical
+//     "Warning: " prefix baked into the text, matching doInstall's exact
+//     wording; a caller wanting byte-identical output should print each
+//     entry to stdout ONLY under --verbose, e.g. `fmt.Printf("  %s\n", n)`.
+//
+// Every entry in both slices is ALSO reported via the progress callback at
+// the exact point it is appended (InstallBeforeAllForced/
+// InstallBeforeEachForced/InstallWarning/InstallNote - see each DeployPhase
+// constant's doc comment), with Detail equal to the slice entry verbatim.
+//
+// On error, the returned result carries any diagnostics/counts accumulated
+// before the failure; callers should surface them alongside the error.
+type InstallResult struct {
+	Installed []string // display names in install order, dependencies first (skip-and-continue on failure), then the primary (fatal on failure)
+	Skipped   []string // "<name>: <reason>" - DEPENDENCIES only; the primary is never in this slice - a primary failure returns an error instead (see InstallOptions' Force doc comment)
+
+	// FilesDeployed is the number of files extracted for the PRIMARY mod
+	// across all of plan.Files - mirrors doInstall's totalFileCount / the
+	// pre-extraction CLI's final "Files deployed: %d" line. Dependencies'
+	// own extracted-file counts are not tracked here (batchInstallMods
+	// never summed them either).
+	FilesDeployed int
+
+	Warnings []string
+	Notes    []string
+}
+
+// ensureProfileExists creates profileName if it doesn't exist yet, matching
+// doInstall/batchInstallMods' lazy profile-creation convention ("Ensure
+// profile exists, create if needed") - failures are non-fatal (mirroring
+// doInstall's own "Log but don't fail - mod is installed" comment) and
+// reported by the caller via the returned error (nil on success or
+// already-exists).
+func ensureProfileExists(pm *ProfileManager, gameID, profileName string) error {
+	if _, err := pm.Get(gameID, profileName); err != nil {
+		if errors.Is(err, domain.ErrProfileNotFound) {
+			if _, err := pm.Create(gameID, profileName); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// reinstallCacheTransaction stages a same-version reinstall's freshly
+// downloaded files in a temporary cache, separate from the live game cache,
+// so a failure partway through (download, deploy, or DB save) can restore
+// the ORIGINAL cached files exactly as they were - ported verbatim from
+// cmd/lmm/install.go's identically-named type (Phase 5b Task 2 moves this
+// into core since ApplyInstall, not the CLI, now owns the whole
+// download-then-deploy-then-save sequence it coordinates; see the task
+// report). Only ever used for the PRIMARY mod, and only when plan.Replaces
+// is set AND its Version matches the mod being installed (a same-version
+// reinstall) - a version upgrade downloads into a distinct cache path
+// already (version is part of the cache key) and needs no staging.
+type reinstallCacheTransaction struct {
+	live      *cache.Cache
+	snapshot  *cache.Cache
+	staged    *cache.Cache
+	tempDir   string
+	gameID    string
+	sourceID  string
+	modID     string
+	version   string
+	activated bool
+}
+
+func prepareReinstallCacheTransaction(live *cache.Cache, gameID, sourceID, modID, version string) (*reinstallCacheTransaction, error) {
+	tempDir, err := os.MkdirTemp("", "lmm-reinstall-cache-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating cache snapshot: %w", err)
+	}
+	snapshot := cache.New(filepath.Join(tempDir, "snapshot"))
+	staged := cache.New(filepath.Join(tempDir, "staged"))
+	if err := live.CloneMod(snapshot, gameID, sourceID, modID, version); err != nil {
+		_ = os.RemoveAll(tempDir)
+		return nil, fmt.Errorf("snapshotting existing cache: %w", err)
+	}
+	return &reinstallCacheTransaction{
+		live:     live,
+		snapshot: snapshot,
+		staged:   staged,
+		tempDir:  tempDir,
+		gameID:   gameID,
+		sourceID: sourceID,
+		modID:    modID,
+		version:  version,
+	}, nil
+}
+
+func (s *reinstallCacheTransaction) Activate() error {
+	if s == nil {
+		return nil
+	}
+	if s.activated {
+		return nil
+	}
+	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
+		return err
+	}
+	if err := s.staged.CloneMod(s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
+		return err
+	}
+	s.activated = true
+	return nil
+}
+
+func (s *reinstallCacheTransaction) RestoreLive() error {
+	if s == nil || !s.activated {
+		return nil
+	}
+	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
+		return err
+	}
+	if err := s.snapshot.CloneMod(s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
+		return err
+	}
+	s.activated = false
+	return nil
+}
+
+func (s *reinstallCacheTransaction) Rollback() error {
+	if s == nil {
+		return nil
+	}
+	if err := s.RestoreLive(); err != nil {
+		return err
+	}
+	err := os.RemoveAll(s.tempDir)
+	*s = reinstallCacheTransaction{}
+	return err
+}
+
+func (s *reinstallCacheTransaction) Commit() error {
+	if s == nil {
+		return nil
+	}
+	err := os.RemoveAll(s.tempDir)
+	*s = reinstallCacheTransaction{}
+	return err
+}
+
+// ApplyInstall executes a plan produced by PlanInstall: dependencies (in
+// plan order) install first, then the primary (plan.Mod) - see InstallPlan's
+// doc comment for how ApplyInstall unifies the pre-extraction CLI's two
+// divergent execution engines (doInstall's own single-mod code vs.
+// batchInstallMods, which is what doInstall actually delegated dependency
+// installation to) behind this one entry point; DeployPhase's Install*
+// constants document the exact per-mod mechanics and failure semantics.
+//
+// install.before_all runs once, before any mod is touched; install.after_all
+// runs once, only if every step through the primary's own install succeeded
+// (matching doInstall - an early return, e.g. the primary's own fatal
+// before_each/download/deploy/save failure, skips after_all entirely, same
+// as the pre-extraction single-mod code path). progress may be nil.
+//
+// On error, the returned result carries any diagnostics/Installed entries
+// accumulated before the failure - callers should surface them alongside the
+// error (see InstallResult's doc comment).
+func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, progress func(DeployProgress)) (*InstallResult, error) {
+	result := &InstallResult{}
+	emit := func(p DeployProgress) {
+		if progress != nil {
+			progress(p)
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+
+	hookCtx := opts.HookContext
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_all", opts.Hooks.GetInstallBeforeAll()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("install.before_all hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("install.before_all hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: InstallBeforeAllForced, Detail: msg})
+	}
+
+	linkMethod := s.GetGameLinkMethod(game)
+	pm := s.NewProfileManager()
+
+	// deferredWarnings holds every install.after_each (dependencies in loop
+	// order, then the primary) and the final install.after_all warning,
+	// flushed together at the very end - mirroring DeployProfile/
+	// purgeForDeploy's deferredWarnings pattern (itself modeled on
+	// batchInstallMods' own printHookWarnings, which accumulated hook
+	// errors across the WHOLE loop - deps and primary alike - and printed
+	// them together only after everything else had already happened).
+	var deferredWarnings []DeployProgress
+
+	total := len(plan.Dependencies)
+	for idx := range plan.Dependencies {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		dep := plan.Dependencies[idx]
+		if warn := s.applyInstallDependency(ctx, game, plan, &dep, idx, total, linkMethod, pm, opts, result, emit); warn != nil {
+			deferredWarnings = append(deferredWarnings, *warn)
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+
+	afterEachWarning, err := s.applyInstallPrimary(ctx, game, plan, linkMethod, pm, opts, result, emit)
+	if err != nil {
+		return result, err
+	}
+	if afterEachWarning != nil {
+		deferredWarnings = append(deferredWarnings, *afterEachWarning)
+	}
+
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_all", opts.Hooks.GetInstallAfterAll()); err != nil {
+		msg := fmt.Sprintf("install.after_all hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		deferredWarnings = append(deferredWarnings, DeployProgress{Phase: InstallWarning, Detail: msg})
+	}
+
+	for _, w := range deferredWarnings {
+		emit(w)
+	}
+
+	return result, nil
+}
+
+// applyInstallDependency installs one entry of plan.Dependencies, matching
+// cmd/lmm/install.go's batchInstallMods per-mod loop exactly (the
+// pre-extraction CLI's actual dependency-installation mechanism - see
+// ApplyInstall's doc comment): any failure (hook, fetch, files, download,
+// conflict aside, deploy, or save) skips this dependency and continues -
+// never Force-gated, never fatal to the overall ApplyInstall call. Returns
+// the install.after_each warning event to defer (nil if none), matching
+// ApplyInstall's deferredWarnings convention.
+func (s *Service) applyInstallDependency(ctx context.Context, game *domain.Game, plan *InstallPlan, dep *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress)) *DeployProgress {
+	base := DeployProgress{Index: idx + 1, Total: total, ModName: dep.Name, ModID: dep.ID, SourceID: dep.SourceID}
+	skip := func(reason string) {
+		evt := base
+		evt.Phase, evt.Detail = InstallDepSkipped, reason
+		emit(evt)
+		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", dep.Name, reason))
+	}
+
+	hookCtx := opts.HookContext
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = dep.ID, dep.Name, dep.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+		skip(fmt.Sprintf("install.before_each hook failed: %v", err))
+		return nil
+	}
+
+	installer := s.GetInstaller(game)
+
+	// Defensive parity with batchInstallMods, which always re-checks
+	// (rather than trusting its caller) - in practice unreachable via
+	// PlanInstall's own contract, which never lists an already-installed
+	// mod in Dependencies.
+	if existing, err := s.GetInstalledMod(dep.SourceID, dep.ID, game.ID, plan.Profile); err == nil {
+		_ = installer.Uninstall(ctx, game, &existing.Mod, plan.Profile)                            //nolint:errcheck // best-effort, matching batchInstallMods
+		_ = s.GetGameCache(game).Delete(game.ID, existing.SourceID, existing.ID, existing.Version) //nolint:errcheck // best-effort, matching batchInstallMods
+	}
+
+	files, err := s.GetModFiles(ctx, plan.SourceID, dep)
+	if err != nil {
+		skip(fmt.Sprintf("failed to get mod files: %v", err))
+		return nil
+	}
+	files = filterAndSortInstallFiles(files, plan.ShowArchived)
+	if len(files) == 0 {
+		skip("no downloadable files available")
+		return nil
+	}
+	selected, _, err := selectDeployFiles(files, nil)
+	if err != nil {
+		skip(err.Error())
+		return nil
+	}
+	file := selected[0]
+
+	progressFn := func(p DownloadProgress) {
+		if p.TotalBytes > 0 {
+			dl := base
+			dl.Phase, dl.Percent = InstallDepDownloading, p.Percentage
+			emit(dl)
+		}
+	}
+	downloadResult, err := s.DownloadMod(ctx, plan.SourceID, game, dep, file, progressFn)
+	if err != nil {
+		skip(fmt.Sprintf("download failed: %v", err))
+		return nil
+	}
+
+	if !opts.Force {
+		if conflicts, err := installer.GetConflicts(ctx, game, dep, plan.Profile); err == nil && len(conflicts) > 0 {
+			evt := base
+			evt.Phase, evt.Detail = InstallDepConflictWarning, fmt.Sprintf("%d file conflict(s) - will overwrite", len(conflicts))
+			emit(evt)
+		}
+	}
+
+	if err := installer.Install(ctx, game, dep, plan.Profile); err != nil {
+		skip(fmt.Sprintf("deployment failed: %v", err))
+		return nil
+	}
+
+	installedMod := &domain.InstalledMod{
+		Mod:          *dep,
+		ProfileName:  plan.Profile,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		LinkMethod:   linkMethod,
+		FileIDs:      []string{file.ID},
+	}
+	installedMod.Mod.GameID = game.ID
+	if err := s.SaveInstalledMod(installedMod); err != nil {
+		skip(fmt.Sprintf("failed to save mod: %v", err))
+		return nil
+	}
+
+	if !opts.SkipVerify && downloadResult.Checksum != "" {
+		if err := s.SaveFileChecksum(dep.SourceID, dep.ID, game.ID, plan.Profile, file.ID, downloadResult.Checksum); err != nil {
+			msg := fmt.Sprintf("Warning: failed to save checksum for file %s: %v", file.ID, err)
+			result.Warnings = append(result.Warnings, msg)
+			evt := base
+			evt.Phase, evt.Detail = InstallWarning, msg
+			emit(evt)
+		}
+	}
+
+	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
+		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
+		result.Notes = append(result.Notes, msg)
+		evt := base
+		evt.Phase, evt.Detail = InstallNote, msg
+		emit(evt)
+	}
+	modRef := domain.ModReference{SourceID: dep.SourceID, ModID: dep.ID, Version: dep.Version, FileIDs: []string{file.ID}}
+	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
+		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
+		result.Notes = append(result.Notes, msg)
+		evt := base
+		evt.Phase, evt.Detail = InstallNote, msg
+		emit(evt)
+	}
+
+	result.Installed = append(result.Installed, dep.Name)
+	installedEvt := base
+	installedEvt.Phase = InstallDepInstalled
+	emit(installedEvt)
+
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+		msg := fmt.Sprintf("install.after_each hook failed for %s: %v", dep.ID, err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = InstallWarning, msg
+		return &evt
+	}
+	return nil
+}
+
+// fileChecksum pairs a downloaded file's ID with its computed checksum, in
+// download order - an ordered alternative to a map so
+// applyInstallPrimary's later SaveFileChecksum loop is deterministic (the
+// pre-extraction CLI's own map-based fileChecksums had no ordering
+// guarantee across multiple files, so this is a harmless, if anything more
+// correct, deviation - see the task report).
+type fileChecksum struct {
+	fileID, checksum string
+}
+
+// applyInstallPrimary installs plan.Mod - doInstall's OWN single-mod
+// mechanics (Force-gated before_each, Install-or-Replace incl. the
+// reinstall-cache-transaction for a same-version reinstall,
+// SaveFileChecksum, --skip-verify), applied here regardless of whether
+// Dependencies was non-empty (see ApplyInstall's doc comment for why this
+// deliberately diverges from batchInstallMods' "treat the primary just like
+// any other mod in the list" behavior). Returns the install.after_each
+// warning event to defer (nil if none). A non-nil error is always fatal to
+// ApplyInstall as a whole, matching doInstall's own early returns.
+func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, plan *InstallPlan, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress)) (*DeployProgress, error) {
+	mod := plan.Mod // local, addressable copy - distinct from plan.Mod
+	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
+
+	hookCtx := opts.HookContext
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+		if !opts.Force {
+			return nil, fmt.Errorf("install.before_each hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("install.before_each hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = InstallBeforeEachForced, msg
+		emit(evt)
+	}
+
+	installer := s.GetInstaller(game)
+	downloadCache := s.GetGameCache(game)
+
+	var reinstallTxn *reinstallCacheTransaction
+	if plan.Replaces != nil && plan.Replaces.Version == mod.Version {
+		var txnErr error
+		reinstallTxn, txnErr = prepareReinstallCacheTransaction(s.GetGameCache(game), game.ID, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version)
+		if txnErr != nil {
+			return nil, fmt.Errorf("preparing reinstall cache: %w", txnErr)
+		}
+		downloadCache = reinstallTxn.staged
+		defer func() {
+			if reinstallTxn != nil {
+				_ = reinstallTxn.Rollback() //nolint:errcheck // best-effort cleanup on an already-erroring path
+			}
+		}()
+	}
+
+	var downloadedFileIDs []string
+	var checksums []fileChecksum
+	filesTotal := len(plan.Files)
+	for i := range plan.Files {
+		file := &plan.Files[i]
+
+		started := base
+		started.Phase, started.Index, started.Total, started.File = InstallDownloadStarted, i+1, filesTotal, file
+		emit(started)
+
+		progressFn := func(p DownloadProgress) {
+			dl := base
+			dl.Phase, dl.Index, dl.Total, dl.File = InstallDownloading, i+1, filesTotal, file
+			dl.Percent, dl.Downloaded, dl.TotalBytes = p.Percentage, p.Downloaded, p.TotalBytes
+			emit(dl)
+		}
+
+		downloadResult, dlErr := s.DownloadModToCache(ctx, downloadCache, plan.SourceID, game, &mod, file, progressFn)
+
+		done := base
+		done.Phase, done.Index, done.Total, done.File = InstallDownloadDone, i+1, filesTotal, file
+		emit(done)
+
+		if dlErr != nil {
+			reason := fmt.Sprintf("download failed: %v", dlErr)
+			evt := base
+			evt.Phase, evt.Index, evt.Total, evt.File, evt.Detail = InstallDownloadFailed, i+1, filesTotal, file, reason
+			emit(evt)
+			if strings.Contains(dlErr.Error(), "third-party downloads") && mod.SourceURL != "" {
+				return nil, fmt.Errorf("download unavailable via API")
+			}
+			return nil, fmt.Errorf("download failed: %w", dlErr)
+		}
+
+		if !opts.SkipVerify && downloadResult.Checksum != "" {
+			evt := base
+			evt.Phase, evt.Index, evt.Total, evt.File, evt.Detail = InstallChecksumComputed, i+1, filesTotal, file, downloadResult.Checksum
+			emit(evt)
+			checksums = append(checksums, fileChecksum{fileID: file.ID, checksum: downloadResult.Checksum})
+		}
+
+		result.FilesDeployed += downloadResult.FilesExtracted
+		downloadedFileIDs = append(downloadedFileIDs, file.ID)
+	}
+
+	emit(DeployProgress{Phase: InstallExtracting, ModName: mod.Name, ModID: mod.ID})
+	emit(DeployProgress{Phase: InstallDeploying, ModName: mod.Name, ModID: mod.ID})
+
+	if plan.Replaces != nil {
+		if reinstallTxn != nil {
+			if err := reinstallTxn.Activate(); err != nil {
+				return nil, fmt.Errorf("activating reinstall cache: %w", err)
+			}
+		}
+		var replaceErr error
+		if reinstallTxn != nil {
+			replaceErr = installer.ReplaceWithOldCache(ctx, game, reinstallTxn.snapshot, &plan.Replaces.Mod, &mod, plan.Profile)
+		} else {
+			replaceErr = installer.Replace(ctx, game, &plan.Replaces.Mod, &mod, plan.Profile)
+		}
+		if replaceErr != nil {
+			if reinstallTxn != nil {
+				_ = reinstallTxn.RestoreLive()                                                                                                                //nolint:errcheck // best-effort recovery on an already-erroring path
+				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.snapshot, s.GetGameCache(game), &plan.Replaces.Mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
+			}
+			return nil, fmt.Errorf("deployment failed: %w", replaceErr)
+		}
+	} else if err := installer.Install(ctx, game, &mod, plan.Profile); err != nil {
+		return nil, fmt.Errorf("deployment failed: %w", err)
+	}
+
+	installedMod := &domain.InstalledMod{
+		Mod:          mod,
+		ProfileName:  plan.Profile,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		LinkMethod:   linkMethod,
+		FileIDs:      downloadedFileIDs,
+	}
+	installedMod.Mod.GameID = game.ID
+
+	if err := s.SaveInstalledMod(installedMod); err != nil {
+		if plan.Replaces != nil {
+			if reinstallTxn != nil {
+				_ = reinstallTxn.RestoreLive()                                                                                                //nolint:errcheck // best-effort recovery on an already-erroring path
+				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.staged, s.GetGameCache(game), &mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
+			} else {
+				_ = installer.Replace(ctx, game, &mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
+			}
+		} else {
+			_ = installer.Uninstall(ctx, game, &mod, plan.Profile) //nolint:errcheck // best-effort recovery
+		}
+		return nil, fmt.Errorf("failed to save mod: %w", err)
+	}
+	if reinstallTxn != nil {
+		if err := reinstallTxn.Commit(); err != nil {
+			msg := fmt.Sprintf("Warning: could not finalize reinstall cache transaction: %v", err)
+			result.Notes = append(result.Notes, msg)
+			emit(DeployProgress{Phase: InstallNote, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+		}
+		reinstallTxn = nil
+	}
+
+	for _, fc := range checksums {
+		if err := s.SaveFileChecksum(plan.SourceID, mod.ID, game.ID, plan.Profile, fc.fileID, fc.checksum); err != nil {
+			msg := fmt.Sprintf("Warning: failed to save checksum for file %s: %v", fc.fileID, err)
+			result.Warnings = append(result.Warnings, msg)
+			emit(DeployProgress{Phase: InstallWarning, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+		}
+	}
+
+	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
+		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
+		result.Notes = append(result.Notes, msg)
+		emit(DeployProgress{Phase: InstallNote, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+	}
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
+	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
+		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
+		result.Notes = append(result.Notes, msg)
+		emit(DeployProgress{Phase: InstallNote, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+	}
+
+	if plan.Replaces != nil && plan.Replaces.Version != mod.Version {
+		if err := s.GetGameCache(game).Delete(game.ID, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version); err != nil {
+			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
+			result.Notes = append(result.Notes, msg)
+			emit(DeployProgress{Phase: InstallNote, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+		}
+	}
+
+	result.Installed = append(result.Installed, mod.Name)
+	emit(DeployProgress{Phase: InstallDone, ModName: mod.Name, ModID: mod.ID})
+
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		return &DeployProgress{Phase: InstallWarning, Detail: msg, ModName: mod.Name, ModID: mod.ID}, nil
+	}
+	return nil, nil
 }
