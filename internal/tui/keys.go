@@ -37,6 +37,10 @@ type KeyMap struct {
 	// a typed character (see updateKey's focused-input branch, which runs
 	// before this ever reaches the outer switch).
 	Install key.Binding
+	// CheckUpdates is Phase 5b's check/apply-updates binding (see
+	// mutations.go's checkForUpdates): fires on ScreenDashboard and
+	// ScreenInstalledMods.
+	CheckUpdates key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -137,6 +141,10 @@ func DefaultKeyMap() KeyMap {
 		Install: key.NewBinding(
 			key.WithKeys("i"),
 			key.WithHelp("i", "install selected result"),
+		),
+		CheckUpdates: key.NewBinding(
+			key.WithKeys("u"),
+			key.WithHelp("u", "check for updates"),
 		),
 	}
 }

@@ -27,6 +27,9 @@ const (
 	// screen's results after a successful install - see
 	// refreshSearchAfterInstall's doc comment.
 	actionInstall
+	// actionUpdate is Phase 5b's check/apply-updates action kind (see
+	// mutations.go's checkForUpdates/applyUpdatesSequentially).
+	actionUpdate
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation

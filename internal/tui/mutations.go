@@ -465,3 +465,167 @@ func (m Model) refreshSearchAfterInstall() (Model, tea.Cmd) {
 	}
 	return m.startSearch(m.search.page.Query, m.search.page.Page)
 }
+
+// --- Check/apply updates ('u' on Dashboard and Installed Mods) ---
+
+// checkUpdatesResultMsg carries a successful CheckUpdates result, tagged
+// with the generation established when the fetch was dispatched (see
+// checkForUpdates) so a superseded result can be discarded.
+type checkUpdatesResultMsg struct {
+	gen  int
+	view UpdatesView
+}
+
+// checkUpdatesFailedMsg carries a failed CheckUpdates call, tagged like
+// checkUpdatesResultMsg. CheckUpdates itself rarely returns a non-nil error
+// (coreProvider folds per-source failures into UpdatesView.Warnings instead
+// - see its own doc comment) - this path exists for the cases that still
+// can (e.g. the installed-mods lookup itself failing).
+type checkUpdatesFailedMsg struct {
+	gen int
+	err error
+}
+
+// checkForUpdates handles 'u' on Dashboard/Installed Mods (task-5-brief.md's
+// Updates flow): a no-op on the wrong screen, with no ActionProvider, or
+// while another action/plan is already in flight. Mirrors
+// installSelectedSearchResult/switchSelectedProfile's async plan-fetch
+// shape: dispatches CheckUpdates and shows a "Checking for updates…" status
+// instead of a modal until the result arrives - resolveCheckUpdatesResult
+// decides whether that becomes a status line (zero updates) or a
+// confirmation modal (one or more).
+func (m Model) checkForUpdates() (Model, tea.Cmd) {
+	if (m.screen != ScreenDashboard && m.screen != ScreenInstalledMods) || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.action.cancel = cancel
+	m.action.gen++
+	gen := m.action.gen
+	m.action.running = true
+	m.action.status = "Checking for updates…"
+	m.action.statusIsError = false
+
+	actions := m.actions
+	return m, func() tea.Msg {
+		view, err := actions.CheckUpdates(ctx)
+		if err != nil {
+			return checkUpdatesFailedMsg{gen: gen, err: err}
+		}
+		return checkUpdatesResultMsg{gen: gen, view: view}
+	}
+}
+
+// resolveCheckUpdatesResult handles a fresh checkUpdatesResultMsg. Either
+// way, m.summary.Updates is set to the real count (task-5-brief.md's
+// Dashboard summary tie-in: Summary.Updates renders the "?" sentinel, -1,
+// until a check has actually run) - this is the model's own in-memory
+// count, not a DataProvider change, so it reverts to unknown on the next
+// unrelated refresh (m.loadData re-reads Overview, which still reports -1
+// until Phase 6 gives DataProvider its own persistent Updates count - an
+// accepted tradeoff per task-5-brief.md's own "no DataProvider change"
+// framing, documented here rather than worked around).
+//
+// Zero updates resolves synchronously to a status line (formatOutcomeStatus
+// reused for its Message-plus-Warnings rendering convention, rather than
+// hand-rolling a second "(N warnings)" formatter - see mergeDiagnostics'
+// sibling reasoning) with no modal; one or more updates opens the batch
+// confirmation modal, whose confirm calls applyUpdatesSequentially with the
+// WHOLE update list captured here (task-5-brief.md: "Sequential-apply loop
+// lives in the confirm closure... one action gen/single-flight scope for
+// the whole batch"). Per-item selection is explicitly out of scope
+// (task-5-brief.md: "Per-item selection is Phase 6 - do not build it").
+func (m Model) resolveCheckUpdatesResult(msg checkUpdatesResultMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+
+	view := msg.view
+	m.summary.Updates = len(view.Updates)
+
+	if len(view.Updates) == 0 {
+		m.action.status = formatOutcomeStatus(ActionOutcome{Message: "No updates available.", Warnings: view.Warnings})
+		m.action.statusIsError = false
+		return m, nil
+	}
+
+	title := fmt.Sprintf("Apply %d update(s)?", len(view.Updates))
+	updates := view.Updates
+	model, pa := m.buildAction(actionUpdate, title, updateDetailLines(view), "", func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+		return applyUpdatesSequentially(ctx, m.actions, updates, progress)
+	})
+	return model.promptAction(pa), nil
+}
+
+// resolveCheckUpdatesFailure handles a fresh checkUpdatesFailedMsg: status
+// line error, no modal, mirroring resolvePlanFailure/
+// resolveInstallPlanFailure.
+func (m Model) resolveCheckUpdatesFailure(msg checkUpdatesFailedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	m.action.status = singleLine(msg.err.Error())
+	m.action.statusIsError = true
+	return m, nil
+}
+
+// updateDetailLines renders an UpdatesView as the "Apply N update(s)?"
+// modal's detail lines: one "<name> <from> → <to>" line per update (the
+// machinery's own "+N more" collapsing, actionModalView, applies here
+// exactly like switchDetailLines' per-mod lines when the list is long),
+// plus a trailing warning-count line when CheckUpdates surfaced any
+// per-source diagnostics alongside the updates it did resolve.
+func updateDetailLines(view UpdatesView) []string {
+	lines := make([]string, 0, len(view.Updates)+1)
+	for _, u := range view.Updates {
+		lines = append(lines, fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion))
+	}
+	if len(view.Warnings) > 0 {
+		lines = append(lines, fmt.Sprintf("%d warning(s) during check", len(view.Warnings)))
+	}
+	return lines
+}
+
+// applyUpdatesSequentially applies every entry in updates, in order,
+// through actions.ApplyUpdate - the confirm-time body of the "Apply N
+// update(s)?" modal (task-5-brief.md's Updates flow), running entirely
+// within the ONE buildAction call resolveCheckUpdatesResult dispatches, so
+// the whole batch shares a single action gen/single-flight scope rather
+// than one per mod. A per-update failure is folded into the aggregate
+// outcome's Warnings and the loop CONTINUES to the next update - matching
+// the CLI's own batch-update behavior and mirroring ApplyInstall's own
+// Failed-into-Warnings precedent (service_core.go) - rather than aborting
+// the remaining updates; this function itself never returns a non-nil
+// error, so a partial-batch failure always completes as an actionDoneMsg
+// with warnings, never an actionFailedMsg. progress is forwarded to every
+// call unchanged (nil-safe, like every other ActionProvider progress
+// parameter), so each update's own download/extract ticks stream into the
+// status line as the batch works through it.
+func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updates []UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	applied := 0
+	var warnings []string
+	for _, u := range updates {
+		outcome, err := actions.ApplyUpdate(ctx, u, progress)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %s", u.Name, singleLine(err.Error())))
+			continue
+		}
+		applied++
+		warnings = append(warnings, outcome.Warnings...)
+	}
+	return ActionOutcome{
+		Message:  fmt.Sprintf("Applied %d update(s)", applied),
+		Warnings: warnings,
+	}, nil
+}

@@ -338,6 +338,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.resolveInstallPlanFailure(msg)
+	case checkUpdatesResultMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveCheckUpdatesResult(msg)
+	case checkUpdatesFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveCheckUpdatesFailure(msg)
 	case loadFailedMsg:
 		m.state = stateFailed
 		m.loadErr = msg.err
@@ -486,6 +496,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.deployActiveProfile()
 	case key.Matches(msg, m.keys.Install):
 		return m.installSelectedSearchResult()
+	case key.Matches(msg, m.keys.CheckUpdates):
+		return m.checkForUpdates()
 	default:
 		return m, nil
 	}
@@ -540,7 +552,7 @@ func (m Model) View() string {
 // designed for; narrower terminals are expected to lose some trailing hints
 // to truncation rather than the wording being shortened to fit them.
 func (m Model) footerLine() string {
-	hint := "?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy  enter: switch  q: quit"
+	hint := "?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: check updates  enter: switch  q: quit"
 	return truncate(m.theme.Help.Render(hint), m.availableWidth())
 }
 
@@ -1123,10 +1135,11 @@ func (m Model) helpView() string {
 		"n/p                 result pages",
 		"s                   cycle source",
 		"e/x/D               toggle enable/disable / uninstall selected mod / deploy active profile",
+		"u                   check for updates (Dashboard/Installed Mods)",
 		"?                   toggle this help",
 		"q / ctrl+c           quit",
 		"",
-		"Enable, disable, uninstall, deploy, install, and profile switch all confirm through a modal before anything changes.",
+		"Enable, disable, uninstall, deploy, install, apply updates, and profile switch all confirm through a modal before anything changes.",
 	}, "\n"))
 }
 
