@@ -805,6 +805,46 @@ func TestCoreProviderActions_ApplyProfileSwitch_DownloadsAndAppliesNeedsDownload
 	assert.NoError(t, err, "the downloaded mod must actually be deployed")
 }
 
+// TestCoreProviderActions_ApplyProfileSwitch_SurfacesInstallFailureAsWarning
+// is the RED test for the Fix wave 2 review finding: a NeedsDownloads switch
+// whose per-mod install fails (here, the fake source errors fetching the
+// mod - one of the install loop's mod-fatal-only failure reasons, see
+// SwitchInstallError's doc comment in flows.go) still completes the switch
+// per core's own semantics (the install loop's fail() closure just
+// `continue`s to the next ToInstall entry; SetDefault always runs after the
+// loop) - but core.SwitchResult never records the failure anywhere
+// (SwitchInstallError's doc comment: "these are NOT accumulated into any
+// SwitchResult slice"), and coreProvider.ApplyProfileSwitch's own
+// result.Notes-only Warnings mapping never sees it either. Against the
+// pre-fix implementation this asserts require.NotEmpty on an Outcome.Warnings
+// that is actually empty - the silent "Switched to X" with zero warnings the
+// finding describes.
+func TestCoreProviderActions_ApplyProfileSwitch_SurfacesInstallFailureAsWarning(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	seedActionProfileMod(t, svc, game.ID, "target", "src", "modZ", "1.0")
+
+	netSrc := newNetSource(t, "src")
+	netSrc.getModErr = errors.New("connection refused")
+	svc.RegisterSource(netSrc)
+
+	outcome, err := actions.ApplyProfileSwitch(context.Background(), "target", nil)
+	require.NoError(t, err, "core reports a per-mod install failure via a progress event, not a fatal error - the switch itself must still complete")
+	assert.Equal(t, `Switched to "target"`, outcome.Message)
+	require.NotEmpty(t, outcome.Warnings, "a failed per-mod install during a NeedsDownloads switch must surface as a warning, not vanish silently")
+	assert.Contains(t, outcome.Warnings[0], "modZ", "the warning must identify WHICH mod failed")
+	assert.Contains(t, outcome.Warnings[0], "connection refused", "the warning must carry the underlying failure reason")
+
+	def, err := pm.GetDefault(game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "target", def.Name, "the switch must still complete despite the failed install")
+
+	_, err = svc.GetInstalledMod("src", "modZ", game.ID, "target")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "the failed mod must not have been installed")
+}
+
 // --- C1: profile rebind after a TUI-driven switch ---
 
 // TestCoreProviderSetProfile_RebindsWhichProfileProfilesMarksActive guards

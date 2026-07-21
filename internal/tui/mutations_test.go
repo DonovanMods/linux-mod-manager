@@ -9,7 +9,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
 
@@ -590,6 +594,133 @@ func TestSwitchPlanNeedsDownloadsOpensModalAndAppliesOnConfirm(t *testing.T) {
 	doneMsg := runActionCmd(t, confirmCmd)
 	require.IsType(t, actionDoneMsg{}, doneMsg)
 	require.Equal(t, []string{"vanilla-plus"}, rec.ApplyCalls, "confirming must call ApplyProfileSwitch")
+}
+
+// erroringModSource is a minimal source.ModSource whose GetMod always fails,
+// used below to drive a REAL per-mod install failure through
+// core.Service.ApplyProfileSwitch's install loop against a real
+// coreProvider/coreActions pair (as opposed to recordingActions, which only
+// replays canned outcomes and so can't exercise the Fix wave 2 fix itself).
+// Mirrors service_core_test.go's stubSource/netSource (package tui_test,
+// unreachable from this package tui test file - see customSourceType's doc
+// comment in service_core.go for why cross-package test doubles aren't
+// shared) and sources_view_test.go's builtinStubSource (package tui, same
+// file split, narrower stub).
+type erroringModSource struct {
+	id  string
+	err error
+}
+
+func (s *erroringModSource) ID() string      { return s.id }
+func (s *erroringModSource) Name() string    { return "Erroring Source" }
+func (s *erroringModSource) AuthURL() string { return "" }
+func (s *erroringModSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *erroringModSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, errors.New("not implemented")
+}
+func (s *erroringModSource) GetMod(context.Context, string, string) (*domain.Mod, error) {
+	return nil, s.err
+}
+func (s *erroringModSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *erroringModSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *erroringModSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", errors.New("not implemented")
+}
+func (s *erroringModSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, errors.New("not implemented")
+}
+
+// TestSwitchConfirmSurfacesInstallFailureWarningInStatusLine is the
+// Model-level RED test for the Fix wave 2 review finding's item 3(c): once
+// coreProvider.ApplyProfileSwitch correctly folds a failed per-mod install
+// into ActionOutcome.Warnings (the sandbox-level RED test in
+// service_core_test.go), the existing formatOutcomeStatus/actionDoneMsg
+// machinery (actions.go/app.go, already proven by
+// TestSwitchConfirmCallsApplyProfileSwitchWithTargetName et al.) must render
+// it in the one-line status suffix with no further wiring - this drives a
+// REAL coreProvider/coreActions pair (not recordingActions) through the full
+// confirm -> ApplyProfileSwitch -> actionDoneMsg round trip to prove that
+// end to end. Against the pre-fix implementation this fails: the status line
+// reads bare `Switched to "vanilla-plus"` with no warning suffix at all,
+// silently hiding the failed install (the finding's exact symptom).
+func TestSwitchConfirmSurfacesInstallFailureWarningInStatusLine(t *testing.T) {
+	t.Parallel()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{
+		ID: "test-game", Name: "Test Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		LinkMethod: domain.LinkSymlink,
+	}
+	require.NoError(t, svc.AddGame(game))
+
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+
+	// "vanilla-plus" matches modelWithActions' prototype.Profile at index 1,
+	// used only to keep the plan-fetch's target name recognizable if this
+	// test is read alongside the recordingActions-backed switch tests above
+	// - the profile list itself comes from THIS sandbox's real coreProvider,
+	// found by name below rather than assumed by index.
+	_, err = pm.Create(game.ID, "vanilla-plus")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "vanilla-plus", domain.ModReference{SourceID: "src", ModID: "modZ", Version: "1.0"}))
+
+	svc.RegisterSource(&erroringModSource{id: "src", err: errors.New("connection refused")})
+
+	provider := NewCoreProvider(svc, game, "default")
+	actions := NewCoreActions(svc, game, "default")
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: actions})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	idx := -1
+	for i, p := range model.profiles {
+		if p.Name == "vanilla-plus" {
+			idx = i
+		}
+	}
+	require.GreaterOrEqualf(t, idx, 0, "the real sandbox profile list must include vanilla-plus")
+	model.screen = ScreenProfiles
+	model.selected[ScreenProfiles] = idx
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending, "a NeedsDownloads plan must open the confirmation modal")
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, _ = model.Update(doneMsg)
+	model = updated.(Model)
+	require.False(t, model.action.statusIsError)
+	require.Contains(t, model.action.status, `Switched to "vanilla-plus"`)
+	require.Contains(t, model.action.status, "modZ",
+		"a failed per-mod install during the switch must surface in the status line, not vanish silently")
 }
 
 // TestSwitchPlanNoChangesShowsSetAsDefaultModal covers the NoChanges
