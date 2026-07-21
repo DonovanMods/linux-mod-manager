@@ -2089,7 +2089,7 @@ func (s *Service) applyInstallDependency(ctx context.Context, game *domain.Game,
 
 	if !opts.SkipVerify && downloadResult.Checksum != "" {
 		if err := s.SaveFileChecksum(dep.SourceID, dep.ID, game.ID, plan.Profile, file.ID, downloadResult.Checksum); err != nil {
-			msg := fmt.Sprintf("Warning: failed to save checksum for file %s: %v", file.ID, err)
+			msg := fmt.Sprintf("failed to save checksum for file %s: %v", file.ID, err)
 			result.Warnings = append(result.Warnings, msg)
 			evt := base
 			evt.Phase, evt.Detail = InstallWarning, msg
@@ -2288,7 +2288,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 
 	for _, fc := range checksums {
 		if err := s.SaveFileChecksum(plan.SourceID, mod.ID, game.ID, plan.Profile, fc.fileID, fc.checksum); err != nil {
-			msg := fmt.Sprintf("Warning: failed to save checksum for file %s: %v", fc.fileID, err)
+			msg := fmt.Sprintf("failed to save checksum for file %s: %v", fc.fileID, err)
 			result.Warnings = append(result.Warnings, msg)
 			emit(DeployProgress{Phase: InstallWarning, Detail: msg, ModName: mod.Name, ModID: mod.ID})
 		}

@@ -14,6 +14,7 @@ package core_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
 // noDepsSource wraps mockSource but always fails GetDependencies with
@@ -609,6 +611,69 @@ exit 0`)
 	logContent, err := os.ReadFile(callLog)
 	require.NoError(t, err)
 	assert.Equal(t, "before_all\nbefore_each:mod1\nafter_each:mod1\nafter_all\n", string(logContent))
+}
+
+// TestService_ApplyInstall_ChecksumSaveFailure_WarningNotDoublePrefixed
+// guards a review finding: InstallResult.Warnings entries must NOT carry a
+// baked-in "Warning: " prefix (matching DeployResult.Warnings' own
+// convention - see its doc comment) since the CLI's InstallWarning handler
+// already adds one uniformly (fmt.Fprintf(os.Stderr, "Warning: %s\n",
+// p.Detail)); baking it into the message too would print
+// "Warning: Warning: failed to save checksum...". Forces SaveFileChecksum to
+// fail deterministically via a blocking UPDATE trigger on
+// installed_mod_files.checksum (mirrors deploy_test.go's
+// installBlockingTrigger).
+func TestService_ApplyInstall_ChecksumSaveFailure_WarningNotDoublePrefixed(t *testing.T) {
+	configDir, dataDir, gameDir := t.TempDir(), t.TempDir(), t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	// Block UPDATEs to installed_mod_files.checksum with a second connection
+	// - narrow enough that Install/SaveInstalledMod still succeed.
+	conn, err := sql.Open("sqlite", filepath.Join(dataDir, "lmm.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	_, err = conn.Exec(`
+		CREATE TRIGGER block_checksum_updates
+		BEFORE UPDATE OF checksum ON installed_mod_files
+		BEGIN
+			SELECT RAISE(ABORT, 'blocked for test');
+		END;
+	`)
+	require.NoError(t, err)
+
+	var events []core.DeployProgress
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err, "a checksum-save failure must not fail the whole install")
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Mod One"}, result.Installed)
+
+	require.Len(t, result.Warnings, 1)
+	assert.True(t, strings.HasPrefix(result.Warnings[0], "failed to save checksum for file mod1: "), "got: %s", result.Warnings[0])
+	assert.Contains(t, result.Warnings[0], "blocked for test")
+	assert.NotContains(t, result.Warnings[0], "Warning:", "the Warnings entry itself must not carry a baked-in prefix - the caller's printer adds it")
+
+	var warningEvt *core.DeployProgress
+	for i := range events {
+		if events[i].Phase == core.InstallWarning {
+			warningEvt = &events[i]
+		}
+	}
+	require.NotNil(t, warningEvt, "an InstallWarning event must fire for the checksum-save failure")
+	assert.Equal(t, result.Warnings[0], warningEvt.Detail)
 }
 
 // TestService_ApplyInstall_DependencyInstallOrder proves dependencies
