@@ -1001,14 +1001,42 @@ func (m Model) searchFooterLine() string {
 func (m Model) profilesView() string {
 	rows := []string{m.theme.PanelTitle.Render("PROFILE ROSTER")}
 	for i, profile := range m.profiles {
-		active := " "
-		if profile.Active {
-			active = "*"
-		}
-		line := fmt.Sprintf("%s %-22s %3d mods", active, profile.Name, profile.ModCount)
-		rows = append(rows, m.row(i, line))
+		rows = append(rows, m.profileRow(i, m.availableWidth(), profile))
 	}
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+}
+
+// profileRow renders one Profiles row: active marker / name / mod count.
+// Same defect class modRow was fixed for (see modRow's doc comment): the
+// name column used to be a fixed 22 runes with no truncation
+// ("%s %-22s %3d mods"), so a longer name overflowed it unchecked and
+// shifted the mod-count column out of alignment with shorter rows. The
+// mod-count column gets a proportional (clamped) share of the panel's
+// width and the name column absorbs whatever's left, so it grows with the
+// panel instead of staying a small fixed number. truncate() (ANSI-safe,
+// hard cutoff with an ellipsis) is applied to both fields so an overlong
+// value can never push the mod-count column out of place.
+func (m Model) profileRow(index, width int, profile ProfileItem) string {
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+	const activeWidth = 1 // "*"/" " active marker
+	const gaps = 2        // separating spaces: marker-name, name-count
+	const minName = 8
+
+	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth-activeWidth-gaps, minName)
+	countWidth := min(9, max(avail/6, 4)) // "999 mods" is up to 8 runes
+	nameWidth := max(avail-countWidth, minName)
+
+	active := " "
+	if profile.Active {
+		active = "*"
+	}
+	count := fmt.Sprintf("%d mods", profile.ModCount)
+
+	line := fmt.Sprintf("%s %-*s %-*s",
+		active,
+		nameWidth, truncate(profile.Name, nameWidth),
+		countWidth, truncate(count, countWidth))
+	return m.row(index, line)
 }
 
 // sourcesView renders the read-only source registry: every source
