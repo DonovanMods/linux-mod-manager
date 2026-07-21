@@ -102,15 +102,23 @@ type actionProgressMsg struct {
 // TestActionProgressPumpNeverBlocksFlowAndCoalescesForSlowConsumer, which
 // pins exactly this behavior).
 func sendActionProgress(ch chan ActionProgress, p ActionProgress) {
-	// TEMPORARY RED-PROOF STUB (removed in the GREEN commit): a naive
-	// non-blocking send with no drain-on-full. This never blocks either,
-	// but under a slow/absent consumer it keeps the OLDEST buffered tick
-	// and silently drops everything sent after the buffer first fills -
-	// the wrong failure mode TestActionProgressPumpNeverBlocksFlowAndCoalescesForSlowConsumer
-	// exists to catch.
+	select {
+	case ch <- p:
+		return
+	default:
+	}
+	select {
+	case <-ch:
+	default:
+	}
 	select {
 	case ch <- p:
 	default:
+		// Lost a vanishingly unlikely race against a concurrent receive
+		// that drained the slot between our drain and our send attempt.
+		// Harmless: the listener still got A recent tick, and the next
+		// send (or the eventual close(ch) - see buildAction) delivers
+		// whatever is truly latest, so nothing is ever stuck.
 	}
 }
 
