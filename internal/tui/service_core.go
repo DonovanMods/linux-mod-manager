@@ -428,6 +428,22 @@ func (p *coreProvider) PlanProfileSwitch(ctx context.Context, profileName string
 // AlreadyActive plans are reported without calling ApplyProfileSwitch at
 // all, mirroring cmd/lmm/profile.go's doProfileSwitch, which returns before
 // ever calling it in that case.
+//
+// Fix wave 2 (review finding): core.SwitchResult never records a per-mod
+// install failure anywhere (SwitchInstallError's doc comment in flows.go:
+// "these are NOT accumulated into any SwitchResult slice" - core.DeployPhase
+// only recorded UpsertMod's own SwitchInstallNote into result.Notes). Left
+// alone, a NeedsDownloads switch whose install loop hits a
+// fetch/get-files/no-files/file-selection/deploy/save failure for one mod
+// (SwitchInstallError) or a download failure (SwitchDownloadFailed) would
+// silently report "Switched to X" with zero warnings, even though the CLI
+// prints "Error: %s" for exactly these phases unconditionally
+// (cmd/lmm/profile.go). installFailures below is this method's OWN
+// accumulator - built from a progress observer that runs regardless of
+// whether the CALLER passed a non-nil progress (unlike
+// deployProgressAdapter, which no-ops entirely when progress is nil - a
+// caller applying a switch with progress=nil, e.g. a "fire and check the
+// outcome" caller, must still see the failure in Warnings).
 func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName string, progress func(ActionProgress)) (ActionOutcome, error) {
 	plan, err := p.svc.PlanProfileSwitch(ctx, p.game, profileName)
 	if err != nil {
@@ -437,13 +453,42 @@ func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName strin
 		return ActionOutcome{Message: fmt.Sprintf("Already on profile %q", profileName)}, nil
 	}
 
-	result, err := p.svc.ApplyProfileSwitch(ctx, p.game, plan, deployProgressAdapter(progress, switchProgressLine))
+	// installFailures and the observer below are local to this call: a
+	// plain, unsynchronized slice is race-safe here because there is
+	// exactly one writer and one reader, both on the same goroutine, never
+	// overlapping in time. The writer is onProgress, invoked synchronously
+	// by p.svc.ApplyProfileSwitch's own emit() calls (flows.go) from
+	// whatever goroutine is executing THIS call - which, per
+	// actions.go/buildAction's doc comment, is the single flow goroutine
+	// Bubble Tea spins up to run a confirmed pendingAction's do(); nothing
+	// else ever calls a coreProvider method concurrently with it (the
+	// Model's single-flight guard blocks a second action while one is
+	// running). The reader is the "Warnings: mergeDiagnostics(...)" line
+	// below, which cannot execute until p.svc.ApplyProfileSwitch has
+	// returned - i.e. until onProgress can no longer be called at all. So
+	// the write phase (during the blocking call) and the read phase (after
+	// it returns) never overlap, on the same goroutine besides.
+	var installFailures []string
+	onProgress := func(evt core.DeployProgress) {
+		switch evt.Phase {
+		case core.SwitchInstallError, core.SwitchDownloadFailed:
+			installFailures = append(installFailures, fmt.Sprintf("%s:%s: %s", evt.SourceID, evt.ModID, evt.Detail))
+		}
+		if progress == nil {
+			return
+		}
+		if line, ok := switchProgressLine(evt); ok {
+			progress(line)
+		}
+	}
+
+	result, err := p.svc.ApplyProfileSwitch(ctx, p.game, plan, onProgress)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("switching to %s: %w", profileName, err)
 	}
 	return ActionOutcome{
 		Message:  fmt.Sprintf("Switched to %q", profileName),
-		Warnings: mergeDiagnostics(nil, result.Notes),
+		Warnings: mergeDiagnostics(installFailures, result.Notes),
 	}, nil
 }
 
@@ -465,9 +510,24 @@ func deployProgressAdapter(progress func(ActionProgress), compose func(core.Depl
 }
 
 // switchProgressLine composes an ActionProgress from one core.DeployProgress
-// event during ApplyProfileSwitch's install loop (the only phases relevant
-// to a TUI status line - see core.DeployPhase's Switch* constants for the
-// full set this deliberately narrows).
+// event during ApplyProfileSwitch's install loop (the phases relevant to a
+// TUI status line - see core.DeployPhase's Switch* constants for the full
+// set this deliberately narrows).
+//
+// Fix wave 2 (review finding, item 2) added SwitchInstallError/
+// SwitchDownloadFailed/SwitchFallbackUsed: the CLI (cmd/lmm/profile.go)
+// prints "    Error: %s" for the first two and an unconditional (NOT
+// --verbose-gated) "    Warning: stored file IDs not found, using primary"
+// for the third, so all three are user-visible live output there - dropping
+// them here via the default case left the TUI with no live sign of a
+// failing/fallback-using install while the switch was still running (the
+// completed outcome's Warnings, see coreProvider.ApplyProfileSwitch, is the
+// only other place a failure surfaces, and used to be silently empty too).
+// SourceID/ModID identify the mod for all three - see DeployProgress.
+// SourceID's own doc comment: it's set for every ApplyProfileSwitch
+// install-loop event from SwitchInstallingMod onward, including these,
+// unlike ModName, which SwitchInstallError may fire before its mod is even
+// fetched (fetch-failure is one of its listed reasons).
 func switchProgressLine(p core.DeployProgress) (ActionProgress, bool) {
 	switch p.Phase {
 	case core.SwitchDownloading:
@@ -476,6 +536,10 @@ func switchProgressLine(p core.DeployProgress) (ActionProgress, bool) {
 		return ActionProgress{Line: fmt.Sprintf("Switching: installing %s:%s (%d/%d)", p.SourceID, p.ModID, p.Index, p.Total), Percent: -1}, true
 	case core.SwitchEnabled, core.SwitchDisabled, core.SwitchInstalled:
 		return ActionProgress{Line: fmt.Sprintf("Switching: %s (%d/%d)", p.ModName, p.Index, p.Total), Percent: -1}, true
+	case core.SwitchInstallError, core.SwitchDownloadFailed:
+		return ActionProgress{Line: fmt.Sprintf("Switching: %s:%s failed - %s", p.SourceID, p.ModID, p.Detail), Percent: -1}, true
+	case core.SwitchFallbackUsed:
+		return ActionProgress{Line: fmt.Sprintf("Switching: %s:%s - stored file IDs not found, using primary", p.SourceID, p.ModID), Percent: -1}, true
 	default:
 		return ActionProgress{}, false
 	}
