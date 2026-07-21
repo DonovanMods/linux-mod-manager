@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -1613,4 +1614,530 @@ func TestFooterHintNamesInstallAction(t *testing.T) {
 	view := model.View()
 
 	require.Contains(t, view, "i: install")
+}
+
+// --- Check/apply updates ('u' on Dashboard and Installed Mods) ---
+
+// TestCheckUpdatesKeyDispatchesAsyncFetchFromDashboard proves 'u' on
+// Dashboard shows a "Checking for updates…" status and returns a command
+// instead of synchronously calling the provider - mirrors
+// TestSwitchKeyDispatchesAsyncPlanFetch/TestInstallKeyDispatchesAsyncPlanFetch's
+// shape.
+func TestCheckUpdatesKeyDispatchesAsyncFetchFromDashboard(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	require.True(t, model.action.running)
+	require.Equal(t, "Checking for updates…", model.action.status)
+	require.False(t, model.action.statusIsError)
+	require.Empty(t, rec.CheckUpdatesCalls, "the provider call happens when the returned cmd runs, not synchronously")
+
+	msg := cmd()
+	require.IsType(t, checkUpdatesResultMsg{}, msg)
+	require.Equal(t, 1, rec.CheckUpdatesCalls)
+}
+
+// TestCheckUpdatesKeyDispatchesAsyncFetchFromInstalledMods proves the same
+// binding also fires from the Installed Mods screen (task-5-brief.md:
+// "'u' on ScreenDashboard and ScreenInstalledMods").
+func TestCheckUpdatesKeyDispatchesAsyncFetchFromInstalledMods(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	require.True(t, model.action.running)
+
+	msg := cmd()
+	require.IsType(t, checkUpdatesResultMsg{}, msg)
+}
+
+func TestCheckUpdatesKeyWrongScreenIsNoop(t *testing.T) {
+	t.Parallel()
+
+	for _, screen := range []Screen{ScreenSearch, ScreenProfiles, ScreenSources} {
+		rec := &recordingActions{}
+		model := modelWithActions(t, rec)
+		model.screen = screen
+
+		updated, cmd := model.Update(keyRunes("u"))
+		model = updated.(Model)
+		require.Nil(t, cmd, "screen %v", screen)
+		require.False(t, model.action.running, "screen %v", screen)
+		require.Empty(t, rec.CheckUpdatesCalls, "screen %v", screen)
+	}
+}
+
+func TestCheckUpdatesKeyInertWhileRunning(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+	model.action.running = true
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Empty(t, rec.CheckUpdatesCalls)
+}
+
+// TestCheckUpdatesKeyInertWhileAnotherModalPending proves a DIFFERENT
+// already-pending modal is left completely undisturbed by 'u'.
+func TestCheckUpdatesKeyInertWhileAnotherModalPending(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return ActionOutcome{}, nil
+	})
+	model = model.promptAction(pa)
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, actionDeploy, model.action.pending.kind, "the original modal must still be showing")
+	require.Empty(t, rec.CheckUpdatesCalls)
+}
+
+// --- Check/apply updates: zero-updates status line ---
+
+func TestCheckUpdatesZeroUpdatesShowsStatusLine(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, cmd2 := model.Update(msg)
+	model = updated.(Model)
+
+	require.Nil(t, cmd2)
+	require.Nil(t, model.action.pending)
+	require.False(t, model.action.running)
+	require.Equal(t, "No updates available.", model.action.status)
+	require.False(t, model.action.statusIsError)
+}
+
+// TestCheckUpdatesZeroUpdatesWithWarningsSuffix guards the "(N warnings)"
+// suffix task-5-brief.md mandates when CheckUpdates surfaces per-source
+// diagnostics alongside zero resolved updates - reusing
+// formatOutcomeStatus's own Message-plus-Warnings rendering convention
+// rather than inventing a second formatter (see
+// resolveCheckUpdatesResult's doc comment).
+func TestCheckUpdatesZeroUpdatesWithWarningsSuffix(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Warnings: []string{
+		`source "local-mods" does not support checking for updates; run 'lmm update' from a shell instead`,
+	}}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.Nil(t, model.action.pending)
+	require.Contains(t, model.action.status, "No updates available.")
+	require.Contains(t, model.action.status, "does not support checking for updates")
+}
+
+// TestCheckUpdatesAuthRequiredWarningRendersAsStatusLine covers the other
+// half of task-5-brief.md's capability/auth item: an ErrAuthRequired-mapped
+// message (coreProvider.CheckUpdates' own wording - service_core_test.go
+// covers the mapping itself) must render just as cleanly.
+func TestCheckUpdatesAuthRequiredWarningRendersAsStatusLine(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Warnings: []string{
+		"Authentication required for one or more sources. Run 'lmm auth login <source>' in a shell, then try again (auth required)",
+	}}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.Contains(t, model.action.status, "Authentication required")
+	require.False(t, model.action.statusIsError, "a per-source warning folded into UpdatesView.Warnings is not itself a failed check")
+}
+
+// TestCheckUpdatesWarningStatusTruncatesAtRenderTime extends rule 5's
+// render-time truncation contract (TestFailedStatusTruncatesAtRenderTimeNotSetTime)
+// to the zero-updates-with-warnings status line.
+func TestCheckUpdatesWarningStatusTruncatesAtRenderTime(t *testing.T) {
+	t.Parallel()
+
+	long := strings.Repeat("x", 300)
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Warnings: []string{long}}}
+	model := sizedModelWithActions(t, rec, 100, 30)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	wide := model.statusLine()
+	require.LessOrEqual(t, lipgloss.Width(wide), model.availableWidth())
+}
+
+// --- Check/apply updates: modal content ---
+
+func TestCheckUpdatesModalContentListsUpdatesAndWarningsCount(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{
+		Updates: []UpdateItem{
+			{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+			{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+		},
+		Warnings: []string{"source foo: boom"},
+	}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, actionUpdate, model.action.pending.kind)
+	require.Equal(t, "Apply 2 update(s)?", model.action.pending.title)
+	require.Contains(t, model.action.pending.detail, "SkyUI 5.2 → 5.3")
+	require.Contains(t, model.action.pending.detail, "USSEP 4.3 → 4.4")
+	require.Contains(t, model.action.pending.detail, "1 warning(s) during check")
+}
+
+// --- Check/apply updates: confirm applies all sequentially ---
+
+// TestCheckUpdatesConfirmAppliesAllSequentiallyInOrder proves confirming
+// the batch modal calls ApplyUpdate once per update, in the SAME order
+// CheckUpdates reported them - task-5-brief.md: "confirm applies all
+// sequentially (recording asserts order)".
+func TestCheckUpdatesConfirmAppliesAllSequentiallyInOrder(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: updates}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+	require.Equal(t, updates, rec.ApplyUpdateCalls, "must apply every update, in order")
+
+	outcome := doneMsg.(actionDoneMsg).outcome
+	require.Equal(t, "Applied 2 update(s)", outcome.Message)
+}
+
+// TestCheckUpdatesMidBatchFailureContinuesAndWarns guards the batch's
+// failure-tolerance contract: one update failing must not abort the rest
+// (task-5-brief.md: "a mid-batch failure continues to the next update...
+// with the failure warned, not fatal"), and the aggregate outcome folds the
+// failure into Warnings (matching ApplyInstall's own Failed-into-Warnings
+// precedent) rather than surfacing as an actionFailedMsg.
+func TestCheckUpdatesMidBatchFailureContinuesAndWarns(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+	rec := &recordingActions{
+		UpdatesViewOut:     UpdatesView{Updates: updates},
+		ApplyUpdateErrByID: map[string]error{"skyui": errors.New("connection refused")},
+	}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg, "a mid-batch failure must still resolve as a done outcome, not actionFailedMsg")
+	require.Equal(t, updates, rec.ApplyUpdateCalls, "the batch must continue past the failed update, not abort")
+
+	outcome := doneMsg.(actionDoneMsg).outcome
+	require.Equal(t, "Applied 1 update(s)", outcome.Message)
+	require.Len(t, outcome.Warnings, 1)
+	require.Contains(t, outcome.Warnings[0], "SkyUI")
+	require.Contains(t, outcome.Warnings[0], "connection refused")
+}
+
+func TestCheckUpdatesCancelDoesNotCallApplyUpdate(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+	}}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+
+	updated, cmd2 := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	model = updated.(Model)
+	require.Nil(t, cmd2)
+	require.Nil(t, model.action.pending)
+	require.Empty(t, rec.ApplyUpdateCalls)
+}
+
+// --- Check/apply updates: stale plan-fetch discard + fetch error ---
+
+func TestCheckUpdatesPlanStaleResultDiscarded(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 9
+	model.action.running = true
+	model.action.status = ""
+
+	updated, cmd := model.Update(checkUpdatesResultMsg{gen: 4, view: UpdatesView{}})
+	m := updated.(Model)
+	require.Nil(t, cmd)
+	require.True(t, m.action.running, "stale result must not clear running")
+	require.Nil(t, m.action.pending)
+	require.Empty(t, m.action.status)
+}
+
+func TestCheckUpdatesStaleFailureDiscarded(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 9
+	model.action.running = true
+
+	updated, cmd := model.Update(checkUpdatesFailedMsg{gen: 1, err: errors.New("boom")})
+	m := updated.(Model)
+	require.Nil(t, cmd)
+	require.True(t, m.action.running)
+	require.Empty(t, m.action.status)
+}
+
+func TestCheckUpdatesErrorShowsStatusNoModal(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{CheckUpdatesErr: errors.New("loading installed mods for skyrim-se/survival: boom")}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	require.IsType(t, checkUpdatesFailedMsg{}, msg)
+
+	updated, cmd2 := model.Update(msg)
+	model = updated.(Model)
+	require.Nil(t, cmd2)
+	require.False(t, model.action.running)
+	require.True(t, model.action.statusIsError)
+	require.Contains(t, model.action.status, "boom")
+	require.Nil(t, model.action.pending)
+}
+
+// --- Check/apply updates: progress streaming ---
+
+func TestCheckUpdatesApplyProgressStreamsIntoStatusLine(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{
+		UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+			{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		}},
+		ApplyUpdateTicks: []ActionProgress{{Line: "Updating SkyUI: 42%", Percent: 42}},
+	}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	batchMsg := confirmCmd()
+	batch, ok := batchMsg.(tea.BatchMsg)
+	require.True(t, ok)
+	require.Len(t, batch, 2)
+
+	actionMsg := batch[0]()
+	require.IsType(t, actionDoneMsg{}, actionMsg)
+
+	progressMsg := batch[1]()
+	updated, _ = model.Update(progressMsg)
+	model = updated.(Model)
+	require.Contains(t, model.statusLine(), "Updating SkyUI: 42%")
+}
+
+// --- Check/apply updates: Dashboard summary tie-in ---
+
+// TestCheckUpdatesUpdatesSummaryCountAfterCheck guards task-5-brief.md's
+// Dashboard summary tie-in: Summary.Updates renders the "?" sentinel (-1)
+// until a check has actually run; a successful check must set it to the
+// real, already-in-hand count (no DataProvider change - see
+// resolveCheckUpdatesResult's doc comment for the accepted "reverts to
+// unknown on the next unrelated refresh" tradeoff).
+func TestCheckUpdatesUpdatesSummaryCountAfterCheck(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+	}}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+	model.summary.Updates = -1 // simulate coreProvider's "?" sentinel before any check has run
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.Equal(t, 1, model.summary.Updates, "the dashboard summary must reflect the real count after a check")
+}
+
+// TestCheckUpdatesUpdatesSummaryCountToZeroWhenNoneFound proves zero
+// updates becomes the KNOWN count 0, not left at the unknown sentinel -1.
+func TestCheckUpdatesUpdatesSummaryCountToZeroWhenNoneFound(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+	model.summary.Updates = -1
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.Equal(t, 0, model.summary.Updates, "zero updates is a KNOWN count (0), not the unknown sentinel (-1)")
+}
+
+// --- Check/apply updates: prototype end-to-end ---
+
+// TestPrototypeUpdatesEndToEndKeyFlow drives the FULL updates flow through
+// the real prototypeProvider: 'u' -> canned updates modal (skyui + ussep,
+// the two canned auto/notify updates - prototype/data.go) -> confirm ->
+// ApplyUpdate's fake progress ticks per mod -> refresh -> both versions
+// bump, visible via a repeated Overview through the SAME provider instance.
+func TestPrototypeUpdatesEndToEndKeyFlow(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	require.Equal(t, "Checking for updates…", model.action.status)
+
+	msg := cmd()
+	require.IsType(t, checkUpdatesResultMsg{}, msg)
+
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, "Apply 2 update(s)?", model.action.pending.title)
+	require.Contains(t, model.action.pending.detail, "SkyUI 5.2 → 5.3")
+	require.Contains(t, model.action.pending.detail, "USSEP 4.3 → 4.4")
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, refreshCmd := model.Update(doneMsg)
+	model = updated.(Model)
+	require.NotNil(t, refreshCmd)
+	require.Equal(t, "Applied 2 update(s)", model.action.status)
+
+	loadedMsg := refreshCmd()
+	require.IsType(t, dataLoadedMsg{}, loadedMsg, "the updates flow never triggers the install-only search-refresh batching")
+	updated, _ = model.Update(loadedMsg)
+	model = updated.(Model)
+
+	skyui := requireModByID(t, model.mods, "skyui")
+	require.Equal(t, "5.3", skyui.Version)
+	ussep := requireModByID(t, model.mods, "ussep")
+	require.Equal(t, "4.4", ussep.Version)
+}
+
+// --- Check/apply updates: help/footer content ---
+
+func TestHelpOverlayDocumentsCheckUpdatesKey(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	model = updateWithRunes(t, model, "?")
+	view := model.View()
+
+	require.Contains(t, view, "check for updates")
+}
+
+func TestFooterHintNamesCheckUpdatesAction(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	view := model.View()
+
+	require.Contains(t, view, "u: check updates")
 }

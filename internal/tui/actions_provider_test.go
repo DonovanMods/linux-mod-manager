@@ -477,6 +477,12 @@ type recordingActions struct {
 
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
+
+	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
+	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
+	// mid-batch update failure (one mod in a multi-update apply fails,
+	// others succeed) without needing per-call outcome sequencing.
+	ApplyUpdateErrByID map[string]error
 }
 
 func (r *recordingActions) EnableMod(_ context.Context, item ModItem) (ActionOutcome, error) {
@@ -540,6 +546,9 @@ func (r *recordingActions) ApplyUpdate(_ context.Context, u UpdateItem, progress
 		if progress != nil {
 			progress(p)
 		}
+	}
+	if err, ok := r.ApplyUpdateErrByID[u.ID]; ok {
+		return ActionOutcome{}, err
 	}
 	return r.ApplyUpdateOutcome, r.ApplyUpdateErr
 }

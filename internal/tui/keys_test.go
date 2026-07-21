@@ -98,3 +98,41 @@ func TestInstallBindingDoesNotCollideWithExistingBindings(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultKeyMapDocumentsCheckUpdatesBinding guards Phase 5b's
+// check-updates binding: 'u' on ScreenDashboard/ScreenInstalledMods (see
+// mutations.go's checkForUpdates).
+func TestDefaultKeyMapDocumentsCheckUpdatesBinding(t *testing.T) {
+	t.Parallel()
+
+	keyMap := DefaultKeyMap()
+	require.True(t, key.Matches(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}}, keyMap.CheckUpdates))
+}
+
+// TestCheckUpdatesBindingDoesNotCollideWithExistingBindings extends the
+// same standing-regression pattern to Phase 5b's CheckUpdates binding: 'u'
+// must not match any binding already registered in KeyMap, including the
+// Phase 5a mutation bindings and Phase 5b's own Install binding.
+func TestCheckUpdatesBindingDoesNotCollideWithExistingBindings(t *testing.T) {
+	t.Parallel()
+
+	keyMap := DefaultKeyMap()
+	existing := map[string]key.Binding{
+		"Quit": keyMap.Quit, "Help": keyMap.Help, "NextScreen": keyMap.NextScreen,
+		"PrevScreen": keyMap.PrevScreen, "Up": keyMap.Up, "Down": keyMap.Down,
+		"Search": keyMap.Search, "SearchScreen": keyMap.SearchScreen, "Dashboard": keyMap.Dashboard,
+		"InstalledMods": keyMap.InstalledMods, "Profiles": keyMap.Profiles, "Sources": keyMap.Sources,
+		"Select": keyMap.Select, "Submit": keyMap.Submit, "Blur": keyMap.Blur,
+		"NextPage": keyMap.NextPage, "PrevPage": keyMap.PrevPage, "CycleSource": keyMap.CycleSource,
+		"ConfirmAction": keyMap.ConfirmAction, "CancelAction": keyMap.CancelAction,
+		"ToggleEnable": keyMap.ToggleEnable, "Uninstall": keyMap.Uninstall, "Deploy": keyMap.Deploy,
+		"Install": keyMap.Install,
+	}
+
+	for _, k := range keyMap.CheckUpdates.Keys() {
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		for eName, e := range existing {
+			require.False(t, key.Matches(msg, e), "CheckUpdates (%q) collides with existing binding %s", k, eName)
+		}
+	}
+}
