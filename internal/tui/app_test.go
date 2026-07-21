@@ -62,10 +62,16 @@ func TestTabCyclesScreens(t *testing.T) {
 	require.Equal(t, ScreenDashboard, updated.CurrentScreen())
 }
 
-// TestTabCyclingOntoSearchFocuses covers the tab-cycling entry path into
-// ScreenSearch: like every other entry path (number keys, dashboard menu,
-// "/"), it must focus the input immediately.
-func TestTabCyclingOntoSearchFocuses(t *testing.T) {
+// TestTabCyclingOntoSearchDoesNotFocus covers the tab-cycling entry path into
+// ScreenSearch. Finding 1 (smoke test): auto-focusing here trapped the user,
+// since a focused input swallows every keystroke (see updateKey's
+// focused-input branch) — they couldn't keep cycling past Search without
+// pressing Esc first. Only the two EXPLICIT "go search" bindings, "/" and
+// "3", may focus (see TestSlashFromAnyScreenJumpsAndFocuses and
+// TestNumberThreeJumpsAndFocuses); screen-cycling must land here unfocused,
+// and a further Tab must keep cycling straight through to the next screen
+// instead of being swallowed as literal text — that's the trap repro.
+func TestTabCyclingOntoSearchDoesNotFocus(t *testing.T) {
 	t.Parallel()
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
@@ -76,7 +82,12 @@ func TestTabCyclingOntoSearchFocuses(t *testing.T) {
 
 	updated = updateWithKeyType(t, updated, tea.KeyTab)
 	require.Equal(t, ScreenSearch, updated.CurrentScreen())
-	require.True(t, updated.search.input.Focused(), "tab-cycling onto search must focus the input")
+	require.False(t, updated.search.input.Focused(), "tab-cycling onto search must NOT focus the input")
+
+	// Trap repro: a further Tab must move on to the next screen, not be
+	// swallowed as literal text by a focused input.
+	updated = updateWithKeyType(t, updated, tea.KeyTab)
+	require.Equal(t, ScreenProfiles, updated.CurrentScreen())
 }
 
 func TestArrowAndVimKeysNavigateScreens(t *testing.T) {
@@ -90,12 +101,18 @@ func TestArrowAndVimKeysNavigateScreens(t *testing.T) {
 
 	model = updateWithRunes(t, model, "l")
 	require.Equal(t, ScreenSearch, model.CurrentScreen())
-	require.True(t, model.search.input.Focused(), "cycling onto search focuses the input")
+	// Finding 1: cycling onto search must NOT focus the input, so the
+	// remaining screen-level arrow/vim keys below keep cycling straight
+	// through — no Esc needed first (that was the trap).
+	require.False(t, model.search.input.Focused(), "cycling onto search must not focus the input")
 
-	// Esc blurs so the remaining screen-level arrow/vim keys reach updateKey's
-	// outer switch instead of moving the cursor inside the now-focused input.
-	model = updateWithKeyType(t, model, tea.KeyEsc)
+	model = updateWithRunes(t, model, "l")
+	require.Equal(t, ScreenProfiles, model.CurrentScreen())
+
 	model = updateWithKeyType(t, model, tea.KeyLeft)
+	require.Equal(t, ScreenSearch, model.CurrentScreen())
+
+	model = updateWithRunes(t, model, "h")
 	require.Equal(t, ScreenInstalledMods, model.CurrentScreen())
 
 	model = updateWithRunes(t, model, "h")
@@ -323,11 +340,13 @@ func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
 	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 
-	// Second entry opens Search, focused like every other entry path.
+	// Second entry opens Search. Per Finding 1, dashboard-menu selection is a
+	// navigation/jump path, not one of the two EXPLICIT "go search" bindings
+	// ("/" and "3"), so it must NOT auto-focus the input either.
 	moved := updateWithRunes(t, model, "j")
 	opened, _ = moved.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.Equal(t, ScreenSearch, opened.(Model).CurrentScreen())
-	require.True(t, opened.(Model).search.input.Focused(), "dashboard menu entry into search must focus the input")
+	require.False(t, opened.(Model).search.input.Focused(), "dashboard menu entry into search must not auto-focus")
 }
 
 func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {
