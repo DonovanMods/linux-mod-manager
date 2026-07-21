@@ -556,6 +556,42 @@ func TestDoInstall_DependencyConfirmPrompt_DeclinedYieldsZeroMutations(t *testin
 	assert.Error(t, dbErr, "declining must result in zero mutations")
 }
 
+// TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary guards
+// the accepted-confirm path: both the dependency and the primary must
+// actually install (via ApplyInstall's unified dependency+primary
+// mechanics), with SOME visible progress for the dependency install phase -
+// not the silent gap a forgotten progress-event case would produce.
+func TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = true // auto-confirm the "Install N mod(s)?" prompt
+
+	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}}
+	src.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", FileName: "dep1.esp", IsPrimary: true}})
+	src.AddDownload("dep-file", []byte("dep content"))
+	src.AddMod(root, []domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("root content"))
+
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "Installing dependency: Dep One")
+	assert.Contains(t, out, "✓ Installed: Dep One")
+	assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
+
+	_, err := os.Lstat(filepath.Join(game.ModPath, "dep1.esp"))
+	assert.NoError(t, err, "dependency file must be deployed")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	assert.NoError(t, err, "primary file must be deployed")
+
+	_, dbErr := svc.GetInstalledMod("test-src", "dep1", "g1", "default")
+	assert.NoError(t, dbErr, "dependency must be installed")
+	_, dbErr = svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	assert.NoError(t, dbErr, "primary must be installed")
+}
+
 // seedConflictingMod installs and deploys "other", owning shared.esp, then
 // pre-seeds mod1's own cache (at the version the fake source will report)
 // with an overlapping shared.esp - the only way PlanInstall's Conflicts gets

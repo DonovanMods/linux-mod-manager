@@ -480,6 +480,13 @@ const (
 	// InstallDepSkipped.
 	InstallBeforeEachForced
 
+	// InstallDepInstalling fires once per dependency, before before_each
+	// even runs - the only point at which a caller can render a per-
+	// dependency "starting" header (mirrors, in spirit rather than exact
+	// text, batchInstallMods' "[%d/%d] Installing: %s v%s" - see the task
+	// report for why the exact text is a deliberate deviation here).
+	// Index/Total count among Dependencies only, matching InstallDepSkipped.
+	InstallDepInstalling
 	// InstallDepSkipped fires whenever a DEPENDENCY is skipped for any
 	// reason (hook failure, fetch/files/download/deploy/save failure) -
 	// unconditional, never Force-gated, matching batchInstallMods exactly.
@@ -1999,6 +2006,10 @@ func (s *Service) applyInstallDependency(ctx context.Context, game *domain.Game,
 		emit(evt)
 		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", dep.Name, reason))
 	}
+
+	installing := base
+	installing.Phase = InstallDepInstalling
+	emit(installing)
 
 	hookCtx := opts.HookContext
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = dep.ID, dep.Name, dep.Version
