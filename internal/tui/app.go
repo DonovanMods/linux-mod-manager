@@ -269,6 +269,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.action.status = formatOutcomeStatus(msg.outcome)
 		m.action.statusIsError = false
+		m.action.progress = ActionProgress{}
 		// A fresh switch's target must rebind the session's active-profile
 		// providers BEFORE the refresh below reads them (see rebindProfile
 		// and profileRebinder in actions.go) - otherwise Profiles() keeps
@@ -289,7 +290,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.action.status = singleLine(msg.err.Error())
 		m.action.statusIsError = true
+		m.action.progress = ActionProgress{}
 		return m, m.loadData
+	case actionProgressMsg:
+		// Stale gen (a tick from a superseded action, e.g. one whose
+		// context was already cancelled by a newer buildAction call) is
+		// discarded entirely: no state touched, no re-issue. A fresh tick
+		// becomes the currently-displayed progress (see statusLine) and
+		// re-issues the listener so the next tick (or the terminal
+		// closed-channel signal - see waitForActionProgress) keeps arriving.
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		m.action.progress = msg.progress
+		return m, waitForActionProgress(m.action.progressCh, msg.gen)
 	case planResultMsg:
 		if msg.gen != m.action.gen {
 			return m, nil
@@ -1158,10 +1172,10 @@ func (m Model) contentChromeHeight() int {
 	}
 
 	// The action status line (rule 8) occupies exactly one row above the
-	// footer, and only when set — see statusLine's matching "" ⇒ nothing
-	// rendered contract in View().
+	// footer, and only when hasVisibleStatus reports something to show —
+	// see statusLine's matching "" ⇒ nothing rendered contract in View().
 	statusHeight := 0
-	if m.action.status != "" {
+	if m.hasVisibleStatus() {
 		statusHeight = 1
 	}
 

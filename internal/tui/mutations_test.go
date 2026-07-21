@@ -43,7 +43,7 @@ func TestToggleEnableKeyOnDisabledModPromptsEnable(t *testing.T) {
 	require.Nil(t, model.action.pending)
 	require.NotNil(t, confirmCmd)
 
-	doneMsg := confirmCmd()
+	doneMsg := runActionCmd(t, confirmCmd)
 	require.IsType(t, actionDoneMsg{}, doneMsg)
 	require.Len(t, rec.EnableCalls, 1)
 	require.Equal(t, "alternate-start", rec.EnableCalls[0].ID)
@@ -76,7 +76,7 @@ func TestToggleEnableKeyOnEnabledModPromptsDisable(t *testing.T) {
 
 	_, confirmCmd := model.Update(keyRunes("y"))
 	require.NotNil(t, confirmCmd)
-	confirmCmd()
+	runActionCmd(t, confirmCmd)
 	require.Len(t, rec.DisableCalls, 1)
 	require.Equal(t, "skyui", rec.DisableCalls[0].ID)
 }
@@ -218,7 +218,7 @@ func TestUninstallKeyPromptsAndConfirmCallsProviderWithSelectedItem(t *testing.T
 	confirmed, confirmCmd := model.Update(keyRunes("y"))
 	model = confirmed.(Model)
 	require.NotNil(t, confirmCmd)
-	doneMsg := confirmCmd()
+	doneMsg := runActionCmd(t, confirmCmd)
 	require.Len(t, rec.UninstallCalls, 1)
 	require.Equal(t, "skyui", rec.UninstallCalls[0].ID)
 	require.Equal(t, "nexusmods", rec.UninstallCalls[0].Source)
@@ -307,7 +307,7 @@ func TestDeployKeyFromDashboardPromptsAndConfirmCallsProvider(t *testing.T) {
 	confirmed, confirmCmd := model.Update(keyRunes("y"))
 	model = confirmed.(Model)
 	require.NotNil(t, confirmCmd)
-	doneMsg := confirmCmd()
+	doneMsg := runActionCmd(t, confirmCmd)
 	require.Equal(t, 1, rec.DeployCalls)
 
 	updated, refreshCmd := model.Update(doneMsg)
@@ -598,7 +598,7 @@ func TestSwitchConfirmCallsApplyProfileSwitchWithTargetName(t *testing.T) {
 	confirmed, confirmCmd := model.Update(keyRunes("y"))
 	model = confirmed.(Model)
 	require.NotNil(t, confirmCmd)
-	doneMsg := confirmCmd()
+	doneMsg := runActionCmd(t, confirmCmd)
 	require.IsType(t, actionDoneMsg{}, doneMsg)
 	require.Equal(t, []string{"vanilla-plus"}, rec.ApplyCalls)
 
@@ -720,7 +720,7 @@ func TestSwitchDoneRebindsProviderSoOldActiveProfileReopensPlanModal(t *testing.
 	confirmed, confirmCmd := model.Update(keyRunes("y"))
 	model = confirmed.(Model)
 	require.NotNil(t, confirmCmd)
-	doneMsg := confirmCmd()
+	doneMsg := runActionCmd(t, confirmCmd)
 	require.IsType(t, actionDoneMsg{}, doneMsg)
 
 	updated, refreshCmd := model.Update(doneMsg)

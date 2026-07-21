@@ -425,7 +425,12 @@ func (p *coreProvider) PlanProfileSwitch(ctx context.Context, profileName string
 // less than the CLI equivalent. AlreadyActive plans are reported without
 // calling ApplyProfileSwitch at all, mirroring cmd/lmm/profile.go's
 // doProfileSwitch, which returns before ever calling it in that case.
-func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName string) (ActionOutcome, error) {
+// TODO(Phase 5b Task 4, part B): progress is accepted (interface parity
+// with the pump - Part A) but not yet threaded to svc.ApplyProfileSwitch,
+// and the NeedsDownloads refusal below is not yet lifted; both land
+// together in this task's second RED/GREEN pair.
+func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName string, progress func(ActionProgress)) (ActionOutcome, error) {
+	_ = progress
 	plan, err := p.svc.PlanProfileSwitch(ctx, p.game, profileName)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("planning switch to %s: %w", profileName, err)

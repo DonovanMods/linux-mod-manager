@@ -177,7 +177,7 @@ func TestPrototypeProviderActions_ApplyProfileSwitch_RefusesNeedsDownloadsCanned
 
 	actions := NewPrototypeProvider().(ActionProvider)
 
-	_, err := actions.ApplyProfileSwitch(context.Background(), prototype.NeedsDownloadProfileName)
+	_, err := actions.ApplyProfileSwitch(context.Background(), prototype.NeedsDownloadProfileName, nil)
 	require.ErrorIs(t, err, errProfileNeedsDownloads)
 }
 
@@ -196,7 +196,7 @@ func TestPrototypeProviderActions_ApplyProfileSwitch_UpdatesActiveProfileVisible
 	provider := NewPrototypeProvider()
 	actions := provider.(ActionProvider)
 
-	outcome, err := actions.ApplyProfileSwitch(context.Background(), "vanilla-plus")
+	outcome, err := actions.ApplyProfileSwitch(context.Background(), "vanilla-plus", nil)
 	require.NoError(t, err)
 	assert.Equal(t, `Switched to "vanilla-plus"`, outcome.Message)
 
@@ -215,7 +215,7 @@ func TestPrototypeProviderActions_ApplyProfileSwitch_AlreadyActive(t *testing.T)
 
 	actions := NewPrototypeProvider().(ActionProvider)
 
-	outcome, err := actions.ApplyProfileSwitch(context.Background(), "survival")
+	outcome, err := actions.ApplyProfileSwitch(context.Background(), "survival", nil)
 	require.NoError(t, err)
 	assert.Equal(t, `Already on profile "survival"`, outcome.Message)
 }
@@ -225,7 +225,7 @@ func TestPrototypeProviderActions_ApplyProfileSwitch_UnknownProfileErrors(t *tes
 
 	actions := NewPrototypeProvider().(ActionProvider)
 
-	_, err := actions.ApplyProfileSwitch(context.Background(), "does-not-exist")
+	_, err := actions.ApplyProfileSwitch(context.Background(), "does-not-exist", nil)
 	assert.Error(t, err)
 }
 
@@ -260,6 +260,12 @@ type recordingActions struct {
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	PlanView                                                                     SwitchPlanView
 
+	// ApplySwitchTicks, if set, are replayed through ApplyProfileSwitch's
+	// progress callback (in order) whenever it's non-nil - lets a caller
+	// assert the pump actually observes ticks a provider reports (Phase 5b
+	// Task 4).
+	ApplySwitchTicks []ActionProgress
+
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 }
 
@@ -288,8 +294,13 @@ func (r *recordingActions) PlanProfileSwitch(_ context.Context, profile string) 
 	return r.PlanView, r.PlanErr
 }
 
-func (r *recordingActions) ApplyProfileSwitch(_ context.Context, profile string) (ActionOutcome, error) {
+func (r *recordingActions) ApplyProfileSwitch(_ context.Context, profile string, progress func(ActionProgress)) (ActionOutcome, error) {
 	r.ApplyCalls = append(r.ApplyCalls, profile)
+	for _, p := range r.ApplySwitchTicks {
+		if progress != nil {
+			progress(p)
+		}
+	}
 	return r.ApplyOutcome, r.ApplyErr
 }
 
@@ -326,7 +337,7 @@ func (f failingActions) PlanProfileSwitch(context.Context, string) (SwitchPlanVi
 	return SwitchPlanView{}, f.err()
 }
 
-func (f failingActions) ApplyProfileSwitch(context.Context, string) (ActionOutcome, error) {
+func (f failingActions) ApplyProfileSwitch(context.Context, string, func(ActionProgress)) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 
@@ -365,7 +376,7 @@ func TestRecordingActionsRecordsCallsAndReturnsConfiguredOutcomes(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, "a", view.From)
 
-	applyOutcome, err := rec.ApplyProfileSwitch(ctx, "target")
+	applyOutcome, err := rec.ApplyProfileSwitch(ctx, "target", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "applied", applyOutcome.Message)
 
@@ -395,7 +406,7 @@ func TestFailingActionsErrorsOnEveryMethod(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 	_, err = f.PlanProfileSwitch(ctx, "target")
 	assert.ErrorIs(t, err, sentinel)
-	_, err = f.ApplyProfileSwitch(ctx, "target")
+	_, err = f.ApplyProfileSwitch(ctx, "target", nil)
 	assert.ErrorIs(t, err, sentinel)
 }
 

@@ -32,7 +32,11 @@ type ActionProvider interface {
 	UninstallMod(ctx context.Context, item ModItem) (ActionOutcome, error)
 	DeployProfile(ctx context.Context) (ActionOutcome, error)
 	PlanProfileSwitch(ctx context.Context, profile string) (SwitchPlanView, error)
-	ApplyProfileSwitch(ctx context.Context, profile string) (ActionOutcome, error)
+	// ApplyProfileSwitch's progress may be nil (see ActionProgress); it
+	// streams download/install ticks when the plan being applied needs
+	// them (Phase 5b Task 4 - see coreProvider/prototypeProvider's own doc
+	// comments on this method).
+	ApplyProfileSwitch(ctx context.Context, profile string, progress func(ActionProgress)) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -241,7 +245,13 @@ func (p *prototypeProvider) PlanProfileSwitch(_ context.Context, profileName str
 // if the fresh plan has NeedsDownloads entries - reachable via the
 // prototype's own planner for prototype.NeedsDownloadProfileName (see this
 // file's package doc comment).
-func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName string) (ActionOutcome, error) {
+//
+// TODO(Phase 5b Task 4, part B): progress is accepted (interface parity with
+// the pump - Part A) but not yet emitted, and the NeedsDownloads refusal
+// below is not yet lifted; both land together in this task's second
+// RED/GREEN pair, which replaces this refusal with a working download demo.
+func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName string, progress func(ActionProgress)) (ActionOutcome, error) {
+	_ = progress
 	view, err := p.PlanProfileSwitch(ctx, profileName)
 	if err != nil {
 		return ActionOutcome{}, err

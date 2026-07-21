@@ -647,7 +647,7 @@ func TestCoreProviderActions_ApplyProfileSwitch_RefusesWhenNeedsDownloads(t *tes
 	require.NoError(t, err)
 	seedActionProfileMod(t, svc, game.ID, "target", "src", "modD", "2.0")
 
-	outcome, err := actions.ApplyProfileSwitch(context.Background(), "target")
+	outcome, err := actions.ApplyProfileSwitch(context.Background(), "target", nil)
 	require.Error(t, err)
 	assert.EqualError(t, err, "profile needs downloads — use 'lmm profile switch' until TUI install ships")
 	assert.Equal(t, tui.ActionOutcome{}, outcome)
@@ -742,7 +742,7 @@ func TestCoreProviderActions_ApplyProfileSwitch_AppliesAndReturnsMessage(t *test
 	seedActionMod(t, svc, game, "src", "modC", "Mod C", "1.0", true, map[string][]byte{"c.esp": []byte("c")})
 	seedActionProfileMod(t, svc, game.ID, "default", "src", "modC", "1.0")
 
-	outcome, err := actions.ApplyProfileSwitch(context.Background(), "target")
+	outcome, err := actions.ApplyProfileSwitch(context.Background(), "target", nil)
 	require.NoError(t, err)
 	assert.Equal(t, `Switched to "target"`, outcome.Message)
 

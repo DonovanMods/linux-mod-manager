@@ -45,6 +45,92 @@ type actionModel struct {
 	cancel        context.CancelFunc
 	status        string
 	statusIsError bool
+
+	// progress is the latest ActionProgress tick observed for the
+	// CURRENTLY running action (zero value otherwise - see
+	// hasVisibleStatus/statusLine, which only ever consult it while
+	// running). progressCh is that action's pump channel - created by
+	// buildAction, closed by its confirm closure once do() returns, and
+	// read by the listener cmd waitForActionProgress re-issues on every
+	// fresh actionProgressMsg (see Model.Update's case in app.go). Both are
+	// per-action: a new buildAction call always installs a fresh pair, and
+	// single-flight guarantees the previous action's Done/Failed message
+	// (which clears progress - see app.go) has already been processed
+	// before that can happen.
+	progress   ActionProgress
+	progressCh chan ActionProgress
+}
+
+// ActionProgress is one streamed progress tick from an in-flight
+// ActionProvider mutation (ApplyInstall/ApplyUpdate/ApplyProfileSwitch -
+// see actions_provider.go). Line is a ready-to-display, provider-composed
+// status string kept short enough for the one-row status line (e.g.
+// `Installing SkyUI: skyui_5_1.7z 42%`); Percent is the 0-100 completion
+// when known, or -1 when the phase has no meaningful percentage
+// (indeterminate - e.g. "extracting").
+type ActionProgress struct {
+	Line    string
+	Percent float64
+}
+
+// actionProgressMsg carries one ActionProgress tick, tagged with the
+// generation established when the action was built (see buildAction) so a
+// tick from a superseded action is discarded exactly like actionDoneMsg/
+// actionFailedMsg.
+type actionProgressMsg struct {
+	gen      int
+	progress ActionProgress
+}
+
+// sendActionProgress delivers p to ch without ever blocking the caller -
+// always the flow goroutine running inside a provider's Apply* method, via
+// the send-adapter buildAction passes it. ch is a single-slot (buffer size
+// 1) mailbox: a plain non-blocking send when empty; when already full (a
+// previous tick hasn't been collected yet by the listener - see
+// waitForActionProgress), a non-blocking drain of that stale tick followed
+// by a non-blocking send of p.
+//
+// Net effect: the listener only ever observes the MOST RECENT tick the flow
+// goroutine produced - intermediate ticks are coalesced away under a slow
+// consumer, never queued, and the flow goroutine itself never waits on the
+// UI. This is deliberately single-slot rather than a small (e.g. ~8-entry)
+// buffer: a larger buffer would still need this exact drain-then-send
+// discipline to guarantee "last value wins" under a slow consumer - a plain
+// buffered send that just drops-when-full instead keeps the OLDEST N ticks
+// and silently discards everything sent after the buffer first fills,
+// which is the wrong failure mode (see
+// TestActionProgressPumpNeverBlocksFlowAndCoalescesForSlowConsumer, which
+// pins exactly this behavior).
+func sendActionProgress(ch chan ActionProgress, p ActionProgress) {
+	// TEMPORARY RED-PROOF STUB (removed in the GREEN commit): a naive
+	// non-blocking send with no drain-on-full. This never blocks either,
+	// but under a slow/absent consumer it keeps the OLDEST buffered tick
+	// and silently drops everything sent after the buffer first fills -
+	// the wrong failure mode TestActionProgressPumpNeverBlocksFlowAndCoalescesForSlowConsumer
+	// exists to catch.
+	select {
+	case ch <- p:
+	default:
+	}
+}
+
+// waitForActionProgress is the pump's listener cmd, bridging ch (see
+// sendActionProgress) into a Bubble Tea message: one actionProgressMsg per
+// receive, tagged with gen so Update can discard a tick from a superseded
+// action. A closed channel (the action has ended - buildAction's confirm
+// closure closes ch right after do() returns) is terminal: this returns a
+// nil tea.Msg, which Bubble Tea never dispatches to Update, so nothing
+// re-issues the listener and the goroutine this cmd runs in simply exits.
+// Only Update's own actionProgressMsg case (app.go) keeps the loop alive,
+// by re-issuing this same cmd after every fresh tick.
+func waitForActionProgress(ch chan ActionProgress, gen int) tea.Cmd {
+	return func() tea.Msg {
+		p, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return actionProgressMsg{gen: gen, progress: p}
+	}
 }
 
 // actionDoneMsg carries a completed action's outcome, tagged with the
@@ -111,7 +197,21 @@ const actionModalMaxDetailLines = 8
 // type's doc comment): every caller except resolvePlanResult's actionSwitch
 // build passes "" here, since only a profile switch has a session-rebind
 // consequence for app.go's actionDoneMsg handler to act on.
-func (m Model) buildAction(kind actionKind, title string, detail []string, switchedTo string, do func(context.Context) (ActionOutcome, error)) (Model, pendingAction) {
+//
+// Progress pump (Phase 5b Task 4): do's second parameter is a send-adapter
+// buildAction always wires up, regardless of whether the underlying
+// ActionProvider method actually reports progress - a caller whose action
+// has none (EnableMod/DisableMod/UninstallMod/DeployProfile) simply never
+// calls it. Confirming the resulting pendingAction (updatePendingActionKey)
+// runs BOTH do itself and a listener cmd (waitForActionProgress) via
+// tea.Batch: the listener bridges ch into actionProgressMsg values Update
+// handles (app.go) by storing the latest tick and re-issuing the listener,
+// for as long as ch stays open. ch is closed here, by the same goroutine
+// that calls do, immediately after do returns - so the LAST tick do ever
+// sent is still delivered (Go channels deliver buffered values before
+// signaling closed), and the listener naturally stops re-issuing once it
+// observes the close (see waitForActionProgress).
+func (m Model) buildAction(kind actionKind, title string, detail []string, switchedTo string, do func(context.Context, func(ActionProgress)) (ActionOutcome, error)) (Model, pendingAction) {
 	if m.action.running || m.action.pending != nil {
 		return m, pendingAction{kind: kind, title: title, detail: detail, confirm: func() tea.Cmd { return nil }}
 	}
@@ -124,18 +224,23 @@ func (m Model) buildAction(kind actionKind, title string, detail []string, switc
 	m.action.gen++
 	gen := m.action.gen
 
+	ch := make(chan ActionProgress, 1)
+	m.action.progressCh = ch
+
 	pa := pendingAction{
 		kind:   kind,
 		title:  title,
 		detail: detail,
 		confirm: func() tea.Cmd {
-			return func() tea.Msg {
-				outcome, err := do(ctx)
+			actionCmd := func() tea.Msg {
+				outcome, err := do(ctx, func(p ActionProgress) { sendActionProgress(ch, p) })
+				close(ch)
 				if err != nil {
 					return actionFailedMsg{gen: gen, kind: kind, err: err}
 				}
 				return actionDoneMsg{gen: gen, kind: kind, outcome: outcome, switchedTo: switchedTo}
 			}
+			return tea.Batch(actionCmd, waitForActionProgress(ch, gen))
 		},
 	}
 	return m, pa
@@ -288,16 +393,38 @@ func singleLine(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", " "), "\n", " ")
 }
 
-// statusLine renders the action status line (last mutation's outcome or
-// error) truncated to the terminal's content width — "" when no status is
-// set, matching contentChromeHeight's height-budget accounting: an unset
-// status renders (and occupies) nothing, not a blank row. Truncation
-// happens here, at render time, against the CURRENT availableWidth(), not
-// when the status was set (rule 5): statusLine is called fresh on every
+// hasVisibleStatus reports whether statusLine() would render anything: the
+// latest in-flight progress tick while an action is running (see
+// ActionProgress), or the last action's outcome/error text otherwise.
+// contentChromeHeight (app.go) uses this to decide whether to reserve the
+// status row, keeping the height budget and the actual render in lockstep -
+// the same "" ⇒ nothing rendered contract statusLine has always had, now
+// extended to cover the progress line too.
+func (m Model) hasVisibleStatus() bool {
+	if m.action.running && m.action.progress.Line != "" {
+		return true
+	}
+	return m.action.status != ""
+}
+
+// statusLine renders the action status line truncated to the terminal's
+// content width — "" when hasVisibleStatus reports nothing to show, matching
+// contentChromeHeight's height-budget accounting: nothing to show renders
+// (and occupies) nothing, not a blank row. While an action is running AND
+// has reported at least one progress tick, that tick's Line takes priority
+// over the stored outcome/error status (rule 8's "the status line renders
+// the latest progress line while running" contract - actionDoneMsg/
+// actionFailedMsg clear progress, see app.go, so this reverts to the
+// outcome/error text the instant the action settles). Truncation happens
+// here, at render time, against the CURRENT availableWidth(), not when the
+// status/progress was set (rule 5): statusLine is called fresh on every
 // View(), so a resize re-truncates the same stored text.
 func (m Model) statusLine() string {
-	if m.action.status == "" {
+	if !m.hasVisibleStatus() {
 		return ""
+	}
+	if m.action.running && m.action.progress.Line != "" {
+		return truncate(m.theme.MutedText.Render(m.action.progress.Line), m.availableWidth())
 	}
 	style := m.theme.MutedText
 	if m.action.statusIsError {
