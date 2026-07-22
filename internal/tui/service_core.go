@@ -25,15 +25,37 @@ import (
 // concurrently. Every read goes through currentProfile(); every write
 // through SetProfile - never read/write p.profile directly elsewhere in
 // this file. resolvedHooks takes the already-resolved profile as a
-// parameter (rather than re-reading p.profile itself) precisely so a later
-// caching layer over it (Task 6 item c) never needs to nest a second lock
-// inside profileMu's critical section (sync.RWMutex is not reentrant).
+// parameter (rather than re-reading p.profile itself) precisely so the
+// caching layer below never needs to nest a second lock inside profileMu's
+// critical section (sync.RWMutex is not reentrant).
+//
+// hooksMu guards the resolvedHooks/hookRunner result cache (Task 6 item c):
+// both used to re-read+parse their backing config YAML from disk on EVERY
+// action call (5a review Minor, "now hot with 5b's frequent actions") -
+// each is now computed at most once per coreProvider instance and reused.
+// A SEPARATE mutex from profileMu, deliberately, for the same
+// non-reentrancy reason noted above; it is read from flow goroutines (any
+// ActionProvider method may run on Bubble Tea's flow goroutine - see
+// actions.go's buildAction) so it needs the same mutex discipline as
+// profileMu, just not the SAME mutex.
 type coreProvider struct {
 	svc  *core.Service
 	game *domain.Game
 
 	profileMu sync.RWMutex
 	profile   string
+
+	hooksMu sync.Mutex
+	// cachedHooks is profile-specific (a profile's hooks.yaml overrides can
+	// differ from another's - see resolvedHooks), so SetProfile invalidates
+	// it on every rebind, even a same-name one (cheap, and correctness
+	// doesn't depend on detecting a genuine change).
+	cachedHooks *core.ResolvedHooks
+	// cachedRunner is NOT profile- or game-specific (HookTimeout is a
+	// single global config.yaml setting - see hookRunner), so it is cached
+	// for this coreProvider's whole lifetime once computed and SetProfile
+	// never touches it.
+	cachedRunner *core.HookRunner
 }
 
 // NewCoreProvider returns a DataProvider backed by the real app service for
@@ -294,10 +316,19 @@ func (p *coreProvider) currentProfile() string {
 // still-in-flight Search call (a different goroutine - see
 // currentProfile's doc comment) may be reading p.profile concurrently;
 // profileMu makes that safe.
+//
+// Task 6 item c: a profile switch can change which profile's hooks.yaml
+// override applies (see resolvedHooks), so the cached ResolvedHooks is
+// invalidated here too - cachedRunner is NOT (never profile-specific - see
+// the struct's doc comment).
 func (p *coreProvider) SetProfile(name string) {
 	p.profileMu.Lock()
 	p.profile = name
 	p.profileMu.Unlock()
+
+	p.hooksMu.Lock()
+	p.cachedHooks = nil
+	p.hooksMu.Unlock()
 }
 
 func (p *coreProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
@@ -337,13 +368,25 @@ func installedModStatus(mod domain.InstalledMod) string {
 // CLI helper, which returns nil when --no-hooks is set - this never returns
 // nil: TUI-triggered mutations always run hooks, same as a default CLI
 // invocation.
+//
+// Task 6 item c: the underlying config read (config.Load) is neither game-
+// nor profile-specific - HookTimeout is a single global setting - so the
+// constructed *core.HookRunner is cached for this coreProvider's whole
+// lifetime once computed (see the struct's doc comment on cachedRunner).
 func (p *coreProvider) hookRunner() *core.HookRunner {
+	p.hooksMu.Lock()
+	defer p.hooksMu.Unlock()
+	if p.cachedRunner != nil {
+		return p.cachedRunner
+	}
+
 	cfg, err := config.Load(p.svc.ConfigDir())
 	timeout := 60 * time.Second // default, matching cmd/lmm/hooks.go
 	if err == nil && cfg.HookTimeout > 0 {
 		timeout = time.Duration(cfg.HookTimeout) * time.Second
 	}
-	return core.NewHookRunner(timeout)
+	p.cachedRunner = core.NewHookRunner(timeout)
+	return p.cachedRunner
 }
 
 // resolvedHooks resolves activeProfile's hooks, mirroring
@@ -352,14 +395,26 @@ func (p *coreProvider) hookRunner() *core.HookRunner {
 // parameter, rather than reading p.profile itself, so every caller reads
 // p.profile exactly once via currentProfile() (Task 6 item b) - see the
 // struct's doc comment.
+//
+// Task 6 item c: unlike hookRunner, this result genuinely varies per
+// profile (a profile's hooks.yaml overrides can differ from another's), so
+// it is cached only until SetProfile rebinds the session (see that
+// method's doc comment and cachedHooks' own).
 func (p *coreProvider) resolvedHooks(activeProfile string) *core.ResolvedHooks {
+	p.hooksMu.Lock()
+	defer p.hooksMu.Unlock()
+	if p.cachedHooks != nil {
+		return p.cachedHooks
+	}
+
 	var profile *domain.Profile
 	if activeProfile != "" {
 		if pr, err := config.LoadProfile(p.svc.ConfigDir(), p.game.ID, activeProfile); err == nil {
 			profile = pr
 		}
 	}
-	return core.ResolveHooks(p.game, profile)
+	p.cachedHooks = core.ResolveHooks(p.game, profile)
+	return p.cachedHooks
 }
 
 // hookContext mirrors cmd/lmm/hooks.go's makeHookContext.

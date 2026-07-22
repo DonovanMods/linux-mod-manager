@@ -716,6 +716,121 @@ exit 1`)
 	assert.True(t, strings.HasPrefix(outcome.Warnings[1], "Note: "), "flow Notes must follow, keeping their historical prefix: %q", outcome.Warnings[1])
 }
 
+// appendProfileHooksYAML appends a "hooks:" section to profileName's
+// already-written YAML file (games/<gameID>/profiles/<profileName>.yaml),
+// pointing uninstall.before_all at scriptPath. config.SaveProfile (used
+// internally by ProfileManager.Create/AddMod, which seedActionProfileMod
+// calls) does not itself round-trip Hooks/HooksExplicit - see
+// internal/storage/config/profiles.go's SaveProfile, whose ProfileConfig
+// literal omits Hooks entirely - so a profile-level hook override has to be
+// layered on afterward, directly, for these tests. Appending a new
+// top-level YAML key is safe: none of ProfileConfig's other fields
+// (name/game_id/mods/link_method/is_default/overrides) collide with
+// "hooks".
+func appendProfileHooksYAML(t *testing.T, configDir, gameID, profileName, scriptPath string) {
+	t.Helper()
+	path := filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "hooks:\n  uninstall:\n    before_all: %q\n", scriptPath)
+	require.NoError(t, err)
+}
+
+// TestCoreProviderActions_ResolvedHooksCachedAcrossActions guards Task 6
+// item c: resolvedHooks/hookRunner used to re-read+parse game/profile hook
+// config from disk on EVERY action (5a review Minor, "now hot with 5b's
+// frequent actions"). Caching is only observable through the public
+// ActionProvider surface by mutating game.Hooks - the SAME *domain.Game
+// pointer coreProvider holds - AFTER the first action call: a fresh,
+// uncached resolvedHooks call would immediately see the mutation and skip
+// the (now unconfigured) hook, while a cached one keeps using the first
+// call's already-resolved hook.
+func TestCoreProviderActions_ResolvedHooksCachedAcrossActions(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	scriptsDir := t.TempDir()
+	callLog := filepath.Join(scriptsDir, "calls.log")
+	script := createActionsTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
+echo "before_all" >> `+callLog+`
+exit 0`)
+	game.Hooks.Uninstall.BeforeAll = script
+
+	seedActionMod(t, svc, game, "src", "1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("d")})
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "1", "1.0")
+	seedActionMod(t, svc, game, "src", "2", "Mod Two", "1.0", true, map[string][]byte{"two.esp": []byte("d")})
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "2", "1.0")
+
+	_, err := actions.UninstallMod(context.Background(), tui.ModItem{ID: "1", Source: "src", Name: "Mod One"})
+	require.NoError(t, err)
+	logAfterFirst, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	require.Equal(t, "before_all\n", string(logAfterFirst), "the first action must resolve and run the configured hook")
+
+	// Mutate the SAME *domain.Game coreProvider holds - a fresh, uncached
+	// resolvedHooks call would see this and skip the hook entirely.
+	game.Hooks.Uninstall.BeforeAll = ""
+
+	_, err = actions.UninstallMod(context.Background(), tui.ModItem{ID: "2", Source: "src", Name: "Mod Two"})
+	require.NoError(t, err)
+	logAfterSecond, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	assert.Equal(t, "before_all\nbefore_all\n", string(logAfterSecond),
+		"resolvedHooks must be cached: the second action must still run the FIRST call's resolved hook, not re-read the now-mutated game.Hooks")
+}
+
+// TestCoreProviderActions_SetProfile_InvalidatesHooksCache guards Task 6
+// item c's SetProfile invalidation half: a profile switch can change which
+// profile's hooks.yaml override applies (see resolvedHooks), so the cached
+// ResolvedHooks must be dropped on rebind, not carried over to the new
+// profile - a stale cache here would silently keep running the OLD
+// profile's hooks (or none) against the NEW one.
+func TestCoreProviderActions_SetProfile_InvalidatesHooksCache(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	scriptsDir := t.TempDir()
+	defaultLog := filepath.Join(scriptsDir, "default.log")
+	otherLog := filepath.Join(scriptsDir, "other.log")
+	defaultScript := createActionsTestScript(t, scriptsDir, "default_before_all.sh", `#!/bin/bash
+echo hit >> `+defaultLog+`
+exit 0`)
+	otherScript := createActionsTestScript(t, scriptsDir, "other_before_all.sh", `#!/bin/bash
+echo hit >> `+otherLog+`
+exit 0`)
+
+	seedActionMod(t, svc, game, "src", "1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("d")})
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "1", "1.0")
+	appendProfileHooksYAML(t, svc.ConfigDir(), game.ID, "default", defaultScript)
+
+	// seedActionMod always saves under the "default" profile (see its own
+	// doc comment) - mod 2 needs a real DB row under "other", so it's saved
+	// directly here instead.
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "2", SourceID: "src", Name: "Mod Two", Version: "1.0", GameID: game.ID},
+		ProfileName:  "other",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	seedActionProfileMod(t, svc, game.ID, "other", "src", "2", "1.0")
+	appendProfileHooksYAML(t, svc.ConfigDir(), game.ID, "other", otherScript)
+
+	_, err := actions.UninstallMod(context.Background(), tui.ModItem{ID: "1", Source: "src", Name: "Mod One"})
+	require.NoError(t, err)
+	defaultLogContent, err := os.ReadFile(defaultLog)
+	require.NoError(t, err)
+	assert.Equal(t, "hit\n", string(defaultLogContent), "must resolve and run the DEFAULT profile's own hook")
+	_, err = os.ReadFile(otherLog)
+	assert.True(t, os.IsNotExist(err), "the OTHER profile's hook must not have run yet")
+
+	rebinder, ok := actions.(interface{ SetProfile(string) })
+	require.True(t, ok, "coreProvider must implement the profileRebinder shape")
+	rebinder.SetProfile("other")
+
+	_, err = actions.UninstallMod(context.Background(), tui.ModItem{ID: "2", Source: "src", Name: "Mod Two"})
+	require.NoError(t, err)
+	otherLogContent, err := os.ReadFile(otherLog)
+	require.NoError(t, err, "the cache must have been invalidated by SetProfile - a stale DEFAULT-profile cache would never resolve/run this hook")
+	assert.Equal(t, "hit\n", string(otherLogContent))
+}
+
 func TestCoreProviderActions_DeployProfile_DeploysAndReturnsMessage(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	seedActionMod(t, svc, game, "src", "1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("1")})
