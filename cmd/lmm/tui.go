@@ -26,10 +26,9 @@ var tuiCmd = &cobra.Command{
 Shows the configured game's installed mods, profiles, and status using the
 same config, database, and game resolution as the CLI commands. Search mod
 sources interactively, inspect the source registry, and manage mods in
-place - enable/disable, uninstall, deploy, and switch profiles - with every
-mutating action behind a confirmation prompt. Installing a mod from search
-results and checking/applying updates aren't available yet - use
-'lmm install' and 'lmm update' for those until a later release.
+place - enable/disable, uninstall, deploy, switch profiles, install from
+search results, and check for updates - with every mutating action behind a
+confirmation prompt.
 
 Use --prototype for a demo mode backed by static fake data:
 
