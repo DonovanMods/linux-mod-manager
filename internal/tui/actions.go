@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -45,8 +46,9 @@ type pendingAction struct {
 
 // actionModel is the Model's mutation-machinery sub-state: the pending
 // confirmation (if any), the single-flight guard, the staleness generation,
-// the in-flight action's cancel func, and the last outcome/error rendered
-// as the status line.
+// the in-flight action's cancel func, the last outcome/error rendered as
+// the status line, and (Task 6 item d) whether a quit is currently
+// draining a running action.
 type actionModel struct {
 	pending       *pendingAction
 	running       bool
@@ -54,6 +56,15 @@ type actionModel struct {
 	cancel        context.CancelFunc
 	status        string
 	statusIsError bool
+
+	// draining is true from the moment quit is pressed while an action is
+	// running (see startQuit) until that action's own done/failed message
+	// arrives or actionDrainTimeout elapses (see app.go's actionDoneMsg/
+	// actionFailedMsg/actionDrainTimeoutMsg handling) - at which point
+	// tea.Quit is finally emitted and this clears. statusLine renders
+	// "Finishing current step…" while this is true, taking priority over
+	// any in-flight progress tick.
+	draining bool
 
 	// progress is the latest ActionProgress tick observed for the
 	// CURRENTLY running action (zero value otherwise - see
@@ -186,7 +197,7 @@ const actionModalMaxDetailLines = 8
 // this task is responsible for:
 //
 //   - A cancelable context derived from m.ctx, stored as action.cancel so
-//     quit (see quitCmd) or a later action can tear it down. Any cancel func
+//     quit (see startQuit) or a later action can tear it down. Any cancel func
 //     already there — e.g. a still-running action nobody's message has
 //     arrived for — is cancelled first, matching actionModel.cancel's
 //     "cancelled ... on new action" contract.
@@ -316,12 +327,15 @@ func (m Model) promptAction(pa pendingAction) Model {
 // established by the time this runs, rather than bumped here); n/esc
 // cancels, leaving every other piece of action/search/screen state
 // untouched and making no ActionProvider call; quit keys still quit (via
-// quitCmd, which also tears down the modal's now-abandoned context); every
-// other key is swallowed so nothing behind the modal can react to it.
+// startQuit, which also tears down the modal's now-abandoned context) - a
+// pending-but-unconfirmed modal always means action.running is still
+// false, so startQuit's idle path (immediate tea.Quit) is what fires here,
+// unchanged by Task 6 item d; every other key is swallowed so nothing
+// behind the modal can react to it.
 func (m Model) updatePendingActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		return m, m.quitCmd()
+		return m.startQuit()
 	case key.Matches(msg, m.keys.ConfirmAction):
 		pa := m.action.pending
 		m.action.pending = nil
@@ -335,18 +349,61 @@ func (m Model) updatePendingActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// quitCmd cancels any in-flight action and any in-flight search (the #42
-// lifecycle carry-forward: search.cancel was previously never invoked on
-// quit) before returning tea.Quit, so goroutines reading a context derived
-// from either observe cancellation instead of leaking past program exit.
-func (m Model) quitCmd() tea.Cmd {
-	if m.action.cancel != nil {
-		m.action.cancel()
-	}
+// actionDrainTimeout bounds how long startQuit waits for a RUNNING action to
+// reach its own done/failed message before forcing an exit anyway (Task 6
+// item d: cancel-then-drain). ~5s: comfortably long enough to cover a
+// well-behaved flow's between-step abort (the ctx.Err() checks flows.go's
+// long loops now have - DeployProfile/ApplyInstall/ApplyProfileSwitch/
+// ApplyUpdate) without making quit feel hung against a provider call that,
+// for whatever reason, never observes ctx cancellation at all.
+const actionDrainTimeout = 5 * time.Second
+
+// actionDrainTimeoutMsg fires actionDrainTimeout after startQuit begins
+// draining a running action, tagged with the gen the drain started with so
+// a timeout arriving after that drain has already resolved (the action's
+// own message already handled) - or, for a single-flight system, one that
+// somehow outlives a LATER action entirely - is a no-op instead of forcing
+// a spurious quit.
+type actionDrainTimeoutMsg struct{ gen int }
+
+// startQuit begins the quit sequence (rule 9 / Task 6 item d). Idle (no
+// action running): unchanged from the pre-item-d quitCmd this replaces -
+// cancel any in-flight action's context (a built-but-unconfirmed
+// pendingAction already has one - see buildAction) and any in-flight
+// search's, then quit immediately.
+//
+// A RUNNING action instead enters a draining state: its context is
+// cancelled right away - so a well-behaved flow aborts between steps
+// almost immediately (flows.go's ctx.Err() checks) - the status line
+// switches to "Finishing current step…" (see statusLine, which gives this
+// priority over any in-flight progress tick), and tea.Quit is deferred
+// until EITHER the action's own done/failed message arrives (app.go's
+// actionDoneMsg/actionFailedMsg cases) OR actionDrainTimeout elapses
+// (actionDrainTimeoutMsg, below) - never dropped immediately mid-flow like
+// the behavior this replaces.
+//
+// Search's in-flight context is always cancelled immediately either way
+// (the #42 lifecycle carry-forward the old quitCmd already covered) -
+// search was never part of item d's long-download concern, only actions
+// (mutations) are.
+func (m Model) startQuit() (Model, tea.Cmd) {
 	if m.search.cancel != nil {
 		m.search.cancel()
 	}
-	return tea.Quit
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+
+	if !m.action.running {
+		return m, tea.Quit
+	}
+
+	m.action.draining = true
+	gen := m.action.gen
+	return m, tea.Tick(actionDrainTimeout, func(time.Time) tea.Msg {
+		return actionDrainTimeoutMsg{gen: gen}
+	})
 }
 
 // isQuitKey reports whether msg actually triggers tea.Quit given the current
@@ -418,6 +475,9 @@ func singleLine(s string) string {
 // the same "" ⇒ nothing rendered contract statusLine has always had, now
 // extended to cover the progress line too.
 func (m Model) hasVisibleStatus() bool {
+	if m.action.draining {
+		return true
+	}
 	if m.action.running && m.action.progress.Line != "" {
 		return true
 	}
@@ -427,18 +487,25 @@ func (m Model) hasVisibleStatus() bool {
 // statusLine renders the action status line truncated to the terminal's
 // content width — "" when hasVisibleStatus reports nothing to show, matching
 // contentChromeHeight's height-budget accounting: nothing to show renders
-// (and occupies) nothing, not a blank row. While an action is running AND
-// has reported at least one progress tick, that tick's Line takes priority
-// over the stored outcome/error status (rule 8's "the status line renders
-// the latest progress line while running" contract - actionDoneMsg/
-// actionFailedMsg clear progress, see app.go, so this reverts to the
-// outcome/error text the instant the action settles). Truncation happens
-// here, at render time, against the CURRENT availableWidth(), not when the
-// status/progress was set (rule 5): statusLine is called fresh on every
-// View(), so a resize re-truncates the same stored text.
+// (and occupies) nothing, not a blank row. Draining (Task 6 item d - quit
+// pressed while an action is running, see startQuit) takes top priority:
+// "Finishing current step…" replaces even an in-flight progress tick, since
+// the action's own progress no longer matters to a user who has already
+// asked to quit. Otherwise, while an action is running AND has reported at
+// least one progress tick, that tick's Line takes priority over the stored
+// outcome/error status (rule 8's "the status line renders the latest
+// progress line while running" contract - actionDoneMsg/actionFailedMsg
+// clear progress, see app.go, so this reverts to the outcome/error text the
+// instant the action settles). Truncation happens here, at render time,
+// against the CURRENT availableWidth(), not when the status/progress was
+// set (rule 5): statusLine is called fresh on every View(), so a resize
+// re-truncates the same stored text.
 func (m Model) statusLine() string {
 	if !m.hasVisibleStatus() {
 		return ""
+	}
+	if m.action.draining {
+		return truncate(m.theme.MutedText.Render("Finishing current step…"), m.availableWidth())
 	}
 	if m.action.running && m.action.progress.Line != "" {
 		return truncate(m.theme.MutedText.Render(m.action.progress.Line), m.availableWidth())

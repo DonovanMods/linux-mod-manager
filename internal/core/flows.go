@@ -1002,6 +1002,14 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 
 	total := len(modsToDeploy)
 	for idx, mod := range modsToDeploy {
+		// Task 6 item d (cancel-then-drain): checked between mods, never
+		// mid-file-operation - a cancelled ctx aborts here with whatever
+		// result has accumulated so far (the partial-result convention -
+		// see this function's doc comment and DeployResult's).
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+
 		base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name, ModID: mod.ID}
 
 		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
@@ -1409,6 +1417,12 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 	totalDisable := len(plan.ToDisable)
 	for idx := range plan.ToDisable {
+		// Task 6 item d (cancel-then-drain): checked between mods, never
+		// mid-file-operation - see DeployProfile's identical check.
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+
 		im := plan.ToDisable[idx]
 		base := DeployProgress{Index: idx + 1, Total: totalDisable, ModName: im.Name, ModID: im.ID}
 
@@ -1435,6 +1449,10 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 	totalEnable := len(plan.ToEnable)
 	for idx := range plan.ToEnable {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+
 		im := plan.ToEnable[idx]
 		base := DeployProgress{Index: idx + 1, Total: totalEnable, ModName: im.Name, ModID: im.ID}
 
@@ -1464,6 +1482,10 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		emit(DeployProgress{Phase: SwitchInstalling, Total: totalInstall})
 
 		for idx, ref := range plan.ToInstall {
+			if err := ctx.Err(); err != nil {
+				return result, err
+			}
+
 			base := DeployProgress{Index: idx + 1, Total: totalInstall, SourceID: ref.SourceID, ModID: ref.ModID}
 			installingEvt := base
 			installingEvt.Phase = SwitchInstallingMod
@@ -2731,6 +2753,16 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
 	}
 	emit(DeployProgress{Phase: UpdateDownloadDone, ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID})
+
+	// Task 6 item d (cancel-then-drain): checked between the download step
+	// above and the hook/deploy (Replace) steps below, at minimum - a
+	// cancelled ctx aborts here, before running any before_each hook or
+	// touching the deployed files, leaving the OLD version fully deployed
+	// and untouched (the partial-result convention - see this function's
+	// doc comment).
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 
 	hookCtx := opts.HookContext
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version

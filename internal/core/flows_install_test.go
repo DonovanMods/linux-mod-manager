@@ -1164,6 +1164,51 @@ func TestService_ApplyInstall_ContextCancellation(t *testing.T) {
 	assert.Error(t, dbErr, "nothing should be installed once the context is already cancelled")
 }
 
+// TestService_ApplyInstall_ContextCancelledBetweenBatchMods_ReturnsPartialResultWithCtxErr
+// is Task 6 item d's mid-run counterpart to
+// TestService_ApplyInstall_ContextCancellation above (which only proved a
+// pre-cancelled ctx short-circuits before any work): the BATCH path's
+// combined [Dependencies..., primary] loop already checked ctx.Err() at
+// the top of every iteration (ApplyInstall's own early ctx.Err() guard,
+// present since Task 2/Fix wave 1); this formalizes coverage for the
+// between-mods case the doc comment above promised. The progress callback
+// cancels the instant the first mod (dep1) finishes installing; root (the
+// primary, second in the combined list) must never be touched at all.
+func TestService_ApplyInstall_ContextCancelledBetweenBatchMods_ReturnsPartialResultWithCtxErr(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+	registerDownloadableMod(t, mock, dep1, "dep1.esp", "payload")
+	registerDownloadableMod(t, mock, root, "root.esp", "payload")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
+		if p.Phase == core.InstallDepInstalled && p.ModName == "Dep One" {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result, "diagnostics accumulated before cancellation must not be discarded")
+	assert.Equal(t, []string{"Dep One"}, result.Installed)
+
+	_, dbErr := svc.GetInstalledMod("src", "root", "g1", "default")
+	assert.ErrorIs(t, dbErr, domain.ErrModNotFound, "root must never have been installed - cancellation lands BETWEEN batch mods")
+	_, statErr := os.Lstat(filepath.Join(gameDir, "root.esp"))
+	assert.True(t, os.IsNotExist(statErr), "root.esp must never have been deployed")
+}
+
 // --- Fix wave 1 (dep-path fidelity) ---
 //
 // The tests below pin the review's Critical finding: when plan.Dependencies

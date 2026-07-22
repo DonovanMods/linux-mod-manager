@@ -327,6 +327,55 @@ func TestService_ApplyUpdate_DownloadFailure(t *testing.T) {
 	assert.Equal(t, "", updated.PreviousVersion)
 }
 
+// TestService_ApplyUpdate_ContextCancelledBetweenDownloadAndDeploy_ReturnsPartialResultWithCtxErr
+// guards Task 6 item d: ApplyUpdate must check ctx BETWEEN the download step
+// and the deploy step (Replace) at minimum - a cancelled ctx aborts there,
+// never mid-download and never mid-Replace, leaving the OLD version fully
+// deployed and untouched (the partial-result convention -
+// TestService_ApplyUpdate_DownloadFailure above pins the identical
+// untouched-old-version outcome for a download failure; this is the same
+// shape for a cancellation instead). The progress callback cancels on
+// UpdateDownloadDone, which fires exactly at that boundary (see
+// UpdateDownloadDone's doc comment).
+func TestService_ApplyUpdate_ContextCancelledBetweenDownloadAndDeploy_ReturnsPartialResultWithCtxErr(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files:                   []domain.DownloadableFile{{ID: "new-1", Name: "New File", FileName: "mod1-new.esp", IsPrimary: true}},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+	mock.AddDownload("new-1", []byte("new-content"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
+	result, err := svc.ApplyUpdate(ctx, game, "default", upd, core.UpdateOptions{}, func(p core.DeployProgress) {
+		if p.Phase == core.UpdateDownloadDone {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result, "a partial result must be returned alongside the error")
+	assert.Empty(t, result.Applied)
+
+	oldContent, err2 := os.ReadFile(filepath.Join(gameDir, "mod1-old.esp"))
+	require.NoError(t, err2, "the OLD version must still be fully deployed - Replace must never have run")
+	assert.Equal(t, "old-content", string(oldContent))
+	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1-new.esp"))
+	assert.True(t, os.IsNotExist(statErr), "the NEW version must never have been deployed")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", updated.Version, "DB row must be unchanged")
+}
+
 // TestService_ApplyUpdate_ProgressEvents covers the download percent
 // sequence with mod attribution, and a nil progress callback being safe.
 func TestService_ApplyUpdate_ProgressEvents(t *testing.T) {

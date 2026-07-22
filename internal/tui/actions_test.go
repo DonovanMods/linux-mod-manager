@@ -542,8 +542,26 @@ func TestQuitKeypressDoesNotClearStatus(t *testing.T) {
 }
 
 // --- Rule 9: quit-time context cleanup ---
+//
+// Task 6 item d (cancel-then-drain) changed WHAT quit does while an action
+// is running: 5a's quitCmd cancelled the action's context but returned
+// tea.Quit immediately regardless, killing a mutation goroutine mid-step at
+// process exit - unacceptable with 5b's long downloads. Quit while running
+// now cancels the context (still, immediately - proven below) but DEFERS
+// tea.Quit until the action's own done/failed message arrives or a bounded
+// timeout elapses (see TestQuitWhileRunningDrainsUntilActionSettles and
+// TestQuitWhileRunningTimesOutAndQuitsAnyway). Quit while IDLE (no action
+// running) is unchanged - still immediate (see
+// TestQuitCancelsInFlightSearchContext, TestPendingModalIgnoresNavigationButQuitStillQuits).
 
-func TestQuitCancelsInFlightActionContext(t *testing.T) {
+// TestQuitWhileRunningCancelsContextImmediatelyButDoesNotQuitYet guards the
+// FIRST half of item d's contract: the in-flight action's context is
+// cancelled the instant quit is pressed (so a well-behaved flow aborts
+// between steps almost immediately - see flows.go's ctx.Err() checks) -
+// but the returned cmd must NOT be tea.Quit itself; the process stays
+// alive, draining, until the action's own message arrives (or the timeout
+// - see the next two tests).
+func TestQuitWhileRunningCancelsContextImmediatelyButDoesNotQuitYet(t *testing.T) {
 	t.Parallel()
 
 	model := modelWithActions(t, &recordingActions{})
@@ -557,16 +575,130 @@ func TestQuitCancelsInFlightActionContext(t *testing.T) {
 	updated, cmd := model.Update(keyRunes("y"))
 	model = updated.(Model)
 	require.NotNil(t, cmd)
+	require.True(t, model.action.running)
 
-	_, quitCmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	require.NotNil(t, quitCmd)
-	require.Equal(t, tea.Quit(), quitCmd())
+	// quitCmd is deliberately never invoked here: it's the REAL
+	// actionDrainTimeout tea.Tick command (see startQuit), and calling it
+	// would block this test for the real ~5s duration. Its eventual
+	// message (actionDrainTimeoutMsg) is exercised directly, without the
+	// real timer, by TestQuitWhileRunningTimesOutAndQuitsAnyway below - the
+	// model-state assertions here (draining, statusLine) are what prove
+	// quit did NOT fire immediately.
+	updated, quitCmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	model = updated.(Model)
+	require.NotNil(t, quitCmd, "a running action's quit must still schedule the drain timeout")
+	require.True(t, model.action.draining, "quit while running must enter the draining state")
+	require.Contains(t, model.statusLine(), "Finishing current step",
+		"the draining state must show 'Finishing current step…' in the status line")
 
 	// The runtime eventually executes the in-flight command; the context it
-	// hands to the ActionProvider call must already be cancelled.
+	// hands to the ActionProvider call must already be cancelled, same as
+	// pre-item-d.
 	runActionCmd(t, cmd)
 	require.Error(t, capturedCtx.Err())
 	require.ErrorIs(t, capturedCtx.Err(), context.Canceled)
+}
+
+// TestQuitWhileRunningDrainsUntilActionSettles guards the drain sequence
+// end to end: quit -> draining state -> the action's own done message
+// (matching gen) arrives -> a tea.Quit cmd is finally emitted, and draining
+// clears.
+func TestQuitWhileRunningDrainsUntilActionSettles(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return ActionOutcome{Message: "ok"}, nil
+	})
+	model = model.promptAction(pa)
+	updated, _ := model.Update(keyRunes("y"))
+	model = updated.(Model)
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	model = updated.(Model)
+	require.True(t, model.action.draining)
+	gen := model.action.gen
+
+	updated, doneCmd := model.Update(actionDoneMsg{gen: gen, kind: actionDeploy, outcome: ActionOutcome{Message: "ok"}})
+	model = updated.(Model)
+	require.False(t, model.action.draining, "the settled action must clear the draining state")
+	require.NotNil(t, doneCmd)
+	require.Equal(t, tea.Quit(), doneCmd(), "the drain must resolve to tea.Quit once the action's own message arrives")
+}
+
+// TestQuitWhileRunningDrainsUntilActionFails mirrors the test above for the
+// FAILURE path (actionFailedMsg) - a drain must resolve on either outcome,
+// not just success.
+func TestQuitWhileRunningDrainsUntilActionFails(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return ActionOutcome{}, errors.New("boom")
+	})
+	model = model.promptAction(pa)
+	updated, _ := model.Update(keyRunes("y"))
+	model = updated.(Model)
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	model = updated.(Model)
+	require.True(t, model.action.draining)
+	gen := model.action.gen
+
+	updated, failCmd := model.Update(actionFailedMsg{gen: gen, kind: actionDeploy, err: errors.New("boom")})
+	model = updated.(Model)
+	require.False(t, model.action.draining)
+	require.NotNil(t, failCmd)
+	require.Equal(t, tea.Quit(), failCmd())
+}
+
+// TestQuitWhileRunningTimesOutAndQuitsAnyway guards the bounded-timeout
+// path: if the action never settles (or the runtime never gets to deliver
+// its message), an actionDrainTimeoutMsg tagged with the SAME gen the
+// drain started with must still resolve to tea.Quit. Fires the message
+// directly (not via the real ~5s tea.Tick) - the timer primitive itself is
+// bubbletea's, not this package's, to test.
+func TestQuitWhileRunningTimesOutAndQuitsAnyway(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return ActionOutcome{Message: "ok"}, nil
+	})
+	model = model.promptAction(pa)
+	updated, _ := model.Update(keyRunes("y"))
+	model = updated.(Model)
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	model = updated.(Model)
+	require.True(t, model.action.draining)
+	gen := model.action.gen
+
+	updated, timeoutCmd := model.Update(actionDrainTimeoutMsg{gen: gen})
+	model = updated.(Model)
+	require.NotNil(t, timeoutCmd)
+	require.Equal(t, tea.Quit(), timeoutCmd(), "a drain that never settles must still quit once the timeout elapses")
+}
+
+// TestStaleActionDrainTimeoutIsNoop guards against a timeout from an
+// already-resolved drain (or a stale gen) forcing a spurious quit.
+func TestStaleActionDrainTimeoutIsNoop(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 3
+	model.action.draining = false // already resolved
+
+	updated, cmd := model.Update(actionDrainTimeoutMsg{gen: 3})
+	m := updated.(Model)
+	require.Nil(t, cmd, "a timeout for an already-resolved drain must be a no-op")
+	require.False(t, m.action.draining)
+
+	model.action.draining = true
+	updated, cmd = model.Update(actionDrainTimeoutMsg{gen: 2}) // stale gen
+	m = updated.(Model)
+	require.Nil(t, cmd, "a timeout tagged with a stale gen must be a no-op")
+	require.True(t, m.action.draining, "must not clear draining for a DIFFERENT (stale) drain")
 }
 
 func TestQuitCancelsInFlightSearchContext(t *testing.T) {
@@ -581,6 +713,25 @@ func TestQuitCancelsInFlightSearchContext(t *testing.T) {
 	require.NotNil(t, quitCmd)
 	require.Equal(t, tea.Quit(), quitCmd())
 	require.Error(t, ctx.Err(), "search's cancel must be invoked on quit (#42 lifecycle carry-forward)")
+}
+
+// TestIdleQuitStaysImmediateEvenWithPriorDrainFields guards "idle quit
+// stays immediate" explicitly at the Model level (TestQuitCancelsInFlightSearchContext
+// above already covers the ordinary case; this pins it even when the
+// action struct carries a non-zero gen from an EARLIER, already-settled
+// action - a stale gen/cancel must never make an idle quit drain).
+func TestIdleQuitStaysImmediateEvenWithPriorDrainFields(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 7
+	model.action.running = false
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m := updated.(Model)
+	require.NotNil(t, cmd)
+	require.Equal(t, tea.Quit(), cmd(), "idle quit must fire immediately, unchanged by item d")
+	require.False(t, m.action.draining)
 }
 
 // --- Rule 10: prototype end-to-end wiring ---

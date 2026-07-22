@@ -291,6 +291,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.action.cancel()
 			m.action.cancel = nil
 		}
+		// Task 6 item d: a quit-triggered drain (see startQuit) resolves the
+		// instant the action it was waiting on settles - no point loading
+		// fresh data or updating the status line for a process that's about
+		// to exit; just quit now instead of racing actionDrainTimeout.
+		if m.action.draining {
+			m.action.draining = false
+			return m, tea.Quit
+		}
 		m.action.status = formatOutcomeStatus(msg.outcome)
 		m.action.statusIsError = false
 		m.action.progress = ActionProgress{}
@@ -355,6 +363,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.action.cancel()
 			m.action.cancel = nil
 		}
+		// Task 6 item d: mirrors actionDoneMsg's drain resolution above - a
+		// failure settles the drain exactly like a success does.
+		if m.action.draining {
+			m.action.draining = false
+			return m, tea.Quit
+		}
 		m.action.status = singleLine(msg.err.Error())
 		m.action.statusIsError = true
 		m.action.progress = ActionProgress{}
@@ -371,6 +385,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.action.progress = msg.progress
 		return m, waitForActionProgress(m.action.progressCh, msg.gen)
+	case actionDrainTimeoutMsg:
+		// Task 6 item d: forces the quit a drain (see startQuit) was
+		// waiting on if the action never settled within actionDrainTimeout.
+		// A stale gen (a LATER drain, or an already-resolved one whose
+		// actionDoneMsg/actionFailedMsg case already cleared draining) is a
+		// no-op - never force-quits a drain this timeout doesn't belong to.
+		if msg.gen != m.action.gen || !m.action.draining {
+			return m, nil
+		}
+		m.action.draining = false
+		return m, tea.Quit
 	case planResultMsg:
 		if msg.gen != m.action.gen {
 			return m, nil
@@ -465,7 +490,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.screen == ScreenSearch && m.search.input.Focused() {
 		switch {
 		case m.isQuitKey(msg): // only ctrl+c while focused — see isQuitKey
-			return m, m.quitCmd()
+			return m.startQuit()
 		case key.Matches(msg, m.keys.Blur):
 			m.search.input.Blur()
 			return m, nil
@@ -481,7 +506,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		return m, m.quitCmd()
+		return m.startQuit()
 	case key.Matches(msg, m.keys.Help):
 		m.showHelp = !m.showHelp
 		return m, nil
