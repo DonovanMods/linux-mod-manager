@@ -1404,6 +1404,18 @@ type SwitchResult struct {
 // is deliberately no hook plumbing in its signature or DeployOptions-style
 // options struct, since profile switch takes no CLI flags beyond the target
 // profile name.
+//
+// plan is executed EXACTLY as given - this method never re-plans or
+// re-validates it against current state. A caller that computed plan some
+// time ago (e.g. to show a user a preview) and only calls this later, after
+// showing that preview, accepts whatever has changed in the interim as
+// already baked into plan; PlanProfileSwitch's own doc comment documents
+// why speculative plans are cheap enough to discard and recompute instead.
+// The TUI's coreProvider.ApplyProfileSwitch (Task 6 item e) is exactly this
+// caller: it re-plans immediately before calling this method, which is a
+// SEPARATE PlanProfileSwitch call from whichever one built the confirmation
+// modal the user actually saw - see that method's own doc comment for the
+// resulting preview/apply drift this can introduce.
 func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, progress func(DeployProgress)) (*SwitchResult, error) {
 	result := &SwitchResult{}
 	emit := func(p DeployProgress) {

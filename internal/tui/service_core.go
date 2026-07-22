@@ -523,6 +523,23 @@ func (p *coreProvider) PlanProfileSwitch(ctx context.Context, profileName string
 // all, mirroring cmd/lmm/profile.go's doProfileSwitch, which returns before
 // ever calling it in that case.
 //
+// Preview/apply drift (Task 6 item e, documented honestly rather than
+// "fixed" - no behavior change): the confirmation modal the user actually
+// sees (mutations.go's switchSelectedProfile/resolvePlanResult) is built
+// from a SEPARATE, EARLIER PlanProfileSwitch call - the one that decided
+// whether to show a modal at all and what its detail lines say. THIS
+// method's own re-plan above is a second, independent PlanProfileSwitch
+// call, made at confirm time. Anything that changes the diff between those
+// two calls (a manual install/uninstall from a shell, another profile
+// mutation, a source's catalog changing underfoot) means the plan actually
+// executed here can differ from what the modal showed - e.g. a mod the
+// modal listed under ToEnable might have been uninstalled in the interim
+// and now falls out of the plan entirely, or a NEW mod could appear. This
+// mirrors PlanProfileSwitch's own doc comment ("speculatively... and
+// discard the result without consequence") taken to its logical
+// conclusion: speculative plans are cheap precisely because they're
+// disposable, not because they're pinned to what gets applied later.
+//
 // Fix wave 2 (review finding): core.SwitchResult never records a per-mod
 // install failure anywhere (SwitchInstallError's doc comment in flows.go:
 // "these are NOT accumulated into any SwitchResult slice" - core.DeployPhase

@@ -422,6 +422,17 @@ lmm tui --prototype --theme dos
 - Switch profile. — **5a**: `enter` on a non-active Profiles row, with a plan
   preview (mods to enable/disable, or "no changes"); refuses instead of
   downloading if the plan needs mods the TUI doesn't have installed yet.
+  **5b Task 4** lifted the download refusal — the preview modal's plan and
+  the plan actually applied on confirm are computed by two SEPARATE
+  `PlanProfileSwitch` calls (preview at modal-open, apply at confirm - see
+  `coreProvider.ApplyProfileSwitch`'s doc comment), so anything that changes
+  the diff in between (a manual mutation from a shell, another profile
+  change, a source's catalog shifting) can make what's applied differ from
+  what the modal showed. Documented (Task 6 item e), not fixed - re-planning
+  at apply is deliberate (a plan is cheap/disposable by design - see
+  `PlanProfileSwitch`'s own doc comment), and no report of this actually
+  surprising a user has come up to justify the cost of pinning the preview's
+  plan through to apply.
 - Deploy current profile. — **5a**: `D` on Installed Mods or Dashboard.
 - Uninstall installed mod. — **5a**: `x` on Installed Mods. Added to this set
   by the CLI-parity audit below (issue #37); not in the phase's original scope.
