@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -118,7 +119,7 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 		ProfileName: profile,
 		Installed:   len(mods),
 		Enabled:     enabled,
-		Updates:     -1, // unknown: update checks are a Phase 6 workflow
+		Updates:     -1, // unknown: on-demand checks are wired (CheckUpdates, Phase 5b); a persistent, always-visible summary-strip COUNT is Phase 6
 		Conflicts:   -1, // unknown: conflict detection is a Phase 6 workflow
 	}, items, nil
 }
@@ -816,6 +817,15 @@ func (p *coreProvider) PlanInstall(ctx context.Context, item ModItem) (InstallPl
 // unlike the CLI, the TUI has no interactive/--file file-selection step, so
 // PlanInstall's own non-interactive default (the primary-or-first file - see
 // InstallPlan.Files' doc comment) is always what gets installed.
+//
+// Deliberately diverges from the CLI on conflicts (C1 review finding): the
+// TUI has only a single upfront confirm modal, not a second blocking
+// prompt mid-flight, so ConfirmConflicts below always returns true
+// (auto-proceeds) rather than aborting - but it never silently hides an
+// overwrite either, folding each conflicting file into Outcome.Warnings as
+// "overwrote: <path> (owned by <mod-id>)", mirroring the BATCH path's own
+// non-blocking "N file(s) conflict" warning philosophy (applyInstallBatchMod
+// in internal/core/flows.go) rather than the CLI's blocking one.
 func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
 	profile := p.currentProfile()
 	plan, err := p.svc.PlanInstall(ctx, p.game, profile, item.Source, item.ID, false)
@@ -823,12 +833,19 @@ func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress 
 		return ActionOutcome{}, mapInstallNetworkError(fmt.Sprintf("planning install of %s", item.Name), item.Source, err)
 	}
 
+	var conflictWarnings []string
 	opts := core.InstallOptions{
 		SkipVerify:  false,
 		Hooks:       p.resolvedHooks(profile),
 		HookRunner:  p.hookRunner(),
 		HookContext: p.hookContext(),
 		Force:       false,
+		ConfirmConflicts: func(conflicts []core.Conflict) bool {
+			for _, c := range conflicts {
+				conflictWarnings = append(conflictWarnings, fmt.Sprintf("overwrote: %s (owned by %s)", c.RelativePath, c.CurrentModID))
+			}
+			return true
+		},
 	}
 
 	adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
@@ -841,15 +858,27 @@ func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress 
 
 	// Warnings = result Warnings + Notes (mergeDiagnostics' documented
 	// order), plus - the BATCH path only, when plan.Dependencies is
-	// non-empty - the Failed display names, so a status line surfaces which
-	// mod(s) in a dependency-having install didn't make it (Failed carries
-	// no reason of its own; Skipped does, but is already folded into
-	// Warnings via Notes/Warnings for the STRICT path's single failure mode
-	// - see InstallResult's doc comment).
+	// non-empty - result.Skipped's "<name>: <reason>" entries (I1 review
+	// finding: bare Failed names carried no reason at all; Skipped already
+	// pairs each failure with why - see InstallResult's doc comment), plus
+	// any conflict-overwrite disclosures recorded above.
 	warnings := mergeDiagnostics(result.Warnings, result.Notes)
-	warnings = append(warnings, result.Failed...)
+	warnings = append(warnings, result.Skipped...)
+	warnings = append(warnings, conflictWarnings...)
+
+	// I1 review finding: a BATCH-path install (plan.Dependencies non-empty)
+	// never fails on a primary's failure - ApplyInstall returns nil error
+	// with the primary named in result.Failed instead (see InstallResult's
+	// doc comment) - so unconditionally claiming "Installed %q" here was a
+	// false success whenever the PRIMARY was the one that failed. A STRICT
+	// (no-deps) primary failure is already fatal above (err != nil), so this
+	// branch is only reachable via the BATCH path.
+	message := fmt.Sprintf("Installed %q", item.Name)
+	if slices.Contains(result.Failed, item.Name) {
+		message = fmt.Sprintf("Installed %d of %d mod(s)", len(result.Installed), len(plan.Dependencies)+1)
+	}
 	return ActionOutcome{
-		Message:  fmt.Sprintf("Installed %q", item.Name),
+		Message:  message,
 		Warnings: warnings,
 	}, nil
 }
