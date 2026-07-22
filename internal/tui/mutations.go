@@ -212,6 +212,16 @@ func (m Model) resolvePlanResult(msg planResultMsg) (Model, tea.Cmd) {
 		m.action.cancel()
 		m.action.cancel = nil
 	}
+	// Copilot PR #63 finding: a quit-triggered drain (see startQuit) that was
+	// waiting on THIS plan fetch resolves the instant it lands, exactly like
+	// actionDoneMsg/actionFailedMsg already do for a running mutation - see
+	// resolveDrainedQuit's own doc comment. Checked BEFORE the AlreadyActive
+	// status line and the switch-modal open below: the app is exiting, so
+	// neither a status write nor a freshly-opened confirmation modal would
+	// ever be seen.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
 
 	view := msg.view
 	if view.AlreadyActive {
@@ -235,6 +245,12 @@ func (m Model) resolvePlanFailure(msg planFailedMsg) (Model, tea.Cmd) {
 	if m.action.cancel != nil {
 		m.action.cancel()
 		m.action.cancel = nil
+	}
+	// Copilot PR #63 finding (mirrors resolvePlanResult above): resolve a
+	// quit-triggered drain immediately rather than writing a status line no
+	// one will ever see.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
 	}
 	m.action.status = singleLine(msg.err.Error())
 	m.action.statusIsError = true
@@ -388,6 +404,12 @@ func (m Model) resolveInstallPlanResult(msg installPlanResultMsg) (Model, tea.Cm
 		m.action.cancel()
 		m.action.cancel = nil
 	}
+	// Copilot PR #63 finding (mirrors resolvePlanResult): resolve a
+	// quit-triggered drain immediately instead of opening the install/
+	// reinstall confirmation modal below - the app is exiting.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
 
 	view := msg.view
 	item := msg.item
@@ -406,6 +428,12 @@ func (m Model) resolveInstallPlanFailure(msg installPlanFailedMsg) (Model, tea.C
 	if m.action.cancel != nil {
 		m.action.cancel()
 		m.action.cancel = nil
+	}
+	// Copilot PR #63 finding (mirrors resolvePlanFailure): resolve a
+	// quit-triggered drain immediately rather than writing a status line no
+	// one will ever see.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
 	}
 	m.action.status = singleLine(msg.err.Error())
 	m.action.statusIsError = true
@@ -574,6 +602,14 @@ func (m Model) resolveCheckUpdatesResult(msg checkUpdatesResultMsg) (Model, tea.
 		m.action.cancel()
 		m.action.cancel = nil
 	}
+	// Copilot PR #63 finding (mirrors resolvePlanResult): resolve a
+	// quit-triggered drain immediately instead of touching m.summary.Updates,
+	// writing the zero-updates status line, or opening the batch
+	// confirmation modal below - the app is exiting, so none of that would
+	// ever be seen.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
 
 	view := msg.view
 	m.summary.Updates = len(view.Updates)
@@ -600,6 +636,12 @@ func (m Model) resolveCheckUpdatesFailure(msg checkUpdatesFailedMsg) (Model, tea
 	if m.action.cancel != nil {
 		m.action.cancel()
 		m.action.cancel = nil
+	}
+	// Copilot PR #63 finding (mirrors resolvePlanFailure): resolve a
+	// quit-triggered drain immediately rather than writing a status line no
+	// one will ever see.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
 	}
 	m.action.status = singleLine(msg.err.Error())
 	m.action.statusIsError = true

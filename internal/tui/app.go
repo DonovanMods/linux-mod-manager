@@ -292,12 +292,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.action.cancel = nil
 		}
 		// Task 6 item d: a quit-triggered drain (see startQuit) resolves the
-		// instant the action it was waiting on settles - no point loading
-		// fresh data or updating the status line for a process that's about
-		// to exit; just quit now instead of racing actionDrainTimeout.
+		// instant the action it was waiting on settles - see resolveDrainedQuit's
+		// own doc comment for why (shared with actionFailedMsg below and the six
+		// plan/check messages in mutations.go).
 		if m.action.draining {
-			m.action.draining = false
-			return m, tea.Quit
+			return m.resolveDrainedQuit()
 		}
 		m.action.status = formatOutcomeStatus(msg.outcome)
 		m.action.statusIsError = false
@@ -364,10 +363,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.action.cancel = nil
 		}
 		// Task 6 item d: mirrors actionDoneMsg's drain resolution above - a
-		// failure settles the drain exactly like a success does.
+		// failure settles the drain exactly like a success does (see
+		// resolveDrainedQuit's doc comment).
 		if m.action.draining {
-			m.action.draining = false
-			return m, tea.Quit
+			return m.resolveDrainedQuit()
 		}
 		m.action.status = singleLine(msg.err.Error())
 		m.action.statusIsError = true

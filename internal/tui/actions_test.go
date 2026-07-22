@@ -701,6 +701,70 @@ func TestStaleActionDrainTimeoutIsNoop(t *testing.T) {
 	require.True(t, m.action.draining, "must not clear draining for a DIFFERENT (stale) drain")
 }
 
+// TestQuitDrainResolvesImmediatelyOnFreshPlanOrCheckMsg guards a Copilot PR
+// #63 review finding: quitting while a PLAN/CHECK step is in flight
+// ("Planning switch…"/"Planning install…"/"Checking for updates…" - see
+// switchSelectedProfile/installSelectedSearchResult/checkForUpdates in
+// mutations.go) sets m.action.draining via startQuit exactly like quitting
+// mid-mutation does, but the six plan/check result/failure messages
+// (planResultMsg/planFailedMsg, installPlanResultMsg/installPlanFailedMsg,
+// checkUpdatesResultMsg/checkUpdatesFailedMsg) never checked draining - so
+// quit blocked for the full actionDrainTimeout (~5s) even though the
+// awaited step had already finished, unlike actionDoneMsg/actionFailedMsg's
+// own immediate resolution (TestQuitWhileRunningDrainsUntilActionSettles/
+// -Fails above). Table covers all six: each arrives fresh (passing its own
+// gen check) while draining is already true and must resolve straight to
+// tea.Quit - and, since the app is exiting, WITHOUT opening the
+// confirmation modal or writing the status line these messages normally
+// produce (resolveDrainedQuit in actions.go, shared with actionDoneMsg/
+// actionFailedMsg's own drain branch, bypasses both).
+func TestQuitDrainResolvesImmediatelyOnFreshPlanOrCheckMsg(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		msg  func(gen int) tea.Msg
+	}{
+		{"planResultMsg", func(gen int) tea.Msg {
+			return planResultMsg{gen: gen, view: SwitchPlanView{From: "a", To: "b"}}
+		}},
+		{"planFailedMsg", func(gen int) tea.Msg {
+			return planFailedMsg{gen: gen, err: errors.New("boom")}
+		}},
+		{"installPlanResultMsg", func(gen int) tea.Msg {
+			return installPlanResultMsg{gen: gen, item: ModItem{ID: "x"}, view: InstallPlanView{Name: "X"}}
+		}},
+		{"installPlanFailedMsg", func(gen int) tea.Msg {
+			return installPlanFailedMsg{gen: gen, err: errors.New("boom")}
+		}},
+		{"checkUpdatesResultMsg", func(gen int) tea.Msg {
+			return checkUpdatesResultMsg{gen: gen, view: UpdatesView{Updates: []UpdateItem{{Name: "X"}}}}
+		}},
+		{"checkUpdatesFailedMsg", func(gen int) tea.Msg {
+			return checkUpdatesFailedMsg{gen: gen, err: errors.New("boom")}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := modelWithActions(t, &recordingActions{})
+			model.action.running = true
+			model.action.gen = 5
+			model.action.draining = true
+
+			updated, cmd := model.Update(tt.msg(5))
+			m := updated.(Model)
+
+			require.NotNil(t, cmd, "a fresh plan/check msg while draining must resolve the drain immediately")
+			require.Equal(t, tea.Quit(), cmd(), "must quit exactly like actionDoneMsg's own drain resolution")
+			require.False(t, m.action.draining, "the settled drain must clear draining")
+			require.Nil(t, m.action.pending, "draining must never open a confirmation modal - the app is exiting")
+			require.Empty(t, m.action.status, "draining must never write a status line - the app is exiting")
+			require.False(t, m.action.running)
+		})
+	}
+}
+
 func TestQuitCancelsInFlightSearchContext(t *testing.T) {
 	t.Parallel()
 
