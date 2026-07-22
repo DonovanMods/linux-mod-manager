@@ -4,31 +4,35 @@
 **Scope:** Add a Bubble Tea/Lip Gloss TUI to `lmm`, starting with visual prototypes and iterating toward a real service-backed interface.
 **Out of scope:** Replacing the existing CLI, changing config formats, implementing image thumbnails, background update daemons, or redesigning core mod-management behavior.
 
-> **Status (2026-07-20): Phases 0–5a are COMPLETE** — Phases 0–3 shipped as **v1.4.0**
+> **Status (2026-07-21): Phases 0–5 are COMPLETE** — Phases 0–3 shipped as **v1.4.0**
 > (PRs #31/#33/#34/#36/#38; issues #30/#32/#35), Phase 4 (search and detail browsing)
-> shipped as **v1.5.0** (PR #41; issue #40; tag `v1.5.0`), and **Phase 5a** (enable/
+> shipped as **v1.5.0** (PR #41; issue #40; tag `v1.5.0`), **Phase 5a** (enable/
 > disable, uninstall, deploy, and profile switch, each behind a confirmation modal,
 > plus the async action machinery, status line, and `--prototype` parity) shipped as
-> **v1.11.0**.
-> **Phase 5b (install selected search result; check/apply updates — network actions
-> that need real progress reporting) is next.** Before planning it, read:
+> **v1.11.0**, and **Phase 5b** (install-from-search with a plan-preview modal and
+> streaming download/extract/deploy progress; check/apply updates with per-update
+> progress; lifting the profile-switch download refusal so a switch needing
+> not-yet-installed mods downloads and installs them itself, with disclosure in the
+> confirmation modal; hardening — cancel-then-drain on quit instead of killing a
+> running mutation mid-step, a profile-switch/search data-race guard, and restored
+> enable/disable diagnostics) shipped as **v1.12.0**.
 >
-> - this file's Phase 5 section, now annotated with what 5a delivered vs. what's
->   left for 5b, AND the **"CLI-parity coverage and roadmap gaps"** tables below,
-> - **issue #37** (Phase 5/6 scope additions + lifecycle carry-forwards — still
->   open; 5a shipped the `uninstall` addition it called out, the remaining items
->   are Phase 6),
-> - **issue #42** (short/narrow-terminal hardening + polish backlog — 5a closed the
->   "quit doesn't cancel in-flight search/action contexts" lifecycle item), and
-> - the Phase 4 review note: `tui.ModItem` has no mod `ID` field — add it before
->   install-from-search; mutations belong in a separate writer interface so the
->   read-only `DataProvider` stays provably read-only. (5a added `ModItem.ID` and
->   the `ActionProvider` write-side seam described there; 5b builds directly on
->   both.)
+> **Phase 6 (conflict/update/profile workflows, per its section below, plus the
+> Phase 6 additions tracked on issue #37) is next.** Before planning it, read:
 >
-> Branches come off `main` (protected — PRs only). Execution records (local-only):
-> `docs/plans/2026-07-13-tui-phase2-close-and-phase3.md`,
-> `docs/plans/2026-07-13-tui-phase4-search-impl.md`.
+> - this file's Phase 6 section, and the **"CLI-parity coverage and roadmap gaps"**
+>   tables below,
+> - **issue #37** (Phase 5/6 scope additions — 5a shipped the `uninstall` addition
+>   it called out; everything else it lists is Phase 6), and
+> - **issue #42** (short/narrow-terminal hardening + polish backlog — still open;
+>   5a closed its "quit doesn't cancel in-flight search/action contexts" lifecycle
+>   item; the height/width-overflow class and test/tooling polish remain).
+>
+> Branches come off `main` (protected — PRs only). Execution records:
+> `docs/plans/archive/2026-07-13-tui-phase2-close-and-phase3.md`,
+> `docs/plans/archive/2026-07-13-tui-phase4-search-impl.md`,
+> `docs/plans/archive/2026-07-19-tui-phase5a-mutations-impl.md`,
+> `docs/plans/archive/2026-07-21-tui-phase5b-network-actions-impl.md`.
 
 The TUI should feel like an 80s console RPG / DOS utility: Wizardry or Ultima in spirit, but still useful for managing real mod lists. Haunted terminal artifact, not hostile UX.
 
@@ -410,9 +414,14 @@ lmm tui --prototype --theme dos
 ## Phase 5 — Safe mutating actions
 
 > **Phase 5a ✅ (complete, v1.11.0):** enable/disable, uninstall, deploy, and
-> profile switch, each behind a confirmation modal. **Phase 5b (not started):**
-> install selected search result; check/apply updates. See the annotations
-> below for exactly what's delivered vs. remaining.
+> profile switch, each behind a confirmation modal. **Phase 5b ✅ (complete,
+> v1.12.0):** install selected search result (plan preview, streaming
+> download/extract/deploy progress); check/apply updates (batch confirmation,
+> per-update progress); the profile-switch download refusal lifted, with
+> disclosure in the confirmation modal; hardening (cancel-then-drain on quit,
+> a profile-switch/search race guard, restored enable/disable diagnostics).
+> **Phase 5 is COMPLETE.** See the annotations below for what each half
+> delivered.
 
 **Goal:** Add install/update/enable/disable/profile actions behind explicit confirmations.
 
@@ -436,8 +445,17 @@ lmm tui --prototype --theme dos
 - Deploy current profile. — **5a**: `D` on Installed Mods or Dashboard.
 - Uninstall installed mod. — **5a**: `x` on Installed Mods. Added to this set
   by the CLI-parity audit below (issue #37); not in the phase's original scope.
-- Install selected search result. — **5b**, not started.
-- Check/apply updates. — **5b**, not started.
+- Install selected search result. — **5b**: `i` on Search, with the input
+  blurred and a result selected. Plans first (files, resolved dependencies
+  with their own download disclosure, conflicts, size), then confirms and
+  streams download/extract/deploy progress; a successful install re-runs the
+  current search so the result's installed marker updates immediately.
+- Check/apply updates. — **5b**: `u` on Dashboard or Installed Mods. Checks
+  every checkable installed mod (pinned/local skipped); zero updates is a
+  status line, one or more opens a batch confirmation modal that applies all
+  of them sequentially with per-update progress, folding a per-mod failure
+  into the batch's warnings instead of aborting the rest. Per-item selection
+  is deliberately out of scope — Phase 6.
 
 **Tasks:**
 
@@ -459,8 +477,14 @@ lmm tui --prototype --theme dos
      flight, plus a one-line outcome/warning summary on completion; deploy
      has no live per-mod progress yet (`coreProvider.DeployProfile` passes a
      nil progress callback). Downloads and updates aren't in 5a's action set
-     at all. Real progress streaming (`core.DeployProgress`, download
-     percentages) is **5b** work.
+     at all.
+   - **5b: delivered** — a single-slot drain-then-send progress pump
+     (`sendActionProgress`/`waitForActionProgress`, internal/tui/actions.go)
+     coalesces ticks under a slow consumer without ever blocking the flow
+     goroutine; install, apply-updates, and a downloading profile switch all
+     stream `core.DeployProgress` events through it into the status line.
+     Deploy itself still has no live per-mod progress (unchanged from 5a,
+     out of 5b's scope).
 4. Prevent duplicate actions while one is running.
    - **5a: delivered** — single-flight guard in `buildAction`/`promptAction`.
 5. Refresh affected views after successful action.
@@ -486,8 +510,22 @@ deploy, profile switch):
   screen)
 - `go test ./...` passes. — **satisfied**
 
-5b (install-from-search, check/apply updates) will need its own pass at
-these criteria once real network/progress actions exist.
+**5b's own pass at these criteria** (install-from-search, check/apply
+updates, downloading profile switches):
+
+- Mutating actions require confirmation, with a plan preview computed before
+  anything downloads. — **satisfied**
+- Cancelling leaves state unchanged. — **satisfied**
+- Successful actions refresh visible data (install also re-runs the current
+  search). — **satisfied**
+- Errors, capability gaps, and auth requirements are visible, recoverable,
+  and name the correct CLI fallback. — **satisfied** (`mapNetworkError` and
+  its per-action wrappers, `internal/tui/service_core.go`)
+- Long-running actions stream progress; quitting mid-action finishes the
+  current step (bounded drain) instead of killing it. — **satisfied**
+- `go test ./...` (incl. `-race`) passes. — **satisfied**
+
+**Phase 5 is COMPLETE.** Phase 6 is next.
 
 ---
 
