@@ -18,18 +18,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// confirmInstallConflicts prompts the user to confirm overwriting files that
-// installing the plan's mod would conflict with. conflicts is sourced from
-// plan.Conflicts (computed by PlanInstall) rather than a fresh GetConflicts
-// call - see InstallPlan.Conflicts' doc comment for why a fresh call isn't
-// possible without downloading first (PlanInstall never downloads). Prints
-// them and prompts for confirmation, returning an error to abort the install
-// when the user declines.
-func confirmInstallConflicts(service *core.Service, game *domain.Game, profileName string, conflicts []core.Conflict) error {
-	if len(conflicts) == 0 {
-		return nil
-	}
-
+// confirmInstallConflicts prints the file conflicts installing the plan's
+// mod would cause and prompts the user to confirm overwriting them. Wired as
+// core.InstallOptions.ConfirmConflicts (see that field's doc comment), so
+// core.ApplyInstall calls this ONLY at its restored, byte-identical
+// position: AFTER the mod is downloaded/extracted to cache and BEFORE it is
+// deployed - the exact spot the pre-extraction CLI's own
+// confirmInstallConflicts occupied, undoing the C1 review finding's
+// regression (conflicts had moved into the pure, pre-download PlanInstall,
+// which can never detect an uncached mod's conflicts at all - see
+// InstallPlan.Conflicts' doc comment). conflicts is therefore always
+// non-empty and freshly computed by core.ApplyInstall itself, never
+// plan.Conflicts (which this function no longer consults).
+//
+// Returns false to decline (core.ApplyInstall then aborts with its own
+// "installation cancelled" error - see readErr below for the one case that
+// is NOT a plain decline). readErr, if non-nil, is a genuine stdin read
+// failure (readPromptLine's own doc comment: distinct from EOF, which is
+// treated as an ordinary empty/declined answer) - doInstall must propagate
+// THIS error verbatim rather than letting it collapse into the generic
+// "installation cancelled" text, matching the pre-extraction CLI's own
+// `if err != nil { return err }` before its y/N check.
+func confirmInstallConflicts(service *core.Service, game *domain.Game, profileName string, conflicts []core.Conflict) (proceed bool, readErr error) {
 	fmt.Printf("\n⚠ File conflicts detected:\n")
 
 	modConflicts := make(map[string][]string)
@@ -62,12 +72,9 @@ func confirmInstallConflicts(service *core.Service, game *domain.Game, profileNa
 	fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
 	input, err := readPromptLine()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if input != "y" && input != "yes" {
-		return fmt.Errorf("installation cancelled")
-	}
-	return nil
+	return input == "y" || input == "yes", nil
 }
 
 // selectInstallFiles applies the --file flag, single-file shortcut, --yes default,
@@ -474,21 +481,30 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		}
 	}
 
-	// Conflict prompt - sourced from plan.Conflicts (computed by
-	// PlanInstall against whatever is already cached), not a fresh
-	// GetConflicts call. --force skips it, unchanged.
-	if !installForce {
-		if err := confirmInstallConflicts(service, game, profileName, plan.Conflicts); err != nil {
-			return err
-		}
-	}
-
+	// promptErr captures a genuine stdin read failure from
+	// confirmInstallConflicts (distinct from an ordinary decline - see its
+	// doc comment) so it can be propagated verbatim below instead of
+	// collapsing into ApplyInstall's generic "installation cancelled" text.
+	var promptErr error
 	opts := core.InstallOptions{
 		SkipVerify:  skipVerify,
 		Hooks:       getResolvedHooks(service, game, profileName),
 		HookRunner:  getHookRunner(service),
 		HookContext: makeHookContext(game),
 		Force:       installForce,
+		// ConfirmConflicts restores the pre-extraction CLI's blocking
+		// conflict prompt at ApplyInstall's own restored position (post-
+		// download/extract, pre-deploy) - see core.InstallOptions.
+		// ConfirmConflicts' doc comment. --force still skips it entirely
+		// (ApplyInstall never calls this when opts.Force is set).
+		ConfirmConflicts: func(conflicts []core.Conflict) bool {
+			proceed, err := confirmInstallConflicts(service, game, profileName, conflicts)
+			if err != nil {
+				promptErr = err
+				return false
+			}
+			return proceed
+		},
 	}
 
 	// progress prints every diagnostic and status line at its exact point
@@ -546,6 +562,13 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		// Diagnostics accumulated before a fatal error (ApplyInstall's
 		// error-path convention returns them alongside it) were already
 		// printed above, live, via progress - nothing left to print here.
+		if promptErr != nil {
+			// A genuine stdin read failure inside the conflict prompt, not
+			// an ordinary decline - see confirmInstallConflicts' doc
+			// comment. Propagate the real error instead of ApplyInstall's
+			// generic "installation cancelled".
+			return promptErr
+		}
 		return err
 	}
 
