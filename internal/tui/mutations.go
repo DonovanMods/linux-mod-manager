@@ -251,30 +251,35 @@ func (m Model) resolvePlanFailure(msg planFailedMsg) (Model, tea.Cmd) {
 //
 // A plan with NeedsDownloads entries (Phase 5b Task 4 lifted the refusal
 // that used to short-circuit these here - ApplyProfileSwitch downloads and
-// installs them itself now) additionally appends a "Will download & install
+// installs them itself now) additionally renders a "Will download & install
 // N mod(s):" header plus one "↓ <ref>" line per entry, mirroring the CLI's
 // own pre-confirm disclosure (cmd/lmm/profile.go's doProfileSwitch: "Will
 // install %d mod(s):" + "  ↓ %s:%s v%s\n" per ref) - without this, the modal
 // would open with no indication that confirming starts network downloads.
-// These lines append to (not replace) any Enable/Disable lines above, and
-// flow into the same flat detail slice actionModalView already truncates
-// with "+N more" when it overflows the panel's height budget.
+//
+// The download disclosure is placed IMMEDIATELY after "From:", before the
+// Enable/Disable buckets (I2 review finding): actionModalView's "+N more"
+// truncation collapses whatever detail lines don't fit its budget, and a
+// busy switch (many Enable/Disable rows) previously pushed the disclosure -
+// appended last - past that budget, silently hiding the one line that warns
+// confirming starts network downloads. Leading with it instead means
+// truncation eats the less-critical Enable/Disable tail first.
 func switchDetailLines(view SwitchPlanView) []string {
 	if view.NoChanges {
 		return []string{fmt.Sprintf("From: %s", view.From), "No mod changes; set as default."}
 	}
 	lines := []string{fmt.Sprintf("From: %s", view.From)}
-	for _, name := range view.Enable {
-		lines = append(lines, fmt.Sprintf("+ %s", name))
-	}
-	for _, name := range view.Disable {
-		lines = append(lines, fmt.Sprintf("- %s", name))
-	}
 	if len(view.NeedsDownloads) > 0 {
 		lines = append(lines, fmt.Sprintf("Will download & install %d mod(s):", len(view.NeedsDownloads)))
 		for _, ref := range view.NeedsDownloads {
 			lines = append(lines, fmt.Sprintf("↓ %s", ref))
 		}
+	}
+	for _, name := range view.Enable {
+		lines = append(lines, fmt.Sprintf("+ %s", name))
+	}
+	for _, name := range view.Disable {
+		lines = append(lines, fmt.Sprintf("- %s", name))
 	}
 	return lines
 }
@@ -617,10 +622,20 @@ func updateDetailLines(view UpdatesView) []string {
 // call unchanged (nil-safe, like every other ActionProvider progress
 // parameter), so each update's own download/extract ticks stream into the
 // status line as the batch works through it.
+//
+// A ctx cancellation (quit-while-running - see the cancel-then-drain doc
+// comment on the model's quit handling) BREAKS the loop before the next
+// update's ApplyUpdate call, rather than letting a cancelled ctx churn every
+// remaining update into its own "context canceled" warning entry - those
+// mods simply never got a chance to apply, which is not the same thing as
+// each of them individually failing.
 func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updates []UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
 	applied := 0
 	var warnings []string
 	for _, u := range updates {
+		if ctx.Err() != nil {
+			break
+		}
 		outcome, err := actions.ApplyUpdate(ctx, u, progress)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %s", u.Name, singleLine(err.Error())))
