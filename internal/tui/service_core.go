@@ -49,12 +49,24 @@ type coreProvider struct {
 	// cachedHooks is profile-specific (a profile's hooks.yaml overrides can
 	// differ from another's - see resolvedHooks), so SetProfile invalidates
 	// it on every rebind, even a same-name one (cheap, and correctness
-	// doesn't depend on detecting a genuine change).
+	// doesn't depend on detecting a genuine change). That invalidation is
+	// keyed on profile SWITCHES only, not on disk edits: a user editing the
+	// ACTIVE profile's hooks.yaml overrides while the TUI keeps running
+	// that same profile still gets the stale, already-cached ResolvedHooks
+	// for the rest of the session - the CLI has no such staleness, since it
+	// re-reads and re-resolves hooks fresh on every invocation. Switching
+	// away and back to the profile (or restarting the TUI) is what picks up
+	// the edit.
 	cachedHooks *core.ResolvedHooks
 	// cachedRunner is NOT profile- or game-specific (HookTimeout is a
 	// single global config.yaml setting - see hookRunner), so it is cached
 	// for this coreProvider's whole lifetime once computed and SetProfile
-	// never touches it.
+	// never touches it. That also means it has no invalidation path at all:
+	// a user editing config.yaml's hook_timeout while the TUI is running
+	// keeps getting whatever timeout was in effect at the first hook-running
+	// action of the session for every action after it - only restarting the
+	// TUI re-reads config.yaml (the CLI, by contrast, re-reads it fresh on
+	// every invocation via its own getHookRunner).
 	cachedRunner *core.HookRunner
 }
 
