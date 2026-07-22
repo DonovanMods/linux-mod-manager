@@ -784,15 +784,21 @@ func seedConflictingMod(t *testing.T, svc *core.Service, game *domain.Game) {
 }
 
 // TestDoInstall_ConflictPrompt_ForceSkipsPrompt guards the conflict prompt
-// path (sourced from plan.Conflicts, computed by PlanInstall - not a fresh
-// GetConflicts call) and --force's skip.
+// path - restored (C1 review finding) to fire at its ORIGINAL, byte-exact
+// position: AFTER the mod is downloaded/extracted to cache and BEFORE it is
+// deployed (see core.InstallOptions.ConfirmConflicts' doc comment), sourced
+// from a FRESH GetConflicts call inside core.ApplyInstall - never
+// plan.Conflicts, which this scenario also happens to populate (mod1's
+// cache already exists pre-download here - see seedConflictingMod), but is
+// no longer what gates the prompt - and --force's skip.
 func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
-	t.Run("prompts and aborts on decline", func(t *testing.T) {
+	t.Run("prompts (after download, before deploy) and aborts on decline", func(t *testing.T) {
 		svc, game, src := setupDoInstallTest(t)
 		installYes = false
 		seedConflictingMod(t, svc, game)
 		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
 			[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+		src.AddDownload("main", []byte("mod1 content"))
 
 		var out string
 		var err error
@@ -807,8 +813,20 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		assert.Contains(t, out, "File conflicts detected:")
 		assert.Contains(t, out, "will be overwritten. Continue? [y/N]: ")
 
+		extractIdx := strings.Index(out, "Extracting to cache...")
+		conflictIdx := strings.Index(out, "File conflicts detected:")
+		require.GreaterOrEqual(t, extractIdx, 0, "the download must have already happened by the time conflicts can even be checked")
+		require.Greater(t, conflictIdx, extractIdx, "the prompt must fire AFTER extraction, matching the pre-extraction CLI's exact position")
+		assert.NotContains(t, out, "Deploying to game directory...", "declining must never reach the deploy phase")
+
+		// Decline-state fidelity: hooks already ran (none configured here),
+		// the download is already cached (a fresh/upgrade install has no
+		// reinstall-cache-transaction to roll back - see
+		// InstallOptions.ConfirmConflicts' doc comment), but nothing
+		// deployed or saved.
+		assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the download must remain cached on decline, matching base's exact decline state")
 		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
-		assert.Error(t, dbErr)
+		assert.Error(t, dbErr, "declining must leave zero DB mutations")
 	})
 
 	t.Run("--force skips the prompt", func(t *testing.T) {
@@ -828,6 +846,95 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 
 		_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
 		assert.NoError(t, err)
+	})
+}
+
+// TestDoInstall_ConflictPrompt_FreshUncachedInstall is the MANDATORY C1
+// regression test: before this fix, a mod that had NEVER been cached before
+// (a genuinely fresh install, unlike seedConflictingMod's leftover-cache
+// scenario above) silently overwrote a conflicting file with no prompt at
+// all - PlanInstall.Conflicts can only report a conflict for a mod ALREADY
+// in cache (see its doc comment), so the pre-fix CLI's pre-download prompt,
+// driven by plan.Conflicts, always saw an empty list for a mod like this.
+// Post-fix, the conflict is detected AFTER download (installer.GetConflicts
+// inspects the now-populated cache), at the same restored position proven
+// above.
+func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
+	seedOtherOwningSharedFile := func(t *testing.T, svc *core.Service, game *domain.Game) {
+		t.Helper()
+		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "shared.esp", []byte("original-other-content")))
+		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+			Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
+			ProfileName:  "default",
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+		}))
+		installer := svc.GetInstaller(game)
+		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+	}
+
+	t.Run("decline preserves the other mod's file untouched", func(t *testing.T) {
+		svc, game, src := setupDoInstallTest(t)
+		installYes = false
+		seedOtherOwningSharedFile(t, svc, game)
+		require.False(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "mod1 must never have been cached before this install")
+		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "main", FileName: "shared.esp", IsPrimary: true}})
+		src.AddDownload("main", []byte("new-mod1-content"))
+
+		var out string
+		var err error
+		withStdin(t, "n\n", func() {
+			out, err = captureStdoutErr(t, func() error {
+				return doInstall(context.Background(), svc, game, nil)
+			})
+		})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "installation cancelled")
+		assert.Contains(t, out, "File conflicts detected:", "an UNCACHED mod's conflict must now be detected - silently missed before this fix")
+
+		extractIdx := strings.Index(out, "Extracting to cache...")
+		conflictIdx := strings.Index(out, "File conflicts detected:")
+		require.GreaterOrEqual(t, extractIdx, 0)
+		require.Greater(t, conflictIdx, extractIdx)
+		assert.NotContains(t, out, "Deploying to game directory...")
+
+		assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the download must remain cached on decline")
+		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		assert.Error(t, dbErr)
+
+		content, readErr := os.ReadFile(filepath.Join(game.ModPath, "shared.esp"))
+		require.NoError(t, readErr)
+		assert.Equal(t, "original-other-content", string(content), "the other mod's deployed file must survive untouched - this is the silent-overwrite bug C1 fixes")
+	})
+
+	t.Run("accept overwrites with the new mod's content", func(t *testing.T) {
+		svc, game, src := setupDoInstallTest(t)
+		installYes = false
+		seedOtherOwningSharedFile(t, svc, game)
+		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "main", FileName: "shared.esp", IsPrimary: true}})
+		src.AddDownload("main", []byte("new-mod1-content"))
+
+		var out string
+		var err error
+		withStdin(t, "y\n", func() {
+			out, err = captureStdoutErr(t, func() error {
+				return doInstall(context.Background(), svc, game, nil)
+			})
+		})
+
+		require.NoError(t, err)
+		assert.Contains(t, out, "File conflicts detected:")
+		assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
+
+		content, readErr := os.ReadFile(filepath.Join(game.ModPath, "shared.esp"))
+		require.NoError(t, readErr)
+		assert.Equal(t, "new-mod1-content", string(content))
+
+		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		assert.NoError(t, dbErr)
 	})
 }
 

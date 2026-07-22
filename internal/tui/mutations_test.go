@@ -555,6 +555,77 @@ func TestSwitchDetailLinesIncludesDownloadDisclosureForNeedsDownloads(t *testing
 	require.Contains(t, lines, "↓ nexusmods:bar v2.0")
 }
 
+// TestSwitchDetailLinesOrdersDownloadDisclosureBeforeEnableDisableBuckets
+// guards the I2 review finding directly at the switchDetailLines level: the
+// disclosure header/refs must render immediately after "From:", BEFORE any
+// Enable/Disable bucket line - the exact ordering actionModalView's "+N
+// more" truncation (actionModalMaxDetailLines = 8) depends on to protect the
+// disclosure on a busy switch (see the modal-level companion test below).
+func TestSwitchDetailLinesOrdersDownloadDisclosureBeforeEnableDisableBuckets(t *testing.T) {
+	t.Parallel()
+
+	lines := switchDetailLines(SwitchPlanView{
+		From:           "survival",
+		To:             "vanilla-plus",
+		Enable:         []string{"Mod A", "Mod B"},
+		Disable:        []string{"Mod C"},
+		NeedsDownloads: []string{"nexusmods:foo v1.0"},
+	})
+
+	require.Equal(t, []string{
+		"From: survival",
+		"Will download & install 1 mod(s):",
+		"↓ nexusmods:foo v1.0",
+		"+ Mod A",
+		"+ Mod B",
+		"- Mod C",
+	}, lines)
+}
+
+// TestSwitchModalDisclosesDownloadsBeforeBucketRowsTruncate is the I2
+// review finding's MANDATORY modal-level regression test: switchDetailLines
+// used to append the download disclosure LAST, so a busy switch (many
+// Enable/Disable rows) could push it past actionModalView's "+N more"
+// truncation budget (actionModalMaxDetailLines = 8), silently hiding the
+// one line that discloses confirming starts network downloads. With 6
+// Enable rows plus the disclosure header+ref (8 detail lines total, one
+// over budget=7 after the title/blank/hint fixed lines), the disclosure
+// must still render in the modal's VISIBLE portion, before any "+N more"
+// line - not collapsed into it.
+func TestSwitchModalDisclosesDownloadsBeforeBucketRowsTruncate(t *testing.T) {
+	t.Parallel()
+
+	enable := []string{"Mod A", "Mod B", "Mod C", "Mod D", "Mod E", "Mod F"}
+	rec := &recordingActions{
+		PlanView: SwitchPlanView{
+			From:           "survival",
+			To:             "vanilla-plus",
+			Enable:         enable,
+			NeedsDownloads: []string{"nexusmods:foo v1.0"},
+		},
+	}
+	model := sizedModelWithActions(t, rec, 120, 38)
+	model.screen = ScreenProfiles
+	model.selected[ScreenProfiles] = 1
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	msg := cmd()
+
+	updated, cmd2 := model.Update(msg)
+	model = updated.(Model)
+	require.Nil(t, cmd2)
+	require.NotNil(t, model.action.pending)
+
+	view := model.View()
+	disclosureIdx := strings.Index(view, "Will download & install 1 mod(s):")
+	moreIdx := strings.Index(view, "more")
+	require.GreaterOrEqual(t, disclosureIdx, 0, "the download disclosure must be visible, not swallowed into +N more")
+	if moreIdx >= 0 {
+		require.Less(t, disclosureIdx, moreIdx, "the disclosure must appear BEFORE any +N more truncation marker")
+	}
+}
+
 // TestSwitchPlanNeedsDownloadsOpensModalAndAppliesOnConfirm covers the
 // Phase 5b Task 4 switch-refusal LIFT at the Model level: a plan with
 // NeedsDownloads entries used to short-circuit to a no-modal refusal status
@@ -2043,6 +2114,54 @@ func TestCheckUpdatesCancelDoesNotCallApplyUpdate(t *testing.T) {
 	require.Nil(t, cmd2)
 	require.Nil(t, model.action.pending)
 	require.Empty(t, rec.ApplyUpdateCalls)
+}
+
+// cancelingActions wraps a *recordingActions but cancels ctx from inside
+// ApplyUpdate itself once a caller-chosen call count is reached, for
+// TestApplyUpdatesSequentially_CtxCancelledMidBatchStopsWithoutChurningWarnings
+// below - the only way to deterministically land a real ctx.Err() BETWEEN
+// two loop iterations of applyUpdatesSequentially.
+type cancelingActions struct {
+	*recordingActions
+	cancel   context.CancelFunc
+	cancelAt int
+	calls    int
+}
+
+func (c *cancelingActions) ApplyUpdate(ctx context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	c.calls++
+	if c.calls == c.cancelAt {
+		c.cancel()
+	}
+	return c.recordingActions.ApplyUpdate(ctx, u, progress)
+}
+
+// TestApplyUpdatesSequentially_CtxCancelledMidBatchStopsWithoutChurningWarnings
+// guards the Minor #1 review finding: applyUpdatesSequentially's loop had no
+// ctx.Err() check between updates, so a quit-while-running cancellation
+// mid-batch (see the model's cancel-then-drain quit handling) would let the
+// loop keep calling ApplyUpdate for every remaining update, each one
+// immediately failing on the now-cancelled ctx and getting folded into its
+// own "context canceled" Warning entry - noisy churn for updates that never
+// got a real chance to apply. The fix breaks the loop instead: no further
+// ApplyUpdate calls, and the updates that never ran are simply absent from
+// both Applied and Warnings, not recorded as failures.
+func TestApplyUpdatesSequentially_CtxCancelledMidBatchStopsWithoutChurningWarnings(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+		{Source: "nexusmods", ID: "sse", Name: "SSE Engine Fixes", FromVersion: "1.0", ToVersion: "1.1"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	actions := &cancelingActions{recordingActions: &recordingActions{}, cancel: cancel, cancelAt: 1}
+
+	outcome, err := applyUpdatesSequentially(ctx, actions, updates, nil)
+	require.NoError(t, err, "a mid-batch cancellation must not surface as an error from this helper - the model's own ctx-cancel path handles that")
+	require.Equal(t, 1, actions.calls, "must stop calling ApplyUpdate once ctx is cancelled, not churn through the rest")
+	require.Equal(t, "Applied 1 update(s)", outcome.Message)
+	require.Empty(t, outcome.Warnings, "the two updates that never got a chance to apply must not be recorded as canceled-warnings")
 }
 
 // --- Check/apply updates: stale plan-fetch discard + fetch error ---

@@ -1321,6 +1321,75 @@ exit 0`)
 		"ApplyInstall must run the CLI's exact install hook configuration")
 }
 
+// TestCoreProviderActions_ApplyInstall_ConflictAutoProceedsAndRecordsWarning
+// guards the C1 review finding's TUI-side divergence: unlike the CLI, the
+// TUI has no blocking conflict prompt (it can't - there's no stdin to read
+// mid-action), so coreProvider.ApplyInstall's ConfirmConflicts callback must
+// auto-proceed (never abort) while still surfacing the overwrite as a
+// Warning instead of silently hiding it - "other" already owns shared.esp;
+// installing a second mod whose own archive also contains shared.esp must
+// overwrite it AND report the overwrite.
+func TestCoreProviderActions_ApplyInstall_ConflictAutoProceedsAndRecordsWarning(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	seedActionMod(t, svc, game, "src", "other", "Other Mod", "1.0", true, map[string][]byte{"shared.esp": []byte("other-content")})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modX", SourceID: "src", Name: "Mod X", Version: "1.0", GameID: game.ID})
+	netSrc.addDownload("modX", netSourceTestZip(t, "shared.esp", "new-content"))
+
+	item := tui.ModItem{ID: "modX", Source: "src", Name: "Mod X"}
+	outcome, err := actions.ApplyInstall(context.Background(), item, nil)
+	require.NoError(t, err, "the TUI must auto-proceed past a conflict, never blocking on stdin it doesn't have")
+	assert.Equal(t, `Installed "Mod X"`, outcome.Message)
+	require.NotEmpty(t, outcome.Warnings)
+	assert.Contains(t, outcome.Warnings, "overwrote: shared.esp (owned by other)")
+
+	content, err := os.ReadFile(filepath.Join(game.ModPath, "shared.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "new-content", string(content), "the TUI must actually overwrite, not silently skip")
+}
+
+// TestCoreProviderActions_ApplyInstall_BatchPrimaryFailureReflectsFailureNotFalseSuccess
+// guards the I1 review finding: the BATCH path (plan.Dependencies non-empty)
+// never fails ApplyInstall on a primary's own failure - the primary is
+// recorded in result.Failed/Skipped instead (see InstallResult's doc
+// comment) - so coreProvider.ApplyInstall's OLD unconditional "Installed %q"
+// Message was a false success whenever the PRIMARY (not just a dependency)
+// was the one that failed: a dependency installs, the primary 404s, and the
+// status line still claimed "Installed" while search would report the mod
+// as still available.
+func TestCoreProviderActions_ApplyInstall_BatchPrimaryFailureReflectsFailureNotFalseSuccess(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	dep := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: game.ID}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root Mod", Version: "1.0", GameID: game.ID}
+	netSrc.addMod(game.ID, dep)
+	netSrc.addMod(game.ID, root)
+	netSrc.deps["root"] = []domain.ModReference{{SourceID: "src", ModID: "dep1"}}
+	netSrc.addDownload("dep1", netSourceTestZip(t, "dep1.esp", "dep-payload"))
+	// Deliberately no addDownload for "root" - its download 404s.
+
+	item := tui.ModItem{ID: "root", Source: "src", Name: "Root Mod"}
+	outcome, err := actions.ApplyInstall(context.Background(), item, nil)
+	require.NoError(t, err, "a BATCH-path primary failure is not a hard error - it lands in Failed/Skipped instead")
+	assert.NotEqual(t, `Installed "Root Mod"`, outcome.Message, "must not falsely claim the primary installed when it actually failed")
+	assert.Equal(t, "Installed 1 of 2 mod(s)", outcome.Message)
+	require.NotEmpty(t, outcome.Warnings, "the failure reason must be present, not just the bare name")
+	assert.Contains(t, outcome.Warnings[0], "Root Mod")
+	assert.Contains(t, outcome.Warnings[0], "download failed")
+
+	_, dbErr := svc.GetInstalledMod("src", "dep1", game.ID, "default")
+	assert.NoError(t, dbErr, "the dependency must still have installed")
+	_, dbErr = svc.GetInstalledMod("src", "root", game.ID, "default")
+	assert.Error(t, dbErr, "the primary must NOT be recorded as installed")
+}
+
 // TestCoreProviderActions_CheckUpdates_OneUpdateAndOneErroringSourceSurfacesWarning
 // guards coreProvider.CheckUpdates against a real core.Service sandbox with
 // two sources: one reports a real update, the other fails outright - the
