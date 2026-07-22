@@ -11,10 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- TUI install-from-search (`i`): plans the selected search result first (files, resolved dependencies, conflicts, size), then confirms and streams download/extract/deploy progress; a successful install re-runs the current search so the result's installed marker updates immediately
+- TUI install-from-search (`i`): plans the selected search result first (files, resolved dependencies, conflicts, size), then confirms and streams download/extract/deploy progress; a successful install re-runs the current search so the result's installed marker updates immediately; unlike the CLI, a file conflict never blocks the TUI's single confirmation — it auto-proceeds and reports each overwritten file as a warning instead; a dependency-having install whose PRIMARY mod fails reports the shortfall (e.g. "Installed 1 of 2 mod(s)") instead of a false "Installed" success
 - TUI update checking and batch apply (`u` on Dashboard/Installed Mods): checks every checkable installed mod, then confirms and applies all eligible updates sequentially with per-update download progress; the Dashboard's Updates count populates with the real number after a check
 - Profile switches that need mods not yet installed now work from the TUI instead of being refused — the confirmation modal discloses what will be downloaded, and confirming downloads and installs them as part of applying the switch
-- Core: install/update flows extracted (`PlanInstall`/`ApplyInstall`/`ApplyUpdate`) so the TUI and CLI share the same logic; CLI behavior preserved byte-for-byte (one negligible exception: a rare batch-install checksum warning lost its leading indent)
+- Core: install/update flows extracted (`PlanInstall`/`ApplyInstall`/`ApplyUpdate`) so the TUI and CLI share the same logic; CLI behavior preserved byte-for-byte, including the file-conflict overwrite prompt's exact position (fires after download/extract, before deploy) and decline behavior (one negligible exception: a rare batch-install checksum warning lost its leading indent)
 
 ### Changed
 
