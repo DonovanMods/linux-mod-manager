@@ -958,6 +958,70 @@ func TestStaleSwitchDoneMsgNeverRebindsProfile(t *testing.T) {
 	require.Equal(t, "survival", provider.current, "a stale switchedTo must never rebind the provider")
 }
 
+// searchCancelProvider is a minimal DataProvider whose Search records the
+// ctx it receives (and returns a canned ready result), for Task 6 item b's
+// switch-done-cancels-in-flight-search test below - a plainer double than
+// fakeSwitchableProvider since this test needs a real Sources() list (so
+// startSearch doesn't hit the "no sources configured" guard) but no
+// profileRebinder behavior at all.
+type searchCancelProvider struct {
+	capturedCtx context.Context
+}
+
+func (p *searchCancelProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{GameName: "Game", ProfileName: "survival"}, nil, nil
+}
+func (p *searchCancelProvider) Sources() []string                               { return []string{"nexusmods"} }
+func (p *searchCancelProvider) SourceInfos() []SourceInfo                       { return nil }
+func (p *searchCancelProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _ int) (SearchPage, error) {
+	p.capturedCtx = ctx
+	return SearchPage{Results: []ModItem{{ID: "x", Name: "X"}}}, nil
+}
+
+// TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult guards Task 6
+// item b's second belt (the 5a review's UX-correctness recommendation,
+// beyond the p.profile race guard itself): a fresh switch-done
+// (actionDoneMsg.switchedTo set, matching gen) must cancel any in-flight
+// search's context and bump search.gen, so a late result computed against
+// the NOW-STALE old-profile installed-marks is discarded by the ordinary
+// stale-gen check (searchResultMsg's case in app.go) rather than applied.
+func TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult(t *testing.T) {
+	t.Parallel()
+
+	provider := &searchCancelProvider{}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: &recordingActions{}})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	model, searchCmd := model.startSearch("skyui", 0)
+	require.NotNil(t, searchCmd, "startSearch must dispatch a query given a real configured source")
+	gen1 := model.search.gen
+	require.NotNil(t, model.search.cancel)
+
+	msg := searchCmd() // runs provider.Search, capturing its ctx
+	require.NotNil(t, provider.capturedCtx)
+	require.NoError(t, provider.capturedCtx.Err(), "search's ctx must not be cancelled yet")
+
+	updated, _ := model.Update(actionDoneMsg{
+		gen: model.action.gen, kind: actionSwitch,
+		outcome:    ActionOutcome{Message: `Switched to "hardcore"`},
+		switchedTo: "hardcore",
+	})
+	model = updated.(Model)
+
+	require.Error(t, provider.capturedCtx.Err(), "switch-done must cancel the in-flight search's context")
+	require.ErrorIs(t, provider.capturedCtx.Err(), context.Canceled)
+	require.NotEqual(t, gen1, model.search.gen, "switch-done must bump the search generation")
+
+	// The late result (tagged with the now-stale gen1) must be discarded,
+	// exactly like any other superseded search result.
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotEqual(t, searchReady, model.search.state, "a late, now-stale search result must not be applied")
+}
+
 // --- Help/footer content ---
 
 func TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim(t *testing.T) {

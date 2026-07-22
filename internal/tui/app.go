@@ -301,6 +301,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// targeting it too (finding C1).
 		if msg.switchedTo != "" {
 			m.rebindProfile(msg.switchedTo)
+			// Task 6 item b's second belt (the 5a review's UX-correctness
+			// recommendation, beyond coreProvider's own p.profile race
+			// guard): any in-flight search was built against the OLD
+			// profile's installed-mod marks (installedModKeys), which are
+			// stale the instant the switch lands - cancel it and bump gen
+			// so a late result (or a late auth/search failure) is discarded
+			// by the ordinary stale-gen checks (searchResultMsg/
+			// searchFailedMsg's cases above) instead of rendering
+			// now-wrong "installed" markers. Mirrors CycleSource's own
+			// cancel+bump+reset-to-idle (updateKey, below).
+			if m.search.cancel != nil {
+				m.search.cancel()
+				m.search.cancel = nil
+			}
+			m.search.gen++
+			m.search.state = searchIdle
 		}
 		// A completed update-apply batch invalidates the just-checked
 		// Updates count: applying updates changes how many are left, and

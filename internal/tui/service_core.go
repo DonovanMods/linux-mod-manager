@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -15,10 +16,24 @@ import (
 )
 
 // coreProvider adapts *core.Service to the read-only DataProvider boundary.
+//
+// profileMu guards profile (Task 6 item b): SetProfile (called from the
+// Bubble Tea Update goroutine when a profile-switch action completes - see
+// app.go's actionDoneMsg handler / rebindProfile) writes it, while a
+// still-in-flight Search call (its own independent goroutine, NOT gated by
+// the action single-flight guard - see Search/installedModKeys) may read it
+// concurrently. Every read goes through currentProfile(); every write
+// through SetProfile - never read/write p.profile directly elsewhere in
+// this file. resolvedHooks takes the already-resolved profile as a
+// parameter (rather than re-reading p.profile itself) precisely so a later
+// caching layer over it (Task 6 item c) never needs to nest a second lock
+// inside profileMu's critical section (sync.RWMutex is not reentrant).
 type coreProvider struct {
-	svc     *core.Service
-	game    *domain.Game
-	profile string
+	svc  *core.Service
+	game *domain.Game
+
+	profileMu sync.RWMutex
+	profile   string
 }
 
 // NewCoreProvider returns a DataProvider backed by the real app service for
@@ -39,9 +54,10 @@ func NewCoreActions(svc *core.Service, game *domain.Game, profileName string) Ac
 }
 
 func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
-	mods, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
+	profile := p.currentProfile()
+	mods, err := p.svc.GetInstalledMods(p.game.ID, profile)
 	if err != nil {
-		return Summary{}, nil, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
+		return Summary{}, nil, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, profile, err)
 	}
 
 	enabled := 0
@@ -65,7 +81,7 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 
 	return Summary{
 		GameName:    p.game.Name,
-		ProfileName: p.profile,
+		ProfileName: profile,
 		Installed:   len(mods),
 		Enabled:     enabled,
 		Updates:     -1, // unknown: update checks are a Phase 6 workflow
@@ -212,9 +228,10 @@ func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page 
 // installedModKeys returns the set of domain.ModKey(sourceID, modID) values
 // installed in the active profile, used to mark search results as installed.
 func (p *coreProvider) installedModKeys() (map[string]bool, error) {
-	installed, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
+	profile := p.currentProfile()
+	installed, err := p.svc.GetInstalledMods(p.game.ID, profile)
 	if err != nil {
-		return nil, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
+		return nil, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, profile, err)
 	}
 	keys := make(map[string]bool, len(installed))
 	for _, mod := range installed {
@@ -251,6 +268,15 @@ func (p *coreProvider) modsToItems(mods []domain.Mod, installedKeys map[string]b
 	return items
 }
 
+// currentProfile returns the session's current active profile, guarded by
+// profileMu (Task 6 item b) - the single read path every method on this
+// type must use instead of touching p.profile directly.
+func (p *coreProvider) currentProfile() string {
+	p.profileMu.RLock()
+	defer p.profileMu.RUnlock()
+	return p.profile
+}
+
 // SetProfile rebinds the session to a new active profile: after a
 // successful TUI-driven switch, core.Service.ApplyProfileSwitch has already
 // persisted the new default profile (see its own doc comment in flows.go),
@@ -263,11 +289,19 @@ func (p *coreProvider) modsToItems(mods []domain.Mod, installedKeys map[string]b
 // contracts); see rebindProfile there for why both the Provider and Actions
 // instances (cmd/lmm/tui.go wires two SEPARATE *coreProvider values, one
 // per constructor) must each be rebound independently.
+//
+// Task 6 item b: SetProfile runs on the Bubble Tea Update goroutine while a
+// still-in-flight Search call (a different goroutine - see
+// currentProfile's doc comment) may be reading p.profile concurrently;
+// profileMu makes that safe.
 func (p *coreProvider) SetProfile(name string) {
+	p.profileMu.Lock()
 	p.profile = name
+	p.profileMu.Unlock()
 }
 
 func (p *coreProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
+	activeProfile := p.currentProfile()
 	profiles, err := p.svc.NewProfileManager().List(p.game.ID)
 	if err != nil {
 		return nil, fmt.Errorf("listing profiles for %s: %w", p.game.ID, err)
@@ -277,7 +311,7 @@ func (p *coreProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
 	for _, profile := range profiles {
 		items = append(items, ProfileItem{
 			Name:     profile.Name,
-			Active:   profile.Name == p.profile,
+			Active:   profile.Name == activeProfile,
 			ModCount: len(profile.Mods),
 		})
 	}
@@ -312,13 +346,16 @@ func (p *coreProvider) hookRunner() *core.HookRunner {
 	return core.NewHookRunner(timeout)
 }
 
-// resolvedHooks resolves game/profile hooks, mirroring cmd/lmm/hooks.go's
-// getResolvedHooks (minus its --no-hooks short-circuit - see hookRunner's
-// doc comment).
-func (p *coreProvider) resolvedHooks() *core.ResolvedHooks {
+// resolvedHooks resolves activeProfile's hooks, mirroring
+// cmd/lmm/hooks.go's getResolvedHooks (minus its --no-hooks short-circuit -
+// see hookRunner's doc comment). Takes the already-resolved profile as a
+// parameter, rather than reading p.profile itself, so every caller reads
+// p.profile exactly once via currentProfile() (Task 6 item b) - see the
+// struct's doc comment.
+func (p *coreProvider) resolvedHooks(activeProfile string) *core.ResolvedHooks {
 	var profile *domain.Profile
-	if p.profile != "" {
-		if pr, err := config.LoadProfile(p.svc.ConfigDir(), p.game.ID, p.profile); err == nil {
+	if activeProfile != "" {
+		if pr, err := config.LoadProfile(p.svc.ConfigDir(), p.game.ID, activeProfile); err == nil {
 			profile = pr
 		}
 	}
@@ -335,7 +372,7 @@ func (p *coreProvider) hookContext() core.HookContext {
 }
 
 func (p *coreProvider) EnableMod(ctx context.Context, item ModItem) (ActionOutcome, error) {
-	result, err := p.svc.EnableMod(ctx, p.game, p.profile, item.Source, item.ID)
+	result, err := p.svc.EnableMod(ctx, p.game, p.currentProfile(), item.Source, item.ID)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("enabling %s: %w", item.Name, err)
 	}
@@ -346,7 +383,7 @@ func (p *coreProvider) EnableMod(ctx context.Context, item ModItem) (ActionOutco
 }
 
 func (p *coreProvider) DisableMod(ctx context.Context, item ModItem) (ActionOutcome, error) {
-	result, err := p.svc.DisableMod(ctx, p.game, p.profile, item.Source, item.ID)
+	result, err := p.svc.DisableMod(ctx, p.game, p.currentProfile(), item.Source, item.ID)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("disabling %s: %w", item.Name, err)
 	}
@@ -360,14 +397,15 @@ func (p *coreProvider) DisableMod(ctx context.Context, item ModItem) (ActionOutc
 // doUninstall passes to core.UninstallMod (KeepCache=false, Force=false -
 // see hookRunner's doc comment for why hooks are never disabled here).
 func (p *coreProvider) UninstallMod(ctx context.Context, item ModItem) (ActionOutcome, error) {
+	profile := p.currentProfile()
 	opts := core.UninstallOptions{
 		KeepCache:   false,
-		Hooks:       p.resolvedHooks(),
+		Hooks:       p.resolvedHooks(profile),
 		HookRunner:  p.hookRunner(),
 		HookContext: p.hookContext(),
 		Force:       false,
 	}
-	result, err := p.svc.UninstallMod(ctx, p.game, p.profile, item.Source, item.ID, opts)
+	result, err := p.svc.UninstallMod(ctx, p.game, profile, item.Source, item.ID, opts)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("uninstalling %s: %w", item.Name, err)
 	}
@@ -383,15 +421,16 @@ func (p *coreProvider) UninstallMod(ctx context.Context, item ModItem) (ActionOu
 // static "working" state while this call is in flight; 5b streams
 // core.DeployProgress events.
 func (p *coreProvider) DeployProfile(ctx context.Context) (ActionOutcome, error) {
+	profile := p.currentProfile()
 	opts := core.DeployOptions{
-		Hooks:       p.resolvedHooks(),
+		Hooks:       p.resolvedHooks(profile),
 		HookRunner:  p.hookRunner(),
 		HookContext: p.hookContext(),
 		Force:       false,
 	}
-	result, err := p.svc.DeployProfile(ctx, p.game, p.profile, opts, nil)
+	result, err := p.svc.DeployProfile(ctx, p.game, profile, opts, nil)
 	if err != nil {
-		return ActionOutcome{}, fmt.Errorf("deploying profile %s: %w", p.profile, err)
+		return ActionOutcome{}, fmt.Errorf("deploying profile %s: %w", profile, err)
 	}
 	msg := fmt.Sprintf("Deployed %d mod(s)", result.Deployed)
 	if len(result.Skipped) > 0 {
@@ -679,7 +718,7 @@ func installPlanView(plan *core.InstallPlan) InstallPlanView {
 // yet - matching the CLI's own non-interactive default when that flag is
 // omitted).
 func (p *coreProvider) PlanInstall(ctx context.Context, item ModItem) (InstallPlanView, error) {
-	plan, err := p.svc.PlanInstall(ctx, p.game, p.profile, item.Source, item.ID, false)
+	plan, err := p.svc.PlanInstall(ctx, p.game, p.currentProfile(), item.Source, item.ID, false)
 	if err != nil {
 		return InstallPlanView{}, mapInstallNetworkError(fmt.Sprintf("planning install of %s", item.Name), item.Source, err)
 	}
@@ -694,14 +733,15 @@ func (p *coreProvider) PlanInstall(ctx context.Context, item ModItem) (InstallPl
 // PlanInstall's own non-interactive default (the primary-or-first file - see
 // InstallPlan.Files' doc comment) is always what gets installed.
 func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
-	plan, err := p.svc.PlanInstall(ctx, p.game, p.profile, item.Source, item.ID, false)
+	profile := p.currentProfile()
+	plan, err := p.svc.PlanInstall(ctx, p.game, profile, item.Source, item.ID, false)
 	if err != nil {
 		return ActionOutcome{}, mapInstallNetworkError(fmt.Sprintf("planning install of %s", item.Name), item.Source, err)
 	}
 
 	opts := core.InstallOptions{
 		SkipVerify:  false,
-		Hooks:       p.resolvedHooks(),
+		Hooks:       p.resolvedHooks(profile),
 		HookRunner:  p.hookRunner(),
 		HookContext: p.hookContext(),
 		Force:       false,
@@ -745,9 +785,10 @@ func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress 
 // per-source failure is still legible inside the underlying joined
 // "source %s: %w" text this doesn't discard.
 func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
-	installed, err := p.svc.GetInstalledMods(p.game.ID, p.profile)
+	profile := p.currentProfile()
+	installed, err := p.svc.GetInstalledMods(p.game.ID, profile)
 	if err != nil {
-		return UpdatesView{}, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, p.profile, err)
+		return UpdatesView{}, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, profile, err)
 	}
 
 	updates, checkErr := p.svc.NewUpdater().CheckUpdates(ctx, p.game, installed)
@@ -778,7 +819,8 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 // and a real update may need that superseded-file-ID mapping to install
 // correctly; only a fresh CheckUpdates call can supply it.
 func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
-	mod, err := p.svc.GetInstalledMod(u.Source, u.ID, p.game.ID, p.profile)
+	profile := p.currentProfile()
+	mod, err := p.svc.GetInstalledMod(u.Source, u.ID, p.game.ID, profile)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("getting installed mod %s: %w", u.Name, err)
 	}
@@ -793,7 +835,7 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 	upd := updates[0]
 
 	opts := core.UpdateOptions{
-		Hooks:       p.resolvedHooks(),
+		Hooks:       p.resolvedHooks(profile),
 		HookRunner:  p.hookRunner(),
 		HookContext: p.hookContext(),
 		Force:       false,
@@ -802,7 +844,7 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 	adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
 		return updateProgressLine(u.Name, p)
 	})
-	result, err := p.svc.ApplyUpdate(ctx, p.game, p.profile, upd, opts, adapter)
+	result, err := p.svc.ApplyUpdate(ctx, p.game, profile, upd, opts, adapter)
 	if err != nil {
 		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("updating %s", u.Name), u.Source, err)
 	}

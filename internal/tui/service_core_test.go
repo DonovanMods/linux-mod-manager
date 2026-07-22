@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -63,6 +64,83 @@ func (s *stubSource) GetDownloadURL(context.Context, *domain.Mod, string) (strin
 }
 func (s *stubSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
 	return nil, errors.New("not implemented")
+}
+
+// blockingSource is a source.ModSource test double whose Search blocks until
+// release is closed, after signaling entered - letting a test hold a
+// coreProvider.Search call genuinely in-flight (past the network call, about
+// to read p.profile in installedModKeys) while a concurrent goroutine calls
+// SetProfile, for Task 6 item b's race-guard test.
+type blockingSource struct {
+	id      string
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingSource) ID() string      { return s.id }
+func (s *blockingSource) Name() string    { return "Blocking Source" }
+func (s *blockingSource) AuthURL() string { return "" }
+func (s *blockingSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *blockingSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	close(s.entered)
+	<-s.release
+	return source.SearchResult{}, nil
+}
+func (s *blockingSource) GetMod(context.Context, string, string) (*domain.Mod, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *blockingSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *blockingSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, errors.New("not implemented")
+}
+func (s *blockingSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", errors.New("not implemented")
+}
+func (s *blockingSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, errors.New("not implemented")
+}
+
+// TestCoreProviderProfileFieldRaceGuard is Task 6 item b's race test: a
+// Search call blocked genuinely in-flight (past the network call, about to
+// read p.profile in installedModKeys - see blockingSource) overlaps a
+// concurrent SetProfile call on the SAME coreProvider instance (mirroring
+// production: cmd/lmm/tui.go wires m.provider's SetProfile via
+// app.go's rebindProfile, called from the SAME instance Search runs
+// against). Passes functionally either way (SetProfile's happens-before
+// relationship to the read is irrelevant to the observable result here);
+// the point is `go test -race` must NOT report a data race on p.profile.
+// RED (this test, run under -race, against the pre-item-b code) is proven
+// in the task report rather than left failing in the tree.
+func TestCoreProviderProfileFieldRaceGuard(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"blocking": "testgame"}
+	src := &blockingSource{id: "blocking", entered: make(chan struct{}), release: make(chan struct{})}
+	svc.RegisterSource(src)
+
+	rebinder, ok := provider.(interface{ SetProfile(string) })
+	require.True(t, ok, "coreProvider must implement the profileRebinder shape")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = provider.Search(context.Background(), "blocking", "query", 0)
+	}()
+
+	<-src.entered // Search is now blocked inside the "network call", about
+	// to proceed straight into installedModKeys' p.profile read the instant
+	// release is closed below.
+	go func() {
+		defer wg.Done()
+		rebinder.SetProfile("other")
+	}()
+	close(src.release)
+
+	wg.Wait()
 }
 
 // netSource is a fuller source.ModSource test double than stubSource above:
