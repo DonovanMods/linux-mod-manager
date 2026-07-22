@@ -14,12 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TUI install-from-search (`i`): plans the selected search result first (files, resolved dependencies, conflicts, size), then confirms and streams download/extract/deploy progress; a successful install re-runs the current search so the result's installed marker updates immediately
 - TUI update checking and batch apply (`u` on Dashboard/Installed Mods): checks every checkable installed mod, then confirms and applies all eligible updates sequentially with per-update download progress; the Dashboard's Updates count populates with the real number after a check
 - Profile switches that need mods not yet installed now work from the TUI instead of being refused — the confirmation modal discloses what will be downloaded, and confirming downloads and installs them as part of applying the switch
-- Core: install/update flows extracted (`PlanInstall`/`ApplyInstall`/`ApplyUpdate`) so the TUI and CLI share the same logic; CLI behavior is unchanged
+- Core: install/update flows extracted (`PlanInstall`/`ApplyInstall`/`ApplyUpdate`) so the TUI and CLI share the same logic; CLI behavior preserved byte-for-byte (one negligible exception: a rare batch-install checksum warning lost its leading indent)
 
 ### Changed
 
 - TUI: quitting while an action is running now cancels it immediately but waits for the current step to finish (bounded to a few seconds) instead of exiting mid-download
 - TUI: a capability gap or missing authentication now names the CLI command appropriate to the action that hit it (install vs. update), instead of always suggesting install
+- TUI: hook configuration is now cached for the session and re-read on profile switch or restart; previously every action re-read hooks.yaml and config.yaml, so hand-edits mid-session had no effect until explicitly refreshing
 
 ### Fixed
 
