@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -62,7 +63,7 @@ func (m Model) toggleSelectedModEnable() (Model, tea.Cmd) {
 func (m Model) promptEnable(item ModItem) (Model, tea.Cmd) {
 	title := fmt.Sprintf("Enable %q?", item.Name)
 	detail := m.gameProfileDetail("Files will be deployed to the game directory.")
-	model, pa := m.buildAction(actionEnable, title, detail, "", func(ctx context.Context) (ActionOutcome, error) {
+	model, pa := m.buildAction(actionEnable, title, detail, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
 		return m.actions.EnableMod(ctx, item)
 	})
 	return model.promptAction(pa), nil
@@ -71,7 +72,7 @@ func (m Model) promptEnable(item ModItem) (Model, tea.Cmd) {
 func (m Model) promptDisable(item ModItem) (Model, tea.Cmd) {
 	title := fmt.Sprintf("Disable %q?", item.Name)
 	detail := m.gameProfileDetail("Files will be removed from the game directory (cache kept).")
-	model, pa := m.buildAction(actionDisable, title, detail, "", func(ctx context.Context) (ActionOutcome, error) {
+	model, pa := m.buildAction(actionDisable, title, detail, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
 		return m.actions.DisableMod(ctx, item)
 	})
 	return model.promptAction(pa), nil
@@ -89,7 +90,7 @@ func (m Model) uninstallSelectedMod() (Model, tea.Cmd) {
 	}
 	title := fmt.Sprintf("Uninstall %q?", item.Name)
 	detail := m.gameProfileDetail("Removes deployed files, cache, and profile entry. Uninstall hooks will run.")
-	model, pa := m.buildAction(actionUninstall, title, detail, "", func(ctx context.Context) (ActionOutcome, error) {
+	model, pa := m.buildAction(actionUninstall, title, detail, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
 		return m.actions.UninstallMod(ctx, item)
 	})
 	return model.promptAction(pa), nil
@@ -112,7 +113,7 @@ func (m Model) deployActiveProfile() (Model, tea.Cmd) {
 		fmt.Sprintf("Game: %s", m.summary.GameName),
 		fmt.Sprintf("Mods: %d enabled", m.summary.Enabled),
 	}
-	model, pa := m.buildAction(actionDeploy, title, detail, "", func(ctx context.Context) (ActionOutcome, error) {
+	model, pa := m.buildAction(actionDeploy, title, detail, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
 		return m.actions.DeployProfile(ctx)
 	})
 	return model.promptAction(pa), nil
@@ -187,40 +188,53 @@ func (m Model) switchSelectedProfile() (Model, tea.Cmd) {
 }
 
 // resolvePlanResult handles a fresh (non-stale - callers check msg.gen
-// first) planResultMsg. AlreadyActive and NeedsDownloads both resolve to a
-// status-line message with no modal (task-7-brief.md's profile-switch
-// flow); AlreadyActive here is defensive only, since switchSelectedProfile
-// already pre-filters the active profile synchronously and never reaches
-// the async fetch for it. Any other plan opens the switch confirmation
-// modal via buildAction, which establishes its OWN fresh gen/cancel for the
-// eventual ApplyProfileSwitch call - running/cancel from the plan fetch are
-// cleared first, so buildAction's single-flight guard passes cleanly.
+// first) planResultMsg. AlreadyActive resolves to a status-line message
+// with no modal (task-7-brief.md's profile-switch flow); this is defensive
+// only, since switchSelectedProfile already pre-filters the active profile
+// synchronously and never reaches the async fetch for it. Any other plan -
+// including one with NeedsDownloads entries (Phase 5b Task 4 LIFTED the
+// refusal that used to short-circuit those here; see
+// errProfileNeedsDownloads's removal in actions_provider.go/
+// service_core.go - ApplyProfileSwitch can download now) - opens the switch
+// confirmation modal via buildAction, which establishes its OWN fresh
+// gen/cancel/progress-channel for the eventual ApplyProfileSwitch call -
+// running/cancel from the plan fetch are cleared first, so buildAction's
+// single-flight guard passes cleanly. The progress adapter buildAction
+// wires in is threaded straight through to ApplyProfileSwitch, so a plan
+// that needs downloads streams them via the same pump every other network
+// action uses. switchDetailLines renders a download-disclosure header plus
+// one line per NeedsDownloads ref (see its own doc comment), so the modal
+// makes it clear confirming a purely-downloading plan starts network
+// downloads before the user commits.
 func (m Model) resolvePlanResult(msg planResultMsg) (Model, tea.Cmd) {
 	m.action.running = false
 	if m.action.cancel != nil {
 		m.action.cancel()
 		m.action.cancel = nil
 	}
+	// Copilot PR #63 finding: a quit-triggered drain (see startQuit) that was
+	// waiting on THIS plan fetch resolves the instant it lands, exactly like
+	// actionDoneMsg/actionFailedMsg already do for a running mutation - see
+	// resolveDrainedQuit's own doc comment. Checked BEFORE the AlreadyActive
+	// status line and the switch-modal open below: the app is exiting, so
+	// neither a status write nor a freshly-opened confirmation modal would
+	// ever be seen.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
 
 	view := msg.view
-	switch {
-	case view.AlreadyActive:
+	if view.AlreadyActive {
 		m.action.status = fmt.Sprintf("Already on profile %q", view.To)
 		m.action.statusIsError = false
 		return m, nil
-	case len(view.NeedsDownloads) > 0:
-		// The exact provider-contract refusal message (errProfileNeedsDownloads,
-		// actions_provider.go) - listing which mods is 5b polish per the brief.
-		m.action.status = errProfileNeedsDownloads.Error()
-		m.action.statusIsError = true
-		return m, nil
-	default:
-		title := fmt.Sprintf("Switch to %q?", view.To)
-		model, pa := m.buildAction(actionSwitch, title, switchDetailLines(view), view.To, func(ctx context.Context) (ActionOutcome, error) {
-			return m.actions.ApplyProfileSwitch(ctx, view.To)
-		})
-		return model.promptAction(pa), nil
 	}
+
+	title := fmt.Sprintf("Switch to %q?", view.To)
+	model, pa := m.buildAction(actionSwitch, title, switchDetailLines(view), view.To, func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.ApplyProfileSwitch(ctx, view.To, progress)
+	})
+	return model.promptAction(pa), nil
 }
 
 // resolvePlanFailure handles a fresh planFailedMsg: status line error, no
@@ -231,6 +245,12 @@ func (m Model) resolvePlanFailure(msg planFailedMsg) (Model, tea.Cmd) {
 	if m.action.cancel != nil {
 		m.action.cancel()
 		m.action.cancel = nil
+	}
+	// Copilot PR #63 finding (mirrors resolvePlanResult above): resolve a
+	// quit-triggered drain immediately rather than writing a status line no
+	// one will ever see.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
 	}
 	m.action.status = singleLine(msg.err.Error())
 	m.action.statusIsError = true
@@ -244,11 +264,33 @@ func (m Model) resolvePlanFailure(msg planFailedMsg) (Model, tea.Cmd) {
 // existing "+N more" overflow collapsing (actionModalView) applies per mod
 // instead of truncating one giant joined line. NoChanges plans render a
 // single explanatory line instead, per task-7-brief.md.
+//
+// A plan with NeedsDownloads entries (Phase 5b Task 4 lifted the refusal
+// that used to short-circuit these here - ApplyProfileSwitch downloads and
+// installs them itself now) additionally renders a "Will download & install
+// N mod(s):" header plus one "↓ <ref>" line per entry, mirroring the CLI's
+// own pre-confirm disclosure (cmd/lmm/profile.go's doProfileSwitch: "Will
+// install %d mod(s):" + "  ↓ %s:%s v%s\n" per ref) - without this, the modal
+// would open with no indication that confirming starts network downloads.
+//
+// The download disclosure is placed IMMEDIATELY after "From:", before the
+// Enable/Disable buckets (I2 review finding): actionModalView's "+N more"
+// truncation collapses whatever detail lines don't fit its budget, and a
+// busy switch (many Enable/Disable rows) previously pushed the disclosure -
+// appended last - past that budget, silently hiding the one line that warns
+// confirming starts network downloads. Leading with it instead means
+// truncation eats the less-critical Enable/Disable tail first.
 func switchDetailLines(view SwitchPlanView) []string {
 	if view.NoChanges {
 		return []string{fmt.Sprintf("From: %s", view.From), "No mod changes; set as default."}
 	}
 	lines := []string{fmt.Sprintf("From: %s", view.From)}
+	if len(view.NeedsDownloads) > 0 {
+		lines = append(lines, fmt.Sprintf("Will download & install %d mod(s):", len(view.NeedsDownloads)))
+		for _, ref := range view.NeedsDownloads {
+			lines = append(lines, fmt.Sprintf("↓ %s", ref))
+		}
+	}
 	for _, name := range view.Enable {
 		lines = append(lines, fmt.Sprintf("+ %s", name))
 	}
@@ -256,4 +298,412 @@ func switchDetailLines(view SwitchPlanView) []string {
 		lines = append(lines, fmt.Sprintf("- %s", name))
 	}
 	return lines
+}
+
+// --- Install from search ('i' on Search, blurred, a result selected) ---
+
+// installPlanResultMsg carries a successful PlanInstall result, tagged with
+// the generation established when the fetch was dispatched (see
+// installSelectedSearchResult) so a superseded result can be discarded
+// exactly like planResultMsg. item is the ModItem that was selected at
+// DISPATCH time (not re-read from selection state on arrival): the search
+// result list's selection isn't locked while "Planning install…" is
+// in-flight (running only blocks a NEW buildAction/promptAction call, not
+// plain navigation - see updateKey), so capturing item in the closure that
+// dispatches the fetch, then carrying it through unchanged in this message,
+// is the only way to guarantee ApplyInstall is later called with the SAME
+// mod the user actually pressed 'i' on. InstallPlanView itself carries no
+// (Source, ID) - only display fields - so item is this message's sole
+// source of truth for what to install.
+type installPlanResultMsg struct {
+	gen  int
+	item ModItem
+	view InstallPlanView
+}
+
+// installPlanFailedMsg carries a failed PlanInstall call, tagged like
+// installPlanResultMsg.
+type installPlanFailedMsg struct {
+	gen int
+	err error
+}
+
+// installSelectedSearchResult handles 'i' on Search (task-5-brief.md's
+// Install-from-search flow): a no-op on the wrong screen, with no
+// ActionProvider, while another action/plan is already in flight, when the
+// search isn't in searchReady (idle/loading/failed/auth-required - see
+// below), or with no result selected (covers both an empty page and a stale
+// selected index). The focused-input case never reaches here at all -
+// updateKey's focused-input branch (app.go) intercepts every key, including
+// 'i', before the outer switch this is dispatched from, so 'i' types into
+// the query exactly like every other letter. Mirrors switchSelectedProfile's
+// async plan-fetch shape (mutations.go's template for this pattern):
+// dispatches PlanInstall and shows a "Planning install…" status instead of a
+// modal until the result arrives.
+//
+// The searchReady check (Copilot review finding on PR #63): startSearch
+// bumps m.search.state to searchLoading for a new query WITHOUT clearing
+// m.search.page, so the previous query's results linger in m.search.page
+// through searchLoading (and, more incidentally, through
+// searchIdle/searchFailed/searchAuthRequired too - none of which should ever
+// still show old results, but the state is re-checked defensively rather
+// than assumed). Reading m.search.page.Results without this guard would let
+// 'i' plan-and-install a result that isn't the one currently displayed -
+// e.g. while the screen reads "Consulting the archive index…". Mirrors
+// refreshSearchAfterInstall's own state check and app.go's next/prev-page
+// guards, which already gate on searchReady before touching m.search.page.
+func (m Model) installSelectedSearchResult() (Model, tea.Cmd) {
+	if m.screen != ScreenSearch || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	if m.search.state != searchReady {
+		return m, nil
+	}
+
+	idx := m.selected[ScreenSearch]
+	results := m.search.page.Results
+	if idx < 0 || idx >= len(results) {
+		return m, nil
+	}
+	item := results[idx]
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.action.cancel = cancel
+	m.action.gen++
+	gen := m.action.gen
+	m.action.running = true
+	m.action.status = "Planning install…"
+	m.action.statusIsError = false
+
+	actions := m.actions
+	return m, func() tea.Msg {
+		view, err := actions.PlanInstall(ctx, item)
+		if err != nil {
+			return installPlanFailedMsg{gen: gen, err: err}
+		}
+		return installPlanResultMsg{gen: gen, item: item, view: view}
+	}
+}
+
+// resolveInstallPlanResult handles a fresh (non-stale) installPlanResultMsg:
+// opens the install/reinstall confirmation modal, mirroring
+// resolvePlanResult's shape. Confirming calls ApplyInstall with msg.item -
+// the mod captured when the fetch was dispatched, per installPlanResultMsg's
+// own doc comment - and the progress adapter buildAction wires in, so
+// download/extract/deploy ticks stream into the status line exactly like
+// every other network action.
+func (m Model) resolveInstallPlanResult(msg installPlanResultMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	// Copilot PR #63 finding (mirrors resolvePlanResult): resolve a
+	// quit-triggered drain immediately instead of opening the install/
+	// reinstall confirmation modal below - the app is exiting.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+
+	view := msg.view
+	item := msg.item
+	model, pa := m.buildAction(actionInstall, installTitle(view), installDetailLines(view), "", func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.ApplyInstall(ctx, item, progress)
+	})
+	return model.promptAction(pa), nil
+}
+
+// resolveInstallPlanFailure handles a fresh installPlanFailedMsg: status
+// line error, no modal, mirroring resolvePlanFailure. err is already the
+// per-action mapped message from the provider (mapInstallNetworkError in
+// service_core.go) when backed by coreProvider - this just renders it.
+func (m Model) resolveInstallPlanFailure(msg installPlanFailedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	// Copilot PR #63 finding (mirrors resolvePlanFailure): resolve a
+	// quit-triggered drain immediately rather than writing a status line no
+	// one will ever see.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+	m.action.status = singleLine(msg.err.Error())
+	m.action.statusIsError = true
+	return m, nil
+}
+
+// installTitle renders an InstallPlanView's modal title: "Reinstall" when
+// the mod is already installed (view.Reinstall), "Install" otherwise - the
+// only distinction task-5-brief.md asks the title to carry for an
+// already-installed search result.
+func installTitle(view InstallPlanView) string {
+	if view.Reinstall {
+		return fmt.Sprintf("Reinstall %q?", view.Name)
+	}
+	return fmt.Sprintf("Install %q?", view.Name)
+}
+
+// installDetailLines renders an InstallPlanView as the install/reinstall
+// modal's detail lines (task-5-brief.md's Install-from-search flow):
+// version+size, source, the file(s) that will download, resolved
+// dependencies with a "Will download & install N mod(s)" disclosure
+// mirroring switchDetailLines' own NeedsDownloads wording, one line per
+// conflicting file, and finally the two warning lines for a
+// missing-dependency or circular-dependency plan.
+//
+// Files and Dependencies are each rendered as ONE comma-joined line rather
+// than one line per entry (unlike switchDetailLines' +/- per-mod lines):
+// task-5-brief.md leaves the choice to the implementer ("pick what reads
+// best at 160 cols, document"). A mod's file/dependency list is typically
+// short and reads naturally as a single sentence at the ~160-col design
+// width, and keeping each to one line leaves more of
+// actionModalMaxDetailLines' budget for the Conflicts/warning lines that
+// matter more to a confirm decision - those stay one line per entry since
+// each conflict is independently actionable information. Overlong lines
+// still truncate individually at render time (actionModalView), same as
+// every other detail line, so this degrades the same way below 160 cols.
+func installDetailLines(view InstallPlanView) []string {
+	lines := []string{
+		fmt.Sprintf("Version: %s (%s)", view.Version, view.SizeLabel),
+		fmt.Sprintf("Source: %s", view.Source),
+	}
+	if len(view.Files) > 0 {
+		lines = append(lines, fmt.Sprintf("Files: %s", strings.Join(view.Files, ", ")))
+	}
+	if len(view.Dependencies) > 0 {
+		lines = append(lines, fmt.Sprintf("Dependencies: %s", strings.Join(view.Dependencies, ", ")))
+		lines = append(lines, fmt.Sprintf("Will download & install %d mod(s)", len(view.Dependencies)))
+	}
+	for _, c := range view.Conflicts {
+		lines = append(lines, fmt.Sprintf("Conflicts: %s", c))
+	}
+	if len(view.MissingDependencies) > 0 {
+		lines = append(lines, fmt.Sprintf("⚠ %d dependency(ies) unavailable", len(view.MissingDependencies)))
+	}
+	if view.CycleWarning {
+		lines = append(lines, "⚠ circular dependency detected")
+	}
+	return lines
+}
+
+// refreshSearchAfterInstall re-issues the CURRENT search query after a
+// successful install, so the just-installed result's "installed" marker
+// updates immediately instead of waiting for the user to search again by
+// hand (task-5-brief.md: "verify the refresh path covers the search
+// results' installed-flag, and fix within internal/tui if not" - the
+// generic post-action refresh, m.loadData, only re-fetches Overview/
+// Profiles, never the search page, since no other mutation needs it to).
+// A no-op (nil cmd, m unchanged) when there's no completed search to
+// refresh (searchIdle/searchLoading/searchFailed/searchAuthRequired) -
+// installSelectedSearchResult can only ever have been reached FROM
+// searchReady (it requires a selected result), but a slow install leaves
+// running enough time for the user to navigate off Search and even start a
+// new query before this runs, so the state is re-checked here rather than
+// assumed.
+func (m Model) refreshSearchAfterInstall() (Model, tea.Cmd) {
+	if m.search.state != searchReady {
+		return m, nil
+	}
+	return m.startSearch(m.search.page.Query, m.search.page.Page)
+}
+
+// --- Check/apply updates ('u' on Dashboard and Installed Mods) ---
+
+// checkUpdatesResultMsg carries a successful CheckUpdates result, tagged
+// with the generation established when the fetch was dispatched (see
+// checkForUpdates) so a superseded result can be discarded.
+type checkUpdatesResultMsg struct {
+	gen  int
+	view UpdatesView
+}
+
+// checkUpdatesFailedMsg carries a failed CheckUpdates call, tagged like
+// checkUpdatesResultMsg. CheckUpdates itself rarely returns a non-nil error
+// (coreProvider folds per-source failures into UpdatesView.Warnings instead
+// - see its own doc comment) - this path exists for the cases that still
+// can (e.g. the installed-mods lookup itself failing).
+type checkUpdatesFailedMsg struct {
+	gen int
+	err error
+}
+
+// checkForUpdates handles 'u' on Dashboard/Installed Mods (task-5-brief.md's
+// Updates flow): a no-op on the wrong screen, with no ActionProvider, or
+// while another action/plan is already in flight. Mirrors
+// installSelectedSearchResult/switchSelectedProfile's async plan-fetch
+// shape: dispatches CheckUpdates and shows a "Checking for updates…" status
+// instead of a modal until the result arrives - resolveCheckUpdatesResult
+// decides whether that becomes a status line (zero updates) or a
+// confirmation modal (one or more).
+func (m Model) checkForUpdates() (Model, tea.Cmd) {
+	if (m.screen != ScreenDashboard && m.screen != ScreenInstalledMods) || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.action.cancel = cancel
+	m.action.gen++
+	gen := m.action.gen
+	m.action.running = true
+	m.action.status = "Checking for updates…"
+	m.action.statusIsError = false
+
+	actions := m.actions
+	return m, func() tea.Msg {
+		view, err := actions.CheckUpdates(ctx)
+		if err != nil {
+			return checkUpdatesFailedMsg{gen: gen, err: err}
+		}
+		return checkUpdatesResultMsg{gen: gen, view: view}
+	}
+}
+
+// resolveCheckUpdatesResult handles a fresh checkUpdatesResultMsg. Either
+// way, m.summary.Updates is set to the real count (task-5-brief.md's
+// Dashboard summary tie-in: Summary.Updates renders the "?" sentinel, -1,
+// until a check has actually run) - this is the model's own in-memory
+// count, not a DataProvider change (m.loadData re-reads Overview, which
+// still reports -1 until Phase 6 gives DataProvider its own persistent
+// Updates count - an accepted tradeoff per task-5-brief.md's own "no
+// DataProvider change" framing). The dataLoadedMsg handler in app.go
+// preserves this known count across an UNRELATED refresh rather than
+// reverting it to the DataProvider's sentinel (a fix-wave-1 correction to
+// this comment's earlier claim that it reverted); it re-sentinels back to
+// -1 only when an update-apply batch actually completes (actionDoneMsg,
+// app.go), since applying updates is the one case that genuinely makes the
+// count stale.
+//
+// Zero updates resolves synchronously to a status line (formatOutcomeStatus
+// reused for its Message-plus-Warnings rendering convention, rather than
+// hand-rolling a second "(N warnings)" formatter - see mergeDiagnostics'
+// sibling reasoning) with no modal; one or more updates opens the batch
+// confirmation modal, whose confirm calls applyUpdatesSequentially with the
+// WHOLE update list captured here (task-5-brief.md: "Sequential-apply loop
+// lives in the confirm closure... one action gen/single-flight scope for
+// the whole batch"). Per-item selection is explicitly out of scope
+// (task-5-brief.md: "Per-item selection is Phase 6 - do not build it").
+func (m Model) resolveCheckUpdatesResult(msg checkUpdatesResultMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	// Copilot PR #63 finding (mirrors resolvePlanResult): resolve a
+	// quit-triggered drain immediately instead of touching m.summary.Updates,
+	// writing the zero-updates status line, or opening the batch
+	// confirmation modal below - the app is exiting, so none of that would
+	// ever be seen.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+
+	view := msg.view
+	m.summary.Updates = len(view.Updates)
+
+	if len(view.Updates) == 0 {
+		m.action.status = formatOutcomeStatus(ActionOutcome{Message: "No updates available.", Warnings: view.Warnings})
+		m.action.statusIsError = false
+		return m, nil
+	}
+
+	title := fmt.Sprintf("Apply %d update(s)?", len(view.Updates))
+	updates := view.Updates
+	model, pa := m.buildAction(actionUpdate, title, updateDetailLines(view), "", func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+		return applyUpdatesSequentially(ctx, m.actions, updates, progress)
+	})
+	return model.promptAction(pa), nil
+}
+
+// resolveCheckUpdatesFailure handles a fresh checkUpdatesFailedMsg: status
+// line error, no modal, mirroring resolvePlanFailure/
+// resolveInstallPlanFailure.
+func (m Model) resolveCheckUpdatesFailure(msg checkUpdatesFailedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	// Copilot PR #63 finding (mirrors resolvePlanFailure): resolve a
+	// quit-triggered drain immediately rather than writing a status line no
+	// one will ever see.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+	m.action.status = singleLine(msg.err.Error())
+	m.action.statusIsError = true
+	return m, nil
+}
+
+// updateDetailLines renders an UpdatesView as the "Apply N update(s)?"
+// modal's detail lines: one "<name> <from> → <to>" line per update (the
+// machinery's own "+N more" collapsing, actionModalView, applies here
+// exactly like switchDetailLines' per-mod lines when the list is long),
+// plus a trailing warning-count line when CheckUpdates surfaced any
+// per-source diagnostics alongside the updates it did resolve.
+func updateDetailLines(view UpdatesView) []string {
+	lines := make([]string, 0, len(view.Updates)+1)
+	for _, u := range view.Updates {
+		lines = append(lines, fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion))
+	}
+	if len(view.Warnings) > 0 {
+		lines = append(lines, fmt.Sprintf("%d warning(s) during check", len(view.Warnings)))
+	}
+	return lines
+}
+
+// applyUpdatesSequentially applies every entry in updates, in order,
+// through actions.ApplyUpdate - the confirm-time body of the "Apply N
+// update(s)?" modal (task-5-brief.md's Updates flow), running entirely
+// within the ONE buildAction call resolveCheckUpdatesResult dispatches, so
+// the whole batch shares a single action gen/single-flight scope rather
+// than one per mod. A per-update failure is folded into the aggregate
+// outcome's Warnings and the loop CONTINUES to the next update - matching
+// the CLI's own batch-update behavior and mirroring ApplyInstall's own
+// Failed-into-Warnings precedent (service_core.go) - rather than aborting
+// the remaining updates; this function itself never returns a non-nil
+// error, so a partial-batch failure always completes as an actionDoneMsg
+// with warnings, never an actionFailedMsg. progress is forwarded to every
+// call unchanged (nil-safe, like every other ActionProvider progress
+// parameter), so each update's own download/extract ticks stream into the
+// status line as the batch works through it.
+//
+// A ctx cancellation (quit-while-running - see the cancel-then-drain doc
+// comment on the model's quit handling) BREAKS the loop before the next
+// update's ApplyUpdate call, rather than letting a cancelled ctx churn every
+// remaining update into its own "context canceled" warning entry - those
+// mods simply never got a chance to apply, which is not the same thing as
+// each of them individually failing.
+func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updates []UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	applied := 0
+	var warnings []string
+	for _, u := range updates {
+		if ctx.Err() != nil {
+			break
+		}
+		outcome, err := actions.ApplyUpdate(ctx, u, progress)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %s", u.Name, singleLine(err.Error())))
+			continue
+		}
+		applied++
+		warnings = append(warnings, outcome.Warnings...)
+	}
+	return ActionOutcome{
+		Message:  fmt.Sprintf("Applied %d update(s)", applied),
+		Warnings: warnings,
+	}, nil
 }

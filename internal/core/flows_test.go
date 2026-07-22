@@ -98,9 +98,10 @@ func TestService_EnableMod_DeploysDisabledMod(t *testing.T) {
 		"plugin.esp": []byte("data"),
 	})
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
-	assert.True(t, changed)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.NoError(t, err, "plugin.esp should be deployed to the game dir")
@@ -119,9 +120,10 @@ func TestService_EnableMod_AlreadyEnabledIsNoop(t *testing.T) {
 		"plugin.esp": []byte("data"),
 	})
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
-	assert.False(t, changed)
+	require.NotNil(t, result)
+	assert.False(t, result.Changed)
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err), "no-op enable must not deploy files")
@@ -135,9 +137,9 @@ func TestService_EnableMod_MissingCacheErrors(t *testing.T) {
 	// Installed-mod record exists, but nothing was ever stored in the cache.
 	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, nil)
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
 	require.Error(t, err)
-	assert.False(t, changed)
+	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "not found in cache")
 
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
@@ -161,9 +163,9 @@ func TestService_EnableMod_DeployFailurePropagatesAndLeavesDBUntouched(t *testin
 	// TestInstaller_Install_DeployFailureRollsBackAndClearsDB.
 	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "blocked"), []byte("occupied"), 0644))
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
 	require.Error(t, err)
-	assert.False(t, changed)
+	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to deploy mod")
 
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
@@ -175,9 +177,9 @@ func TestService_EnableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "missing")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "missing")
 	require.Error(t, err)
-	assert.False(t, changed)
+	assert.Nil(t, result)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -197,9 +199,11 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
-	changed, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
-	assert.True(t, changed)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	assert.Empty(t, result.Notes, "a clean undeploy must not record a diagnostic")
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err), "plugin.esp should be removed from the game dir")
@@ -220,18 +224,19 @@ func TestService_DisableMod_AlreadyDisabledIsNoop(t *testing.T) {
 		"plugin.esp": []byte("data"),
 	})
 
-	changed, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
-	assert.False(t, changed)
+	require.NotNil(t, result)
+	assert.False(t, result.Changed)
 }
 
 func TestService_DisableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
-	changed, err := svc.DisableMod(context.Background(), game, "default", "src", "missing")
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "missing")
 	require.Error(t, err)
-	assert.False(t, changed)
+	assert.Nil(t, result)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -240,7 +245,10 @@ func TestService_DisableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
 // pre-extraction CLI (doModDisable) treated Uninstall failures as non-fatal
 // ("warn but continue" under --verbose) because files may already have been
 // removed manually. DisableMod preserves the *functional* outcome — DB still
-// flips to disabled — even when undeploying fails.
+// flips to disabled — even when undeploying fails, and (Task 6 item a)
+// records the historical diagnostic text in Notes rather than discarding it,
+// so a caller (cmd/lmm's doModDisable) can restore the pre-5a --verbose
+// warning byte-identically.
 func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -259,9 +267,13 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	require.NoError(t, os.Remove(deployedPath))
 	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
-	changed, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err, "undeploy failures must not fail DisableMod")
-	assert.True(t, changed)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	require.Len(t, result.Notes, 1)
+	assert.Contains(t, result.Notes[0], "Warning: failed to undeploy some files: ",
+		"must carry the pre-5a historical prefix verbatim, matching UninstallResult's own convention")
 
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
 	require.NoError(t, err)
@@ -1690,6 +1702,45 @@ exit 1`)
 	assert.Less(t, overridesIdx, afterAllIdx, "overrides warning must be emitted before the after_all hook warning")
 }
 
+// TestService_DeployProfile_ContextCancelledBetweenMods_ReturnsPartialResultWithCtxErr
+// guards Task 6 item d: DeployProfile's per-mod loop must check ctx between
+// iterations, aborting BETWEEN mods (never mid-file-operation) with the
+// established partial-result convention (see
+// TestService_DeployProfile_FatalErrorAfterAccumulatedDiagnostic_ReturnsPartialResult) -
+// the seam 5b's cancel-then-drain quit path (TUI) relies on. The progress
+// callback cancels ctx the instant the first mod's DeployDeployed event
+// fires; the second and third mods must never be touched at all.
+func TestService_DeployProfile_ContextCancelledBetweenMods_ReturnsPartialResultWithCtxErr(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("a")})
+	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "1.0", true, map[string][]byte{"b.esp": []byte("b")})
+	seedNamedInstalledMod(t, svc, game, "src", "c", "Mod C", "1.0", true, map[string][]byte{"c.esp": []byte("c")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "b", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "c", "1.0")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
+		if p.Phase == core.DeployDeployed && p.ModName == "Mod A" {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result, "diagnostics/progress accumulated before cancellation must not be discarded")
+	assert.Equal(t, 1, result.Deployed, "only the mod already fully deployed before cancellation was observed counts")
+
+	_, err = os.Lstat(filepath.Join(gameDir, "a.esp"))
+	assert.NoError(t, err, "Mod A must have fully deployed before cancellation")
+	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.True(t, os.IsNotExist(err), "Mod B must never have been touched - cancellation lands BETWEEN mods")
+	_, err = os.Lstat(filepath.Join(gameDir, "c.esp"))
+	assert.True(t, os.IsNotExist(err), "Mod C must never have been touched")
+}
+
 // --- PlanProfileSwitch / ApplyProfileSwitch (Task 4) ---
 //
 // These extract doProfileSwitch (cmd/lmm/profile.go) into a pure diff
@@ -2486,4 +2537,150 @@ func TestService_ApplyProfileSwitch_NilProgressCallbackIsSafe(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Equal(t, 1, result.Disabled)
 	})
+}
+
+// --- Task 6 item d: cancel-then-drain (ctx checked between loop iterations) ---
+
+// TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_ReturnsPartialResultWithCtxErr
+// guards the disable loop: a cancelled ctx aborts BETWEEN mods, never
+// mid-file-operation, with the partial-result convention. The progress
+// callback cancels the instant the first mod's SwitchDisabled event fires;
+// the second mod must never be touched (still deployed).
+func TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_ReturnsPartialResultWithCtxErr(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+
+	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("a")})
+	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "1.0", true, map[string][]byte{"b.esp": []byte("b")})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "a", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "b", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	modA, err := svc.GetInstalledMod("src", "a", "g1", "default")
+	require.NoError(t, err)
+	modB, err := svc.GetInstalledMod("src", "b", "g1", "default")
+	require.NoError(t, err)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToDisable: []domain.InstalledMod{*modA, *modB},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(p core.DeployProgress) {
+		if p.Phase == core.SwitchDisabled && p.ModName == "Mod A" {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Disabled)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.NoError(t, err, "Mod B must never have been touched - still deployed")
+}
+
+// TestService_ApplyProfileSwitch_ContextCancelledBetweenEnableLoopMods_ReturnsPartialResultWithCtxErr
+// mirrors the disable-loop test above for the enable loop: the second mod
+// must never be deployed/enabled.
+func TestService_ApplyProfileSwitch_ContextCancelledBetweenEnableLoopMods_ReturnsPartialResultWithCtxErr(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "a", "Mod A", "1.0", false, map[string][]byte{"a.esp": []byte("a")})
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "b", "Mod B", "1.0", false, map[string][]byte{"b.esp": []byte("b")})
+
+	modA, err := svc.GetInstalledMod("src", "a", "g1", "target")
+	require.NoError(t, err)
+	modB, err := svc.GetInstalledMod("src", "b", "g1", "target")
+	require.NoError(t, err)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToEnable: []domain.InstalledMod{*modA, *modB},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(p core.DeployProgress) {
+		if p.Phase == core.SwitchEnabled && p.ModName == "Mod A" {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Enabled)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.True(t, os.IsNotExist(err), "Mod B must never have been deployed/enabled")
+}
+
+// TestService_ApplyProfileSwitch_ContextCancelledBetweenInstallLoopMods_ReturnsPartialResultWithCtxErr
+// mirrors the disable/enable-loop tests above for the install loop: the
+// second ModReference must never be fetched/downloaded/installed.
+func TestService_ApplyProfileSwitch_ContextCancelledBetweenInstallLoopMods_ReturnsPartialResultWithCtxErr(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, err)
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	tmpDir := t.TempDir()
+	firstZip := createTestZip(t, tmpDir, map[string]string{"first.esp": "payload"})
+	firstContent, err := os.ReadFile(firstZip)
+	require.NoError(t, err)
+	mock.AddDownload("1", firstContent)
+	mock.AddMod("g1", &domain.Mod{ID: "first", SourceID: "src", Name: "First Mod", Version: "1.0", GameID: "g1"})
+	secondZip := createTestZip(t, tmpDir, map[string]string{"second.esp": "payload"})
+	secondContent, err := os.ReadFile(secondZip)
+	require.NoError(t, err)
+	mock.AddDownload("2", secondContent)
+	mock.AddMod("g1", &domain.Mod{ID: "second", SourceID: "src", Name: "Second Mod", Version: "1.0", GameID: "g1"})
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{
+			{SourceID: "src", ModID: "first", Version: "1.0"},
+			{SourceID: "src", ModID: "second", Version: "1.0"},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(p core.DeployProgress) {
+		if p.Phase == core.SwitchInstalled && p.ModID == "first" {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "second.esp"))
+	assert.True(t, os.IsNotExist(err), "the second ModReference must never have been fetched/installed")
+	_, err = svc.GetInstalledMod("src", "second", "g1", "target")
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }

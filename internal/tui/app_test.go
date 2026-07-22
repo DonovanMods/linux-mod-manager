@@ -350,19 +350,29 @@ func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	t.Parallel()
 
-	// Height bumped 36->37 for Task 7's new e/x/D help line: the party-sheet
-	// dashboard's COMMANDS menu panel already fit height=36's help-visible
-	// content budget with exactly zero slack (6 content lines against a
-	// panelContentHeight of exactly 6), so ANY help-overlay growth needs one
-	// more terminal row here to keep the exact-height invariant this test
-	// guards - see task-7-brief.md's "height/help tests may need justified
-	// adjustment for new hint lines" allowance.
-	model := sizedPrototypeModel(t, "wizardry", 120, 37)
+	// Height bumped 37->39->40 across Phase 5b Task 5's two new help lines
+	// ("i" install, added first; "u" check-updates, added second - see
+	// helpView). Verified empirically at each step (scratch probes sweeping
+	// a height range, since removed) the same way 5a proved its own 36->37
+	// bump: below the fitting height, the rendered view consistently comes
+	// out one row taller than the requested terminal height (lipgloss pads
+	// SHORT content but never clips content taller than the requested
+	// budget) - the party-sheet dashboard's split-panel math
+	// (partyDashboardView's topHeight/menuHeight, both integer divisions of
+	// availableContentHeight) hits its natural minimum before the requested
+	// budget does. Height=40 is the first value where the requested content
+	// budget (with BOTH new help lines present) finally reaches that same
+	// natural minimum, so the view fits with exactly zero slack (41 and
+	// above, the content grows to fill the larger budget instead). This
+	// pins the current zero-slack floor - see task-5-brief.md's "prove
+	// pre-existing saturation... like 5a did" allowance for justified
+	// height adjustments.
+	model := sizedPrototypeModel(t, "wizardry", 120, 40)
 	model = updateWithRunes(t, model, "?")
 
 	view := model.View()
 	require.Equal(t, 120, lipgloss.Width(view))
-	require.Equal(t, 37, lipgloss.Height(view))
+	require.Equal(t, 40, lipgloss.Height(view))
 }
 
 func TestThemesUseDistinctLayouts(t *testing.T) {
@@ -589,6 +599,41 @@ func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 
 	model = updateWithKeyType(t, model, tea.KeyEsc)
 	require.Contains(t, model.View(), "/ focus · s source", "unfocused idle hint still tells the user how to refocus")
+}
+
+// sentinelUpdatesProvider mirrors coreProvider.Overview's real shape: no
+// update check has ever run, so Updates/Conflicts report the -1 "unknown"
+// sentinel from the very first load.
+type sentinelUpdatesProvider struct{}
+
+func (sentinelUpdatesProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{Updates: -1, Conflicts: -1}, nil, nil
+}
+func (sentinelUpdatesProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (sentinelUpdatesProvider) Sources() []string                               { return []string{"nexusmods"} }
+func (sentinelUpdatesProvider) SourceInfos() []SourceInfo                       { return nil }
+func (sentinelUpdatesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
+
+// TestFirstLoadHonorsProviderUpdatesSentinel guards the dataLoadedMsg
+// preserve behavior (see mutations_test.go's
+// TestDataLoadedMsgPreservesKnownUpdatesCountAcrossUnrelatedRefresh) against
+// misfiring on the model's very FIRST load. Before any dataLoadedMsg has
+// ever landed, m.summary is the zero-value Summary{} - Updates == 0 - which
+// must NOT be mistaken for a "known" count of zero updates: a provider
+// reporting the -1 sentinel on the first load (exactly coreProvider's real
+// behavior before any check has run) must still render "?", not "0".
+func TestFirstLoadHonorsProviderUpdatesSentinel(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: sentinelUpdatesProvider{}})
+	require.NoError(t, err)
+
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	require.Equal(t, -1, model.summary.Updates, "the first load must take the provider's own sentinel, not a preserved zero-value")
 }
 
 // recordingProvider wraps a delegate DataProvider and records the context

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-07-21
+
+### Added
+
+- TUI install-from-search (`i`): plans the selected search result first (files, resolved dependencies, conflicts, size), then confirms and streams download/extract/deploy progress; a successful install re-runs the current search so the result's installed marker updates immediately; unlike the CLI, a file conflict never blocks the TUI's single confirmation — it auto-proceeds and reports each overwritten file as a warning instead; a dependency-having install whose PRIMARY mod fails reports the shortfall (e.g. "Installed 1 of 2 mod(s)") instead of a false "Installed" success
+- TUI update checking and batch apply (`u` on Dashboard/Installed Mods): checks every checkable installed mod, then confirms and applies all eligible updates sequentially with per-update download progress; the Dashboard's Updates count populates with the real number after a check
+- Profile switches that need mods not yet installed now work from the TUI instead of being refused — the confirmation modal discloses what will be downloaded, and confirming downloads and installs them as part of applying the switch
+- Core: install/update flows extracted (`PlanInstall`/`ApplyInstall`/`ApplyUpdate`) so the TUI and CLI share the same logic; CLI behavior preserved byte-for-byte, including the file-conflict overwrite prompt's exact position (fires after download/extract, before deploy) and decline behavior (one negligible exception: a rare batch-install checksum warning lost its leading indent)
+
+### Changed
+
+- TUI: quitting while an action is running now cancels it immediately but waits for the current step to finish (bounded to a few seconds) instead of exiting mid-download
+- TUI: a capability gap or missing authentication now names the CLI command appropriate to the action that hit it (install vs. update), instead of always suggesting install
+- TUI: hook configuration is now cached for the session and re-read on profile switch or restart; previously every action re-read hooks.yaml and config.yaml, so hand-edits mid-session had no effect until explicitly refreshing
+
+### Fixed
+
+- `lmm mod disable --verbose` again prints the undeploy-failure warning, dropped in v1.11.0's extraction of `DisableMod`, restored byte-identical to its pre-1.11.0 wording
+- `lmm mod enable`/`lmm mod disable --verbose` no longer drop diagnostics accumulated before a later fatal error (e.g. an undeploy warning followed by a database failure)
+- TUI: a data race between an in-flight search and a completing profile switch, both reading/writing the session's active profile concurrently
+- TUI: a profile switch that partially fails while downloading mods now surfaces the per-mod failures as warnings instead of reporting a plain "Switched to X" success
+
 ## [1.11.0] - 2026-07-20
 
 ### Added
@@ -759,7 +781,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.8.0...v1.9.0

@@ -145,7 +145,7 @@ lmm mod set-update 12345 --game skyrim-se --pin
 
 ### Terminal UI
 
-Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, and switch profiles — with every mutating action behind a confirmation prompt:
+Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, switch profiles, install from search results, and check/apply updates — with every mutating action behind a confirmation prompt:
 
 ```bash
 lmm tui                     # real data
@@ -161,7 +161,9 @@ Dashboard menu also focuses search — explicit search intent focuses,
 passive cycling doesn't), `/` focus search from anywhere, type query,
 `enter` to search, `esc` unfocus (clears focus; afterward `s` cycles
 sources, number keys switch screens), `n`/`p` next/previous page, `e`/`x`/`D`
-enable-disable/uninstall/deploy (see below), `?` help, `q` quit.
+enable-disable/uninstall/deploy (see below), `i` install the selected search
+result (Search, input blurred — see below), `u` check for updates (Dashboard
+or Installed Mods — see below), `?` help, `q` quit.
 
 The Search screen defaults to **All sources**, mirroring the CLI: the typed
 query runs concurrently against every source configured for the game. Press
@@ -170,7 +172,14 @@ sources" is selected, results carry a source column, and if any source
 failed, a one-line warning (e.g. `⚠ 1 source unavailable: my-repo: ...`)
 appears above the results — the sources that succeeded are still shown.
 Results mark already-installed mods; selecting a result shows a detail
-panel.
+panel. With the search input blurred, `i` installs the selected result: lmm
+plans the install first ("Planning install…" on the status line), then opens
+a confirmation panel with the version and size, source, file(s) that will
+download, resolved dependencies (with their own download disclosure),
+conflicting files if any, and a warning if a dependency is missing or
+circular. Confirming streams download/extract/deploy progress into the
+status line; a successful install re-runs the current search so the
+result's "installed" marker updates right away.
 
 The **Sources** screen (key `5`) lists every source registered with lmm —
 built-in and custom — with the same ID/TYPE/AUTH/CAPABILITIES columns as
@@ -185,26 +194,42 @@ its profile entry, running uninstall hooks along the way. `D` deploys the
 active profile (using its current enabled mods) from either Installed Mods
 or the Dashboard.
 
+`u`, on Dashboard or Installed Mods, checks every checkable installed mod
+for updates (pinned and local mods are skipped) — "Checking for updates…"
+on the status line while it runs. Zero updates reports a one-line status;
+one or more opens a confirmation panel listing each `<mod> <from> → <to>`,
+and confirming applies all of them in sequence with per-update download
+progress streamed into the status line — one mod failing doesn't stop the
+rest, it's folded into the batch's warnings instead. The Dashboard's Updates
+count shows `?` until a check has run this session, then reflects the real
+number (it survives unrelated refreshes and only reverts to `?` after an
+update batch is actually applied, since that's what makes the count stale).
+
 On **Profiles**, `enter` on a profile other than the active one plans the
 switch and shows a preview: mods to enable/disable, or "No mod changes; set
 as default." when nothing would change. `enter` on the already-active
 profile just reports "Already on profile ..." with no modal. If the plan
-would need to download anything not already installed, the switch is
-refused with a message pointing at `lmm profile switch` — installing from
-the TUI is coming in a later phase.
+needs mods that aren't installed yet, the preview also discloses what it
+will fetch (`Will download & install N mod(s):` plus one `↓` line per mod)
+— confirming downloads and installs them as part of applying the switch,
+streaming the same progress as an install.
 
-Every mutating action — enable/disable, uninstall, deploy, profile switch —
-opens a confirmation panel describing what will change before it runs:
-`y`/`enter` confirms, `n`/`esc` cancels, and only one action can be in
-flight at a time. Once it finishes, a one-line status message reports the
-outcome (including a warning count, if the flow reported any) and clears on
-your next keypress. `--prototype` mode demos all of these actions against
-simulated data, including one canned profile that always exercises the
-needs-downloads refusal.
-
-Installing a mod from search results and checking/applying updates from the
-TUI aren't available yet — use `lmm install` and `lmm update` for those
-until a later release.
+Every mutating action — enable/disable, uninstall, deploy, profile switch,
+install, apply updates — opens a confirmation panel describing what will
+change before it runs: `y`/`enter` confirms, `n`/`esc` cancels, and only one
+action can be in flight at a time. Install, apply-updates, and any switch
+that downloads mods stream live progress into the status line while they
+run; once an action finishes, a one-line status message reports the outcome
+(including a warning count, if the flow reported any) and clears on your
+next keypress. Quitting (`q`/`ctrl+c`) while an action is running cancels it
+immediately but waits — "Finishing current step…" on the status line,
+bounded to a few seconds — for that step to actually finish instead of
+killing it mid-download. A source that can't perform a requested action, or
+needs authentication, renders as a clean one-line message naming the right
+CLI fallback (e.g. "run 'lmm update' from a shell instead", or `lmm auth
+login <source>`) instead of a raw error. `--prototype` mode demos all of
+these actions end to end against simulated data, including one canned
+profile that always exercises the download-and-switch path.
 
 ## Configuration
 

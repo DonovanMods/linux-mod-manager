@@ -216,12 +216,25 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
-	changed, err := service.EnableMod(ctx, game, profileName, modSource, modID)
+	result, err := service.EnableMod(ctx, game, profileName, modSource, modID)
 	if err != nil {
+		// EnableMod's error-path convention returns any diagnostics
+		// accumulated before the fatal error alongside it (mirrors
+		// UninstallMod's own convention - see uninstall.go's
+		// printUninstallDiagnostics); print them now, or they'd otherwise be
+		// lost even though they already happened. result is nil on every
+		// EnableMod error path today, but is guarded here anyway, for parity
+		// with doModDisable below and because EnableResult.Notes is kept
+		// specifically so a future EnableMod diagnostic wouldn't need
+		// another signature change (see its doc comment in flows.go).
+		if result != nil {
+			printModNotes(result.Notes)
+		}
 		return err
 	}
+	printModNotes(result.Notes)
 
-	if !changed {
+	if !result.Changed {
 		fmt.Printf("%s is already enabled.\n", mod.Name)
 		return nil
 	}
@@ -252,18 +265,49 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
-	changed, err := service.DisableMod(ctx, game, profileName, modSource, modID)
+	result, err := service.DisableMod(ctx, game, profileName, modSource, modID)
 	if err != nil {
+		// DisableMod's error-path convention returns any diagnostics
+		// accumulated before the fatal error alongside it (see DisableMod's
+		// doc comment in flows.go, and mirrors UninstallMod's own convention
+		// - see uninstall.go's printUninstallDiagnostics); print them now,
+		// or they'd otherwise be lost even though they already happened
+		// (e.g. an undeploy-failure Note recorded, then a later
+		// SetModEnabled failure). result is nil only when DisableMod failed
+		// before it could allocate the result struct.
+		if result != nil {
+			printModNotes(result.Notes)
+		}
 		return err
 	}
+	printModNotes(result.Notes)
 
-	if !changed {
+	if !result.Changed {
 		fmt.Printf("%s is already disabled.\n", mod.Name)
 		return nil
 	}
 
 	fmt.Printf("✓ Disabled: %s (files removed from game, kept in cache)\n", mod.Name)
 	return nil
+}
+
+// printModNotes prints notes (EnableResult.Notes/DisableResult.Notes) to
+// stdout, only under --verbose — the historical display contract
+// UninstallResult's doc comment documents (each entry already carries its
+// prefix word baked in, e.g. DisableResult's restored pre-5a "Warning:
+// failed to undeploy some files: %v"). Safe to call with a nil/empty slice —
+// but NOT with a nil *EnableResult/*DisableResult itself; callers on the
+// error path (doModEnable/doModDisable above) must check that pointer for
+// nil before passing its .Notes field, since it panics on a nil receiver
+// otherwise (EnableMod/DisableMod both return a nil result on some error
+// paths - see their own doc comments in flows.go).
+func printModNotes(notes []string) {
+	if !verbose {
+		return
+	}
+	for _, n := range notes {
+		fmt.Printf("  %s\n", n)
+	}
 }
 
 func runModFiles(cmd *cobra.Command, args []string) error {

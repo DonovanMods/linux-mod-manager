@@ -247,7 +247,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if len(autoUpdates) > 0 {
 		fmt.Printf("\nApplying %d auto-update(s)...\n", len(autoUpdates))
 		for _, update := range autoUpdates {
-			if err := applyUpdate(ctx, service, game, &update.InstalledMod, update.NewVersion, profileName, update.FileIDReplacements); err != nil {
+			if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
 				fmt.Printf("  ✗ %s: %v\n", update.InstalledMod.Name, err)
 			} else {
 				fmt.Printf("  ✓ %s %s → %s\n", update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
@@ -267,7 +267,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if len(notifyUpdates) > 0 {
 			fmt.Printf("\nApplying %d remaining update(s)...\n", len(notifyUpdates))
 			for _, update := range notifyUpdates {
-				if err := applyUpdate(ctx, service, game, &update.InstalledMod, update.NewVersion, profileName, update.FileIDReplacements); err != nil {
+				if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
 					fmt.Printf("  ✗ %s: %v\n", update.InstalledMod.Name, err)
 				} else {
 					fmt.Printf("  ✓ %s %s → %s\n", update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
@@ -317,7 +317,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		return nil
 	}
 
-	if err := applyUpdate(ctx, service, game, mod, newVersion, profileName, updates[0].FileIDReplacements); err != nil {
+	if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
 		return err
 	}
 
@@ -326,161 +326,41 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	return nil
 }
 
-func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, newVersion, profileName string, fileIDReplacements map[string]string) error {
-	// Set up hooks
-	hookRunner := getHookRunner(service)
-	resolvedHooks := getResolvedHooks(service, game, profileName)
-	hookCtx := makeHookContext(game)
-	var hookErrors []error
-
-	// Get the new version's mod info
-	newMod, err := service.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
-	if err != nil {
-		return fmt.Errorf("fetching new version: %w", err)
+// applyUpdate applies upd to an installed mod: resolve -> call
+// Service.ApplyUpdate -> print from its progress events. progress prints
+// every diagnostic at its exact point of occurrence, driven entirely by
+// core.ApplyUpdate's progress events - reproducing the pre-extraction CLI's
+// exact console positioning (download progress, forced-hook warnings,
+// after_each hook warnings, and the --verbose-gated link-method note).
+func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, upd domain.Update, profileName string) error {
+	opts := core.UpdateOptions{
+		Hooks:       getResolvedHooks(service, game, profileName),
+		HookRunner:  getHookRunner(service),
+		HookContext: makeHookContext(game),
+		Force:       updateForce,
 	}
 
-	// If version doesn't match what we expect, update it
-	if newMod.Version != newVersion {
-		newMod.Version = newVersion
-	}
-
-	// Get available files for the new version
-	files, err := service.GetModFiles(ctx, mod.SourceID, newMod)
-	if err != nil {
-		return fmt.Errorf("getting mod files: %w", err)
-	}
-
-	if len(files) == 0 {
-		return fmt.Errorf("no downloadable files available")
-	}
-
-	// Resolve file IDs: use replacements when a file was superseded (e.g. NexusMods FileUpdates)
-	effectiveFileIDs := mod.FileIDs
-	if len(fileIDReplacements) > 0 {
-		effectiveFileIDs = make([]string, len(mod.FileIDs))
-		for i, fid := range mod.FileIDs {
-			if newID, ok := fileIDReplacements[fid]; ok {
-				effectiveFileIDs[i] = newID
-			} else {
-				effectiveFileIDs[i] = fid
+	progress := func(p core.DeployProgress) {
+		switch p.Phase {
+		case core.UpdateDownloading:
+			if verbose {
+				fmt.Printf("\r  Downloading: %.1f%%", p.Percent)
+			}
+		case core.UpdateDownloadDone:
+			if verbose {
+				fmt.Println()
+			}
+		case core.UpdateBeforeEachForced, core.UpdateWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.UpdateNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
 			}
 		}
 	}
-	// Try to use the same file IDs as before (or superseding IDs), or fall back to primary
-	filesToDownload, _, err := selectFilesToDownload(files, effectiveFileIDs)
-	if err != nil {
-		return fmt.Errorf("selecting files to download: %w", err)
-	}
 
-	// Download the new version
-	progressFn := func(p core.DownloadProgress) {
-		if p.TotalBytes > 0 && verbose {
-			fmt.Printf("\r  Downloading: %.1f%%", p.Percentage)
-		}
-	}
-
-	var downloadedFileIDs []string
-	for _, selectedFile := range filesToDownload {
-		_, err = service.DownloadMod(ctx, mod.SourceID, game, newMod, selectedFile, progressFn)
-		if err != nil {
-			return fmt.Errorf("downloading update: %w", err)
-		}
-		downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
-	}
-	if verbose {
-		fmt.Println()
-	}
-
-	// Run uninstall.before_each hook (before uninstalling old version)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.BeforeEach != "" {
-		hookCtx.HookName = "uninstall.before_each"
-		hookCtx.ModID = mod.ID
-		hookCtx.ModName = mod.Name
-		hookCtx.ModVersion = mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.BeforeEach, hookCtx); err != nil {
-			if !updateForce {
-				return fmt.Errorf("uninstall.before_each hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: uninstall.before_each hook failed (forced): %v\n", err)
-		}
-	}
-
-	// Undeploy old version
-	linkMethod := service.GetGameLinkMethod(game)
-	installer := service.GetInstaller(game)
-
-	// Run install.before_each hook (before installing new version)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
-		hookCtx.HookName = "install.before_each"
-		hookCtx.ModID = newMod.ID
-		hookCtx.ModName = newMod.Name
-		hookCtx.ModVersion = newMod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
-			if !updateForce {
-				return fmt.Errorf("install.before_each hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: install.before_each hook failed (forced): %v\n", err)
-		}
-	}
-
-	// Replace old version with the new version.
-	if err := installer.Replace(ctx, game, &mod.Mod, newMod, profileName); err != nil {
-		return fmt.Errorf("deploying update: %w", err)
-	}
-
-	// Run uninstall.after_each hook (after old files are no longer the active deployment)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
-		hookCtx.HookName = "uninstall.after_each"
-		hookCtx.ModID = mod.ID
-		hookCtx.ModName = mod.Name
-		hookCtx.ModVersion = mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed: %w", err))
-		}
-	}
-
-	// Run install.after_each hook (after installing new version)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
-		hookCtx.HookName = "install.after_each"
-		hookCtx.ModID = newMod.ID
-		hookCtx.ModName = newMod.Name
-		hookCtx.ModVersion = newMod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed: %w", err))
-		}
-	}
-
-	// Print hook warnings
-	printHookWarnings(hookErrors)
-
-	// Update database (preserves rollback state and file IDs atomically).
-	if err := service.ApplyModUpdate(mod.SourceID, mod.ID, game.ID, profileName, newVersion, downloadedFileIDs); err != nil {
-		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName)
-		return fmt.Errorf("updating database: %w", err)
-	}
-
-	// Update the link method used for deployment
-	if err := service.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
-		if verbose {
-			fmt.Printf("  Warning: could not update link method: %v\n", err)
-		}
-	}
-
-	// Update the profile entry with new version and FileIDs
-	pm := getProfileManager(service)
-	modRef := domain.ModReference{
-		SourceID: mod.SourceID,
-		ModID:    mod.ID,
-		Version:  newVersion,
-		FileIDs:  downloadedFileIDs,
-	}
-	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-		_ = service.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)
-		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName)
-		return fmt.Errorf("updating profile: %w", err)
-	}
-
-	return nil
+	_, err := service.ApplyUpdate(ctx, game, profileName, upd, opts, progress)
+	return err
 }
 
 func runUpdateRollback(cmd *cobra.Command, args []string) error {

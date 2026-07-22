@@ -121,7 +121,13 @@ func NewModel(options Options) (Model, error) {
 		ctx:      options.Ctx,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
-		search:   newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize()),
+		// Updates starts at its own "-1 unknown" sentinel (Summary's own
+		// doc comment), not the Go zero value 0, so the dataLoadedMsg
+		// preserve check below (`m.summary.Updates >= 0`) can't mistake
+		// "no load has happened yet" for "a check already found zero
+		// updates" on the very first load.
+		summary: Summary{Updates: -1, Conflicts: -1},
+		search:  newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize()),
 		// sources is seeded synchronously (like search's source list above)
 		// rather than through loadData/dataLoadedMsg: SourceInfos is a
 		// read-only view of already-registered sources, not an I/O call that
@@ -253,7 +259,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case dataLoadedMsg:
 		m.state = stateReady
-		m.summary = msg.summary
+		summary := msg.summary
+		// Updates is the model's own in-memory count once a check has
+		// actually run (see resolveCheckUpdatesResult's doc comment) -
+		// coreProvider.Overview has no persistent count of its own and
+		// always reports the -1/"?" sentinel, so wholesale-overwriting
+		// m.summary with every incoming summary reverted a just-checked
+		// count to "?" on the very next UNRELATED refresh (enable/
+		// disable/deploy/switch/install all funnel through here). Preserve
+		// the session's known count across that case; a genuinely fresh,
+		// non-sentinel count from the provider still always wins. The one
+		// case that SHOULD go stale - applying updates, which changes how
+		// many are left - re-sentinels explicitly in actionDoneMsg below
+		// rather than here, since a plain refresh has no way to tell "stale
+		// because updates were just applied" apart from "stale because
+		// nothing changed".
+		if summary.Updates < 0 && m.summary.Updates >= 0 {
+			summary.Updates = m.summary.Updates
+		}
+		m.summary = summary
 		m.mods = msg.mods
 		m.profiles = msg.profiles
 		m.clampSelections()
@@ -267,8 +291,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.action.cancel()
 			m.action.cancel = nil
 		}
+		// Task 6 item d: a quit-triggered drain (see startQuit) resolves the
+		// instant the action it was waiting on settles - see resolveDrainedQuit's
+		// own doc comment for why (shared with actionFailedMsg below and the six
+		// plan/check messages in mutations.go).
+		if m.action.draining {
+			return m.resolveDrainedQuit()
+		}
 		m.action.status = formatOutcomeStatus(msg.outcome)
 		m.action.statusIsError = false
+		m.action.progress = ActionProgress{}
 		// A fresh switch's target must rebind the session's active-profile
 		// providers BEFORE the refresh below reads them (see rebindProfile
 		// and profileRebinder in actions.go) - otherwise Profiles() keeps
@@ -276,8 +308,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// targeting it too (finding C1).
 		if msg.switchedTo != "" {
 			m.rebindProfile(msg.switchedTo)
+			// Task 6 item b's second belt (the 5a review's UX-correctness
+			// recommendation, beyond coreProvider's own p.profile race
+			// guard): any in-flight search was built against the OLD
+			// profile's installed-mod marks (installedModKeys), which are
+			// stale the instant the switch lands - cancel it and bump gen
+			// so a late result (or a late auth/search failure) is discarded
+			// by the ordinary stale-gen checks (searchResultMsg/
+			// searchFailedMsg's cases above) instead of rendering
+			// now-wrong "installed" markers. Mirrors CycleSource's own
+			// cancel+bump+reset-to-idle (updateKey, below).
+			if m.search.cancel != nil {
+				m.search.cancel()
+				m.search.cancel = nil
+			}
+			m.search.gen++
+			m.search.state = searchIdle
 		}
-		return m, m.loadData
+		// A completed update-apply batch invalidates the just-checked
+		// Updates count: applying updates changes how many are left, and
+		// Phase 5b has no way to compute the new real number without
+		// re-running CheckUpdates (resolveCheckUpdatesResult's own doc
+		// comment on the "no DataProvider change" tradeoff). Re-sentinel it
+		// back to "?" here, in the action's own done-path, rather than
+		// leave a now-stale count on screen or lean on the dataLoadedMsg
+		// preserve behavior above (which has no way to distinguish "stale
+		// because updates were just applied" from "stale because nothing
+		// relevant changed") to eventually correct it.
+		if msg.kind == actionUpdate {
+			m.summary.Updates = -1
+		}
+		// A completed install additionally re-runs the current search query
+		// (if any) so the just-installed result's "installed" marker updates
+		// immediately - see refreshSearchAfterInstall's doc comment for why
+		// the refresh above (Overview/Profiles only, via m.loadData) doesn't
+		// already cover this. tea.Batch collapses to the single m.loadData
+		// cmd, UNWRAPPED, for every other action kind (compactCmds - see the
+		// bubbletea package's own Batch doc comment), so this changes
+		// nothing about the refresh cmd every other action already returns.
+		cmds := []tea.Cmd{m.loadData}
+		if msg.kind == actionInstall {
+			var searchCmd tea.Cmd
+			m, searchCmd = m.refreshSearchAfterInstall()
+			cmds = append(cmds, searchCmd)
+		}
+		return m, tea.Batch(cmds...)
 	case actionFailedMsg:
 		if msg.gen != m.action.gen {
 			return m, nil
@@ -287,9 +362,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.action.cancel()
 			m.action.cancel = nil
 		}
+		// Task 6 item d: mirrors actionDoneMsg's drain resolution above - a
+		// failure settles the drain exactly like a success does (see
+		// resolveDrainedQuit's doc comment).
+		if m.action.draining {
+			return m.resolveDrainedQuit()
+		}
 		m.action.status = singleLine(msg.err.Error())
 		m.action.statusIsError = true
+		m.action.progress = ActionProgress{}
 		return m, m.loadData
+	case actionProgressMsg:
+		// Stale gen (a tick from a superseded action, e.g. one whose
+		// context was already cancelled by a newer buildAction call) is
+		// discarded entirely: no state touched, no re-issue. A fresh tick
+		// becomes the currently-displayed progress (see statusLine) and
+		// re-issues the listener so the next tick (or the terminal
+		// closed-channel signal - see waitForActionProgress) keeps arriving.
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		m.action.progress = msg.progress
+		return m, waitForActionProgress(m.action.progressCh, msg.gen)
+	case actionDrainTimeoutMsg:
+		// Task 6 item d: forces the quit a drain (see startQuit) was
+		// waiting on if the action never settled within actionDrainTimeout.
+		// A stale gen (a LATER drain, or an already-resolved one whose
+		// actionDoneMsg/actionFailedMsg case already cleared draining) is a
+		// no-op - never force-quits a drain this timeout doesn't belong to.
+		if msg.gen != m.action.gen || !m.action.draining {
+			return m, nil
+		}
+		m.action.draining = false
+		return m, tea.Quit
 	case planResultMsg:
 		if msg.gen != m.action.gen {
 			return m, nil
@@ -300,6 +405,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.resolvePlanFailure(msg)
+	case installPlanResultMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveInstallPlanResult(msg)
+	case installPlanFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveInstallPlanFailure(msg)
+	case checkUpdatesResultMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveCheckUpdatesResult(msg)
+	case checkUpdatesFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveCheckUpdatesFailure(msg)
 	case loadFailedMsg:
 		m.state = stateFailed
 		m.loadErr = msg.err
@@ -364,7 +489,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.screen == ScreenSearch && m.search.input.Focused() {
 		switch {
 		case m.isQuitKey(msg): // only ctrl+c while focused — see isQuitKey
-			return m, m.quitCmd()
+			return m.startQuit()
 		case key.Matches(msg, m.keys.Blur):
 			m.search.input.Blur()
 			return m, nil
@@ -380,7 +505,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		return m, m.quitCmd()
+		return m.startQuit()
 	case key.Matches(msg, m.keys.Help):
 		m.showHelp = !m.showHelp
 		return m, nil
@@ -446,6 +571,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.uninstallSelectedMod()
 	case key.Matches(msg, m.keys.Deploy):
 		return m.deployActiveProfile()
+	case key.Matches(msg, m.keys.Install):
+		return m.installSelectedSearchResult()
+	case key.Matches(msg, m.keys.CheckUpdates):
+		return m.checkForUpdates()
 	default:
 		return m, nil
 	}
@@ -500,7 +629,7 @@ func (m Model) View() string {
 // designed for; narrower terminals are expected to lose some trailing hints
 // to truncation rather than the wording being shortened to fit them.
 func (m Model) footerLine() string {
-	hint := "?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  e: enable/disable · x: uninstall · D: deploy  enter: switch  q: quit"
+	hint := "?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: check updates  enter: switch  q: quit"
 	return truncate(m.theme.Help.Render(hint), m.availableWidth())
 }
 
@@ -1077,15 +1206,17 @@ func (m Model) helpView() string {
 		"tab / shift+tab     cycle top-level screens",
 		"1-5                 jump to a screen (3 focuses search)",
 		"/                   search from anywhere (jumps + focuses input)",
+		"i                   install the selected search result (Search, unfocused)",
 		"enter               open menu entry / search / switch profile",
 		"esc                 unfocus search input",
 		"n/p                 result pages",
 		"s                   cycle source",
 		"e/x/D               toggle enable/disable / uninstall selected mod / deploy active profile",
+		"u                   check for updates (Dashboard/Installed Mods)",
 		"?                   toggle this help",
 		"q / ctrl+c           quit",
 		"",
-		"Enable, disable, uninstall, deploy, and profile switch all confirm through a modal before anything changes.",
+		"Enable, disable, uninstall, deploy, install, apply updates, and profile switch all confirm through a modal before anything changes.",
 	}, "\n"))
 }
 
@@ -1158,10 +1289,10 @@ func (m Model) contentChromeHeight() int {
 	}
 
 	// The action status line (rule 8) occupies exactly one row above the
-	// footer, and only when set — see statusLine's matching "" ⇒ nothing
-	// rendered contract in View().
+	// footer, and only when hasVisibleStatus reports something to show —
+	// see statusLine's matching "" ⇒ nothing rendered contract in View().
 	statusHeight := 0
-	if m.action.status != "" {
+	if m.hasVisibleStatus() {
 		statusHeight = 1
 	}
 

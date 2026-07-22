@@ -14,82 +14,32 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 )
 
-// downloadSelectedFiles fetches each selected mod file into downloadCache,
-// printing progress and returning per-file metadata for the caller to record.
-// sourceID is passed in (rather than read from the installSource global) so
-// the helper is reusable and testable in isolation.
-func downloadSelectedFiles(ctx context.Context, service *core.Service, downloadCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, selectedFiles []*domain.DownloadableFile) (totalFileCount int, downloadedFileIDs []string, fileChecksums map[string]string, err error) {
-	fileChecksums = make(map[string]string)
-
-	for i, selectedFile := range selectedFiles {
-		if len(selectedFiles) > 1 {
-			fmt.Printf("\n[%d/%d] Downloading %s...\n", i+1, len(selectedFiles), displayFileLabel(*selectedFile))
-		} else {
-			fmt.Printf("\nDownloading %s...\n", displayFileLabel(*selectedFile))
-		}
-
-		progressFn := func(p core.DownloadProgress) {
-			if p.TotalBytes > 0 {
-				bar := progressBar(p.Percentage, 30)
-				fmt.Printf("\r  [%s] %.1f%% (%s / %s)", bar, p.Percentage,
-					formatSize(p.Downloaded), formatSize(p.TotalBytes))
-			} else {
-				fmt.Printf("\r  Downloaded %s", formatSize(p.Downloaded))
-			}
-		}
-
-		downloadResult, dlErr := service.DownloadModToCache(ctx, downloadCache, sourceID, game, mod, selectedFile, progressFn)
-		if dlErr != nil {
-			fmt.Println()
-			if strings.Contains(dlErr.Error(), "third-party downloads") && mod.SourceURL != "" {
-				fmt.Println()
-				fmt.Println("  ⚠  This mod author has disabled API downloads.")
-				fmt.Println("  To install manually:")
-				fmt.Println()
-				fmt.Printf("    1. Download from: %s\n", mod.SourceURL)
-				fmt.Printf("    2. Import:        lmm import <downloaded-file> --id %s\n", mod.ID)
-				fmt.Println()
-				return 0, nil, nil, fmt.Errorf("download unavailable via API")
-			}
-			return 0, nil, nil, fmt.Errorf("download failed: %w", dlErr)
-		}
-		fmt.Println()
-
-		if !skipVerify && downloadResult.Checksum != "" {
-			displayChecksum := downloadResult.Checksum
-			if len(displayChecksum) > 12 {
-				displayChecksum = displayChecksum[:12] + "..."
-			}
-			fmt.Printf("  Checksum: %s\n", displayChecksum)
-			fileChecksums[selectedFile.ID] = downloadResult.Checksum
-		}
-
-		totalFileCount += downloadResult.FilesExtracted
-		downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
-	}
-	return totalFileCount, downloadedFileIDs, fileChecksums, nil
-}
-
-// confirmInstallConflicts inspects what files the about-to-install mod would
-// overwrite. If conflicts exist it prints them and prompts for confirmation,
-// returning an error to abort the install when the user declines.
-func confirmInstallConflicts(ctx context.Context, service *core.Service, installer *core.Installer, game *domain.Game, mod *domain.Mod, profileName string) error {
-	conflicts, err := installer.GetConflicts(ctx, game, mod, profileName)
-	if err != nil {
-		if verbose {
-			fmt.Printf("Warning: could not check conflicts: %v\n", err)
-		}
-		return nil
-	}
-	if len(conflicts) == 0 {
-		return nil
-	}
-
+// confirmInstallConflicts prints the file conflicts installing the plan's
+// mod would cause and prompts the user to confirm overwriting them. Wired as
+// core.InstallOptions.ConfirmConflicts (see that field's doc comment), so
+// core.ApplyInstall calls this ONLY at its restored, byte-identical
+// position: AFTER the mod is downloaded/extracted to cache and BEFORE it is
+// deployed - the exact spot the pre-extraction CLI's own
+// confirmInstallConflicts occupied, undoing the C1 review finding's
+// regression (conflicts had moved into the pure, pre-download PlanInstall,
+// which can never detect an uncached mod's conflicts at all - see
+// InstallPlan.Conflicts' doc comment). conflicts is therefore always
+// non-empty and freshly computed by core.ApplyInstall itself, never
+// plan.Conflicts (which this function no longer consults).
+//
+// Returns false to decline (core.ApplyInstall then aborts with its own
+// "installation cancelled" error - see readErr below for the one case that
+// is NOT a plain decline). readErr, if non-nil, is a genuine stdin read
+// failure (readPromptLine's own doc comment: distinct from EOF, which is
+// treated as an ordinary empty/declined answer) - doInstall must propagate
+// THIS error verbatim rather than letting it collapse into the generic
+// "installation cancelled" text, matching the pre-extraction CLI's own
+// `if err != nil { return err }` before its y/N check.
+func confirmInstallConflicts(service *core.Service, game *domain.Game, profileName string, conflicts []core.Conflict) (proceed bool, readErr error) {
 	fmt.Printf("\n⚠ File conflicts detected:\n")
 
 	modConflicts := make(map[string][]string)
@@ -122,12 +72,9 @@ func confirmInstallConflicts(ctx context.Context, service *core.Service, install
 	fmt.Printf("\n%d file(s) will be overwritten. Continue? [y/N]: ", len(conflicts))
 	input, err := readPromptLine()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if input != "y" && input != "yes" {
-		return fmt.Errorf("installation cancelled")
-	}
-	return nil
+	return input == "y" || input == "yes", nil
 }
 
 // selectInstallFiles applies the --file flag, single-file shortcut, --yes default,
@@ -308,33 +255,6 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 	}
 }
 
-// installPlan contains the ordered list of mods to install
-type installPlan struct {
-	mods          []*domain.Mod // In install order (dependencies first, target last)
-	missing       []string      // Dependencies that couldn't be fetched (warning only)
-	cycleDetected bool          // True if a circular dependency was detected
-}
-
-// depFetcher is the interface needed for dependency resolution
-type depFetcher interface {
-	GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error)
-	GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error)
-}
-
-// serviceDepFetcher wraps core.Service to implement depFetcher
-type serviceDepFetcher struct {
-	svc      *core.Service
-	sourceID string
-}
-
-func (s *serviceDepFetcher) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
-	return s.svc.GetMod(ctx, s.sourceID, gameID, modID)
-}
-
-func (s *serviceDepFetcher) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
-	return s.svc.GetDependencies(ctx, s.sourceID, mod)
-}
-
 var (
 	installSource       string
 	installProfile      string
@@ -447,7 +367,8 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 
 	profileName := profileOrDefault(installProfile)
 
-	// Get the mod to install (by --id or interactive search)
+	// Get the mod to install (by --id or interactive search) - unchanged,
+	// CLI-side.
 	var mod *domain.Mod
 	if installModID != "" {
 		if verbose {
@@ -473,59 +394,69 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 
 	fmt.Printf("\nSelected: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
 
-	// Resolve dependencies (unless --no-deps or local mod)
-	var modsToInstall []*domain.Mod
 	if !installNoDeps && mod.SourceID != domain.SourceLocal {
 		fmt.Println("\nResolving dependencies...")
+	}
 
-		// Get already-installed mods
-		installedMods, _ := service.GetInstalledMods(game.ID, profileName)
-		installedIDs := make(map[string]bool)
-		for _, im := range installedMods {
-			installedIDs[domain.ModKey(im.SourceID, im.ID)] = true
+	// PlanInstall resolves dependencies, files (its own non-interactive
+	// default), conflicts (against whatever is already cached), and any
+	// existing installed row - all read-only. --no-deps/local-mod dep
+	// skipping and interactive/--file file selection are deliberately NOT
+	// part of PlanInstall (see its doc comment); both are applied to the
+	// plan below, CLI-side, before ApplyInstall ever runs.
+	plan, err := service.PlanInstall(ctx, game, profileName, installSource, mod.ID, installShowArchived)
+	if err != nil {
+		if errors.Is(err, domain.ErrAuthRequired) {
+			return authPromptError(installSource)
 		}
+		return err
+	}
 
-		// Resolve dependencies
-		fetcher := &serviceDepFetcher{svc: service, sourceID: installSource}
-		plan, err := resolveDependencies(ctx, fetcher, mod, installedIDs)
-		if err != nil {
-			return fmt.Errorf("resolving dependencies: %w", err)
-		}
+	if installNoDeps || mod.SourceID == domain.SourceLocal {
+		plan.Dependencies = nil
+		plan.MissingDependencies = nil
+		plan.CycleDetected = false
+	}
 
-		// If there are dependencies to install, show plan and confirm
-		if len(plan.mods) > 1 || len(plan.missing) > 0 {
-			showInstallPlan(plan, mod.ID)
+	// If there are dependencies to install (or unresolvable ones to warn
+	// about), show the plan and confirm.
+	if len(plan.Dependencies) > 0 || len(plan.MissingDependencies) > 0 {
+		showInstallPlan(plan)
 
-			if !installYes {
-				fmt.Printf("\nInstall %d mod(s)? [Y/n]: ", len(plan.mods))
-				input, err := readPromptLine()
-				if err != nil {
-					return err
-				}
-				if input == "n" || input == "no" {
-					return fmt.Errorf("installation cancelled")
-				}
+		if !installYes {
+			fmt.Printf("\nInstall %d mod(s)? [Y/n]: ", len(plan.Dependencies)+1)
+			input, err := readPromptLine()
+			if err != nil {
+				return err
+			}
+			if input == "n" || input == "no" {
+				return fmt.Errorf("installation cancelled")
 			}
 		}
-
-		modsToInstall = plan.mods
-	} else {
-		modsToInstall = []*domain.Mod{mod}
 	}
 
-	// If multiple mods to install (target + deps), use batch install
-	if len(modsToInstall) > 1 {
-		return installModsWithDeps(ctx, service, game, modsToInstall, profileName)
+	// Fix wave 1 (dep-path fidelity): a dependency-having install must
+	// reproduce cmd/lmm/install.go's pre-extraction batchInstallMods
+	// mechanics byte-for-byte for the WHOLE list, primary included - never
+	// the single-mod code below (interactive/--file file selection, the
+	// blocking conflict prompt) - matching doInstall's own pre-extraction
+	// early return ("if len(modsToInstall) > 1: return
+	// installModsWithDeps(...)"), which never reached any of that either.
+	// See doInstallBatch's own doc comment and task-2-report.md's "Fix wave
+	// 1" entry for the full review trace this restores.
+	if len(plan.Dependencies) > 0 {
+		return doInstallBatch(ctx, service, game, plan, profileName)
 	}
 
-	// Single mod install - continue with existing flow
-
-	// Get available files
+	// Get available files for the PRIMARY mod - unchanged, CLI-side:
+	// PlanInstall's own Files already picked its non-interactive default;
+	// interactive/--file selection below overrides plan.Files with exactly
+	// what the user chose (see InstallPlan.Files' doc comment - ApplyInstall
+	// installs exactly plan.Files, no re-selection).
 	files, err := service.GetModFiles(ctx, installSource, mod)
 	if err != nil {
 		return fmt.Errorf("failed to get mod files: %w", err)
 	}
-
 	files = filterAndSortFiles(files, installShowArchived)
 	if len(files) == 0 {
 		return fmt.Errorf("no downloadable files available for this mod")
@@ -535,8 +466,12 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	if err != nil {
 		return err
 	}
+	plan.Files = make([]domain.DownloadableFile, len(selectedFiles))
+	for i, f := range selectedFiles {
+		plan.Files[i] = *f
+	}
 
-	// Show selected files
+	// Show selected files - unchanged, CLI-side.
 	if len(selectedFiles) == 1 {
 		fmt.Printf("\nFile: %s\n", displayFileLabel(*selectedFiles[0]))
 	} else {
@@ -546,298 +481,190 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		}
 	}
 
-	// Set up hooks
-	hookRunner := getHookRunner(service)
-	resolvedHooks := getResolvedHooks(service, game, profileName)
-	hookCtx := makeHookContext(game)
-	var hookErrors []error
-
-	// Run install.before_all hook (for single mod, this also serves as before_each)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeAll != "" {
-		hookCtx.HookName = "install.before_all"
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeAll, hookCtx); err != nil {
-			if !installForce {
-				return fmt.Errorf("install.before_all hook failed: %w", err)
+	// promptErr captures a genuine stdin read failure from
+	// confirmInstallConflicts (distinct from an ordinary decline - see its
+	// doc comment) so it can be propagated verbatim below instead of
+	// collapsing into ApplyInstall's generic "installation cancelled" text.
+	var promptErr error
+	opts := core.InstallOptions{
+		SkipVerify:  skipVerify,
+		Hooks:       getResolvedHooks(service, game, profileName),
+		HookRunner:  getHookRunner(service),
+		HookContext: makeHookContext(game),
+		Force:       installForce,
+		// ConfirmConflicts restores the pre-extraction CLI's blocking
+		// conflict prompt at ApplyInstall's own restored position (post-
+		// download/extract, pre-deploy) - see core.InstallOptions.
+		// ConfirmConflicts' doc comment. --force still skips it entirely
+		// (ApplyInstall never calls this when opts.Force is set).
+		ConfirmConflicts: func(conflicts []core.Conflict) bool {
+			proceed, err := confirmInstallConflicts(service, game, profileName, conflicts)
+			if err != nil {
+				promptErr = err
+				return false
 			}
-			fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
+			return proceed
+		},
+	}
+
+	// progress prints every diagnostic and status line at its exact point
+	// of occurrence, driven entirely by core.ApplyInstall's progress events
+	// - including diagnostics that also land in result.Warnings/.Notes (see
+	// core.InstallResult's doc comment). Those slices are never separately
+	// batch-printed below: every entry has a corresponding event here, so
+	// doing so would double-print.
+	progress := func(p core.DeployProgress) {
+		switch p.Phase {
+		case core.InstallBeforeAllForced, core.InstallBeforeEachForced:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.InstallDownloadStarted:
+			if p.Total > 1 {
+				fmt.Printf("\n[%d/%d] Downloading %s...\n", p.Index, p.Total, displayFileLabel(*p.File))
+			} else {
+				fmt.Printf("\nDownloading %s...\n", displayFileLabel(*p.File))
+			}
+		case core.InstallDownloading:
+			if p.TotalBytes > 0 {
+				bar := progressBar(p.Percent, 30)
+				fmt.Printf("\r  [%s] %.1f%% (%s / %s)", bar, p.Percent, formatSize(p.Downloaded), formatSize(p.TotalBytes))
+			} else {
+				fmt.Printf("\r  Downloaded %s", formatSize(p.Downloaded))
+			}
+		case core.InstallDownloadDone:
+			fmt.Println()
+		case core.InstallDownloadFailed:
+			if strings.Contains(p.Detail, "third-party downloads") && mod.SourceURL != "" {
+				fmt.Println()
+				fmt.Println("  ⚠  This mod author has disabled API downloads.")
+				fmt.Println("  To install manually:")
+				fmt.Println()
+				fmt.Printf("    1. Download from: %s\n", mod.SourceURL)
+				fmt.Printf("    2. Import:        lmm import <downloaded-file> --id %s\n", mod.ID)
+				fmt.Println()
+			}
+		case core.InstallChecksumComputed:
+			fmt.Printf("  Checksum: %s\n", truncateChecksum(p.Detail))
+		case core.InstallExtracting:
+			fmt.Println("\nExtracting to cache...")
+		case core.InstallDeploying:
+			fmt.Println("Deploying to game directory...")
+		case core.InstallNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		case core.InstallWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		}
 	}
 
-	// Run install.before_each hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
-		hookCtx.HookName = "install.before_each"
-		hookCtx.ModID = mod.ID
-		hookCtx.ModName = mod.Name
-		hookCtx.ModVersion = mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
-			if !installForce {
-				return fmt.Errorf("install.before_each hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: install.before_each hook failed (forced): %v\n", err)
-		}
-	}
-
-	// Set up installer
-	linkMethod := service.GetGameLinkMethod(game)
-	installer := service.GetInstaller(game)
-	var reinstallTxn *reinstallCacheTransaction
-	downloadCache := service.GetGameCache(game)
-
-	// Check if mod is already installed so we can replace it atomically later.
-	existingMod, err := service.GetInstalledMod(installSource, mod.ID, game.ID, profileName)
+	result, err := service.ApplyInstall(ctx, game, plan, opts, progress)
 	if err != nil {
-		if !errors.Is(err, domain.ErrModNotFound) {
-			return fmt.Errorf("checking existing installed mod: %w", err)
+		// Diagnostics accumulated before a fatal error (ApplyInstall's
+		// error-path convention returns them alongside it) were already
+		// printed above, live, via progress - nothing left to print here.
+		if promptErr != nil {
+			// A genuine stdin read failure inside the conflict prompt, not
+			// an ordinary decline - see confirmInstallConflicts' doc
+			// comment. Propagate the real error instead of ApplyInstall's
+			// generic "installation cancelled".
+			return promptErr
 		}
-		existingMod = nil
-	} else if existingMod.Version == mod.Version {
-		reinstallTxn, err = prepareReinstallCacheTransaction(service.GetGameCache(game), game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version)
-		if err != nil {
-			return fmt.Errorf("preparing reinstall cache: %w", err)
-		}
-		downloadCache = reinstallTxn.staged
-		defer func() {
-			if reinstallTxn != nil {
-				_ = reinstallTxn.Rollback()
-			}
-		}()
-	}
-
-	totalFileCount, downloadedFileIDs, fileChecksums, err := downloadSelectedFiles(ctx, service, downloadCache, installSource, game, mod, selectedFiles)
-	if err != nil {
 		return err
 	}
 
-	fmt.Println("\nExtracting to cache...")
-
-	if !installForce {
-		if err := confirmInstallConflicts(ctx, service, installer, game, mod, profileName); err != nil {
-			return err
-		}
-	}
-
-	// Deploy to game directory
-	fmt.Println("Deploying to game directory...")
-
-	if existingMod != nil {
-		if reinstallTxn != nil {
-			if err := reinstallTxn.Activate(); err != nil {
-				return fmt.Errorf("activating reinstall cache: %w", err)
-			}
-		}
-		var replaceErr error
-		if reinstallTxn != nil {
-			replaceErr = installer.ReplaceWithOldCache(ctx, game, reinstallTxn.snapshot, &existingMod.Mod, mod, profileName)
-		} else {
-			replaceErr = installer.Replace(ctx, game, &existingMod.Mod, mod, profileName)
-		}
-		if replaceErr != nil {
-			if reinstallTxn != nil {
-				_ = reinstallTxn.RestoreLive()
-				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.snapshot, service.GetGameCache(game), &existingMod.Mod, &existingMod.Mod, profileName)
-			}
-			return fmt.Errorf("deployment failed: %w", replaceErr)
-		}
-	} else if err := installer.Install(ctx, game, mod, profileName); err != nil {
-		return fmt.Errorf("deployment failed: %w", err)
-	}
-
-	// Save to database. Normalize GameID to the lmm game (not the
-	// source-mapped value Service.SearchMods/GetMod stamped onto mod.GameID
-	// for querying the source) so every DB read, which queries by the lmm
-	// game ID, can find this row again (see issue: non-empty sources:
-	// mappings otherwise orphan the install).
-	installedMod := &domain.InstalledMod{
-		Mod:          *mod,
-		ProfileName:  profileName,
-		UpdatePolicy: domain.UpdateNotify,
-		Enabled:      true,
-		Deployed:     true,
-		LinkMethod:   linkMethod,
-		FileIDs:      downloadedFileIDs,
-	}
-	installedMod.Mod.GameID = game.ID
-
-	if err := service.SaveInstalledMod(installedMod); err != nil {
-		if existingMod != nil {
-			if reinstallTxn != nil {
-				_ = reinstallTxn.RestoreLive()
-				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.staged, service.GetGameCache(game), mod, &existingMod.Mod, profileName)
-			} else {
-				_ = installer.Replace(ctx, game, mod, &existingMod.Mod, profileName)
-			}
-		} else {
-			_ = installer.Uninstall(ctx, game, mod, profileName)
-		}
-		return fmt.Errorf("failed to save mod: %w", err)
-	}
-	if reinstallTxn != nil {
-		if err := reinstallTxn.Commit(); err != nil && verbose {
-			fmt.Printf("  Warning: could not finalize reinstall cache transaction: %v\n", err)
-		}
-		reinstallTxn = nil
-	}
-
-	// Store checksums in database
-	for fileID, checksum := range fileChecksums {
-		if err := service.SaveFileChecksum(
-			installSource, mod.ID, game.ID, profileName, fileID, checksum,
-		); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save checksum for file %s: %v\n", fileID, err)
-		}
-	}
-
-	// Add mod to current profile (with FileIDs)
-	pm := getProfileManager(service)
-	modRef := domain.ModReference{
-		SourceID: mod.SourceID,
-		ModID:    mod.ID,
-		Version:  mod.Version,
-		FileIDs:  downloadedFileIDs,
-	}
-
-	// Ensure profile exists, create if needed
-	if _, err := pm.Get(game.ID, profileName); err != nil {
-		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(game.ID, profileName); err != nil {
-				// Log but don't fail - mod is installed
-				if verbose {
-					fmt.Printf("  Warning: could not create profile: %v\n", err)
-				}
-			}
-		}
-	}
-
-	// Add or update mod in profile (handles both new installs and re-installs)
-	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-		if verbose {
-			fmt.Printf("  Warning: could not update profile: %v\n", err)
-		}
-	}
-
-	if existingMod != nil && existingMod.Version != mod.Version {
-		if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
-			fmt.Printf("  Warning: could not clear old cache: %v\n", err)
-		}
-	}
-
-	// Run install.after_each hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
-		hookCtx.HookName = "install.after_each"
-		hookCtx.ModID = mod.ID
-		hookCtx.ModName = mod.Name
-		hookCtx.ModVersion = mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed: %w", err))
-		}
-	}
-
-	// Run install.after_all hook
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterAll != "" {
-		hookCtx.HookName = "install.after_all"
-		hookCtx.ModID = ""
-		hookCtx.ModName = ""
-		hookCtx.ModVersion = ""
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterAll, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
-		}
-	}
-
-	// Print hook warnings
-	printHookWarnings(hookErrors)
-
 	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
-	fmt.Printf("  Files deployed: %d\n", totalFileCount)
+	fmt.Printf("  Files deployed: %d\n", result.FilesDeployed)
 	fmt.Printf("  Added to profile: %s\n", profileName)
 
 	return nil
 }
 
-type reinstallCacheTransaction struct {
-	live      *cache.Cache
-	snapshot  *cache.Cache
-	staged    *cache.Cache
-	tempDir   string
-	gameID    string
-	sourceID  string
-	modID     string
-	version   string
-	activated bool
-}
+// doInstallBatch executes plan's dependency-present install via
+// ApplyInstall's restored BATCH-path semantics (Fix wave 1 - see
+// task-2-report.md's "Fix wave 1 (dep-path fidelity)" entry for the full
+// review trace this fixes): every mod - each dependency, then the primary -
+// is treated COMPLETELY identically, reproducing cmd/lmm/install.go's
+// pre-extraction batchInstallMods console output byte-for-byte (git show
+// 5243286:cmd/lmm/install.go, lines ~1175-1347). In particular, unlike
+// doInstall's own single-mod code above: NO interactive/--file file
+// selection (always the primary-or-first file, re-resolved per mod), NO
+// blocking conflict prompt (a non-blocking inline "⚠ N file conflict(s)"
+// warning only) - doInstall's pre-extraction early return never reached
+// either of those for a dependency-having install, so this function must
+// not either. Must never read stdin - the caller's "Install N mod(s)?"
+// confirm prompt (run before this is ever called) is the only legitimate
+// stdin read anywhere in this path.
+func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Game, plan *core.InstallPlan, profileName string) error {
+	fmt.Printf("\nInstalling %d mod(s)...\n", len(plan.Dependencies)+1)
 
-func prepareReinstallCacheTransaction(live *cache.Cache, gameID, sourceID, modID, version string) (*reinstallCacheTransaction, error) {
-	tempDir, err := os.MkdirTemp("", "lmm-reinstall-cache-*")
+	opts := core.InstallOptions{
+		SkipVerify:  skipVerify,
+		Hooks:       getResolvedHooks(service, game, profileName),
+		HookRunner:  getHookRunner(service),
+		HookContext: makeHookContext(game),
+		Force:       installForce,
+	}
+
+	// progress prints every diagnostic and status line at its exact point
+	// of occurrence, driven entirely by core.ApplyInstall's BATCH-path
+	// progress events - reproducing batchInstallMods' console output
+	// byte-for-byte. See each Install* constant's doc comment (in
+	// internal/core/flows.go, starting at InstallDepInstalling) for the
+	// exact text/semantics being restored here.
+	progress := func(p core.DeployProgress) {
+		switch p.Phase {
+		case core.InstallBeforeAllForced:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.InstallDepInstalling:
+			fmt.Printf("\n[%d/%d] Installing: %s v%s\n", p.Index, p.Total, p.ModName, p.ModVersion)
+		case core.InstallDepReinstalling:
+			fmt.Printf("  Removing previous installation...\n")
+		case core.InstallDepFileSelected:
+			fmt.Printf("  File: %s\n", displayFileLabel(*p.File))
+		case core.InstallDepDownloading:
+			bar := progressBar(p.Percent, 20)
+			fmt.Printf("\r  [%s] %.1f%%", bar, p.Percent)
+		case core.InstallDepDownloadDone:
+			fmt.Println()
+		case core.InstallDepSkipped:
+			// Detail already carries its restored, failure-type-specific,
+			// fully-prefixed text verbatim ("Skipped: ..." for a hook
+			// failure, "Error: ..." for everything else) - see
+			// InstallDepSkipped's doc comment.
+			fmt.Printf("  %s\n", p.Detail)
+		case core.InstallChecksumComputed:
+			fmt.Printf("  Checksum: %s\n", truncateChecksum(p.Detail))
+		case core.InstallDepConflictWarning:
+			fmt.Printf("  ⚠ %s\n", p.Detail)
+		case core.InstallDepInstalled:
+			fmt.Printf("  ✓ Installed (%d files)\n", p.FilesExtracted)
+		case core.InstallNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		case core.InstallWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		}
+	}
+
+	result, err := service.ApplyInstall(ctx, game, plan, opts, progress)
 	if err != nil {
-		return nil, fmt.Errorf("creating cache snapshot: %w", err)
+		// Diagnostics accumulated before a fatal error (install.before_all,
+		// forced) were already printed above, live, via progress - nothing
+		// left to print here. Unlike the STRICT path, a per-mod failure in
+		// the BATCH path never reaches here - it's recorded in
+		// result.Failed/Skipped and printed via the terminal Summary below
+		// instead (see InstallDepSkipped).
+		return err
 	}
-	snapshot := cache.New(filepath.Join(tempDir, "snapshot"))
-	staged := cache.New(filepath.Join(tempDir, "staged"))
-	if err := live.CloneMod(snapshot, gameID, sourceID, modID, version); err != nil {
-		_ = os.RemoveAll(tempDir)
-		return nil, fmt.Errorf("snapshotting existing cache: %w", err)
-	}
-	return &reinstallCacheTransaction{
-		live:     live,
-		snapshot: snapshot,
-		staged:   staged,
-		tempDir:  tempDir,
-		gameID:   gameID,
-		sourceID: sourceID,
-		modID:    modID,
-		version:  version,
-	}, nil
-}
 
-func (s *reinstallCacheTransaction) Activate() error {
-	if s == nil {
-		return nil
+	fmt.Printf("\n--- Summary ---\n")
+	fmt.Printf("Installed: %d\n", len(result.Installed))
+	if len(result.Failed) > 0 {
+		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(result.Failed, ", "))
 	}
-	if s.activated {
-		return nil
-	}
-	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
-		return err
-	}
-	if err := s.staged.CloneMod(s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
-		return err
-	}
-	s.activated = true
+
 	return nil
-}
-
-func (s *reinstallCacheTransaction) RestoreLive() error {
-	if s == nil || !s.activated {
-		return nil
-	}
-	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
-		return err
-	}
-	if err := s.snapshot.CloneMod(s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
-		return err
-	}
-	s.activated = false
-	return nil
-}
-
-func (s *reinstallCacheTransaction) Rollback() error {
-	if s == nil {
-		return nil
-	}
-	if err := s.RestoreLive(); err != nil {
-		return err
-	}
-	err := os.RemoveAll(s.tempDir)
-	*s = reinstallCacheTransaction{}
-	return err
-}
-
-func (s *reinstallCacheTransaction) Commit() error {
-	if s == nil {
-		return nil
-	}
-	err := os.RemoveAll(s.tempDir)
-	*s = reinstallCacheTransaction{}
-	return err
 }
 
 // promptMultiSelection prompts the user to select one or more numbers
@@ -1038,117 +865,31 @@ func parseRangeSelection(input string, max int) ([]int, error) {
 	return result, nil
 }
 
-// resolveDependencies fetches all dependencies for a mod and returns them in install order.
-// Dependencies are fetched recursively. Already-installed mods are skipped.
-// Missing dependencies (not found on source) are recorded but don't cause failure.
-// Circular dependencies are detected and recorded for warning.
-func resolveDependencies(ctx context.Context, fetcher depFetcher, target *domain.Mod, installedIDs map[string]bool) (*installPlan, error) {
-	plan := &installPlan{}
-	visited := make(map[string]bool)
-	stack := make(map[string]bool) // Keys currently being visited (for cycle detection)
-
-	var collect func(mod *domain.Mod) error
-	collect = func(mod *domain.Mod) error {
-		key := domain.ModKey(mod.SourceID, mod.ID)
-		if visited[key] {
-			return nil
-		}
-		visited[key] = true
-		stack[key] = true
-		defer func() { delete(stack, key) }()
-
-		// Fetch dependencies for this mod
-		deps, err := fetcher.GetDependencies(ctx, mod)
-		if err != nil {
-			return nil
-		}
-
-		for _, ref := range deps {
-			depKey := domain.ModKey(ref.SourceID, ref.ModID)
-
-			if installedIDs[depKey] {
-				continue
-			}
-
-			if stack[depKey] {
-				plan.cycleDetected = true
-				continue
-			}
-			if visited[depKey] {
-				continue
-			}
-
-			// Fetch the dependency mod (use target game domain so fetch is correct)
-			gameIDForFetch := target.GameID
-			if gameIDForFetch == "" {
-				gameIDForFetch = mod.GameID
-			}
-			depMod, err := fetcher.GetMod(ctx, gameIDForFetch, ref.ModID)
-			if err != nil {
-				// Dependency not available (external like SKSE)
-				plan.missing = append(plan.missing, depKey)
-				continue
-			}
-			// Keep actual source from fetch; validate against ref
-			if depMod.SourceID != "" && depMod.SourceID != ref.SourceID {
-				// Mismatch: dependency listed for different source
-				plan.missing = append(plan.missing, depKey)
-				continue
-			}
-			if depMod.SourceID == "" {
-				depMod.SourceID = ref.SourceID
-			}
-
-			// Recursively collect transitive dependencies
-			if err := collect(depMod); err != nil {
-				return err
-			}
-
-			// Add dependency after its dependencies (topological order)
-			plan.mods = append(plan.mods, depMod)
-		}
-
-		return nil
-	}
-
-	// Collect all dependencies
-	if err := collect(target); err != nil {
-		return nil, err
-	}
-
-	// Add target mod last
-	plan.mods = append(plan.mods, target)
-
-	return plan, nil
-}
-
-// showInstallPlan displays the install plan (dependency tree order) to the user
-func showInstallPlan(plan *installPlan, targetModID string) {
+// showInstallPlan displays PlanInstall's resolved dependency tree (install
+// order: dependencies first, target last) and any missing/cyclic-dependency
+// warnings - byte-identical to the pre-refit CLI's own showInstallPlan
+// (which took a locally-resolved dependency list), now sourced from
+// *core.InstallPlan since dependency resolution itself moved into
+// Service.PlanInstall - see the task report.
+func showInstallPlan(plan *core.InstallPlan) {
 	fmt.Printf("\nDependency tree (install order):\n")
-	for i, mod := range plan.mods {
-		label := "[dependency]"
-		if mod.ID == targetModID {
-			label = "[target]"
-		}
-		fmt.Printf("  %d. %s v%s (ID: %s) %s\n", i+1, mod.Name, mod.Version, mod.ID, label)
+	i := 1
+	for _, dep := range plan.Dependencies {
+		fmt.Printf("  %d. %s v%s (ID: %s) [dependency]\n", i, dep.Name, dep.Version, dep.ID)
+		i++
 	}
+	fmt.Printf("  %d. %s v%s (ID: %s) [target]\n", i, plan.Mod.Name, plan.Mod.Version, plan.Mod.ID)
 
-	if plan.cycleDetected {
+	if plan.CycleDetected {
 		fmt.Fprintf(os.Stderr, "\n⚠ Warning: Circular dependency detected among dependencies; install order is best-effort.\n")
 	}
 
-	if len(plan.missing) > 0 {
-		fmt.Printf("\n⚠ Warning: %d dependency(ies) not available on source:\n", len(plan.missing))
-		for _, m := range plan.missing {
-			fmt.Printf("  - %s (may require manual install)\n", m)
+	if len(plan.MissingDependencies) > 0 {
+		fmt.Printf("\n⚠ Warning: %d dependency(ies) not available on source:\n", len(plan.MissingDependencies))
+		for _, ref := range plan.MissingDependencies {
+			fmt.Printf("  - %s (may require manual install)\n", domain.ModKey(ref.SourceID, ref.ModID))
 		}
 	}
-}
-
-// installModsWithDeps installs multiple mods in order (dependencies first).
-// Delegates to batchInstallMods.
-func installModsWithDeps(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
-	return batchInstallMods(ctx, service, game, mods, profileName)
 }
 
 // truncateChecksum returns a display-friendly checksum (first 12 chars + "...").
@@ -1169,9 +910,12 @@ func runInstallHook(ctx context.Context, runner *core.HookRunner, hooks *core.Re
 	return err
 }
 
-// batchInstallMods is the shared implementation for installing multiple mods sequentially.
-// Used by installMultipleMods (multi-select from search) and installModsWithDeps (dependency-resolved).
-// Each mod's SourceID is used for API calls (set during search/dep resolution).
+// batchInstallMods is the shared implementation for installing multiple mods
+// sequentially. Used by installMultipleMods (multi-select from search) -
+// dependency-resolved installs go through PlanInstall/ApplyInstall instead
+// as of Phase 5b Task 2 (see doInstall and ApplyInstall's doc comments for
+// why the two paths were unified there rather than here). Each mod's
+// SourceID is used for API calls (set during search/dep resolution).
 func batchInstallMods(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
 	fmt.Printf("\nInstalling %d mod(s)...\n", len(mods))
 
