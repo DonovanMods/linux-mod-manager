@@ -527,11 +527,16 @@ func (m Model) checkForUpdates() (Model, tea.Cmd) {
 // way, m.summary.Updates is set to the real count (task-5-brief.md's
 // Dashboard summary tie-in: Summary.Updates renders the "?" sentinel, -1,
 // until a check has actually run) - this is the model's own in-memory
-// count, not a DataProvider change, so it reverts to unknown on the next
-// unrelated refresh (m.loadData re-reads Overview, which still reports -1
-// until Phase 6 gives DataProvider its own persistent Updates count - an
-// accepted tradeoff per task-5-brief.md's own "no DataProvider change"
-// framing, documented here rather than worked around).
+// count, not a DataProvider change (m.loadData re-reads Overview, which
+// still reports -1 until Phase 6 gives DataProvider its own persistent
+// Updates count - an accepted tradeoff per task-5-brief.md's own "no
+// DataProvider change" framing). The dataLoadedMsg handler in app.go
+// preserves this known count across an UNRELATED refresh rather than
+// reverting it to the DataProvider's sentinel (a fix-wave-1 correction to
+// this comment's earlier claim that it reverted); it re-sentinels back to
+// -1 only when an update-apply batch actually completes (actionDoneMsg,
+// app.go), since applying updates is the one case that genuinely makes the
+// count stale.
 //
 // Zero updates resolves synchronously to a status line (formatOutcomeStatus
 // reused for its Message-plus-Warnings rendering convention, rather than

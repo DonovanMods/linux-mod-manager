@@ -601,6 +601,41 @@ func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	require.Contains(t, model.View(), "/ focus · s source", "unfocused idle hint still tells the user how to refocus")
 }
 
+// sentinelUpdatesProvider mirrors coreProvider.Overview's real shape: no
+// update check has ever run, so Updates/Conflicts report the -1 "unknown"
+// sentinel from the very first load.
+type sentinelUpdatesProvider struct{}
+
+func (sentinelUpdatesProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{Updates: -1, Conflicts: -1}, nil, nil
+}
+func (sentinelUpdatesProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (sentinelUpdatesProvider) Sources() []string                               { return []string{"nexusmods"} }
+func (sentinelUpdatesProvider) SourceInfos() []SourceInfo                       { return nil }
+func (sentinelUpdatesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
+
+// TestFirstLoadHonorsProviderUpdatesSentinel guards the dataLoadedMsg
+// preserve behavior (see mutations_test.go's
+// TestDataLoadedMsgPreservesKnownUpdatesCountAcrossUnrelatedRefresh) against
+// misfiring on the model's very FIRST load. Before any dataLoadedMsg has
+// ever landed, m.summary is the zero-value Summary{} - Updates == 0 - which
+// must NOT be mistaken for a "known" count of zero updates: a provider
+// reporting the -1 sentinel on the first load (exactly coreProvider's real
+// behavior before any check has run) must still render "?", not "0".
+func TestFirstLoadHonorsProviderUpdatesSentinel(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewModel(Options{Theme: "wizardry", Provider: sentinelUpdatesProvider{}})
+	require.NoError(t, err)
+
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	require.Equal(t, -1, model.summary.Updates, "the first load must take the provider's own sentinel, not a preserved zero-value")
+}
+
 // recordingProvider wraps a delegate DataProvider and records the context
 // passed to Overview for test verification.
 type recordingProvider struct {

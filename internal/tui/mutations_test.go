@@ -2119,6 +2119,103 @@ func TestCheckUpdatesUpdatesSummaryCountToZeroWhenNoneFound(t *testing.T) {
 	require.Equal(t, 0, model.summary.Updates, "zero updates is a KNOWN count (0), not the unknown sentinel (-1)")
 }
 
+// TestDataLoadedMsgPreservesKnownUpdatesCountAcrossUnrelatedRefresh guards
+// against reverting the dashboard's just-checked Updates count to the "?"
+// sentinel on ANY subsequent, unrelated refresh. resolveCheckUpdatesResult
+// sets m.summary.Updates to the real, in-memory count (see its own doc
+// comment), but the dataLoadedMsg handler wholesale-overwrote m.summary
+// with whatever the DataProvider reports - and coreProvider.Overview always
+// reports Updates: -1 (no persistent count until Phase 6) - so an unrelated
+// refresh (enable/disable/deploy/switch/install; anything that re-runs
+// m.loadData) reverted a just-checked "3 updates" straight back to "?" even
+// though nothing about updates changed. A fresh NON-sentinel count from the
+// provider must still win over a preserved one - see
+// TestActionDoneReSentinelsUpdatesCountAfterApplyingUpdates for the one case
+// that SHOULD go stale.
+func TestDataLoadedMsgPreservesKnownUpdatesCountAcrossUnrelatedRefresh(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "a", Name: "A", FromVersion: "1", ToVersion: "2"},
+		{Source: "nexusmods", ID: "b", Name: "B", FromVersion: "1", ToVersion: "2"},
+		{Source: "nexusmods", ID: "c", Name: "C", FromVersion: "1", ToVersion: "2"},
+	}}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.Equal(t, 3, model.summary.Updates, "sanity: the check set the real count")
+
+	// An unrelated refresh - e.g. the one enable/disable/deploy/switch
+	// already trigger - carrying the DataProvider's own "?" sentinel
+	// summary must not wipe out what was just learned.
+	updated, _ = model.Update(dataLoadedMsg{summary: Summary{Updates: -1, Conflicts: -1}, mods: model.mods, profiles: model.profiles})
+	model = updated.(Model)
+
+	require.Equal(t, 3, model.summary.Updates, "an unrelated refresh must not revert a known Updates count to the unknown sentinel")
+}
+
+// TestDataLoadedMsgFreshNonSentinelUpdatesCountWins proves a genuinely fresh
+// (non-sentinel) Updates count from the DataProvider always wins over a
+// preserved one - the preserve behavior above only applies when the
+// incoming summary reports the -1 sentinel.
+func TestDataLoadedMsgFreshNonSentinelUpdatesCountWins(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.summary.Updates = 3
+
+	updated, _ := model.Update(dataLoadedMsg{summary: Summary{Updates: 7, Conflicts: -1}, mods: model.mods, profiles: model.profiles})
+	model = updated.(Model)
+
+	require.Equal(t, 7, model.summary.Updates, "a fresh non-sentinel count must overwrite a previously known one")
+}
+
+// TestActionDoneReSentinelsUpdatesCountAfterApplyingUpdates covers the
+// companion case: applying updates REDUCES how many are available, so the
+// just-checked count is now wrong, not merely unrelated. Phase 5b has no way
+// to compute the new real count without re-running CheckUpdates (see
+// resolveCheckUpdatesResult's doc comment on the "no DataProvider change"
+// tradeoff), so the least-surprising behavior is to re-sentinel Updates back
+// to "?" in the update-apply action's own done-path, rather than leave a
+// stale count on screen or have the very next unrelated refresh's preserve
+// logic (see the pair of tests above) keep it alive indefinitely.
+func TestActionDoneReSentinelsUpdatesCountAfterApplyingUpdates(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{
+		UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+			{Source: "nexusmods", ID: "a", Name: "A", FromVersion: "1", ToVersion: "2"},
+		}},
+		ApplyUpdateOutcome: ActionOutcome{Message: `Updated "A"`},
+	}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, 1, model.summary.Updates, "sanity: the check set the real count")
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, refreshCmd := model.Update(doneMsg)
+	model = updated.(Model)
+	require.NotNil(t, refreshCmd)
+
+	require.Equal(t, -1, model.summary.Updates, "a completed update-apply batch must re-sentinel Updates back to unknown - the just-checked count is now stale")
+}
+
 // --- Check/apply updates: prototype end-to-end ---
 
 // TestPrototypeUpdatesEndToEndKeyFlow drives the FULL updates flow through

@@ -121,7 +121,13 @@ func NewModel(options Options) (Model, error) {
 		ctx:      options.Ctx,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
-		search:   newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize()),
+		// Updates starts at its own "-1 unknown" sentinel (Summary's own
+		// doc comment), not the Go zero value 0, so the dataLoadedMsg
+		// preserve check below (`m.summary.Updates >= 0`) can't mistake
+		// "no load has happened yet" for "a check already found zero
+		// updates" on the very first load.
+		summary: Summary{Updates: -1, Conflicts: -1},
+		search:  newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize()),
 		// sources is seeded synchronously (like search's source list above)
 		// rather than through loadData/dataLoadedMsg: SourceInfos is a
 		// read-only view of already-registered sources, not an I/O call that
@@ -253,7 +259,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case dataLoadedMsg:
 		m.state = stateReady
-		m.summary = msg.summary
+		summary := msg.summary
+		// Updates is the model's own in-memory count once a check has
+		// actually run (see resolveCheckUpdatesResult's doc comment) -
+		// coreProvider.Overview has no persistent count of its own and
+		// always reports the -1/"?" sentinel, so wholesale-overwriting
+		// m.summary with every incoming summary reverted a just-checked
+		// count to "?" on the very next UNRELATED refresh (enable/
+		// disable/deploy/switch/install all funnel through here). Preserve
+		// the session's known count across that case; a genuinely fresh,
+		// non-sentinel count from the provider still always wins. The one
+		// case that SHOULD go stale - applying updates, which changes how
+		// many are left - re-sentinels explicitly in actionDoneMsg below
+		// rather than here, since a plain refresh has no way to tell "stale
+		// because updates were just applied" apart from "stale because
+		// nothing changed".
+		if summary.Updates < 0 && m.summary.Updates >= 0 {
+			summary.Updates = m.summary.Updates
+		}
+		m.summary = summary
 		m.mods = msg.mods
 		m.profiles = msg.profiles
 		m.clampSelections()
@@ -277,6 +301,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// targeting it too (finding C1).
 		if msg.switchedTo != "" {
 			m.rebindProfile(msg.switchedTo)
+		}
+		// A completed update-apply batch invalidates the just-checked
+		// Updates count: applying updates changes how many are left, and
+		// Phase 5b has no way to compute the new real number without
+		// re-running CheckUpdates (resolveCheckUpdatesResult's own doc
+		// comment on the "no DataProvider change" tradeoff). Re-sentinel it
+		// back to "?" here, in the action's own done-path, rather than
+		// leave a now-stale count on screen or lean on the dataLoadedMsg
+		// preserve behavior above (which has no way to distinguish "stale
+		// because updates were just applied" from "stale because nothing
+		// relevant changed") to eventually correct it.
+		if msg.kind == actionUpdate {
+			m.summary.Updates = -1
 		}
 		// A completed install additionally re-runs the current search query
 		// (if any) so the just-installed result's "installed" marker updates
