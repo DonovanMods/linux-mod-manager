@@ -1182,6 +1182,57 @@ func TestInstallConfirmCallsApplyInstallWithSelectedItemThenRefreshes(t *testing
 	require.Equal(t, `Installed "Campfire"`, model.action.status)
 }
 
+// TestInstallConfirmIsImmuneToSelectionDriftWhilePlanIsPending is a
+// regression/refactor guard for installPlanResultMsg's own doc comment: item
+// is captured in installSelectedSearchResult's dispatch closure and carried
+// unchanged through resolveInstallPlanResult, NOT re-read from
+// m.selected[ScreenSearch] on arrival. moveSelection (app.go's Down key
+// handler) is never gated on m.action.running, so a user is free to move the
+// cursor while "Planning install…" is in flight; this pins that doing so
+// cannot change which mod ends up installed. Select result A, press 'i',
+// move the cursor to result B before resolving the pending plan fetch,
+// confirm, and assert ApplyInstall was called with A - never B.
+func TestInstallConfirmIsImmuneToSelectionDriftWhilePlanIsPending(t *testing.T) {
+	t.Parallel()
+
+	itemA := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	itemB := ModItem{ID: "frostfall", Source: "nexusmods", Name: "Frostfall"}
+	rec := &recordingActions{
+		InstallPlanViewOut:  InstallPlanView{Name: "Campfire", Version: "1.12", Source: "nexusmods", SizeLabel: "4.5 MB"},
+		ApplyInstallOutcome: ActionOutcome{Message: `Installed "Campfire"`},
+	}
+	model := searchReadyModel(t, rec, []ModItem{itemA, itemB})
+	require.Equal(t, 0, model.selected[ScreenSearch], "A must be selected at dispatch time")
+
+	updated, cmd := model.Update(keyRunes("i"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	require.True(t, model.action.running, "plan fetch is in flight, not yet resolved")
+
+	// Selection drift while the plan fetch is pending: moveSelection isn't
+	// gated on m.action.running, so this must succeed - and must not affect
+	// which item the eventual install targets.
+	updated, moveCmd := model.Update(keyRunes("j"))
+	model = updated.(Model)
+	require.Nil(t, moveCmd)
+	require.Equal(t, 1, model.selected[ScreenSearch], "cursor moved to B while the plan fetch was pending")
+
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, `Install "Campfire"?`, model.action.pending.title, "the resolved plan is still A's, not B's")
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.NotNil(t, confirmCmd)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	require.Equal(t, []ModItem{itemA}, rec.ApplyInstallCalls, "ApplyInstall must target A (selected at dispatch), never B (selected at resolution)")
+	require.Equal(t, []ModItem{itemA}, rec.PlanInstallCalls, "no second PlanInstall was triggered by the selection drift")
+}
+
 func TestInstallCancelDoesNotCallApplyInstall(t *testing.T) {
 	t.Parallel()
 
