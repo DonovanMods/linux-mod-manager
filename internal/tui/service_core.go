@@ -335,25 +335,25 @@ func (p *coreProvider) hookContext() core.HookContext {
 }
 
 func (p *coreProvider) EnableMod(ctx context.Context, item ModItem) (ActionOutcome, error) {
-	changed, err := p.svc.EnableMod(ctx, p.game, p.profile, item.Source, item.ID)
+	result, err := p.svc.EnableMod(ctx, p.game, p.profile, item.Source, item.ID)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("enabling %s: %w", item.Name, err)
 	}
-	if !changed {
+	if !result.Changed {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already enabled", item.Name)}, nil
 	}
-	return ActionOutcome{Message: fmt.Sprintf("Enabled %q", item.Name)}, nil
+	return ActionOutcome{Message: fmt.Sprintf("Enabled %q", item.Name), Warnings: mergeDiagnostics(nil, result.Notes)}, nil
 }
 
 func (p *coreProvider) DisableMod(ctx context.Context, item ModItem) (ActionOutcome, error) {
-	changed, err := p.svc.DisableMod(ctx, p.game, p.profile, item.Source, item.ID)
+	result, err := p.svc.DisableMod(ctx, p.game, p.profile, item.Source, item.ID)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("disabling %s: %w", item.Name, err)
 	}
-	if !changed {
+	if !result.Changed {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already disabled", item.Name)}, nil
 	}
-	return ActionOutcome{Message: fmt.Sprintf("Disabled %q", item.Name)}, nil
+	return ActionOutcome{Message: fmt.Sprintf("Disabled %q", item.Name), Warnings: mergeDiagnostics(nil, result.Notes)}, nil
 }
 
 // UninstallMod runs the same hook configuration cmd/lmm/uninstall.go's

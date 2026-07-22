@@ -530,6 +530,37 @@ func TestCoreProviderActions_DisableMod_UndeploysAndReturnsMessage(t *testing.T)
 	assert.True(t, os.IsNotExist(err), "DisableMod must undeploy the mod's files")
 }
 
+// TestCoreProviderActions_DisableMod_UndeployFailureSurfacesAsWarning guards
+// Task 6 item a's TUI refit: coreProvider.DisableMod folds
+// core.DisableResult.Notes into ActionOutcome.Warnings (the established
+// mergeDiagnostics pattern - see UninstallMod/DeployProfile), so an
+// undeploy failure that used to be silently swallowed (`_ =` in flows.go
+// pre-Task-6) now reaches the TUI status line instead of vanishing.
+func TestCoreProviderActions_DisableMod_UndeployFailureSurfacesAsWarning(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+
+	// Corrupt the deployed file into a plain file (not a symlink) so the
+	// symlink linker's Undeploy fails deterministically ("not a symlink") -
+	// mirrors internal/core/flows_test.go's
+	// TestService_DisableMod_UndeployFailureIsNonFatal.
+	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+
+	outcome, err := actions.DisableMod(context.Background(), tui.ModItem{ID: "1", Source: "src", Name: "Test Mod"})
+	require.NoError(t, err, "undeploy failures must not fail DisableMod")
+	assert.Equal(t, `Disabled "Test Mod"`, outcome.Message)
+	require.Len(t, outcome.Warnings, 1)
+	assert.Contains(t, outcome.Warnings[0], "Warning: failed to undeploy some files: ")
+
+	mod, err := svc.GetInstalledMod("src", "1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "DB should still flip to disabled even when undeploy is best-effort")
+}
+
 func TestCoreProviderActions_DisableMod_AlreadyDisabledMessage(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	seedActionMod(t, svc, game, "src", "1", "Test Mod", "1.0", false, nil)

@@ -216,12 +216,13 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
-	changed, err := service.EnableMod(ctx, game, profileName, modSource, modID)
+	result, err := service.EnableMod(ctx, game, profileName, modSource, modID)
 	if err != nil {
 		return err
 	}
+	printModNotes(result.Notes)
 
-	if !changed {
+	if !result.Changed {
 		fmt.Printf("%s is already enabled.\n", mod.Name)
 		return nil
 	}
@@ -252,18 +253,33 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
-	changed, err := service.DisableMod(ctx, game, profileName, modSource, modID)
+	result, err := service.DisableMod(ctx, game, profileName, modSource, modID)
 	if err != nil {
 		return err
 	}
+	printModNotes(result.Notes)
 
-	if !changed {
+	if !result.Changed {
 		fmt.Printf("%s is already disabled.\n", mod.Name)
 		return nil
 	}
 
 	fmt.Printf("✓ Disabled: %s (files removed from game, kept in cache)\n", mod.Name)
 	return nil
+}
+
+// printModNotes prints notes (EnableResult.Notes/DisableResult.Notes) to
+// stdout, only under --verbose — the historical display contract
+// UninstallResult's doc comment documents (each entry already carries its
+// prefix word baked in, e.g. DisableResult's restored pre-5a "Warning:
+// failed to undeploy some files: %v"). Safe to call with a nil/empty slice.
+func printModNotes(notes []string) {
+	if !verbose {
+		return
+	}
+	for _, n := range notes {
+		fmt.Printf("  %s\n", n)
+	}
 }
 
 func runModFiles(cmd *cobra.Command, args []string) error {

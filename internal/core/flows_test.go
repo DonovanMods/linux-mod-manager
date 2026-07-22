@@ -98,9 +98,10 @@ func TestService_EnableMod_DeploysDisabledMod(t *testing.T) {
 		"plugin.esp": []byte("data"),
 	})
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
-	assert.True(t, changed)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.NoError(t, err, "plugin.esp should be deployed to the game dir")
@@ -119,9 +120,10 @@ func TestService_EnableMod_AlreadyEnabledIsNoop(t *testing.T) {
 		"plugin.esp": []byte("data"),
 	})
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
-	assert.False(t, changed)
+	require.NotNil(t, result)
+	assert.False(t, result.Changed)
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err), "no-op enable must not deploy files")
@@ -135,9 +137,9 @@ func TestService_EnableMod_MissingCacheErrors(t *testing.T) {
 	// Installed-mod record exists, but nothing was ever stored in the cache.
 	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, nil)
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
 	require.Error(t, err)
-	assert.False(t, changed)
+	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "not found in cache")
 
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
@@ -161,9 +163,9 @@ func TestService_EnableMod_DeployFailurePropagatesAndLeavesDBUntouched(t *testin
 	// TestInstaller_Install_DeployFailureRollsBackAndClearsDB.
 	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "blocked"), []byte("occupied"), 0644))
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
 	require.Error(t, err)
-	assert.False(t, changed)
+	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to deploy mod")
 
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
@@ -175,9 +177,9 @@ func TestService_EnableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
-	changed, err := svc.EnableMod(context.Background(), game, "default", "src", "missing")
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "missing")
 	require.Error(t, err)
-	assert.False(t, changed)
+	assert.Nil(t, result)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -197,9 +199,11 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
-	changed, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
-	assert.True(t, changed)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	assert.Empty(t, result.Notes, "a clean undeploy must not record a diagnostic")
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err), "plugin.esp should be removed from the game dir")
@@ -220,18 +224,19 @@ func TestService_DisableMod_AlreadyDisabledIsNoop(t *testing.T) {
 		"plugin.esp": []byte("data"),
 	})
 
-	changed, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
-	assert.False(t, changed)
+	require.NotNil(t, result)
+	assert.False(t, result.Changed)
 }
 
 func TestService_DisableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
-	changed, err := svc.DisableMod(context.Background(), game, "default", "src", "missing")
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "missing")
 	require.Error(t, err)
-	assert.False(t, changed)
+	assert.Nil(t, result)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -240,7 +245,10 @@ func TestService_DisableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
 // pre-extraction CLI (doModDisable) treated Uninstall failures as non-fatal
 // ("warn but continue" under --verbose) because files may already have been
 // removed manually. DisableMod preserves the *functional* outcome — DB still
-// flips to disabled — even when undeploying fails.
+// flips to disabled — even when undeploying fails, and (Task 6 item a)
+// records the historical diagnostic text in Notes rather than discarding it,
+// so a caller (cmd/lmm's doModDisable) can restore the pre-5a --verbose
+// warning byte-identically.
 func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -259,9 +267,13 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	require.NoError(t, os.Remove(deployedPath))
 	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
-	changed, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err, "undeploy failures must not fail DisableMod")
-	assert.True(t, changed)
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	require.Len(t, result.Notes, 1)
+	assert.Contains(t, result.Notes[0], "Warning: failed to undeploy some files: ",
+		"must carry the pre-5a historical prefix verbatim, matching UninstallResult's own convention")
 
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
 	require.NoError(t, err)

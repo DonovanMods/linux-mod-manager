@@ -15,62 +15,97 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
+// EnableResult reports the outcome of EnableMod. Changed is true iff the
+// mod was actually deployed and flipped to enabled — false (not an error)
+// when it was already enabled, mirroring EnableMod's pre-Task-6 (bool,
+// error) return. Notes carries operational diagnostics using the same
+// display-contract convention as UninstallResult/DeployResult (Task 2's
+// convention, extended here in Task 6 item a for result-struct
+// convergence): always empty today — EnableMod has no diagnostic-producing
+// step — kept for parity with DisableResult and so a future EnableMod
+// diagnostic wouldn't need another signature change.
+type EnableResult struct {
+	Changed bool
+	Notes   []string
+}
+
+// DisableResult reports the outcome of DisableMod. Changed mirrors
+// EnableResult.Changed. Notes carries the sole diagnostic DisableMod can
+// produce — a non-fatal undeploy failure (see DisableMod's doc comment) —
+// using the same historical-prefix-baked-into-the-text convention
+// UninstallResult's doc comment documents: a caller wanting byte-identical
+// pre-5a output should print each entry to stdout ONLY under --verbose,
+// verbatim, e.g. `fmt.Printf("  %s\n", n)`.
+type DisableResult struct {
+	Changed bool
+	Notes   []string
+}
+
 // EnableMod deploys an installed-but-disabled mod's files from the cache to
-// the game directory and marks it enabled in the database. Returns
-// (false, nil) — not an error — if the mod was already enabled.
-func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (bool, error) {
+// the game directory and marks it enabled in the database. Returns a result
+// with Changed false — not an error — if the mod was already enabled.
+func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*EnableResult, error) {
 	mod, err := s.GetInstalledMod(sourceID, modID, game.ID, profileName)
 	if err != nil {
-		return false, fmt.Errorf("getting installed mod %s: %w", modID, err)
+		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
 	}
 
 	if mod.Enabled {
-		return false, nil
+		return &EnableResult{}, nil
 	}
 
 	if !s.GetGameCache(game).Exists(game.ID, sourceID, modID, mod.Version) {
-		return false, fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
+		return nil, fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 
 	installer := s.GetInstaller(game)
 	if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
-		return false, fmt.Errorf("failed to deploy mod: %w", err)
+		return nil, fmt.Errorf("failed to deploy mod: %w", err)
 	}
 
 	if err := s.SetModEnabled(sourceID, modID, game.ID, profileName, true); err != nil {
-		return false, fmt.Errorf("failed to update mod status: %w", err)
+		return nil, fmt.Errorf("failed to update mod status: %w", err)
 	}
 
-	return true, nil
+	return &EnableResult{Changed: true}, nil
 }
 
 // DisableMod undeploys the mod's files from the game directory — the cache
 // entry is kept so the mod can be re-enabled later without downloading again
-// — and marks it disabled in the database. Returns (false, nil) — not an
-// error — if the mod was already disabled.
+// — and marks it disabled in the database. Returns a result with Changed
+// false — not an error — if the mod was already disabled.
 //
 // Undeploy failures are treated as non-fatal: the game files may already
 // have been removed manually, and refusing to record the user's intent to
 // disable the mod would leave it stuck. This mirrors the pre-extraction CLI,
-// which warned (under --verbose) but always continued to flip the DB state.
-func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (bool, error) {
+// which warned (under --verbose) but always continued to flip the DB state
+// — DisableResult.Notes (Task 6 item a) restores that diagnostic for
+// callers that want it, rather than discarding it as the (bool, error)
+// signature this replaces was forced to.
+func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*DisableResult, error) {
 	mod, err := s.GetInstalledMod(sourceID, modID, game.ID, profileName)
 	if err != nil {
-		return false, fmt.Errorf("getting installed mod %s: %w", modID, err)
+		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
 	}
 
 	if !mod.Enabled {
-		return false, nil
+		return &DisableResult{}, nil
 	}
 
+	result := &DisableResult{}
 	installer := s.GetInstaller(game)
-	_ = installer.Uninstall(ctx, game, &mod.Mod, profileName) //nolint:errcheck // best-effort undeploy; see doc comment
+	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
+		// Non-fatal — see doc comment. Historical "Warning: " prefix baked
+		// into the text itself, matching UninstallResult's own convention.
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to undeploy some files: %v", err))
+	}
 
 	if err := s.SetModEnabled(sourceID, modID, game.ID, profileName, false); err != nil {
-		return false, fmt.Errorf("failed to update mod status: %w", err)
+		return result, fmt.Errorf("failed to update mod status: %w", err)
 	}
 
-	return true, nil
+	result.Changed = true
+	return result, nil
 }
 
 // UninstallOptions configures UninstallMod.

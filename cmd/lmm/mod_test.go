@@ -2,10 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 )
 
 func TestModCmd_Structure(t *testing.T) {
@@ -197,4 +204,64 @@ func TestModDisableCmd_NoModID(t *testing.T) {
 	err := cmd.Execute()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "accepts 1 arg")
+}
+
+// TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically
+// guards Task 6 item a: EnableMod/DisableMod's (bool, error) -> result-struct
+// convergence restores the pre-5a --verbose diagnostic doModDisable dropped
+// in 5a Task 1 (adjudicated acceptable-until-convergence at the time - see
+// DisableMod's doc comment in flows.go). Asserts the printed line is
+// byte-identical to `git show v1.10.0:cmd/lmm/mod.go`'s
+// `fmt.Printf("  Warning: failed to undeploy some files: %v\n", err)`.
+func TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"src": "g1"},
+	}
+
+	// Deploy for real first (mirrors internal/core/flows_test.go's
+	// TestService_DisableMod_UndeployFailureIsNonFatal) so there is
+	// something to undeploy.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	// Corrupt the deployed file into a plain file (not a symlink) so the
+	// symlink linker's Undeploy fails deterministically ("not a symlink").
+	deployedPath := filepath.Join(gameDir, "plugin.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+
+	oldSource, oldProfile, oldVerbose := modSource, modProfile, verbose
+	modSource = "src"
+	modProfile = ""
+	verbose = true
+	t.Cleanup(func() {
+		modSource, modProfile, verbose = oldSource, oldProfile, oldVerbose
+	})
+
+	out := captureStdout(t, func() error {
+		return doModDisable(context.Background(), svc, game, "1")
+	})
+
+	assert.Contains(t, out, "  Warning: failed to undeploy some files: ",
+		"missing byte-identical restored undeploy-failure diagnostic; got:\n%s", out)
+	assert.Contains(t, out, "✓ Disabled: Test Mod (files removed from game, kept in cache)")
 }
