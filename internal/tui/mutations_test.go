@@ -1419,6 +1419,36 @@ func TestInstallKeyEmptyResultsIsNoop(t *testing.T) {
 	require.Empty(t, rec.PlanInstallCalls)
 }
 
+// TestInstallKeyStaleSearchStateIsNoop proves 'i' is inert whenever
+// m.search.page still holds a PREVIOUS search's results but m.search.state
+// is no longer searchReady (Copilot review finding on PR #63,
+// internal/tui/mutations.go ~line 339): startSearch bumps state to
+// searchLoading for a new query WITHOUT clearing m.search.page, so a stale
+// page lingers through searchLoading (and, more incidentally, through
+// searchIdle/searchFailed/searchAuthRequired too) - reading
+// m.search.page.Results without checking m.search.state would let 'i'
+// plan-and-install a result that isn't the one currently displayed. Mirrors
+// refreshSearchAfterInstall's own state check (mutations.go) and
+// app.go's next/prev-page guards, which already gate on searchReady before
+// touching m.search.page.
+func TestInstallKeyStaleSearchStateIsNoop(t *testing.T) {
+	t.Parallel()
+
+	item := ModItem{ID: "campfire", Source: "nexusmods", Name: "Campfire"}
+	for _, state := range []searchState{searchIdle, searchLoading, searchFailed, searchAuthRequired} {
+		rec := &recordingActions{}
+		model := searchReadyModel(t, rec, []ModItem{item})
+		model.search.state = state // page.Results still holds the OLD (stale) results
+
+		updated, cmd := model.Update(keyRunes("i"))
+		model = updated.(Model)
+		require.Nil(t, cmd, "state %v", state)
+		require.False(t, model.action.running, "state %v", state)
+		require.Nil(t, model.action.pending, "state %v", state)
+		require.Empty(t, rec.PlanInstallCalls, "state %v", state)
+	}
+}
+
 func TestInstallKeyWrongScreenIsNoop(t *testing.T) {
 	t.Parallel()
 

@@ -314,20 +314,36 @@ type installPlanFailedMsg struct {
 
 // installSelectedSearchResult handles 'i' on Search (task-5-brief.md's
 // Install-from-search flow): a no-op on the wrong screen, with no
-// ActionProvider, with no result selected (covers both an empty page and a
-// stale selected index), or while another action/plan is already in
-// flight. The focused-input case never reaches here at all - updateKey's
-// focused-input branch (app.go) intercepts every key, including 'i', before
-// the outer switch this is dispatched from, so 'i' types into the query
-// exactly like every other letter. Mirrors switchSelectedProfile's async
-// plan-fetch shape (mutations.go's template for this pattern): dispatches
-// PlanInstall and shows a "Planning install…" status instead of a modal
-// until the result arrives.
+// ActionProvider, while another action/plan is already in flight, when the
+// search isn't in searchReady (idle/loading/failed/auth-required - see
+// below), or with no result selected (covers both an empty page and a stale
+// selected index). The focused-input case never reaches here at all -
+// updateKey's focused-input branch (app.go) intercepts every key, including
+// 'i', before the outer switch this is dispatched from, so 'i' types into
+// the query exactly like every other letter. Mirrors switchSelectedProfile's
+// async plan-fetch shape (mutations.go's template for this pattern):
+// dispatches PlanInstall and shows a "Planning install…" status instead of a
+// modal until the result arrives.
+//
+// The searchReady check (Copilot review finding on PR #63): startSearch
+// bumps m.search.state to searchLoading for a new query WITHOUT clearing
+// m.search.page, so the previous query's results linger in m.search.page
+// through searchLoading (and, more incidentally, through
+// searchIdle/searchFailed/searchAuthRequired too - none of which should ever
+// still show old results, but the state is re-checked defensively rather
+// than assumed). Reading m.search.page.Results without this guard would let
+// 'i' plan-and-install a result that isn't the one currently displayed -
+// e.g. while the screen reads "Consulting the archive index…". Mirrors
+// refreshSearchAfterInstall's own state check and app.go's next/prev-page
+// guards, which already gate on searchReady before touching m.search.page.
 func (m Model) installSelectedSearchResult() (Model, tea.Cmd) {
 	if m.screen != ScreenSearch || m.actions == nil {
 		return m, nil
 	}
 	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	if m.search.state != searchReady {
 		return m, nil
 	}
 
