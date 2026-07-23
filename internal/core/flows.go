@@ -1449,9 +1449,9 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 // cmd/lmm/profile.go's doProfileSwitch's diff computation (through its
 // "Show changes" print block) - see the task report for the exact mapping.
 //
-// CRITICAL: this mirrors the CLI's OWN diff algorithm, which is distinct
-// from (and does not call) ProfileManager.Switch - see the task report for
-// why both exist.
+// CRITICAL: this mirrors the CLI's OWN diff algorithm. (An older, unused
+// ProfileManager.Switch implementation coexisted with it until #60 retired
+// it - this flow is the only switch implementation now.)
 type SwitchPlan struct {
 	GameID, From, To string
 
@@ -1672,11 +1672,24 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			continue
 		}
 		if err := s.SetModEnabled(im.SourceID, im.ID, game.ID, plan.To, true); err != nil {
-			msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)
-			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = SwitchEnableNote, msg
-			emit(evt)
+			if errors.Is(err, domain.ErrModNotFound) {
+				// im's row lives under a different profile (PlanProfileSwitch
+				// admits such mods into ToEnable), so the UPDATE-only
+				// SetModEnabled matched nothing; create the target-profile row
+				// so the deployment we just made isn't orphaned (#60).
+				row := im
+				row.ProfileName = plan.To
+				row.Enabled = true
+				row.Deployed = true
+				err = s.SaveInstalledMod(&row)
+			}
+			if err != nil {
+				msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)
+				result.Notes = append(result.Notes, msg)
+				evt := base
+				evt.Phase, evt.Detail = SwitchEnableNote, msg
+				emit(evt)
+			}
 		}
 
 		result.Enabled++
