@@ -2323,6 +2323,57 @@ func TestService_ApplyProfileSwitch_EnableLoop_SetModEnabledFailureIsNonFatalNot
 	assert.NoError(t, err, "the mod must still have been deployed")
 }
 
+// TestService_ApplyProfileSwitch_EnableLoop_ModInstalledUnderOtherProfile_CreatesTargetRow
+// guards the #60 fix: when the target profile's YAML references a mod whose
+// installed_mods row lives only under a DIFFERENT profile (reachable via
+// profile export/import or hand-edited profile lists), enabling it must
+// create a row under the target profile - otherwise the deployment is
+// orphaned: files on disk and tracked in deployed_files, but invisible to
+// GetInstalledMods(game, target), so a later switch AWAY from the target
+// never undeploys the mod.
+func TestService_ApplyProfileSwitch_EnableLoop_ModInstalledUnderOtherProfile_CreatesTargetRow(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+
+	// Installed+disabled under "default"; referenced by "target"'s YAML
+	// without ever having been installed there.
+	seedInstalledModUnderProfile(t, svc, game, "default", "src", "1", "Test Mod", "1.0", false, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "target", "src", "1", "1.0")
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+	require.Len(t, plan.ToEnable, 1)
+	require.Equal(t, "default", plan.ToEnable[0].ProfileName,
+		"precondition: the planned mod's row must live under the other profile")
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Enabled)
+	assert.Empty(t, result.Notes, "creating the missing target row must not be downgraded to a warning")
+
+	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	assert.NoError(t, err, "the mod must be deployed to the game dir")
+
+	row, err := svc.GetInstalledMod("src", "1", "g1", "target")
+	require.NoError(t, err, "an installed_mods row must exist under the target profile")
+	assert.True(t, row.Enabled)
+	assert.True(t, row.Deployed)
+
+	// The orphan regression: switching back away from "target" must see the
+	// mod as enabled there and schedule it for disable/undeploy.
+	backPlan, err := svc.PlanProfileSwitch(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.Len(t, backPlan.ToDisable, 1, "switching away must undeploy the mod (it was orphaned before #60)")
+	assert.Equal(t, "1", backPlan.ToDisable[0].ID)
+}
+
 // TestService_ApplyProfileSwitch_InstallLoop_FetchFailureSkipsModAndContinuesToNextMod
 // guards the install loop's per-ref isolation: a mod whose source isn't
 // registered (GetMod fails) is skipped via a SwitchInstallError event and

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.12.2] - 2026-07-23
+## [1.12.3] - 2026-07-23
 
 ### Fixed
 
@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `--profile` flag help text now uniformly reads "(default: active profile)"; several commands previously documented the literal "default" fallback
+
+## [1.12.2] - 2026-07-23
+
+### Fixed
+
+- Profile switch: enabling a mod whose install record lives under a different profile (reachable via `profile export`/`import` or hand-edited profile lists) now creates the record under the target profile, so a later switch away undeploys it — previously the files were deployed but invisible to the target profile, leaving an orphaned deployment and a spurious "failed to update … mod not found" warning (#60)
+
+### Removed
+
+- Dead code: `ProfileManager.Switch` and its rollback helpers — an older, unused second switch implementation superseded by `PlanProfileSwitch`/`ApplyProfileSwitch` (#60)
 
 ## [1.12.1] - 2026-07-23
 
@@ -805,7 +815,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.2...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.3...HEAD
+[1.12.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.2...v1.12.3
 [1.12.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.1...v1.12.2
 [1.12.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.11.0...v1.12.0
