@@ -460,9 +460,15 @@ type recordingActions struct {
 	ApplyInstallCalls []ModItem
 	CheckUpdatesCalls int
 	ApplyUpdateCalls  []UpdateItem
+	// SetPolicyCalls records each SetUpdatePolicy call as {modID, policy} -
+	// Task 5's picker wiring tests assert against this rather than a
+	// []ModItem (mirroring the other *Calls fields) since both the mod
+	// identity and the chosen policy string matter to those tests.
+	SetPolicyCalls []struct{ ModID, Policy string }
 
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
+	SetPolicyOutcome                                                             ActionOutcome
 	PlanView                                                                     SwitchPlanView
 	InstallPlanViewOut                                                           InstallPlanView
 	UpdatesViewOut                                                               UpdatesView
@@ -477,6 +483,7 @@ type recordingActions struct {
 
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
+	SetPolicyErr                                                      error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -553,6 +560,11 @@ func (r *recordingActions) ApplyUpdate(_ context.Context, u UpdateItem, progress
 	return r.ApplyUpdateOutcome, r.ApplyUpdateErr
 }
 
+func (r *recordingActions) SetUpdatePolicy(_ context.Context, item ModItem, policy string) (ActionOutcome, error) {
+	r.SetPolicyCalls = append(r.SetPolicyCalls, struct{ ModID, Policy string }{item.ID, policy})
+	return r.SetPolicyOutcome, r.SetPolicyErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -603,6 +615,10 @@ func (f failingActions) CheckUpdates(context.Context) (UpdatesView, error) {
 }
 
 func (f failingActions) ApplyUpdate(context.Context, UpdateItem, func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) SetUpdatePolicy(context.Context, ModItem, string) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 

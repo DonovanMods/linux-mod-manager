@@ -1589,3 +1589,79 @@ func TestCoreProviderActions_ApplyUpdate_MapsNotSupportedError(t *testing.T) {
 	assert.NotContains(t, err.Error(), "lmm install",
 		"an updates-capability gap must never suggest the install-path fallback")
 }
+
+// TestCoreProviderActions_SetUpdatePolicy_PersistsAndReadsBack is Task 5's
+// coreProvider guard: setting "auto" through the ActionProvider seam
+// persists via svc.SetModUpdatePolicy, visible in a direct
+// svc.GetInstalledMod read-back as domain.UpdateAuto - a real Service
+// fixture, no recording fake, so this proves the actual DB write/mapping
+// rather than just the wiring.
+func TestCoreProviderActions_SetUpdatePolicy_PersistsAndReadsBack(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modP", "Mod P", "1.0", true, nil)
+	item := tui.ModItem{ID: "modP", Source: "src", Name: "Mod P"}
+
+	outcome, err := actions.SetUpdatePolicy(context.Background(), item, "auto")
+	require.NoError(t, err)
+	assert.Equal(t, "Mod P update policy: auto", outcome.Message)
+
+	mod, err := svc.GetInstalledMod("src", "modP", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateAuto, mod.UpdatePolicy)
+}
+
+// TestCoreProviderActions_SetUpdatePolicy_UnknownPolicyErrors guards the
+// reject-not-default contract (service_core.go's parseUpdatePolicy): an
+// unrecognized policy string errors instead of silently mapping to
+// domain.UpdateNotify, and never reaches svc.SetModUpdatePolicy at all - the
+// mod's policy in the DB stays untouched.
+func TestCoreProviderActions_SetUpdatePolicy_UnknownPolicyErrors(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modQ", "Mod Q", "1.0", true, nil)
+	item := tui.ModItem{ID: "modQ", Source: "src", Name: "Mod Q"}
+
+	_, err := actions.SetUpdatePolicy(context.Background(), item, "bogus")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown policy "bogus"`)
+
+	mod, err := svc.GetInstalledMod("src", "modQ", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateNotify, mod.UpdatePolicy, "an unknown policy must never mutate the stored policy")
+}
+
+// TestCoreProviderOverview_MapsUpdatePolicyToWireString extends
+// TestCoreProviderOverview's own assertions (per task-5-brief.md: "extend
+// the existing Overview test's assertions minimally") to cover the
+// ModItem.UpdatePolicy field this task added: seeded UpdateAuto/UpdatePinned
+// mods must stringify to "auto"/"pin" (policyToString's documented wire
+// strings - NOT the CLI's own "pinned" spelling, see that function's doc
+// comment) in the Overview mapping.
+func TestCoreProviderOverview_MapsUpdatePolicyToWireString(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "201", SourceID: "nexusmods", GameID: game.ID, Name: "Auto Mod", Version: "1.0"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateAuto,
+		Enabled:      true,
+	}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "202", SourceID: "nexusmods", GameID: game.ID, Name: "Pinned Mod", Version: "1.0"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdatePinned,
+		Enabled:      true,
+	}))
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+
+	byID := map[string]tui.ModItem{}
+	for _, m := range mods {
+		byID[m.ID] = m
+	}
+	require.Contains(t, byID, "101", "pre-existing fixture mod must still be present")
+	assert.Equal(t, "notify", byID["101"].UpdatePolicy, "the fixture's default UpdatePolicy (zero value) maps to notify")
+	require.Contains(t, byID, "201")
+	assert.Equal(t, "auto", byID["201"].UpdatePolicy)
+	require.Contains(t, byID, "202")
+	assert.Equal(t, "pin", byID["202"].UpdatePolicy)
+}

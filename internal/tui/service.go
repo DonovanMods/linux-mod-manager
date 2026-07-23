@@ -36,6 +36,15 @@ type ModItem struct {
 	Downloads       int64
 	Endorsements    int64
 	HasEndorsements bool
+	// UpdatePolicy is the mod's current update-check policy - "notify",
+	// "auto", or "pin" (see ActionProvider.SetUpdatePolicy's doc comment for
+	// what each means) - populated by coreProvider's Overview mapping
+	// (stringified from domain.InstalledMod.UpdatePolicy) and
+	// prototypeProvider's canned Mod.UpdatePolicy field. Empty for a
+	// Search-derived ModItem (search results aren't installed, so they have
+	// no policy of their own) - only Overview/the Installed Mods screen ever
+	// populates it.
+	UpdatePolicy string
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of
@@ -209,6 +218,7 @@ func modItems(mods []prototype.Mod) []ModItem {
 			Downloads:       mod.Downloads,
 			Endorsements:    mod.Endorsements,
 			HasEndorsements: mod.HasEndorsements,
+			UpdatePolicy:    mod.UpdatePolicy,
 		})
 	}
 	return items

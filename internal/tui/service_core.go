@@ -105,12 +105,13 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {
 		items = append(items, ModItem{
-			ID:      mod.ID,
-			Name:    mod.Name,
-			Author:  mod.Author,
-			Version: mod.Version,
-			Source:  mod.SourceID,
-			Status:  installedModStatus(mod),
+			ID:           mod.ID,
+			Name:         mod.Name,
+			Author:       mod.Author,
+			Version:      mod.Version,
+			Source:       mod.SourceID,
+			Status:       installedModStatus(mod),
+			UpdatePolicy: policyToString(mod.UpdatePolicy),
 		})
 	}
 
@@ -384,6 +385,43 @@ func installedModStatus(mod domain.InstalledMod) string {
 		return "enabled"
 	default:
 		return "disabled"
+	}
+}
+
+// policyToString renders a domain.UpdatePolicy as ModItem.UpdatePolicy's
+// documented "notify"/"auto"/"pin" wire strings - the inverse of
+// parseUpdatePolicy below. Deliberately NOT shared with cmd/lmm/update.go's
+// own policyToString (whose "pinned" spelling differs and which internal/tui
+// cannot import - see customSourceType's doc comment for why CLI-only
+// helpers are duplicated rather than shared): the TUI's ActionProvider
+// contract fixes "pin" as the wire string (see SetUpdatePolicy's doc
+// comment), so this must NOT reuse the CLI's "pinned".
+func policyToString(policy domain.UpdatePolicy) string {
+	switch policy {
+	case domain.UpdateAuto:
+		return "auto"
+	case domain.UpdatePinned:
+		return "pin"
+	default:
+		return "notify"
+	}
+}
+
+// parseUpdatePolicy maps SetUpdatePolicy's policy argument to its
+// domain.UpdatePolicy constant, the inverse of policyToString - an unknown
+// string (anything but "notify"/"auto"/"pin") is rejected rather than
+// silently defaulting to UpdateNotify, so a caller typo never quietly pins
+// nothing.
+func parseUpdatePolicy(policy string) (domain.UpdatePolicy, error) {
+	switch policy {
+	case "notify":
+		return domain.UpdateNotify, nil
+	case "auto":
+		return domain.UpdateAuto, nil
+	case "pin":
+		return domain.UpdatePinned, nil
+	default:
+		return 0, fmt.Errorf("unknown policy %q", policy)
 	}
 }
 
@@ -979,6 +1017,20 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 		Message:  fmt.Sprintf("Updated %q to %s", u.Name, upd.NewVersion),
 		Warnings: mergeDiagnostics(result.Warnings, result.Notes),
 	}, nil
+}
+
+// SetUpdatePolicy validates and maps policy (see parseUpdatePolicy) and
+// persists it via svc.SetModUpdatePolicy - a local DB write with no network
+// call and no hooks, unlike every other mutation in this file.
+func (p *coreProvider) SetUpdatePolicy(_ context.Context, item ModItem, policy string) (ActionOutcome, error) {
+	mapped, err := parseUpdatePolicy(policy)
+	if err != nil {
+		return ActionOutcome{}, err
+	}
+	if err := p.svc.SetModUpdatePolicy(item.Source, item.ID, p.game.ID, p.currentProfile(), mapped); err != nil {
+		return ActionOutcome{}, fmt.Errorf("setting update policy for %s: %w", item.Name, err)
+	}
+	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
 }
 
 // switchPlanView maps a core.SwitchPlan to its TUI render model, using the

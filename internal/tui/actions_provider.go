@@ -60,6 +60,13 @@ type ActionProvider interface {
 	// ApplyUpdate applies one update reported by CheckUpdates. progress may
 	// be nil.
 	ApplyUpdate(ctx context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error)
+	// SetUpdatePolicy sets item's update-check policy to policy, one of
+	// "notify" (default: show available updates, require approval), "auto"
+	// (apply automatically), or "pin" (never update) - mapping to
+	// domain.UpdateNotify/UpdateAuto/UpdatePinned respectively for
+	// coreProvider. Unlike CheckUpdates/ApplyUpdate this never touches the
+	// network - a local DB write - so it carries no progress callback.
+	SetUpdatePolicy(ctx context.Context, item ModItem, policy string) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -514,4 +521,35 @@ func (p *prototypeProvider) ApplyUpdate(_ context.Context, u UpdateItem, progres
 	p.data.InstalledMods[idx].Status = "installed"
 
 	return ActionOutcome{Message: fmt.Sprintf("Updated %q to %s", u.Name, u.ToVersion)}, nil
+}
+
+// isValidUpdatePolicy reports whether policy is one of the three strings
+// SetUpdatePolicy accepts - shared by both providers' validation (see
+// coreProvider's own parseUpdatePolicy in service_core.go, which additionally
+// maps a valid string to its domain.UpdatePolicy constant; the prototype has
+// no such enum to map to, since it stores the policy as a plain string
+// directly on the canned Mod).
+func isValidUpdatePolicy(policy string) bool {
+	switch policy {
+	case "notify", "auto", "pin":
+		return true
+	default:
+		return false
+	}
+}
+
+// SetUpdatePolicy mutates the canned InstalledMods entry's UpdatePolicy
+// field in place - visible in a repeated Overview, mirroring
+// EnableMod/DisableMod/UninstallMod's own "same instance, same session"
+// contract.
+func (p *prototypeProvider) SetUpdatePolicy(_ context.Context, item ModItem, policy string) (ActionOutcome, error) {
+	if !isValidUpdatePolicy(policy) {
+		return ActionOutcome{}, fmt.Errorf("unknown policy %q", policy)
+	}
+	idx := p.findInstalledIndex(item.Source, item.ID)
+	if idx < 0 {
+		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	p.data.InstalledMods[idx].UpdatePolicy = policy
+	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
 }

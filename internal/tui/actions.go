@@ -31,6 +31,13 @@ const (
 	// actionUpdate is Phase 5b's check/apply-updates action kind (see
 	// mutations.go's checkForUpdates/applyUpdatesSequentially).
 	actionUpdate
+	// actionSetPolicy is Task 5's update-policy picker action kind (see
+	// mutations.go's editSelectedModPolicy/resolvePolicyChoice). No
+	// actionDoneMsg branch needs to name it specifically (app.go) - the
+	// default status+refresh path already covers it, unlike actionInstall
+	// (extra search refresh) and actionUpdate (re-sentinels the Updates
+	// count).
+	actionSetPolicy
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation

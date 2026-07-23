@@ -165,6 +165,116 @@ func (m Model) showDeployedFiles() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// --- Update policy ('P' on Installed Mods) ---
+
+// updatePolicyOptions is the fixed notify/auto/pin option order the policy
+// picker always shows (task-5-brief.md's Keybindings section), independent
+// of the selected mod's actual current policy - which only decides which
+// option starts pre-selected and marked "current" (see
+// editSelectedModPolicy).
+var updatePolicyOptions = []string{"notify", "auto", "pin"}
+
+// policyChosenMsg carries the option the user picked in the update-policy
+// picker (see editSelectedModPolicy), naming both the ModItem the picker was
+// opened for and the chosen policy string.
+//
+// Unlike planResultMsg/installPlanResultMsg/checkUpdatesResultMsg below
+// (which resolve an ASYNC network fetch dispatched earlier, tagged with a
+// gen for staleness), this message exists purely so the actual buildAction
+// call - which must run against the LIVE Model, not a value captured by the
+// picker's own choose closure - happens from inside Update(), the same way
+// updatePendingActionKey's ConfirmAction branch runs buildAction's result
+// against the live model when the user presses y/enter. Bubble Tea models
+// are values: a closure built when editSelectedModPolicy opened the picker
+// closes over the Model as it was AT THAT MOMENT, but pendingPicker.choose's
+// signature is `func(idx int) tea.Cmd` - it cannot hand back a mutated
+// Model, only a Cmd. If buildAction ran directly inside that closure, the
+// gen/cancel/progressCh bookkeeping it computes would be stamped onto a
+// Model copy nothing ever adopts, while choosePickerOption (picker.go)
+// separately returns the UNMODIFIED live model (with only .picker cleared)
+// as the new current Model - so the eventual actionDoneMsg's gen would never
+// match live m.action.gen and would be silently discarded as stale. Routing
+// through this message instead means choose's Cmd carries no I/O at all: it
+// fires on the very next Bubble Tea tick, and resolvePolicyChoice - which
+// DOES receive the live Model as its method receiver - does the actual
+// buildAction call there, exactly like the confirm-modal path does.
+type policyChosenMsg struct {
+	item   ModItem
+	policy string
+}
+
+// editSelectedModPolicy handles 'P' on Installed Mods (task-5-brief.md's
+// update-policy flow): a no-op on the wrong screen, an empty list, or with
+// no ActionProvider configured - mirrors uninstallSelectedMod/
+// showDeployedFiles' guard/selection shape. Opens a 3-option (notify/auto/
+// pin) picker with the selected mod's CURRENT policy (item.UpdatePolicy -
+// populated by coreProvider's Overview mapping / prototypeProvider's canned
+// data, see ModItem's doc comment) pre-selected and labeled "current"; a
+// mod whose UpdatePolicy doesn't match any of the three options (e.g. the
+// zero value "") simply leaves the picker on its default selection (index
+// 0, "notify") with no option marked "current" - it never guesses.
+//
+// Picking an option dispatches the action immediately - task-5-brief.md: "no
+// second confirm gate, the pick IS the confirmation" - via policyChosenMsg/
+// resolvePolicyChoice; see policyChosenMsg's own doc comment for why that
+// indirection is required rather than calling buildAction directly inside
+// choose.
+func (m Model) editSelectedModPolicy() (Model, tea.Cmd) {
+	if m.screen != ScreenInstalledMods || m.actions == nil {
+		return m, nil
+	}
+	item, ok := m.selectedMod()
+	if !ok {
+		return m, nil
+	}
+
+	options := make([]pickerOption, len(updatePolicyOptions))
+	selected := 0
+	for i, policy := range updatePolicyOptions {
+		options[i] = pickerOption{Label: policy}
+		if policy == item.UpdatePolicy {
+			options[i].Note = "current"
+			selected = i
+		}
+	}
+
+	picker := pendingPicker{
+		title:    fmt.Sprintf("Update policy — %s", item.Name),
+		options:  options,
+		selected: selected,
+		choose: func(idx int) tea.Cmd {
+			policy := updatePolicyOptions[idx]
+			return func() tea.Msg { return policyChosenMsg{item: item, policy: policy} }
+		},
+	}
+	return m.promptPicker(picker), nil
+}
+
+// resolvePolicyChoice handles a policyChosenMsg: builds the actionSetPolicy
+// action for msg.item/msg.policy and confirms it immediately, mirroring
+// updatePendingActionKey's ConfirmAction branch (actions.go) - buildAction
+// runs here, against m (this method's receiver, the CURRENT live Model), so
+// its gen/cancel/progressCh bookkeeping stays consistent with whatever
+// actionDoneMsg/actionProgressMsg eventually arrives (see policyChosenMsg's
+// doc comment for why this can't happen inside the picker's choose closure
+// itself). No pendingAction/confirmation modal is ever shown - the picker
+// selection already WAS the user's confirmation (task-5-brief.md) - so this
+// sets action.running directly instead of calling promptAction.
+// buildAction's own single-flight guard (running/pending) still applies
+// defensively, on the vanishingly unlikely chance something else started an
+// action in the gap between the picker closing and this message arriving.
+func (m Model) resolvePolicyChoice(msg policyChosenMsg) (Model, tea.Cmd) {
+	item := msg.item
+	policy := msg.policy
+	title := fmt.Sprintf("Update policy — %s", item.Name)
+	actions := m.actions
+	model, pa := m.buildAction(actionSetPolicy, title, nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
+		return actions.SetUpdatePolicy(ctx, item, policy)
+	})
+	model.action.running = true
+	return model, pa.confirm()
+}
+
 // planResultMsg carries a successful PlanProfileSwitch result, tagged with
 // the generation established when the fetch was dispatched (see
 // switchSelectedProfile) so a superseded result can be discarded exactly
