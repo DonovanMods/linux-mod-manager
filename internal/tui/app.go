@@ -1341,6 +1341,12 @@ func (m Model) helpGroups() []helpGroup {
 	dashboard := helpGroup{
 		name: "dashboard",
 		entries: []string{
+			// Select ("enter") is context-dependent (see updateKey): on
+			// the Dashboard it opens the selected menu entry
+			// (openSelectedMenuEntry), so the description is written out
+			// here rather than reusing keys.go's generic "open" - the same
+			// ad-hoc shape as the profiles group's "switch profile" below.
+			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "open menu entry"),
 			helpEntry(m.keys.Deploy),
 			helpEntry(m.keys.CheckUpdates),
 			helpEntry(m.keys.Purge),
@@ -1452,7 +1458,7 @@ func (m Model) helpView() string {
 		shown := max(budget-1, 0)
 		more := len(body) - shown
 		lines = append(lines, body[:shown]...)
-		lines = append(lines, m.theme.MutedText.Render(fmt.Sprintf("+%d more", more)))
+		lines = append(lines, truncate(m.theme.MutedText.Render(fmt.Sprintf("+%d more", more)), panelContentWidth))
 	} else {
 		lines = append(lines, body...)
 	}

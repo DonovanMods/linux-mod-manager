@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,6 +59,35 @@ func TestHelpViewCurrentScreenGroupFirst(t *testing.T) {
 	require.NotEqual(t, -1, installedIdx, "installed mods header missing")
 	require.NotEqual(t, -1, profilesIdx, "profiles header missing")
 	require.Less(t, installedIdx, profilesIdx, "installed mods group should render before profiles when on Installed Mods")
+}
+
+// TestHelpViewCapsWithMoreTailAtSmallHeight exercises the height-capped
+// path the other help tests never reach (their budgets exceed the full
+// grouped list by construction): at 80x24 helpBodyBudget is far below the
+// body's natural size, so helpView must cap the list with a dimmed
+// "+N more" tail AND the whole View() must still occupy the terminal
+// bounds exactly - the same invariant TestViewFitsTerminalBoundsWithHelpVisible
+// pins at its uncapped zero-slack height. ScreenProfiles is used because
+// its screen view genuinely shrinks to availableContentHeight's 8-row
+// floor (the floor helpBodyBudget reserves); the party-sheet Dashboard and
+// a populated Installed Mods list have natural minimums above that floor
+// and overflow at this size with or without the help panel open - a
+// pre-existing limitation, not the cap's.
+//
+// Negative control (recorded in task-9-report.md): temporarily inflating
+// helpBodyBudget by +10 makes this test FAIL (view grows past 24 rows),
+// proving it guards the cap arithmetic, not just the tail copy.
+func TestHelpViewCapsWithMoreTailAtSmallHeight(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 80, 24)
+	model.screen = ScreenProfiles
+	model = updateWithRunes(t, model, "?")
+
+	view := model.View()
+	require.Regexp(t, `\+\d+ more`, view, "capped help must end in a '+N more' tail")
+	require.Equal(t, 80, lipgloss.Width(view))
+	require.Equal(t, 24, lipgloss.Height(view))
 }
 
 // TestFooterMentionsHelpKey pins "?" as the discovery point for help: the
