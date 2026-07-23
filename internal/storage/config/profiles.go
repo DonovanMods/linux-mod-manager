@@ -212,6 +212,9 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 
 // ListProfiles returns all profile names for a game
 func ListProfiles(configDir, gameID string) ([]string, error) {
+	if err := validateSegment(gameID, domain.ErrInvalidGameID); err != nil {
+		return nil, err
+	}
 	profileDir := filepath.Join(configDir, "games", gameID, "profiles")
 	entries, err := os.ReadDir(profileDir)
 	if err != nil {

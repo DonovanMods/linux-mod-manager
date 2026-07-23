@@ -116,6 +116,18 @@ func TestLoadProfile_RejectsInvalidGameID(t *testing.T) {
 	}
 }
 
+func TestListProfiles_RejectsInvalidGameID(t *testing.T) {
+	for label, makeID := range invalidProfileNames {
+		t.Run(label, func(t *testing.T) {
+			tempDir := t.TempDir()
+			_, err := ListProfiles(tempDir, makeID(tempDir))
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, domain.ErrInvalidGameID)
+		})
+	}
+}
+
 func TestDeleteProfile_RejectsInvalidGameID(t *testing.T) {
 	for label, makeID := range invalidProfileNames {
 		t.Run(label, func(t *testing.T) {
