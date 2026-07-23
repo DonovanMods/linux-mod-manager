@@ -52,6 +52,15 @@ type KeyMap struct {
 	// selected, opening a notify/auto/pin picker whose selection dispatches
 	// immediately (no separate confirm modal).
 	Policy key.Binding
+	// CreateProfile and DeleteProfile are Task 6's Profiles-screen bindings
+	// (see mutations.go's createProfilePrompt/deleteSelectedProfile).
+	// CreateProfile opens the "new profile" input modal, whose submit
+	// dispatches immediately (no separate confirm modal - mirroring Policy's
+	// own "the choice IS the confirmation" shape). DeleteProfile opens the
+	// standard y/n confirmation modal for a non-active row, or refuses
+	// synchronously on the status line for the active one.
+	CreateProfile key.Binding
+	DeleteProfile key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -164,6 +173,14 @@ func DefaultKeyMap() KeyMap {
 		Policy: key.NewBinding(
 			key.WithKeys("P"),
 			key.WithHelp("P", "policy"),
+		),
+		CreateProfile: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "new profile"),
+		),
+		DeleteProfile: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "delete profile"),
 		),
 	}
 }

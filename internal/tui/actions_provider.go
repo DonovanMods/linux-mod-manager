@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
@@ -33,6 +34,15 @@ import (
 // the call risks a send-on-closed-channel panic - progress must only be
 // invoked synchronously within the method's own call stack (or from a
 // goroutine fully joined before returning).
+// errCannotDeleteActiveProfile is the shared wording for refusing to delete
+// the currently active profile - the TUI's own status-line refusal
+// (mutations.go's deleteSelectedProfile) and both ActionProvider
+// implementations' defense-in-depth guards (coreProvider.DeleteProfile,
+// prototypeProvider.DeleteProfile below) all use this SAME string, so the
+// three independent checks (self-review finding, Task 6) can never drift out
+// of sync with each other.
+const errCannotDeleteActiveProfile = "cannot delete the active profile"
+
 type ActionProvider interface {
 	EnableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
 	DisableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
@@ -67,6 +77,23 @@ type ActionProvider interface {
 	// coreProvider. Unlike CheckUpdates/ApplyUpdate this never touches the
 	// network - a local DB write - so it carries no progress callback.
 	SetUpdatePolicy(ctx context.Context, item ModItem, policy string) (ActionOutcome, error)
+
+	// CreateProfile creates a new, empty profile named name (Task 6's
+	// Profiles-screen 'c' binding - see mutations.go's createProfilePrompt).
+	// A name colliding with an existing profile is rejected - coreProvider
+	// via ProfileManager.Create's own duplicate check, prototypeProvider
+	// mirroring it defensively even though the TUI's own input-modal
+	// validate closure already refuses a colliding name before this is ever
+	// called.
+	CreateProfile(ctx context.Context, name string) (ActionOutcome, error)
+	// DeleteProfile removes profile name (Task 6's Profiles-screen 'd'
+	// binding - see mutations.go's deleteSelectedProfile). Deleting the
+	// currently active profile is refused - the TUI's own handler already
+	// checks this synchronously before ever reaching here (a status-line
+	// refusal, no modal), but every implementation repeats the guard
+	// defense-in-depth, since a stale active-profile row (a refresh landed
+	// between the keypress and confirm) could otherwise let it through.
+	DeleteProfile(ctx context.Context, name string) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -411,6 +438,37 @@ func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName 
 	p.data.Profile.Name = profileName
 
 	return ActionOutcome{Message: fmt.Sprintf("Switched to %q", profileName)}, nil
+}
+
+// CreateProfile appends a new canned Profile entry to data.Profiles, visible
+// in a repeated Profiles call - mirrors EnableMod/DisableMod's own "same
+// instance, same session" contract. A name colliding with an existing
+// profile is refused, mirroring coreProvider's own ProfileManager.Create
+// precedent (service_core.go) even though this is defense-in-depth here too
+// (see ActionProvider.CreateProfile's doc comment).
+func (p *prototypeProvider) CreateProfile(_ context.Context, name string) (ActionOutcome, error) {
+	if _, ok := p.findProfile(name); ok {
+		return ActionOutcome{}, fmt.Errorf("profile already exists: %s", name)
+	}
+	p.data.Profiles = append(p.data.Profiles, prototype.Profile{Name: name})
+	return ActionOutcome{Message: fmt.Sprintf("Created profile: %s", name)}, nil
+}
+
+// DeleteProfile removes the canned Profiles entry named name, visible in a
+// repeated Profiles call. Refuses to delete the active profile - defense-in-
+// depth mirroring coreProvider's own guard (see ActionProvider.DeleteProfile's
+// doc comment).
+func (p *prototypeProvider) DeleteProfile(_ context.Context, name string) (ActionOutcome, error) {
+	if name == p.activeProfileName() {
+		return ActionOutcome{}, errors.New(errCannotDeleteActiveProfile)
+	}
+	for i, pr := range p.data.Profiles {
+		if pr.Name == name {
+			p.data.Profiles = append(p.data.Profiles[:i], p.data.Profiles[i+1:]...)
+			return ActionOutcome{Message: fmt.Sprintf("Deleted profile: %s", name)}, nil
+		}
+	}
+	return ActionOutcome{}, fmt.Errorf("profile not found: %s", name)
 }
 
 // findSearchResult returns the index of the SearchResults entry matching

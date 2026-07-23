@@ -874,3 +874,120 @@ func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updat
 		Warnings: warnings,
 	}, nil
 }
+
+// --- Profile create/delete ('c'/'d' on Profiles) ---
+
+// profileCreateSubmittedMsg carries the name the user typed and confirmed in
+// the "new profile" input modal (see createProfilePrompt), routed through
+// Update() to resolveProfileCreate exactly like policyChosenMsg is routed to
+// resolvePolicyChoice - and for the identical reason (see policyChosenMsg's
+// own doc comment, which this mirrors in full): pendingInput's submit
+// closure has signature `func(value string) tea.Cmd` (input_modal.go), so it
+// cannot hand back a mutated Model itself - it can only return a Cmd that,
+// on the next tick, delivers this message to Update(), which runs the
+// actual buildAction call against the LIVE model. This message type is the
+// corrected mechanic for Task 6: the brief's own text describes create's
+// submit as running buildAction directly inside the modal closure, which
+// Task 5 already proved cannot work - see policyChosenMsg's doc comment for
+// the full explanation of why (stranded Model writes, a permanently wedged
+// single-flight guard on a refused buildAction).
+type profileCreateSubmittedMsg struct {
+	name string
+}
+
+// createProfilePrompt handles 'c' on Profiles (task-6-brief.md's profile
+// create flow): a no-op on the wrong screen or with no ActionProvider
+// configured - mirrors editSelectedModPolicy/uninstallSelectedMod's own
+// guard shape, minus a selection requirement, since creating a profile needs
+// no row selected. Opens the input modal with validate rejecting only an
+// EXACT (case-sensitive) match against a name already in m.profiles - the
+// input modal's own "name required" handling already covers the empty case
+// (see pendingInput's doc comment), so validate here never needs to.
+// submit dispatches profileCreateSubmittedMsg on the next tick rather than
+// calling buildAction directly - see that message's own doc comment for why.
+func (m Model) createProfilePrompt() (Model, tea.Cmd) {
+	if m.screen != ScreenProfiles || m.actions == nil {
+		return m, nil
+	}
+
+	existing := make(map[string]bool, len(m.profiles))
+	for _, p := range m.profiles {
+		existing[p.Name] = true
+	}
+
+	input := newInputModalTextInput("profile name", m.availableWidth(), m.theme.Panel.GetHorizontalFrameSize())
+	pi := pendingInput{
+		title: "new profile",
+		input: input,
+		validate: func(value string) string {
+			if existing[value] {
+				return "profile already exists"
+			}
+			return ""
+		},
+		submit: func(value string) tea.Cmd {
+			return func() tea.Msg { return profileCreateSubmittedMsg{name: value} }
+		},
+	}
+	return m.promptInput(pi), nil
+}
+
+// resolveProfileCreate handles a profileCreateSubmittedMsg: dispatches
+// actionCreateProfile and confirms immediately - the modal's own submit WAS
+// the user's confirmation (task-6-brief.md: no second confirm gate),
+// mirroring resolvePolicyChoice's identical "no pendingAction, set running
+// directly" shape. The single-flight guard is checked HERE, not left to
+// buildAction's own guard, for the exact reason resolvePolicyChoice's doc
+// comment gives: the window between promptInput's submit clearing the modal
+// (running still false) and this resolution running is real, and relying on
+// buildAction's own refusal alone would leave this method setting
+// running=true below for an action that never actually started, sticking
+// the single-flight guard with nothing to ever clear it.
+func (m Model) resolveProfileCreate(msg profileCreateSubmittedMsg) (Model, tea.Cmd) {
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	name := msg.name
+	actions := m.actions
+	title := fmt.Sprintf("Create profile %q?", name)
+	model, pa := m.buildAction(actionCreateProfile, title, nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
+		return actions.CreateProfile(ctx, name)
+	})
+	model.action.running = true
+	return model, pa.confirm()
+}
+
+// deleteSelectedProfile handles 'd' on Profiles (task-6-brief.md's profile
+// delete flow): a no-op on the wrong screen, an empty list, or with no
+// ActionProvider configured - mirrors switchSelectedProfile's guard/
+// selection shape. The active profile is refused SYNCHRONOUSLY, on the
+// status line, with no modal at all: deleting the profile the session is
+// currently on would leave the TUI's own state (and a real coreProvider's
+// currentProfile) pointing at a profile that no longer exists, so this is
+// checked before ever building a confirmation - the ActionProvider's own
+// DeleteProfile repeats the same guard defense-in-depth (see its doc
+// comment), but the TUI-level check is what keeps this a clean status-line
+// refusal instead of a modal the user could still confirm into an error.
+func (m Model) deleteSelectedProfile() (Model, tea.Cmd) {
+	if m.screen != ScreenProfiles || m.actions == nil {
+		return m, nil
+	}
+	idx := m.selected[ScreenProfiles]
+	if idx < 0 || idx >= len(m.profiles) {
+		return m, nil
+	}
+	profile := m.profiles[idx]
+	if profile.Active {
+		m.action.status = singleLine(errCannotDeleteActiveProfile)
+		m.action.statusIsError = true
+		return m, nil
+	}
+
+	title := fmt.Sprintf("Delete profile %q?", profile.Name)
+	detail := []string{"mods keep their install records; only the profile list is removed"}
+	name := profile.Name
+	model, pa := m.buildAction(actionDeleteProfile, title, detail, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.DeleteProfile(ctx, name)
+	})
+	return model.promptAction(pa), nil
+}

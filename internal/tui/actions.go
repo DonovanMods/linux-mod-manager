@@ -38,6 +38,15 @@ const (
 	// (extra search refresh) and actionUpdate (re-sentinels the Updates
 	// count).
 	actionSetPolicy
+	// actionCreateProfile and actionDeleteProfile are Task 6's Profiles-screen
+	// create/delete action kinds (see mutations.go's createProfilePrompt/
+	// resolveProfileCreate and deleteSelectedProfile). Neither needs an
+	// actionDoneMsg branch of its own (app.go) - the default status+refresh
+	// path already covers both, exactly like actionSetPolicy above; loadData
+	// re-fetches Profiles, so the new/removed row is visible on the very next
+	// render.
+	actionCreateProfile
+	actionDeleteProfile
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation

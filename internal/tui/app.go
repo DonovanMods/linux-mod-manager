@@ -440,6 +440,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resolveCheckUpdatesFailure(msg)
 	case policyChosenMsg:
 		return m.resolvePolicyChoice(msg)
+	case profileCreateSubmittedMsg:
+		return m.resolveProfileCreate(msg)
 	case loadFailedMsg:
 		m.state = stateFailed
 		m.loadErr = msg.err
@@ -606,6 +608,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.showDeployedFiles()
 	case key.Matches(msg, m.keys.Policy):
 		return m.editSelectedModPolicy()
+	case key.Matches(msg, m.keys.CreateProfile):
+		return m.createProfilePrompt()
+	case key.Matches(msg, m.keys.DeleteProfile):
+		return m.deleteSelectedProfile()
 	default:
 		return m, nil
 	}

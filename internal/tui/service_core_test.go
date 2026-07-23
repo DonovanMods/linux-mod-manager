@@ -1591,6 +1591,61 @@ func TestCoreProviderActions_ApplyUpdate_MapsNotSupportedError(t *testing.T) {
 }
 
 // TestCoreProviderActions_SetUpdatePolicy_PersistsAndReadsBack is Task 5's
+// TestCoreProviderActions_CreateProfile proves CreateProfile persists a real,
+// empty profile via svc.NewProfileManager().Create, readable back with
+// pm.Get, and that a duplicate create is rejected (ProfileManager.Create's
+// own "profile already exists" guard - internal/core/profile.go).
+func TestCoreProviderActions_CreateProfile(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	outcome, err := actions.CreateProfile(context.Background(), "extra")
+	require.NoError(t, err)
+	assert.Equal(t, "Created profile: extra", outcome.Message)
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get(game.ID, "extra")
+	require.NoError(t, err)
+	assert.Equal(t, "extra", profile.Name)
+
+	_, err = actions.CreateProfile(context.Background(), "extra")
+	assert.Error(t, err, "creating a colliding name a second time must error")
+}
+
+// TestCoreProviderActions_DeleteProfile proves DeleteProfile removes a real,
+// non-active profile's YAML via svc.NewProfileManager().Delete - a
+// subsequent pm.Get for the same name returns domain.ErrProfileNotFound.
+func TestCoreProviderActions_DeleteProfile(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "extra")
+	require.NoError(t, err)
+
+	outcome, err := actions.DeleteProfile(context.Background(), "extra")
+	require.NoError(t, err)
+	assert.Equal(t, "Deleted profile: extra", outcome.Message)
+
+	_, err = pm.Get(game.ID, "extra")
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
+}
+
+// TestCoreProviderActions_DeleteActiveProfileRefused proves the
+// defense-in-depth guard in coreProvider.DeleteProfile: deleting the
+// session's own active profile ("default", per newCoreActionsFixture) errors
+// without ever calling ProfileManager.Delete - the profile is still present
+// afterward.
+func TestCoreProviderActions_DeleteActiveProfileRefused(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	_, err := actions.DeleteProfile(context.Background(), "default")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot delete the active profile")
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "default", profile.Name, "the refused delete must leave the active profile untouched")
+}
+
 // coreProvider guard: setting "auto" through the ActionProvider seam
 // persists via svc.SetModUpdatePolicy, visible in a direct
 // svc.GetInstalledMod read-back as domain.UpdateAuto - a real Service

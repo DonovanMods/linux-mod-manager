@@ -208,6 +208,62 @@ func TestPrototypeProviderActions_ApplyProfileSwitch_DownloadsAndAppliesNeedsDow
 	assert.True(t, byName[prototype.NeedsDownloadProfileName].Active, "the switch must still complete and mark the target active")
 }
 
+// --- prototypeProvider: CreateProfile/DeleteProfile (Task 6) ---
+
+func TestPrototypeProviderActions_CreateProfile_AddsVisibleInRepeatedProfiles(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+
+	outcome, err := actions.CreateProfile(context.Background(), "new-profile")
+	require.NoError(t, err)
+	assert.Equal(t, "Created profile: new-profile", outcome.Message)
+
+	profiles, err := provider.Profiles(context.Background())
+	require.NoError(t, err)
+	byName := map[string]ProfileItem{}
+	for _, p := range profiles {
+		byName[p.Name] = p
+	}
+	require.Contains(t, byName, "new-profile", "the SAME provider instance must reflect the create on a repeated Profiles call")
+}
+
+func TestPrototypeProviderActions_CreateProfile_DuplicateNameErrors(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	_, err := actions.CreateProfile(context.Background(), "survival")
+	assert.Error(t, err)
+}
+
+func TestPrototypeProviderActions_DeleteProfile_RemovesVisibleInRepeatedProfiles(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+
+	outcome, err := actions.DeleteProfile(context.Background(), "vanilla-plus")
+	require.NoError(t, err)
+	assert.Equal(t, "Deleted profile: vanilla-plus", outcome.Message)
+
+	profiles, err := provider.Profiles(context.Background())
+	require.NoError(t, err)
+	for _, p := range profiles {
+		assert.NotEqual(t, "vanilla-plus", p.Name, "a deleted profile must be gone from a repeated Profiles call")
+	}
+}
+
+func TestPrototypeProviderActions_DeleteProfile_ActiveRefused(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	_, err := actions.DeleteProfile(context.Background(), "survival")
+	assert.Error(t, err)
+}
+
 func TestPrototypeProviderActions_PlanProfileSwitch_UnknownProfileErrors(t *testing.T) {
 	t.Parallel()
 
@@ -465,10 +521,16 @@ type recordingActions struct {
 	// []ModItem (mirroring the other *Calls fields) since both the mod
 	// identity and the chosen policy string matter to those tests.
 	SetPolicyCalls []struct{ ModID, Policy string }
+	// CreateProfileCalls/DeleteProfileCalls record each call's name argument
+	// - Task 6's create/delete wiring tests assert against these, mirroring
+	// PlanCalls/ApplyCalls' own single-string-argument shape above.
+	CreateProfileCalls []string
+	DeleteProfileCalls []string
 
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
+	CreateProfileOutcome, DeleteProfileOutcome                                   ActionOutcome
 	PlanView                                                                     SwitchPlanView
 	InstallPlanViewOut                                                           InstallPlanView
 	UpdatesViewOut                                                               UpdatesView
@@ -484,6 +546,7 @@ type recordingActions struct {
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
 	SetPolicyErr                                                      error
+	CreateProfileErr, DeleteProfileErr                                error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -565,6 +628,16 @@ func (r *recordingActions) SetUpdatePolicy(_ context.Context, item ModItem, poli
 	return r.SetPolicyOutcome, r.SetPolicyErr
 }
 
+func (r *recordingActions) CreateProfile(_ context.Context, name string) (ActionOutcome, error) {
+	r.CreateProfileCalls = append(r.CreateProfileCalls, name)
+	return r.CreateProfileOutcome, r.CreateProfileErr
+}
+
+func (r *recordingActions) DeleteProfile(_ context.Context, name string) (ActionOutcome, error) {
+	r.DeleteProfileCalls = append(r.DeleteProfileCalls, name)
+	return r.DeleteProfileOutcome, r.DeleteProfileErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -619,6 +692,14 @@ func (f failingActions) ApplyUpdate(context.Context, UpdateItem, func(ActionProg
 }
 
 func (f failingActions) SetUpdatePolicy(context.Context, ModItem, string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) CreateProfile(context.Context, string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) DeleteProfile(context.Context, string) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 

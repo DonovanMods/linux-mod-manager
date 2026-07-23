@@ -1033,6 +1033,33 @@ func (p *coreProvider) SetUpdatePolicy(_ context.Context, item ModItem, policy s
 	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
 }
 
+// CreateProfile creates a new, empty profile via ProfileManager.Create - a
+// local YAML write, no network call, no hooks (mirroring SetUpdatePolicy's
+// own "local DB/config write" shape above). ProfileManager.Create already
+// rejects a colliding name ("profile already exists: <name>") - see
+// internal/core/profile.go - so no separate check is needed here.
+func (p *coreProvider) CreateProfile(_ context.Context, name string) (ActionOutcome, error) {
+	if _, err := p.svc.NewProfileManager().Create(p.game.ID, name); err != nil {
+		return ActionOutcome{}, fmt.Errorf("creating profile %s: %w", name, err)
+	}
+	return ActionOutcome{Message: fmt.Sprintf("Created profile: %s", name)}, nil
+}
+
+// DeleteProfile removes profile name via ProfileManager.Delete. Refuses to
+// delete the currently active profile - defense-in-depth backing the TUI's
+// own active-row guard (mutations.go's deleteSelectedProfile), in case a
+// stale selection ever reaches this call with the session's actual current
+// profile (see ActionProvider.DeleteProfile's doc comment).
+func (p *coreProvider) DeleteProfile(_ context.Context, name string) (ActionOutcome, error) {
+	if name == p.currentProfile() {
+		return ActionOutcome{}, errors.New(errCannotDeleteActiveProfile)
+	}
+	if err := p.svc.NewProfileManager().Delete(p.game.ID, name); err != nil {
+		return ActionOutcome{}, fmt.Errorf("deleting profile %s: %w", name, err)
+	}
+	return ActionOutcome{Message: fmt.Sprintf("Deleted profile: %s", name)}, nil
+}
+
 // switchPlanView maps a core.SwitchPlan to its TUI render model, using the
 // same display strings cmd/lmm/profile.go's doProfileSwitch plan printout
 // uses: ToEnable/ToDisable entries are addressed by Name (the CLI's "  + %s
