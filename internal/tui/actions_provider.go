@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
@@ -33,6 +34,15 @@ import (
 // the call risks a send-on-closed-channel panic - progress must only be
 // invoked synchronously within the method's own call stack (or from a
 // goroutine fully joined before returning).
+// errCannotDeleteActiveProfile is the shared wording for refusing to delete
+// the currently active profile - the TUI's own status-line refusal
+// (mutations.go's deleteSelectedProfile) and both ActionProvider
+// implementations' defense-in-depth guards (coreProvider.DeleteProfile,
+// prototypeProvider.DeleteProfile below) all use this SAME string, so the
+// three independent checks (self-review finding, Task 6) can never drift out
+// of sync with each other.
+const errCannotDeleteActiveProfile = "cannot delete the active profile"
+
 type ActionProvider interface {
 	EnableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
 	DisableMod(ctx context.Context, item ModItem) (ActionOutcome, error)
@@ -60,6 +70,40 @@ type ActionProvider interface {
 	// ApplyUpdate applies one update reported by CheckUpdates. progress may
 	// be nil.
 	ApplyUpdate(ctx context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error)
+	// SetUpdatePolicy sets item's update-check policy to policy, one of
+	// "notify" (default: show available updates, require approval), "auto"
+	// (apply automatically), or "pin" (never update) - mapping to
+	// domain.UpdateNotify/UpdateAuto/UpdatePinned respectively for
+	// coreProvider. Unlike CheckUpdates/ApplyUpdate this never touches the
+	// network - a local DB write - so it carries no progress callback.
+	SetUpdatePolicy(ctx context.Context, item ModItem, policy string) (ActionOutcome, error)
+
+	// CreateProfile creates a new, empty profile named name (Task 6's
+	// Profiles-screen 'c' binding - see mutations.go's createProfilePrompt).
+	// A name colliding with an existing profile is rejected - coreProvider
+	// via ProfileManager.Create's own duplicate check, prototypeProvider
+	// mirroring it defensively even though the TUI's own input-modal
+	// validate closure already refuses a colliding name before this is ever
+	// called.
+	CreateProfile(ctx context.Context, name string) (ActionOutcome, error)
+	// DeleteProfile removes profile name (Task 6's Profiles-screen 'd'
+	// binding - see mutations.go's deleteSelectedProfile). Deleting the
+	// currently active profile is refused - the TUI's own handler already
+	// checks this synchronously before ever reaching here (a status-line
+	// refusal, no modal), but every implementation repeats the guard
+	// defense-in-depth, since a stale active-profile row (a refresh landed
+	// between the keypress and confirm) could otherwise let it through.
+	DeleteProfile(ctx context.Context, name string) (ActionOutcome, error)
+
+	// PurgeProfile undeploys every mod currently installed in the active
+	// profile (Task 7's Dashboard/Installed-Mods 'X' binding - see
+	// mutations.go's purgeProfilePrompt): the TUI equivalent of `lmm purge`
+	// with neither --uninstall nor --force. Mod records are preserved, only
+	// marked not-deployed - matching the CLI default (coreProvider never
+	// exposes --uninstall's record-deleting variant; see its own doc
+	// comment). progress may be nil, like every other streaming
+	// ActionProvider method.
+	PurgeProfile(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -168,10 +212,12 @@ func mergeDiagnostics(warnings, notes []string) []string {
 // see that method's own doc comment below). Every other canned profile
 // leaves Mods unset and is unaffected.
 
-// findInstalledIndex returns the index of the InstalledMods entry matching
-// (sourceID, id), or -1 if none matches.
+// findInstalledIndex returns the index of the ACTIVE game's installed-mods
+// entry matching (sourceID, id), or -1 if none matches - routed through
+// activeMods (service.go, Copilot PR #69) so every lookup-based operation
+// automatically addresses whichever game the session is bound to.
 func (p *prototypeProvider) findInstalledIndex(sourceID, id string) int {
-	for i, mod := range p.data.InstalledMods {
+	for i, mod := range p.activeMods() {
 		if mod.Source == sourceID && mod.ID == id {
 			return i
 		}
@@ -184,11 +230,12 @@ func (p *prototypeProvider) EnableMod(_ context.Context, item ModItem) (ActionOu
 	if idx < 0 {
 		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
 	}
-	if p.data.InstalledMods[idx].Status != "disabled" {
+	mods := p.activeMods()
+	if mods[idx].Status != "disabled" {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already enabled", item.Name)}, nil
 	}
-	p.data.InstalledMods[idx].Status = "installed"
-	p.data.Stats.Enabled++
+	mods[idx].Status = "installed"
+	p.adjustStats(0, 1)
 	return ActionOutcome{Message: fmt.Sprintf("Enabled %q", item.Name)}, nil
 }
 
@@ -197,11 +244,12 @@ func (p *prototypeProvider) DisableMod(_ context.Context, item ModItem) (ActionO
 	if idx < 0 {
 		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
 	}
-	if p.data.InstalledMods[idx].Status == "disabled" {
+	mods := p.activeMods()
+	if mods[idx].Status == "disabled" {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already disabled", item.Name)}, nil
 	}
-	p.data.InstalledMods[idx].Status = "disabled"
-	p.data.Stats.Enabled--
+	mods[idx].Status = "disabled"
+	p.adjustStats(0, -1)
 	return ActionOutcome{Message: fmt.Sprintf("Disabled %q", item.Name)}, nil
 }
 
@@ -210,18 +258,20 @@ func (p *prototypeProvider) UninstallMod(_ context.Context, item ModItem) (Actio
 	if idx < 0 {
 		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
 	}
-	wasEnabled := p.data.InstalledMods[idx].Status != "disabled"
-	p.data.InstalledMods = append(p.data.InstalledMods[:idx], p.data.InstalledMods[idx+1:]...)
-	p.data.Stats.Installed--
+	mods := p.activeMods()
+	wasEnabled := mods[idx].Status != "disabled"
+	p.setActiveMods(append(mods[:idx], mods[idx+1:]...))
+	enabledDelta := 0
 	if wasEnabled {
-		p.data.Stats.Enabled--
+		enabledDelta = -1
 	}
+	p.adjustStats(-1, enabledDelta)
 	return ActionOutcome{Message: fmt.Sprintf("Uninstalled %q", item.Name)}, nil
 }
 
 func (p *prototypeProvider) DeployProfile(_ context.Context) (ActionOutcome, error) {
 	deployed := 0
-	for _, mod := range p.data.InstalledMods {
+	for _, mod := range p.activeMods() {
 		if mod.Status != "disabled" {
 			deployed++
 		}
@@ -295,7 +345,7 @@ func (p *prototypeProvider) PlanProfileSwitch(_ context.Context, profileName str
 	}
 
 	var enable, disable []string
-	for i, mod := range p.data.InstalledMods {
+	for i, mod := range p.activeMods() {
 		if i%2 == 0 {
 			if mod.Status == "disabled" {
 				enable = append(enable, mod.Name)
@@ -343,10 +393,10 @@ func (p *prototypeProvider) materializeNeedsDownloads(profileName string) {
 		if p.findInstalledIndex("nexusmods", id) >= 0 {
 			continue
 		}
-		p.data.InstalledMods = append(p.data.InstalledMods, prototype.Mod{
+		p.setActiveMods(append(p.activeMods(), prototype.Mod{
 			ID: id, Name: id, Source: "nexusmods", Version: "1.0", Status: "disabled",
-		})
-		p.data.Stats.Installed++
+		}))
+		p.adjustStats(1, 0)
 	}
 }
 
@@ -389,12 +439,13 @@ func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName 
 	for _, name := range view.Disable {
 		disable[name] = true
 	}
-	for i := range p.data.InstalledMods {
-		switch name := p.data.InstalledMods[i].Name; {
+	mods := p.activeMods()
+	for i := range mods {
+		switch name := mods[i].Name; {
 		case enable[name]:
-			p.data.InstalledMods[i].Status = "installed"
+			mods[i].Status = "installed"
 		case disable[name]:
-			p.data.InstalledMods[i].Status = "disabled"
+			mods[i].Status = "disabled"
 		}
 	}
 
@@ -404,6 +455,37 @@ func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName 
 	p.data.Profile.Name = profileName
 
 	return ActionOutcome{Message: fmt.Sprintf("Switched to %q", profileName)}, nil
+}
+
+// CreateProfile appends a new canned Profile entry to data.Profiles, visible
+// in a repeated Profiles call - mirrors EnableMod/DisableMod's own "same
+// instance, same session" contract. A name colliding with an existing
+// profile is refused, mirroring coreProvider's own ProfileManager.Create
+// precedent (service_core.go) even though this is defense-in-depth here too
+// (see ActionProvider.CreateProfile's doc comment).
+func (p *prototypeProvider) CreateProfile(_ context.Context, name string) (ActionOutcome, error) {
+	if _, ok := p.findProfile(name); ok {
+		return ActionOutcome{}, fmt.Errorf("profile already exists: %s", name)
+	}
+	p.data.Profiles = append(p.data.Profiles, prototype.Profile{Name: name})
+	return ActionOutcome{Message: fmt.Sprintf("Created profile: %s", name)}, nil
+}
+
+// DeleteProfile removes the canned Profiles entry named name, visible in a
+// repeated Profiles call. Refuses to delete the active profile - defense-in-
+// depth mirroring coreProvider's own guard (see ActionProvider.DeleteProfile's
+// doc comment).
+func (p *prototypeProvider) DeleteProfile(_ context.Context, name string) (ActionOutcome, error) {
+	if name == p.activeProfileName() {
+		return ActionOutcome{}, errors.New(errCannotDeleteActiveProfile)
+	}
+	for i, pr := range p.data.Profiles {
+		if pr.Name == name {
+			p.data.Profiles = append(p.data.Profiles[:i], p.data.Profiles[i+1:]...)
+			return ActionOutcome{Message: fmt.Sprintf("Deleted profile: %s", name)}, nil
+		}
+	}
+	return ActionOutcome{}, fmt.Errorf("profile not found: %s", name)
 }
 
 // findSearchResult returns the index of the SearchResults entry matching
@@ -464,14 +546,14 @@ func (p *prototypeProvider) ApplyInstall(_ context.Context, item ModItem, progre
 	fakeProgressTicks(progress, fmt.Sprintf("Installing %s", mod.Name))
 
 	if installedIdx := p.findInstalledIndex(item.Source, item.ID); installedIdx >= 0 {
-		p.data.InstalledMods[installedIdx].Status = "installed"
-		p.data.InstalledMods[installedIdx].Version = mod.Version
+		installedMods := p.activeMods()
+		installedMods[installedIdx].Status = "installed"
+		installedMods[installedIdx].Version = mod.Version
 	} else {
 		installed := mod
 		installed.Status = "installed"
-		p.data.InstalledMods = append(p.data.InstalledMods, installed)
-		p.data.Stats.Installed++
-		p.data.Stats.Enabled++
+		p.setActiveMods(append(p.activeMods(), installed))
+		p.adjustStats(1, 1)
 	}
 	p.data.SearchResults[idx].Status = "installed"
 
@@ -485,7 +567,7 @@ func (p *prototypeProvider) ApplyInstall(_ context.Context, item ModItem, progre
 // carries no policy field - see its doc comment).
 func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error) {
 	var view UpdatesView
-	for _, mod := range p.data.InstalledMods {
+	for _, mod := range p.activeMods() {
 		if mod.AvailableVersion == "" {
 			continue
 		}
@@ -509,9 +591,75 @@ func (p *prototypeProvider) ApplyUpdate(_ context.Context, u UpdateItem, progres
 
 	fakeProgressTicks(progress, fmt.Sprintf("Updating %s", u.Name))
 
-	p.data.InstalledMods[idx].Version = u.ToVersion
-	p.data.InstalledMods[idx].AvailableVersion = ""
-	p.data.InstalledMods[idx].Status = "installed"
+	mods := p.activeMods()
+	mods[idx].Version = u.ToVersion
+	mods[idx].AvailableVersion = ""
+	mods[idx].Status = "installed"
 
 	return ActionOutcome{Message: fmt.Sprintf("Updated %q to %s", u.Name, u.ToVersion)}, nil
+}
+
+// isValidUpdatePolicy reports whether policy is one of the three strings
+// SetUpdatePolicy accepts - shared by both providers' validation (see
+// coreProvider's own parseUpdatePolicy in service_core.go, which additionally
+// maps a valid string to its domain.UpdatePolicy constant; the prototype has
+// no such enum to map to, since it stores the policy as a plain string
+// directly on the canned Mod).
+func isValidUpdatePolicy(policy string) bool {
+	switch policy {
+	case "notify", "auto", "pin":
+		return true
+	default:
+		return false
+	}
+}
+
+// SetUpdatePolicy mutates the canned InstalledMods entry's UpdatePolicy
+// field in place - visible in a repeated Overview, mirroring
+// EnableMod/DisableMod/UninstallMod's own "same instance, same session"
+// contract.
+func (p *prototypeProvider) SetUpdatePolicy(_ context.Context, item ModItem, policy string) (ActionOutcome, error) {
+	if !isValidUpdatePolicy(policy) {
+		return ActionOutcome{}, fmt.Errorf("unknown policy %q", policy)
+	}
+	idx := p.findInstalledIndex(item.Source, item.ID)
+	if idx < 0 {
+		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	p.activeMods()[idx].UpdatePolicy = policy
+	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
+}
+
+// PurgeProfile emits one fake progress tick per canned InstalledMods entry
+// (mirroring purgeProgressLine's real per-mod PurgeModPurged tick in
+// service_core.go, one level up - the prototype has no percentage-based
+// phases to fake, so it ticks by mod rather than by 0/50/100%, unlike
+// fakeProgressTicks' ApplyInstall/ApplyUpdate precedent), then flips every
+// entry to "disabled" - the prototype's own "not deployed" terminal state
+// (see DisableMod above; prototype.Mod has no separate "deployed"/"enabled"
+// distinction the way coreProvider's installedModStatus does - see Mod.Status'
+// doc comment), decrementing Stats.Enabled for whichever entries weren't
+// already disabled. An empty InstalledMods list short-circuits to "no mods
+// installed" with no ticks emitted at all, mirroring coreProvider's own
+// empty-mods short-circuit (see its doc comment).
+func (p *prototypeProvider) PurgeProfile(_ context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+	mods := p.activeMods()
+	if len(mods) == 0 {
+		return ActionOutcome{Message: "no mods installed"}, nil
+	}
+
+	purged := 0
+	for i := range mods {
+		mod := &mods[i]
+		if progress != nil {
+			progress(ActionProgress{Line: fmt.Sprintf("✓ %s", mod.Name), Percent: -1})
+		}
+		if mod.Status != "disabled" {
+			p.adjustStats(0, -1)
+			mod.Status = "disabled"
+		}
+		purged++
+	}
+
+	return ActionOutcome{Message: fmt.Sprintf("Purged %d mod(s)", purged)}, nil
 }

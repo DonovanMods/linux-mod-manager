@@ -41,6 +41,40 @@ type KeyMap struct {
 	// mutations.go's checkForUpdates): fires on ScreenDashboard and
 	// ScreenInstalledMods.
 	CheckUpdates key.Binding
+	// Files is Task 4's deployed-files-overlay binding (see mutations.go's
+	// showDeployedFiles): fires on ScreenInstalledMods with a mod selected.
+	// "f" is overloaded - overlay.go's updateOverlayKey also matches a plain
+	// "f" to CLOSE the overlay once open, so this key doubles as an open/
+	// close toggle.
+	Files key.Binding
+	// Policy is Task 5's update-policy picker binding (see mutations.go's
+	// editSelectedModPolicy): fires on ScreenInstalledMods with a mod
+	// selected, opening a notify/auto/pin picker whose selection dispatches
+	// immediately (no separate confirm modal).
+	Policy key.Binding
+	// CreateProfile and DeleteProfile are Task 6's Profiles-screen bindings
+	// (see mutations.go's createProfilePrompt/deleteSelectedProfile).
+	// CreateProfile opens the "new profile" input modal, whose submit
+	// dispatches immediately (no separate confirm modal - mirroring Policy's
+	// own "the choice IS the confirmation" shape). DeleteProfile opens the
+	// standard y/n confirmation modal for a non-active row, or refuses
+	// synchronously on the status line for the active one.
+	CreateProfile key.Binding
+	DeleteProfile key.Binding
+	// Purge is Task 7's Dashboard/Installed-Mods purge-behind-confirmation
+	// binding (see mutations.go's purgeProfilePrompt): undeploys every mod
+	// currently installed in the active profile, behind the standard y/n
+	// confirmation modal - the TUI equivalent of `lmm purge`. Capital "X"
+	// (distinct from lowercase "x"/Uninstall) since purge acts on the WHOLE
+	// profile, not the selected mod.
+	Purge key.Binding
+	// GameSwitch is Task 8's in-TUI game switcher binding (see mutations.go's
+	// openGameSwitcher): fires on ANY screen (unlike every other mutation
+	// binding above, which is scoped to specific screens), opening a picker
+	// of every configured game with the active one marked - picking one
+	// dispatches immediately (no separate confirm modal, mirroring Policy's
+	// own "the choice IS the confirmation" shape).
+	GameSwitch key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -145,6 +179,30 @@ func DefaultKeyMap() KeyMap {
 		CheckUpdates: key.NewBinding(
 			key.WithKeys("u"),
 			key.WithHelp("u", "check for updates"),
+		),
+		Files: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "files"),
+		),
+		Policy: key.NewBinding(
+			key.WithKeys("P"),
+			key.WithHelp("P", "policy"),
+		),
+		CreateProfile: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "new profile"),
+		),
+		DeleteProfile: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "delete profile"),
+		),
+		Purge: key.NewBinding(
+			key.WithKeys("X"),
+			key.WithHelp("X", "purge"),
+		),
+		GameSwitch: key.NewBinding(
+			key.WithKeys("g"),
+			key.WithHelp("g", "game"),
 		),
 	}
 }

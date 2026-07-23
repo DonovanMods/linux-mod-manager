@@ -936,6 +936,9 @@ func (f *fakeSwitchableProvider) Search(context.Context, string, string, int) (S
 	return SearchPage{}, nil
 }
 
+func (f *fakeSwitchableProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
+func (f *fakeSwitchableProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
+
 func (f *fakeSwitchableProvider) Profiles(context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(f.names))
 	for _, name := range f.names {
@@ -1035,8 +1038,15 @@ func TestStaleSwitchDoneMsgNeverRebindsProfile(t *testing.T) {
 // fakeSwitchableProvider since this test needs a real Sources() list (so
 // startSearch doesn't hit the "no sources configured" guard) but no
 // profileRebinder behavior at all.
+// listGames/SetGameCalls are Task 8's addition, letting
+// TestGameSwitchCancelsInFlightSearchAndDiscardsLateResult below drive a
+// real game-switch picker choice through this same minimal double, mirroring
+// this type's existing profile-switch precedent (the test right above this
+// one) for the game-switch case.
 type searchCancelProvider struct {
-	capturedCtx context.Context
+	capturedCtx  context.Context
+	listGames    []GameInfo
+	SetGameCalls []string
 }
 
 func (p *searchCancelProvider) Overview(context.Context) (Summary, []ModItem, error) {
@@ -1048,6 +1058,14 @@ func (p *searchCancelProvider) Profiles(context.Context) ([]ProfileItem, error) 
 func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _ int) (SearchPage, error) {
 	p.capturedCtx = ctx
 	return SearchPage{Results: []ModItem{{ID: "x", Name: "X"}}}, nil
+}
+func (p *searchCancelProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
+func (p *searchCancelProvider) ListGames() ([]GameInfo, error)                 { return p.listGames, nil }
+
+// SetGame implements actions.go's optional gameRebinder hook.
+func (p *searchCancelProvider) SetGame(id string) error {
+	p.SetGameCalls = append(p.SetGameCalls, id)
+	return nil
 }
 
 // TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult guards Task 6
@@ -1098,13 +1116,20 @@ func TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult(t *testing.T) {
 func TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 120, 38)
+	// Height 60 keeps every help group uncapped (see
+	// TestViewFitsTerminalBoundsWithHelpVisible's helpBodyBudget note), so
+	// this doesn't depend on which screen's group happens to render first.
+	model := sizedPrototypeModel(t, "wizardry", 120, 60)
 	model = updateWithRunes(t, model, "?")
 	view := model.View()
 
+	// Task 9 restructured helpView into per-screen groups whose entries
+	// reuse each binding's own key.WithHelp copy from keys.go (helpEntry)
+	// instead of the old flat list's bespoke prose - so the wording here is
+	// terser than the pre-Task-9 assertions were.
 	require.Contains(t, view, "toggle enable/disable")
-	require.Contains(t, view, "uninstall selected mod")
-	require.Contains(t, view, "deploy active profile")
+	require.Contains(t, view, "uninstall")
+	require.Contains(t, view, "deploy profile")
 	require.Contains(t, view, "switch profile")
 	require.NotContains(t, view, "Browsing is read-only",
 		"the help copy must no longer claim the TUI is read-only now that mutations exist")
@@ -1816,11 +1841,16 @@ func TestPrototypeInstallPlanReinstallForSkyUI(t *testing.T) {
 func TestHelpOverlayDocumentsInstallKey(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	// Height 60 keeps every help group uncapped, same as
+	// TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim - the
+	// "search" group (which documents Install) isn't promoted to the front
+	// on the default Dashboard screen, so it needs enough budget to render
+	// at all.
+	model := sizedPrototypeModel(t, "wizardry", 160, 60)
 	model = updateWithRunes(t, model, "?")
 	view := model.View()
 
-	require.Contains(t, view, "install the selected search result")
+	require.Contains(t, view, "install selected result")
 }
 
 func TestFooterHintNamesInstallAction(t *testing.T) {
@@ -2501,4 +2531,110 @@ func TestFooterHintNamesCheckUpdatesAction(t *testing.T) {
 	view := model.View()
 
 	require.Contains(t, view, "u: check updates")
+}
+
+// --- Deployed files ('f' on Installed Mods) ---
+
+// modelWithProvider builds a fully-loaded Model (data ready) backed by the
+// given DataProvider and no ActionProvider - mirrors modelWithActions'
+// shape but for tests exercising a read-only DataProvider seam (showDeployedFiles
+// only needs m.provider, never m.actions).
+func modelWithProvider(t *testing.T, provider DataProvider) Model {
+	t.Helper()
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	return loaded.(Model)
+}
+
+// TestFilesKeyOpensOverlayWithDeployedFiles covers the happy path against
+// the prototype provider (real, non-empty canned DeployedFiles rows for a
+// known installed mod - see prototypeProvider.DeployedFiles): 'f' on row 0
+// opens the overlay with a title naming the mod and a non-empty file list.
+func TestFilesKeyOpensOverlayWithDeployedFiles(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	name := model.mods[0].Name
+
+	updated, cmd := model.Update(keyRunes("f"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.NotNil(t, model.overlay)
+	require.Contains(t, model.overlay.title, name)
+	require.NotEmpty(t, model.overlay.lines)
+}
+
+// TestFilesKeyEmptyStateMessage covers a mod with nothing currently
+// deployed: DeployedFiles' documented empty-but-no-error contract (an empty
+// slice, nil error - see DataProvider.DeployedFiles' doc comment) renders as
+// a single explanatory line, never a blank overlay.
+func TestFilesKeyEmptyStateMessage(t *testing.T) {
+	t.Parallel()
+
+	provider := &recordingProvider{delegate: NewPrototypeProvider()}
+	model := modelWithProvider(t, provider)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, cmd := model.Update(keyRunes("f"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.NotNil(t, model.overlay)
+	require.Equal(t, []string{"no files deployed"}, model.overlay.lines)
+}
+
+// TestFilesKeyIgnoredOnOtherScreens proves 'f' only fires on Installed Mods.
+func TestFilesKeyIgnoredOnOtherScreens(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("f"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.overlay)
+}
+
+// TestFilesKeySwallowedByFocusedSearchInput proves 'f' types into the search
+// box instead of opening the overlay while ScreenSearch is focused - the
+// existing focused-input swallow branch (updateKey, app.go) runs before the
+// mutation-key switch this is dispatched from, so this is inertness by
+// construction, matching every other single-letter mutation key's own test
+// of the same guard (e.g. TestToggleEnableKeyInertWhileSearchFocused).
+func TestFilesKeySwallowedByFocusedSearchInput(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	updated := updateWithRunes(t, model, "3") // jump to search, focused
+	updated = updateWithRunes(t, updated, "f")
+
+	require.True(t, updated.search.input.Focused())
+	require.Contains(t, updated.search.input.Value(), "f")
+	require.Nil(t, updated.overlay)
+}
+
+// TestFilesKeyErrorGoesToStatusLine covers a DeployedFiles failure (e.g. a
+// DB read error): the status line renders the error and statusIsError
+// flips, mirroring every other synchronous/async failure path's rendering
+// (singleLine(err.Error()) + statusIsError = true - see resolvePlanFailure/
+// resolveInstallPlanFailure/resolveCheckUpdatesFailure for the async
+// precedent this mirrors) - no overlay opens.
+func TestFilesKeyErrorGoesToStatusLine(t *testing.T) {
+	t.Parallel()
+
+	provider := &recordingProvider{delegate: NewPrototypeProvider(), DeployedFilesErr: errors.New("db read failed")}
+	model := modelWithProvider(t, provider)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, cmd := model.Update(keyRunes("f"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.overlay)
+	require.True(t, model.action.statusIsError)
+	require.Equal(t, singleLine("db read failed"), model.action.status)
 }
