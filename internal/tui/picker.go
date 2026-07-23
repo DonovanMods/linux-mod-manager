@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -105,16 +106,33 @@ func digitQuickSelect(msg tea.KeyMsg, n int) (int, bool) {
 // the screen content, mirroring actionModalView's approach (see that
 // method's doc comment for why: it preserves the exact-height render
 // invariant every screen holds without an overlay needing its own height
-// bookkeeping).
+// bookkeeping). Unlike actionModalView's detail lines (informational, so
+// overflow collapses into a single "+N more"), every picker option must
+// stay reachable and selectable, so an option list taller than the panel's
+// budget is clipped to a scroll-follow-selection window instead (see
+// pickerWindow), with dimmed "↑ N more"/"↓ N more" indicator lines naming
+// whatever is clipped above/below.
 func (m Model) pickerView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
 	panelContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	panelContentHeight := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
 
 	p := m.picker
 	lines := []string{truncate(m.theme.PanelTitle.Render(p.title), panelContentWidth)}
 
-	for i, opt := range p.options {
+	// Fixed lines: title, blank separator, hint (3 total) — the same
+	// accounting actionModalView uses. Whatever vertical room remains is
+	// the budget for option rows plus any indicator lines.
+	const fixedLines = 3
+	budget := max(panelContentHeight-fixedLines, 1)
+	start, windowSize := pickerWindow(len(p.options), p.selected, budget)
+
+	if start > 0 {
+		lines = append(lines, m.theme.MutedText.Render(fmt.Sprintf("↑ %d more", start)))
+	}
+	for i := start; i < start+windowSize; i++ {
+		opt := p.options[i]
 		marker := "  "
 		if i == p.selected {
 			marker = "> "
@@ -129,8 +147,34 @@ func (m Model) pickerView() string {
 		}
 		lines = append(lines, row)
 	}
+	if below := len(p.options) - (start + windowSize); below > 0 {
+		lines = append(lines, m.theme.MutedText.Render(fmt.Sprintf("↓ %d more", below)))
+	}
 
 	lines = append(lines, "", m.theme.MutedText.Render("↑/↓ move · enter choose · esc cancel"))
 
 	return m.panelWithHeight(width, height).Render(strings.Join(lines, "\n"))
+}
+
+// pickerWindow computes the contiguous [start, start+windowSize) slice of an
+// n-option list to render given the selected index and the row budget
+// (option rows + indicator lines together must fit in budget). When
+// everything fits, the window is the whole list and no indicators are
+// needed. Otherwise two rows are reserved for the "↑/↓ N more" indicators —
+// unconditionally, so the window size (and therefore total rendered lines)
+// can never exceed budget regardless of which edge the window touches; a
+// window at an edge simply renders one fewer line — and the window is
+// centered on the selection, clamped to the list bounds, so the selected
+// row is always visible (scroll-follow-selection). budget is always >= 3 in
+// practice: availableContentHeight's 8-line floor minus the panel border
+// minus the 3 fixed lines (see pickerView) leaves at least 3.
+func pickerWindow(n, selected, budget int) (start, windowSize int) {
+	if n <= budget {
+		return 0, n
+	}
+	windowSize = max(budget-2, 1)
+	start = selected - (windowSize-1)/2
+	start = min(start, n-windowSize)
+	start = max(start, 0)
+	return start, windowSize
 }
