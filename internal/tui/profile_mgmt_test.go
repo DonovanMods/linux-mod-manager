@@ -54,16 +54,23 @@ func TestCreateProfileDuplicateNameValidatesInModal(t *testing.T) {
 }
 
 // TestCreateProfilePathTraversalNameValidatesInModal covers the validate
-// closure's client-side mirror of the config layer's validateProfileName
-// guard: names containing path separators or ".." would become file paths
-// under the profiles directory, so typing one and pressing enter keeps the
-// modal open with an inline error, and never dispatches - rather than only
-// failing after submit via ActionOutcome.
+// closure's path-traversal check: names containing path separators or ".."
+// would become file paths under the profiles directory (the config layer
+// refuses them too), so typing one and pressing enter keeps the modal open
+// with an inline error, and never dispatches - rather than only failing
+// after submit via ActionOutcome.
 func TestCreateProfilePathTraversalNameValidatesInModal(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"../evil", "foo/bar", `foo\bar`} {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+	}{
+		{name: "dot dot", input: "../evil"},
+		{name: "forward slash", input: "foo/bar"},
+		{name: "backslash", input: `foo\bar`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			rec := &recordingActions{}
@@ -72,7 +79,7 @@ func TestCreateProfilePathTraversalNameValidatesInModal(t *testing.T) {
 
 			updated, _ := model.Update(keyRunes("c"))
 			model = updated.(Model)
-			model = typeString(t, model, name)
+			model = typeString(t, model, tc.input)
 			updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			model = updated.(Model)
 
