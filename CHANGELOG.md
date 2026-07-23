@@ -7,11 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.12.4] - 2026-07-23
+## [1.13.1] - 2026-07-23
 
 ### Security
 
 - Profile names are now validated before any filesystem access: names that are empty (or whitespace-only), contain path separators, or contain ".." are rejected with a clear "invalid profile name" error. Previously a name like `../../../evil` passed to `lmm profile create`/`delete` (or a crafted `profile import` file) would be joined into the profile path unchecked, letting profile save/delete write or remove `.yaml` files outside `~/.config/lmm/games/<game>/profiles/`. The guard lives in the storage layer, so the CLI, TUI, and profile import all share it.
+
+## [1.13.0] - 2026-07-23
+
+### Added
+
+- TUI purge behind a confirmation view (`X` on Dashboard/Installed Mods), streaming per-mod progress via the shared `core.PurgeProfile` flow (#61); an empty profile short-circuits with a "no mods installed" message. The `purge --uninstall` variant deliberately remains CLI-only
+- Per-mod deployed-files panel (`f` on Installed Mods), listing the files a mod has placed in the game directory
+- Update-policy editing (`P` on Installed Mods): a notify/auto/pin picker with the mod's current policy marked
+- In-TUI game switcher (`g`, any screen): pick from configured games to rebind the session (data providers, active profile, sources) and reload; `--prototype` demo mode gets a second canned game to switch to
+- Profile create (`c`) and delete (`d`) on the Profiles screen; delete refuses the active profile, and create validates duplicate names inline
+- Help overlay (`?`) restructured into per-screen key groups, with the current screen's group listed first and a height-capped "+N more" tail; the Dashboard's `enter` action is now documented
+
+### Fixed
+
+- TUI: an in-flight data load racing a game or profile switch could momentarily repopulate the screen with the prior game's or profile's data; loads are now generation-checked so a stale load can no longer overwrite a newer one
 
 ## [1.12.3] - 2026-07-23
 
@@ -821,8 +836,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.4...HEAD
-[1.12.4]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.3...v1.12.4
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.1...HEAD
+[1.13.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.0...v1.13.1
+[1.13.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.3...v1.13.0
 [1.12.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.2...v1.12.3
 [1.12.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.1...v1.12.2
 [1.12.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.0...v1.12.1

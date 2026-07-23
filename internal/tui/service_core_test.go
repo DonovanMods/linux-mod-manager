@@ -143,6 +143,51 @@ func TestCoreProviderProfileFieldRaceGuard(t *testing.T) {
 	wg.Wait()
 }
 
+// TestCoreProviderGameFieldRaceGuard is Task 8's race test, mirroring
+// TestCoreProviderProfileFieldRaceGuard immediately above in full (gameMu's
+// own doc comment guards the identical race for p.game that profileMu
+// guards for p.profile): a Search call blocked genuinely in-flight (past
+// the network call, about to proceed into installedModKeys' own
+// p.currentGame().ID read - the same spot p.currentProfile() is read right
+// after unblocking) overlaps a concurrent SetGame call on the SAME
+// coreProvider instance. Passes functionally either way; the point is
+// `go test -race` must NOT report a data race on p.game.
+func TestCoreProviderGameFieldRaceGuard(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"blocking": "testgame"}
+	src := &blockingSource{id: "blocking", entered: make(chan struct{}), release: make(chan struct{})}
+	svc.RegisterSource(src)
+
+	second := &domain.Game{
+		ID:          "second-game",
+		Name:        "Second Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+	}
+	require.NoError(t, svc.AddGame(second))
+
+	rebinder, ok := provider.(interface{ SetGame(string) error })
+	require.True(t, ok, "coreProvider must implement the gameRebinder shape")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = provider.Search(context.Background(), "blocking", "query", 0)
+	}()
+
+	<-src.entered // Search is now blocked inside the "network call", about
+	// to proceed straight into installedModKeys' p.currentGame().ID read the
+	// instant release is closed below.
+	go func() {
+		defer wg.Done()
+		_ = rebinder.SetGame(second.ID)
+	}()
+	close(src.release)
+
+	wg.Wait()
+}
+
 // netSource is a fuller source.ModSource test double than stubSource above:
 // it serves real download content over an httptest.Server, so coreProvider's
 // network-touching ActionProvider methods (PlanInstall/ApplyInstall/
@@ -471,6 +516,58 @@ func TestCoreProviderSearchAllSourcesWarnings(t *testing.T) {
 	require.Len(t, page.Warnings, 1)
 	assert.Contains(t, page.Warnings[0], failingSourceID)
 	assert.NotEmpty(t, page.Results, "good source's results survive the failure")
+}
+
+// --- coreProvider: DeployedFiles ---
+
+// TestCoreProviderDeployedFiles guards the read-only files-overlay data path
+// (Task 4): DeployedFiles must return the exact relative paths a real
+// Installer.Install run recorded via SaveDeployedFile, sorted (the
+// underlying query already ORDER BYs relative_path - see
+// internal/storage/db/files.go's GetDeployedFilesForMod - so this also pins
+// that coreProvider does not need to re-sort defensively).
+func TestCoreProviderDeployedFiles(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+
+	gameCache := svc.GetGameCache(game)
+	files := map[string][]byte{
+		"textures/mod-a/main.dds": []byte("data"),
+		"mod-a.esp":               []byte("data"),
+	}
+	for path, content := range files {
+		require.NoError(t, gameCache.Store(game.ID, "nexusmods", "mod-a", "1.0", path, content))
+	}
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "mod-a",
+			SourceID: "nexusmods",
+			GameID:   game.ID,
+			Name:     "Mod A",
+			Version:  "1.0",
+		},
+		ProfileName: "default",
+		Enabled:     true,
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod-a", SourceID: "nexusmods", Version: "1.0", GameID: game.ID}, "default"))
+
+	got, err := provider.DeployedFiles("nexusmods", "mod-a")
+	require.NoError(t, err)
+	require.Equal(t, []string{"mod-a.esp", "textures/mod-a/main.dds"}, got)
+}
+
+// TestCoreProviderDeployedFilesEmpty covers a mod with no deployed_files
+// rows at all - the fixture's mod "101" carries Deployed:true on its
+// InstalledMod DB row, but that flag is separate bookkeeping from the
+// deployed_files tracking table (only Installer.Install populates it via
+// SaveDeployedFile - see this file's other DeployedFiles test), so no
+// Install call means no tracked files.
+func TestCoreProviderDeployedFilesEmpty(t *testing.T) {
+	provider, _, _ := newCoreProviderFixture(t)
+
+	got, err := provider.DeployedFiles("nexusmods", "101")
+	require.NoError(t, err)
+	require.Empty(t, got)
 }
 
 // --- coreProvider: ActionProvider ---
@@ -939,6 +1036,128 @@ func TestCoreProviderActions_DeployProfile_ReportsFailedCount(t *testing.T) {
 	assert.NoError(t, err, "the mod with an intact cache entry should still deploy")
 	_, err = os.Lstat(filepath.Join(game.ModPath, "two.esp"))
 	assert.True(t, os.IsNotExist(err), "the mod whose redownload failed must not be deployed")
+}
+
+// --- coreProvider: PurgeProfile (Task 7) ---
+
+// seedDeployedActionMod stores files in game's cache, saves an InstalledMod
+// DB row with Deployed already true, and actually deploys the files via
+// Installer.Install - the seed+install recipe TestCoreProviderDeployedFiles
+// (Task 3, above) established, extended with an explicit Deployed:true seed
+// (mirroring newCoreProviderFixture's own SkyUI row) so a purge test can
+// observe it flip to false.
+func seedDeployedActionMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, name, version string, files map[string][]byte) {
+	t.Helper()
+
+	gameCache := svc.GetGameCache(game)
+	for path, content := range files {
+		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+	}
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: version, GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID}, "default"))
+}
+
+// TestCoreProviderActions_PurgeProfile drives PurgeProfile against a real
+// Service: two mods are seeded pre-deployed and actually installed
+// (seedDeployedActionMod), then purged - proving the files are undeployed
+// for real, both DB rows flip Deployed=false (not deleted - Uninstall is
+// always false, see coreProvider.PurgeProfile's own doc comment), the
+// outcome message counts them, and the progress adapter streams the
+// DeployPurging header plus a "✓"-line per mod (purgeProgressLine's
+// composed lines, observed here directly - unlike the TUI-model-level pump
+// tests in purge_test.go, this calls the progress callback synchronously
+// per event with no single-slot-channel coalescing in between).
+func TestCoreProviderActions_PurgeProfile(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedDeployedActionMod(t, svc, game, "src", "1", "Mod One", "1.0", map[string][]byte{"one.esp": []byte("1")})
+	seedDeployedActionMod(t, svc, game, "src", "2", "Mod Two", "1.0", map[string][]byte{"two.esp": []byte("2")})
+
+	var ticks []tui.ActionProgress
+	outcome, err := actions.PurgeProfile(context.Background(), func(p tui.ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, "Purged 2 mod(s)", outcome.Message)
+	assert.Empty(t, outcome.Warnings)
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "one.esp"))
+	assert.True(t, os.IsNotExist(err), "purge must undeploy mod 1's files")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "two.esp"))
+	assert.True(t, os.IsNotExist(err), "purge must undeploy mod 2's files")
+
+	mod1, err := svc.GetInstalledMod("src", "1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod1.Deployed, "purge must flip Deployed to false, not delete the record")
+	mod2, err := svc.GetInstalledMod("src", "2", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod2.Deployed)
+
+	var lines []string
+	for _, tick := range ticks {
+		lines = append(lines, tick.Line)
+	}
+	assert.Contains(t, lines, "purging 2 mod(s)…")
+	checkmarks := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "✓ ") {
+			checkmarks++
+		}
+	}
+	assert.Equal(t, 2, checkmarks, "must observe a ✓-line per purged mod")
+}
+
+// TestCoreProviderActions_PurgeProfile_SkipAndWarningsSurface guards the
+// Skipped -> Warnings prefixing coreProvider.PurgeProfile documents
+// (service_core.go's prefixSkipped): a game-level uninstall.before_each
+// hook that always fails skips the mod entirely (core.PurgeResult.Skipped,
+// not Purged), and that skip must surface in ActionOutcome.Warnings with
+// its own "Skipped " lead-in. Uses the SAME direct
+// game.Hooks.Uninstall.BeforeEach technique
+// TestCoreProviderActions_UninstallMod_RunsUninstallHooksMatchingCLIConfig
+// (above) already established in this file - simpler than round-tripping a
+// hooks.yaml fixture, and already proven to resolve through
+// coreProvider.resolvedHooks, so this test reuses it rather than
+// introducing a second hook-wiring mechanism.
+func TestCoreProviderActions_PurgeProfile_SkipAndWarningsSurface(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	scriptsDir := t.TempDir()
+	failScript := createActionsTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "boom" >&2
+exit 1`)
+	game.Hooks.Uninstall.BeforeEach = failScript
+
+	seedDeployedActionMod(t, svc, game, "src", "1", "Test Mod", "1.0", map[string][]byte{"plugin.esp": []byte("data")})
+
+	outcome, err := actions.PurgeProfile(context.Background(), nil)
+	require.NoError(t, err, "a before_each skip must not fail the whole purge")
+	assert.Equal(t, "Purged 0 mod(s)", outcome.Message)
+	require.Len(t, outcome.Warnings, 1)
+	assert.Contains(t, outcome.Warnings[0], "Skipped Test Mod: uninstall.before_each hook failed")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "plugin.esp"))
+	assert.NoError(t, err, "a skipped mod's files must remain deployed - purge never touched it")
+
+	mod, err := svc.GetInstalledMod("src", "1", game.ID, "default")
+	require.NoError(t, err)
+	assert.True(t, mod.Deployed, "a skipped mod's Deployed flag must be untouched")
+}
+
+// TestCoreProviderActions_PurgeProfile_Empty guards the empty-mods
+// short-circuit (coreProvider.PurgeProfile's own doc comment): no installed
+// mods means no core.PurgeProfile call at all, just a plain "no mods
+// installed" outcome with no error and no warnings.
+func TestCoreProviderActions_PurgeProfile_Empty(t *testing.T) {
+	actions, _, _ := newCoreActionsFixture(t)
+
+	outcome, err := actions.PurgeProfile(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "no mods installed", outcome.Message)
+	assert.Empty(t, outcome.Warnings)
 }
 
 func TestCoreProviderActions_PlanProfileSwitch_MapsBucketsToDisplayStrings(t *testing.T) {
@@ -1536,4 +1755,273 @@ func TestCoreProviderActions_ApplyUpdate_MapsNotSupportedError(t *testing.T) {
 	assert.Contains(t, err.Error(), "lmm update")
 	assert.NotContains(t, err.Error(), "lmm install",
 		"an updates-capability gap must never suggest the install-path fallback")
+}
+
+// TestCoreProviderActions_SetUpdatePolicy_PersistsAndReadsBack is Task 5's
+// TestCoreProviderActions_CreateProfile proves CreateProfile persists a real,
+// empty profile via svc.NewProfileManager().Create, readable back with
+// pm.Get, and that a duplicate create is rejected (ProfileManager.Create's
+// own "profile already exists" guard - internal/core/profile.go).
+func TestCoreProviderActions_CreateProfile(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	outcome, err := actions.CreateProfile(context.Background(), "extra")
+	require.NoError(t, err)
+	assert.Equal(t, "Created profile: extra", outcome.Message)
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get(game.ID, "extra")
+	require.NoError(t, err)
+	assert.Equal(t, "extra", profile.Name)
+
+	_, err = actions.CreateProfile(context.Background(), "extra")
+	assert.Error(t, err, "creating a colliding name a second time must error")
+}
+
+// TestCoreProviderActions_DeleteProfile proves DeleteProfile removes a real,
+// non-active profile's YAML via svc.NewProfileManager().Delete - a
+// subsequent pm.Get for the same name returns domain.ErrProfileNotFound.
+func TestCoreProviderActions_DeleteProfile(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "extra")
+	require.NoError(t, err)
+
+	outcome, err := actions.DeleteProfile(context.Background(), "extra")
+	require.NoError(t, err)
+	assert.Equal(t, "Deleted profile: extra", outcome.Message)
+
+	_, err = pm.Get(game.ID, "extra")
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
+}
+
+// TestCoreProviderActions_DeleteActiveProfileRefused proves the
+// defense-in-depth guard in coreProvider.DeleteProfile: deleting the
+// session's own active profile ("default", per newCoreActionsFixture) errors
+// without ever calling ProfileManager.Delete - the profile is still present
+// afterward.
+func TestCoreProviderActions_DeleteActiveProfileRefused(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	_, err := actions.DeleteProfile(context.Background(), "default")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot delete the active profile")
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "default", profile.Name, "the refused delete must leave the active profile untouched")
+}
+
+// coreProvider guard: setting "auto" through the ActionProvider seam
+// persists via svc.SetModUpdatePolicy, visible in a direct
+// svc.GetInstalledMod read-back as domain.UpdateAuto - a real Service
+// fixture, no recording fake, so this proves the actual DB write/mapping
+// rather than just the wiring.
+func TestCoreProviderActions_SetUpdatePolicy_PersistsAndReadsBack(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modP", "Mod P", "1.0", true, nil)
+	item := tui.ModItem{ID: "modP", Source: "src", Name: "Mod P"}
+
+	outcome, err := actions.SetUpdatePolicy(context.Background(), item, "auto")
+	require.NoError(t, err)
+	assert.Equal(t, "Mod P update policy: auto", outcome.Message)
+
+	mod, err := svc.GetInstalledMod("src", "modP", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateAuto, mod.UpdatePolicy)
+}
+
+// TestCoreProviderActions_SetUpdatePolicy_UnknownPolicyErrors guards the
+// reject-not-default contract (service_core.go's parseUpdatePolicy): an
+// unrecognized policy string errors instead of silently mapping to
+// domain.UpdateNotify, and never reaches svc.SetModUpdatePolicy at all - the
+// mod's policy in the DB stays untouched.
+func TestCoreProviderActions_SetUpdatePolicy_UnknownPolicyErrors(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modQ", "Mod Q", "1.0", true, nil)
+	item := tui.ModItem{ID: "modQ", Source: "src", Name: "Mod Q"}
+
+	_, err := actions.SetUpdatePolicy(context.Background(), item, "bogus")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown policy "bogus"`)
+
+	mod, err := svc.GetInstalledMod("src", "modQ", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdateNotify, mod.UpdatePolicy, "an unknown policy must never mutate the stored policy")
+}
+
+// TestCoreProviderOverview_MapsUpdatePolicyToWireString extends
+// TestCoreProviderOverview's own assertions (per task-5-brief.md: "extend
+// the existing Overview test's assertions minimally") to cover the
+// ModItem.UpdatePolicy field this task added: seeded UpdateAuto/UpdatePinned
+// mods must stringify to "auto"/"pin" (policyToString's documented wire
+// strings - NOT the CLI's own "pinned" spelling, see that function's doc
+// comment) in the Overview mapping.
+func TestCoreProviderOverview_MapsUpdatePolicyToWireString(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "201", SourceID: "nexusmods", GameID: game.ID, Name: "Auto Mod", Version: "1.0"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateAuto,
+		Enabled:      true,
+	}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "202", SourceID: "nexusmods", GameID: game.ID, Name: "Pinned Mod", Version: "1.0"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdatePinned,
+		Enabled:      true,
+	}))
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+
+	byID := map[string]tui.ModItem{}
+	for _, m := range mods {
+		byID[m.ID] = m
+	}
+	require.Contains(t, byID, "101", "pre-existing fixture mod must still be present")
+	assert.Equal(t, "notify", byID["101"].UpdatePolicy, "the fixture's default UpdatePolicy (zero value) maps to notify")
+	require.Contains(t, byID, "201")
+	assert.Equal(t, "auto", byID["201"].UpdatePolicy)
+	require.Contains(t, byID, "202")
+	assert.Equal(t, "pin", byID["202"].UpdatePolicy)
+}
+
+// --- Task 8: in-TUI game switcher ---
+
+// TestCoreProviderListGames guards ListGames' basic contract: every
+// configured game is listed, sorted by Name (mirroring SourceInfos' own
+// sorting - svc.ListGames ranges over an internal map, so iteration order
+// isn't otherwise deterministic), with exactly the fixture's own game -
+// the one bound at construction time - marked Active.
+func TestCoreProviderListGames(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+
+	second := &domain.Game{
+		ID:          "second-game",
+		Name:        "A Second Game", // sorts before "Test Game"
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+	}
+	require.NoError(t, svc.AddGame(second))
+
+	games, err := provider.ListGames()
+	require.NoError(t, err)
+	require.Len(t, games, 2)
+
+	require.Equal(t, "A Second Game", games[0].Name, "must be sorted by Name")
+	require.Equal(t, "Test Game", games[1].Name)
+
+	byID := map[string]tui.GameInfo{}
+	for _, g := range games {
+		byID[g.ID] = g
+	}
+	require.True(t, byID[game.ID].Active, "the fixture's game (bound at construction) must be marked Active")
+	require.False(t, byID[second.ID].Active)
+}
+
+// TestCoreProviderSetGame guards SetGame's rebind contract: after switching,
+// Overview/Profiles reflect the NEW game's own data (not the game bound at
+// construction); an unknown id is refused, with the current binding left
+// completely untouched.
+func TestCoreProviderSetGame(t *testing.T) {
+	provider, svc, _ := newCoreProviderFixture(t)
+
+	second := &domain.Game{
+		ID:          "second-game",
+		Name:        "Second Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+	}
+	require.NoError(t, svc.AddGame(second))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(second.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(second.ID, "default"))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "301", SourceID: "nexusmods", GameID: second.ID, Name: "Second Game Mod", Version: "1.0"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+
+	rebinder, ok := provider.(interface{ SetGame(string) error })
+	require.True(t, ok, "coreProvider must implement the gameRebinder hook (SetGame(string) error)")
+	require.NoError(t, rebinder.SetGame(second.ID))
+
+	summary, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "Second Game", summary.GameName)
+	require.Equal(t, "default", summary.ProfileName, "SetGame must resolve the new game's OWN default profile")
+	require.Len(t, mods, 1)
+	require.Equal(t, "Second Game Mod", mods[0].Name)
+
+	profiles, err := provider.Profiles(context.Background())
+	require.NoError(t, err)
+	require.Len(t, profiles, 1, "Profiles must be scoped to the NEW game, not the one bound at construction")
+	require.Equal(t, "default", profiles[0].Name)
+	require.True(t, profiles[0].Active)
+
+	err = rebinder.SetGame("no-such-game")
+	require.Error(t, err)
+	summary, _, err = provider.Overview(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "Second Game", summary.GameName, "an unknown id must leave the current binding untouched")
+}
+
+// TestCoreProviderActions_SetGame_InvalidatesHooksCache guards SetGame's
+// hooks-cache invalidation, mirroring
+// TestCoreProviderActions_SetProfile_InvalidatesHooksCache's own seam
+// exactly (see that test's doc comment for the full reasoning) but keyed on
+// GAME instead of profile: a stale ResolvedHooks cached from the FIRST
+// game's hooks must never leak into an action run against the SECOND.
+func TestCoreProviderActions_SetGame_InvalidatesHooksCache(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	scriptsDir := t.TempDir()
+	firstLog := filepath.Join(scriptsDir, "first.log")
+	secondLog := filepath.Join(scriptsDir, "second.log")
+	firstScript := createActionsTestScript(t, scriptsDir, "first_before_all.sh", `#!/bin/bash
+echo hit >> `+firstLog+`
+exit 0`)
+	secondScript := createActionsTestScript(t, scriptsDir, "second_before_all.sh", `#!/bin/bash
+echo hit >> `+secondLog+`
+exit 0`)
+
+	game.Hooks.Uninstall.BeforeAll = firstScript
+	seedActionMod(t, svc, game, "src", "1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("d")})
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "1", "1.0")
+
+	_, err := actions.UninstallMod(context.Background(), tui.ModItem{ID: "1", Source: "src", Name: "Mod One"})
+	require.NoError(t, err)
+	firstLogContent, err := os.ReadFile(firstLog)
+	require.NoError(t, err)
+	assert.Equal(t, "hit\n", string(firstLogContent), "must resolve and run the FIRST game's own hook")
+
+	second := &domain.Game{
+		ID:          "second-game",
+		Name:        "Second Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+		LinkMethod:  domain.LinkSymlink,
+	}
+	second.Hooks.Uninstall.BeforeAll = secondScript
+	require.NoError(t, svc.AddGame(second))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(second.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(second.ID, "default"))
+	seedActionMod(t, svc, second, "src", "2", "Mod Two", "1.0", true, map[string][]byte{"two.esp": []byte("d")})
+	seedActionProfileMod(t, svc, second.ID, "default", "src", "2", "1.0")
+
+	rebinder, ok := actions.(interface{ SetGame(string) error })
+	require.True(t, ok, "coreProvider must implement the gameRebinder hook (SetGame(string) error)")
+	require.NoError(t, rebinder.SetGame(second.ID))
+
+	_, err = actions.UninstallMod(context.Background(), tui.ModItem{ID: "2", Source: "src", Name: "Mod Two"})
+	require.NoError(t, err)
+	secondLogContent, err := os.ReadFile(secondLog)
+	require.NoError(t, err)
+	assert.Equal(t, "hit\n", string(secondLogContent),
+		"resolvedHooks must be recomputed after SetGame: the SECOND game's own hook must run, not one cached from the first")
 }

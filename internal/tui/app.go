@@ -64,6 +64,19 @@ type Model struct {
 
 	state   loadState
 	loadErr error
+	// loadGen tags every loadData dispatch (dataLoadedMsg/loadFailedMsg
+	// carry the gen current when the cmd was built - loadData's value
+	// receiver captures it), mirroring searchModel.gen's staleness
+	// discipline: Update discards a load message whose gen no longer
+	// matches. Bumped ONLY where an in-flight load is intentionally
+	// invalidated - resolveGameSwitch's session reset (mutations.go) and
+	// actionDoneMsg's profile-switch rebind (both rebind the providers a
+	// still-running load may be reading from, so its eventual result
+	// describes a binding that no longer exists). Ordinary post-action
+	// refreshes deliberately do NOT bump it: concurrent same-binding
+	// refreshes all describe current data, and last-wins (the pre-gen
+	// behavior) remains correct for them.
+	loadGen int
 
 	summary  Summary
 	mods     []ModItem
@@ -71,6 +84,19 @@ type Model struct {
 	sources  []SourceInfo
 	search   searchModel
 	action   actionModel
+	// picker is the pending list-choice modal (see picker.go), if any.
+	// Sibling to action.pending: promptPicker/updatePickerKey/pickerView
+	// mirror promptAction/updatePendingActionKey/actionModalView's structure.
+	picker *pendingPicker
+	// inputModal is the pending text-entry modal (see input_modal.go), if
+	// any. Another sibling of action.pending/picker: promptInput/
+	// updateInputModalKey/inputModalView mirror the same structure.
+	inputModal *pendingInput
+	// overlay is the pending read-only info panel (see overlay.go), if any.
+	// Another sibling of action.pending/picker/inputModal: promptOverlay/
+	// updateOverlayKey/overlayView mirror the same structure, simplified
+	// (no choose/submit - see infoOverlay's doc comment).
+	overlay *infoOverlay
 
 	screen   Screen
 	selected map[Screen]int
@@ -88,15 +114,24 @@ const (
 	stateFailed
 )
 
-// dataLoadedMsg carries data successfully loaded through a DataProvider.
+// dataLoadedMsg carries data successfully loaded through a DataProvider,
+// tagged with the load generation current when the fetch was dispatched
+// (see Model.loadGen) so a superseded load - one still in flight when a
+// game switch reset the session - is discarded exactly like a stale
+// searchResultMsg (the mechanism this mirrors).
 type dataLoadedMsg struct {
+	gen      int
 	summary  Summary
 	mods     []ModItem
 	profiles []ProfileItem
 }
 
-// loadFailedMsg carries an error from a failed DataProvider load.
-type loadFailedMsg struct{ err error }
+// loadFailedMsg carries an error from a failed DataProvider load, tagged
+// like dataLoadedMsg.
+type loadFailedMsg struct {
+	gen int
+	err error
+}
 
 // NewModel creates the TUI model backed by the given DataProvider.
 func NewModel(options Options) (Model, error) {
@@ -241,23 +276,34 @@ func (m Model) Init() tea.Cmd {
 }
 
 // loadData fetches all dashboard data through the configured DataProvider.
-// It runs as a Bubble Tea command, off the update loop.
+// It runs as a Bubble Tea command, off the update loop. The value receiver
+// captures m.loadGen as of dispatch time, so the message this eventually
+// produces is tagged with the generation the load was issued under (see
+// Model.loadGen) - a caller that bumps loadGen and THEN returns m.loadData
+// (resolveGameSwitch) stamps the fresh gen, while a load already in flight
+// keeps its old one and is discarded on arrival.
 func (m Model) loadData() tea.Msg {
 	summary, mods, err := m.provider.Overview(m.ctx)
 	if err != nil {
-		return loadFailedMsg{err: err}
+		return loadFailedMsg{gen: m.loadGen, err: err}
 	}
 	profiles, err := m.provider.Profiles(m.ctx)
 	if err != nil {
-		return loadFailedMsg{err: err}
+		return loadFailedMsg{gen: m.loadGen, err: err}
 	}
 
-	return dataLoadedMsg{summary: summary, mods: mods, profiles: profiles}
+	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case dataLoadedMsg:
+		// Stale gen: a load dispatched before a game/profile switch reset
+		// the session (see Model.loadGen) - discarded whole, exactly like a
+		// stale searchResultMsg below.
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		m.state = stateReady
 		summary := msg.summary
 		// Updates is the model's own in-memory count once a check has
@@ -324,6 +370,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.search.gen++
 			m.search.state = searchIdle
+			// Same invalidation for any in-flight DATA load (see
+			// Model.loadGen): it was dispatched against the OLD profile's
+			// binding, so its eventual rows/summary go stale the instant
+			// the rebind above lands - and, if it completed after the
+			// fresh refresh dispatched below, would silently overwrite the
+			// NEW profile's data. Bumped BEFORE the cmds slice below is
+			// built, so the refresh's own m.loadData captures the fresh
+			// gen (loadData's value receiver - see its doc comment).
+			m.loadGen++
 		}
 		// A completed update-apply batch invalidates the just-checked
 		// Updates count: applying updates changes how many are left, and
@@ -425,7 +480,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.resolveCheckUpdatesFailure(msg)
+	case policyChosenMsg:
+		return m.resolvePolicyChoice(msg)
+	case profileCreateSubmittedMsg:
+		return m.resolveProfileCreate(msg)
+	case gameChosenMsg:
+		return m.resolveGameSwitch(msg)
 	case loadFailedMsg:
+		// Stale gen: mirrors dataLoadedMsg's discard above - a superseded
+		// load's failure must not flip the fresh session into stateFailed.
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		m.state = stateFailed
 		m.loadErr = msg.err
 		return m, nil
@@ -469,6 +535,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.action.pending != nil {
 		return m.updatePendingActionKey(msg)
+	}
+
+	if m.picker != nil {
+		return m.updatePickerKey(msg)
+	}
+
+	if m.inputModal != nil {
+		return m.updateInputModalKey(msg)
+	}
+
+	if m.overlay != nil {
+		return m.updateOverlayKey(msg)
 	}
 
 	// Rule 8: any keypress that isn't a modal response (handled above,
@@ -575,6 +653,18 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.installSelectedSearchResult()
 	case key.Matches(msg, m.keys.CheckUpdates):
 		return m.checkForUpdates()
+	case key.Matches(msg, m.keys.Files):
+		return m.showDeployedFiles()
+	case key.Matches(msg, m.keys.Policy):
+		return m.editSelectedModPolicy()
+	case key.Matches(msg, m.keys.CreateProfile):
+		return m.createProfilePrompt()
+	case key.Matches(msg, m.keys.DeleteProfile):
+		return m.deleteSelectedProfile()
+	case key.Matches(msg, m.keys.Purge):
+		return m.purgeProfilePrompt()
+	case key.Matches(msg, m.keys.GameSwitch):
+		return m.openGameSwitcher()
 	default:
 		return m, nil
 	}
@@ -710,6 +800,18 @@ func (m Model) nav() string {
 func (m Model) screenView() string {
 	if m.action.pending != nil {
 		return m.actionModalView()
+	}
+
+	if m.picker != nil {
+		return m.pickerView()
+	}
+
+	if m.inputModal != nil {
+		return m.inputModalView()
+	}
+
+	if m.overlay != nil {
+		return m.overlayView()
 	}
 
 	switch m.state {
@@ -1199,25 +1301,169 @@ func (m Model) sourcesView() string {
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// helpGroup is one labeled section of the help panel: a screen name (or
+// "global") plus the key entries that apply to it. Group labels are
+// lowercase per Task 9's copy convention (see helpGroups).
+type helpGroup struct {
+	name    string
+	entries []string
+}
+
+// helpEntry formats one keybinding as a help-panel row, reusing the
+// binding's own key.WithHelp key/description from keys.go rather than
+// restating it - the single source of truth for "what does this key do"
+// stays in DefaultKeyMap.
+func helpEntry(kb key.Binding) string {
+	h := kb.Help()
+	return fmt.Sprintf("%-16s %s", h.Key, h.Desc)
+}
+
+// helpGroups builds the full, ordered set of help groups: "global" always
+// first, then every screen group that has entries, in a fixed order
+// (dashboard, installed mods, search, profiles - sources has no bindings
+// beyond plain navigation, so it's omitted entirely), with the CURRENT
+// screen's group promoted to immediately follow global. Each screen's list
+// mirrors updateKey's dispatch guards in mutations.go (e.g. Files/Policy/
+// Purge all gate on ScreenInstalledMods too, alongside Deploy/CheckUpdates).
+func (m Model) helpGroups() []helpGroup {
+	global := helpGroup{
+		name: "global",
+		entries: []string{
+			helpEntry(m.keys.Quit),
+			helpEntry(m.keys.Help),
+			helpEntry(m.keys.NextScreen),
+			helpEntry(m.keys.PrevScreen),
+			fmt.Sprintf("%-16s %s", "1-5", "jump to a screen"),
+			helpEntry(m.keys.GameSwitch),
+		},
+	}
+
+	dashboard := helpGroup{
+		name: "dashboard",
+		entries: []string{
+			// Select ("enter") is context-dependent (see updateKey): on
+			// the Dashboard it opens the selected menu entry
+			// (openSelectedMenuEntry), so the description is written out
+			// here rather than reusing keys.go's generic "open" - the same
+			// ad-hoc shape as the profiles group's "switch profile" below.
+			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "open menu entry"),
+			helpEntry(m.keys.Deploy),
+			helpEntry(m.keys.CheckUpdates),
+			helpEntry(m.keys.Purge),
+		},
+	}
+
+	installedMods := helpGroup{
+		name: "installed mods",
+		entries: []string{
+			helpEntry(m.keys.ToggleEnable),
+			helpEntry(m.keys.Uninstall),
+			helpEntry(m.keys.Deploy),
+			helpEntry(m.keys.CheckUpdates),
+			helpEntry(m.keys.Files),
+			helpEntry(m.keys.Policy),
+			helpEntry(m.keys.Purge),
+		},
+	}
+
+	search := helpGroup{
+		name: "search",
+		entries: []string{
+			helpEntry(m.keys.Search),
+			helpEntry(m.keys.Submit),
+			helpEntry(m.keys.Blur),
+			helpEntry(m.keys.NextPage),
+			helpEntry(m.keys.PrevPage),
+			helpEntry(m.keys.CycleSource),
+			helpEntry(m.keys.Install),
+		},
+	}
+
+	profiles := helpGroup{
+		name: "profiles",
+		entries: []string{
+			// Select ("enter") is context-dependent (see updateKey): on
+			// Profiles it switches, not "open" like keys.go's generic
+			// Select.Help() says elsewhere - so this one entry is written
+			// out rather than reusing helpEntry, matching the actual
+			// behavior on this screen.
+			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "switch profile"),
+			helpEntry(m.keys.CreateProfile),
+			helpEntry(m.keys.DeleteProfile),
+		},
+	}
+
+	fixed := []helpGroup{dashboard, installedMods, search, profiles}
+	screenGroupName := map[Screen]string{
+		ScreenDashboard:     dashboard.name,
+		ScreenInstalledMods: installedMods.name,
+		ScreenSearch:        search.name,
+		ScreenProfiles:      profiles.name,
+	}
+	if name, ok := screenGroupName[m.screen]; ok {
+		for i, g := range fixed {
+			if g.name == name {
+				promoted := append([]helpGroup{g}, fixed[:i]...)
+				fixed = append(promoted, fixed[i+1:]...)
+				break
+			}
+		}
+	}
+
+	return append([]helpGroup{global}, fixed...)
+}
+
+// helpBodyBudget bounds how many content rows the help panel's group list
+// may use, so a long grouped list can't crowd screenView down past its own
+// floor (matching availableContentHeight's own max(...,8)) - the same
+// "+N more" cap overlayView uses, sized so the two floors agree exactly:
+// when the list is capped, screenView gets precisely its floor of 8; when
+// it isn't, screenView gets whatever room the (smaller) natural list left,
+// same as before Task 9.
+func (m Model) helpBodyBudget() int {
+	if m.height == 0 {
+		return 40
+	}
+	status := 0
+	if m.hasVisibleStatus() {
+		status = 1
+	}
+	const (
+		titleNavSpacerHeight = 4 // matches contentChromeHeight's own constant
+		screenViewFloor      = 8 // matches availableContentHeight's own floor
+		fixedHelpLines       = 2 // "HELP" title + blank separator
+	)
+	total := m.height - m.theme.App.GetVerticalFrameSize() - titleNavSpacerHeight - status
+	return max(total-screenViewFloor-m.theme.Panel.GetVerticalBorderSize()-fixedHelpLines, 1)
+}
+
 func (m Model) helpView() string {
-	return m.panel(m.availableWidth()).Render(strings.Join([]string{
-		m.theme.PanelTitle.Render("HELP"),
-		"arrows / hjkl       move or switch screens",
-		"tab / shift+tab     cycle top-level screens",
-		"1-5                 jump to a screen (3 focuses search)",
-		"/                   search from anywhere (jumps + focuses input)",
-		"i                   install the selected search result (Search, unfocused)",
-		"enter               open menu entry / search / switch profile",
-		"esc                 unfocus search input",
-		"n/p                 result pages",
-		"s                   cycle source",
-		"e/x/D               toggle enable/disable / uninstall selected mod / deploy active profile",
-		"u                   check for updates (Dashboard/Installed Mods)",
-		"?                   toggle this help",
-		"q / ctrl+c           quit",
-		"",
-		"Enable, disable, uninstall, deploy, install, apply updates, and profile switch all confirm through a modal before anything changes.",
-	}, "\n"))
+	width := m.availableWidth()
+	panelContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+
+	var body []string
+	for i, g := range m.helpGroups() {
+		if i > 0 {
+			body = append(body, "")
+		}
+		body = append(body, truncate(m.theme.PanelTitle.Render(g.name), panelContentWidth))
+		for _, e := range g.entries {
+			body = append(body, truncate(e, panelContentWidth))
+		}
+	}
+
+	lines := []string{truncate(m.theme.PanelTitle.Render("HELP"), panelContentWidth), ""}
+	budget := m.helpBodyBudget()
+	if len(body) > budget {
+		shown := max(budget-1, 0)
+		more := len(body) - shown
+		lines = append(lines, body[:shown]...)
+		lines = append(lines, truncate(m.theme.MutedText.Render(fmt.Sprintf("+%d more", more)), panelContentWidth))
+	} else {
+		lines = append(lines, body...)
+	}
+
+	return m.panel(width).Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) row(index int, label string) string {

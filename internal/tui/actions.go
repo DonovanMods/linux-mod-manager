@@ -31,6 +31,28 @@ const (
 	// actionUpdate is Phase 5b's check/apply-updates action kind (see
 	// mutations.go's checkForUpdates/applyUpdatesSequentially).
 	actionUpdate
+	// actionSetPolicy is Task 5's update-policy picker action kind (see
+	// mutations.go's editSelectedModPolicy/resolvePolicyChoice). No
+	// actionDoneMsg branch needs to name it specifically (app.go) - the
+	// default status+refresh path already covers it, unlike actionInstall
+	// (extra search refresh) and actionUpdate (re-sentinels the Updates
+	// count).
+	actionSetPolicy
+	// actionCreateProfile and actionDeleteProfile are Task 6's Profiles-screen
+	// create/delete action kinds (see mutations.go's createProfilePrompt/
+	// resolveProfileCreate and deleteSelectedProfile). Neither needs an
+	// actionDoneMsg branch of its own (app.go) - the default status+refresh
+	// path already covers both, exactly like actionSetPolicy above; loadData
+	// re-fetches Profiles, so the new/removed row is visible on the very next
+	// render.
+	actionCreateProfile
+	actionDeleteProfile
+	// actionPurge is Task 7's Dashboard/Installed-Mods purge-behind-
+	// confirmation action kind (see mutations.go's purgeProfilePrompt). No
+	// actionDoneMsg branch needs to name it specifically (app.go) - the
+	// default status+refresh path already covers it, exactly like
+	// actionSetPolicy/actionCreateProfile/actionDeleteProfile above.
+	actionPurge
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation
@@ -305,6 +327,48 @@ func (m Model) rebindProfile(name string) {
 	if rb, ok := m.actions.(profileRebinder); ok {
 		rb.SetProfile(name)
 	}
+}
+
+// gameRebinder is implemented by DataProvider/ActionProvider values that
+// carry a per-session active-game binding (currently *coreProvider only -
+// see service_core.go's SetGame), letting a successful TUI-driven game
+// switch rebind the session without reconstructing the provider. Mirrors
+// profileRebinder's own shape/reasoning in full (see that type's doc
+// comment) - it's deliberately NOT part of DataProvider/ActionProvider
+// themselves for the identical reason. prototypeProvider DOES implement
+// this one (unlike profileRebinder, which it deliberately skips - see that
+// type's doc comment for why): Task 8 wants the game switcher to visibly
+// work in --prototype demo mode, and prototypeProvider.SetGame (service.go)
+// is written to tolerate the resulting double-call (see rebindGame below)
+// by being a plain "which one" switch rather than a toggle.
+type gameRebinder interface {
+	SetGame(id string) error
+}
+
+// rebindGame rebinds every provider/actions instance that supports it (see
+// gameRebinder) to id, mirroring rebindProfile's own "both instances,
+// independently, even a shared pointer is a harmless no-op" reasoning in
+// full (see that method's doc comment) - both are attempted unconditionally
+// regardless of whether the first call errored, and the FIRST error either
+// one returns is what's returned here (a second error, if any, is not
+// otherwise surfaced - matching this task's brief, which asks only that
+// both calls happen and the first failure wins). --prototype mode wires
+// m.provider and m.actions from the SAME prototypeProvider instance
+// (NewPrototypeModel), so this calls SetGame on it TWICE for one switch;
+// see gameRebinder's own doc comment for why that's safe.
+func (m Model) rebindGame(id string) error {
+	var firstErr error
+	if rb, ok := m.provider.(gameRebinder); ok {
+		if err := rb.SetGame(id); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if rb, ok := m.actions.(gameRebinder); ok {
+		if err := rb.SetGame(id); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // promptAction shows pa as the confirmation modal (rule 1): this is the only

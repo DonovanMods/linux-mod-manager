@@ -208,6 +208,62 @@ func TestPrototypeProviderActions_ApplyProfileSwitch_DownloadsAndAppliesNeedsDow
 	assert.True(t, byName[prototype.NeedsDownloadProfileName].Active, "the switch must still complete and mark the target active")
 }
 
+// --- prototypeProvider: CreateProfile/DeleteProfile (Task 6) ---
+
+func TestPrototypeProviderActions_CreateProfile_AddsVisibleInRepeatedProfiles(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+
+	outcome, err := actions.CreateProfile(context.Background(), "new-profile")
+	require.NoError(t, err)
+	assert.Equal(t, "Created profile: new-profile", outcome.Message)
+
+	profiles, err := provider.Profiles(context.Background())
+	require.NoError(t, err)
+	byName := map[string]ProfileItem{}
+	for _, p := range profiles {
+		byName[p.Name] = p
+	}
+	require.Contains(t, byName, "new-profile", "the SAME provider instance must reflect the create on a repeated Profiles call")
+}
+
+func TestPrototypeProviderActions_CreateProfile_DuplicateNameErrors(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	_, err := actions.CreateProfile(context.Background(), "survival")
+	assert.Error(t, err)
+}
+
+func TestPrototypeProviderActions_DeleteProfile_RemovesVisibleInRepeatedProfiles(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+
+	outcome, err := actions.DeleteProfile(context.Background(), "vanilla-plus")
+	require.NoError(t, err)
+	assert.Equal(t, "Deleted profile: vanilla-plus", outcome.Message)
+
+	profiles, err := provider.Profiles(context.Background())
+	require.NoError(t, err)
+	for _, p := range profiles {
+		assert.NotEqual(t, "vanilla-plus", p.Name, "a deleted profile must be gone from a repeated Profiles call")
+	}
+}
+
+func TestPrototypeProviderActions_DeleteProfile_ActiveRefused(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	_, err := actions.DeleteProfile(context.Background(), "survival")
+	assert.Error(t, err)
+}
+
 func TestPrototypeProviderActions_PlanProfileSwitch_UnknownProfileErrors(t *testing.T) {
 	t.Parallel()
 
@@ -460,23 +516,54 @@ type recordingActions struct {
 	ApplyInstallCalls []ModItem
 	CheckUpdatesCalls int
 	ApplyUpdateCalls  []UpdateItem
+	// SetPolicyCalls records each SetUpdatePolicy call as {modID, policy} -
+	// Task 5's picker wiring tests assert against this rather than a
+	// []ModItem (mirroring the other *Calls fields) since both the mod
+	// identity and the chosen policy string matter to those tests.
+	SetPolicyCalls []struct{ ModID, Policy string }
+	// CreateProfileCalls/DeleteProfileCalls record each call's name argument
+	// - Task 6's create/delete wiring tests assert against these, mirroring
+	// PlanCalls/ApplyCalls' own single-string-argument shape above.
+	CreateProfileCalls []string
+	DeleteProfileCalls []string
+	// PurgeCalls counts each PurgeProfile call - Task 7's purge wiring tests
+	// assert against this, mirroring DeployCalls/CheckUpdatesCalls' own
+	// no-argument counter shape above (PurgeProfile takes no ModItem/name
+	// argument - it always acts on the whole active profile).
+	PurgeCalls int
+	// SetGameCalls records each SetGame call's id argument - Task 8's game-
+	// switch wiring tests assert against this, mirroring CreateProfileCalls/
+	// DeleteProfileCalls' own single-string-argument shape above. SetGame
+	// itself is NOT part of ActionProvider (it's the optional gameRebinder
+	// hook, actions.go) - recordingActions implements it anyway so
+	// rebindGame's type assertion succeeds against this fake.
+	SetGameCalls []string
 
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
+	SetPolicyOutcome                                                             ActionOutcome
+	CreateProfileOutcome, DeleteProfileOutcome                                   ActionOutcome
+	PurgeOutcome                                                                 ActionOutcome
 	PlanView                                                                     SwitchPlanView
 	InstallPlanViewOut                                                           InstallPlanView
 	UpdatesViewOut                                                               UpdatesView
 
-	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks, if set, are
-	// replayed through the matching method's progress callback (in order)
-	// whenever it's non-nil - lets a caller assert the pump actually
-	// observes ticks a provider reports (Phase 5b Task 4).
+	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks/PurgeTicks, if
+	// set, are replayed through the matching method's progress callback (in
+	// order) whenever it's non-nil - lets a caller assert the pump actually
+	// observes ticks a provider reports (Phase 5b Task 4; PurgeTicks is
+	// Task 7's addition for PurgeProfile).
 	ApplySwitchTicks  []ActionProgress
 	ApplyInstallTicks []ActionProgress
 	ApplyUpdateTicks  []ActionProgress
+	PurgeTicks        []ActionProgress
 
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
+	SetPolicyErr                                                      error
+	CreateProfileErr, DeleteProfileErr                                error
+	PurgeErr                                                          error
+	SetGameErr                                                        error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -553,6 +640,37 @@ func (r *recordingActions) ApplyUpdate(_ context.Context, u UpdateItem, progress
 	return r.ApplyUpdateOutcome, r.ApplyUpdateErr
 }
 
+func (r *recordingActions) SetUpdatePolicy(_ context.Context, item ModItem, policy string) (ActionOutcome, error) {
+	r.SetPolicyCalls = append(r.SetPolicyCalls, struct{ ModID, Policy string }{item.ID, policy})
+	return r.SetPolicyOutcome, r.SetPolicyErr
+}
+
+func (r *recordingActions) CreateProfile(_ context.Context, name string) (ActionOutcome, error) {
+	r.CreateProfileCalls = append(r.CreateProfileCalls, name)
+	return r.CreateProfileOutcome, r.CreateProfileErr
+}
+
+func (r *recordingActions) DeleteProfile(_ context.Context, name string) (ActionOutcome, error) {
+	r.DeleteProfileCalls = append(r.DeleteProfileCalls, name)
+	return r.DeleteProfileOutcome, r.DeleteProfileErr
+}
+
+func (r *recordingActions) PurgeProfile(_ context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+	r.PurgeCalls++
+	for _, p := range r.PurgeTicks {
+		if progress != nil {
+			progress(p)
+		}
+	}
+	return r.PurgeOutcome, r.PurgeErr
+}
+
+// SetGame implements actions.go's optional gameRebinder hook (Task 8).
+func (r *recordingActions) SetGame(id string) error {
+	r.SetGameCalls = append(r.SetGameCalls, id)
+	return r.SetGameErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -603,6 +721,22 @@ func (f failingActions) CheckUpdates(context.Context) (UpdatesView, error) {
 }
 
 func (f failingActions) ApplyUpdate(context.Context, UpdateItem, func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) SetUpdatePolicy(context.Context, ModItem, string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) CreateProfile(context.Context, string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) DeleteProfile(context.Context, string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) PurgeProfile(context.Context, func(ActionProgress)) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 
