@@ -936,6 +936,8 @@ func (f *fakeSwitchableProvider) Search(context.Context, string, string, int) (S
 	return SearchPage{}, nil
 }
 
+func (f *fakeSwitchableProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
+
 func (f *fakeSwitchableProvider) Profiles(context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(f.names))
 	for _, name := range f.names {
@@ -1049,6 +1051,7 @@ func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _ int) (
 	p.capturedCtx = ctx
 	return SearchPage{Results: []ModItem{{ID: "x", Name: "X"}}}, nil
 }
+func (p *searchCancelProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
 
 // TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult guards Task 6
 // item b's second belt (the 5a review's UX-correctness recommendation,

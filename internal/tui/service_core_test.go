@@ -473,6 +473,58 @@ func TestCoreProviderSearchAllSourcesWarnings(t *testing.T) {
 	assert.NotEmpty(t, page.Results, "good source's results survive the failure")
 }
 
+// --- coreProvider: DeployedFiles ---
+
+// TestCoreProviderDeployedFiles guards the read-only files-overlay data path
+// (Task 4): DeployedFiles must return the exact relative paths a real
+// Installer.Install run recorded via SaveDeployedFile, sorted (the
+// underlying query already ORDER BYs relative_path - see
+// internal/storage/db/files.go's GetDeployedFilesForMod - so this also pins
+// that coreProvider does not need to re-sort defensively).
+func TestCoreProviderDeployedFiles(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+
+	gameCache := svc.GetGameCache(game)
+	files := map[string][]byte{
+		"textures/mod-a/main.dds": []byte("data"),
+		"mod-a.esp":               []byte("data"),
+	}
+	for path, content := range files {
+		require.NoError(t, gameCache.Store(game.ID, "nexusmods", "mod-a", "1.0", path, content))
+	}
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "mod-a",
+			SourceID: "nexusmods",
+			GameID:   game.ID,
+			Name:     "Mod A",
+			Version:  "1.0",
+		},
+		ProfileName: "default",
+		Enabled:     true,
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod-a", SourceID: "nexusmods", Version: "1.0", GameID: game.ID}, "default"))
+
+	got, err := provider.DeployedFiles("nexusmods", "mod-a")
+	require.NoError(t, err)
+	require.Equal(t, []string{"mod-a.esp", "textures/mod-a/main.dds"}, got)
+}
+
+// TestCoreProviderDeployedFilesEmpty covers a mod with no deployed_files
+// rows at all - the fixture's mod "101" carries Deployed:true on its
+// InstalledMod DB row, but that flag is separate bookkeeping from the
+// deployed_files tracking table (only Installer.Install populates it via
+// SaveDeployedFile - see this file's other DeployedFiles test), so no
+// Install call means no tracked files.
+func TestCoreProviderDeployedFilesEmpty(t *testing.T) {
+	provider, _, _ := newCoreProviderFixture(t)
+
+	got, err := provider.DeployedFiles("nexusmods", "101")
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
 // --- coreProvider: ActionProvider ---
 
 // newCoreActionsFixture mirrors newCoreProviderFixture, but returns the

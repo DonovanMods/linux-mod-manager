@@ -362,6 +362,20 @@ func (p *coreProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
 	return items, nil
 }
 
+// DeployedFiles lists the relative paths sourceID/modID has deployed in the
+// active profile. p.svc.GetDeployedFilesForMod's own query already ORDER
+// BYs relative_path (internal/storage/db/files.go), so no defensive
+// sort.Strings is needed here - unlike Sources()/SourceInfos(), which sort
+// because their underlying iteration order (a Go map) is genuinely
+// unordered.
+func (p *coreProvider) DeployedFiles(sourceID, modID string) ([]string, error) {
+	paths, err := p.svc.GetDeployedFilesForMod(p.game.ID, p.currentProfile(), sourceID, modID)
+	if err != nil {
+		return nil, fmt.Errorf("loading deployed files for %s:%s: %w", sourceID, modID, err)
+	}
+	return paths, nil
+}
+
 func installedModStatus(mod domain.InstalledMod) string {
 	switch {
 	case mod.Enabled && mod.Deployed:

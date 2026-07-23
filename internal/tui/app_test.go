@@ -525,6 +525,7 @@ func (f failingProvider) SourceInfos() []SourceInfo                       { retu
 func (f failingProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, f.err
 }
+func (f failingProvider) DeployedFiles(string, string) ([]string, error) { return nil, f.err }
 
 func TestModelShowsLoadingBeforeDataArrives(t *testing.T) {
 	t.Parallel()
@@ -581,6 +582,7 @@ func (emptyProvider) SourceInfos() []SourceInfo                       { return n
 func (emptyProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
+func (emptyProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
 
 func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	t.Parallel()
@@ -615,6 +617,7 @@ func (sentinelUpdatesProvider) SourceInfos() []SourceInfo                       
 func (sentinelUpdatesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
+func (sentinelUpdatesProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
 
 // TestFirstLoadHonorsProviderUpdatesSentinel guards the dataLoadedMsg
 // preserve behavior (see mutations_test.go's
@@ -637,10 +640,16 @@ func TestFirstLoadHonorsProviderUpdatesSentinel(t *testing.T) {
 }
 
 // recordingProvider wraps a delegate DataProvider and records the context
-// passed to Overview for test verification.
+// passed to Overview for test verification. DeployedFilesResult/
+// DeployedFilesErr configure DeployedFiles directly (no delegate call, no
+// recording) - simple canned-return fields, since no test using this fake
+// needs to observe DeployedFiles' arguments the way onOverview observes
+// Overview's context.
 type recordingProvider struct {
-	delegate   DataProvider
-	onOverview func(context.Context)
+	delegate            DataProvider
+	onOverview          func(context.Context)
+	DeployedFilesResult []string
+	DeployedFilesErr    error
 }
 
 func (r recordingProvider) Overview(ctx context.Context) (Summary, []ModItem, error) {
@@ -664,6 +673,10 @@ func (r recordingProvider) SourceInfos() []SourceInfo {
 
 func (r recordingProvider) Search(ctx context.Context, source, query string, page int) (SearchPage, error) {
 	return r.delegate.Search(ctx, source, query, page)
+}
+
+func (r recordingProvider) DeployedFiles(sourceID, modID string) ([]string, error) {
+	return r.DeployedFilesResult, r.DeployedFilesErr
 }
 
 func TestModelUsesProvidedContext(t *testing.T) {

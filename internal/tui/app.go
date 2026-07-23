@@ -79,6 +79,11 @@ type Model struct {
 	// any. Another sibling of action.pending/picker: promptInput/
 	// updateInputModalKey/inputModalView mirror the same structure.
 	inputModal *pendingInput
+	// overlay is the pending read-only info panel (see overlay.go), if any.
+	// Another sibling of action.pending/picker/inputModal: promptOverlay/
+	// updateOverlayKey/overlayView mirror the same structure, simplified
+	// (no choose/submit - see infoOverlay's doc comment).
+	overlay *infoOverlay
 
 	screen   Screen
 	selected map[Screen]int
@@ -487,6 +492,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateInputModalKey(msg)
 	}
 
+	if m.overlay != nil {
+		return m.updateOverlayKey(msg)
+	}
+
 	// Rule 8: any keypress that isn't a modal response (handled above,
 	// before this point is ever reached) and isn't quit clears the status
 	// line. isQuitKey (not the bare Quit binding) is used so a "q" that's
@@ -734,6 +743,10 @@ func (m Model) screenView() string {
 
 	if m.inputModal != nil {
 		return m.inputModalView()
+	}
+
+	if m.overlay != nil {
+		return m.overlayView()
 	}
 
 	switch m.state {

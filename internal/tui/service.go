@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
@@ -92,6 +94,11 @@ type DataProvider interface {
 	// Search queries one source, or every one of the game's configured
 	// sources when source is "" (the documented all-sources sentinel).
 	Search(ctx context.Context, source, query string, page int) (SearchPage, error)
+	// DeployedFiles lists the relative paths a specific installed mod has
+	// deployed into the game directory, sorted, for the read-only files
+	// overlay (Task 4). An empty slice with a nil error means the mod is
+	// known but has nothing currently deployed (e.g. disabled).
+	DeployedFiles(sourceID, modID string) ([]string, error)
 }
 
 // prototypeProvider serves the static demo data set. It must never touch
@@ -150,6 +157,30 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, _ in
 		PageSize:   SearchPageSize,
 		TotalCount: len(matched),
 	}, nil
+}
+
+// DeployedFiles returns 2-3 plausible canned rows derived from item's name
+// (falling back to the raw modID when it isn't one of the canned
+// InstalledMods/SearchResults entries - see findInstalledIndex/
+// findSearchResult in actions_provider.go): deterministic, no randomness,
+// and never errors, matching this type's "never touch disk/network"
+// contract. Sorted, matching the interface's documented contract (coreProvider
+// gets this for free from its query's ORDER BY - see that type's own
+// DeployedFiles).
+func (p *prototypeProvider) DeployedFiles(sourceID, modID string) ([]string, error) {
+	name := modID
+	if idx := p.findInstalledIndex(sourceID, modID); idx >= 0 {
+		name = p.data.InstalledMods[idx].Name
+	} else if idx := p.findSearchResult(sourceID, modID); idx >= 0 {
+		name = p.data.SearchResults[idx].Name
+	}
+	files := []string{
+		fmt.Sprintf("%s.esp", name),
+		fmt.Sprintf("Data/%s.bsa", name),
+		fmt.Sprintf("textures/%s/main.dds", modID),
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 func (p *prototypeProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
