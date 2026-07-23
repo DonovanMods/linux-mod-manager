@@ -155,13 +155,47 @@ func (p *prototypeProvider) activeGame() prototype.Game {
 	return p.data.Game
 }
 
-// activeMods returns the canned InstalledMods this session is currently
-// bound to (see altActive's doc comment).
+// activeMods returns the canned installed-mods slice this session is
+// currently bound to (see altActive's doc comment). Every prototypeProvider
+// method that reads OR mutates installed mods must go through this (or
+// setActiveMods below) instead of touching p.data.InstalledMods directly -
+// Copilot PR #69 caught SetUpdatePolicy/PurgeProfile (and an audit found
+// every other mutation) addressing the primary slice regardless of which
+// game was active, silently mutating the WRONG game's dataset after a
+// --prototype game switch. In-place element writes through the returned
+// slice value share the backing array and are visible in later reads;
+// append/remove must write the new header back via setActiveMods.
 func (p *prototypeProvider) activeMods() []prototype.Mod {
 	if p.altActive {
 		return p.data.AltMods
 	}
 	return p.data.InstalledMods
+}
+
+// setActiveMods replaces the ACTIVE game's installed-mods slice - the
+// write-back half of activeMods (see its doc comment), needed by the
+// operations that grow or shrink the list (UninstallMod, ApplyInstall,
+// materializeNeedsDownloads) rather than mutating elements in place.
+func (p *prototypeProvider) setActiveMods(mods []prototype.Mod) {
+	if p.altActive {
+		p.data.AltMods = mods
+		return
+	}
+	p.data.InstalledMods = mods
+}
+
+// adjustStats applies installed/enabled deltas to the PRIMARY game's canned
+// Stats counters - a deliberate no-op while the alt game is active: the alt
+// game has no canned Stats at all (its Overview derives Installed/Enabled
+// live from AltMods - see Overview's doc comment), so mutating the shared
+// Stats there would silently corrupt the PRIMARY game's counters (the
+// Copilot PR #69 PurgeProfile finding, generalized to every mutation).
+func (p *prototypeProvider) adjustStats(installedDelta, enabledDelta int) {
+	if p.altActive {
+		return
+	}
+	p.data.Stats.Installed += installedDelta
+	p.data.Stats.Enabled += enabledDelta
 }
 
 func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
@@ -270,17 +304,17 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, _ in
 }
 
 // DeployedFiles returns 2-3 plausible canned rows derived from item's name
-// (falling back to the raw modID when it isn't one of the canned
-// InstalledMods/SearchResults entries - see findInstalledIndex/
-// findSearchResult in actions_provider.go): deterministic, no randomness,
-// and never errors, matching this type's "never touch disk/network"
-// contract. Sorted, matching the interface's documented contract (coreProvider
-// gets this for free from its query's ORDER BY - see that type's own
-// DeployedFiles).
+// (falling back to the raw modID when it isn't one of the ACTIVE game's
+// installed mods or the canned SearchResults entries - see
+// findInstalledIndex/findSearchResult in actions_provider.go):
+// deterministic, no randomness, and never errors, matching this type's
+// "never touch disk/network" contract. Sorted, matching the interface's
+// documented contract (coreProvider gets this for free from its query's
+// ORDER BY - see that type's own DeployedFiles).
 func (p *prototypeProvider) DeployedFiles(sourceID, modID string) ([]string, error) {
 	name := modID
 	if idx := p.findInstalledIndex(sourceID, modID); idx >= 0 {
-		name = p.data.InstalledMods[idx].Name
+		name = p.activeMods()[idx].Name
 	} else if idx := p.findSearchResult(sourceID, modID); idx >= 0 {
 		name = p.data.SearchResults[idx].Name
 	}

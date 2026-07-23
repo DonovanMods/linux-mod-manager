@@ -212,10 +212,12 @@ func mergeDiagnostics(warnings, notes []string) []string {
 // see that method's own doc comment below). Every other canned profile
 // leaves Mods unset and is unaffected.
 
-// findInstalledIndex returns the index of the InstalledMods entry matching
-// (sourceID, id), or -1 if none matches.
+// findInstalledIndex returns the index of the ACTIVE game's installed-mods
+// entry matching (sourceID, id), or -1 if none matches - routed through
+// activeMods (service.go, Copilot PR #69) so every lookup-based operation
+// automatically addresses whichever game the session is bound to.
 func (p *prototypeProvider) findInstalledIndex(sourceID, id string) int {
-	for i, mod := range p.data.InstalledMods {
+	for i, mod := range p.activeMods() {
 		if mod.Source == sourceID && mod.ID == id {
 			return i
 		}
@@ -228,11 +230,12 @@ func (p *prototypeProvider) EnableMod(_ context.Context, item ModItem) (ActionOu
 	if idx < 0 {
 		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
 	}
-	if p.data.InstalledMods[idx].Status != "disabled" {
+	mods := p.activeMods()
+	if mods[idx].Status != "disabled" {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already enabled", item.Name)}, nil
 	}
-	p.data.InstalledMods[idx].Status = "installed"
-	p.data.Stats.Enabled++
+	mods[idx].Status = "installed"
+	p.adjustStats(0, 1)
 	return ActionOutcome{Message: fmt.Sprintf("Enabled %q", item.Name)}, nil
 }
 
@@ -241,11 +244,12 @@ func (p *prototypeProvider) DisableMod(_ context.Context, item ModItem) (ActionO
 	if idx < 0 {
 		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
 	}
-	if p.data.InstalledMods[idx].Status == "disabled" {
+	mods := p.activeMods()
+	if mods[idx].Status == "disabled" {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already disabled", item.Name)}, nil
 	}
-	p.data.InstalledMods[idx].Status = "disabled"
-	p.data.Stats.Enabled--
+	mods[idx].Status = "disabled"
+	p.adjustStats(0, -1)
 	return ActionOutcome{Message: fmt.Sprintf("Disabled %q", item.Name)}, nil
 }
 
@@ -254,18 +258,20 @@ func (p *prototypeProvider) UninstallMod(_ context.Context, item ModItem) (Actio
 	if idx < 0 {
 		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
 	}
-	wasEnabled := p.data.InstalledMods[idx].Status != "disabled"
-	p.data.InstalledMods = append(p.data.InstalledMods[:idx], p.data.InstalledMods[idx+1:]...)
-	p.data.Stats.Installed--
+	mods := p.activeMods()
+	wasEnabled := mods[idx].Status != "disabled"
+	p.setActiveMods(append(mods[:idx], mods[idx+1:]...))
+	enabledDelta := 0
 	if wasEnabled {
-		p.data.Stats.Enabled--
+		enabledDelta = -1
 	}
+	p.adjustStats(-1, enabledDelta)
 	return ActionOutcome{Message: fmt.Sprintf("Uninstalled %q", item.Name)}, nil
 }
 
 func (p *prototypeProvider) DeployProfile(_ context.Context) (ActionOutcome, error) {
 	deployed := 0
-	for _, mod := range p.data.InstalledMods {
+	for _, mod := range p.activeMods() {
 		if mod.Status != "disabled" {
 			deployed++
 		}
@@ -339,7 +345,7 @@ func (p *prototypeProvider) PlanProfileSwitch(_ context.Context, profileName str
 	}
 
 	var enable, disable []string
-	for i, mod := range p.data.InstalledMods {
+	for i, mod := range p.activeMods() {
 		if i%2 == 0 {
 			if mod.Status == "disabled" {
 				enable = append(enable, mod.Name)
@@ -387,10 +393,10 @@ func (p *prototypeProvider) materializeNeedsDownloads(profileName string) {
 		if p.findInstalledIndex("nexusmods", id) >= 0 {
 			continue
 		}
-		p.data.InstalledMods = append(p.data.InstalledMods, prototype.Mod{
+		p.setActiveMods(append(p.activeMods(), prototype.Mod{
 			ID: id, Name: id, Source: "nexusmods", Version: "1.0", Status: "disabled",
-		})
-		p.data.Stats.Installed++
+		}))
+		p.adjustStats(1, 0)
 	}
 }
 
@@ -433,12 +439,13 @@ func (p *prototypeProvider) ApplyProfileSwitch(ctx context.Context, profileName 
 	for _, name := range view.Disable {
 		disable[name] = true
 	}
-	for i := range p.data.InstalledMods {
-		switch name := p.data.InstalledMods[i].Name; {
+	mods := p.activeMods()
+	for i := range mods {
+		switch name := mods[i].Name; {
 		case enable[name]:
-			p.data.InstalledMods[i].Status = "installed"
+			mods[i].Status = "installed"
 		case disable[name]:
-			p.data.InstalledMods[i].Status = "disabled"
+			mods[i].Status = "disabled"
 		}
 	}
 
@@ -539,14 +546,14 @@ func (p *prototypeProvider) ApplyInstall(_ context.Context, item ModItem, progre
 	fakeProgressTicks(progress, fmt.Sprintf("Installing %s", mod.Name))
 
 	if installedIdx := p.findInstalledIndex(item.Source, item.ID); installedIdx >= 0 {
-		p.data.InstalledMods[installedIdx].Status = "installed"
-		p.data.InstalledMods[installedIdx].Version = mod.Version
+		installedMods := p.activeMods()
+		installedMods[installedIdx].Status = "installed"
+		installedMods[installedIdx].Version = mod.Version
 	} else {
 		installed := mod
 		installed.Status = "installed"
-		p.data.InstalledMods = append(p.data.InstalledMods, installed)
-		p.data.Stats.Installed++
-		p.data.Stats.Enabled++
+		p.setActiveMods(append(p.activeMods(), installed))
+		p.adjustStats(1, 1)
 	}
 	p.data.SearchResults[idx].Status = "installed"
 
@@ -560,7 +567,7 @@ func (p *prototypeProvider) ApplyInstall(_ context.Context, item ModItem, progre
 // carries no policy field - see its doc comment).
 func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error) {
 	var view UpdatesView
-	for _, mod := range p.data.InstalledMods {
+	for _, mod := range p.activeMods() {
 		if mod.AvailableVersion == "" {
 			continue
 		}
@@ -584,9 +591,10 @@ func (p *prototypeProvider) ApplyUpdate(_ context.Context, u UpdateItem, progres
 
 	fakeProgressTicks(progress, fmt.Sprintf("Updating %s", u.Name))
 
-	p.data.InstalledMods[idx].Version = u.ToVersion
-	p.data.InstalledMods[idx].AvailableVersion = ""
-	p.data.InstalledMods[idx].Status = "installed"
+	mods := p.activeMods()
+	mods[idx].Version = u.ToVersion
+	mods[idx].AvailableVersion = ""
+	mods[idx].Status = "installed"
 
 	return ActionOutcome{Message: fmt.Sprintf("Updated %q to %s", u.Name, u.ToVersion)}, nil
 }
@@ -618,7 +626,7 @@ func (p *prototypeProvider) SetUpdatePolicy(_ context.Context, item ModItem, pol
 	if idx < 0 {
 		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
 	}
-	p.data.InstalledMods[idx].UpdatePolicy = policy
+	p.activeMods()[idx].UpdatePolicy = policy
 	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
 }
 
@@ -635,18 +643,19 @@ func (p *prototypeProvider) SetUpdatePolicy(_ context.Context, item ModItem, pol
 // installed" with no ticks emitted at all, mirroring coreProvider's own
 // empty-mods short-circuit (see its doc comment).
 func (p *prototypeProvider) PurgeProfile(_ context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
-	if len(p.data.InstalledMods) == 0 {
+	mods := p.activeMods()
+	if len(mods) == 0 {
 		return ActionOutcome{Message: "no mods installed"}, nil
 	}
 
 	purged := 0
-	for i := range p.data.InstalledMods {
-		mod := &p.data.InstalledMods[i]
+	for i := range mods {
+		mod := &mods[i]
 		if progress != nil {
 			progress(ActionProgress{Line: fmt.Sprintf("✓ %s", mod.Name), Percent: -1})
 		}
 		if mod.Status != "disabled" {
-			p.data.Stats.Enabled--
+			p.adjustStats(0, -1)
 			mod.Status = "disabled"
 		}
 		purged++

@@ -35,9 +35,12 @@ func (m Model) promptOverlay(o infoOverlay) Model {
 }
 
 // updateOverlayKey handles every key while the info overlay is shown: esc
-// (Blur) or a plain "f" closes it - two close keys because Task 4 also
-// binds "f" to OPEN the overlay from a list screen, and closing on the same
-// key it opened with is the expected toggle feel; quit keys still quit, via
+// (Blur) or the Files binding closes it - two close keys because Task 4
+// also binds Files ("f") to OPEN the overlay from a list screen, and
+// closing on the same key it opened with is the expected toggle feel; the
+// close side matches m.keys.Files rather than a hard-coded "f" (Copilot PR
+// #69 finding) so a custom KeyMap remapping Files can never desync the
+// toggle's open and close halves; quit keys still quit, via
 // isQuitKey (actions.go) - unlike updateInputModalKey, which matches only
 // "ctrl+c" so a plain "q" stays typeable in its text field, the overlay has
 // no text entry at all, so a plain "q" quitting (isQuitKey's ordinary,
@@ -55,7 +58,7 @@ func (m Model) updateOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Blur):
 		m.overlay = nil
 		return m, nil
-	case msg.String() == "f":
+	case key.Matches(msg, m.keys.Files):
 		m.overlay = nil
 		return m, nil
 	default:

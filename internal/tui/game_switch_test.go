@@ -8,6 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/require"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
 
 // --- Task 8: in-TUI game switcher ('g' from any screen) ---
@@ -445,4 +447,107 @@ func TestPrototypeGameSwitchFlipsData(t *testing.T) {
 		names = append(names, mod.Name)
 	}
 	require.Contains(t, names, "Fallout 4 Script Extender")
+}
+
+// --- Prototype mutations after a game switch (Copilot PR #69) ---
+//
+// Every prototypeProvider mutation/read used to address p.data.InstalledMods
+// and p.data.Stats directly, ignoring the altActive binding Task 8's
+// Overview flip introduced: after a --prototype game switch, an operation
+// either failed "mod not found" (the target lives in AltMods) or silently
+// mutated the WRONG game's dataset and corrupted the primary game's canned
+// Stats. These tests drive the provider through its own SetGame seam (the
+// exact call rebindGame makes) and assert each operation targets the ACTIVE
+// game's mods, leaving the primary dataset and Stats untouched.
+
+// prototypeProviderOnAltGame returns a prototypeProvider already switched to
+// the alt canned game, plus deep-ish copies of the primary dataset taken
+// BEFORE the switch so tests can prove it stayed untouched.
+func prototypeProviderOnAltGame(t *testing.T) (*prototypeProvider, []prototype.Mod, prototype.Stats) {
+	t.Helper()
+	p := NewPrototypeProvider().(*prototypeProvider)
+	primaryBefore := make([]prototype.Mod, len(p.data.InstalledMods))
+	copy(primaryBefore, p.data.InstalledMods)
+	statsBefore := p.data.Stats
+	require.NoError(t, p.SetGame(p.data.AltGame.ID))
+	return p, primaryBefore, statsBefore
+}
+
+func TestPrototypePolicyEditAfterGameSwitchTargetsActiveGame(t *testing.T) {
+	t.Parallel()
+
+	p, primaryBefore, _ := prototypeProviderOnAltGame(t)
+
+	_, err := p.SetUpdatePolicy(context.Background(), ModItem{ID: "f4se", Source: "nexusmods", Name: "Fallout 4 Script Extender"}, "pin")
+	require.NoError(t, err, "the alt game's own mod must be addressable after the switch")
+	require.Equal(t, "pin", p.data.AltMods[0].UpdatePolicy, "the ACTIVE game's row must carry the new policy")
+	require.Equal(t, primaryBefore, p.data.InstalledMods, "the primary game's rows must be untouched")
+}
+
+func TestPrototypePurgeAfterGameSwitchTargetsActiveGame(t *testing.T) {
+	t.Parallel()
+
+	p, primaryBefore, statsBefore := prototypeProviderOnAltGame(t)
+
+	outcome, err := p.PurgeProfile(context.Background(), nil)
+	require.NoError(t, err)
+	require.Equal(t, "Purged 2 mod(s)", outcome.Message, "must purge the ACTIVE game's 2 mods, not the primary's 5")
+	for _, mod := range p.data.AltMods {
+		require.Equal(t, "disabled", mod.Status)
+	}
+	require.Equal(t, primaryBefore, p.data.InstalledMods, "the primary game's rows must be untouched")
+	require.Equal(t, statsBefore, p.data.Stats, "the primary game's canned Stats must not be corrupted")
+}
+
+func TestPrototypeUninstallAfterGameSwitchTargetsActiveGame(t *testing.T) {
+	t.Parallel()
+
+	p, primaryBefore, statsBefore := prototypeProviderOnAltGame(t)
+
+	_, err := p.UninstallMod(context.Background(), ModItem{ID: "f4se", Source: "nexusmods", Name: "Fallout 4 Script Extender"})
+	require.NoError(t, err)
+	require.Len(t, p.data.AltMods, 1, "the ACTIVE game's list must shrink")
+	require.Equal(t, primaryBefore, p.data.InstalledMods, "the primary game's rows must be untouched")
+	require.Equal(t, statsBefore, p.data.Stats, "the primary game's canned Stats must not be corrupted")
+}
+
+func TestPrototypeEnableAfterGameSwitchLeavesPrimaryStats(t *testing.T) {
+	t.Parallel()
+
+	p, primaryBefore, statsBefore := prototypeProviderOnAltGame(t)
+
+	// "unofficial-patch" is canned disabled (see prototype.Load's AltMods).
+	_, err := p.EnableMod(context.Background(), ModItem{ID: "unofficial-patch", Source: "nexusmods", Name: "Unofficial Fallout 4 Patch"})
+	require.NoError(t, err)
+	require.Equal(t, "installed", p.data.AltMods[1].Status, "the ACTIVE game's row must flip")
+	require.Equal(t, primaryBefore, p.data.InstalledMods, "the primary game's rows must be untouched")
+	require.Equal(t, statsBefore, p.data.Stats,
+		"the alt game derives its counts live from AltMods - the primary's canned Stats must not move")
+}
+
+func TestPrototypeCheckUpdatesAfterGameSwitchUsesActiveMods(t *testing.T) {
+	t.Parallel()
+
+	p, _, _ := prototypeProviderOnAltGame(t)
+
+	view, err := p.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, view.Updates,
+		"AltMods carry no AvailableVersion entries - reporting the PRIMARY game's canned updates after the switch is the bug")
+}
+
+func TestPrototypeDeployedFilesAfterGameSwitchUsesActiveMods(t *testing.T) {
+	t.Parallel()
+
+	p, _, _ := prototypeProviderOnAltGame(t)
+
+	files, err := p.DeployedFiles("nexusmods", "f4se")
+	require.NoError(t, err)
+	require.Contains(t, files, "Fallout 4 Script Extender.esp",
+		"the display-name lookup must resolve against the ACTIVE game's mods, not fall back to the raw mod ID")
+
+	outcome, err := p.DeployProfile(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "Deployed 1 mod(s)", outcome.Message,
+		"deploy must count the ACTIVE game's enabled mods (1 of 2), not the primary's")
 }

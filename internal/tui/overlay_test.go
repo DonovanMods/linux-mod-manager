@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
@@ -47,6 +48,31 @@ func TestOverlayFKeyCloses(t *testing.T) {
 	model = updateWithRunes(t, model, "f")
 
 	require.Nil(t, model.overlay)
+}
+
+// TestOverlayClosesOnRemappedFilesKey guards Copilot PR #69's finding on
+// updateOverlayKey: the close side used to hard-code msg.String() == "f"
+// while the OPEN side matches m.keys.Files - a custom KeyMap remapping
+// Files would desync the toggle (the new key opens, only the old literal
+// closes). Both sides must consult the same binding.
+func TestOverlayClosesOnRemappedFilesKey(t *testing.T) {
+	t.Parallel()
+
+	model := overlayTestModel(t)
+	model.keys.Files = key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "files"))
+	model = model.promptOverlay(infoOverlay{
+		title: "Deployed Files",
+		lines: []string{"Data/SkyUI.esp"},
+	})
+	require.NotNil(t, model.overlay)
+
+	// The now-unbound old literal must NOT close it...
+	model = updateWithRunes(t, model, "f")
+	require.NotNil(t, model.overlay, "an unbound key must be swallowed, not treated as the Files toggle")
+
+	// ...and the remapped binding must.
+	model = updateWithRunes(t, model, "F")
+	require.Nil(t, model.overlay, "the remapped Files binding must close the overlay it opens")
 }
 
 // TestOverlayQuitKeyQuits locks in that, unlike the input modal (which must
