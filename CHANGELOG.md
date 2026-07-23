@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- TUI: the new-profile modal now rejects names containing path separators or `..` inline (matching the config layer's validation), instead of only surfacing the failure after submit
+
 ## [1.13.0] - 2026-07-23
 
 ### Added

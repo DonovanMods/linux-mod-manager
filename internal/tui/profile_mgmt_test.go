@@ -53,6 +53,44 @@ func TestCreateProfileDuplicateNameValidatesInModal(t *testing.T) {
 	require.Empty(t, rec.CreateProfileCalls)
 }
 
+// TestCreateProfilePathTraversalNameValidatesInModal covers the validate
+// closure's path-traversal check: names containing path separators or ".."
+// would become file paths under the profiles directory (the config layer
+// refuses them too), so typing one and pressing enter keeps the modal open
+// with an inline error, and never dispatches - rather than only failing
+// after submit via ActionOutcome.
+func TestCreateProfilePathTraversalNameValidatesInModal(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		input string
+	}{
+		{name: "dot dot", input: "../evil"},
+		{name: "forward slash", input: "foo/bar"},
+		{name: "backslash", input: `foo\bar`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := &recordingActions{}
+			model := modelWithActions(t, rec)
+			model.screen = ScreenProfiles
+
+			updated, _ := model.Update(keyRunes("c"))
+			model = updated.(Model)
+			model = typeString(t, model, tc.input)
+			updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			model = updated.(Model)
+
+			require.Nil(t, cmd, "a validation error must not dispatch anything")
+			require.NotNil(t, model.inputModal, "modal must stay open on a validation error")
+			require.Equal(t, `name must not contain path separators or ".."`, model.inputModal.errMsg)
+			require.Empty(t, rec.CreateProfileCalls)
+		})
+	}
+}
+
 // TestCreateProfileSubmitRunsActionAndRefreshes drives the full round trip:
 // 'c' opens the modal, typing a new name and pressing enter dispatches a
 // deferred profileCreateSubmittedMsg (the closure-over-stale-Model problem

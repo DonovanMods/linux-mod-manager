@@ -899,10 +899,14 @@ type profileCreateSubmittedMsg struct {
 // create flow): a no-op on the wrong screen or with no ActionProvider
 // configured - mirrors editSelectedModPolicy/uninstallSelectedMod's own
 // guard shape, minus a selection requirement, since creating a profile needs
-// no row selected. Opens the input modal with validate rejecting only an
-// EXACT (case-sensitive) match against a name already in m.profiles - the
-// input modal's own "name required" handling already covers the empty case
-// (see pendingInput's doc comment), so validate here never needs to.
+// no row selected. Opens the input modal with validate rejecting names
+// containing path separators or ".." (such names would be interpreted as
+// file paths under the profiles directory; the config layer refuses them
+// too, but checking here surfaces the refusal inline instead of only after
+// submit) and an EXACT (case-sensitive) match against a name already in
+// m.profiles - the input modal's own "name required" handling already
+// covers the empty case (see pendingInput's doc comment), so validate here
+// never needs to.
 // submit dispatches profileCreateSubmittedMsg on the next tick rather than
 // calling buildAction directly - see that message's own doc comment for why.
 func (m Model) createProfilePrompt() (Model, tea.Cmd) {
@@ -920,6 +924,9 @@ func (m Model) createProfilePrompt() (Model, tea.Cmd) {
 		title: "new profile",
 		input: input,
 		validate: func(value string) string {
+			if strings.ContainsAny(value, `/\`) || strings.Contains(value, "..") {
+				return `name must not contain path separators or ".."`
+			}
 			if existing[value] {
 				return "profile already exists"
 			}
