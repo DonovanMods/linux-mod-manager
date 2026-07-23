@@ -288,9 +288,10 @@ type DeployOptions struct {
 type DeployPhase int
 
 const (
-	// DeployPurging fires once, before any purge-phase mod is touched, when
-	// Purge is set and there is at least one installed mod to purge. Total
-	// is the number of mods being purged; Index and ModName are zero/empty.
+	// DeployPurging fires once, before any purge-phase mod is touched -
+	// from a deploy --purge pass or from PurgeProfile (#61) - when there
+	// is at least one installed mod to purge. Total is the number of mods
+	// being purged; Index and ModName are zero/empty.
 	DeployPurging DeployPhase = iota
 	// DeployBeforeEachSkipped: install.before_each failed for ModName: the
 	// mod is skipped (added to DeployResult.Skipped). Detail is the reason.
@@ -363,28 +364,31 @@ const (
 	// the after_each/after_all ones, reproducing that print order without
 	// changing when each check actually runs (see DeployProfile's body).
 	DeployWarning
-	// PurgeWarning fires wherever a --purge pass appends an entry to
-	// DeployResult.Warnings: a skipped uninstall.before_each mod (fires
-	// inline, per mod, as it happens), or a failed uninstall.after_each/
-	// after_all hook (fires after the whole purge loop has finished, in
-	// mod order then after_all - mirroring the pre-extraction
-	// purgeDeployedMods, which accumulated these and printed them
+	// PurgeWarning fires wherever a purge appends an entry to its
+	// result's Warnings (DeployResult for deploy --purge, PurgeResult for
+	// PurgeProfile): a skipped uninstall.before_each mod (deploy mode
+	// only - PurgeProfile reports that skip as PurgeModSkipped instead;
+	// fires inline, per mod, as it happens), or a failed
+	// uninstall.after_each/after_all hook (fires after the whole purge
+	// loop has finished, in mod order then after_all - mirroring the
+	// pre-extraction CLIs, which accumulated these and printed them
 	// together, after every per-mod line, via printHookWarnings).
 	PurgeWarning
-	// PurgeNote fires wherever a --purge pass appends an entry to
-	// DeployResult.Notes for a specific mod (a failed undeploy, or a
-	// failed SetModDeployed(false)), inline, immediately after that
-	// operation - mirroring the pre-extraction purgeDeployedMods's
-	// --verbose-gated "⚠ " lines.
+	// PurgeNote fires wherever a purge appends a per-mod entry to its
+	// result's Notes (a failed undeploy, a failed SetModDeployed(false),
+	// or PurgeProfile --uninstall's record-delete/profile-remove
+	// failures), inline, immediately after that operation - mirroring the
+	// pre-extraction CLIs' --verbose-gated "⚠ "/"Note: " lines.
 	PurgeNote
-	// PurgeComplete fires once, after a non-empty --purge pass has
-	// finished everything (including its own hook warnings) but before
-	// DeployProfile moves on to gathering mods to deploy. It carries no
-	// data; a caller wanting byte-identical pre-extraction output prints
-	// exactly one blank line here - purgeDeployedMods's own final
-	// `fmt.Println()`, which the initial extraction had misplaced
-	// immediately after the purge header instead of at the end of the
-	// purge phase.
+	// PurgeComplete fires once, after a non-empty purge has finished
+	// everything (including its own hook warnings) - before DeployProfile
+	// moves on to gathering mods to deploy, or as PurgeProfile's terminal
+	// event. It carries no data; a deploy --purge caller wanting
+	// byte-identical pre-extraction output prints exactly one blank line
+	// here - purgeDeployedMods's own final `fmt.Println()`, which the
+	// initial extraction had misplaced immediately after the purge header
+	// instead of at the end of the purge phase (`lmm purge` prints
+	// nothing for it).
 	PurgeComplete
 
 	// --- Task 4: ApplyProfileSwitch progress events, extending this same
@@ -931,9 +935,10 @@ func selectDeployFiles(files []domain.DownloadableFile, storedFileIDs []string) 
 // missing - an undeploy-then-install cycle recording the effective link
 // method and deployed state, and finally applying any profile overrides.
 // This is a behavior-preserving extraction of the pre-extraction CLI's
-// doDeploy (cmd/lmm/deploy.go) and purgeDeployedMods (cmd/lmm/purge.go, the
-// --purge-before-deploy call only - the standalone `lmm purge` command is
-// untouched by this extraction); see the task report for the exact mapping.
+// doDeploy (cmd/lmm/deploy.go) and purgeDeployedMods (cmd/lmm/purge.go's
+// --purge-before-deploy variant; the standalone `lmm purge` command was
+// later extracted too, as PurgeProfile, and since #61 both purges share
+// purgeMods); see the task report for the exact mapping.
 //
 // progress may be nil. When non-nil, it is called synchronously from this
 // function for every notable event - see DeployPhase's constants for what
