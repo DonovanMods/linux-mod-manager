@@ -526,27 +526,36 @@ type recordingActions struct {
 	// PlanCalls/ApplyCalls' own single-string-argument shape above.
 	CreateProfileCalls []string
 	DeleteProfileCalls []string
+	// PurgeCalls counts each PurgeProfile call - Task 7's purge wiring tests
+	// assert against this, mirroring DeployCalls/CheckUpdatesCalls' own
+	// no-argument counter shape above (PurgeProfile takes no ModItem/name
+	// argument - it always acts on the whole active profile).
+	PurgeCalls int
 
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
 	CreateProfileOutcome, DeleteProfileOutcome                                   ActionOutcome
+	PurgeOutcome                                                                 ActionOutcome
 	PlanView                                                                     SwitchPlanView
 	InstallPlanViewOut                                                           InstallPlanView
 	UpdatesViewOut                                                               UpdatesView
 
-	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks, if set, are
-	// replayed through the matching method's progress callback (in order)
-	// whenever it's non-nil - lets a caller assert the pump actually
-	// observes ticks a provider reports (Phase 5b Task 4).
+	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks/PurgeTicks, if
+	// set, are replayed through the matching method's progress callback (in
+	// order) whenever it's non-nil - lets a caller assert the pump actually
+	// observes ticks a provider reports (Phase 5b Task 4; PurgeTicks is
+	// Task 7's addition for PurgeProfile).
 	ApplySwitchTicks  []ActionProgress
 	ApplyInstallTicks []ActionProgress
 	ApplyUpdateTicks  []ActionProgress
+	PurgeTicks        []ActionProgress
 
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
 	SetPolicyErr                                                      error
 	CreateProfileErr, DeleteProfileErr                                error
+	PurgeErr                                                          error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -638,6 +647,16 @@ func (r *recordingActions) DeleteProfile(_ context.Context, name string) (Action
 	return r.DeleteProfileOutcome, r.DeleteProfileErr
 }
 
+func (r *recordingActions) PurgeProfile(_ context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+	r.PurgeCalls++
+	for _, p := range r.PurgeTicks {
+		if progress != nil {
+			progress(p)
+		}
+	}
+	return r.PurgeOutcome, r.PurgeErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -700,6 +719,10 @@ func (f failingActions) CreateProfile(context.Context, string) (ActionOutcome, e
 }
 
 func (f failingActions) DeleteProfile(context.Context, string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) PurgeProfile(context.Context, func(ActionProgress)) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 

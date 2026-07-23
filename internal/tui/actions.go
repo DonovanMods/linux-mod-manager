@@ -47,6 +47,12 @@ const (
 	// render.
 	actionCreateProfile
 	actionDeleteProfile
+	// actionPurge is Task 7's Dashboard/Installed-Mods purge-behind-
+	// confirmation action kind (see mutations.go's purgeProfilePrompt). No
+	// actionDoneMsg branch needs to name it specifically (app.go) - the
+	// default status+refresh path already covers it, exactly like
+	// actionSetPolicy/actionCreateProfile/actionDeleteProfile above.
+	actionPurge
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation

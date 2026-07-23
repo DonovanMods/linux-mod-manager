@@ -993,6 +993,128 @@ func TestCoreProviderActions_DeployProfile_ReportsFailedCount(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "the mod whose redownload failed must not be deployed")
 }
 
+// --- coreProvider: PurgeProfile (Task 7) ---
+
+// seedDeployedActionMod stores files in game's cache, saves an InstalledMod
+// DB row with Deployed already true, and actually deploys the files via
+// Installer.Install - the seed+install recipe TestCoreProviderDeployedFiles
+// (Task 3, above) established, extended with an explicit Deployed:true seed
+// (mirroring newCoreProviderFixture's own SkyUI row) so a purge test can
+// observe it flip to false.
+func seedDeployedActionMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, name, version string, files map[string][]byte) {
+	t.Helper()
+
+	gameCache := svc.GetGameCache(game)
+	for path, content := range files {
+		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+	}
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: version, GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID}, "default"))
+}
+
+// TestCoreProviderActions_PurgeProfile drives PurgeProfile against a real
+// Service: two mods are seeded pre-deployed and actually installed
+// (seedDeployedActionMod), then purged - proving the files are undeployed
+// for real, both DB rows flip Deployed=false (not deleted - Uninstall is
+// always false, see coreProvider.PurgeProfile's own doc comment), the
+// outcome message counts them, and the progress adapter streams the
+// DeployPurging header plus a "✓"-line per mod (purgeProgressLine's
+// composed lines, observed here directly - unlike the TUI-model-level pump
+// tests in purge_test.go, this calls the progress callback synchronously
+// per event with no single-slot-channel coalescing in between).
+func TestCoreProviderActions_PurgeProfile(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedDeployedActionMod(t, svc, game, "src", "1", "Mod One", "1.0", map[string][]byte{"one.esp": []byte("1")})
+	seedDeployedActionMod(t, svc, game, "src", "2", "Mod Two", "1.0", map[string][]byte{"two.esp": []byte("2")})
+
+	var ticks []tui.ActionProgress
+	outcome, err := actions.PurgeProfile(context.Background(), func(p tui.ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, "Purged 2 mod(s)", outcome.Message)
+	assert.Empty(t, outcome.Warnings)
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "one.esp"))
+	assert.True(t, os.IsNotExist(err), "purge must undeploy mod 1's files")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "two.esp"))
+	assert.True(t, os.IsNotExist(err), "purge must undeploy mod 2's files")
+
+	mod1, err := svc.GetInstalledMod("src", "1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod1.Deployed, "purge must flip Deployed to false, not delete the record")
+	mod2, err := svc.GetInstalledMod("src", "2", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod2.Deployed)
+
+	var lines []string
+	for _, tick := range ticks {
+		lines = append(lines, tick.Line)
+	}
+	assert.Contains(t, lines, "purging 2 mod(s)…")
+	checkmarks := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "✓ ") {
+			checkmarks++
+		}
+	}
+	assert.Equal(t, 2, checkmarks, "must observe a ✓-line per purged mod")
+}
+
+// TestCoreProviderActions_PurgeProfile_SkipAndWarningsSurface guards the
+// Skipped -> Warnings prefixing coreProvider.PurgeProfile documents
+// (service_core.go's prefixSkipped): a game-level uninstall.before_each
+// hook that always fails skips the mod entirely (core.PurgeResult.Skipped,
+// not Purged), and that skip must surface in ActionOutcome.Warnings with
+// its own "Skipped " lead-in. Uses the SAME direct
+// game.Hooks.Uninstall.BeforeEach technique
+// TestCoreProviderActions_UninstallMod_RunsUninstallHooksMatchingCLIConfig
+// (above) already established in this file - simpler than round-tripping a
+// hooks.yaml fixture, and already proven to resolve through
+// coreProvider.resolvedHooks, so this test reuses it rather than
+// introducing a second hook-wiring mechanism.
+func TestCoreProviderActions_PurgeProfile_SkipAndWarningsSurface(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	scriptsDir := t.TempDir()
+	failScript := createActionsTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "boom" >&2
+exit 1`)
+	game.Hooks.Uninstall.BeforeEach = failScript
+
+	seedDeployedActionMod(t, svc, game, "src", "1", "Test Mod", "1.0", map[string][]byte{"plugin.esp": []byte("data")})
+
+	outcome, err := actions.PurgeProfile(context.Background(), nil)
+	require.NoError(t, err, "a before_each skip must not fail the whole purge")
+	assert.Equal(t, "Purged 0 mod(s)", outcome.Message)
+	require.Len(t, outcome.Warnings, 1)
+	assert.Contains(t, outcome.Warnings[0], "Skipped Test Mod: uninstall.before_each hook failed")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "plugin.esp"))
+	assert.NoError(t, err, "a skipped mod's files must remain deployed - purge never touched it")
+
+	mod, err := svc.GetInstalledMod("src", "1", game.ID, "default")
+	require.NoError(t, err)
+	assert.True(t, mod.Deployed, "a skipped mod's Deployed flag must be untouched")
+}
+
+// TestCoreProviderActions_PurgeProfile_Empty guards the empty-mods
+// short-circuit (coreProvider.PurgeProfile's own doc comment): no installed
+// mods means no core.PurgeProfile call at all, just a plain "no mods
+// installed" outcome with no error and no warnings.
+func TestCoreProviderActions_PurgeProfile_Empty(t *testing.T) {
+	actions, _, _ := newCoreActionsFixture(t)
+
+	outcome, err := actions.PurgeProfile(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "no mods installed", outcome.Message)
+	assert.Empty(t, outcome.Warnings)
+}
+
 func TestCoreProviderActions_PlanProfileSwitch_MapsBucketsToDisplayStrings(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	pm := svc.NewProfileManager()

@@ -94,6 +94,16 @@ type ActionProvider interface {
 	// defense-in-depth, since a stale active-profile row (a refresh landed
 	// between the keypress and confirm) could otherwise let it through.
 	DeleteProfile(ctx context.Context, name string) (ActionOutcome, error)
+
+	// PurgeProfile undeploys every mod currently installed in the active
+	// profile (Task 7's Dashboard/Installed-Mods 'X' binding - see
+	// mutations.go's purgeProfilePrompt): the TUI equivalent of `lmm purge`
+	// with neither --uninstall nor --force. Mod records are preserved, only
+	// marked not-deployed - matching the CLI default (coreProvider never
+	// exposes --uninstall's record-deleting variant; see its own doc
+	// comment). progress may be nil, like every other streaming
+	// ActionProvider method.
+	PurgeProfile(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -610,4 +620,37 @@ func (p *prototypeProvider) SetUpdatePolicy(_ context.Context, item ModItem, pol
 	}
 	p.data.InstalledMods[idx].UpdatePolicy = policy
 	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
+}
+
+// PurgeProfile emits one fake progress tick per canned InstalledMods entry
+// (mirroring purgeProgressLine's real per-mod PurgeModPurged tick in
+// service_core.go, one level up - the prototype has no percentage-based
+// phases to fake, so it ticks by mod rather than by 0/50/100%, unlike
+// fakeProgressTicks' ApplyInstall/ApplyUpdate precedent), then flips every
+// entry to "disabled" - the prototype's own "not deployed" terminal state
+// (see DisableMod above; prototype.Mod has no separate "deployed"/"enabled"
+// distinction the way coreProvider's installedModStatus does - see Mod.Status'
+// doc comment), decrementing Stats.Enabled for whichever entries weren't
+// already disabled. An empty InstalledMods list short-circuits to "no mods
+// installed" with no ticks emitted at all, mirroring coreProvider's own
+// empty-mods short-circuit (see its doc comment).
+func (p *prototypeProvider) PurgeProfile(_ context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+	if len(p.data.InstalledMods) == 0 {
+		return ActionOutcome{Message: "no mods installed"}, nil
+	}
+
+	purged := 0
+	for i := range p.data.InstalledMods {
+		mod := &p.data.InstalledMods[i]
+		if progress != nil {
+			progress(ActionProgress{Line: fmt.Sprintf("✓ %s", mod.Name), Percent: -1})
+		}
+		if mod.Status != "disabled" {
+			p.data.Stats.Enabled--
+			mod.Status = "disabled"
+		}
+		purged++
+	}
+
+	return ActionOutcome{Message: fmt.Sprintf("Purged %d mod(s)", purged)}, nil
 }

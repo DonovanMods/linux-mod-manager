@@ -569,6 +569,107 @@ func (p *coreProvider) DeployProfile(ctx context.Context) (ActionOutcome, error)
 	}, nil
 }
 
+// prefixSkipped maps each core.PurgeResult.Skipped entry ("<name>: <reason>"
+// - see that field's own doc comment) to "Skipped <name>: <reason>" for
+// ActionOutcome.Warnings. Unlike DeployResult.Skipped, which
+// coreProvider.DeployProfile appends bare (its message already leads with
+// "Deployed N, M failed"), PurgeProfile's outcome message never mentions a
+// skip count at all - so each entry needs its own "Skipped " lead-in to read
+// as a diagnostic rather than an unlabeled fragment on the status line.
+func prefixSkipped(skipped []string) []string {
+	if len(skipped) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(skipped))
+	for _, s := range skipped {
+		out = append(out, "Skipped "+s)
+	}
+	return out
+}
+
+// purgeProgressLine composes an ActionProgress from one core.DeployProgress
+// event during PurgeProfile - only the three phases task-7-brief.md calls
+// out for the TUI status line: DeployPurging's header (Total mods about to
+// purge), and each mod's own PurgeModPurged/PurgeModSkipped. Every other
+// phase PurgeProfile can emit (DeployBeforeAllForced, PurgeWarning,
+// PurgeNote, PurgeComplete) is deliberately NOT streamed - those already
+// reach the user through the completed outcome's Warnings (see
+// coreProvider.PurgeProfile below), and streaming them too would just
+// duplicate the same text on the status line a moment earlier.
+func purgeProgressLine(p core.DeployProgress) (ActionProgress, bool) {
+	switch p.Phase {
+	case core.DeployPurging:
+		return ActionProgress{Line: fmt.Sprintf("purging %d mod(s)…", p.Total), Percent: -1}, true
+	case core.PurgeModPurged:
+		return ActionProgress{Line: fmt.Sprintf("✓ %s (%d/%d)", p.ModName, p.Index, p.Total), Percent: -1}, true
+	case core.PurgeModSkipped:
+		return ActionProgress{Line: "skipped " + p.ModName, Percent: -1}, true
+	default:
+		return ActionProgress{}, false
+	}
+}
+
+// PurgeProfile undeploys every mod currently installed in the active
+// profile - the TUI's 'X' binding (Task 7, mutations.go's
+// purgeProfilePrompt), wired onto core.PurgeProfile (#61's extraction built
+// specifically for this consumer). mods is re-fetched here via
+// GetInstalledMods rather than reused from whatever list the confirmation
+// modal was built from - the same documented plan-drift stance as
+// ApplyProfileSwitch's own re-plan-at-apply precedent (see that method's
+// doc comment): the set actually purged can differ from what the modal
+// showed if something changed between the keypress and the confirm. An
+// empty list short-circuits to a plain "no mods installed" outcome with no
+// core call, no hooks, and no progress ticks at all - mirroring the CLI's
+// own "No mods installed" short-circuit (cmd/lmm/purge.go's doPurge) and
+// core.PurgeProfile's own documented empty-mods no-op.
+//
+// Uninstall is always false (the TUI has no --uninstall equivalent - purged
+// mods keep their DB record, matching a plain `lmm purge`) and Force is
+// always false (matching every other coreProvider mutation's hook
+// defaults - see hookRunner's doc comment), same as DeployProfile/
+// UninstallMod above.
+//
+// On error, coreProvider follows the SAME convention every other mutation
+// in this file already does (DeployProfile/UninstallMod/ApplyInstall/
+// ApplyUpdate/ApplyProfileSwitch): the wrapped error is returned with an
+// empty ActionOutcome{}, not core.PurgeProfile's own partial result -
+// buildAction's actionFailedMsg (actions.go) only ever carries the error
+// text, never an outcome, so a partial result's Warnings/Skipped would
+// never reach the status line regardless of whether this method populated
+// them. The only PurgeProfile error path reachable with Force=false is an
+// uninstall.before_all hook failure, which core.PurgeProfile documents as
+// returning before anything in the result is populated anyway.
+func (p *coreProvider) PurgeProfile(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+	profile := p.currentProfile()
+	mods, err := p.svc.GetInstalledMods(p.game.ID, profile)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("loading installed mods for %s/%s: %w", p.game.ID, profile, err)
+	}
+	if len(mods) == 0 {
+		return ActionOutcome{Message: "no mods installed"}, nil
+	}
+
+	opts := core.PurgeOptions{
+		Uninstall:   false,
+		Hooks:       p.resolvedHooks(profile),
+		HookRunner:  p.hookRunner(),
+		HookContext: p.hookContext(),
+		Force:       false,
+	}
+
+	adapter := deployProgressAdapter(progress, purgeProgressLine)
+	result, err := p.svc.PurgeProfile(ctx, p.game, profile, mods, opts, adapter)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("purging profile %s: %w", profile, err)
+	}
+
+	warnings := mergeDiagnostics(append(prefixSkipped(result.Skipped), result.Warnings...), result.Notes)
+	return ActionOutcome{
+		Message:  fmt.Sprintf("Purged %d mod(s)", result.Purged),
+		Warnings: warnings,
+	}, nil
+}
+
 func (p *coreProvider) PlanProfileSwitch(ctx context.Context, profileName string) (SwitchPlanView, error) {
 	plan, err := p.svc.PlanProfileSwitch(ctx, p.game, profileName)
 	if err != nil {

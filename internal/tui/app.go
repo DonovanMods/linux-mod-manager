@@ -612,6 +612,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.createProfilePrompt()
 	case key.Matches(msg, m.keys.DeleteProfile):
 		return m.deleteSelectedProfile()
+	case key.Matches(msg, m.keys.Purge):
+		return m.purgeProfilePrompt()
 	default:
 		return m, nil
 	}

@@ -991,3 +991,52 @@ func (m Model) deleteSelectedProfile() (Model, tea.Cmd) {
 	})
 	return model.promptAction(pa), nil
 }
+
+// --- Purge ('X' on Dashboard and Installed Mods) ---
+
+// purgeProfilePrompt handles 'X' on Dashboard/Installed Mods (task-7-brief.md's
+// purge flow): a no-op on the wrong screen or with no ActionProvider
+// configured - mirrors deployActiveProfile's guard shape (both fire on the
+// same two screens, and neither depends on a row selection - purging, like
+// deploying, acts on the WHOLE active profile, not a single mod).
+//
+// An empty m.mods resolves SYNCHRONOUSLY to a status-line message with no
+// modal, unlike deployActiveProfile (which lets a zero-enabled-mods deploy
+// through as a valid, if unusual, outcome the provider itself reports):
+// purging zero installed mods has nothing to confirm and nothing for the
+// provider to do - coreProvider.PurgeProfile short-circuits identically
+// (see its own doc comment in service_core.go) - so this mirrors that
+// provider-side short-circuit at the TUI layer too, sparing a pointless
+// confirm-then-no-op round trip. statusIsError is explicitly false: this is
+// a benign "nothing to do" outcome, not a refusal (contrast
+// deleteSelectedProfile's active-profile guard, which IS an error).
+//
+// The modal title names the game (task-7-brief.md's own example: "Purge 3
+// mod(s) from <Game>?"): m.summary.GameName is already populated by the
+// same Overview call that fills m.mods (see coreProvider.Overview), so it's
+// cheaply available here exactly like deployActiveProfile's own detail
+// lines already assume. detail lists every mod's name - the existing
+// confirmation-modal "+N more" overflow cap (actionModalView,
+// actionModalMaxDetailLines) handles a long list without this needing to
+// truncate itself.
+func (m Model) purgeProfilePrompt() (Model, tea.Cmd) {
+	if (m.screen != ScreenDashboard && m.screen != ScreenInstalledMods) || m.actions == nil {
+		return m, nil
+	}
+	if len(m.mods) == 0 {
+		m.action.status = "no mods installed"
+		m.action.statusIsError = false
+		return m, nil
+	}
+
+	detail := make([]string, 0, len(m.mods))
+	for _, mod := range m.mods {
+		detail = append(detail, mod.Name)
+	}
+
+	title := fmt.Sprintf("Purge %d mod(s) from %s?", len(m.mods), m.summary.GameName)
+	model, pa := m.buildAction(actionPurge, title, detail, "", func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.PurgeProfile(ctx, progress)
+	})
+	return model.promptAction(pa), nil
+}

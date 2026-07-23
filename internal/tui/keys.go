@@ -61,6 +61,13 @@ type KeyMap struct {
 	// synchronously on the status line for the active one.
 	CreateProfile key.Binding
 	DeleteProfile key.Binding
+	// Purge is Task 7's Dashboard/Installed-Mods purge-behind-confirmation
+	// binding (see mutations.go's purgeProfilePrompt): undeploys every mod
+	// currently installed in the active profile, behind the standard y/n
+	// confirmation modal - the TUI equivalent of `lmm purge`. Capital "X"
+	// (distinct from lowercase "x"/Uninstall) since purge acts on the WHOLE
+	// profile, not the selected mod.
+	Purge key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -181,6 +188,10 @@ func DefaultKeyMap() KeyMap {
 		DeleteProfile: key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "delete profile"),
+		),
+		Purge: key.NewBinding(
+			key.WithKeys("X"),
+			key.WithHelp("X", "purge"),
 		),
 	}
 }
