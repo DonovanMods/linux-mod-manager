@@ -236,3 +236,95 @@ func TestPolicyChoiceMapsProviderErrorToActionFailedMsg(t *testing.T) {
 	require.Contains(t, model.action.status, sentinel.Error())
 	require.NotNil(t, refreshCmd, "the partial-mutation contract still refreshes on failure")
 }
+
+// TestPolicyChoiceSecondPickInFlightIsDropped guards the in-flight-message
+// window between a pick and its resolution: after choosePickerOption clears
+// the picker, action.running stays false until resolvePolicyChoice runs, so
+// a second 'P' press in that window opens a second picker and yields a
+// SECOND policyChosenMsg before the first has resolved. Resolving both must
+// dispatch exactly ONE SetUpdatePolicy call - the second message is dropped
+// by resolvePolicyChoice's own single-flight guard once the first
+// resolution has set running=true - and the second resolution must leave
+// the action state (gen, running, status) untouched.
+func TestPolicyChoiceSecondPickInFlightIsDropped(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{SetPolicyOutcome: ActionOutcome{Message: `SkyUI update policy: pin`}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	// First pick: P → picker → "3" chooses "pin"; the deferred msg exists
+	// but has NOT resolved yet.
+	updated, _ := model.Update(keyRunes("P"))
+	model = updated.(Model)
+	updated, chooseCmd1 := model.Update(keyRunes("3"))
+	model = updated.(Model)
+	msg1 := chooseCmd1()
+
+	// Second pick in the window: the picker re-opens (running is still
+	// false) and a second deferred msg is produced.
+	updated, _ = model.Update(keyRunes("P"))
+	model = updated.(Model)
+	require.NotNil(t, model.picker, "the window is real: a second picker can open before the first pick resolves")
+	updated, chooseCmd2 := model.Update(keyRunes("2"))
+	model = updated.(Model)
+	msg2 := chooseCmd2()
+
+	// First resolution dispatches normally.
+	updated, actionCmd1 := model.Update(msg1)
+	model = updated.(Model)
+	require.True(t, model.action.running)
+	require.NotNil(t, actionCmd1)
+	genAfterFirst := model.action.gen
+
+	// Second resolution, arriving while the first action is in flight, must
+	// be a no-op: no second dispatch, no state disturbance.
+	updated, actionCmd2 := model.Update(msg2)
+	model = updated.(Model)
+	require.Nil(t, actionCmd2, "the dropped second pick must not dispatch anything")
+	require.Equal(t, genAfterFirst, model.action.gen, "the dropped pick must not bump gen")
+	require.True(t, model.action.running, "the FIRST action stays in flight")
+
+	doneMsg := runActionCmd(t, actionCmd1)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+	require.Len(t, rec.SetPolicyCalls, 1, "exactly one SetUpdatePolicy dispatch for two back-to-back picks")
+	require.Equal(t, "pin", rec.SetPolicyCalls[0].Policy, "the FIRST pick wins")
+}
+
+// TestPolicyChoiceDroppedWhileConfirmModalPending covers the other edge of
+// the same window: a pendingAction confirm modal opened between the pick and
+// its resolution (e.g. 'D' pressed in the gap). Without
+// resolvePolicyChoice's guard, buildAction's own refusal leaves the model
+// untouched but resolvePolicyChoice then set running=true anyway - sticking
+// the single-flight guard permanently (no action is actually running, so no
+// actionDoneMsg/actionFailedMsg would ever clear it). The stray message
+// must be dropped entirely: running stays false, the modal stays up, no
+// dispatch.
+func TestPolicyChoiceDroppedWhileConfirmModalPending(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, _ := model.Update(keyRunes("P"))
+	model = updated.(Model)
+	updated, chooseCmd := model.Update(keyRunes("3"))
+	model = updated.(Model)
+	msg := chooseCmd()
+
+	// A confirm modal opens in the window before the pick resolves.
+	updated, _ = model.Update(keyRunes("D"))
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, actionDeploy, model.action.pending.kind)
+
+	updated, cmd := model.Update(msg)
+	model = updated.(Model)
+	require.Nil(t, cmd, "the dropped pick must not dispatch anything")
+	require.False(t, model.action.running, "a dropped pick must never set running - nothing would ever clear it")
+	require.NotNil(t, model.action.pending, "the confirm modal must stay up, undisturbed")
+	require.Empty(t, rec.SetPolicyCalls)
+}

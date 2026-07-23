@@ -260,10 +260,21 @@ func (m Model) editSelectedModPolicy() (Model, tea.Cmd) {
 // itself). No pendingAction/confirmation modal is ever shown - the picker
 // selection already WAS the user's confirmation (task-5-brief.md) - so this
 // sets action.running directly instead of calling promptAction.
-// buildAction's own single-flight guard (running/pending) still applies
-// defensively, on the vanishingly unlikely chance something else started an
-// action in the gap between the picker closing and this message arriving.
+// Single-flight is checked HERE, not left to buildAction's own guard: a
+// policyChosenMsg is an in-flight message, and the window between the pick
+// (picker cleared, running still false) and this resolution is real - a
+// second 'P' press there opens a second picker and yields a second
+// policyChosenMsg, and a 'D' press opens a confirm modal. A message
+// arriving while an action is already running or a confirmation is already
+// pending is dropped entirely - mirroring the stale-gen discards the
+// resolve* family's callers perform (app.go) - because relying on
+// buildAction's refusal alone would leave this method setting
+// running=true below for an action that never actually started, sticking
+// the single-flight guard with nothing to ever clear it.
 func (m Model) resolvePolicyChoice(msg policyChosenMsg) (Model, tea.Cmd) {
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
 	item := msg.item
 	policy := msg.policy
 	title := fmt.Sprintf("Update policy — %s", item.Name)
