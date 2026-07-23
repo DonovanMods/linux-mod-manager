@@ -9,12 +9,15 @@ var (
 	ErrModNotFound     = errors.New("mod not found")
 	ErrGameNotFound    = errors.New("game not found")
 	ErrProfileNotFound = errors.New("profile not found")
-	ErrDependencyLoop  = errors.New("circular dependency detected")
-	ErrAuthRequired    = errors.New("authentication required")
-	ErrInvalidConfig   = errors.New("invalid configuration")
-	ErrFileConflict    = errors.New("file conflict detected")
-	ErrDownloadFailed  = errors.New("download failed")
-	ErrLinkFailed      = errors.New("link operation failed")
+	// ErrInvalidProfileName rejects profile names that are empty or would
+	// escape the profiles directory (path separators, ".." segments).
+	ErrInvalidProfileName = errors.New("invalid profile name")
+	ErrDependencyLoop     = errors.New("circular dependency detected")
+	ErrAuthRequired       = errors.New("authentication required")
+	ErrInvalidConfig      = errors.New("invalid configuration")
+	ErrFileConflict       = errors.New("file conflict detected")
+	ErrDownloadFailed     = errors.New("download failed")
+	ErrLinkFailed         = errors.New("link operation failed")
 )
 
 // DeployError aggregates a primary failure with optional rollback / cleanup

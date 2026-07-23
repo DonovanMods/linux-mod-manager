@@ -89,8 +89,24 @@ func parseProfileHooks(yaml ProfileHooksYAML) (domain.GameHooks, domain.GameHook
 	return hooks, explicit
 }
 
+// validateProfileName rejects names that are empty or would resolve outside
+// the profiles directory once joined (filepath.Join collapses ".." segments,
+// so "../../evil" would otherwise escape configDir entirely).
+func validateProfileName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%w: name is empty", domain.ErrInvalidProfileName)
+	}
+	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return fmt.Errorf("%w: %q must not contain path separators or \"..\"", domain.ErrInvalidProfileName, name)
+	}
+	return nil
+}
+
 // LoadProfile reads a profile from disk
 func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error) {
+	if err := validateProfileName(profileName); err != nil {
+		return nil, err
+	}
 	profilePath := filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml")
 	data, err := os.ReadFile(profilePath)
 	if err != nil {
@@ -136,6 +152,9 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 
 // SaveProfile writes a profile to disk
 func SaveProfile(configDir string, profile *domain.Profile) error {
+	if err := validateProfileName(profile.Name); err != nil {
+		return err
+	}
 	cfg := ProfileConfig{
 		Name:       profile.Name,
 		GameID:     profile.GameID,
@@ -205,6 +224,9 @@ func ListProfiles(configDir, gameID string) ([]string, error) {
 
 // DeleteProfile removes a profile from disk
 func DeleteProfile(configDir, gameID, profileName string) error {
+	if err := validateProfileName(profileName); err != nil {
+		return err
+	}
 	profilePath := filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml")
 	if err := os.Remove(profilePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
