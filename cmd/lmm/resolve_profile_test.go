@@ -14,6 +14,8 @@ import (
 // registered, returning the service (closed via t.Cleanup).
 func newResolveTestService(t *testing.T) *core.Service {
 	t.Helper()
+	prevConfigDir, prevDataDir := configDir, dataDir
+	t.Cleanup(func() { configDir, dataDir = prevConfigDir, prevDataDir })
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 
@@ -89,9 +91,10 @@ func TestListCmd_UsesActiveProfileAfterSwitch(t *testing.T) {
 	game, err := svc.GetGame("testgame")
 	require.NoError(t, err)
 
+	prevListProfile, prevJSONOutput := listProfile, jsonOutput
+	t.Cleanup(func() { listProfile, jsonOutput = prevListProfile, prevJSONOutput })
 	listProfile = ""
 	jsonOutput = true
-	defer func() { jsonOutput = false }()
 
 	out := captureStdout(t, func() error {
 		return doList(&cobra.Command{}, svc, game)
