@@ -9,8 +9,11 @@ var (
 	ErrModNotFound     = errors.New("mod not found")
 	ErrGameNotFound    = errors.New("game not found")
 	ErrProfileNotFound = errors.New("profile not found")
-	// ErrInvalidProfileName rejects profile names that are empty or would
-	// escape the profiles directory (path separators, ".." segments).
+	// ErrInvalidProfileName rejects profile names that are empty or
+	// whitespace-only, or contain a path separator ("/" or "\") or the
+	// substring ".." anywhere. The rule is deliberately conservative —
+	// harmless names like "foo..bar" are also rejected — so a valid name
+	// is always a single path segment inside the profiles directory.
 	ErrInvalidProfileName = errors.New("invalid profile name")
 	ErrDependencyLoop     = errors.New("circular dependency detected")
 	ErrAuthRequired       = errors.New("authentication required")
