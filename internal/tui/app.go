@@ -75,6 +75,10 @@ type Model struct {
 	// Sibling to action.pending: promptPicker/updatePickerKey/pickerView
 	// mirror promptAction/updatePendingActionKey/actionModalView's structure.
 	picker *pendingPicker
+	// inputModal is the pending text-entry modal (see input_modal.go), if
+	// any. Another sibling of action.pending/picker: promptInput/
+	// updateInputModalKey/inputModalView mirror the same structure.
+	inputModal *pendingInput
 
 	screen   Screen
 	selected map[Screen]int
@@ -479,6 +483,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updatePickerKey(msg)
 	}
 
+	if m.inputModal != nil {
+		return m.updateInputModalKey(msg)
+	}
+
 	// Rule 8: any keypress that isn't a modal response (handled above,
 	// before this point is ever reached) and isn't quit clears the status
 	// line. isQuitKey (not the bare Quit binding) is used so a "q" that's
@@ -722,6 +730,10 @@ func (m Model) screenView() string {
 
 	if m.picker != nil {
 		return m.pickerView()
+	}
+
+	if m.inputModal != nil {
+		return m.inputModalView()
 	}
 
 	switch m.state {
