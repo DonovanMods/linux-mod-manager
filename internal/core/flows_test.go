@@ -1634,6 +1634,68 @@ func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) 
 	assert.Greater(t, noteIdx, purgingIdx, "the purge-phase note must come after the DeployPurging header event, still within the purge phase")
 }
 
+// TestService_DeployProfile_PurgeBeforeEachSkip_WarningTextExact pins the
+// deploy --purge before_each-skip Warning's exact wording (in particular
+// its "during purge (not purged)" tail and NAME attribution), which
+// deliberately differs from `lmm purge`'s treatment of the same skip
+// (PurgeResult.Skipped + PurgeModSkipped) - a #61 divergence preserved
+// through the shared-loop convergence.
+func TestService_DeployProfile_PurgeBeforeEachSkip_WarningTextExact(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "bad", "Bad Mod", "1.0", true, map[string][]byte{"bad.esp": []byte("b")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "bad", "1.0")
+
+	beforeEachScript := createTestScript(t, scriptsDir, "before_each.sh", "#!/bin/bash\necho boom >&2\nexit 1")
+	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}}
+
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
+		Purge: true, All: true, Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
+	}, nil)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, result.Warnings)
+	assert.True(t, strings.HasPrefix(result.Warnings[0], "uninstall.before_each hook failed for Bad Mod during purge (not purged): "),
+		"got: %q", result.Warnings[0])
+}
+
+// TestService_DeployProfile_PurgeAfterEachWarning_UsesModID pins the
+// deploy --purge after_each Warning's historical mod-ID attribution
+// ("for <id>", not "for <name>") - previously untested wording, and the
+// other side of a #61 divergence: `lmm purge` (doPurge, and now
+// PurgeProfile) uses the mod NAME in the same warning.
+func TestService_DeployProfile_PurgeAfterEachWarning_UsesModID(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "mod-id-1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("d")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "mod-id-1", "1.0")
+
+	afterEachScript := createTestScript(t, scriptsDir, "after_each.sh", "#!/bin/bash\necho boom >&2\nexit 1")
+	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{AfterEach: afterEachScript}}
+
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
+		Purge: true, Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
+	}, nil)
+	require.NoError(t, err)
+
+	var found string
+	for _, w := range result.Warnings {
+		if strings.HasPrefix(w, "uninstall.after_each hook failed for ") {
+			found = w
+			break
+		}
+	}
+	require.NotEmpty(t, found, "expected a purge-pass after_each warning; got %v", result.Warnings)
+	assert.True(t, strings.HasPrefix(found, "uninstall.after_each hook failed for mod-id-1: "),
+		"deploy --purge attributes by mod ID, got: %q", found)
+}
+
 // TestService_DeployProfile_OverridesWarningEmittedBeforeDeferredHookWarnings
 // guards finding 2: the pre-extraction CLI printed the profile-overrides
 // warning (computed and printed immediately once the deploy loop and
