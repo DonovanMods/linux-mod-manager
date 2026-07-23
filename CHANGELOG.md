@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Profile names are now validated before any filesystem access: names that are empty (or whitespace-only), contain path separators, or contain ".." are rejected with a clear "invalid profile name" error. Previously a name like `../../../evil` passed to `lmm profile create`/`delete` (or a crafted `profile import` file) would be joined into the profile path unchecked, letting profile save/delete write or remove `.yaml` files outside `~/.config/lmm/games/<game>/profiles/`. The guard lives in the storage layer, so the CLI, TUI, and profile import all share it.
+- Profile names and game IDs are now validated before any filesystem access: values that are empty (or whitespace-only), contain path separators, or contain ".." are rejected with a clear "invalid profile name" / "invalid game ID" error. Previously a name like `../../../evil` passed to `lmm profile create`/`delete` — or a crafted `name`/`game_id` in a `profile import` file — would be joined into the profile path unchecked, letting profile save/delete write or remove `.yaml` files outside `~/.config/lmm/games/<game>/profiles/`. The guard lives in the storage layer, so the CLI, TUI, and profile import all share it.
 
 ### Fixed
 

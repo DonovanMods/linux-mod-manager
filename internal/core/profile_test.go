@@ -104,6 +104,38 @@ func TestProfileManager_Create_RejectsPathTraversalName(t *testing.T) {
 	}
 }
 
+func TestProfileManager_Import_RejectsPathTraversalGameID(t *testing.T) {
+	// The attack vector Copilot flagged on PR #72: profile import parses
+	// game_id from untrusted YAML and joins it into the save path.
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "deep", "nested", "config")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(configDir, database)
+
+	_, err = pm.Import([]byte("name: innocent\ngame_id: ../../../evil\nmods: []\n"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidGameID)
+
+	var files []string
+	err = filepath.Walk(tempDir, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Empty(t, files, "no file may be written for an invalid game ID")
+}
+
 func TestProfileManager_Delete_RejectsPathTraversalName(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")

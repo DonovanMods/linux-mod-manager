@@ -89,22 +89,32 @@ func parseProfileHooks(yaml ProfileHooksYAML) (domain.GameHooks, domain.GameHook
 	return hooks, explicit
 }
 
-// validateProfileName rejects names that are empty or would resolve outside
-// the profiles directory once joined (filepath.Join collapses ".." segments,
-// so "../../evil" would otherwise escape configDir entirely).
-func validateProfileName(name string) error {
-	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("%w: name is empty", domain.ErrInvalidProfileName)
+// validateSegment rejects values that are empty or would resolve outside
+// their directory once joined (filepath.Join collapses ".." segments, so
+// "../../evil" would otherwise escape configDir entirely). Failures wrap
+// sentinel so callers can branch on which field was invalid.
+func validateSegment(value string, sentinel error) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%w: value is empty", sentinel)
 	}
-	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
-		return fmt.Errorf("%w: %q must not contain path separators or \"..\"", domain.ErrInvalidProfileName, name)
+	if strings.ContainsAny(value, `/\`) || strings.Contains(value, "..") {
+		return fmt.Errorf("%w: %q must not contain path separators or \"..\"", sentinel, value)
 	}
 	return nil
 }
 
+// validateProfilePath guards both path segments a profile file path is built
+// from: the game ID and the profile name.
+func validateProfilePath(gameID, profileName string) error {
+	if err := validateSegment(gameID, domain.ErrInvalidGameID); err != nil {
+		return err
+	}
+	return validateSegment(profileName, domain.ErrInvalidProfileName)
+}
+
 // LoadProfile reads a profile from disk
 func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error) {
-	if err := validateProfileName(profileName); err != nil {
+	if err := validateProfilePath(gameID, profileName); err != nil {
 		return nil, err
 	}
 	profilePath := filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml")
@@ -152,7 +162,7 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 
 // SaveProfile writes a profile to disk
 func SaveProfile(configDir string, profile *domain.Profile) error {
-	if err := validateProfileName(profile.Name); err != nil {
+	if err := validateProfilePath(profile.GameID, profile.Name); err != nil {
 		return err
 	}
 	cfg := ProfileConfig{
@@ -224,7 +234,7 @@ func ListProfiles(configDir, gameID string) ([]string, error) {
 
 // DeleteProfile removes a profile from disk
 func DeleteProfile(configDir, gameID, profileName string) error {
-	if err := validateProfileName(profileName); err != nil {
+	if err := validateProfilePath(gameID, profileName); err != nil {
 		return err
 	}
 	profilePath := filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml")

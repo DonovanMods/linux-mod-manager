@@ -87,6 +87,47 @@ func TestLoadProfile_RejectsInvalidName(t *testing.T) {
 	}
 }
 
+func TestSaveProfile_RejectsInvalidGameID(t *testing.T) {
+	for label, makeID := range invalidProfileNames {
+		t.Run(label, func(t *testing.T) {
+			tempDir := t.TempDir()
+			configDir := filepath.Join(tempDir, "deep", "nested", "config")
+			require.NoError(t, os.MkdirAll(configDir, 0755))
+
+			profile := &domain.Profile{Name: "good", GameID: makeID(tempDir)}
+			err := SaveProfile(configDir, profile)
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, domain.ErrInvalidGameID)
+			assert.Empty(t, listRegularFiles(t, tempDir), "no file may be written for an invalid game ID")
+		})
+	}
+}
+
+func TestLoadProfile_RejectsInvalidGameID(t *testing.T) {
+	for label, makeID := range invalidProfileNames {
+		t.Run(label, func(t *testing.T) {
+			tempDir := t.TempDir()
+			_, err := LoadProfile(tempDir, makeID(tempDir), "good")
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, domain.ErrInvalidGameID)
+		})
+	}
+}
+
+func TestDeleteProfile_RejectsInvalidGameID(t *testing.T) {
+	for label, makeID := range invalidProfileNames {
+		t.Run(label, func(t *testing.T) {
+			tempDir := t.TempDir()
+			err := DeleteProfile(tempDir, makeID(tempDir), "good")
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, domain.ErrInvalidGameID)
+		})
+	}
+}
+
 func TestDeleteProfile_RejectsInvalidName(t *testing.T) {
 	for label, makeName := range invalidProfileNames {
 		t.Run(label, func(t *testing.T) {

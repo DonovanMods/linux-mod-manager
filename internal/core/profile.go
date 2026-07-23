@@ -33,7 +33,7 @@ func (pm *ProfileManager) Create(gameID, name string) (*domain.Profile, error) {
 	}
 	// The validation error is the user-facing message; don't bury it under
 	// the existence-check wrapping.
-	if errors.Is(err, domain.ErrInvalidProfileName) {
+	if errors.Is(err, domain.ErrInvalidProfileName) || errors.Is(err, domain.ErrInvalidGameID) {
 		return nil, err
 	}
 	if err != domain.ErrProfileNotFound {

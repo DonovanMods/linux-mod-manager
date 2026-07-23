@@ -15,12 +15,16 @@ var (
 	// harmless names like "foo..bar" are also rejected — so a valid name
 	// is always a single path segment inside the profiles directory.
 	ErrInvalidProfileName = errors.New("invalid profile name")
-	ErrDependencyLoop     = errors.New("circular dependency detected")
-	ErrAuthRequired       = errors.New("authentication required")
-	ErrInvalidConfig      = errors.New("invalid configuration")
-	ErrFileConflict       = errors.New("file conflict detected")
-	ErrDownloadFailed     = errors.New("download failed")
-	ErrLinkFailed         = errors.New("link operation failed")
+	// ErrInvalidGameID applies the same rule to game IDs, which are joined
+	// into the same on-disk paths (and reachable from untrusted YAML via
+	// profile import).
+	ErrInvalidGameID  = errors.New("invalid game ID")
+	ErrDependencyLoop = errors.New("circular dependency detected")
+	ErrAuthRequired   = errors.New("authentication required")
+	ErrInvalidConfig  = errors.New("invalid configuration")
+	ErrFileConflict   = errors.New("file conflict detected")
+	ErrDownloadFailed = errors.New("download failed")
+	ErrLinkFailed     = errors.New("link operation failed")
 )
 
 // DeployError aggregates a primary failure with optional rollback / cleanup
