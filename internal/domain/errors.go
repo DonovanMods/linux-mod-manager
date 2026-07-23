@@ -9,12 +9,22 @@ var (
 	ErrModNotFound     = errors.New("mod not found")
 	ErrGameNotFound    = errors.New("game not found")
 	ErrProfileNotFound = errors.New("profile not found")
-	ErrDependencyLoop  = errors.New("circular dependency detected")
-	ErrAuthRequired    = errors.New("authentication required")
-	ErrInvalidConfig   = errors.New("invalid configuration")
-	ErrFileConflict    = errors.New("file conflict detected")
-	ErrDownloadFailed  = errors.New("download failed")
-	ErrLinkFailed      = errors.New("link operation failed")
+	// ErrInvalidProfileName rejects profile names that are empty or
+	// whitespace-only, or contain a path separator ("/" or "\") or the
+	// substring ".." anywhere. The rule is deliberately conservative —
+	// harmless names like "foo..bar" are also rejected — so a valid name
+	// is always a single path segment inside the profiles directory.
+	ErrInvalidProfileName = errors.New("invalid profile name")
+	// ErrInvalidGameID applies the same rule to game IDs, which are joined
+	// into the same on-disk paths (and reachable from untrusted YAML via
+	// profile import).
+	ErrInvalidGameID  = errors.New("invalid game ID")
+	ErrDependencyLoop = errors.New("circular dependency detected")
+	ErrAuthRequired   = errors.New("authentication required")
+	ErrInvalidConfig  = errors.New("invalid configuration")
+	ErrFileConflict   = errors.New("file conflict detected")
+	ErrDownloadFailed = errors.New("download failed")
+	ErrLinkFailed     = errors.New("link operation failed")
 )
 
 // DeployError aggregates a primary failure with optional rollback / cleanup

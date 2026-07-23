@@ -89,8 +89,37 @@ func parseProfileHooks(yaml ProfileHooksYAML) (domain.GameHooks, domain.GameHook
 	return hooks, explicit
 }
 
+// validateSegment enforces that value is usable as a single path segment:
+// non-empty (after trimming whitespace), no path separators ("/" or "\"),
+// and no ".." substring. The rule is deliberately conservative — harmless
+// values like "foo..bar" or non-escaping subpaths like "a/b" are rejected
+// too — because filepath.Join collapses ".." segments, so anything less
+// strict risks resolving outside configDir (e.g. "../../evil"). Failures
+// wrap sentinel so callers can branch on which field was invalid.
+func validateSegment(value string, sentinel error) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%w: value is empty", sentinel)
+	}
+	if strings.ContainsAny(value, `/\`) || strings.Contains(value, "..") {
+		return fmt.Errorf("%w: %q must not contain path separators or \"..\"", sentinel, value)
+	}
+	return nil
+}
+
+// validateProfilePath guards both path segments a profile file path is built
+// from: the game ID and the profile name.
+func validateProfilePath(gameID, profileName string) error {
+	if err := validateSegment(gameID, domain.ErrInvalidGameID); err != nil {
+		return err
+	}
+	return validateSegment(profileName, domain.ErrInvalidProfileName)
+}
+
 // LoadProfile reads a profile from disk
 func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error) {
+	if err := validateProfilePath(gameID, profileName); err != nil {
+		return nil, err
+	}
 	profilePath := filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml")
 	data, err := os.ReadFile(profilePath)
 	if err != nil {
@@ -136,6 +165,9 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 
 // SaveProfile writes a profile to disk
 func SaveProfile(configDir string, profile *domain.Profile) error {
+	if err := validateProfilePath(profile.GameID, profile.Name); err != nil {
+		return err
+	}
 	cfg := ProfileConfig{
 		Name:       profile.Name,
 		GameID:     profile.GameID,
@@ -180,6 +212,9 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 
 // ListProfiles returns all profile names for a game
 func ListProfiles(configDir, gameID string) ([]string, error) {
+	if err := validateSegment(gameID, domain.ErrInvalidGameID); err != nil {
+		return nil, err
+	}
 	profileDir := filepath.Join(configDir, "games", gameID, "profiles")
 	entries, err := os.ReadDir(profileDir)
 	if err != nil {
@@ -205,6 +240,9 @@ func ListProfiles(configDir, gameID string) ([]string, error) {
 
 // DeleteProfile removes a profile from disk
 func DeleteProfile(configDir, gameID, profileName string) error {
+	if err := validateProfilePath(gameID, profileName); err != nil {
+		return err
+	}
 	profilePath := filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml")
 	if err := os.Remove(profilePath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {

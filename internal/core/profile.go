@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -29,6 +30,11 @@ func (pm *ProfileManager) Create(gameID, name string) (*domain.Profile, error) {
 	_, err := config.LoadProfile(pm.configDir, gameID, name)
 	if err == nil {
 		return nil, fmt.Errorf("profile already exists: %s", name)
+	}
+	// The validation error is the user-facing message; don't bury it under
+	// the existence-check wrapping.
+	if errors.Is(err, domain.ErrInvalidProfileName) || errors.Is(err, domain.ErrInvalidGameID) {
+		return nil, err
 	}
 	if err != domain.ErrProfileNotFound {
 		return nil, fmt.Errorf("checking profile: %w", err)

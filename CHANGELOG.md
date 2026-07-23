@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-07-23
+
+### Security
+
+- Profile names and game IDs are now validated before any filesystem access: values that are empty (or whitespace-only), contain path separators, or contain ".." are rejected with a clear "invalid profile name" / "invalid game ID" error. Previously a name like `../../../evil` passed to `lmm profile create`/`delete` — or a crafted `name`/`game_id` in a `profile import` file — would be joined into the profile path unchecked, letting profile save/delete write or remove `.yaml` files outside `~/.config/lmm/games/<game>/profiles/`. The guard lives in the storage layer, so the CLI, TUI, and profile import all share it.
+
 ### Fixed
 
 - TUI: the new-profile modal now rejects names containing path separators or `..` inline (matching the config layer's validation), instead of only surfacing the failure after submit
+
 
 ## [1.13.0] - 2026-07-23
 
@@ -834,7 +841,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.1...HEAD
+[1.13.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.3...v1.13.0
 [1.12.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.2...v1.12.3
 [1.12.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.1...v1.12.2

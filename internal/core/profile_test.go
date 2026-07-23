@@ -1,6 +1,9 @@
 package core_test
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -42,6 +45,110 @@ func TestProfileManager_Create_DuplicateName(t *testing.T) {
 
 	_, err = pm.Create("skyrim-se", "survival")
 	assert.Error(t, err) // Should fail - duplicate name
+}
+
+func TestProfileManager_Create_RejectsPathTraversalName(t *testing.T) {
+	// Each payload is a func of the test's temp root so path-shaped payloads
+	// stay inside it — even a guard regression can only touch the sandbox.
+	fixed := func(name string) func(string) string {
+		return func(string) string { return name }
+	}
+	tests := map[string]func(root string) string{
+		"parent traversal": fixed("../evil"),
+		"deep traversal":   fixed("../../../etc/cron.d/evil"),
+		"subdirectory":     fixed("a/b"),
+		"absolute path": func(root string) string {
+			return filepath.Join(root, "outside", "evil")
+		},
+		"empty":           fixed(""),
+		"whitespace only": fixed("   "),
+	}
+
+	for label, makeName := range tests {
+		t.Run(label, func(t *testing.T) {
+			// Nest configDir so traversal payloads land inside the walkable
+			// temp root instead of escaping it.
+			tempDir := t.TempDir()
+			configDir := filepath.Join(tempDir, "deep", "nested", "config")
+			require.NoError(t, os.MkdirAll(configDir, 0755))
+			database, err := db.New(":memory:")
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, database.Close())
+			})
+
+			pm := core.NewProfileManager(configDir, database)
+
+			_, err = pm.Create("skyrim-se", makeName(tempDir))
+			require.Error(t, err)
+			assert.ErrorIs(t, err, domain.ErrInvalidProfileName)
+			// The validation error is the user-facing message; it must not be
+			// buried under the existence-check wrapping.
+			assert.NotContains(t, err.Error(), "checking profile")
+
+			// No file may be written anywhere - inside or outside the
+			// profiles directory.
+			var files []string
+			err = filepath.Walk(tempDir, func(path string, info fs.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.Mode().IsRegular() {
+					files = append(files, path)
+				}
+				return nil
+			})
+			require.NoError(t, err)
+			assert.Empty(t, files, "no file may be written for an invalid profile name")
+		})
+	}
+}
+
+func TestProfileManager_Import_RejectsPathTraversalGameID(t *testing.T) {
+	// The attack vector Copilot flagged on PR #72: profile import parses
+	// game_id from untrusted YAML and joins it into the save path.
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "deep", "nested", "config")
+	require.NoError(t, os.MkdirAll(configDir, 0755))
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(configDir, database)
+
+	_, err = pm.Import([]byte("name: innocent\ngame_id: ../../../evil\nmods: []\n"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidGameID)
+
+	var files []string
+	err = filepath.Walk(tempDir, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Empty(t, files, "no file may be written for an invalid game ID")
+}
+
+func TestProfileManager_Delete_RejectsPathTraversalName(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	err = pm.Delete("skyrim-se", "../evil")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidProfileName)
 }
 
 func TestProfileManager_List(t *testing.T) {
