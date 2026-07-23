@@ -71,6 +71,10 @@ type Model struct {
 	sources  []SourceInfo
 	search   searchModel
 	action   actionModel
+	// picker is the pending list-choice modal (see picker.go), if any.
+	// Sibling to action.pending: promptPicker/updatePickerKey/pickerView
+	// mirror promptAction/updatePendingActionKey/actionModalView's structure.
+	picker *pendingPicker
 
 	screen   Screen
 	selected map[Screen]int
@@ -471,6 +475,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updatePendingActionKey(msg)
 	}
 
+	if m.picker != nil {
+		return m.updatePickerKey(msg)
+	}
+
 	// Rule 8: any keypress that isn't a modal response (handled above,
 	// before this point is ever reached) and isn't quit clears the status
 	// line. isQuitKey (not the bare Quit binding) is used so a "q" that's
@@ -710,6 +718,10 @@ func (m Model) nav() string {
 func (m Model) screenView() string {
 	if m.action.pending != nil {
 		return m.actionModalView()
+	}
+
+	if m.picker != nil {
+		return m.pickerView()
 	}
 
 	switch m.state {
