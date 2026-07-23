@@ -68,6 +68,13 @@ type KeyMap struct {
 	// (distinct from lowercase "x"/Uninstall) since purge acts on the WHOLE
 	// profile, not the selected mod.
 	Purge key.Binding
+	// GameSwitch is Task 8's in-TUI game switcher binding (see mutations.go's
+	// openGameSwitcher): fires on ANY screen (unlike every other mutation
+	// binding above, which is scoped to specific screens), opening a picker
+	// of every configured game with the active one marked - picking one
+	// dispatches immediately (no separate confirm modal, mirroring Policy's
+	// own "the choice IS the confirmation" shape).
+	GameSwitch key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -192,6 +199,10 @@ func DefaultKeyMap() KeyMap {
 		Purge: key.NewBinding(
 			key.WithKeys("X"),
 			key.WithHelp("X", "purge"),
+		),
+		GameSwitch: key.NewBinding(
+			key.WithKeys("g"),
+			key.WithHelp("g", "game"),
 		),
 	}
 }

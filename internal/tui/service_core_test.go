@@ -143,6 +143,51 @@ func TestCoreProviderProfileFieldRaceGuard(t *testing.T) {
 	wg.Wait()
 }
 
+// TestCoreProviderGameFieldRaceGuard is Task 8's race test, mirroring
+// TestCoreProviderProfileFieldRaceGuard immediately above in full (gameMu's
+// own doc comment guards the identical race for p.game that profileMu
+// guards for p.profile): a Search call blocked genuinely in-flight (past
+// the network call, about to proceed into installedModKeys' own
+// p.currentGame().ID read - the same spot p.currentProfile() is read right
+// after unblocking) overlaps a concurrent SetGame call on the SAME
+// coreProvider instance. Passes functionally either way; the point is
+// `go test -race` must NOT report a data race on p.game.
+func TestCoreProviderGameFieldRaceGuard(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"blocking": "testgame"}
+	src := &blockingSource{id: "blocking", entered: make(chan struct{}), release: make(chan struct{})}
+	svc.RegisterSource(src)
+
+	second := &domain.Game{
+		ID:          "second-game",
+		Name:        "Second Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+	}
+	require.NoError(t, svc.AddGame(second))
+
+	rebinder, ok := provider.(interface{ SetGame(string) error })
+	require.True(t, ok, "coreProvider must implement the gameRebinder shape")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = provider.Search(context.Background(), "blocking", "query", 0)
+	}()
+
+	<-src.entered // Search is now blocked inside the "network call", about
+	// to proceed straight into installedModKeys' p.currentGame().ID read the
+	// instant release is closed below.
+	go func() {
+		defer wg.Done()
+		_ = rebinder.SetGame(second.ID)
+	}()
+	close(src.release)
+
+	wg.Wait()
+}
+
 // netSource is a fuller source.ModSource test double than stubSource above:
 // it serves real download content over an httptest.Server, so coreProvider's
 // network-touching ActionProvider methods (PlanInstall/ApplyInstall/
@@ -1841,4 +1886,142 @@ func TestCoreProviderOverview_MapsUpdatePolicyToWireString(t *testing.T) {
 	assert.Equal(t, "auto", byID["201"].UpdatePolicy)
 	require.Contains(t, byID, "202")
 	assert.Equal(t, "pin", byID["202"].UpdatePolicy)
+}
+
+// --- Task 8: in-TUI game switcher ---
+
+// TestCoreProviderListGames guards ListGames' basic contract: every
+// configured game is listed, sorted by Name (mirroring SourceInfos' own
+// sorting - svc.ListGames ranges over an internal map, so iteration order
+// isn't otherwise deterministic), with exactly the fixture's own game -
+// the one bound at construction time - marked Active.
+func TestCoreProviderListGames(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+
+	second := &domain.Game{
+		ID:          "second-game",
+		Name:        "A Second Game", // sorts before "Test Game"
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+	}
+	require.NoError(t, svc.AddGame(second))
+
+	games, err := provider.ListGames()
+	require.NoError(t, err)
+	require.Len(t, games, 2)
+
+	require.Equal(t, "A Second Game", games[0].Name, "must be sorted by Name")
+	require.Equal(t, "Test Game", games[1].Name)
+
+	byID := map[string]tui.GameInfo{}
+	for _, g := range games {
+		byID[g.ID] = g
+	}
+	require.True(t, byID[game.ID].Active, "the fixture's game (bound at construction) must be marked Active")
+	require.False(t, byID[second.ID].Active)
+}
+
+// TestCoreProviderSetGame guards SetGame's rebind contract: after switching,
+// Overview/Profiles reflect the NEW game's own data (not the game bound at
+// construction); an unknown id is refused, with the current binding left
+// completely untouched.
+func TestCoreProviderSetGame(t *testing.T) {
+	provider, svc, _ := newCoreProviderFixture(t)
+
+	second := &domain.Game{
+		ID:          "second-game",
+		Name:        "Second Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+	}
+	require.NoError(t, svc.AddGame(second))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(second.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(second.ID, "default"))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "301", SourceID: "nexusmods", GameID: second.ID, Name: "Second Game Mod", Version: "1.0"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+
+	rebinder, ok := provider.(interface{ SetGame(string) error })
+	require.True(t, ok, "coreProvider must implement the gameRebinder hook (SetGame(string) error)")
+	require.NoError(t, rebinder.SetGame(second.ID))
+
+	summary, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "Second Game", summary.GameName)
+	require.Equal(t, "default", summary.ProfileName, "SetGame must resolve the new game's OWN default profile")
+	require.Len(t, mods, 1)
+	require.Equal(t, "Second Game Mod", mods[0].Name)
+
+	profiles, err := provider.Profiles(context.Background())
+	require.NoError(t, err)
+	require.Len(t, profiles, 1, "Profiles must be scoped to the NEW game, not the one bound at construction")
+	require.Equal(t, "default", profiles[0].Name)
+	require.True(t, profiles[0].Active)
+
+	err = rebinder.SetGame("no-such-game")
+	require.Error(t, err)
+	summary, _, err = provider.Overview(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "Second Game", summary.GameName, "an unknown id must leave the current binding untouched")
+}
+
+// TestCoreProviderActions_SetGame_InvalidatesHooksCache guards SetGame's
+// hooks-cache invalidation, mirroring
+// TestCoreProviderActions_SetProfile_InvalidatesHooksCache's own seam
+// exactly (see that test's doc comment for the full reasoning) but keyed on
+// GAME instead of profile: a stale ResolvedHooks cached from the FIRST
+// game's hooks must never leak into an action run against the SECOND.
+func TestCoreProviderActions_SetGame_InvalidatesHooksCache(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	scriptsDir := t.TempDir()
+	firstLog := filepath.Join(scriptsDir, "first.log")
+	secondLog := filepath.Join(scriptsDir, "second.log")
+	firstScript := createActionsTestScript(t, scriptsDir, "first_before_all.sh", `#!/bin/bash
+echo hit >> `+firstLog+`
+exit 0`)
+	secondScript := createActionsTestScript(t, scriptsDir, "second_before_all.sh", `#!/bin/bash
+echo hit >> `+secondLog+`
+exit 0`)
+
+	game.Hooks.Uninstall.BeforeAll = firstScript
+	seedActionMod(t, svc, game, "src", "1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("d")})
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "1", "1.0")
+
+	_, err := actions.UninstallMod(context.Background(), tui.ModItem{ID: "1", Source: "src", Name: "Mod One"})
+	require.NoError(t, err)
+	firstLogContent, err := os.ReadFile(firstLog)
+	require.NoError(t, err)
+	assert.Equal(t, "hit\n", string(firstLogContent), "must resolve and run the FIRST game's own hook")
+
+	second := &domain.Game{
+		ID:          "second-game",
+		Name:        "Second Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+		LinkMethod:  domain.LinkSymlink,
+	}
+	second.Hooks.Uninstall.BeforeAll = secondScript
+	require.NoError(t, svc.AddGame(second))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(second.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(second.ID, "default"))
+	seedActionMod(t, svc, second, "src", "2", "Mod Two", "1.0", true, map[string][]byte{"two.esp": []byte("d")})
+	seedActionProfileMod(t, svc, second.ID, "default", "src", "2", "1.0")
+
+	rebinder, ok := actions.(interface{ SetGame(string) error })
+	require.True(t, ok, "coreProvider must implement the gameRebinder hook (SetGame(string) error)")
+	require.NoError(t, rebinder.SetGame(second.ID))
+
+	_, err = actions.UninstallMod(context.Background(), tui.ModItem{ID: "2", Source: "src", Name: "Mod Two"})
+	require.NoError(t, err)
+	secondLogContent, err := os.ReadFile(secondLog)
+	require.NoError(t, err)
+	assert.Equal(t, "hit\n", string(secondLogContent),
+		"resolvedHooks must be recomputed after SetGame: the SECOND game's own hook must run, not one cached from the first")
 }

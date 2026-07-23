@@ -186,6 +186,7 @@ func (longSourcesProvider) Search(context.Context, string, string, int) (SearchP
 	return SearchPage{}, nil
 }
 func (longSourcesProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
+func (longSourcesProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
 
 // TestSourcesViewFitsPanelWidthNarrowTerminal guards that sourcesView rows
 // truncate to the panel's content width (not the full terminal width) to

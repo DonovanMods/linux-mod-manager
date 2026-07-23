@@ -526,6 +526,7 @@ func (f failingProvider) Search(context.Context, string, string, int) (SearchPag
 	return SearchPage{}, f.err
 }
 func (f failingProvider) DeployedFiles(string, string) ([]string, error) { return nil, f.err }
+func (f failingProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
 
 func TestModelShowsLoadingBeforeDataArrives(t *testing.T) {
 	t.Parallel()
@@ -583,6 +584,7 @@ func (emptyProvider) Search(context.Context, string, string, int) (SearchPage, e
 	return SearchPage{}, nil
 }
 func (emptyProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
+func (emptyProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
 
 func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	t.Parallel()
@@ -618,6 +620,7 @@ func (sentinelUpdatesProvider) Search(context.Context, string, string, int) (Sea
 	return SearchPage{}, nil
 }
 func (sentinelUpdatesProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
+func (sentinelUpdatesProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
 
 // TestFirstLoadHonorsProviderUpdatesSentinel guards the dataLoadedMsg
 // preserve behavior (see mutations_test.go's
@@ -644,39 +647,71 @@ func TestFirstLoadHonorsProviderUpdatesSentinel(t *testing.T) {
 // DeployedFilesErr configure DeployedFiles directly (no delegate call, no
 // recording) - simple canned-return fields, since no test using this fake
 // needs to observe DeployedFiles' arguments the way onOverview observes
-// Overview's context.
+// Overview's context. ListGamesResult/ListGamesErr/SetGameCalls/SetGameErr
+// are Task 8's game-switch additions, mirroring DeployedFiles' own
+// canned-return shape for ListGames and recordingActions' own *Calls-slice
+// convention (actions_provider_test.go) for SetGame; AltSourceInfos/
+// AltSources, once set, become what SourceInfos()/Sources() return after
+// the FIRST SetGame call - letting a test prove the post-switch source
+// re-seed (mutations.go's resolveGameSwitch) actually reads a fresh call
+// rather than a value cached from before the switch. Now a POINTER receiver
+// throughout (Task 8): SetGameCalls must accumulate visibly to the caller's
+// own variable, which a value-receiver method can never do.
 type recordingProvider struct {
 	delegate            DataProvider
 	onOverview          func(context.Context)
 	DeployedFilesResult []string
 	DeployedFilesErr    error
+
+	ListGamesResult []GameInfo
+	ListGamesErr    error
+	SetGameCalls    []string
+	SetGameErr      error
+	AltSourceInfos  []SourceInfo
+	AltSources      []string
 }
 
-func (r recordingProvider) Overview(ctx context.Context) (Summary, []ModItem, error) {
+func (r *recordingProvider) Overview(ctx context.Context) (Summary, []ModItem, error) {
 	if r.onOverview != nil {
 		r.onOverview(ctx)
 	}
 	return r.delegate.Overview(ctx)
 }
 
-func (r recordingProvider) Profiles(ctx context.Context) ([]ProfileItem, error) {
+func (r *recordingProvider) Profiles(ctx context.Context) ([]ProfileItem, error) {
 	return r.delegate.Profiles(ctx)
 }
 
-func (r recordingProvider) Sources() []string {
+func (r *recordingProvider) Sources() []string {
+	if len(r.SetGameCalls) > 0 && r.AltSources != nil {
+		return r.AltSources
+	}
 	return r.delegate.Sources()
 }
 
-func (r recordingProvider) SourceInfos() []SourceInfo {
+func (r *recordingProvider) SourceInfos() []SourceInfo {
+	if len(r.SetGameCalls) > 0 && r.AltSourceInfos != nil {
+		return r.AltSourceInfos
+	}
 	return r.delegate.SourceInfos()
 }
 
-func (r recordingProvider) Search(ctx context.Context, source, query string, page int) (SearchPage, error) {
+func (r *recordingProvider) Search(ctx context.Context, source, query string, page int) (SearchPage, error) {
 	return r.delegate.Search(ctx, source, query, page)
 }
 
-func (r recordingProvider) DeployedFiles(sourceID, modID string) ([]string, error) {
+func (r *recordingProvider) DeployedFiles(sourceID, modID string) ([]string, error) {
 	return r.DeployedFilesResult, r.DeployedFilesErr
+}
+
+func (r *recordingProvider) ListGames() ([]GameInfo, error) {
+	return r.ListGamesResult, r.ListGamesErr
+}
+
+// SetGame implements actions.go's optional gameRebinder hook.
+func (r *recordingProvider) SetGame(id string) error {
+	r.SetGameCalls = append(r.SetGameCalls, id)
+	return r.SetGameErr
 }
 
 func TestModelUsesProvidedContext(t *testing.T) {
@@ -686,7 +721,7 @@ func TestModelUsesProvidedContext(t *testing.T) {
 	ctx := context.WithValue(context.Background(), ctxKey{}, "marker")
 
 	var seen context.Context
-	provider := recordingProvider{
+	provider := &recordingProvider{
 		delegate:   NewPrototypeProvider(),
 		onOverview: func(c context.Context) { seen = c },
 	}

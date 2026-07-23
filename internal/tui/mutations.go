@@ -1040,3 +1040,175 @@ func (m Model) purgeProfilePrompt() (Model, tea.Cmd) {
 	})
 	return model.promptAction(pa), nil
 }
+
+// --- Game switch ('g' from any screen) ---
+
+// gameChosenMsg carries the game ID the user picked in the game-switcher
+// picker (see openGameSwitcher), routed through Update() to
+// resolveGameSwitch exactly like policyChosenMsg/profileCreateSubmittedMsg
+// are routed to their own resolvers - and for the identical reason (see
+// policyChosenMsg's own doc comment for the full explanation): the picker's
+// choose closure (pendingPicker.choose, picker.go) can only return a
+// tea.Cmd, never a mutated Model, so the actual rebind-and-reset must run
+// inside Update(), against the LIVE model, not a Model captured when the
+// picker was built.
+//
+// Unlike policyChosenMsg/profileCreateSubmittedMsg, a game switch is NOT a
+// buildAction-built ActionProvider mutation at all - see resolveGameSwitch's
+// own doc comment - so this message carries only the chosen id, nothing
+// else buildAction's machinery would need.
+type gameChosenMsg struct{ id string }
+
+// openGameSwitcher handles 'g' from ANY screen (task-8-brief.md's in-TUI
+// game switcher): unlike every other mutation handler in this file, it has
+// no screen guard at all - switching games is meaningful regardless of
+// which screen the user is currently looking at.
+//
+// A running action refuses synchronously, on the status line ("action in
+// progress"), BEFORE promptPicker is ever called: promptPicker's own guard
+// (picker.go) already refuses while running/pending/a picker is already up,
+// but it does so SILENTLY (a plain no-op) - task-8-brief.md's own test
+// (TestGameSwitchBlockedWhileActionRunning) requires an explicit status
+// message here, mirroring switchSelectedProfile/checkForUpdates/
+// installSelectedSearchResult's own explicit single-flight checks elsewhere
+// in this file (rather than leaning on buildAction/promptAction's silent
+// refusal the way editSelectedModPolicy/createProfilePrompt do - those are
+// followed by a picker/input modal whose OWN "no second confirm needed"
+// framing makes a silent refusal acceptable; a "why did nothing happen"
+// keypress on ANY screen deserves better here).
+//
+// The inputModal/overlay check below is defense-in-depth, not a reachable
+// guard: updateKey (app.go) only ever reaches the outer switch this is
+// dispatched from when m.action.pending, m.picker, m.inputModal, AND
+// m.overlay are all already nil - mirroring showDeployedFiles' own doc
+// comment on the identical situation for that handler. It's kept anyway,
+// same as every other promptX call in this file, in case that call-site
+// invariant is ever weakened.
+func (m Model) openGameSwitcher() (Model, tea.Cmd) {
+	if m.action.running {
+		m.action.status = "action in progress"
+		m.action.statusIsError = true
+		return m, nil
+	}
+	if m.inputModal != nil || m.overlay != nil {
+		return m, nil
+	}
+
+	// Synchronous, mirroring showDeployedFiles' documented exception
+	// (this file's own doc comment on that method): ListGames is a local
+	// games.yaml/config read, not network I/O, for both coreProvider and
+	// prototypeProvider.
+	games, err := m.provider.ListGames()
+	if err != nil {
+		m.action.status = singleLine(err.Error())
+		m.action.statusIsError = true
+		return m, nil
+	}
+	if len(games) <= 1 {
+		m.action.status = "only one game configured"
+		m.action.statusIsError = false
+		return m, nil
+	}
+
+	options := make([]pickerOption, len(games))
+	ids := make([]string, len(games))
+	selected := 0
+	activeID := ""
+	for i, g := range games {
+		options[i] = pickerOption{Label: g.Name}
+		ids[i] = g.ID
+		if g.Active {
+			options[i].Note = "active"
+			selected = i
+			activeID = g.ID
+		}
+	}
+
+	picker := pendingPicker{
+		title:    "switch game",
+		options:  options,
+		selected: selected,
+		// Choosing the already-active game is a no-op: returning a nil
+		// tea.Cmd here means choosePickerOption (picker.go) just clears the
+		// picker and dispatches nothing - no gameChosenMsg is ever produced,
+		// so resolveGameSwitch never runs, matching
+		// TestGameSwitchSameGameIsNoop's "no SetGame calls, no reset"
+		// expectation without needing its own guard in resolveGameSwitch.
+		choose: func(idx int) tea.Cmd {
+			id := ids[idx]
+			if id == activeID {
+				return nil
+			}
+			return func() tea.Msg { return gameChosenMsg{id: id} }
+		},
+	}
+	return m.promptPicker(picker), nil
+}
+
+// resolveGameSwitch handles a gameChosenMsg: guards single-flight
+// (running/pending), mirroring resolvePolicyChoice/resolveProfileCreate's
+// own "the window between the pick and this resolution is real" reasoning
+// (see either's doc comment in full) - a second 'g' press in that window
+// opens a second picker, and a mutation key opens a confirm modal.
+//
+// Unlike every OTHER resolve* handler in this file, this is not a
+// buildAction-built ActionProvider mutation at all: switching games is a
+// direct, synchronous Model rebind (task-8-brief.md's own framing) - no
+// confirm modal, no progress stream, no actionDoneMsg round trip. rebindGame
+// (actions.go) rebinds every provider/actions instance that supports it; an
+// error there (e.g. coreProvider.SetGame's own unknown-id guard, unreachable
+// in practice since msg.id always comes from a ListGames-derived option,
+// but checked anyway) renders on the status line and leaves every other
+// piece of session state completely untouched - nothing about the OLD
+// game's data is wrong just because the rebind itself failed.
+//
+// A successful rebind resets the session's data-derived state to the exact
+// shape Init()/NewModel's zero state uses, mirroring actionDoneMsg's own
+// switchedTo handling in app.go (the profile-switch analog of this reset,
+// one layer down):
+//   - any in-flight search is cancelled and its generation bumped (a search
+//     built against the OLD game's sources/installed-marks is meaningless
+//     for the new one - mirrors actionDoneMsg's identical search-cancel)
+//   - summary/mods/profiles revert to "nothing loaded yet"; every screen's
+//     selection zeroes (a stale selected row surviving into totally
+//     different data is exactly the class of bug clampSelections exists to
+//     prevent elsewhere, but the OLD list is about to be replaced wholesale
+//     here, not just resized, so this resets rather than clamps)
+//   - sources/search.sources re-seed from the NEW game's SourceInfos()/
+//     Sources() - a different game can have an entirely different set of
+//     configured/registered sources
+//
+// state = stateLoading + returning m.loadData re-fetches Overview/Profiles
+// for the new game, mirroring Init()'s own first-load shape exactly.
+func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+
+	if err := m.rebindGame(msg.id); err != nil {
+		m.action.status = singleLine(err.Error())
+		m.action.statusIsError = true
+		return m, nil
+	}
+
+	if m.search.cancel != nil {
+		m.search.cancel()
+		m.search.cancel = nil
+	}
+	m.search.gen++
+	m.search.state = searchIdle
+
+	m.summary = Summary{Updates: -1, Conflicts: -1}
+	m.mods = nil
+	m.profiles = nil
+	for screen := range m.selected {
+		m.selected[screen] = 0
+	}
+
+	m.sources = m.provider.SourceInfos()
+	m.search.sources = append([]string{""}, m.provider.Sources()...)
+	m.search.sourceIdx = 0
+
+	m.state = stateLoading
+	return m, m.loadData
+}

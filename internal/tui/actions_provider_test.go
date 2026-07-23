@@ -531,6 +531,13 @@ type recordingActions struct {
 	// no-argument counter shape above (PurgeProfile takes no ModItem/name
 	// argument - it always acts on the whole active profile).
 	PurgeCalls int
+	// SetGameCalls records each SetGame call's id argument - Task 8's game-
+	// switch wiring tests assert against this, mirroring CreateProfileCalls/
+	// DeleteProfileCalls' own single-string-argument shape above. SetGame
+	// itself is NOT part of ActionProvider (it's the optional gameRebinder
+	// hook, actions.go) - recordingActions implements it anyway so
+	// rebindGame's type assertion succeeds against this fake.
+	SetGameCalls []string
 
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
@@ -556,6 +563,7 @@ type recordingActions struct {
 	SetPolicyErr                                                      error
 	CreateProfileErr, DeleteProfileErr                                error
 	PurgeErr                                                          error
+	SetGameErr                                                        error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -655,6 +663,12 @@ func (r *recordingActions) PurgeProfile(_ context.Context, progress func(ActionP
 		}
 	}
 	return r.PurgeOutcome, r.PurgeErr
+}
+
+// SetGame implements actions.go's optional gameRebinder hook (Task 8).
+func (r *recordingActions) SetGame(id string) error {
+	r.SetGameCalls = append(r.SetGameCalls, id)
+	return r.SetGameErr
 }
 
 // failingActions implements ActionProvider with every method returning a

@@ -8,6 +8,14 @@ type Data struct {
 	InstalledMods []Mod
 	SearchResults []Mod
 	Profiles      []Profile
+	// AltGame/AltMods are Task 8's second canned game, letting --prototype
+	// mode demo the in-TUI game switcher ('g') end to end: AltMods is
+	// deliberately tiny (1-2 entries) - the demo only needs the switch to
+	// visibly work, not a second full dataset. See
+	// prototypeProvider.ListGames/SetGame (service.go/actions_provider.go)
+	// for how these back the switcher.
+	AltGame Game
+	AltMods []Mod
 }
 
 type Game struct {
@@ -80,6 +88,11 @@ type Mod struct {
 func Load() Data {
 	return Data{
 		Game:    Game{ID: "skyrim-se", Name: "Skyrim Special Edition"},
+		AltGame: Game{ID: "fallout4", Name: "Fallout 4"},
+		AltMods: []Mod{
+			{ID: "f4se", Name: "Fallout 4 Script Extender", Source: "nexusmods", Author: "behippo", Version: "0.6.23", Status: "installed", Summary: "Script extender required by most other mods.", Downloads: 9_100_000, Endorsements: 310_000, HasEndorsements: true},
+			{ID: "unofficial-patch", Name: "Unofficial Fallout 4 Patch", Source: "nexusmods", Author: "Arthmoor", Version: "2.1.3", Status: "disabled", Summary: "Community bug-fix compilation.", Downloads: 4_400_000, Endorsements: 190_000, HasEndorsements: true},
+		},
 		Profile: Profile{Name: "survival", Active: true, ModCount: 42},
 		Stats: Stats{
 			Installed: 42,

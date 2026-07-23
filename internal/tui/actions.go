@@ -329,6 +329,48 @@ func (m Model) rebindProfile(name string) {
 	}
 }
 
+// gameRebinder is implemented by DataProvider/ActionProvider values that
+// carry a per-session active-game binding (currently *coreProvider only -
+// see service_core.go's SetGame), letting a successful TUI-driven game
+// switch rebind the session without reconstructing the provider. Mirrors
+// profileRebinder's own shape/reasoning in full (see that type's doc
+// comment) - it's deliberately NOT part of DataProvider/ActionProvider
+// themselves for the identical reason. prototypeProvider DOES implement
+// this one (unlike profileRebinder, which it deliberately skips - see that
+// type's doc comment for why): Task 8 wants the game switcher to visibly
+// work in --prototype demo mode, and prototypeProvider.SetGame (service.go)
+// is written to tolerate the resulting double-call (see rebindGame below)
+// by being a plain "which one" switch rather than a toggle.
+type gameRebinder interface {
+	SetGame(id string) error
+}
+
+// rebindGame rebinds every provider/actions instance that supports it (see
+// gameRebinder) to id, mirroring rebindProfile's own "both instances,
+// independently, even a shared pointer is a harmless no-op" reasoning in
+// full (see that method's doc comment) - both are attempted unconditionally
+// regardless of whether the first call errored, and the FIRST error either
+// one returns is what's returned here (a second error, if any, is not
+// otherwise surfaced - matching this task's brief, which asks only that
+// both calls happen and the first failure wins). --prototype mode wires
+// m.provider and m.actions from the SAME prototypeProvider instance
+// (NewPrototypeModel), so this calls SetGame on it TWICE for one switch;
+// see gameRebinder's own doc comment for why that's safe.
+func (m Model) rebindGame(id string) error {
+	var firstErr error
+	if rb, ok := m.provider.(gameRebinder); ok {
+		if err := rb.SetGame(id); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if rb, ok := m.actions.(gameRebinder); ok {
+		if err := rb.SetGame(id); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 // promptAction shows pa as the confirmation modal (rule 1): this is the only
 // method that sets action.pending, and it never calls the ActionProvider
 // itself — nothing mutates until confirm (see updatePendingActionKey).

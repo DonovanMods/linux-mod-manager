@@ -1,0 +1,311 @@
+package tui
+
+import (
+	"context"
+	"strconv"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/require"
+)
+
+// --- Task 8: in-TUI game switcher ('g' from any screen) ---
+
+// TestGameKeyOpensPickerActiveMarked covers 'g' opening the switcher: the
+// picker's title, every configured game's name as an option, and the
+// active game's option carrying the "active" Note (mirroring
+// editSelectedModPolicy's own "current" Note convention for the
+// update-policy picker).
+func TestGameKeyOpensPickerActiveMarked(t *testing.T) {
+	t.Parallel()
+
+	provider := &recordingProvider{
+		delegate: NewPrototypeProvider(),
+		ListGamesResult: []GameInfo{
+			{ID: "skyrim", Name: "Skyrim", Active: false},
+			{ID: "fallout4", Name: "Fallout 4", Active: true},
+		},
+	}
+	model := modelWithProvider(t, provider)
+
+	updated, cmd := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.NotNil(t, model.picker)
+	require.Equal(t, "switch game", model.picker.title)
+	require.Len(t, model.picker.options, 2)
+	require.Equal(t, "Skyrim", model.picker.options[0].Label)
+	require.Empty(t, model.picker.options[0].Note)
+	require.Equal(t, "Fallout 4", model.picker.options[1].Label)
+	require.Equal(t, "active", model.picker.options[1].Note)
+	require.Equal(t, 1, model.picker.selected, "the active game must start selected")
+}
+
+// TestGameSwitchRebindsProvidersResetsAndReloads is the end-to-end happy
+// path: choosing a non-active game rebinds BOTH m.provider and m.actions
+// (rebindGame, actions.go), resets the session's data-derived state to its
+// "nothing loaded yet" shape, re-seeds sources from the NEW game, and
+// returns a cmd chain that resolves to a fresh dataLoadedMsg.
+func TestGameSwitchRebindsProvidersResetsAndReloads(t *testing.T) {
+	t.Parallel()
+
+	games := []GameInfo{
+		{ID: "fallout4", Name: "Fallout 4", Active: true},
+		{ID: "skyrim", Name: "Skyrim", Active: false},
+	}
+	provider := &recordingProvider{
+		delegate:        NewPrototypeProvider(),
+		ListGamesResult: games,
+		AltSourceInfos:  []SourceInfo{{ID: "alt-source", Name: "Alt Source", Type: "built-in"}},
+		AltSources:      []string{"alt-source"},
+	}
+	actions := &recordingActions{}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: actions})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	// Dirty the state a real switch must reset, so zeroing/clearing is
+	// actually observable rather than trivially already-true.
+	model.selected[ScreenInstalledMods] = 1
+	model.selected[ScreenSearch] = 2
+	model.summary.Updates = 7
+
+	updated, cmd := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.NotNil(t, model.picker)
+
+	// Option 1 ("Skyrim") is the non-active game; digit quick-select chooses
+	// it directly (picker.go's digitQuickSelect is 1-based).
+	updated, chooseCmd := model.Update(keyRunes("2"))
+	model = updated.(Model)
+	require.Nil(t, model.picker, "choosing an option must clear the picker")
+	require.NotNil(t, chooseCmd)
+
+	gameMsg := chooseCmd()
+	require.IsType(t, gameChosenMsg{}, gameMsg)
+	require.Equal(t, "skyrim", gameMsg.(gameChosenMsg).id)
+
+	updated, loadCmd := model.Update(gameMsg)
+	model = updated.(Model)
+
+	require.Equal(t, []string{"skyrim"}, provider.SetGameCalls)
+	require.Equal(t, []string{"skyrim"}, actions.SetGameCalls)
+
+	require.Equal(t, stateLoading, model.state)
+	require.Nil(t, model.mods)
+	require.Nil(t, model.profiles)
+	require.Equal(t, -1, model.summary.Updates)
+	require.Equal(t, -1, model.summary.Conflicts)
+	require.Equal(t, 0, model.selected[ScreenInstalledMods])
+	require.Equal(t, 0, model.selected[ScreenSearch])
+
+	require.Equal(t, provider.AltSourceInfos, model.sources, "sources must re-seed from the NEW game's SourceInfos()")
+	require.Equal(t, []string{"", "alt-source"}, model.search.sources, "search sources must re-seed from the NEW game's Sources()")
+
+	require.NotNil(t, loadCmd)
+	dataMsg := loadCmd()
+	require.IsType(t, dataLoadedMsg{}, dataMsg)
+
+	updated, _ = model.Update(dataMsg)
+	model = updated.(Model)
+	require.Equal(t, stateReady, model.state)
+}
+
+// TestGameSwitchBlockedWhileActionRunning covers the single-flight guard:
+// while an action is running, 'g' refuses synchronously with an explicit
+// "action in progress" status (unlike promptPicker's own silent no-op -
+// see openGameSwitcher's doc comment for why this task's own test demands
+// an explicit message) and opens no picker at all.
+func TestGameSwitchBlockedWhileActionRunning(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.running = true
+
+	updated, cmd := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.picker)
+	require.Equal(t, "action in progress", model.action.status)
+	require.True(t, model.action.statusIsError)
+}
+
+// TestGameSwitchSameGameIsNoop covers choosing the ALREADY-active game:
+// openGameSwitcher's picker closure returns a nil cmd for that option (see
+// its own doc comment), so no gameChosenMsg is ever produced - no SetGame
+// call on either provider or actions, and no session reset.
+func TestGameSwitchSameGameIsNoop(t *testing.T) {
+	t.Parallel()
+
+	games := []GameInfo{
+		{ID: "fallout4", Name: "Fallout 4", Active: true},
+		{ID: "skyrim", Name: "Skyrim", Active: false},
+	}
+	provider := &recordingProvider{delegate: NewPrototypeProvider(), ListGamesResult: games}
+	actions := &recordingActions{}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: actions})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+	stateBefore := model.state
+
+	updated, _ := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.NotNil(t, model.picker)
+	require.Equal(t, 0, model.picker.selected, "the active game (index 0) must start selected")
+
+	// Select (enter) chooses whatever's currently selected - the active
+	// game itself, with no navigation first.
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.Nil(t, model.picker, "choosing must still clear the picker")
+	require.Nil(t, cmd, "choosing the active game must dispatch no cmd at all")
+
+	require.Empty(t, provider.SetGameCalls)
+	require.Empty(t, actions.SetGameCalls)
+	require.Equal(t, stateBefore, model.state, "nothing about the session's data must reset")
+}
+
+// TestGameKeySwallowedByFocusedSearchInput proves 'g' types into the search
+// box instead of opening the switcher while ScreenSearch is focused - the
+// existing focused-input swallow branch (updateKey, app.go) runs before the
+// mutation-key switch this is dispatched from, mirroring every other
+// single-letter mutation key's own test of the same guard (e.g.
+// TestFilesKeySwallowedByFocusedSearchInput).
+func TestGameKeySwallowedByFocusedSearchInput(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	updated := updateWithRunes(t, model, "3") // jump to search, focused
+	updated = updateWithRunes(t, updated, "g")
+
+	require.True(t, updated.search.input.Focused())
+	require.Contains(t, updated.search.input.Value(), "g")
+	require.Nil(t, updated.picker)
+}
+
+// TestGameSwitchOnlyOneGameConfiguredStatus covers ListGames returning
+// exactly one entry: a status line ("only one game configured", not an
+// error) instead of an empty/single-option picker, per task-8-brief.md's
+// own framing ("nicer than an empty pick").
+func TestGameSwitchOnlyOneGameConfiguredStatus(t *testing.T) {
+	t.Parallel()
+
+	provider := &recordingProvider{
+		delegate:        NewPrototypeProvider(),
+		ListGamesResult: []GameInfo{{ID: "only", Name: "Only Game", Active: true}},
+	}
+	model := modelWithProvider(t, provider)
+
+	updated, cmd := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.picker)
+	require.Equal(t, "only one game configured", model.action.status)
+	require.False(t, model.action.statusIsError)
+}
+
+// TestGameSwitchCancelsInFlightSearchAndDiscardsLateResult mirrors
+// TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult (the
+// profile-switch precedent for this exact mechanism, immediately above in
+// this file): a fresh game switch must cancel any in-flight search's
+// context and bump search.gen, so a late result computed against the
+// NOW-STALE old game's installed-marks/sources is discarded by the ordinary
+// stale-gen check (searchResultMsg's case in app.go) rather than applied.
+func TestGameSwitchCancelsInFlightSearchAndDiscardsLateResult(t *testing.T) {
+	t.Parallel()
+
+	provider := &searchCancelProvider{listGames: []GameInfo{
+		{ID: "current", Name: "Current Game", Active: true},
+		{ID: "other", Name: "Other Game", Active: false},
+	}}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: &recordingActions{}})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	model, searchCmd := model.startSearch("skyui", 0)
+	require.NotNil(t, searchCmd, "startSearch must dispatch a query given a real configured source")
+	gen1 := model.search.gen
+	require.NotNil(t, model.search.cancel)
+
+	msg := searchCmd() // runs provider.Search, capturing its ctx
+	require.NotNil(t, provider.capturedCtx)
+	require.NoError(t, provider.capturedCtx.Err(), "search's ctx must not be cancelled yet")
+
+	updated, _ := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.NotNil(t, model.picker)
+
+	updated, chooseCmd := model.Update(keyRunes("2")) // "Other Game", not active
+	model = updated.(Model)
+	require.NotNil(t, chooseCmd)
+	gameMsg := chooseCmd()
+
+	updated, _ = model.Update(gameMsg)
+	model = updated.(Model)
+
+	require.Error(t, provider.capturedCtx.Err(), "game switch must cancel the in-flight search's context")
+	require.ErrorIs(t, provider.capturedCtx.Err(), context.Canceled)
+	require.NotEqual(t, gen1, model.search.gen, "game switch must bump the search generation")
+
+	// The late result (tagged with the now-stale gen1) must be discarded,
+	// exactly like any other superseded search result.
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotEqual(t, searchReady, model.search.state, "a late, now-stale search result must not be applied")
+}
+
+// --- Prototype demo ---
+
+// TestPrototypeGameSwitchFlipsData proves the switcher visibly works in
+// --prototype mode end to end: picking the alt canned game (Data.AltGame)
+// flips Overview to report it, with AltMods' own names showing up as the
+// Installed Mods list. NewPrototypeModel wires m.provider and m.actions
+// from the SAME prototypeProvider instance (see that constructor's doc
+// comment), so this also exercises rebindGame's documented double-call onto
+// one instance (gameRebinder's own doc comment, actions.go).
+func TestPrototypeGameSwitchFlipsData(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	updated, _ := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.NotNil(t, model.picker)
+
+	targetIdx := -1
+	for i, opt := range model.picker.options {
+		if opt.Note != "active" {
+			targetIdx = i
+		}
+	}
+	require.GreaterOrEqual(t, targetIdx, 0, "exactly one option must be the non-active alt game")
+
+	updated, chooseCmd := model.Update(keyRunes(strconv.Itoa(targetIdx + 1)))
+	model = updated.(Model)
+	require.NotNil(t, chooseCmd)
+	gameMsg := chooseCmd()
+
+	updated, loadCmd := model.Update(gameMsg)
+	model = updated.(Model)
+	require.Equal(t, stateLoading, model.state)
+	require.NotNil(t, loadCmd)
+
+	dataMsg := loadCmd()
+	updated, _ = model.Update(dataMsg)
+	model = updated.(Model)
+
+	require.Equal(t, "Fallout 4", model.summary.GameName)
+	require.NotEmpty(t, model.mods)
+	names := make([]string, 0, len(model.mods))
+	for _, mod := range model.mods {
+		names = append(names, mod.Name)
+	}
+	require.Contains(t, names, "Fallout 4 Script Extender")
+}

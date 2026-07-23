@@ -937,6 +937,7 @@ func (f *fakeSwitchableProvider) Search(context.Context, string, string, int) (S
 }
 
 func (f *fakeSwitchableProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
+func (f *fakeSwitchableProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
 
 func (f *fakeSwitchableProvider) Profiles(context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(f.names))
@@ -1037,8 +1038,15 @@ func TestStaleSwitchDoneMsgNeverRebindsProfile(t *testing.T) {
 // fakeSwitchableProvider since this test needs a real Sources() list (so
 // startSearch doesn't hit the "no sources configured" guard) but no
 // profileRebinder behavior at all.
+// listGames/SetGameCalls are Task 8's addition, letting
+// TestGameSwitchCancelsInFlightSearchAndDiscardsLateResult below drive a
+// real game-switch picker choice through this same minimal double, mirroring
+// this type's existing profile-switch precedent (the test right above this
+// one) for the game-switch case.
 type searchCancelProvider struct {
-	capturedCtx context.Context
+	capturedCtx  context.Context
+	listGames    []GameInfo
+	SetGameCalls []string
 }
 
 func (p *searchCancelProvider) Overview(context.Context) (Summary, []ModItem, error) {
@@ -1052,6 +1060,13 @@ func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _ int) (
 	return SearchPage{Results: []ModItem{{ID: "x", Name: "X"}}}, nil
 }
 func (p *searchCancelProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
+func (p *searchCancelProvider) ListGames() ([]GameInfo, error)                 { return p.listGames, nil }
+
+// SetGame implements actions.go's optional gameRebinder hook.
+func (p *searchCancelProvider) SetGame(id string) error {
+	p.SetGameCalls = append(p.SetGameCalls, id)
+	return nil
+}
 
 // TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult guards Task 6
 // item b's second belt (the 5a review's UX-correctness recommendation,
@@ -2547,7 +2562,7 @@ func TestFilesKeyOpensOverlayWithDeployedFiles(t *testing.T) {
 func TestFilesKeyEmptyStateMessage(t *testing.T) {
 	t.Parallel()
 
-	provider := recordingProvider{delegate: NewPrototypeProvider()}
+	provider := &recordingProvider{delegate: NewPrototypeProvider()}
 	model := modelWithProvider(t, provider)
 	model.screen = ScreenInstalledMods
 	model.selected[ScreenInstalledMods] = 0
@@ -2599,7 +2614,7 @@ func TestFilesKeySwallowedByFocusedSearchInput(t *testing.T) {
 func TestFilesKeyErrorGoesToStatusLine(t *testing.T) {
 	t.Parallel()
 
-	provider := recordingProvider{delegate: NewPrototypeProvider(), DeployedFilesErr: errors.New("db read failed")}
+	provider := &recordingProvider{delegate: NewPrototypeProvider(), DeployedFilesErr: errors.New("db read failed")}
 	model := modelWithProvider(t, provider)
 	model.screen = ScreenInstalledMods
 	model.selected[ScreenInstalledMods] = 0
