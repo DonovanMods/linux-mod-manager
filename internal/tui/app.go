@@ -64,6 +64,19 @@ type Model struct {
 
 	state   loadState
 	loadErr error
+	// loadGen tags every loadData dispatch (dataLoadedMsg/loadFailedMsg
+	// carry the gen current when the cmd was built - loadData's value
+	// receiver captures it), mirroring searchModel.gen's staleness
+	// discipline: Update discards a load message whose gen no longer
+	// matches. Bumped ONLY where an in-flight load is intentionally
+	// invalidated - resolveGameSwitch's session reset (mutations.go) and
+	// actionDoneMsg's profile-switch rebind (both rebind the providers a
+	// still-running load may be reading from, so its eventual result
+	// describes a binding that no longer exists). Ordinary post-action
+	// refreshes deliberately do NOT bump it: concurrent same-binding
+	// refreshes all describe current data, and last-wins (the pre-gen
+	// behavior) remains correct for them.
+	loadGen int
 
 	summary  Summary
 	mods     []ModItem
@@ -101,15 +114,24 @@ const (
 	stateFailed
 )
 
-// dataLoadedMsg carries data successfully loaded through a DataProvider.
+// dataLoadedMsg carries data successfully loaded through a DataProvider,
+// tagged with the load generation current when the fetch was dispatched
+// (see Model.loadGen) so a superseded load - one still in flight when a
+// game switch reset the session - is discarded exactly like a stale
+// searchResultMsg (the mechanism this mirrors).
 type dataLoadedMsg struct {
+	gen      int
 	summary  Summary
 	mods     []ModItem
 	profiles []ProfileItem
 }
 
-// loadFailedMsg carries an error from a failed DataProvider load.
-type loadFailedMsg struct{ err error }
+// loadFailedMsg carries an error from a failed DataProvider load, tagged
+// like dataLoadedMsg.
+type loadFailedMsg struct {
+	gen int
+	err error
+}
 
 // NewModel creates the TUI model backed by the given DataProvider.
 func NewModel(options Options) (Model, error) {
@@ -254,23 +276,34 @@ func (m Model) Init() tea.Cmd {
 }
 
 // loadData fetches all dashboard data through the configured DataProvider.
-// It runs as a Bubble Tea command, off the update loop.
+// It runs as a Bubble Tea command, off the update loop. The value receiver
+// captures m.loadGen as of dispatch time, so the message this eventually
+// produces is tagged with the generation the load was issued under (see
+// Model.loadGen) - a caller that bumps loadGen and THEN returns m.loadData
+// (resolveGameSwitch) stamps the fresh gen, while a load already in flight
+// keeps its old one and is discarded on arrival.
 func (m Model) loadData() tea.Msg {
 	summary, mods, err := m.provider.Overview(m.ctx)
 	if err != nil {
-		return loadFailedMsg{err: err}
+		return loadFailedMsg{gen: m.loadGen, err: err}
 	}
 	profiles, err := m.provider.Profiles(m.ctx)
 	if err != nil {
-		return loadFailedMsg{err: err}
+		return loadFailedMsg{gen: m.loadGen, err: err}
 	}
 
-	return dataLoadedMsg{summary: summary, mods: mods, profiles: profiles}
+	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case dataLoadedMsg:
+		// Stale gen: a load dispatched before a game/profile switch reset
+		// the session (see Model.loadGen) - discarded whole, exactly like a
+		// stale searchResultMsg below.
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		m.state = stateReady
 		summary := msg.summary
 		// Updates is the model's own in-memory count once a check has
@@ -337,6 +370,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.search.gen++
 			m.search.state = searchIdle
+			// Same invalidation for any in-flight DATA load (see
+			// Model.loadGen): it was dispatched against the OLD profile's
+			// binding, so its eventual rows/summary go stale the instant
+			// the rebind above lands - and, if it completed after the
+			// fresh refresh dispatched below, would silently overwrite the
+			// NEW profile's data. Bumped BEFORE the cmds slice below is
+			// built, so the refresh's own m.loadData captures the fresh
+			// gen (loadData's value receiver - see its doc comment).
+			m.loadGen++
 		}
 		// A completed update-apply batch invalidates the just-checked
 		// Updates count: applying updates changes how many are left, and
@@ -445,6 +487,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gameChosenMsg:
 		return m.resolveGameSwitch(msg)
 	case loadFailedMsg:
+		// Stale gen: mirrors dataLoadedMsg's discard above - a superseded
+		// load's failure must not flip the fresh session into stateFailed.
+		if msg.gen != m.loadGen {
+			return m, nil
+		}
 		m.state = stateFailed
 		m.loadErr = msg.err
 		return m, nil

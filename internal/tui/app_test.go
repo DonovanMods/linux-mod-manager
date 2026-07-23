@@ -526,7 +526,7 @@ func (f failingProvider) Search(context.Context, string, string, int) (SearchPag
 	return SearchPage{}, f.err
 }
 func (f failingProvider) DeployedFiles(string, string) ([]string, error) { return nil, f.err }
-func (f failingProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
+func (f failingProvider) ListGames() ([]GameInfo, error)                 { return nil, f.err }
 
 func TestModelShowsLoadingBeforeDataArrives(t *testing.T) {
 	t.Parallel()

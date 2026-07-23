@@ -1104,7 +1104,16 @@ func (m Model) openGameSwitcher() (Model, tea.Cmd) {
 		m.action.statusIsError = true
 		return m, nil
 	}
-	if len(games) <= 1 {
+	// Zero games is unreachable via coreProvider (its session is always
+	// bound to a configured game, so ListGames returns at least that one),
+	// but a message claiming "only one" when there are NONE would lie -
+	// guarded separately (review finding).
+	if len(games) == 0 {
+		m.action.status = "no games configured"
+		m.action.statusIsError = false
+		return m, nil
+	}
+	if len(games) == 1 {
 		m.action.status = "only one game configured"
 		m.action.statusIsError = false
 		return m, nil
@@ -1197,6 +1206,15 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	}
 	m.search.gen++
 	m.search.state = searchIdle
+
+	// Invalidate any in-flight DATA load the same way (see Model.loadGen's
+	// doc comment, app.go): a load dispatched before this reset was reading
+	// the OLD game's binding - without the bump, its message could land
+	// after this reset (even after the fresh load below) and repopulate the
+	// old game's rows while the providers are already bound to the new one.
+	// Bumped before the m.loadData return below, so the fresh load's value
+	// receiver captures the new gen and its own message still applies.
+	m.loadGen++
 
 	m.summary = Summary{Updates: -1, Conflicts: -1}
 	m.mods = nil

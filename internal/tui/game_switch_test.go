@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 
@@ -256,6 +257,95 @@ func TestGameSwitchCancelsInFlightSearchAndDiscardsLateResult(t *testing.T) {
 	updated, _ = model.Update(msg)
 	model = updated.(Model)
 	require.NotEqual(t, searchReady, model.search.state, "a late, now-stale search result must not be applied")
+}
+
+// TestGameSwitchDropsStaleInFlightLoad guards the review's Important
+// finding: dataLoadedMsg used to be applied unconditionally, so a load
+// dispatched BEFORE a game switch (game A's Overview/Profiles, possibly
+// even read mid-rebind) could land AFTER resolveGameSwitch's reset and
+// repopulate the model with the old game's rows while the providers are
+// already bound to game B. The fix mirrors the search-gen mechanism
+// (searchResultMsg/searchFailedMsg): loads are stamped with m.loadGen at
+// dispatch, resolveGameSwitch bumps it, and Update discards a stale-gen
+// dataLoadedMsg/loadFailedMsg entirely.
+func TestGameSwitchDropsStaleInFlightLoad(t *testing.T) {
+	t.Parallel()
+
+	games := []GameInfo{
+		{ID: "gameA", Name: "Game A", Active: true},
+		{ID: "gameB", Name: "Game B", Active: false},
+	}
+	provider := &recordingProvider{delegate: NewPrototypeProvider(), ListGamesResult: games}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: &recordingActions{}})
+	require.NoError(t, err)
+
+	// Capture (but do not deliver) the initial load's message - this is the
+	// in-flight load-A whose result must go stale the moment the switch
+	// resets the session.
+	staleLoadMsg := model.Init()()
+	require.IsType(t, dataLoadedMsg{}, staleLoadMsg)
+
+	updated, _ := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.NotNil(t, model.picker)
+	updated, chooseCmd := model.Update(keyRunes("2")) // "Game B", not active
+	model = updated.(Model)
+	require.NotNil(t, chooseCmd)
+
+	updated, loadCmd := model.Update(chooseCmd())
+	model = updated.(Model)
+	require.Equal(t, stateLoading, model.state)
+	require.NotNil(t, loadCmd)
+
+	// The OLD load's message lands after the reset: it must be discarded
+	// whole - no state transition, no repopulated rows.
+	updated, _ = model.Update(staleLoadMsg)
+	model = updated.(Model)
+	require.Equal(t, stateLoading, model.state, "a stale in-flight load must not resolve the post-switch loading state")
+	require.Nil(t, model.mods, "a stale in-flight load must not repopulate the old game's rows")
+
+	// The NEW load (dispatched by the switch itself, stamped with the
+	// bumped gen) still applies normally.
+	updated, _ = model.Update(loadCmd())
+	model = updated.(Model)
+	require.Equal(t, stateReady, model.state)
+}
+
+// TestGameSwitcherListGamesErrorGoesToStatusLine covers openGameSwitcher's
+// ListGames-failure branch: the error renders on the status line
+// (statusIsError set) and no picker opens - mirroring
+// TestFilesKeyErrorGoesToStatusLine's shape for the other synchronous
+// provider read.
+func TestGameSwitcherListGamesErrorGoesToStatusLine(t *testing.T) {
+	t.Parallel()
+
+	provider := &recordingProvider{delegate: NewPrototypeProvider(), ListGamesErr: errors.New("games.yaml unreadable")}
+	model := modelWithProvider(t, provider)
+
+	updated, cmd := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.picker)
+	require.True(t, model.action.statusIsError)
+	require.Equal(t, singleLine("games.yaml unreadable"), model.action.status)
+}
+
+// TestGameSwitchNoGamesConfiguredStatus covers ListGames returning ZERO
+// entries (unreachable via coreProvider, whose session is always bound to
+// a configured game, but the message must not lie): "no games configured",
+// not "only one game configured".
+func TestGameSwitchNoGamesConfiguredStatus(t *testing.T) {
+	t.Parallel()
+
+	provider := &recordingProvider{delegate: NewPrototypeProvider(), ListGamesResult: nil}
+	model := modelWithProvider(t, provider)
+
+	updated, cmd := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.picker)
+	require.Equal(t, "no games configured", model.action.status)
+	require.False(t, model.action.statusIsError)
 }
 
 // --- Prototype demo ---
