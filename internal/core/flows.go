@@ -700,6 +700,29 @@ const (
 	// indent, prefix baked into Detail, matching SwitchDisableNote/
 	// SwitchEnableNote's own convention).
 	UpdateNote
+
+	// --- PurgeProfile progress events (#61, TUI Phase 6 prep): the
+	// standalone `lmm purge` command's flow, extending this same enum.
+	// PurgeProfile also reuses DeployBeforeAllForced, DeployPurging,
+	// PurgeNote, PurgeWarning, and PurgeComplete; the two phases below are
+	// purge-command-only and NEVER fire during a deploy --purge pass, whose
+	// event stream is unchanged. ---
+
+	// PurgeModSkipped fires when a mod's uninstall.before_each hook fails
+	// during `lmm purge`: the mod is skipped entirely (stays deployed) and
+	// counts toward PurgeResult.Skipped. Index/Total/ModName/ModID are set;
+	// Detail carries "uninstall.before_each hook failed: <err>" - the text
+	// doPurge printed after "  Skipped <name>: " (the matching Skipped
+	// entry is the same Detail behind a "<name>: " prefix). Contrast with
+	// deploy --purge, which reports the equivalent skip as a PurgeWarning.
+	PurgeModSkipped
+	// PurgeModPurged fires when a mod finishes purging - at doPurge's
+	// "  ✓ <name>"/succeeded++ point, after that mod's uninstall.after_each
+	// attempt. Index/Total/ModName/ModID are set. Note a best-effort
+	// undeploy or SetModDeployed failure (PurgeNote) does NOT suppress
+	// this; only a before_each skip or an --uninstall record-delete
+	// failure does.
+	PurgeModPurged
 )
 
 // DeployProgress reports incremental status during DeployProfile. Index and
@@ -1244,6 +1267,169 @@ func (s *Service) purgeForDeploy(ctx context.Context, game *domain.Game, profile
 	linker.CleanupEmptyDirs(game.ModPath)
 	emit(DeployProgress{Phase: PurgeComplete})
 	return nil
+}
+
+// PurgeOptions configures PurgeProfile.
+type PurgeOptions struct {
+	// Uninstall additionally deletes each purged mod's DB record and
+	// profile-YAML entry (like uninstalling it), instead of just marking
+	// it not deployed - `lmm purge --uninstall`.
+	Uninstall bool
+
+	// Hook plumbing, mirroring DeployOptions/InstallOptions: all four
+	// uninstall.* hooks fire (purge is an uninstall-family operation).
+	// Force continues past a failing uninstall.before_all hook (recorded
+	// as a Warning) instead of aborting the purge.
+	Hooks       *ResolvedHooks
+	HookRunner  *HookRunner
+	HookContext HookContext
+	Force       bool
+}
+
+// PurgeResult reports the outcome of PurgeProfile. Warnings and Notes
+// follow DeployResult's display contract (Warnings: unconditional stderr;
+// Notes: --verbose-gated stdout, historical text baked in). Skipped holds
+// one "<name>: <reason>" entry per mod that was NOT fully purged (a
+// before_each-skipped mod, or an --uninstall record-delete failure);
+// len(Skipped) is doPurge's historical `failed` counter, so the CLI's
+// "Purged: N, Failed: M" summary comes from Purged and len(Skipped).
+type PurgeResult struct {
+	Purged   int
+	Skipped  []string
+	Warnings []string
+	Notes    []string
+}
+
+// PurgeProfile undeploys every mod in mods from game's directory - the
+// `lmm purge` command's flow, a behavior-preserving extraction of
+// cmd/lmm/purge.go's doPurge (#61). The caller fetches mods (via
+// GetInstalledMods) and confirms with the user first, so the set shown in
+// the confirmation prompt is exactly the set purged; an empty mods slice
+// returns immediately - no hooks, no events (the "No mods installed"
+// message stays caller-side). Without opts.Uninstall each mod's record is
+// kept and marked not-deployed; with it, records and profile entries are
+// removed. Undeploy and DB-mark failures are best-effort (Notes); a
+// before_each hook failure or --uninstall record-delete failure skips
+// that mod (Skipped).
+//
+// progress may be nil. Cancellation is honored between mods (the
+// partial-result convention: the accumulated result comes back alongside
+// ctx.Err()); one cancellation-behavior delta from the pre-extraction
+// doPurge, which never checked ctx mid-loop.
+func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, progress func(DeployProgress)) (*PurgeResult, error) {
+	result := &PurgeResult{}
+	emit := func(p DeployProgress) {
+		if progress != nil {
+			progress(p)
+		}
+	}
+
+	if len(mods) == 0 {
+		return result, nil
+	}
+
+	hookCtx := opts.HookContext
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_all", opts.Hooks.GetUninstallBeforeAll()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("uninstall.before_all hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("uninstall.before_all hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: DeployBeforeAllForced, Detail: msg})
+	}
+
+	installer := s.GetInstaller(game)
+	emit(DeployProgress{Phase: DeployPurging, Total: len(mods)})
+
+	// deferredWarnings mirrors purgeForDeploy's: doPurge accumulated
+	// after_each/after_all hook errors and only printed them, together via
+	// printHookWarnings, once the whole loop had finished.
+	var deferredWarnings []DeployProgress
+
+	total := len(mods)
+	for idx, mod := range mods {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+
+		base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name, ModID: mod.ID}
+
+		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+		if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
+			detail := fmt.Sprintf("uninstall.before_each hook failed: %v", err)
+			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, detail))
+			evt := base
+			evt.Phase, evt.Detail = PurgeModSkipped, detail
+			emit(evt)
+			continue
+		}
+
+		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
+			// Best-effort: files may have been manually removed.
+			msg := fmt.Sprintf("⚠ %s - %v", mod.Name, err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = PurgeNote, msg
+			emit(evt)
+		}
+
+		if opts.Uninstall {
+			if err := s.DeleteInstalledMod(mod.SourceID, mod.ID, game.ID, profileName); err != nil {
+				msg := fmt.Sprintf("⚠ %s - failed to remove record: %v", mod.Name, err)
+				result.Notes = append(result.Notes, msg)
+				evt := base
+				evt.Phase, evt.Detail = PurgeNote, msg
+				emit(evt)
+				result.Skipped = append(result.Skipped, fmt.Sprintf("%s: failed to remove record: %v", mod.Name, err))
+				continue
+			}
+			if err := s.NewProfileManager().RemoveMod(game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+				msg := fmt.Sprintf("Note: %s - %v", mod.Name, err)
+				result.Notes = append(result.Notes, msg)
+				evt := base
+				evt.Phase, evt.Detail = PurgeNote, msg
+				emit(evt)
+			}
+		} else {
+			if err := s.SetModDeployed(mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
+				msg := fmt.Sprintf("⚠ %s - failed to mark as not deployed: %v", mod.Name, err)
+				result.Notes = append(result.Notes, msg)
+				evt := base
+				evt.Phase, evt.Detail = PurgeNote, msg
+				emit(evt)
+			}
+		}
+
+		if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
+			// NAME attribution (doPurge purge.go:171), unlike deploy
+			// --purge's historical mod.ID - see purgeForDeploy.
+			msg := fmt.Sprintf("uninstall.after_each hook failed for %s: %v", mod.Name, err)
+			result.Warnings = append(result.Warnings, msg)
+			evt := base
+			evt.Phase, evt.Detail = PurgeWarning, msg
+			deferredWarnings = append(deferredWarnings, evt)
+		}
+
+		result.Purged++
+		evt := base
+		evt.Phase = PurgeModPurged
+		emit(evt)
+	}
+
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_all", opts.Hooks.GetUninstallAfterAll()); err != nil {
+		msg := fmt.Sprintf("uninstall.after_all hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		deferredWarnings = append(deferredWarnings, DeployProgress{Phase: PurgeWarning, Detail: msg})
+	}
+
+	for _, w := range deferredWarnings {
+		emit(w)
+	}
+
+	linker.CleanupEmptyDirs(game.ModPath)
+	emit(DeployProgress{Phase: PurgeComplete})
+	return result, nil
 }
 
 // SwitchPlan is the pure, displayable diff between the currently-active
