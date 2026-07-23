@@ -48,16 +48,23 @@ func TestProfileManager_Create_DuplicateName(t *testing.T) {
 }
 
 func TestProfileManager_Create_RejectsPathTraversalName(t *testing.T) {
-	tests := map[string]string{
-		"parent traversal": "../evil",
-		"deep traversal":   "../../../etc/cron.d/evil",
-		"subdirectory":     "a/b",
-		"absolute path":    "/etc/evil",
-		"empty":            "",
-		"whitespace only":  "   ",
+	// Each payload is a func of the test's temp root so path-shaped payloads
+	// stay inside it — even a guard regression can only touch the sandbox.
+	fixed := func(name string) func(string) string {
+		return func(string) string { return name }
+	}
+	tests := map[string]func(root string) string{
+		"parent traversal": fixed("../evil"),
+		"deep traversal":   fixed("../../../etc/cron.d/evil"),
+		"subdirectory":     fixed("a/b"),
+		"absolute path": func(root string) string {
+			return filepath.Join(root, "outside", "evil")
+		},
+		"empty":           fixed(""),
+		"whitespace only": fixed("   "),
 	}
 
-	for label, name := range tests {
+	for label, makeName := range tests {
 		t.Run(label, func(t *testing.T) {
 			// Nest configDir so traversal payloads land inside the walkable
 			// temp root instead of escaping it.
@@ -72,7 +79,7 @@ func TestProfileManager_Create_RejectsPathTraversalName(t *testing.T) {
 
 			pm := core.NewProfileManager(configDir, database)
 
-			_, err = pm.Create("skyrim-se", name)
+			_, err = pm.Create("skyrim-se", makeName(tempDir))
 			require.Error(t, err)
 			assert.ErrorIs(t, err, domain.ErrInvalidProfileName)
 			// The validation error is the user-facing message; it must not be

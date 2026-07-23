@@ -12,18 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// invalidProfileNames are names that must be rejected before any filesystem
-// access: they are empty, or would resolve to a path outside the profiles
-// directory once joined (filepath.Join collapses ".." segments).
-var invalidProfileNames = map[string]string{
-	"empty":            "",
-	"whitespace only":  "   ",
-	"parent traversal": "../evil",
-	"deep traversal":   "../../../etc/cron.d/evil",
-	"subdirectory":     "a/b",
-	"absolute path":    "/etc/evil",
-	"bare dotdot":      "..",
-	"backslash":        `a\b`,
+// fixedName adapts a constant payload to invalidProfileNames' shape.
+func fixedName(name string) func(string) string {
+	return func(string) string { return name }
+}
+
+// invalidProfileNames builds names that must be rejected before any
+// filesystem access: they are empty, or would resolve to a path outside the
+// profiles directory once joined (filepath.Join collapses ".." segments).
+// Each payload is a func of the test's temp root so path-shaped payloads
+// stay inside it — even a guard regression can only touch the sandbox.
+var invalidProfileNames = map[string]func(root string) string{
+	"empty":            fixedName(""),
+	"whitespace only":  fixedName("   "),
+	"parent traversal": fixedName("../evil"),
+	"deep traversal":   fixedName("../../../etc/cron.d/evil"),
+	"subdirectory":     fixedName("a/b"),
+	"absolute path": func(root string) string {
+		return filepath.Join(root, "outside", "evil")
+	},
+	"bare dotdot": fixedName(".."),
+	"backslash":   fixedName(`a\b`),
 }
 
 // listRegularFiles returns every regular file under root, relative to root.
@@ -48,7 +57,7 @@ func listRegularFiles(t *testing.T, root string) []string {
 }
 
 func TestSaveProfile_RejectsInvalidName(t *testing.T) {
-	for label, name := range invalidProfileNames {
+	for label, makeName := range invalidProfileNames {
 		t.Run(label, func(t *testing.T) {
 			// configDir is nested so traversal payloads land inside the
 			// walkable temp root instead of escaping it.
@@ -56,7 +65,7 @@ func TestSaveProfile_RejectsInvalidName(t *testing.T) {
 			configDir := filepath.Join(tempDir, "deep", "nested", "config")
 			require.NoError(t, os.MkdirAll(configDir, 0755))
 
-			profile := &domain.Profile{Name: name, GameID: "skyrim-se"}
+			profile := &domain.Profile{Name: makeName(tempDir), GameID: "skyrim-se"}
 			err := SaveProfile(configDir, profile)
 
 			require.Error(t, err)
@@ -67,9 +76,10 @@ func TestSaveProfile_RejectsInvalidName(t *testing.T) {
 }
 
 func TestLoadProfile_RejectsInvalidName(t *testing.T) {
-	for label, name := range invalidProfileNames {
+	for label, makeName := range invalidProfileNames {
 		t.Run(label, func(t *testing.T) {
-			_, err := LoadProfile(t.TempDir(), "skyrim-se", name)
+			tempDir := t.TempDir()
+			_, err := LoadProfile(tempDir, "skyrim-se", makeName(tempDir))
 
 			require.Error(t, err)
 			assert.ErrorIs(t, err, domain.ErrInvalidProfileName)
@@ -78,7 +88,7 @@ func TestLoadProfile_RejectsInvalidName(t *testing.T) {
 }
 
 func TestDeleteProfile_RejectsInvalidName(t *testing.T) {
-	for label, name := range invalidProfileNames {
+	for label, makeName := range invalidProfileNames {
 		t.Run(label, func(t *testing.T) {
 			// Plant a file where "../evil" would resolve to prove Delete
 			// never touches paths outside the profiles directory.
@@ -89,7 +99,7 @@ func TestDeleteProfile_RejectsInvalidName(t *testing.T) {
 			victim := filepath.Join(gameDir, "evil.yaml")
 			require.NoError(t, os.WriteFile(victim, []byte("do not delete"), 0644))
 
-			err := DeleteProfile(configDir, "skyrim-se", name)
+			err := DeleteProfile(configDir, "skyrim-se", makeName(tempDir))
 
 			require.Error(t, err)
 			assert.ErrorIs(t, err, domain.ErrInvalidProfileName)
