@@ -1216,6 +1216,15 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	// receiver captures the new gen and its own message still applies.
 	m.loadGen++
 
+	// Modals are session state too: type-ahead in the pick→resolution window
+	// can open one (e.g. 'c' → the "new profile" input modal, whose validate
+	// closure captured the OLD game's profile list) before this deferred
+	// message resolves - left standing, it would operate over the reset
+	// state below while bound to the new game's providers.
+	m.picker = nil
+	m.inputModal = nil
+	m.overlay = nil
+
 	m.summary = Summary{Updates: -1, Conflicts: -1}
 	m.mods = nil
 	m.profiles = nil

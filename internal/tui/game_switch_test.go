@@ -348,6 +348,53 @@ func TestGameSwitchNoGamesConfiguredStatus(t *testing.T) {
 	require.False(t, model.action.statusIsError)
 }
 
+// TestGameSwitchResetClosesOpenModals guards the final-review pre-merge
+// finding: a deferred gameChosenMsg resolves on the tick AFTER the pick,
+// and type-ahead widens that window - another modal (e.g. 'c' on Profiles
+// opening the "new profile" input modal) can be up by the time the switch
+// resolves. resolveGameSwitch's reset must close it: a modal built against
+// the OLD game's data (the input modal's validate closure captured the old
+// profile list) operating over reset state bound to the NEW game is
+// exactly the stale-capture class the reset exists to prevent.
+func TestGameSwitchResetClosesOpenModals(t *testing.T) {
+	t.Parallel()
+
+	games := []GameInfo{
+		{ID: "gameA", Name: "Game A", Active: true},
+		{ID: "gameB", Name: "Game B", Active: false},
+	}
+	provider := &recordingProvider{delegate: NewPrototypeProvider(), ListGamesResult: games}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: &recordingActions{}})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	// Pick the non-active game; hold its gameChosenMsg undelivered - this
+	// is the pick→resolution window.
+	updated, _ := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	require.NotNil(t, model.picker)
+	updated, chooseCmd := model.Update(keyRunes("2"))
+	model = updated.(Model)
+	require.NotNil(t, chooseCmd)
+	pendingMsg := chooseCmd()
+
+	// Type-ahead: open the "new profile" input modal before the switch
+	// resolves (its validate closure captured the OLD game's profile list).
+	model.screen = ScreenProfiles
+	updated, _ = model.Update(keyRunes("c"))
+	model = updated.(Model)
+	require.NotNil(t, model.inputModal, "arrange: the input modal must be up when the switch resolves")
+
+	updated, loadCmd := model.Update(pendingMsg)
+	model = updated.(Model)
+	require.Equal(t, stateLoading, model.state)
+	require.NotNil(t, loadCmd)
+	require.Nil(t, model.inputModal, "the reset must close a modal captured against the old game's data")
+	require.Nil(t, model.picker)
+	require.Nil(t, model.overlay)
+}
+
 // --- Prototype demo ---
 
 // TestPrototypeGameSwitchFlipsData proves the switcher visibly works in
