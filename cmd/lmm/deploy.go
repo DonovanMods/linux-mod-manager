@@ -143,6 +143,11 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		case core.PurgeComplete:
 			fmt.Println()
 			return
+		case core.PurgeModSkipped, core.PurgeModPurged:
+			// PurgeProfile-only phases that never fire during a deploy
+			// --purge pass; handled so a future change can't accidentally
+			// route them into printDeployHeaderOnce below.
+			return
 		}
 
 		printDeployHeaderOnce(p.Total)

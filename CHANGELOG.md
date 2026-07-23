@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-07-23
+
+### Changed
+
+- Core: the `lmm purge` command's logic is extracted into `core.PurgeProfile`, and `deploy --purge` and `lmm purge` now share a single purge implementation (previously three slightly-diverged copies, one dead) — CLI output is byte-identical, pinned by output-fidelity tests (#61). This also readies purge for the TUI's Phase 6 confirmation view (#37).
+
+### Fixed
+
+- `lmm purge` and `lmm deploy --purge` now honor cancellation (Ctrl-C) between mods and report the partial result, instead of always purging the full list
+
+### Removed
+
+- Dead code: `purgeDeployedMods` (superseded by the core deploy flow in v1.11.0, zero call sites since)
+
 ## [1.12.0] - 2026-07-21
 
 ### Added
@@ -781,7 +795,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.1...HEAD
+[1.12.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.9.0...v1.10.0
