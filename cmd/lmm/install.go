@@ -365,7 +365,10 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		return err
 	}
 
-	profileName := profileOrDefault(installProfile)
+	profileName, err := resolveProfile(service, game.ID, installProfile)
+	if err != nil {
+		return err
+	}
 
 	// Get the mod to install (by --id or interactive search) - unchanged,
 	// CLI-side.

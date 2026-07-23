@@ -166,7 +166,7 @@ func init() {
 	profileApplyCmd.Flags().BoolVarP(&profileApplyYes, "yes", "y", false, "auto-confirm changes")
 
 	// Reorder flags
-	profileReorderCmd.Flags().StringVarP(&profileReorderProfile, "profile", "p", "", "profile (default: default)")
+	profileReorderCmd.Flags().StringVarP(&profileReorderProfile, "profile", "p", "", "profile (default: active profile)")
 
 	rootCmd.AddCommand(profileCmd)
 }
@@ -809,7 +809,10 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 
 func doProfileReorder(service *core.Service, game *domain.Game, args []string) error {
 
-	profileName := profileOrDefault(profileReorderProfile)
+	profileName, err := resolveProfile(service, game.ID, profileReorderProfile)
+	if err != nil {
+		return err
+	}
 	profile, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("loading profile: %w", err)

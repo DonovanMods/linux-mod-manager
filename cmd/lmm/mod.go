@@ -157,7 +157,10 @@ func doModSetUpdate(service *core.Service, game *domain.Game, modID string) erro
 		return err
 	}
 
-	profileName := profileOrDefault(modProfile)
+	profileName, err := resolveProfile(service, game.ID, modProfile)
+	if err != nil {
+		return err
+	}
 
 	// Get the mod to verify it exists and get its name
 	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
@@ -208,7 +211,10 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 		return err
 	}
 
-	profileName := profileOrDefault(modProfile)
+	profileName, err := resolveProfile(service, game.ID, modProfile)
+	if err != nil {
+		return err
+	}
 
 	// Get the mod to verify it exists and get its name for display
 	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
@@ -257,7 +263,10 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 		return err
 	}
 
-	profileName := profileOrDefault(modProfile)
+	profileName, err := resolveProfile(service, game.ID, modProfile)
+	if err != nil {
+		return err
+	}
 
 	// Get the mod to verify it exists and get its name for display
 	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
@@ -317,9 +326,11 @@ func runModFiles(cmd *cobra.Command, args []string) error {
 }
 
 func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
-	profileName := profileOrDefault(modProfile)
+	profileName, err := resolveProfile(svc, game.ID, modProfile)
+	if err != nil {
+		return err
+	}
 
-	var err error
 	modSource, err = resolveSource(game, modSource, false)
 	if err != nil {
 		return err

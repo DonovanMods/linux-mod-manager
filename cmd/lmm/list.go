@@ -64,7 +64,10 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 		return runListProfiles(cmd, service, game.ID, game.Name)
 	}
 
-	profileName := profileOrDefault(listProfile)
+	profileName, err := resolveProfile(service, game.ID, listProfile)
+	if err != nil {
+		return err
+	}
 
 	mods, err := service.GetInstalledMods(game.ID, profileName)
 	if err != nil {

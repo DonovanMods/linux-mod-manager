@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
@@ -274,10 +275,21 @@ func requireGame(cmd *cobra.Command) error {
 	return fmt.Errorf("no game specified; use --game or -g flag, or set a default with 'lmm game set-default <game-id>'")
 }
 
-// profileOrDefault returns the given profile name, or "default" if empty
-func profileOrDefault(profile string) string {
-	if profile == "" {
-		return "default"
+// resolveProfile returns the profile a command should operate on: the explicit
+// -p/--profile value when given, otherwise the game's active profile as
+// resolved by ProfileManager.GetDefault (the IsDefault profile set by
+// `lmm profile switch`, else the first profile). Falls back to "default" when
+// no profiles exist yet so a fresh setup still works.
+func resolveProfile(svc *core.Service, gameID, flagValue string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
 	}
-	return profile
+	profile, err := svc.NewProfileManager().GetDefault(gameID)
+	if err != nil {
+		if errors.Is(err, domain.ErrProfileNotFound) {
+			return "default", nil
+		}
+		return "", fmt.Errorf("resolving active profile for %s: %w", gameID, err)
+	}
+	return profile.Name, nil
 }

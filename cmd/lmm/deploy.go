@@ -65,7 +65,10 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 }
 
 func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	profileName := profileOrDefault(deployProfile)
+	profileName, err := resolveProfile(service, game.ID, deployProfile)
+	if err != nil {
+		return err
+	}
 
 	var linkMethodOverride *domain.LinkMethod
 	if deployMethod != "" {

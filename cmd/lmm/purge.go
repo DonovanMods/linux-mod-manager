@@ -41,7 +41,7 @@ Examples:
 }
 
 func init() {
-	purgeCmd.Flags().StringVarP(&purgeProfile, "profile", "p", "", "profile to purge (default: default profile)")
+	purgeCmd.Flags().StringVarP(&purgeProfile, "profile", "p", "", "profile to purge (default: active profile)")
 	purgeCmd.Flags().BoolVar(&purgeUninstall, "uninstall", false, "also remove mod records from database (like uninstalling each mod)")
 	purgeCmd.Flags().BoolVarP(&purgeYes, "yes", "y", false, "skip confirmation prompt")
 	purgeCmd.Flags().BoolVarP(&purgeForce, "force", "f", false, "continue even if hooks fail")
@@ -56,7 +56,10 @@ func runPurge(cmd *cobra.Command, args []string) error {
 }
 
 func doPurge(ctx context.Context, service *core.Service, game *domain.Game) error {
-	profileName := profileOrDefault(purgeProfile)
+	profileName, err := resolveProfile(service, game.ID, purgeProfile)
+	if err != nil {
+		return err
+	}
 
 	// The mod list is fetched before confirming so the prompt's count is
 	// exactly the set core.PurgeProfile will purge.
