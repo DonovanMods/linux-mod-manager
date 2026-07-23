@@ -1,33 +1,25 @@
 package core
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/linker"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 )
 
-// ProfileManager handles profile CRUD operations and switching
+// ProfileManager handles profile CRUD operations. Profile switching lives in
+// Service.PlanProfileSwitch/ApplyProfileSwitch (internal/core/flows.go).
 type ProfileManager struct {
 	configDir string
 	db        *db.DB
-	cache     *cache.Cache
-	linker    linker.Linker
 }
 
 // NewProfileManager creates a new profile manager
-func NewProfileManager(configDir string, database *db.DB, cache *cache.Cache, lnk linker.Linker) *ProfileManager {
+func NewProfileManager(configDir string, database *db.DB) *ProfileManager {
 	return &ProfileManager{
 		configDir: configDir,
 		db:        database,
-		cache:     cache,
-		linker:    lnk,
 	}
 }
 
@@ -214,207 +206,6 @@ func (pm *ProfileManager) ReorderMods(gameID, profileName string, mods []domain.
 
 	profile.Mods = mods
 	return config.SaveProfile(pm.configDir, profile)
-}
-
-// Switch switches to a different profile, undeploying the current profile's mods
-// and deploying the new profile's mods. It fails fast on any error and rolls back
-// to the previous state (game dir and default profile) so the system is never left
-// in a mixed old/new state.
-func (pm *ProfileManager) Switch(ctx context.Context, game *domain.Game, newProfileName string) error {
-	newProfile, err := config.LoadProfile(pm.configDir, game.ID, newProfileName)
-	if err != nil {
-		return fmt.Errorf("loading new profile: %w", err)
-	}
-
-	currentProfile, err := pm.GetDefault(game.ID)
-	if err != nil && !errors.Is(err, domain.ErrProfileNotFound) {
-		return fmt.Errorf("getting current profile: %w", err)
-	}
-	hadCurrentProfile := currentProfile != nil
-	// Ensure current is never nil so rollbacks can safely use it (no mods/overrides when there was no default).
-	if currentProfile == nil {
-		currentProfile = &domain.Profile{Name: "", GameID: game.ID, Mods: nil, Overrides: nil}
-	}
-
-	// Phase 1: Undeploy current profile (fail-fast). Skip if no default was set, or switching to same profile. On error, rollback by re-deploying undeployed mods.
-	if hadCurrentProfile && currentProfile.Name != newProfileName && len(currentProfile.Mods) > 0 {
-		for i, modRef := range currentProfile.Mods {
-			if err := pm.undeployModRefFailFast(ctx, game, modRef); err != nil {
-				rollbackErr := pm.rollbackRedeploy(ctx, game, currentProfile.Mods[:i+1])
-				return joinSwitchErr(fmt.Errorf("undeploy %s:%s: %w", modRef.SourceID, modRef.ModID, err), rollbackErr)
-			}
-		}
-	}
-
-	// Phase 2: Deploy new profile (fail-fast). On error, rollback: undeploy new mods we deployed, then redeploy old.
-	for i, modRef := range newProfile.Mods {
-		if err := pm.deployMod(ctx, game, modRef); err != nil {
-			rollbackErr := pm.rollbackAfterDeployFailure(ctx, game, currentProfile, newProfile.Mods[:i])
-			return joinSwitchErr(fmt.Errorf("deploy %s:%s: %w", modRef.SourceID, modRef.ModID, err), rollbackErr)
-		}
-	}
-
-	// Phase 3: Apply new profile overrides. On error, rollback: revert to old profile (mods + overrides).
-	if err := ApplyProfileOverrides(game, newProfile); err != nil {
-		rollbackErr := pm.rollbackAfterOverridesFailure(ctx, game, currentProfile, newProfile)
-		return joinSwitchErr(fmt.Errorf("apply overrides: %w", err), rollbackErr)
-	}
-
-	// Phase 4: Set default. On error, rollback full switch so game dir and default stay consistent.
-	if err := pm.SetDefault(game.ID, newProfileName); err != nil {
-		rollbackErr := pm.rollbackAfterOverridesFailure(ctx, game, currentProfile, newProfile)
-		return joinSwitchErr(fmt.Errorf("set default profile: %w", err), rollbackErr)
-	}
-	return nil
-}
-
-func joinSwitchErr(primary, rollback error) error {
-	return &domain.DeployError{Op: "profile switch failed", Primary: primary, Rollback: rollback}
-}
-
-// undeployModRefFailFast removes a mod from the game directory, returning on first file error.
-func (pm *ProfileManager) undeployModRefFailFast(ctx context.Context, game *domain.Game, modRef domain.ModReference) error {
-	files, err := pm.cache.ListFiles(game.ID, modRef.SourceID, modRef.ModID, modRef.Version)
-	if err != nil {
-		return fmt.Errorf("listing cached files: %w", err)
-	}
-	for _, file := range files {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		dstPath := filepath.Join(game.ModPath, file)
-		if err := pm.linker.Undeploy(dstPath); err != nil {
-			return fmt.Errorf("%s: %w", file, err)
-		}
-	}
-	return nil
-}
-
-// rollbackRedeploy re-deploys the given mods (used after undeploy fail-fast).
-func (pm *ProfileManager) rollbackRedeploy(ctx context.Context, game *domain.Game, mods []domain.ModReference) error {
-	var errs []error
-	for _, modRef := range mods {
-		if err := pm.deployMod(ctx, game, modRef); err != nil {
-			errs = append(errs, fmt.Errorf("redeploy %s:%s: %w", modRef.SourceID, modRef.ModID, err))
-		}
-	}
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
-}
-
-// rollbackAfterDeployFailure undeploys the new mods we deployed, then redeploys the old profile.
-func (pm *ProfileManager) rollbackAfterDeployFailure(ctx context.Context, game *domain.Game, current *domain.Profile, deployedNew []domain.ModReference) error {
-	var errs []error
-	for _, modRef := range deployedNew {
-		if err := pm.undeployModRef(ctx, game, modRef); err != nil {
-			errs = append(errs, fmt.Errorf("undeploy new %s:%s: %w", modRef.SourceID, modRef.ModID, err))
-		}
-	}
-	if current != nil && len(current.Mods) > 0 {
-		for _, modRef := range current.Mods {
-			if err := pm.deployMod(ctx, game, modRef); err != nil {
-				errs = append(errs, fmt.Errorf("redeploy old %s:%s: %w", modRef.SourceID, modRef.ModID, err))
-			}
-		}
-	}
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
-}
-
-// rollbackAfterOverridesFailure restores old profile: undeploy new mods, deploy old mods, apply old overrides.
-func (pm *ProfileManager) rollbackAfterOverridesFailure(ctx context.Context, game *domain.Game, current *domain.Profile, newProfile *domain.Profile) error {
-	var errs []error
-	for _, modRef := range newProfile.Mods {
-		if err := pm.undeployModRef(ctx, game, modRef); err != nil {
-			errs = append(errs, fmt.Errorf("undeploy new %s:%s: %w", modRef.SourceID, modRef.ModID, err))
-		}
-	}
-	if current != nil {
-		for _, modRef := range current.Mods {
-			if err := pm.deployMod(ctx, game, modRef); err != nil {
-				errs = append(errs, fmt.Errorf("redeploy old %s:%s: %w", modRef.SourceID, modRef.ModID, err))
-			}
-		}
-		if len(current.Overrides) > 0 {
-			if err := ApplyProfileOverrides(game, current); err != nil {
-				errs = append(errs, fmt.Errorf("restore old overrides: %w", err))
-			}
-		}
-	}
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
-}
-
-// deployMod deploys a single mod to the game directory
-func (pm *ProfileManager) deployMod(ctx context.Context, game *domain.Game, modRef domain.ModReference) error {
-	// Check if mod is cached
-	if !pm.cache.Exists(game.ID, modRef.SourceID, modRef.ModID, modRef.Version) {
-		return fmt.Errorf("mod not cached: %s:%s@%s", modRef.SourceID, modRef.ModID, modRef.Version)
-	}
-
-	// Get list of files
-	files, err := pm.cache.ListFiles(game.ID, modRef.SourceID, modRef.ModID, modRef.Version)
-	if err != nil {
-		return fmt.Errorf("listing cached files: %w", err)
-	}
-
-	var deployed []string
-	// Deploy each file
-	for _, file := range files {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		srcPath := pm.cache.GetFilePath(game.ID, modRef.SourceID, modRef.ModID, modRef.Version, file)
-		dstPath := filepath.Join(game.ModPath, file)
-
-		if err := pm.linker.Deploy(srcPath, dstPath); err != nil {
-			for j := len(deployed) - 1; j >= 0; j-- {
-				_ = pm.linker.Undeploy(filepath.Join(game.ModPath, deployed[j]))
-			}
-			return fmt.Errorf("deploying %s: %w", file, err)
-		}
-		deployed = append(deployed, file)
-	}
-
-	return nil
-}
-
-// undeployModRef removes a mod from the game directory using a ModReference
-func (pm *ProfileManager) undeployModRef(ctx context.Context, game *domain.Game, modRef domain.ModReference) error {
-	// Get list of files
-	files, err := pm.cache.ListFiles(game.ID, modRef.SourceID, modRef.ModID, modRef.Version)
-	if err != nil {
-		return fmt.Errorf("listing cached files: %w", err)
-	}
-
-	var errs []error
-	for _, file := range files {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		dstPath := filepath.Join(game.ModPath, file)
-		if err := pm.linker.Undeploy(dstPath); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", file, err))
-		}
-	}
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
 }
 
 // Export exports a profile to a portable format

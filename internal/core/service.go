@@ -579,7 +579,7 @@ func (s *Service) NewInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 // NewProfileManager returns a ProfileManager wired to this service's storage,
 // so callers do not need direct access to the database or registry.
 func (s *Service) NewProfileManager() *ProfileManager {
-	return NewProfileManager(s.configDir, s.db, s.cache, s.GetLinker(s.config.DefaultLinkMethod))
+	return NewProfileManager(s.configDir, s.db)
 }
 
 // NewUpdater returns an Updater wired to this service's source registry.

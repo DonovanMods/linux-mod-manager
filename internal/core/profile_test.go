@@ -1,16 +1,10 @@
 package core_test
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/linker"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +19,7 @@ func TestProfileManager_Create(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	profile, err := pm.Create("skyrim-se", "survival")
 	require.NoError(t, err)
@@ -41,7 +35,7 @@ func TestProfileManager_Create_DuplicateName(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	_, err = pm.Create("skyrim-se", "survival")
 	require.NoError(t, err)
@@ -58,7 +52,7 @@ func TestProfileManager_List(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	_, err = pm.Create("skyrim-se", "survival")
 	require.NoError(t, err)
@@ -78,7 +72,7 @@ func TestProfileManager_Get(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	_, err = pm.Create("skyrim-se", "survival")
 	require.NoError(t, err)
@@ -96,7 +90,7 @@ func TestProfileManager_Get_NotFound(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	_, err = pm.Get("skyrim-se", "nonexistent")
 	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
@@ -110,7 +104,7 @@ func TestProfileManager_Delete(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	_, err = pm.Create("skyrim-se", "survival")
 	require.NoError(t, err)
@@ -130,7 +124,7 @@ func TestProfileManager_SetDefault(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	_, err = pm.Create("skyrim-se", "profile1")
 	require.NoError(t, err)
@@ -153,7 +147,7 @@ func TestProfileManager_AddMod(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	_, err = pm.Create("skyrim-se", "survival")
 	require.NoError(t, err)
@@ -181,7 +175,7 @@ func TestProfileManager_RemoveMod(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	_, err = pm.Create("skyrim-se", "survival")
 	require.NoError(t, err)
@@ -202,229 +196,6 @@ func TestProfileManager_RemoveMod(t *testing.T) {
 	assert.Empty(t, profile.Mods)
 }
 
-func TestProfileManager_Switch(t *testing.T) {
-	dir := t.TempDir()
-	modPath := filepath.Join(dir, "game", "mods")
-	require.NoError(t, os.MkdirAll(modPath, 0755))
-
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	cacheDir := filepath.Join(dir, "cache")
-	modCache := cache.New(cacheDir)
-	lnk := linker.NewSymlink()
-
-	pm := core.NewProfileManager(dir, database, modCache, lnk)
-
-	game := &domain.Game{
-		ID:      "skyrim-se",
-		Name:    "Skyrim SE",
-		ModPath: modPath,
-	}
-
-	// Create two profiles
-	_, err = pm.Create("skyrim-se", "profile1")
-	require.NoError(t, err)
-	_, err = pm.Create("skyrim-se", "profile2")
-	require.NoError(t, err)
-
-	// Add mod to profile1 and cache it
-	modRef := domain.ModReference{SourceID: "nexusmods", ModID: "123", Version: "1.0"}
-	err = pm.AddMod("skyrim-se", "profile1", modRef)
-	require.NoError(t, err)
-
-	// Create cached mod file
-	err = modCache.Store("skyrim-se", "nexusmods", "123", "1.0", "test.esp", []byte("mod data"))
-	require.NoError(t, err)
-
-	// Switch to profile1 should deploy mods
-	err = pm.Switch(context.Background(), game, "profile1")
-	require.NoError(t, err)
-
-	// Verify mod is deployed
-	deployedPath := filepath.Join(modPath, "test.esp")
-	_, err = os.Lstat(deployedPath)
-	require.NoError(t, err)
-
-	// Switch to profile2 should undeploy profile1 mods
-	err = pm.Switch(context.Background(), game, "profile2")
-	require.NoError(t, err)
-
-	// Verify mod is no longer deployed
-	_, err = os.Lstat(deployedPath)
-	assert.True(t, os.IsNotExist(err))
-}
-
-func TestProfileManager_Switch_DeployFailure_Rollback(t *testing.T) {
-	dir := t.TempDir()
-	modPath := filepath.Join(dir, "game", "mods")
-	require.NoError(t, os.MkdirAll(modPath, 0755))
-
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	cacheDir := filepath.Join(dir, "cache")
-	modCache := cache.New(cacheDir)
-	pm := core.NewProfileManager(dir, database, modCache, linker.NewSymlink())
-
-	game := &domain.Game{ID: "skyrim-se", Name: "Skyrim SE", ModPath: modPath}
-
-	_, err = pm.Create("skyrim-se", "profile1")
-	require.NoError(t, err)
-	_, err = pm.Create("skyrim-se", "profile2")
-	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault("skyrim-se", "profile1"))
-
-	modA := domain.ModReference{SourceID: "nexusmods", ModID: "111", Version: "1.0"}
-	modB := domain.ModReference{SourceID: "nexusmods", ModID: "222", Version: "1.0"}
-	require.NoError(t, pm.AddMod("skyrim-se", "profile1", modA))
-	require.NoError(t, pm.AddMod("skyrim-se", "profile2", modA))
-	require.NoError(t, pm.AddMod("skyrim-se", "profile2", modB))
-
-	require.NoError(t, modCache.Store("skyrim-se", "nexusmods", "111", "1.0", "a.esp", []byte("a")))
-	// mod B is not cached -> deploy will fail when switching to profile2
-
-	require.NoError(t, pm.Switch(context.Background(), game, "profile1"))
-	deployedA := filepath.Join(modPath, "a.esp")
-	_, err = os.Lstat(deployedA)
-	require.NoError(t, err)
-
-	err = pm.Switch(context.Background(), game, "profile2")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "profile switch failed")
-	assert.Contains(t, err.Error(), "deploy nexusmods:222")
-
-	// Rollback: old profile (profile1) restored, default unchanged
-	def, _ := pm.GetDefault("skyrim-se")
-	require.NotNil(t, def)
-	assert.Equal(t, "profile1", def.Name)
-	_, err = os.Lstat(deployedA)
-	require.NoError(t, err)
-}
-
-func TestProfileManager_Switch_UndeployFailure_Rollback(t *testing.T) {
-	dir := t.TempDir()
-	modPath := filepath.Join(dir, "game", "mods")
-	require.NoError(t, os.MkdirAll(modPath, 0755))
-
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	cacheDir := filepath.Join(dir, "cache")
-	modCache := cache.New(cacheDir)
-	pm := core.NewProfileManager(dir, database, modCache, linker.NewSymlink())
-
-	game := &domain.Game{ID: "skyrim-se", Name: "Skyrim SE", ModPath: modPath}
-
-	_, err = pm.Create("skyrim-se", "profile1")
-	require.NoError(t, err)
-	_, err = pm.Create("skyrim-se", "profile2")
-	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault("skyrim-se", "profile1"))
-
-	modA := domain.ModReference{SourceID: "nexusmods", ModID: "111", Version: "1.0"}
-	modB := domain.ModReference{SourceID: "nexusmods", ModID: "222", Version: "1.0"}
-	require.NoError(t, pm.AddMod("skyrim-se", "profile1", modA))
-	require.NoError(t, pm.AddMod("skyrim-se", "profile1", modB))
-
-	require.NoError(t, modCache.Store("skyrim-se", "nexusmods", "111", "1.0", "a.esp", []byte("a")))
-	require.NoError(t, modCache.Store("skyrim-se", "nexusmods", "222", "1.0", "b.esp", []byte("b")))
-
-	require.NoError(t, pm.Switch(context.Background(), game, "profile1"))
-	deployedA := filepath.Join(modPath, "a.esp")
-	deployedB := filepath.Join(modPath, "b.esp")
-	_, err = os.Lstat(deployedA)
-	require.NoError(t, err)
-	_, err = os.Lstat(deployedB)
-	require.NoError(t, err)
-
-	// Replace B's symlink with a regular file so undeploy fails (symlink linker returns "not a symlink")
-	require.NoError(t, os.Remove(deployedB))
-	require.NoError(t, os.WriteFile(deployedB, []byte("replaced"), 0644))
-
-	err = pm.Switch(context.Background(), game, "profile2")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "profile switch failed")
-	assert.Contains(t, err.Error(), "undeploy nexusmods:222")
-
-	// Rollback must restore the current profile completely, including the mod
-	// whose undeploy failed after partially mutating its files.
-	def, _ := pm.GetDefault("skyrim-se")
-	require.NotNil(t, def)
-	assert.Equal(t, "profile1", def.Name)
-	_, err = os.Lstat(deployedA)
-	require.NoError(t, err, "A should be redeployed")
-	infoB, err := os.Lstat(deployedB)
-	require.NoError(t, err)
-	assert.True(t, infoB.Mode()&os.ModeSymlink != 0, "B should be restored to the original symlink deployment")
-}
-
-func TestProfileManager_Switch_OverridesFailure_Rollback(t *testing.T) {
-	dir := t.TempDir()
-	modPath := filepath.Join(dir, "game", "mods")
-	installPath := filepath.Join(dir, "game")
-	require.NoError(t, os.MkdirAll(modPath, 0755))
-
-	database, err := db.New(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, database.Close())
-	})
-
-	cacheDir := filepath.Join(dir, "cache")
-	modCache := cache.New(cacheDir)
-	pm := core.NewProfileManager(dir, database, modCache, linker.NewSymlink())
-
-	game := &domain.Game{
-		ID:          "skyrim-se",
-		Name:        "Skyrim SE",
-		ModPath:     modPath,
-		InstallPath: installPath,
-	}
-
-	_, err = pm.Create("skyrim-se", "profile1")
-	require.NoError(t, err)
-	_, err = pm.Create("skyrim-se", "profile2")
-	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault("skyrim-se", "profile1"))
-
-	modRef := domain.ModReference{SourceID: "nexusmods", ModID: "123", Version: "1.0"}
-	require.NoError(t, pm.AddMod("skyrim-se", "profile1", modRef))
-	require.NoError(t, pm.AddMod("skyrim-se", "profile2", modRef))
-	require.NoError(t, modCache.Store("skyrim-se", "nexusmods", "123", "1.0", "mod.esp", []byte("x")))
-
-	require.NoError(t, pm.Switch(context.Background(), game, "profile1"))
-	deployedPath := filepath.Join(modPath, "mod.esp")
-	_, err = os.Lstat(deployedPath)
-	require.NoError(t, err)
-
-	// Give profile2 invalid overrides (path traversal) so ApplyProfileOverrides fails
-	prof, err := config.LoadProfile(dir, "skyrim-se", "profile2")
-	require.NoError(t, err)
-	prof.Overrides = map[string][]byte{"../evil": []byte("x")}
-	require.NoError(t, config.SaveProfile(dir, prof))
-
-	err = pm.Switch(context.Background(), game, "profile2")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "profile switch failed")
-	assert.Contains(t, err.Error(), "apply overrides")
-
-	def, _ := pm.GetDefault("skyrim-se")
-	require.NotNil(t, def)
-	assert.Equal(t, "profile1", def.Name)
-	_, err = os.Lstat(deployedPath)
-	require.NoError(t, err)
-}
-
 func TestProfileManager_ExportImport(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")
@@ -433,7 +204,7 @@ func TestProfileManager_ExportImport(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	pm := core.NewProfileManager(dir, database, cache.New(dir), linker.NewSymlink())
+	pm := core.NewProfileManager(dir, database)
 
 	// Create a profile with mods
 	_, err = pm.Create("skyrim-se", "original")
@@ -477,11 +248,7 @@ func TestProfileManager_UpsertMod(t *testing.T) {
 		require.NoError(t, database.Close())
 	})
 
-	cacheDir := filepath.Join(dir, "cache")
-	modCache := cache.New(cacheDir)
-	lnk := linker.NewSymlink()
-
-	pm := core.NewProfileManager(dir, database, modCache, lnk)
+	pm := core.NewProfileManager(dir, database)
 
 	// Create a profile
 	_, err = pm.Create("skyrim-se", "test")

@@ -1449,9 +1449,9 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 // cmd/lmm/profile.go's doProfileSwitch's diff computation (through its
 // "Show changes" print block) - see the task report for the exact mapping.
 //
-// CRITICAL: this mirrors the CLI's OWN diff algorithm, which is distinct
-// from (and does not call) ProfileManager.Switch - see the task report for
-// why both exist.
+// CRITICAL: this mirrors the CLI's OWN diff algorithm. (An older, unused
+// ProfileManager.Switch implementation coexisted with it until #60 retired
+// it - this flow is the only switch implementation now.)
 type SwitchPlan struct {
 	GameID, From, To string
 
