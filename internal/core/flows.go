@@ -1672,11 +1672,24 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			continue
 		}
 		if err := s.SetModEnabled(im.SourceID, im.ID, game.ID, plan.To, true); err != nil {
-			msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)
-			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = SwitchEnableNote, msg
-			emit(evt)
+			if errors.Is(err, domain.ErrModNotFound) {
+				// im's row lives under a different profile (PlanProfileSwitch
+				// admits such mods into ToEnable), so the UPDATE-only
+				// SetModEnabled matched nothing; create the target-profile row
+				// so the deployment we just made isn't orphaned (#60).
+				row := im
+				row.ProfileName = plan.To
+				row.Enabled = true
+				row.Deployed = true
+				err = s.SaveInstalledMod(&row)
+			}
+			if err != nil {
+				msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)
+				result.Notes = append(result.Notes, msg)
+				evt := base
+				evt.Phase, evt.Detail = SwitchEnableNote, msg
+				emit(evt)
+			}
 		}
 
 		result.Enabled++
