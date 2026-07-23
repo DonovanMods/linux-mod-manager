@@ -41,6 +41,12 @@ type KeyMap struct {
 	// mutations.go's checkForUpdates): fires on ScreenDashboard and
 	// ScreenInstalledMods.
 	CheckUpdates key.Binding
+	// Files is Task 4's deployed-files-overlay binding (see mutations.go's
+	// showDeployedFiles): fires on ScreenInstalledMods with a mod selected.
+	// "f" is overloaded - overlay.go's updateOverlayKey also matches a plain
+	// "f" to CLOSE the overlay once open, so this key doubles as an open/
+	// close toggle.
+	Files key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -145,6 +151,10 @@ func DefaultKeyMap() KeyMap {
 		CheckUpdates: key.NewBinding(
 			key.WithKeys("u"),
 			key.WithHelp("u", "check for updates"),
+		),
+		Files: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "files"),
 		),
 	}
 }

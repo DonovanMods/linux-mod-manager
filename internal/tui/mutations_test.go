@@ -2505,3 +2505,109 @@ func TestFooterHintNamesCheckUpdatesAction(t *testing.T) {
 
 	require.Contains(t, view, "u: check updates")
 }
+
+// --- Deployed files ('f' on Installed Mods) ---
+
+// modelWithProvider builds a fully-loaded Model (data ready) backed by the
+// given DataProvider and no ActionProvider - mirrors modelWithActions'
+// shape but for tests exercising a read-only DataProvider seam (showDeployedFiles
+// only needs m.provider, never m.actions).
+func modelWithProvider(t *testing.T, provider DataProvider) Model {
+	t.Helper()
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	return loaded.(Model)
+}
+
+// TestFilesKeyOpensOverlayWithDeployedFiles covers the happy path against
+// the prototype provider (real, non-empty canned DeployedFiles rows for a
+// known installed mod - see prototypeProvider.DeployedFiles): 'f' on row 0
+// opens the overlay with a title naming the mod and a non-empty file list.
+func TestFilesKeyOpensOverlayWithDeployedFiles(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	name := model.mods[0].Name
+
+	updated, cmd := model.Update(keyRunes("f"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.NotNil(t, model.overlay)
+	require.Contains(t, model.overlay.title, name)
+	require.NotEmpty(t, model.overlay.lines)
+}
+
+// TestFilesKeyEmptyStateMessage covers a mod with nothing currently
+// deployed: DeployedFiles' documented empty-but-no-error contract (an empty
+// slice, nil error - see DataProvider.DeployedFiles' doc comment) renders as
+// a single explanatory line, never a blank overlay.
+func TestFilesKeyEmptyStateMessage(t *testing.T) {
+	t.Parallel()
+
+	provider := recordingProvider{delegate: NewPrototypeProvider()}
+	model := modelWithProvider(t, provider)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, cmd := model.Update(keyRunes("f"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.NotNil(t, model.overlay)
+	require.Equal(t, []string{"no files deployed"}, model.overlay.lines)
+}
+
+// TestFilesKeyIgnoredOnOtherScreens proves 'f' only fires on Installed Mods.
+func TestFilesKeyIgnoredOnOtherScreens(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("f"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.overlay)
+}
+
+// TestFilesKeySwallowedByFocusedSearchInput proves 'f' types into the search
+// box instead of opening the overlay while ScreenSearch is focused - the
+// existing focused-input swallow branch (updateKey, app.go) runs before the
+// mutation-key switch this is dispatched from, so this is inertness by
+// construction, matching every other single-letter mutation key's own test
+// of the same guard (e.g. TestToggleEnableKeyInertWhileSearchFocused).
+func TestFilesKeySwallowedByFocusedSearchInput(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	updated := updateWithRunes(t, model, "3") // jump to search, focused
+	updated = updateWithRunes(t, updated, "f")
+
+	require.True(t, updated.search.input.Focused())
+	require.Contains(t, updated.search.input.Value(), "f")
+	require.Nil(t, updated.overlay)
+}
+
+// TestFilesKeyErrorGoesToStatusLine covers a DeployedFiles failure (e.g. a
+// DB read error): the status line renders the error and statusIsError
+// flips, mirroring every other synchronous/async failure path's rendering
+// (singleLine(err.Error()) + statusIsError = true - see resolvePlanFailure/
+// resolveInstallPlanFailure/resolveCheckUpdatesFailure for the async
+// precedent this mirrors) - no overlay opens.
+func TestFilesKeyErrorGoesToStatusLine(t *testing.T) {
+	t.Parallel()
+
+	provider := recordingProvider{delegate: NewPrototypeProvider(), DeployedFilesErr: errors.New("db read failed")}
+	model := modelWithProvider(t, provider)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, cmd := model.Update(keyRunes("f"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.overlay)
+	require.True(t, model.action.statusIsError)
+	require.Equal(t, singleLine("db read failed"), model.action.status)
+}

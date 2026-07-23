@@ -600,6 +600,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.installSelectedSearchResult()
 	case key.Matches(msg, m.keys.CheckUpdates):
 		return m.checkForUpdates()
+	case key.Matches(msg, m.keys.Files):
+		return m.showDeployedFiles()
 	default:
 		return m, nil
 	}

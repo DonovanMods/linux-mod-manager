@@ -119,6 +119,52 @@ func (m Model) deployActiveProfile() (Model, tea.Cmd) {
 	return model.promptAction(pa), nil
 }
 
+// --- Deployed files ('f' on Installed Mods) ---
+
+// showDeployedFiles handles 'f' on Installed Mods (task-4-brief.md): opens a
+// read-only overlay listing the selected mod's deployed file paths. A no-op
+// on the wrong screen, an empty list, or with no DataProvider configured -
+// mirrors uninstallSelectedMod's guard/selection shape, using m.provider
+// instead of m.actions since this is a read, not a mutation.
+//
+// Unlike every other handler in this file, the DeployedFiles call below is
+// made SYNCHRONOUSLY rather than dispatched as an async tea.Cmd: it's a
+// local DB read (coreProvider.DeployedFiles, service_core.go), not a network
+// call, so the async-dispatch discipline installSelectedSearchResult/
+// switchSelectedProfile/checkForUpdates follow (status line + tea.Cmd +
+// staleness-checked result message) doesn't apply here - this is the one
+// documented exception.
+//
+// No extra single-flight/other-modal guard is needed here: updateKey only
+// ever reaches the outer switch this is dispatched from when
+// m.action.pending, m.picker, m.inputModal, and m.overlay are ALL already
+// nil, so promptOverlay's own guard (overlay.go) can never actually refuse
+// on this path - it's kept anyway for defense-in-depth, exactly like every
+// other promptX call in this file.
+func (m Model) showDeployedFiles() (tea.Model, tea.Cmd) {
+	if m.screen != ScreenInstalledMods || m.provider == nil {
+		return m, nil
+	}
+	item, ok := m.selectedMod()
+	if !ok {
+		return m, nil
+	}
+
+	files, err := m.provider.DeployedFiles(item.Source, item.ID)
+	if err != nil {
+		m.action.status = singleLine(err.Error())
+		m.action.statusIsError = true
+		return m, nil
+	}
+
+	lines := files
+	if len(lines) == 0 {
+		lines = []string{"no files deployed"}
+	}
+	m = m.promptOverlay(infoOverlay{title: fmt.Sprintf("Files — %s", item.Name), lines: lines})
+	return m, nil
+}
+
 // planResultMsg carries a successful PlanProfileSwitch result, tagged with
 // the generation established when the fetch was dispatched (see
 // switchSelectedProfile) so a superseded result can be discarded exactly

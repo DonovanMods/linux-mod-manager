@@ -43,6 +43,11 @@ func (m Model) promptOverlay(o infoOverlay) Model {
 // no text entry at all, so a plain "q" quitting (isQuitKey's ordinary,
 // non-focused-search-input behavior) matches every other list screen; every
 // other key is swallowed so nothing behind the overlay can react to it.
+// Invariant this relies on: the overlay is only ever opened from Installed
+// Mods (Task 4's showDeployedFiles, mutations.go, guards on m.screen ==
+// ScreenInstalledMods) - the search input only ever focuses on ScreenSearch
+// (gotoScreenFocused) - so it can never be focused while the overlay is up,
+// meaning a plain "q" here always quits reliably, never types into a field.
 func (m Model) updateOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.isQuitKey(msg):
