@@ -1116,13 +1116,20 @@ func TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult(t *testing.T) {
 func TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 120, 38)
+	// Height 60 keeps every help group uncapped (see
+	// TestViewFitsTerminalBoundsWithHelpVisible's helpBodyBudget note), so
+	// this doesn't depend on which screen's group happens to render first.
+	model := sizedPrototypeModel(t, "wizardry", 120, 60)
 	model = updateWithRunes(t, model, "?")
 	view := model.View()
 
+	// Task 9 restructured helpView into per-screen groups whose entries
+	// reuse each binding's own key.WithHelp copy from keys.go (helpEntry)
+	// instead of the old flat list's bespoke prose - so the wording here is
+	// terser than the pre-Task-9 assertions were.
 	require.Contains(t, view, "toggle enable/disable")
-	require.Contains(t, view, "uninstall selected mod")
-	require.Contains(t, view, "deploy active profile")
+	require.Contains(t, view, "uninstall")
+	require.Contains(t, view, "deploy profile")
 	require.Contains(t, view, "switch profile")
 	require.NotContains(t, view, "Browsing is read-only",
 		"the help copy must no longer claim the TUI is read-only now that mutations exist")
@@ -1834,11 +1841,16 @@ func TestPrototypeInstallPlanReinstallForSkyUI(t *testing.T) {
 func TestHelpOverlayDocumentsInstallKey(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	// Height 60 keeps every help group uncapped, same as
+	// TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim - the
+	// "search" group (which documents Install) isn't promoted to the front
+	// on the default Dashboard screen, so it needs enough budget to render
+	// at all.
+	model := sizedPrototypeModel(t, "wizardry", 160, 60)
 	model = updateWithRunes(t, model, "?")
 	view := model.View()
 
-	require.Contains(t, view, "install the selected search result")
+	require.Contains(t, view, "install selected result")
 }
 
 func TestFooterHintNamesInstallAction(t *testing.T) {

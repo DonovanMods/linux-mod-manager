@@ -1,14 +1,14 @@
                                                                                 
   LMM // Linux Mod Manager                                                      
-  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles                   
+  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources      
                                                                                 
   ┌───────────────────────────────────┐ ┌────────────────────────────────────┐  
   │ ACTIVE PROFILE                    │ │ OPERATIONS                         │  
   │ survival                          │ │ > Installed Mods                   │  
   │                                   │ │   Search Archives                  │  
   │ Game     Skyrim Special Edition   │ │   Profiles                         │  
-  │ Enabled  39                       │ │   Consult Conflict Oracle          │  
-  │ Updates  3                        │ │                                    │  
+  │ Enabled  39                       │ │   Sources                          │  
+  │ Updates  3                        │ │   Consult Conflict Oracle          │  
   │                                   │ │                                    │  
   │                                   │ │                                    │  
   │                                   │ │                                    │  
@@ -20,5 +20,5 @@
   │                                   │ │                                    │  
   └───────────────────────────────────┘ └────────────────────────────────────┘  
                                                                                 
-  ?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  q: quit                   
+  ?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/d…  
                                                                                 

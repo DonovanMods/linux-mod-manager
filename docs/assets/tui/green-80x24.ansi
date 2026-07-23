@@ -1,6 +1,6 @@
                                                                                 
   LMM // Linux Mod Manager                                                      
-  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles                   
+  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources      
                                                                                 
   ╭──────────────────────────────────────────────────────────────────────────╮  
   │ CRT STATUS STACK                                                         │  
@@ -12,13 +12,13 @@
   │ > Installed Mods                                                         │  
   │   Search Archives                                                        │  
   │   Profiles                                                               │  
+  │   Sources                                                                │  
   │   Consult Conflict Oracle                                                │  
-  │                                                                          │  
   │                                                                          │  
   │                                                                          │  
   │                                                                          │  
   │                                                                          │  
   ╰──────────────────────────────────────────────────────────────────────────╯  
                                                                                 
-  ?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  q: quit                   
+  ?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/d…  
                                                                                 

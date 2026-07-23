@@ -1301,25 +1301,163 @@ func (m Model) sourcesView() string {
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// helpGroup is one labeled section of the help panel: a screen name (or
+// "global") plus the key entries that apply to it. Group labels are
+// lowercase per Task 9's copy convention (see helpGroups).
+type helpGroup struct {
+	name    string
+	entries []string
+}
+
+// helpEntry formats one keybinding as a help-panel row, reusing the
+// binding's own key.WithHelp key/description from keys.go rather than
+// restating it - the single source of truth for "what does this key do"
+// stays in DefaultKeyMap.
+func helpEntry(kb key.Binding) string {
+	h := kb.Help()
+	return fmt.Sprintf("%-16s %s", h.Key, h.Desc)
+}
+
+// helpGroups builds the full, ordered set of help groups: "global" always
+// first, then every screen group that has entries, in a fixed order
+// (dashboard, installed mods, search, profiles - sources has no bindings
+// beyond plain navigation, so it's omitted entirely), with the CURRENT
+// screen's group promoted to immediately follow global. Each screen's list
+// mirrors updateKey's dispatch guards in mutations.go (e.g. Files/Policy/
+// Purge all gate on ScreenInstalledMods too, alongside Deploy/CheckUpdates).
+func (m Model) helpGroups() []helpGroup {
+	global := helpGroup{
+		name: "global",
+		entries: []string{
+			helpEntry(m.keys.Quit),
+			helpEntry(m.keys.Help),
+			helpEntry(m.keys.NextScreen),
+			helpEntry(m.keys.PrevScreen),
+			fmt.Sprintf("%-16s %s", "1-5", "jump to a screen"),
+			helpEntry(m.keys.GameSwitch),
+		},
+	}
+
+	dashboard := helpGroup{
+		name: "dashboard",
+		entries: []string{
+			helpEntry(m.keys.Deploy),
+			helpEntry(m.keys.CheckUpdates),
+			helpEntry(m.keys.Purge),
+		},
+	}
+
+	installedMods := helpGroup{
+		name: "installed mods",
+		entries: []string{
+			helpEntry(m.keys.ToggleEnable),
+			helpEntry(m.keys.Uninstall),
+			helpEntry(m.keys.Deploy),
+			helpEntry(m.keys.CheckUpdates),
+			helpEntry(m.keys.Files),
+			helpEntry(m.keys.Policy),
+			helpEntry(m.keys.Purge),
+		},
+	}
+
+	search := helpGroup{
+		name: "search",
+		entries: []string{
+			helpEntry(m.keys.Search),
+			helpEntry(m.keys.Submit),
+			helpEntry(m.keys.Blur),
+			helpEntry(m.keys.NextPage),
+			helpEntry(m.keys.PrevPage),
+			helpEntry(m.keys.CycleSource),
+			helpEntry(m.keys.Install),
+		},
+	}
+
+	profiles := helpGroup{
+		name: "profiles",
+		entries: []string{
+			// Select ("enter") is context-dependent (see updateKey): on
+			// Profiles it switches, not "open" like keys.go's generic
+			// Select.Help() says elsewhere - so this one entry is written
+			// out rather than reusing helpEntry, matching the actual
+			// behavior on this screen.
+			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "switch profile"),
+			helpEntry(m.keys.CreateProfile),
+			helpEntry(m.keys.DeleteProfile),
+		},
+	}
+
+	fixed := []helpGroup{dashboard, installedMods, search, profiles}
+	screenGroupName := map[Screen]string{
+		ScreenDashboard:     dashboard.name,
+		ScreenInstalledMods: installedMods.name,
+		ScreenSearch:        search.name,
+		ScreenProfiles:      profiles.name,
+	}
+	if name, ok := screenGroupName[m.screen]; ok {
+		for i, g := range fixed {
+			if g.name == name {
+				promoted := append([]helpGroup{g}, fixed[:i]...)
+				fixed = append(promoted, fixed[i+1:]...)
+				break
+			}
+		}
+	}
+
+	return append([]helpGroup{global}, fixed...)
+}
+
+// helpBodyBudget bounds how many content rows the help panel's group list
+// may use, so a long grouped list can't crowd screenView down past its own
+// floor (matching availableContentHeight's own max(...,8)) - the same
+// "+N more" cap overlayView uses, sized so the two floors agree exactly:
+// when the list is capped, screenView gets precisely its floor of 8; when
+// it isn't, screenView gets whatever room the (smaller) natural list left,
+// same as before Task 9.
+func (m Model) helpBodyBudget() int {
+	if m.height == 0 {
+		return 40
+	}
+	status := 0
+	if m.hasVisibleStatus() {
+		status = 1
+	}
+	const (
+		titleNavSpacerHeight = 4 // matches contentChromeHeight's own constant
+		screenViewFloor      = 8 // matches availableContentHeight's own floor
+		fixedHelpLines       = 2 // "HELP" title + blank separator
+	)
+	total := m.height - m.theme.App.GetVerticalFrameSize() - titleNavSpacerHeight - status
+	return max(total-screenViewFloor-m.theme.Panel.GetVerticalBorderSize()-fixedHelpLines, 1)
+}
+
 func (m Model) helpView() string {
-	return m.panel(m.availableWidth()).Render(strings.Join([]string{
-		m.theme.PanelTitle.Render("HELP"),
-		"arrows / hjkl       move or switch screens",
-		"tab / shift+tab     cycle top-level screens",
-		"1-5                 jump to a screen (3 focuses search)",
-		"/                   search from anywhere (jumps + focuses input)",
-		"i                   install the selected search result (Search, unfocused)",
-		"enter               open menu entry / search / switch profile",
-		"esc                 unfocus search input",
-		"n/p                 result pages",
-		"s                   cycle source",
-		"e/x/D               toggle enable/disable / uninstall selected mod / deploy active profile",
-		"u                   check for updates (Dashboard/Installed Mods)",
-		"?                   toggle this help",
-		"q / ctrl+c           quit",
-		"",
-		"Enable, disable, uninstall, deploy, install, apply updates, and profile switch all confirm through a modal before anything changes.",
-	}, "\n"))
+	width := m.availableWidth()
+	panelContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+
+	var body []string
+	for i, g := range m.helpGroups() {
+		if i > 0 {
+			body = append(body, "")
+		}
+		body = append(body, truncate(m.theme.PanelTitle.Render(g.name), panelContentWidth))
+		for _, e := range g.entries {
+			body = append(body, truncate(e, panelContentWidth))
+		}
+	}
+
+	lines := []string{truncate(m.theme.PanelTitle.Render("HELP"), panelContentWidth), ""}
+	budget := m.helpBodyBudget()
+	if len(body) > budget {
+		shown := max(budget-1, 0)
+		more := len(body) - shown
+		lines = append(lines, body[:shown]...)
+		lines = append(lines, m.theme.MutedText.Render(fmt.Sprintf("+%d more", more)))
+	} else {
+		lines = append(lines, body...)
+	}
+
+	return m.panel(width).Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) row(index int, label string) string {
