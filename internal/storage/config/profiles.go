@@ -89,10 +89,13 @@ func parseProfileHooks(yaml ProfileHooksYAML) (domain.GameHooks, domain.GameHook
 	return hooks, explicit
 }
 
-// validateSegment rejects values that are empty or would resolve outside
-// their directory once joined (filepath.Join collapses ".." segments, so
-// "../../evil" would otherwise escape configDir entirely). Failures wrap
-// sentinel so callers can branch on which field was invalid.
+// validateSegment enforces that value is usable as a single path segment:
+// non-empty (after trimming whitespace), no path separators ("/" or "\"),
+// and no ".." substring. The rule is deliberately conservative — harmless
+// values like "foo..bar" or non-escaping subpaths like "a/b" are rejected
+// too — because filepath.Join collapses ".." segments, so anything less
+// strict risks resolving outside configDir (e.g. "../../evil"). Failures
+// wrap sentinel so callers can branch on which field was invalid.
 func validateSegment(value string, sentinel error) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("%w: value is empty", sentinel)
