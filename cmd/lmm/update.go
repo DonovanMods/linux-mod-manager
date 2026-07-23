@@ -98,7 +98,10 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Determine profile
-	profileName := profileOrDefault(updateProfile)
+	profileName, err := resolveProfile(service, game.ID, updateProfile)
+	if err != nil {
+		return err
+	}
 
 	// Get installed mods
 	installed, err := service.GetInstalledMods(game.ID, profileName)
@@ -377,7 +380,10 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		return err
 	}
 
-	profileName := profileOrDefault(updateProfile)
+	profileName, err := resolveProfile(service, game.ID, updateProfile)
+	if err != nil {
+		return err
+	}
 
 	// Get the installed mod
 	mod, err := service.GetInstalledMod(updateSource, modID, game.ID, profileName)

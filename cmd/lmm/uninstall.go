@@ -50,7 +50,10 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 
 func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Determine profile
-	profileName := profileOrDefault(uninstallProfile)
+	profileName, err := resolveProfile(service, game.ID, uninstallProfile)
+	if err != nil {
+		return err
+	}
 
 	if verbose {
 		fmt.Printf("Uninstalling mod %s from %s (profile: %s)...\n", modID, game.Name, profileName)
@@ -58,7 +61,6 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 
 	// Find the mod - try specified source first, then search all installed mods
 	var installedMod *domain.InstalledMod
-	var err error
 	if uninstallSource != "" {
 		// Source explicitly specified
 		if uninstallSource != domain.SourceLocal {

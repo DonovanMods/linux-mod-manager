@@ -193,7 +193,10 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// Get installed mods to mark already-installed ones (source-aware: a mod
 	// ID is only unique within its source, so key on both).
-	profileName := profileOrDefault(searchProfile)
+	profileName, err := resolveProfile(service, game.ID, searchProfile)
+	if err != nil {
+		return err
+	}
 	installedMods, _ := service.GetInstalledMods(game.ID, profileName)
 	installedKeys := make(map[string]bool)
 	for _, im := range installedMods {

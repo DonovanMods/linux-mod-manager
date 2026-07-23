@@ -44,7 +44,7 @@ Examples:
 }
 
 func init() {
-	conflictsCmd.Flags().StringVarP(&conflictsProfile, "profile", "p", "", "profile (default: default)")
+	conflictsCmd.Flags().StringVarP(&conflictsProfile, "profile", "p", "", "profile (default: active profile)")
 
 	rootCmd.AddCommand(conflictsCmd)
 }
@@ -56,7 +56,10 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 }
 
 func doConflicts(svc *core.Service, game *domain.Game) error {
-	profileName := profileOrDefault(conflictsProfile)
+	profileName, err := resolveProfile(svc, game.ID, conflictsProfile)
+	if err != nil {
+		return err
+	}
 
 	// Get all installed mods
 	mods, err := svc.GetInstalledMods(game.ID, profileName)

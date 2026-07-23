@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -52,14 +51,9 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 
 	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
-		// Fall back to the CLI's default-profile convention (cf.
-		// profileOrDefault) when no profile exists yet, so a fresh setup
-		// opens an empty TUI instead of erroring.
-		profileName := "default"
-		if profile, err := svc.NewProfileManager().GetDefault(game.ID); err == nil {
-			profileName = profile.Name
-		} else if !errors.Is(err, domain.ErrProfileNotFound) {
-			return fmt.Errorf("resolving default profile for %s: %w", game.ID, err)
+		profileName, err := resolveProfile(svc, game.ID, "")
+		if err != nil {
+			return err
 		}
 
 		model, err := tui.NewModel(tui.Options{

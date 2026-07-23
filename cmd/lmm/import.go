@@ -44,7 +44,7 @@ Examples:
 }
 
 func init() {
-	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "profile to import to (default: default)")
+	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "profile to import to (default: active profile)")
 	importCmd.Flags().StringVarP(&importSource, "source", "s", "", "source for update tracking (default: auto-detect or local)")
 	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking to source (defaults to curseforge)")
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "import without conflict prompts")
@@ -61,7 +61,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 }
 
 func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, game *domain.Game, args []string) error {
-	profileName := profileOrDefault(importProfile)
+	profileName, err := resolveProfile(service, game.ID, importProfile)
+	if err != nil {
+		return err
+	}
 
 	// No args = scan mode
 	if len(args) == 0 {

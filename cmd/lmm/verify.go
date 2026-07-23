@@ -51,7 +51,7 @@ Examples:
 
 func init() {
 	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Re-download missing files and populate missing checksums by re-downloading")
-	verifyCmd.Flags().StringVarP(&verifyProfile, "profile", "p", "", "profile to verify (default: default)")
+	verifyCmd.Flags().StringVarP(&verifyProfile, "profile", "p", "", "profile to verify (default: active profile)")
 
 	rootCmd.AddCommand(verifyCmd)
 }
@@ -63,7 +63,10 @@ func runVerify(cmd *cobra.Command, args []string) error {
 }
 
 func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []string) error {
-	profile := profileOrDefault(verifyProfile)
+	profile, err := resolveProfile(svc, game.ID, verifyProfile)
+	if err != nil {
+		return err
+	}
 
 	// Get all files with checksums for this game/profile
 	files, err := svc.GetFilesWithChecksums(game.ID, profile)

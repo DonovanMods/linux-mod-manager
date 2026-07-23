@@ -48,7 +48,7 @@ func init() {
 	modEditCmd.Flags().StringVar(&editAuthor, "author", "", "new author")
 	modEditCmd.Flags().StringVar(&editSource, "source", "", "new source (e.g. curseforge, nexusmods)")
 	modEditCmd.Flags().StringVar(&editID, "source-id", "", "new source-specific mod ID")
-	modEditCmd.Flags().StringVarP(&editProfile, "profile", "p", "", "profile (default: default)")
+	modEditCmd.Flags().StringVarP(&editProfile, "profile", "p", "", "profile (default: active profile)")
 
 	modCmd.AddCommand(modEditCmd)
 }
@@ -60,7 +60,10 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 }
 
 func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, currentID string) error {
-	profileName := profileOrDefault(editProfile)
+	profileName, err := resolveProfile(service, game.ID, editProfile)
+	if err != nil {
+		return err
+	}
 
 	// Find the mod - search all sources
 	var installedMod *domain.InstalledMod

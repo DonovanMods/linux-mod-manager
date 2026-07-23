@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.3] - 2026-07-23
+
+### Fixed
+
+- Flagless CLI commands now operate on the game's active profile (the one set by `lmm profile switch`) instead of always using the profile literally named "default" (#66). Affected every command that takes `-p/--profile`: `list`, `deploy`, `install`, `uninstall`, `update`, `update rollback`, `mod enable/disable/set-update/files/edit`, `import`, `search`, `conflicts`, `verify`, `purge`, and `profile reorder`. An explicit `-p` still wins, and a fresh setup with no profiles keeps the "default" convention. The TUI already resolved the active profile correctly and now shares the same resolver.
+
+### Changed
+
+- `--profile` flag help text now uniformly reads "(default: active profile)"; several commands previously documented the literal "default" fallback
+
 ## [1.12.2] - 2026-07-23
 
 ### Fixed
@@ -805,7 +815,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.2...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.3...HEAD
+[1.12.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.2...v1.12.3
 [1.12.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.1...v1.12.2
 [1.12.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.0...v1.12.1
 [1.12.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.11.0...v1.12.0
