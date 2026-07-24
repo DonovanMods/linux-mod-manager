@@ -361,8 +361,9 @@ func (noSourcesProvider) SourceInfos() []SourceInfo                       { retu
 func (noSourcesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
-func (noSourcesProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
-func (noSourcesProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
+func (noSourcesProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
+func (noSourcesProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
+func (noSourcesProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
 
 func TestZeroRealSourcesShowsConfiguredSourcesDiagnosticOnConstruction(t *testing.T) {
 	t.Parallel()

@@ -16,6 +16,13 @@ type Data struct {
 	// for how these back the switcher.
 	AltGame Game
 	AltMods []Mod
+	// Conflicts is the PRIMARY game's canned file-conflict set (Task 3),
+	// feeding prototypeProvider.Conflicts (service.go) for the Conflicts
+	// screen's --prototype demo: one stale entry and one in-sync entry, so
+	// the demo shows both the stale marker and both detail-pane hint copy
+	// variants. The alt game has none - see prototypeProvider.Conflicts' own
+	// doc comment.
+	Conflicts []Conflict
 }
 
 type Game struct {
@@ -42,6 +49,15 @@ type Profile struct {
 // NeedsDownloads plan and --prototype mode can demo the refusal state
 // without any core.Service.
 const NeedsDownloadProfileName = "requiem-overhaul"
+
+// Conflict is one canned file-conflict row (Task 3) - see Data.Conflicts.
+type Conflict struct {
+	Path   string
+	Owner  string
+	Winner string
+	AlsoIn []string
+	Stale  bool
+}
 
 type Stats struct {
 	Installed int
@@ -98,7 +114,7 @@ func Load() Data {
 			Installed: 42,
 			Enabled:   39,
 			Updates:   3,
-			Conflicts: 1,
+			Conflicts: 2,
 		},
 		InstalledMods: []Mod{
 			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true, UpdatePolicy: "auto", AvailableVersion: "5.3"},
@@ -118,6 +134,13 @@ func Load() Data {
 			// computes Reinstall by checking InstalledMods live, so this entry
 			// needs no special-casing beyond simply existing here.
 			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true},
+		},
+		Conflicts: []Conflict{
+			// Stale: the DB owner (Immersive Armors) disagrees with the
+			// load-order winner (USSEP) - a redeploy would flip who wins.
+			{Path: "meshes/armor/steel/f/1stperson/steel_helmet.nif", Owner: "Immersive Armors", Winner: "USSEP", AlsoIn: []string{"USSEP"}, Stale: true},
+			// In-sync: owner and winner already agree.
+			{Path: "textures/frost.dds", Owner: "USSEP", Winner: "USSEP", AlsoIn: []string{"Immersive Armors"}, Stale: false},
 		},
 		Profiles: []Profile{
 			{Name: "survival", Active: true, ModCount: 42},

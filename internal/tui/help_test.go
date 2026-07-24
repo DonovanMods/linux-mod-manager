@@ -24,7 +24,7 @@ func TestHelpViewListsPerScreenGroups(t *testing.T) {
 	view := model.helpView()
 
 	for _, want := range []string{
-		"global", "dashboard", "installed mods", "search", "profiles",
+		"global", "dashboard", "installed mods", "search", "profiles", "conflicts",
 		"files", "policy", "purge", "game", "new profile", "delete profile",
 	} {
 		require.Contains(t, view, want, "missing %q", want)
@@ -59,6 +59,26 @@ func TestHelpViewCurrentScreenGroupFirst(t *testing.T) {
 	require.NotEqual(t, -1, installedIdx, "installed mods header missing")
 	require.NotEqual(t, -1, profilesIdx, "profiles header missing")
 	require.Less(t, installedIdx, profilesIdx, "installed mods group should render before profiles when on Installed Mods")
+}
+
+// TestHelpViewConflictsGroupPromotedOnConflictsScreen mirrors
+// TestHelpViewCurrentScreenGroupFirst for Task 3's new "conflicts" group: a
+// Conflicts-screen user sees it promoted to immediately follow "global",
+// ahead of the fixed dashboard/installed mods/search/profiles order.
+func TestHelpViewConflictsGroupPromotedOnConflictsScreen(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model.screen = ScreenConflicts
+	model.showHelp = true
+
+	view := model.helpView()
+	conflictsIdx := strings.Index(view, "conflicts")
+	dashboardIdx := strings.Index(view, "dashboard")
+	require.NotEqual(t, -1, conflictsIdx, "conflicts header missing")
+	require.NotEqual(t, -1, dashboardIdx, "dashboard header missing")
+	require.Less(t, conflictsIdx, dashboardIdx, "conflicts group should render before dashboard when on Conflicts")
 }
 
 // TestHelpViewCapsWithMoreTailAtSmallHeight exercises the height-capped

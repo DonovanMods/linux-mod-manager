@@ -16,14 +16,20 @@ type KeyMap struct {
 	InstalledMods key.Binding
 	Profiles      key.Binding
 	Sources       key.Binding
-	Select        key.Binding
-	Submit        key.Binding
-	Blur          key.Binding
-	NextPage      key.Binding
-	PrevPage      key.Binding
-	CycleSource   key.Binding
-	ConfirmAction key.Binding
-	CancelAction  key.Binding
+	// ConflictsScreen is Task 3's direct-jump binding to ScreenConflicts,
+	// mirroring SearchScreen's own "named screen, separate from the plain
+	// Dashboard/InstalledMods/Profiles/Sources bindings" shape (both name a
+	// specific screen a user might reach some other way too - SearchScreen
+	// via "/", ConflictsScreen has no such alternate entry point yet).
+	ConflictsScreen key.Binding
+	Select          key.Binding
+	Submit          key.Binding
+	Blur            key.Binding
+	NextPage        key.Binding
+	PrevPage        key.Binding
+	CycleSource     key.Binding
+	ConfirmAction   key.Binding
+	CancelAction    key.Binding
 	// ToggleEnable, Uninstall, and Deploy are Phase 5a's Installed
 	// Mods/Dashboard mutation bindings (see mutations.go). Profile switch
 	// deliberately has no binding of its own here - it reuses Select
@@ -127,6 +133,10 @@ func DefaultKeyMap() KeyMap {
 		Sources: key.NewBinding(
 			key.WithKeys("5"),
 			key.WithHelp("5", "sources"),
+		),
+		ConflictsScreen: key.NewBinding(
+			key.WithKeys("6"),
+			key.WithHelp("6", "conflicts"),
 		),
 		Select: key.NewBinding(
 			key.WithKeys("enter"),

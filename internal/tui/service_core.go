@@ -487,6 +487,36 @@ func (p *coreProvider) DeployedFiles(sourceID, modID string) ([]string, error) {
 	return paths, nil
 }
 
+// Conflicts lists every file conflict the active profile currently has
+// (Task 3), delegating directly to svc.GetProfileConflicts and mapping each
+// core.ProfileConflict to its TUI render model - Owner/Winner/AlsoIn take
+// each ConflictModRef's Name (already falls back to Key when empty - see
+// that type's own doc comment), so no separate fallback is needed here.
+func (p *coreProvider) Conflicts(ctx context.Context) ([]ConflictItem, error) {
+	game := p.currentGame()
+	profile := p.currentProfile()
+	conflicts, err := p.svc.GetProfileConflicts(ctx, game, profile)
+	if err != nil {
+		return nil, fmt.Errorf("getting conflicts for %s/%s: %w", game.ID, profile, err)
+	}
+
+	items := make([]ConflictItem, 0, len(conflicts))
+	for _, c := range conflicts {
+		alsoIn := make([]string, 0, len(c.AlsoIn))
+		for _, ref := range c.AlsoIn {
+			alsoIn = append(alsoIn, ref.Name)
+		}
+		items = append(items, ConflictItem{
+			Path:   c.Path,
+			Owner:  c.Owner.Name,
+			Winner: c.LoadOrderWinner.Name,
+			AlsoIn: alsoIn,
+			Stale:  c.Stale,
+		})
+	}
+	return items, nil
+}
+
 func installedModStatus(mod domain.InstalledMod) string {
 	switch {
 	case mod.Enabled && mod.Deployed:

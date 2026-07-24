@@ -82,8 +82,15 @@ type Model struct {
 	mods     []ModItem
 	profiles []ProfileItem
 	sources  []SourceInfo
-	search   searchModel
-	action   actionModel
+	// conflicts backs the Conflicts screen (Task 3) - fetched alongside
+	// mods/profiles in the same loadData refresh cycle (see dataLoadedMsg),
+	// not gated behind an explicit user action the way Updates/CheckUpdates
+	// is: conflict detection is a cheap, pure DB/cache read (core.Service.
+	// GetProfileConflicts), so it belongs in the ordinary load rather than a
+	// Phase 5b-style on-demand check.
+	conflicts []ConflictItem
+	search    searchModel
+	action    actionModel
 	// picker is the pending list-choice modal (see picker.go), if any.
 	// Sibling to action.pending: promptPicker/updatePickerKey/pickerView
 	// mirror promptAction/updatePendingActionKey/actionModalView's structure.
@@ -120,10 +127,11 @@ const (
 // game switch reset the session - is discarded exactly like a stale
 // searchResultMsg (the mechanism this mirrors).
 type dataLoadedMsg struct {
-	gen      int
-	summary  Summary
-	mods     []ModItem
-	profiles []ProfileItem
+	gen       int
+	summary   Summary
+	mods      []ModItem
+	profiles  []ProfileItem
+	conflicts []ConflictItem
 }
 
 // loadFailedMsg carries an error from a failed DataProvider load, tagged
@@ -174,6 +182,7 @@ func NewModel(options Options) (Model, error) {
 			ScreenSearch:        0,
 			ScreenProfiles:      0,
 			ScreenSources:       0,
+			ScreenConflicts:     0,
 		},
 	}, nil
 }
@@ -291,8 +300,21 @@ func (m Model) loadData() tea.Msg {
 	if err != nil {
 		return loadFailedMsg{gen: m.loadGen, err: err}
 	}
+	conflicts, err := m.provider.Conflicts(m.ctx)
+	if err != nil {
+		return loadFailedMsg{gen: m.loadGen, err: err}
+	}
+	// The dashboard's conflict count is derived from THIS fetch, not
+	// whatever Overview itself reported (real coreProvider.Overview always
+	// reports the -1 sentinel there - see its own doc comment - and the
+	// prototype's canned Stats.Conflicts is just flavor text): unlike
+	// Updates, which genuinely needs an explicit user-triggered check
+	// (Phase 5b), conflict detection is a plain, cheap read available on
+	// every ordinary refresh, so Summary.Conflicts always reflects the real,
+	// current count once this returns - never the "?" unknown sentinel.
+	summary.Conflicts = len(conflicts)
 
-	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles}
+	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles, conflicts: conflicts}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -326,6 +348,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.summary = summary
 		m.mods = msg.mods
 		m.profiles = msg.profiles
+		m.conflicts = msg.conflicts
 		m.clampSelections()
 		return m, nil
 	case actionDoneMsg:
@@ -628,6 +651,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gotoScreen(ScreenProfiles)
 	case key.Matches(msg, m.keys.Sources):
 		return m.gotoScreen(ScreenSources)
+	case key.Matches(msg, m.keys.ConflictsScreen):
+		return m.gotoScreen(ScreenConflicts)
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 		return m, nil
@@ -675,7 +700,14 @@ func (m Model) View() string {
 
 	b.WriteString(m.theme.Title.Render("LMM // Linux Mod Manager"))
 	b.WriteString("\n")
-	b.WriteString(m.nav())
+	// Hard-truncated to availableWidth(), matching every other fixed-height
+	// line (footerLine/helpView) - Task 3's 6th screen entry ("[6]
+	// Conflicts") pushed the joined nav bar past 80 columns for the first
+	// time, and an untruncated overlong line here would otherwise trigger
+	// lipgloss's automatic word-wrap and silently grow the view past its
+	// fixed height budget (the same defect class truncate()'s other call
+	// sites already guard against - see its own doc comment).
+	b.WriteString(truncate(m.nav(), m.availableWidth()))
 	b.WriteString("\n\n")
 
 	b.WriteString(m.screenView())
@@ -778,6 +810,8 @@ func (m Model) itemCount(screen Screen) int {
 		return len(m.profiles)
 	case ScreenSources:
 		return len(m.sources)
+	case ScreenConflicts:
+		return len(m.conflicts)
 	default:
 		return len(m.dashboardMenu())
 	}
@@ -839,6 +873,8 @@ func (m Model) screenView() string {
 		return m.profilesView()
 	case ScreenSources:
 		return m.sourcesView()
+	case ScreenConflicts:
+		return m.conflictsView()
 	default:
 		return m.dashboardView()
 	}
@@ -1301,6 +1337,129 @@ func (m Model) sourcesView() string {
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// conflictsView renders the Conflicts screen (Task 3): every file conflict
+// GetProfileConflicts found for the active profile, one row each, sorted by
+// Path (the query's own contract - see core.GetProfileConflicts' doc
+// comment) - m.conflicts is stored in that order, so no re-sort is needed
+// here. Conflicts only surface for files the DB already knows were
+// deployed (ownership comes from deployed_files - see ConflictItem's own
+// doc comment), so a profile that has never been deployed reports none;
+// the empty-state copy below deliberately does not promise pre-deploy
+// detection.
+func (m Model) conflictsView() string {
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+
+	if len(m.conflicts) == 0 {
+		return m.panelWithHeight(width, height).Render(strings.Join([]string{
+			m.theme.PanelTitle.Render("CONFLICT ORACLE"),
+			m.theme.MutedText.Render("No conflicts detected."),
+		}, "\n"))
+	}
+
+	// Two-pane list/detail layout mirroring commanderDashboardView's width
+	// math: leftWidth + gap + rightWidth sums to EXACTLY width, so
+	// lipgloss.JoinHorizontal's result satisfies the "screenView uses
+	// availableWidth() exactly" invariant every other screen already meets.
+	gap := 1
+	leftWidth := max((width-gap)/2, 1)
+	rightWidth := max(width-gap-leftWidth, 1)
+	paneContentHeight := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		m.panelWithHeight(leftWidth, height).Render(m.conflictsListPane(leftWidth, paneContentHeight)),
+		" ",
+		m.panelWithHeight(rightWidth, height).Render(m.conflictsDetailPane(rightWidth, paneContentHeight)),
+	)
+}
+
+// conflictsListPane renders the selectable FILE/OWNER/WINNER rows, marking a
+// stale conflict (owner disagrees with the load-order winner - a redeploy
+// would change who wins) with a leading "!" so it's visible without opening
+// the detail pane. Column widths derive from the pane's actual content
+// width (mirroring searchResultsPane/profileRow's own proportional-with-
+// floor approach) so the columns can never sum past it; overflowing values
+// truncate rather than reaching lipgloss's automatic line-wrap, which would
+// silently break the exact-height layout invariant. Rows beyond maxLines
+// are omitted for the same reason a short terminal can outnumber the
+// available rows.
+func (m Model) conflictsListPane(width, maxLines int) string {
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+	const markerWidth = 2 // "! "/"  " stale marker
+	const gaps = 2        // separating spaces between the 3 columns
+	const minPath = 8
+
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	avail := max(innerWidth-prefixWidth-markerWidth-gaps, minPath)
+	ownerWidth := min(14, max(avail/4, 1))
+	winnerWidth := min(14, max(avail/4, 1))
+	pathWidth := max(avail-ownerWidth-winnerWidth, minPath)
+
+	headerLine := fmt.Sprintf("  %-*s %-*s %s",
+		pathWidth, "FILE", ownerWidth, "OWNER", "WINNER")
+	rows := []string{
+		m.theme.PanelTitle.Render("CONFLICT ORACLE"),
+		m.theme.MutedText.Render(truncate(headerLine, innerWidth)),
+	}
+
+	items := m.conflicts
+	budget := maxLines - len(rows)
+	if budget < 0 {
+		budget = 0
+	}
+	if len(items) > budget {
+		items = items[:budget]
+	}
+
+	for i, c := range items {
+		marker := "  "
+		if c.Stale {
+			marker = m.theme.WarningText.Render("! ")
+		}
+		line := marker + fmt.Sprintf("%-*s %-*s %s",
+			pathWidth, truncate(c.Path, pathWidth),
+			ownerWidth, truncate(c.Owner, ownerWidth),
+			truncate(c.Winner, winnerWidth))
+		rows = append(rows, m.row(i, line))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// conflictsDetailPane renders the fields for the currently selected
+// conflict: path/owner/winner, every other providing mod (AlsoIn), and a
+// hint line whose copy depends on Stale - task-3-brief.md's wording is used
+// verbatim since it's the only place in the TUI that explains what a stale
+// conflict means and how to resolve it.
+func (m Model) conflictsDetailPane(width, maxLines int) string {
+	idx := m.selected[ScreenConflicts]
+	if idx < 0 || idx >= len(m.conflicts) {
+		return m.theme.MutedText.Render("No selection.")
+	}
+	c := m.conflicts[idx]
+
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	lines := []string{
+		m.theme.PanelTitle.Render("DETAIL"),
+		truncate(fmt.Sprintf("File:   %s", c.Path), innerWidth),
+		truncate(fmt.Sprintf("Owner:  %s", c.Owner), innerWidth),
+		truncate(fmt.Sprintf("Winner: %s", c.Winner), innerWidth),
+	}
+	if len(c.AlsoIn) > 0 {
+		lines = append(lines, truncate("Also in: "+strings.Join(c.AlsoIn, ", "), innerWidth))
+	}
+
+	hint := "reorder mods (J/K on installed) to change the winner"
+	if c.Stale {
+		hint = fmt.Sprintf("load order says %s should win — deploy (D) to apply", c.Winner)
+	}
+	lines = append(lines, "", truncate(m.theme.MutedText.Render(hint), innerWidth))
+
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	return strings.Join(lines, "\n")
+}
+
 // helpGroup is one labeled section of the help panel: a screen name (or
 // "global") plus the key entries that apply to it. Group labels are
 // lowercase per Task 9's copy convention (see helpGroups).
@@ -1333,7 +1492,7 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.Help),
 			helpEntry(m.keys.NextScreen),
 			helpEntry(m.keys.PrevScreen),
-			fmt.Sprintf("%-16s %s", "1-5", "jump to a screen"),
+			fmt.Sprintf("%-16s %s", "1-6", "jump to a screen"),
 			helpEntry(m.keys.GameSwitch),
 		},
 	}
@@ -1393,12 +1552,28 @@ func (m Model) helpGroups() []helpGroup {
 		},
 	}
 
-	fixed := []helpGroup{dashboard, installedMods, search, profiles}
+	// conflicts has no mutation bindings of its own yet (Task 3 is read-only
+	// - Deploy stays scoped to Dashboard/Installed Mods, see
+	// deployActiveProfile's own screen guard): Up/Down are documented here
+	// anyway, unlike every OTHER screen (where they're left to the footer's
+	// generic "↑↓/j/k: move" hint), because selecting a row IS this screen's
+	// entire interaction model - it's what reveals the detail pane's stale/
+	// in-sync hint copy, not just a cosmetic highlight.
+	conflicts := helpGroup{
+		name: "conflicts",
+		entries: []string{
+			helpEntry(m.keys.Up),
+			helpEntry(m.keys.Down),
+		},
+	}
+
+	fixed := []helpGroup{dashboard, installedMods, search, profiles, conflicts}
 	screenGroupName := map[Screen]string{
 		ScreenDashboard:     dashboard.name,
 		ScreenInstalledMods: installedMods.name,
 		ScreenSearch:        search.name,
 		ScreenProfiles:      profiles.name,
+		ScreenConflicts:     conflicts.name,
 	}
 	if name, ok := screenGroupName[m.screen]; ok {
 		for i, g := range fixed {

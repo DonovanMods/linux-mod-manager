@@ -938,6 +938,9 @@ func (f *fakeSwitchableProvider) Search(context.Context, string, string, int) (S
 
 func (f *fakeSwitchableProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
 func (f *fakeSwitchableProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
+func (f *fakeSwitchableProvider) Conflicts(context.Context) ([]ConflictItem, error) {
+	return nil, nil
+}
 
 func (f *fakeSwitchableProvider) Profiles(context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(f.names))
@@ -1061,6 +1064,9 @@ func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _ int) (
 }
 func (p *searchCancelProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
 func (p *searchCancelProvider) ListGames() ([]GameInfo, error)                 { return p.listGames, nil }
+func (p *searchCancelProvider) Conflicts(context.Context) ([]ConflictItem, error) {
+	return nil, nil
+}
 
 // SetGame implements actions.go's optional gameRebinder hook.
 func (p *searchCancelProvider) SetGame(id string) error {

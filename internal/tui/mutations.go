@@ -1235,6 +1235,7 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	m.summary = Summary{Updates: -1, Conflicts: -1}
 	m.mods = nil
 	m.profiles = nil
+	m.conflicts = nil
 	for screen := range m.selected {
 		m.selected[screen] = 0
 	}

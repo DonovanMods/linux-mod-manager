@@ -570,6 +570,89 @@ func TestCoreProviderDeployedFilesEmpty(t *testing.T) {
 	require.Empty(t, got)
 }
 
+// --- coreProvider: Conflicts (Task 3) ---
+
+// TestCoreProviderConflicts guards coreProvider.Conflicts' mapping from
+// core.ProfileConflict to tui.ConflictItem: names (not raw source:mod keys)
+// and Stale must both come through correctly, in both directions - first
+// the in-sync case (owner == load-order winner after a real deploy), then
+// the stale case (a reorder without a redeploy flips the winner while the
+// DB owner stays put) - mirroring internal/core/conflicts_test.go's own
+// TestGetProfileConflictsWinnerAndStale fixture shape, built here directly
+// against a real *core.Service since seedTwinConflict/seedNamedInstalledMod
+// are unexported to package core_test and unreachable from here.
+func TestCoreProviderConflicts(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{
+		ID:          "conflict-game",
+		Name:        "Conflict Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+		LinkMethod:  domain.LinkSymlink,
+	}
+	require.NoError(t, svc.AddGame(game))
+
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "modX", "1.0", "shared.esp", []byte("X-content")))
+	require.NoError(t, gameCache.Store(game.ID, "src", "modY", "1.0", "shared.esp", []byte("Y-content")))
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "modX", SourceID: "src", GameID: game.ID, Name: "Mod X", Version: "1.0"},
+		ProfileName: "default",
+		Enabled:     true,
+	}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "modY", SourceID: "src", GameID: game.ID, Name: "Mod Y", Version: "1.0"},
+		ProfileName: "default",
+		Enabled:     true,
+	}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modX", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modY", Version: "1.0"}))
+
+	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	provider := tui.NewCoreProvider(svc, game, "default")
+
+	items, err := provider.Conflicts(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+
+	item := items[0]
+	assert.Equal(t, "shared.esp", item.Path)
+	assert.Equal(t, "Mod Y", item.Owner, "modY deploys last in profile order and owns the shared path")
+	assert.Equal(t, "Mod Y", item.Winner)
+	assert.Equal(t, []string{"Mod X"}, item.AlsoIn)
+	assert.False(t, item.Stale)
+
+	// Reorder WITHOUT redeploying: modX becomes the load-order winner while
+	// the DB's recorded owner stays modY - the conflict must now report
+	// Stale, with Winner tracking the new order and Owner unchanged.
+	require.NoError(t, pm.ReorderMods(game.ID, "default", []domain.ModReference{
+		{SourceID: "src", ModID: "modY", Version: "1.0"},
+		{SourceID: "src", ModID: "modX", Version: "1.0"},
+	}))
+
+	items, err = provider.Conflicts(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "Mod Y", items[0].Owner, "DB owner must be unchanged without a redeploy")
+	assert.Equal(t, "Mod X", items[0].Winner, "after the reorder, modX is last in profile order")
+	assert.True(t, items[0].Stale)
+}
+
 // --- coreProvider: ActionProvider ---
 
 // newCoreActionsFixture mirrors newCoreProviderFixture, but returns the
