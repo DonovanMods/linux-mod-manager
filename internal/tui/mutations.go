@@ -192,13 +192,11 @@ func (m Model) showDeployedFiles() (tea.Model, tea.Cmd) {
 // uninstallSelectedMod/showDeployedFiles); a single-flight conflict (checked
 // explicitly here, mirroring switchSelectedProfile/checkForUpdates' own
 // explicit check - required because, unlike those, this method never
-// reaches buildAction's own guard at all); modsFiltered (see its own doc
-// comment on the Model struct for why an explicit status-line explanation,
-// unlike the silent guards around it); an out-of-range selection (covers an
-// empty list); and the target slot being off either end of the list (the
-// top row can't move up, the bottom row can't move down) - all four of
-// these last guards are silent no-ops, matching this file's existing
-// precedent for a selection/edge condition that isn't itself an error.
+// reaches buildAction's own guard at all); an out-of-range selection
+// (covers an empty list); and the target slot being off either end of the
+// list (the top row can't move up, the bottom row can't move down) - all
+// silent no-ops, matching this file's existing precedent for a
+// selection/edge condition that isn't itself an error.
 //
 // On success: the swapped order becomes m.mods, selection follows the moved
 // mod to its new slot, and m.orderChanged is set (see its own doc comment)
@@ -213,11 +211,13 @@ func (m Model) moveSelectedMod(delta int) (Model, tea.Cmd) {
 	if m.action.running || m.action.pending != nil {
 		return m, nil
 	}
-	if m.modsFiltered {
-		m.action.status = "reorder unavailable while filtered"
-		m.action.statusIsError = true
-		return m, nil
-	}
+	// If a filtered or otherwise PARTIAL view of the installed list ever
+	// lands on this screen, reorder must go inert here (with a status-line
+	// explanation): a partial view cannot express a total load order, so
+	// persisting one would silently truncate the profile (design doc §2,
+	// docs/plans/2026-07-23-tui-phase6b-workflows-design.md). No such view
+	// exists today - m.mods is always the full profile's list - so there is
+	// deliberately no guard to write yet (YAGNI).
 
 	idx := m.selected[ScreenInstalledMods]
 	if idx < 0 || idx >= len(m.mods) {

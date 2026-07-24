@@ -122,19 +122,6 @@ type Model struct {
 	// actionDoneMsg case below) or a game switch resets the session
 	// (resolveGameSwitch, mutations.go).
 	orderChanged bool
-	// modsFiltered marks the Installed Mods list on screen as a PARTIAL view
-	// of the active profile's full mod set - moveSelectedMod's reorder guard
-	// (mutations.go): a partial view cannot express a total load order (see
-	// docs/plans/2026-07-23-tui-phase6b-workflows-design.md §2), so
-	// reordering it would silently persist a truncated order. Nothing in the
-	// current TUI actually narrows m.mods yet (Installed Mods has no
-	// filter/search box of its own - only the separate Search screen filters,
-	// and that's an entirely different list), so this guard is presently
-	// unreachable via any real keypress; it exists so a future filter
-	// feature on this screen inherits reorder's safety automatically rather
-	// than moveSelectedMod needing to be revisited. Exercised directly
-	// (white-box) by TestReorderInertWhileFiltered.
-	modsFiltered bool
 }
 
 // loadState tracks where the Model is in its async data-load lifecycle.
@@ -1642,13 +1629,15 @@ func (m Model) helpGroups() []helpGroup {
 // same as before Task 9.
 func (m Model) helpBodyBudget() int {
 	if m.height == 0 {
-		// Bumped 40->50 in Task 4: the installed-mods group's two new
-		// MoveDown/MoveUp entries pushed the full uncapped group list to 43
-		// lines, past the old 40 default - TestHelpViewListsPerScreenGroups
-		// depends on this staying "generous" enough to render every group's
-		// content, per this method's own doc comment. 50 leaves headroom
-		// above today's 43 for the next few tasks' bindings, rather than
-		// needing a re-bump for every single addition.
+		// Bumped 40->50 in Task 4: the full uncapped group list was already
+		// at 41 lines after Task 3's conflicts group (silently one past the
+		// old 40 default), and the installed-mods group's two new
+		// MoveDown/MoveUp entries pushed it further past 40, to 43 -
+		// TestHelpViewListsPerScreenGroups depends on this staying
+		// "generous" enough to render every group's content, per this
+		// method's own doc comment. 50 leaves headroom above today's 43 for
+		// the next few tasks' bindings, rather than needing a re-bump for
+		// every single addition.
 		return 50
 	}
 	status := 0

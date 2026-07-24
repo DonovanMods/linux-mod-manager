@@ -2717,29 +2717,6 @@ func TestMoveAtListEdgeNoop(t *testing.T) {
 	require.Empty(t, rec.ReorderCalls)
 }
 
-// TestReorderInertWhileFiltered proves modsFiltered (see its own doc comment
-// on the Model struct) refuses the move with an explicit status-line
-// explanation, leaving the list and provider untouched - unlike the other
-// reorder guards, which are silent.
-func TestReorderInertWhileFiltered(t *testing.T) {
-	t.Parallel()
-
-	rec := &recordingActions{}
-	model := modelWithActions(t, rec)
-	model.screen = ScreenInstalledMods
-	model.selected[ScreenInstalledMods] = 0
-	model.modsFiltered = true
-
-	updated, cmd := model.Update(keyRunes("J"))
-	model = updated.(Model)
-	require.Nil(t, cmd)
-	require.Equal(t, "SkyUI", model.mods[0].Name, "order must be untouched")
-	require.Empty(t, rec.ReorderCalls)
-	require.Equal(t, "reorder unavailable while filtered", model.action.status)
-	require.True(t, model.action.statusIsError)
-	require.False(t, model.orderChanged)
-}
-
 // TestReorderInertWhileActionRunning proves the single-flight guard: an
 // in-flight action blocks a move entirely (silent no-op, mirroring
 // switchSelectedProfile/checkForUpdates' own explicit running/pending check
