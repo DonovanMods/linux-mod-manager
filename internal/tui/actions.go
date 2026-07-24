@@ -53,6 +53,12 @@ const (
 	// default status+refresh path already covers it, exactly like
 	// actionSetPolicy/actionCreateProfile/actionDeleteProfile above.
 	actionPurge
+	// actionRollback is Task 6's Installed-Mods rollback-behind-confirmation
+	// action kind (see mutations.go's rollbackSelectedMod). No
+	// actionDoneMsg branch needs to name it specifically (app.go) - the
+	// default status+refresh path already covers it, exactly like
+	// actionPurge above.
+	actionRollback
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation

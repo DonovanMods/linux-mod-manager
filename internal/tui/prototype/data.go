@@ -98,6 +98,15 @@ type Mod struct {
 	// comment. Every other InstalledMods entry leaves both unset.
 	UpdatePolicy     string
 	AvailableVersion string
+
+	// PreviousVersion feeds prototypeProvider.Rollback's fake swap (Task 6):
+	// a non-empty value marks the InstalledMods entry as rollback-eligible,
+	// mirroring domain.InstalledMod.PreviousVersion's own "version before
+	// last update" contract - ModItem.PreviousVersion (service.go) is
+	// populated straight from this field. Every other canned mod leaves it
+	// unset, so --prototype mode can also demo the "no previous version to
+	// roll back to" refusal (mutations.go's rollbackSelectedMod) on those.
+	PreviousVersion string
 }
 
 // Load returns static demo data. It must never touch disk, network, DB, or APIs.
@@ -119,7 +128,7 @@ func Load() Data {
 		InstalledMods: []Mod{
 			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true, UpdatePolicy: "auto", AvailableVersion: "5.3"},
 			{ID: "ussep", Name: "USSEP", Source: "nexusmods", Author: "Arthmoor", Version: "4.3", Status: "update", Summary: "Unofficial Skyrim Special Edition Patch.", Downloads: 11_000_000, Endorsements: 420_000, HasEndorsements: true, UpdatePolicy: "notify", AvailableVersion: "4.4"},
-			{ID: "skse-address-library", Name: "SKSE Address Library", Source: "nexusmods", Author: "meh321", Version: "11", Status: "installed", Summary: "Address library for SKSE plugins.", Downloads: 8_900_000, Endorsements: 150_000, HasEndorsements: true},
+			{ID: "skse-address-library", Name: "SKSE Address Library", Source: "nexusmods", Author: "meh321", Version: "11", Status: "installed", Summary: "Address library for SKSE plugins.", Downloads: 8_900_000, Endorsements: 150_000, HasEndorsements: true, PreviousVersion: "10"},
 			{ID: "immersive-armors", Name: "Immersive Armors", Source: "nexusmods", Author: "hothtrooper44", Version: "8.1", Status: "conflict", Summary: "Adds hundreds of new armor variants.", Downloads: 6_700_000, Endorsements: 380_000, HasEndorsements: true},
 			{ID: "alternate-start", Name: "Alternate Start", Source: "nexusmods", Author: "Arthmoor", Version: "4.2", Status: "disabled", Summary: "Alternative character start scenarios.", Downloads: 5_200_000, Endorsements: 220_000, HasEndorsements: true},
 		},

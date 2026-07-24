@@ -173,6 +173,48 @@ func (m Model) showDeployedFiles() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// --- Rollback ('<' on Installed Mods) ---
+
+// rollbackSelectedMod handles '<' on Installed Mods (Task 6): a no-op on the
+// wrong screen, an empty list, or with no ActionProvider configured -
+// mirrors uninstallSelectedMod's guard/selection shape. A mod with no
+// PreviousVersion (ModItem.PreviousVersion == "") is refused SYNCHRONOUSLY,
+// on the status line, with no modal at all - mirroring
+// deleteSelectedProfile's own active-profile refusal shape (see that
+// method's doc comment): there is nothing to confirm when there is no
+// previous version to roll back to, and ActionProvider.Rollback's own guard
+// repeats this defense-in-depth exactly like DeleteProfile's does. Unlike
+// deleteSelectedProfile's refusal (an actual error - deleting the active
+// profile IS a valid row the user could otherwise act on), this is a benign
+// "nothing to do" outcome for the selected row - mirroring
+// purgeProfilePrompt's own "no mods installed" short-circuit - so
+// statusIsError is false here, not true.
+//
+// Otherwise, opens the standard y/n confirmation modal titled with both
+// versions so the user can see exactly what's about to change, then calls
+// ActionProvider.Rollback with the selected item on confirm.
+func (m Model) rollbackSelectedMod() (Model, tea.Cmd) {
+	if m.screen != ScreenInstalledMods || m.actions == nil {
+		return m, nil
+	}
+	item, ok := m.selectedMod()
+	if !ok {
+		return m, nil
+	}
+	if item.PreviousVersion == "" {
+		m.action.status = "no previous version to roll back to"
+		m.action.statusIsError = false
+		return m, nil
+	}
+
+	title := fmt.Sprintf("Roll back %q v%s → v%s?", item.Name, item.Version, item.PreviousVersion)
+	detail := m.gameProfileDetail("Replaces deployed files with the previous version; rollback hooks will run. A failure partway may leave a mix of both versions applied.")
+	model, pa := m.buildAction(actionRollback, title, detail, "", func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.Rollback(ctx, item, progress)
+	})
+	return model.promptAction(pa), nil
+}
+
 // --- Load-order reorder (J/K on Installed Mods) ---
 
 // moveSelectedMod handles MoveDown ('J', delta=+1) and MoveUp ('K',

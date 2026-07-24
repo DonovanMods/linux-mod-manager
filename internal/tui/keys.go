@@ -90,6 +90,13 @@ type KeyMap struct {
 	// fully functional side by side.
 	MoveDown key.Binding
 	MoveUp   key.Binding
+	// Rollback is Task 6's Installed-Mods rollback binding (see mutations.go's
+	// rollbackSelectedMod): fires on ScreenInstalledMods with a mod selected,
+	// behind the standard y/n confirmation modal - the TUI equivalent of
+	// `lmm update rollback <mod-id>`. A mod with no PreviousVersion is refused on
+	// the status line instead (no modal). "<" reads as "go back a version",
+	// distinct from every other single-letter/shift-letter binding above.
+	Rollback key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -230,6 +237,10 @@ func DefaultKeyMap() KeyMap {
 		MoveUp: key.NewBinding(
 			key.WithKeys("K", "ctrl+up"),
 			key.WithHelp("K", "move mod up"),
+		),
+		Rollback: key.NewBinding(
+			key.WithKeys("<"),
+			key.WithHelp("<", "rollback"),
 		),
 	}
 }

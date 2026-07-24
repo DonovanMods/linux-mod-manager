@@ -716,6 +716,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.moveSelectedMod(1)
 	case key.Matches(msg, m.keys.MoveUp):
 		return m.moveSelectedMod(-1)
+	case key.Matches(msg, m.keys.Rollback):
+		return m.rollbackSelectedMod()
 	default:
 		return m, nil
 	}
@@ -1552,6 +1554,9 @@ func (m Model) helpGroups() []helpGroup {
 			// mutations.go's moveSelectedMod).
 			helpEntry(m.keys.MoveDown),
 			helpEntry(m.keys.MoveUp),
+			// Rollback is Task 6's rollback-behind-confirmation key (see
+			// mutations.go's rollbackSelectedMod).
+			helpEntry(m.keys.Rollback),
 		},
 	}
 

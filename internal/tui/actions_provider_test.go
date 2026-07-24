@@ -485,6 +485,65 @@ func TestPrototypeProviderActions_ApplyUpdate_UnknownModErrors(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestPrototypeRollbackSwapsVersions covers Task 6's rollback demo: the
+// canned "skse-address-library" InstalledMods entry (see prototype/data.go's
+// PreviousVersion doc comment) has Version "11"/PreviousVersion "10" -
+// Rollback must swap the two IN PLACE, visible on a repeated Overview,
+// mirroring ApplyUpdate's own "same instance, same session" contract.
+func TestPrototypeRollbackSwapsVersions(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	before := requireModByID(t, mods, "skse-address-library")
+	require.Equal(t, "11", before.Version)
+	require.Equal(t, "10", before.PreviousVersion)
+
+	var ticks []ActionProgress
+	outcome, err := actions.Rollback(context.Background(),
+		ModItem{ID: before.ID, Source: before.Source, Name: before.Name},
+		func(p ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, `Rolled back "SKSE Address Library" to 10`, outcome.Message)
+	require.NotEmpty(t, ticks, "Rollback must stream fake progress ticks like ApplyUpdate/ApplyInstall")
+
+	_, mods, err = provider.Overview(context.Background())
+	require.NoError(t, err)
+	after := requireModByID(t, mods, "skse-address-library")
+	assert.Equal(t, "10", after.Version, "the SAME provider instance must reflect the rollback on the next Overview call")
+	assert.Equal(t, "11", after.PreviousVersion, "the rolled-back-FROM version becomes the new previous version")
+}
+
+// TestPrototypeRollbackNoPreviousVersionErrors guards the defense-in-depth
+// guard on a mod with no PreviousVersion (e.g. "skyui", which only carries
+// an AvailableVersion - see prototype/data.go) - the TUI's own handler
+// already refuses this synchronously (mutations.go's rollbackSelectedMod),
+// but prototypeProvider.Rollback repeats the check anyway.
+func TestPrototypeRollbackNoPreviousVersionErrors(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	_, err := actions.Rollback(context.Background(), ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no previous version available for rollback")
+}
+
+// TestPrototypeRollbackUnknownModErrors mirrors every other prototype
+// mutation's unknown-mod guard (e.g.
+// TestPrototypeProviderActions_ApplyUpdate_UnknownModErrors above).
+func TestPrototypeRollbackUnknownModErrors(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	_, err := actions.Rollback(context.Background(), ModItem{ID: "does-not-exist", Source: "nexusmods"}, nil)
+	assert.Error(t, err)
+}
+
 func requireModByID(t *testing.T, mods []ModItem, id string) ModItem {
 	t.Helper()
 	for _, m := range mods {
@@ -545,12 +604,18 @@ type recordingActions struct {
 	// above (one []string per call, not a single flattened slice).
 	ReorderCalls [][]string
 
+	// RollbackCalls records each Rollback call's item argument - Task 6's
+	// rollback wiring tests assert against this, mirroring EnableCalls/
+	// DisableCalls/UninstallCalls' own single-ModItem-argument shape above.
+	RollbackCalls []ModItem
+
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
 	CreateProfileOutcome, DeleteProfileOutcome                                   ActionOutcome
 	PurgeOutcome                                                                 ActionOutcome
 	ReorderOutcome                                                               ActionOutcome
+	RollbackOutcome                                                              ActionOutcome
 	PlanView                                                                     SwitchPlanView
 	InstallPlanViewOut                                                           InstallPlanView
 	UpdatesViewOut                                                               UpdatesView
@@ -564,6 +629,7 @@ type recordingActions struct {
 	ApplyInstallTicks []ActionProgress
 	ApplyUpdateTicks  []ActionProgress
 	PurgeTicks        []ActionProgress
+	RollbackTicks     []ActionProgress
 
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
@@ -572,6 +638,7 @@ type recordingActions struct {
 	PurgeErr                                                          error
 	SetGameErr                                                        error
 	ReorderErr                                                        error
+	RollbackErr                                                       error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -685,6 +752,17 @@ func (r *recordingActions) ReorderMods(_ context.Context, orderedKeys []string) 
 	return r.ReorderOutcome, r.ReorderErr
 }
 
+// Rollback implements ActionProvider (Task 6).
+func (r *recordingActions) Rollback(_ context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	r.RollbackCalls = append(r.RollbackCalls, item)
+	for _, p := range r.RollbackTicks {
+		if progress != nil {
+			progress(p)
+		}
+	}
+	return r.RollbackOutcome, r.RollbackErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -755,6 +833,10 @@ func (f failingActions) PurgeProfile(context.Context, func(ActionProgress)) (Act
 }
 
 func (f failingActions) ReorderMods(context.Context, []string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) Rollback(context.Context, ModItem, func(ActionProgress)) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 
@@ -887,6 +969,8 @@ func TestFailingActionsErrorsOnEveryMethod(t *testing.T) {
 	_, err = f.CheckUpdates(ctx)
 	assert.ErrorIs(t, err, sentinel)
 	_, err = f.ApplyUpdate(ctx, UpdateItem{}, nil)
+	assert.ErrorIs(t, err, sentinel)
+	_, err = f.Rollback(ctx, item, nil)
 	assert.ErrorIs(t, err, sentinel)
 }
 

@@ -141,13 +141,14 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {
 		items = append(items, ModItem{
-			ID:           mod.ID,
-			Name:         mod.Name,
-			Author:       mod.Author,
-			Version:      mod.Version,
-			Source:       mod.SourceID,
-			Status:       installedModStatus(mod),
-			UpdatePolicy: policyToString(mod.UpdatePolicy),
+			ID:              mod.ID,
+			Name:            mod.Name,
+			Author:          mod.Author,
+			Version:         mod.Version,
+			Source:          mod.SourceID,
+			Status:          installedModStatus(mod),
+			UpdatePolicy:    policyToString(mod.UpdatePolicy),
+			PreviousVersion: mod.PreviousVersion,
 		})
 	}
 
@@ -1343,6 +1344,55 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 	}
 	return ActionOutcome{
 		Message:  fmt.Sprintf("Updated %q to %s", u.Name, upd.NewVersion),
+		Warnings: mergeDiagnostics(result.Warnings, result.Notes),
+	}, nil
+}
+
+// rollbackProgressLine composes an ActionProgress from one core.DeployProgress
+// event during ApplyRollback, mirroring updateProgressLine's shape - but
+// ApplyRollback (Phase 6b Task 5) never downloads anything (the previous
+// version's files already live in the cache - see its own doc comment), so
+// it has no percentage-based phase worth surfacing on the status line the
+// way updateProgressLine's UpdateDownloading case does. Every phase
+// ApplyRollback actually emits (UpdateBeforeEachForced/UpdateWarning/
+// UpdateNote, reused verbatim from ApplyUpdate - see RollbackResult's own
+// doc comment) already reaches the caller through the completed
+// RollbackResult's Warnings/Notes fields (mergeDiagnostics, Rollback below) -
+// exactly mirroring how coreProvider.ApplyUpdate's own updateProgressLine
+// leaves those same three phases unmapped, for the identical reason. Kept as
+// an explicit named function (rather than a literal always-false closure) so
+// a future phase addition has an obvious, precedented place to compose a
+// line.
+func rollbackProgressLine(core.DeployProgress) (ActionProgress, bool) {
+	return ActionProgress{}, false
+}
+
+// Rollback rolls item back to its PreviousVersion via svc.ApplyRollback
+// (Phase 6b Task 5), with the SAME hook configuration
+// UninstallMod/DeployProfile/ApplyUpdate already use (Force=false - see
+// hookRunner's doc comment) - RollbackOptions mirrors UpdateOptions' own
+// hook plumbing exactly (see that type's doc comment in flows.go). The TUI
+// itself refuses a mod with no PreviousVersion synchronously, before this is
+// ever called (mutations.go's rollbackSelectedMod) - core.ApplyRollback
+// repeats the same guard defense-in-depth, so a stale selection still fails
+// cleanly here rather than rolling back the wrong thing.
+func (p *coreProvider) Rollback(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	game := p.currentGame()
+	profile := p.currentProfile()
+	opts := core.RollbackOptions{
+		Hooks:       p.resolvedHooks(game, profile),
+		HookRunner:  p.hookRunner(),
+		HookContext: p.hookContext(game),
+		Force:       false,
+	}
+
+	adapter := deployProgressAdapter(progress, rollbackProgressLine)
+	result, err := p.svc.ApplyRollback(ctx, game, profile, item.Source, item.ID, opts, adapter)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("rolling back %s: %w", item.Name, err)
+	}
+	return ActionOutcome{
+		Message:  fmt.Sprintf("Rolled back %q to %s", result.ModName, result.ToVersion),
 		Warnings: mergeDiagnostics(result.Warnings, result.Notes),
 	}, nil
 }

@@ -117,6 +117,18 @@ type ActionProvider interface {
 	// buildAction/promptAction's async confirm machinery. Outcome.Message is
 	// "load order updated".
 	ReorderMods(ctx context.Context, orderedKeys []string) (ActionOutcome, error)
+
+	// Rollback reverts item to its PreviousVersion (Task 6's '<' binding on
+	// Installed Mods - see mutations.go's rollbackSelectedMod), wired onto
+	// core.Service.ApplyRollback (Phase 6b Task 5's extraction of
+	// cmd/lmm/update.go's doUpdateRollback). A mod with no PreviousVersion
+	// is refused SYNCHRONOUSLY by the TUI, on the status line, before this
+	// is ever called - mirroring DeleteProfile's active-profile guard's own
+	// "status-line refusal, no modal" shape (see that method's doc comment)
+	// - but every implementation repeats the guard defense-in-depth, exactly
+	// like DeleteProfile's own coreProvider/prototypeProvider methods do.
+	// progress may be nil, like every other streaming ActionProvider method.
+	Rollback(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -705,4 +717,29 @@ func (p *prototypeProvider) ReorderMods(_ context.Context, orderedKeys []string)
 
 	p.setActiveMods(reordered)
 	return ActionOutcome{Message: "load order updated"}, nil
+}
+
+// Rollback swaps the ACTIVE game's matching InstalledMods entry's
+// Version/PreviousVersion in place (Task 6) - visible in a repeated
+// Overview, mirroring ApplyUpdate's own "same instance, same session"
+// contract. A mod with no PreviousVersion is refused defense-in-depth
+// (mirrors DeleteProfile's active-profile guard above), even though the
+// TUI's own handler (mutations.go's rollbackSelectedMod) already checks this
+// synchronously before ever calling here.
+func (p *prototypeProvider) Rollback(_ context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	idx := p.findInstalledIndex(item.Source, item.ID)
+	if idx < 0 {
+		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	mods := p.activeMods()
+	mod := &mods[idx]
+	if mod.PreviousVersion == "" {
+		return ActionOutcome{}, errors.New("no previous version available for rollback")
+	}
+
+	fakeProgressTicks(progress, fmt.Sprintf("Rolling back %s", mod.Name))
+
+	fromVersion, toVersion := mod.Version, mod.PreviousVersion
+	mod.Version, mod.PreviousVersion = toVersion, fromVersion
+	return ActionOutcome{Message: fmt.Sprintf("Rolled back %q to %s", mod.Name, toVersion)}, nil
 }

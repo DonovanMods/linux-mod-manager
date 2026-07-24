@@ -45,6 +45,17 @@ type ModItem struct {
 	// no policy of their own) - only Overview/the Installed Mods screen ever
 	// populates it.
 	UpdatePolicy string
+	// PreviousVersion is the version this mod would roll back to via '<' on
+	// Installed Mods (Task 6, mutations.go's rollbackSelectedMod) - "" means
+	// no previous version is available (the mod has never been updated, or
+	// has already been rolled back once), which the handler refuses
+	// synchronously rather than opening a modal. coreProvider populates this
+	// from domain.InstalledMod.PreviousVersion (service_core.go's Overview
+	// mapping); prototypeProvider from the canned Mod.PreviousVersion field
+	// (see that type's doc comment). Empty for a Search-derived ModItem,
+	// mirroring UpdatePolicy's own "only Overview populates it" convention
+	// above.
+	PreviousVersion string
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of
@@ -402,6 +413,7 @@ func modItems(mods []prototype.Mod) []ModItem {
 			Endorsements:    mod.Endorsements,
 			HasEndorsements: mod.HasEndorsements,
 			UpdatePolicy:    mod.UpdatePolicy,
+			PreviousVersion: mod.PreviousVersion,
 		})
 	}
 	return items

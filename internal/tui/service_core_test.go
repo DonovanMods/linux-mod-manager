@@ -1921,6 +1921,105 @@ func TestCoreProviderActions_ApplyUpdate_MapsNotSupportedError(t *testing.T) {
 		"an updates-capability gap must never suggest the install-path fallback")
 }
 
+// seedActionRollbackReadyMod prepares an installed mod already updated once,
+// ready to be passed to Rollback - mirroring
+// internal/core/flows_rollback_test.go's seedRollbackReadyMod (unexported
+// there, so duplicated here for this package's tests, exactly like
+// seedActionMod above mirrors that package's own seedInstalledMod): an OLD
+// version is installed and cached first, then advanced to a NEW version via
+// the same Replace + ApplyModUpdate + UpsertMod sequence ApplyUpdate itself
+// performs - leaving PreviousVersion/PreviousFileIDs set and the OLD
+// version's cache entry intact, exactly the precondition core.ApplyRollback
+// (and so coreProvider.Rollback) requires.
+func seedActionRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, name, oldVersion, newVersion string, oldFileIDs, newFileIDs []string, oldFiles, newFiles map[string][]byte) *domain.InstalledMod {
+	t.Helper()
+
+	gameCache := svc.GetGameCache(game)
+	for path, content := range oldFiles {
+		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, oldVersion, path, content))
+	}
+	for path, content := range newFiles {
+		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, newVersion, path, content))
+	}
+
+	oldMod := domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: oldVersion, GameID: game.ID}
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          oldMod,
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		LinkMethod:   domain.LinkSymlink,
+		FileIDs:      oldFileIDs,
+	}))
+
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &oldMod, "default"))
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: oldVersion, FileIDs: oldFileIDs}))
+
+	newMod := domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: newVersion, GameID: game.ID}
+	require.NoError(t, installer.Replace(context.Background(), game, &oldMod, &newMod, "default"))
+	require.NoError(t, svc.ApplyModUpdate(sourceID, modID, game.ID, "default", newVersion, newFileIDs))
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: newVersion, FileIDs: newFileIDs}))
+
+	updated, err := svc.GetInstalledMod(sourceID, modID, game.ID, "default")
+	require.NoError(t, err)
+	return updated
+}
+
+// TestCoreProviderRollback proves coreProvider.Rollback wires
+// core.ApplyRollback with the same hook defaults every other mutation uses
+// (Force=false - see hookRunner's doc comment), swaps the mod back to its
+// previous version FOR REAL (a real *core.Service fixture, no recording
+// fake - proving the actual DB/cache/deploy behavior, not just the wiring),
+// and composes the outcome message/warnings exactly like ApplyUpdate's own
+// convention (mergeDiagnostics(result.Warnings, result.Notes)).
+func TestCoreProviderRollback(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	mod := seedActionRollbackReadyMod(t, svc, game, "src", "modR", "Mod R", "1.0", "2.0",
+		[]string{"old-1"}, []string{"new-1"},
+		map[string][]byte{"modr-old.esp": []byte("old-content")},
+		map[string][]byte{"modr-new.esp": []byte("new-content")})
+	require.Equal(t, "2.0", mod.Version)
+	require.Equal(t, "1.0", mod.PreviousVersion)
+
+	var ticks []tui.ActionProgress
+	outcome, err := actions.Rollback(context.Background(),
+		tui.ModItem{Source: "src", ID: "modR", Name: "Mod R"},
+		func(p tui.ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, `Rolled back "Mod R" to 1.0`, outcome.Message)
+	assert.Empty(t, outcome.Warnings)
+
+	updated, err := svc.GetInstalledMod("src", "modR", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", updated.Version)
+	assert.Equal(t, "2.0", updated.PreviousVersion, "the DB swap must record the rolled-back-FROM version as the new previous_version")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "modr-old.esp"))
+	assert.NoError(t, err, "the previous version's file must be redeployed")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "modr-new.esp"))
+	assert.True(t, os.IsNotExist(err), "the current version's file must be undeployed")
+}
+
+// TestCoreProviderRollback_NoPreviousVersionErrors guards the first guard
+// core.ApplyRollback checks: a mod that has never been updated has no
+// PreviousVersion, and Rollback must surface that error wrapped with the
+// mod's name - mirroring every other coreProvider mutation's own
+// "<verb>ing %s: %w" wrapping convention (e.g. UninstallMod/DeployProfile
+// above).
+func TestCoreProviderRollback_NoPreviousVersionErrors(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modS", "Mod S", "1.0", true, nil)
+
+	_, err := actions.Rollback(context.Background(), tui.ModItem{Source: "src", ID: "modS", Name: "Mod S"}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no previous version available for rollback")
+}
+
 // TestCoreProviderActions_SetUpdatePolicy_PersistsAndReadsBack is Task 5's
 // TestCoreProviderActions_CreateProfile proves CreateProfile persists a real,
 // empty profile via svc.NewProfileManager().Create, readable back with
