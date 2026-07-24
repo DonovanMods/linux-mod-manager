@@ -688,6 +688,15 @@ const (
 	// differs) "Warning: %s hook failed (forced): %v" unconditional stderr
 	// prints. Detail already carries the full, hook-specific message
 	// verbatim.
+	//
+	// Reused, extend-don't-fork (Phase 6b Task 5): ApplyRollback fires this
+	// SAME phase for its own two Force-gated before_each hooks -
+	// uninstall.before_each (the version being rolled back FROM) and
+	// install.before_each (the version being rolled back TO) - mirroring
+	// doUpdateRollback's own two near-identical Force checks exactly. The
+	// two flows are never in progress at once, so the shared phase carries
+	// no ambiguity; Detail alone (plus ModName/ModID) tells a caller which
+	// hook and which mod failed.
 	UpdateBeforeEachForced
 	// UpdateWarning fires for either of the update's two after_each hook
 	// failures - uninstall.after_each (old version) or install.after_each
@@ -697,12 +706,21 @@ const (
 	// then install.after_each) - unlike DeployWarning/InstallWarning's
 	// end-of-whole-run deferral, since applyUpdate itself prints these
 	// immediately, well before its own DB-update steps below.
+	//
+	// Reused (Phase 6b Task 5): ApplyRollback fires this SAME phase for its
+	// own two always-non-fatal after_each hooks, in the same
+	// uninstall-then-install order, mirroring doUpdateRollback's own
+	// hookErrors/printHookWarnings pair exactly.
 	UpdateWarning
 	// UpdateNote fires when SetModLinkMethod fails after a successful
 	// update - the sole --verbose-gated diagnostic in applyUpdate,
 	// mirroring "  Warning: could not update link method: %v" (2-space
 	// indent, prefix baked into Detail, matching SwitchDisableNote/
 	// SwitchEnableNote's own convention).
+	//
+	// Reused (Phase 6b Task 5): ApplyRollback fires this SAME phase for its
+	// own SetModLinkMethod failure, mirroring doUpdateRollback's
+	// textually-identical verbose-gated print exactly.
 	UpdateNote
 
 	// --- PurgeProfile progress events (#61, TUI Phase 6 prep): the
@@ -3196,5 +3214,231 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, newVersion))
+	return result, nil
+}
+
+// --- ApplyRollback (Phase 6b Task 5) ---
+
+// RollbackOptions configures ApplyRollback, mirroring UpdateOptions'
+// (ApplyUpdate's own, flows.go:2971) hook plumbing exactly: Hooks/HookRunner/
+// HookContext are supplied by the caller - the CLI resolves them via
+// getHookRunner/getResolvedHooks/makeHookContext, respecting --no-hooks and
+// the configured hook timeout, concerns core deliberately does not
+// reimplement (see UpdateOptions' own doc comment). Hooks and/or HookRunner
+// may be nil to skip hook execution entirely.
+//
+// Force gates ONLY the rollback's two before_each hooks - uninstall.before_each
+// (the version being rolled back FROM) and install.before_each (the version
+// being rolled back TO) - matching doUpdateRollback's own --force check
+// exactly. As with UpdateOptions, there is no before_all/after_all pair:
+// doUpdateRollback never ran one.
+type RollbackOptions struct {
+	Hooks       *ResolvedHooks
+	HookRunner  *HookRunner
+	HookContext HookContext
+	Force       bool
+}
+
+// RollbackResult reports the outcome of ApplyRollback.
+//
+//   - ModName, FromVersion, ToVersion identify the rollback - split into
+//     separate fields (unlike UpdateApplyResult.Applied's single formatted
+//     string) because the CLI needs FromVersion/ToVersion independently for
+//     its own "Rolling back %s %s → %s..." header, printed BEFORE
+//     ApplyRollback is even called (the CLI keeps its own GetInstalledMod
+//     call for that header - see ApplyRollback's doc comment). All three are
+//     populated as soon as ApplyRollback's guard checks pass - before any
+//     hook runs - so a caller can rely on them for its footer even though
+//     they are not gated on the whole rollback having succeeded the way
+//     UpdateApplyResult.Applied is (ApplyRollback has no equivalent
+//     "succeeded end to end" list; callers infer success from a nil error).
+//   - Warnings holds diagnostics doUpdateRollback printed unconditionally:
+//     uninstall.before_each/install.before_each (when forced), and
+//     uninstall.after_each/install.after_each hook failures (always
+//     non-fatal) - same display contract as UpdateApplyResult.Warnings:
+//     callers should print each entry to stderr, unconditionally, e.g.
+//     `fmt.Fprintf(os.Stderr, "Warning: %v\n", w)`.
+//   - Notes holds the sole diagnostic doUpdateRollback only printed under
+//     --verbose: a failed SetModLinkMethod, with the historical "Warning: "
+//     prefix baked into the text already, matching UpdateApplyResult.Notes'
+//     own convention exactly (doUpdateRollback's verbose print was
+//     textually identical to applyUpdate's own); a caller wanting
+//     byte-identical output should print it to stdout ONLY under --verbose,
+//     e.g. `fmt.Printf("  %s\n", n)`.
+//
+// Every entry in both slices is ALSO reported via the progress callback at
+// the exact point it is appended (UpdateBeforeEachForced/UpdateWarning/
+// UpdateNote - reused verbatim from ApplyUpdate, see each DeployPhase
+// constant's doc comment), Detail equal to the slice entry verbatim.
+//
+// On error, the returned result carries any diagnostics/identity fields
+// accumulated before the failure; callers should surface them alongside the
+// error.
+type RollbackResult struct {
+	ModName, FromVersion, ToVersion string
+	Warnings, Notes                 []string
+}
+
+// ApplyRollback rolls the installed mod identified by sourceID/modID back to
+// its PreviousVersion, following cmd/lmm/update.go's pre-extraction
+// doUpdateRollback ordering exactly: GetInstalledMod -> guard checks ->
+// hooks -> installer.Replace(current -> previous) -> RollbackModVersion (DB
+// swap, with a compensating reverse-Replace on failure) -> SetModLinkMethod
+// -> reload -> ProfileManager.UpsertMod (compensating BOTH the DB swap and
+// the Replace on failure). This is a behavior-preserving extraction - see the
+// task report for the full mapping. Unlike ApplyUpdate, there is no
+// download step at all - the previous version's files already live in the
+// cache (ApplyUpdate itself guarantees this: it never deletes a mod's OLD
+// cache entry - see ApplyUpdate's own doc comment) - so the FIRST thing this
+// function's caller-visible behavior depends on is that cache entry still
+// existing.
+//
+// Guards, checked before anything else, in order: mod.PreviousVersion must
+// be non-empty ("no previous version available for rollback" - a mod that
+// has never been updated, or has already been rolled back once, has no
+// second previous version to roll back to), and the previous version must
+// still exist in the game's cache ("previous version %s not found in
+// cache" - defends against a cache entry pruned or manually deleted between
+// the update and the rollback). Both mirror doUpdateRollback's own two
+// precondition checks verbatim, including their exact error text (the CLI's
+// own "mod not found: %s" wrapping of a failed GetInstalledMod is preserved
+// here too, for the same reason).
+//
+// Hook failure semantics mirror doUpdateRollback's own two, independently
+// Force-gated before_each hooks (uninstall.before_each for the CURRENT
+// version, install.before_each for the PREVIOUS version being redeployed:
+// fatal unless Force is set, in which case a Warning is recorded and the
+// rollback proceeds) and its two always-non-fatal after_each hooks
+// (uninstall.after_each, install.after_each - both recorded as Warnings
+// regardless of Force, run in that order immediately after Replace, well
+// before the DB/profile writes below - see UpdateWarning's doc comment).
+//
+// A failure to write RollbackModVersion triggers a best-effort compensating
+// reverse Installer.Replace (redeploying the CURRENT version, undoing the
+// Replace this function just performed) before returning the error; a
+// failure to write ProfileManager.UpsertMod afterward compensates BOTH -
+// another RollbackModVersion (undoing the DB swap) AND another reverse
+// Replace - matching doUpdateRollback's own two, textually-near-identical
+// compensation blocks exactly. A failure reloading the rolled-back mod
+// (the GetInstalledMod call between those two steps) is, however, NOT
+// compensated - matching doUpdateRollback's own verbatim behavior, a
+// pre-existing gap this extraction preserves rather than fixes (see the
+// task report). A failure to write SetModLinkMethod is NOT rolled back
+// either, matching doUpdateRollback exactly (it only ever produced a
+// --verbose-gated Note).
+//
+// progress may be nil. On error, the returned result carries any
+// diagnostics/identity fields accumulated before the failure - callers
+// should surface them alongside the error (see RollbackResult's doc
+// comment).
+func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts RollbackOptions, progress func(DeployProgress)) (*RollbackResult, error) {
+	result := &RollbackResult{}
+	emit := func(p DeployProgress) {
+		if progress != nil {
+			progress(p)
+		}
+	}
+
+	mod, err := s.GetInstalledMod(sourceID, modID, game.ID, profileName)
+	if err != nil {
+		return result, fmt.Errorf("mod not found: %s", modID)
+	}
+
+	if mod.PreviousVersion == "" {
+		return result, fmt.Errorf("no previous version available for rollback")
+	}
+
+	if !s.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.PreviousVersion) {
+		return result, fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
+	}
+
+	result.ModName = mod.Name
+	result.FromVersion = mod.Version
+	result.ToVersion = mod.PreviousVersion
+
+	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
+
+	hookCtx := opts.HookContext
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("uninstall.before_each hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateBeforeEachForced, msg
+		emit(evt)
+	}
+
+	linkMethod := s.GetGameLinkMethod(game)
+	installer := s.GetInstaller(game)
+
+	prevMod := mod.Mod
+	prevMod.Version = mod.PreviousVersion
+
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = prevMod.ID, prevMod.Name, prevMod.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("install.before_each hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("install.before_each hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateBeforeEachForced, msg
+		emit(evt)
+	}
+
+	if err := installer.Replace(ctx, game, &mod.Mod, &prevMod, profileName); err != nil {
+		return result, fmt.Errorf("deploying previous version: %w", err)
+	}
+
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
+		msg := fmt.Sprintf("uninstall.after_each hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateWarning, msg
+		emit(evt)
+	}
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = prevMod.ID, prevMod.Name, prevMod.Version
+	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateWarning, msg
+		emit(evt)
+	}
+
+	if err := s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName); err != nil {
+		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
+		return result, fmt.Errorf("updating database: %w", err)
+	}
+
+	if err := s.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
+		msg := fmt.Sprintf("Warning: could not update link method: %v", err)
+		result.Notes = append(result.Notes, msg)
+		evt := base
+		evt.Phase, evt.Detail = UpdateNote, msg
+		emit(evt)
+	}
+
+	rolledBackMod, err := s.GetInstalledMod(mod.SourceID, mod.ID, game.ID, profileName)
+	if err != nil {
+		return result, fmt.Errorf("reloading rolled back mod: %w", err)
+	}
+
+	pm := s.NewProfileManager()
+	if err := pm.UpsertMod(game.ID, profileName, domain.ModReference{
+		SourceID: rolledBackMod.SourceID,
+		ModID:    rolledBackMod.ID,
+		Version:  rolledBackMod.Version,
+		FileIDs:  rolledBackMod.FileIDs,
+	}); err != nil {
+		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName)    //nolint:errcheck // best-effort recovery on an already-erroring path
+		return result, fmt.Errorf("updating profile: %w", err)
+	}
+
 	return result, nil
 }

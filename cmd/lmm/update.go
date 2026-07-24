@@ -372,6 +372,18 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doUpdateRollback resolves the target mod -> prints its own
+// "Rolling back %s %s → %s..." header (using its own GetInstalledMod call,
+// which also reproduces doUpdateRollback's pre-extraction guard errors
+// verbatim: "mod not found: %s" and, before ApplyRollback is ever called,
+// the same PreviousVersion/cache-existence checks ApplyRollback repeats
+// internally - so the header never prints when either guard would fail,
+// matching the pre-extraction ordering exactly) -> calls
+// Service.ApplyRollback, printing from its progress events exactly like
+// applyUpdate does for ApplyUpdate (forced-hook warnings, after_each hook
+// warnings, and the --verbose-gated link-method note all reuse the SAME
+// UpdateBeforeEachForced/UpdateWarning/UpdateNote phases) -> prints the
+// final "✓ Rolled back: ..." footer from the result's own fields.
 func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Resolve source: use flag if set, otherwise first configured source
 	var err error
@@ -385,7 +397,8 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		return err
 	}
 
-	// Get the installed mod
+	// Get the installed mod - kept CLI-side for the header below (see this
+	// function's doc comment); ApplyRollback fetches it again internally.
 	mod, err := service.GetInstalledMod(updateSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
@@ -402,107 +415,30 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 
 	fmt.Printf("Rolling back %s %s → %s...\n", mod.Name, mod.Version, mod.PreviousVersion)
 
-	// Set up hooks
-	hookRunner := getHookRunner(service)
-	resolvedHooks := getResolvedHooks(service, game, profileName)
-	hookCtx := makeHookContext(game)
-	var hookErrors []error
+	opts := core.RollbackOptions{
+		Hooks:       getResolvedHooks(service, game, profileName),
+		HookRunner:  getHookRunner(service),
+		HookContext: makeHookContext(game),
+		Force:       updateForce,
+	}
 
-	// Run uninstall.before_each hook (before uninstalling current version)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.BeforeEach != "" {
-		hookCtx.HookName = "uninstall.before_each"
-		hookCtx.ModID = mod.ID
-		hookCtx.ModName = mod.Name
-		hookCtx.ModVersion = mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.BeforeEach, hookCtx); err != nil {
-			if !updateForce {
-				return fmt.Errorf("uninstall.before_each hook failed: %w", err)
+	progress := func(p core.DeployProgress) {
+		switch p.Phase {
+		case core.UpdateBeforeEachForced, core.UpdateWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.UpdateNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
 			}
-			fmt.Fprintf(os.Stderr, "Warning: uninstall.before_each hook failed (forced): %v\n", err)
 		}
 	}
 
-	// Undeploy current version
-	linkMethod := service.GetGameLinkMethod(game)
-	installer := service.GetInstaller(game)
-
-	// Deploy previous version
-	prevMod := mod.Mod
-	prevMod.Version = mod.PreviousVersion
-
-	// Run install.before_each hook (before installing previous version)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.BeforeEach != "" {
-		hookCtx.HookName = "install.before_each"
-		hookCtx.ModID = prevMod.ID
-		hookCtx.ModName = prevMod.Name
-		hookCtx.ModVersion = prevMod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.BeforeEach, hookCtx); err != nil {
-			if !updateForce {
-				return fmt.Errorf("install.before_each hook failed: %w", err)
-			}
-			fmt.Fprintf(os.Stderr, "Warning: install.before_each hook failed (forced): %v\n", err)
-		}
-	}
-
-	if err := installer.Replace(ctx, game, &mod.Mod, &prevMod, profileName); err != nil {
-		return fmt.Errorf("deploying previous version: %w", err)
-	}
-
-	// Run uninstall.after_each hook (after current version is no longer active)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Uninstall.AfterEach != "" {
-		hookCtx.HookName = "uninstall.after_each"
-		hookCtx.ModID = mod.ID
-		hookCtx.ModName = mod.Name
-		hookCtx.ModVersion = mod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Uninstall.AfterEach, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("uninstall.after_each hook failed: %w", err))
-		}
-	}
-
-	// Run install.after_each hook (after installing previous version)
-	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
-		hookCtx.HookName = "install.after_each"
-		hookCtx.ModID = prevMod.ID
-		hookCtx.ModName = prevMod.Name
-		hookCtx.ModVersion = prevMod.Version
-		if _, err := hookRunner.Run(ctx, resolvedHooks.Install.AfterEach, hookCtx); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed: %w", err))
-		}
-	}
-
-	// Print hook warnings
-	printHookWarnings(hookErrors)
-
-	// Swap versions in database
-	if err := service.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName); err != nil {
-		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName)
-		return fmt.Errorf("updating database: %w", err)
-	}
-
-	// Update the link method used for deployment
-	if err := service.SetModLinkMethod(mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
-		if verbose {
-			fmt.Printf("  Warning: could not update link method: %v\n", err)
-		}
-	}
-
-	rolledBackMod, err := service.GetInstalledMod(mod.SourceID, mod.ID, game.ID, profileName)
+	result, err := service.ApplyRollback(ctx, game, profileName, mod.SourceID, mod.ID, opts, progress)
 	if err != nil {
-		return fmt.Errorf("reloading rolled back mod: %w", err)
-	}
-	pm := getProfileManager(service)
-	if err := pm.UpsertMod(game.ID, profileName, domain.ModReference{
-		SourceID: rolledBackMod.SourceID,
-		ModID:    rolledBackMod.ID,
-		Version:  rolledBackMod.Version,
-		FileIDs:  rolledBackMod.FileIDs,
-	}); err != nil {
-		_ = service.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)
-		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName)
-		return fmt.Errorf("updating profile: %w", err)
+		return err
 	}
 
-	fmt.Printf("\n✓ Rolled back: %s %s → %s\n", mod.Name, mod.Version, mod.PreviousVersion)
+	fmt.Printf("\n✓ Rolled back: %s %s → %s\n", result.ModName, result.FromVersion, result.ToVersion)
 	return nil
 }
 
