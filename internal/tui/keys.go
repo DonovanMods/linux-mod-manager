@@ -81,6 +81,15 @@ type KeyMap struct {
 	// dispatches immediately (no separate confirm modal, mirroring Policy's
 	// own "the choice IS the confirmation" shape).
 	GameSwitch key.Binding
+	// MoveDown and MoveUp are Task 4's load-order reorder bindings on
+	// Installed Mods (see mutations.go's moveSelectedMod): capital J/K
+	// (shift+j/shift+k, aliased ctrl+down/ctrl+up) swap the selected mod with
+	// its neighbor and persist the new order immediately - no confirm modal
+	// (see that method's own doc comment for why). Deliberately distinct from
+	// the lowercase j/k list-navigation bindings (Up/Down above); both remain
+	// fully functional side by side.
+	MoveDown key.Binding
+	MoveUp   key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -213,6 +222,14 @@ func DefaultKeyMap() KeyMap {
 		GameSwitch: key.NewBinding(
 			key.WithKeys("g"),
 			key.WithHelp("g", "game"),
+		),
+		MoveDown: key.NewBinding(
+			key.WithKeys("J", "ctrl+down"),
+			key.WithHelp("J", "move mod down"),
+		),
+		MoveUp: key.NewBinding(
+			key.WithKeys("K", "ctrl+up"),
+			key.WithHelp("K", "move mod up"),
 		),
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
 
@@ -104,6 +105,18 @@ type ActionProvider interface {
 	// comment). progress may be nil, like every other streaming
 	// ActionProvider method.
 	PurgeProfile(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error)
+
+	// ReorderMods persists a new load order for every installed mod (Task
+	// 4's J/K reorder keys on Installed Mods - see mutations.go's
+	// moveSelectedMod): orderedKeys is the FULL desired order, one
+	// domain.ModKey("sourceID:modID") per installed mod, exactly once - the
+	// order the mods will actually deploy in (last wins file conflicts, per
+	// core.OrderByProfile). A local YAML write, no network call, no hooks -
+	// called SYNCHRONOUSLY by moveSelectedMod (the same documented sync
+	// exception DeployedFiles carries above), not through
+	// buildAction/promptAction's async confirm machinery. Outcome.Message is
+	// "load order updated".
+	ReorderMods(ctx context.Context, orderedKeys []string) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -662,4 +675,34 @@ func (p *prototypeProvider) PurgeProfile(_ context.Context, progress func(Action
 	}
 
 	return ActionOutcome{Message: fmt.Sprintf("Purged %d mod(s)", purged)}, nil
+}
+
+// ReorderMods reorders the ACTIVE game's installed-mods slice (routed
+// through activeMods()/setActiveMods - see activeMods' own doc comment on
+// why every prototypeProvider mutation must go through these rather than
+// touching p.data.InstalledMods directly) to match orderedKeys exactly: each
+// key is looked up via domain.ModKey(mod.Source, mod.ID) against the current
+// activeMods() set. An unknown key (one that doesn't match any currently
+// active mod) errors rather than silently dropping or ignoring it - the
+// caller (moveSelectedMod) always derives orderedKeys FROM the active list
+// itself, so this should never actually happen in practice; it's checked
+// anyway rather than trusting the caller blindly.
+func (p *prototypeProvider) ReorderMods(_ context.Context, orderedKeys []string) (ActionOutcome, error) {
+	mods := p.activeMods()
+	byKey := make(map[string]prototype.Mod, len(mods))
+	for _, mod := range mods {
+		byKey[domain.ModKey(mod.Source, mod.ID)] = mod
+	}
+
+	reordered := make([]prototype.Mod, 0, len(orderedKeys))
+	for _, key := range orderedKeys {
+		mod, ok := byKey[key]
+		if !ok {
+			return ActionOutcome{}, fmt.Errorf("mod not found: %s", key)
+		}
+		reordered = append(reordered, mod)
+	}
+
+	p.setActiveMods(reordered)
+	return ActionOutcome{Message: "load order updated"}, nil
 }

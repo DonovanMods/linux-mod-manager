@@ -653,6 +653,38 @@ func TestCoreProviderConflicts(t *testing.T) {
 	assert.True(t, items[0].Stale)
 }
 
+// --- coreProvider: Overview load order (Task 4) ---
+
+// TestCoreProviderOverviewFollowsLoadOrder proves Overview's ModItems come
+// back in core.OrderByProfile's order - unlisted mods first (sorted by
+// domain.ModKey), then profile.Mods order - so the list a TUI user reorders
+// on the Installed Mods screen IS deploy order. The fixture's "101"/"102"
+// mods (newCoreProviderFixture) are never added to profile.Mods, so they
+// sort by key ("nexusmods:101" < "nexusmods:102") ahead of a third mod that
+// IS listed.
+func TestCoreProviderOverviewFollowsLoadOrder(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "999", SourceID: "nexusmods", GameID: game.ID, Name: "Zeta", Version: "1.0"},
+		ProfileName: "default",
+		Enabled:     true,
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "nexusmods", ModID: "999"}))
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	require.Len(t, mods, 3)
+
+	names := make([]string, len(mods))
+	for i, m := range mods {
+		names[i] = m.Name
+	}
+	require.Equal(t, []string{"SkyUI", "USSEP", "Zeta"}, names,
+		"unlisted 101/102 sort first by key; listed 999 comes last in profile.Mods order")
+}
+
 // --- coreProvider: ActionProvider ---
 
 // newCoreActionsFixture mirrors newCoreProviderFixture, but returns the
@@ -1241,6 +1273,55 @@ func TestCoreProviderActions_PurgeProfile_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "no mods installed", outcome.Message)
 	assert.Empty(t, outcome.Warnings)
+}
+
+// --- coreProvider: ReorderMods (Task 4) ---
+
+// TestCoreProviderReorderModsPreservesRefs covers the two ways ReorderMods
+// builds each domain.ModReference: "modA" is already listed in profile.Mods
+// with a Version/FileIDs that deliberately DIFFER from its current DB
+// record - proving the reorder preserves the PROFILE's own stored ref
+// verbatim rather than silently pulling the DB's current values; "modB" is
+// installed but NOT yet listed in profile.Mods - proving it's synthesized
+// from its DB record (today's actual installed Version/FileIDs) instead of
+// an empty ref.
+func TestCoreProviderReorderModsPreservesRefs(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	seedActionMod(t, svc, game, "src", "modA", "Mod A", "2.0", true, nil)
+	seedActionMod(t, svc, game, "src", "modB", "Mod B", "1.0", true, nil)
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+		SourceID: "src", ModID: "modA", Version: "1.0", FileIDs: []string{"old-file-id"},
+	}))
+	// modB is deliberately left OFF profile.Mods.
+
+	outcome, err := actions.ReorderMods(context.Background(), []string{"src:modB", "src:modA"})
+	require.NoError(t, err)
+	require.Equal(t, "load order updated", outcome.Message)
+
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 2)
+
+	require.Equal(t, "modB", profile.Mods[0].ModID, "new order: modB first")
+	require.Equal(t, "1.0", profile.Mods[0].Version, "unlisted mod synthesized from its current DB record")
+
+	require.Equal(t, "modA", profile.Mods[1].ModID)
+	require.Equal(t, "1.0", profile.Mods[1].Version, "already-listed ref's own Version preserved, not overwritten from the DB's 2.0")
+	require.Equal(t, []string{"old-file-id"}, profile.Mods[1].FileIDs)
+}
+
+// TestCoreProviderReorderModsUnknownKeyErrors proves an orderedKeys entry
+// that matches neither an existing profile ref nor an installed DB record
+// errors instead of silently synthesizing a phantom reference.
+func TestCoreProviderReorderModsUnknownKeyErrors(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modA", "Mod A", "1.0", true, nil)
+
+	_, err := actions.ReorderMods(context.Background(), []string{"src:modA", "src:does-not-exist"})
+	require.Error(t, err)
 }
 
 func TestCoreProviderActions_PlanProfileSwitch_MapsBucketsToDisplayStrings(t *testing.T) {

@@ -539,11 +539,18 @@ type recordingActions struct {
 	// rebindGame's type assertion succeeds against this fake.
 	SetGameCalls []string
 
+	// ReorderCalls records each ReorderMods call's orderedKeys argument -
+	// Task 4's reorder wiring tests assert against this, mirroring
+	// CreateProfileCalls/DeleteProfileCalls' own single-slice-argument shape
+	// above (one []string per call, not a single flattened slice).
+	ReorderCalls [][]string
+
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
 	CreateProfileOutcome, DeleteProfileOutcome                                   ActionOutcome
 	PurgeOutcome                                                                 ActionOutcome
+	ReorderOutcome                                                               ActionOutcome
 	PlanView                                                                     SwitchPlanView
 	InstallPlanViewOut                                                           InstallPlanView
 	UpdatesViewOut                                                               UpdatesView
@@ -564,6 +571,7 @@ type recordingActions struct {
 	CreateProfileErr, DeleteProfileErr                                error
 	PurgeErr                                                          error
 	SetGameErr                                                        error
+	ReorderErr                                                        error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -671,6 +679,12 @@ func (r *recordingActions) SetGame(id string) error {
 	return r.SetGameErr
 }
 
+// ReorderMods implements ActionProvider (Task 4).
+func (r *recordingActions) ReorderMods(_ context.Context, orderedKeys []string) (ActionOutcome, error) {
+	r.ReorderCalls = append(r.ReorderCalls, orderedKeys)
+	return r.ReorderOutcome, r.ReorderErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -737,6 +751,10 @@ func (f failingActions) DeleteProfile(context.Context, string) (ActionOutcome, e
 }
 
 func (f failingActions) PurgeProfile(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) ReorderMods(context.Context, []string) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 

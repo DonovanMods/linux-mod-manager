@@ -2644,3 +2644,211 @@ func TestFilesKeyErrorGoesToStatusLine(t *testing.T) {
 	require.True(t, model.action.statusIsError)
 	require.Equal(t, singleLine("db read failed"), model.action.status)
 }
+
+// --- Load-order reorder (J/K on Installed Mods) ---
+//
+// The prototype provider's canned Installed Mods list (prototype/data.go)
+// is, in order: skyui, ussep, skse-address-library, immersive-armors,
+// alternate-start - all source "nexusmods". modelWithActions loads this
+// list unmodified (see its own doc comment), so every test below can assert
+// against these exact names/positions.
+
+// TestMoveSelectedModDownPersistsOrder covers the full round trip for 'J' on
+// the top row: m.mods swaps rows 0/1, selection follows the moved mod to its
+// new slot, the provider is called with the FULL new key order (not just the
+// two swapped entries), and m.orderChanged flips so the deploy hint shows.
+func TestMoveSelectedModDownPersistsOrder(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{ReorderOutcome: ActionOutcome{Message: "load order updated"}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	require.Equal(t, "SkyUI", model.mods[0].Name)
+	require.Equal(t, "USSEP", model.mods[1].Name)
+	require.False(t, model.orderChanged)
+
+	updated, cmd := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+
+	require.Equal(t, "USSEP", model.mods[0].Name, "row 0 now holds what was row 1")
+	require.Equal(t, "SkyUI", model.mods[1].Name, "row 1 now holds what was row 0")
+	require.Equal(t, 1, model.selected[ScreenInstalledMods], "selection follows the moved mod")
+
+	require.Len(t, rec.ReorderCalls, 1)
+	require.Equal(t, []string{
+		"nexusmods:ussep",
+		"nexusmods:skyui",
+		"nexusmods:skse-address-library",
+		"nexusmods:immersive-armors",
+		"nexusmods:alternate-start",
+	}, rec.ReorderCalls[0], "provider must receive the FULL new order, not just the two swapped keys")
+
+	require.True(t, model.orderChanged)
+}
+
+// TestMoveAtListEdgeNoop proves 'K' at row 0 and 'J' at the last row are
+// no-ops: no provider call, no mutation, selection untouched.
+func TestMoveAtListEdgeNoop(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, cmd := model.Update(keyRunes("K"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, "SkyUI", model.mods[0].Name)
+	require.Equal(t, 0, model.selected[ScreenInstalledMods])
+	require.Empty(t, rec.ReorderCalls)
+
+	last := len(model.mods) - 1
+	model.selected[ScreenInstalledMods] = last
+	lastName := model.mods[last].Name
+
+	updated, cmd = model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, lastName, model.mods[last].Name)
+	require.Equal(t, last, model.selected[ScreenInstalledMods])
+	require.Empty(t, rec.ReorderCalls)
+}
+
+// TestReorderInertWhileFiltered proves modsFiltered (see its own doc comment
+// on the Model struct) refuses the move with an explicit status-line
+// explanation, leaving the list and provider untouched - unlike the other
+// reorder guards, which are silent.
+func TestReorderInertWhileFiltered(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	model.modsFiltered = true
+
+	updated, cmd := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, "SkyUI", model.mods[0].Name, "order must be untouched")
+	require.Empty(t, rec.ReorderCalls)
+	require.Equal(t, "reorder unavailable while filtered", model.action.status)
+	require.True(t, model.action.statusIsError)
+	require.False(t, model.orderChanged)
+}
+
+// TestReorderInertWhileActionRunning proves the single-flight guard: an
+// in-flight action blocks a move entirely (silent no-op, mirroring
+// switchSelectedProfile/checkForUpdates' own explicit running/pending check
+// - moveSelectedMod never reaches buildAction's own guard, since it's
+// dispatched synchronously, not through buildAction at all).
+func TestReorderInertWhileActionRunning(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	model.action.running = true
+
+	updated, cmd := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, "SkyUI", model.mods[0].Name)
+	require.Equal(t, 0, model.selected[ScreenInstalledMods])
+	require.Empty(t, rec.ReorderCalls)
+	require.False(t, model.orderChanged)
+}
+
+// TestReorderErrorRefreshesFromDisk covers a ReorderMods failure (e.g. a
+// disk write error): the status line renders the error, m.mods is left
+// exactly as it was (the write never took effect - no point showing a
+// locally-swapped order the disk doesn't actually have), no
+// m.orderChanged hint is set, and a refresh (m.loadData) is dispatched so
+// the list reflects disk truth on the next render.
+func TestReorderErrorRefreshesFromDisk(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{ReorderErr: errors.New("disk write failed")}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, cmd := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.NotNil(t, cmd, "a refresh must be dispatched on failure")
+	require.IsType(t, dataLoadedMsg{}, cmd())
+
+	require.Equal(t, singleLine("disk write failed"), model.action.status)
+	require.True(t, model.action.statusIsError)
+	require.False(t, model.orderChanged)
+	require.Equal(t, "SkyUI", model.mods[0].Name, "list stays as-is; the dispatched refresh corrects it from disk")
+	require.Equal(t, 0, model.selected[ScreenInstalledMods])
+}
+
+// TestReorderSetsDeployHint proves the full hint lifecycle: a successful
+// move sets m.orderChanged and the status line renders the hint text; a
+// SUCCESSFUL deploy's actionDoneMsg clears it again (see app.go's
+// actionDoneMsg case).
+func TestReorderSetsDeployHint(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{
+		ReorderOutcome: ActionOutcome{Message: "load order updated"},
+		DeployOutcome:  ActionOutcome{Message: "Deployed 5 mod(s)"},
+	}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, _ := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.True(t, model.orderChanged)
+	require.Contains(t, model.statusLine(), "order changed — deploy (D) to apply")
+
+	// A plain navigation keypress must NOT clear the hint (unlike
+	// m.action.status, which rule 8 clears on every non-quit keypress) -
+	// the hint is meant to survive ordinary browsing until deploy/switch.
+	updated, _ = model.Update(keyRunes("k"))
+	model = updated.(Model)
+	require.True(t, model.orderChanged)
+	require.Contains(t, model.statusLine(), "order changed — deploy (D) to apply")
+
+	updated, _ = model.Update(keyRunes("D"))
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, actionDeploy, model.action.pending.kind)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, _ = model.Update(doneMsg)
+	model = updated.(Model)
+	require.False(t, model.orderChanged, "the hint clears once the deploy resolves successfully")
+}
+
+// TestMoveKeysSwallowedByFocusedSearchInput proves 'J'/'K' type into the
+// search box instead of triggering a reorder while ScreenSearch is focused -
+// the existing focused-input swallow branch (updateKey, app.go) runs before
+// the mutation-key switch this is dispatched from, so this is inertness by
+// construction, matching every other single-letter mutation key's own test
+// of the same guard (e.g. TestToggleEnableKeyInertWhileSearchFocused).
+func TestMoveKeysSwallowedByFocusedSearchInput(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	updated := updateWithRunes(t, model, "3") // jump to search, focused
+	updated = updateWithRunes(t, updated, "J")
+	updated = updateWithRunes(t, updated, "K")
+
+	require.True(t, updated.search.input.Focused())
+	require.Contains(t, updated.search.input.Value(), "J")
+	require.Contains(t, updated.search.input.Value(), "K")
+	require.Empty(t, rec.ReorderCalls)
+}

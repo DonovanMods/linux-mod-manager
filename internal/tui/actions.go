@@ -563,7 +563,13 @@ func (m Model) hasVisibleStatus() bool {
 	if m.action.running && m.action.progress.Line != "" {
 		return true
 	}
-	return m.action.status != ""
+	if m.action.status != "" {
+		return true
+	}
+	// Task 4's post-reorder deploy hint (see Model.orderChanged's own doc
+	// comment): the lowest-priority fallback, shown only when nothing more
+	// specific is already claiming the status line.
+	return m.orderChanged
 }
 
 // statusLine renders the action status line truncated to the terminal's
@@ -592,11 +598,17 @@ func (m Model) statusLine() string {
 	if m.action.running && m.action.progress.Line != "" {
 		return truncate(m.theme.MutedText.Render(m.action.progress.Line), m.availableWidth())
 	}
-	style := m.theme.MutedText
-	if m.action.statusIsError {
-		style = m.theme.DangerText
+	if m.action.status != "" {
+		style := m.theme.MutedText
+		if m.action.statusIsError {
+			style = m.theme.DangerText
+		}
+		return truncate(style.Render(m.action.status), m.availableWidth())
 	}
-	return truncate(style.Render(m.action.status), m.availableWidth())
+	// Falls through here only when hasVisibleStatus's orderChanged branch is
+	// what made hasVisibleStatus true (every other case above already
+	// returned) - see Model.orderChanged's own doc comment.
+	return truncate(m.theme.MutedText.Render("order changed — deploy (D) to apply"), m.availableWidth())
 }
 
 // actionModalView renders the pending confirmation as a bordered panel that

@@ -110,6 +110,31 @@ type Model struct {
 	showHelp bool
 	width    int
 	height   int
+
+	// orderChanged is Task 4's post-reorder deploy hint flag: moveSelectedMod
+	// (mutations.go) sets this true after every successful J/K move, and
+	// statusLine (actions.go) falls back to rendering "order changed —
+	// deploy (D) to apply" whenever it's true and there's nothing more
+	// specific (m.action.status) to show - unlike m.action.status, this is
+	// NOT cleared by rule 8's "any keypress clears the status" (app.go's
+	// updateKey), so it survives ordinary navigation until a deploy or
+	// profile-switch action actually resolves successfully (cleared in the
+	// actionDoneMsg case below) or a game switch resets the session
+	// (resolveGameSwitch, mutations.go).
+	orderChanged bool
+	// modsFiltered marks the Installed Mods list on screen as a PARTIAL view
+	// of the active profile's full mod set - moveSelectedMod's reorder guard
+	// (mutations.go): a partial view cannot express a total load order (see
+	// docs/plans/2026-07-23-tui-phase6b-workflows-design.md §2), so
+	// reordering it would silently persist a truncated order. Nothing in the
+	// current TUI actually narrows m.mods yet (Installed Mods has no
+	// filter/search box of its own - only the separate Search screen filters,
+	// and that's an entirely different list), so this guard is presently
+	// unreachable via any real keypress; it exists so a future filter
+	// feature on this screen inherits reorder's safety automatically rather
+	// than moveSelectedMod needing to be revisited. Exercised directly
+	// (white-box) by TestReorderInertWhileFiltered.
+	modsFiltered bool
 }
 
 // loadState tracks where the Model is in its async data-load lifecycle.
@@ -403,6 +428,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// gen (loadData's value receiver - see its doc comment).
 			m.loadGen++
 		}
+		// A successful deploy or profile switch is exactly what Task 4's
+		// post-reorder hint (m.orderChanged, see its own doc comment) is
+		// waiting for - either one means the reordered load order has now
+		// actually been applied, so the reminder to deploy no longer
+		// applies. A FAILED deploy/switch (actionFailedMsg below) does NOT
+		// clear it: the order is still unapplied in that case, so the hint
+		// should keep reminding the user.
+		if msg.kind == actionDeploy || msg.kind == actionSwitch {
+			m.orderChanged = false
+		}
 		// A completed update-apply batch invalidates the just-checked
 		// Updates count: applying updates changes how many are left, and
 		// Phase 5b has no way to compute the new real number without
@@ -690,6 +725,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.purgeProfilePrompt()
 	case key.Matches(msg, m.keys.GameSwitch):
 		return m.openGameSwitcher()
+	case key.Matches(msg, m.keys.MoveDown):
+		return m.moveSelectedMod(1)
+	case key.Matches(msg, m.keys.MoveUp):
+		return m.moveSelectedMod(-1)
 	default:
 		return m, nil
 	}
@@ -1522,6 +1561,10 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.Files),
 			helpEntry(m.keys.Policy),
 			helpEntry(m.keys.Purge),
+			// MoveDown/MoveUp are Task 4's load-order reorder keys (see
+			// mutations.go's moveSelectedMod).
+			helpEntry(m.keys.MoveDown),
+			helpEntry(m.keys.MoveUp),
 		},
 	}
 
@@ -1599,7 +1642,14 @@ func (m Model) helpGroups() []helpGroup {
 // same as before Task 9.
 func (m Model) helpBodyBudget() int {
 	if m.height == 0 {
-		return 40
+		// Bumped 40->50 in Task 4: the installed-mods group's two new
+		// MoveDown/MoveUp entries pushed the full uncapped group list to 43
+		// lines, past the old 40 default - TestHelpViewListsPerScreenGroups
+		// depends on this staying "generous" enough to render every group's
+		// content, per this method's own doc comment. 50 leaves headroom
+		// above today's 43 for the next few tasks' bindings, rather than
+		// needing a re-bump for every single addition.
+		return 50
 	}
 	status := 0
 	if m.hasVisibleStatus() {

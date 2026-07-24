@@ -121,6 +121,16 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 		return Summary{}, nil, fmt.Errorf("loading installed mods for %s/%s: %w", game.ID, profile, err)
 	}
 
+	// Deterministic load order (Task 4): the SAME order DeployProfile/
+	// PlanProfileSwitch already use (Task 1's core.OrderByProfile), so the
+	// list a user reorders with J/K on this screen IS the order that will
+	// actually deploy - reordering anything else would be reordering a
+	// display fiction. Nil-safe on an unreadable profile.yaml, mirroring
+	// core.DeployProfile's own "don't abort the caller's operation, stay
+	// deterministic anyway" precedent (flows.go).
+	profileYAML, _ := config.LoadProfile(p.svc.ConfigDir(), game.ID, profile)
+	mods = core.OrderByProfile(profileYAML, mods)
+
 	enabled := 0
 	for _, mod := range mods {
 		if mod.Enabled {
@@ -820,6 +830,67 @@ func (p *coreProvider) PurgeProfile(ctx context.Context, progress func(ActionPro
 		Message:  fmt.Sprintf("Purged %d mod(s)", result.Purged),
 		Warnings: warnings,
 	}, nil
+}
+
+// ReorderMods persists orderedKeys (Task 4: the FULL desired load order, one
+// domain.ModKey("sourceID:modID") per installed mod - see
+// ActionProvider.ReorderMods' doc comment) as profile.Mods, via
+// ProfileManager.ReorderMods - a local YAML write.
+//
+// Each entry in orderedKeys becomes a domain.ModReference built one of two
+// ways: a mod ALREADY listed in profile.Mods keeps its EXISTING ref's
+// Version/FileIDs verbatim (a reorder must never silently reset either -
+// those fields track what was actually installed/downloaded, which a pure
+// load-order change has no business touching); a mod not yet listed (Task
+// 1's "unlisted" case - present in the installed set but absent from the
+// profile file) is synthesized from its current DB record instead, so it
+// gains a ref carrying today's actual installed Version/FileIDs rather than
+// an empty one.
+func (p *coreProvider) ReorderMods(_ context.Context, orderedKeys []string) (ActionOutcome, error) {
+	game := p.currentGame()
+	profileName := p.currentProfile()
+	pm := p.svc.NewProfileManager()
+
+	profile, err := pm.Get(game.ID, profileName)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("loading profile %s: %w", profileName, err)
+	}
+	existing := make(map[string]domain.ModReference, len(profile.Mods))
+	for _, ref := range profile.Mods {
+		existing[domain.ModKey(ref.SourceID, ref.ModID)] = ref
+	}
+
+	installed, err := p.svc.GetInstalledMods(game.ID, profileName)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("loading installed mods for %s/%s: %w", game.ID, profileName, err)
+	}
+	installedByKey := make(map[string]domain.InstalledMod, len(installed))
+	for _, mod := range installed {
+		installedByKey[domain.ModKey(mod.SourceID, mod.ID)] = mod
+	}
+
+	mods := make([]domain.ModReference, 0, len(orderedKeys))
+	for _, key := range orderedKeys {
+		if ref, ok := existing[key]; ok {
+			mods = append(mods, ref)
+			continue
+		}
+		im, ok := installedByKey[key]
+		if !ok {
+			return ActionOutcome{}, fmt.Errorf("mod not found: %s", key)
+		}
+		mods = append(mods, domain.ModReference{
+			SourceID: im.SourceID,
+			ModID:    im.ID,
+			Version:  im.Version,
+			FileIDs:  im.FileIDs,
+		})
+	}
+
+	if err := pm.ReorderMods(game.ID, profileName, mods); err != nil {
+		return ActionOutcome{}, fmt.Errorf("reordering profile %s: %w", profileName, err)
+	}
+	return ActionOutcome{Message: "load order updated"}, nil
 }
 
 func (p *coreProvider) PlanProfileSwitch(ctx context.Context, profileName string) (SwitchPlanView, error) {

@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
 // This file wires Task 6's generic confirmation-modal/action machinery
@@ -168,6 +170,81 @@ func (m Model) showDeployedFiles() (tea.Model, tea.Cmd) {
 		lines = []string{"no files deployed"}
 	}
 	m = m.promptOverlay(infoOverlay{title: fmt.Sprintf("Files — %s", item.Name), lines: lines})
+	return m, nil
+}
+
+// --- Load-order reorder (J/K on Installed Mods) ---
+
+// moveSelectedMod handles MoveDown ('J', delta=+1) and MoveUp ('K',
+// delta=-1) on Installed Mods (task-4-brief.md): swaps the selected mod with
+// its delta-neighbor in m.mods and persists the FULL new load order
+// immediately via ActionProvider.ReorderMods.
+//
+// Unlike every buildAction-routed handler in this file, the ReorderMods call
+// below is made SYNCHRONOUSLY, exactly like showDeployedFiles' DeployedFiles
+// call above (see that method's own doc comment for the documented
+// exception this repeats): it's a local YAML write, not a network call, and
+// - unlike Enable/Disable/Uninstall/Deploy - a reorder isn't destructive, so
+// there's nothing for a y/n confirmation modal to gate and no progress to
+// stream.
+//
+// Guards, in order: wrong screen or no ActionProvider configured (mirrors
+// uninstallSelectedMod/showDeployedFiles); a single-flight conflict (checked
+// explicitly here, mirroring switchSelectedProfile/checkForUpdates' own
+// explicit check - required because, unlike those, this method never
+// reaches buildAction's own guard at all); modsFiltered (see its own doc
+// comment on the Model struct for why an explicit status-line explanation,
+// unlike the silent guards around it); an out-of-range selection (covers an
+// empty list); and the target slot being off either end of the list (the
+// top row can't move up, the bottom row can't move down) - all four of
+// these last guards are silent no-ops, matching this file's existing
+// precedent for a selection/edge condition that isn't itself an error.
+//
+// On success: the swapped order becomes m.mods, selection follows the moved
+// mod to its new slot, and m.orderChanged is set (see its own doc comment)
+// so the status line reminds the user to deploy. On failure: m.mods is left
+// untouched (the write never took effect) and a refresh is dispatched so the
+// list reflects disk truth - mirroring the design's own "errors surface in
+// the status line and the list refreshes to disk truth" contract.
+func (m Model) moveSelectedMod(delta int) (Model, tea.Cmd) {
+	if m.screen != ScreenInstalledMods || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	if m.modsFiltered {
+		m.action.status = "reorder unavailable while filtered"
+		m.action.statusIsError = true
+		return m, nil
+	}
+
+	idx := m.selected[ScreenInstalledMods]
+	if idx < 0 || idx >= len(m.mods) {
+		return m, nil
+	}
+	target := idx + delta
+	if target < 0 || target >= len(m.mods) {
+		return m, nil
+	}
+
+	mods := append([]ModItem(nil), m.mods...)
+	mods[idx], mods[target] = mods[target], mods[idx]
+
+	keys := make([]string, len(mods))
+	for i, mod := range mods {
+		keys[i] = domain.ModKey(mod.Source, mod.ID)
+	}
+
+	if _, err := m.actions.ReorderMods(m.ctx, keys); err != nil {
+		m.action.status = singleLine(err.Error())
+		m.action.statusIsError = true
+		return m, m.loadData
+	}
+
+	m.mods = mods
+	m.selected[ScreenInstalledMods] = target
+	m.orderChanged = true
 	return m, nil
 }
 
@@ -1245,6 +1322,11 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	for screen := range m.selected {
 		m.selected[screen] = 0
 	}
+	// Task 4's post-reorder deploy hint (m.orderChanged) described the OLD
+	// game's profile - meaningless (and potentially confusing) once every
+	// other piece of data-derived state above has just been reset for the
+	// new one.
+	m.orderChanged = false
 
 	m.sources = m.provider.SourceInfos()
 	m.search.sources = append([]string{""}, m.provider.Sources()...)
