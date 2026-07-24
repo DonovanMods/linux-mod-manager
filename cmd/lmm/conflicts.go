@@ -24,6 +24,8 @@ type conflictJSON struct {
 	Path   string   `json:"path"`
 	Owner  string   `json:"owner"`
 	AlsoIn []string `json:"also_in"`
+	Winner string   `json:"winner"`
+	Stale  bool     `json:"stale"`
 }
 
 var conflictsCmd = &cobra.Command{
@@ -32,7 +34,10 @@ var conflictsCmd = &cobra.Command{
 	Long: `Display all file conflicts in the current profile.
 
 A conflict occurs when multiple mods want to deploy the same file path.
-The mod listed as "owner" is the one whose file is currently deployed.
+The mod listed as "owner" is the one whose file is currently deployed;
+the "winner" is the mod that would own the file after a fresh deploy,
+per the profile's load order (later mods override earlier ones). When
+the two disagree, the conflict is stale - redeploy to apply load order.
 
 Note: File tracking requires mods to be installed/deployed with lmm version 0.9.0+.
 Older mods may need to be redeployed to track their files.
@@ -51,100 +56,49 @@ func init() {
 
 func runConflicts(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
-		return doConflicts(svc, game)
+		return doConflicts(ctx, svc, game)
 	})
 }
 
-func doConflicts(svc *core.Service, game *domain.Game) error {
+// doConflicts renders core's GetProfileConflicts for the resolved profile.
+// The empty-mods vs no-conflicts distinction is presentation-only, so the
+// installed-mod count check stays here rather than in core.
+func doConflicts(ctx context.Context, svc *core.Service, game *domain.Game) error {
 	profileName, err := resolveProfile(svc, game.ID, conflictsProfile)
 	if err != nil {
 		return err
 	}
 
-	// Get all installed mods
 	mods, err := svc.GetInstalledMods(game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
 
+	emitEmptyJSON := func() error {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(conflictsJSONOutput{GameID: game.ID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
+			return fmt.Errorf("encoding json: %w", err)
+		}
+		return nil
+	}
+
 	if len(mods) == 0 {
 		if jsonOutput {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(conflictsJSONOutput{GameID: game.ID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
-				return fmt.Errorf("encoding json: %w", err)
-			}
-			return nil
+			return emitEmptyJSON()
 		}
 		fmt.Println("No installed mods.")
 		return nil
 	}
 
-	// Build map of mod ID to name for display
-	modNames := make(map[string]string)
-	for _, m := range mods {
-		key := m.SourceID + ":" + m.ID
-		modNames[key] = m.Name
-	}
-
-	// Collect all file paths and which mods want them
-	// Map: relative_path -> list of mod keys that have this file
-	fileToMods := make(map[string][]string)
-
-	for _, m := range mods {
-		files, err := svc.GetDeployedFilesForMod(game.ID, profileName, m.SourceID, m.ID)
-		if err != nil {
-			continue
-		}
-		key := m.SourceID + ":" + m.ID
-		for _, f := range files {
-			fileToMods[f] = append(fileToMods[f], key)
-		}
-	}
-
-	// Find files with multiple mods (conflicts)
-	type conflictInfo struct {
-		path     string
-		ownerKey string
-		others   []string
-	}
-
-	var conflicts []conflictInfo
-	for path, keys := range fileToMods {
-		if len(keys) > 1 {
-			// Get current owner from database
-			ownerSourceID, ownerModID, found, err := svc.GetFileOwner(game.ID, profileName, path)
-			if err != nil || !found {
-				continue
-			}
-			ownerKey := ownerSourceID + ":" + ownerModID
-
-			// Other mods that wanted this file
-			var others []string
-			for _, k := range keys {
-				if k != ownerKey {
-					others = append(others, k)
-				}
-			}
-
-			if len(others) > 0 {
-				conflicts = append(conflicts, conflictInfo{
-					path:     path,
-					ownerKey: ownerKey,
-					others:   others,
-				})
-			}
-		}
+	conflicts, err := svc.GetProfileConflicts(ctx, game, profileName)
+	if err != nil {
+		return fmt.Errorf("getting conflicts: %w", err)
 	}
 
 	if len(conflicts) == 0 {
 		if jsonOutput {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(conflictsJSONOutput{GameID: game.ID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
-				return fmt.Errorf("encoding json: %w", err)
-			}
-			return nil
+			return emitEmptyJSON()
 		}
 		fmt.Println("No conflicts found.")
 		return nil
@@ -153,19 +107,17 @@ func doConflicts(svc *core.Service, game *domain.Game) error {
 	if jsonOutput {
 		out := conflictsJSONOutput{GameID: game.ID, Profile: profileName, Conflicts: make([]conflictJSON, len(conflicts))}
 		for i, c := range conflicts {
-			ownerName := modNames[c.ownerKey]
-			if ownerName == "" {
-				ownerName = c.ownerKey
+			alsoIn := make([]string, len(c.AlsoIn))
+			for j, m := range c.AlsoIn {
+				alsoIn[j] = m.Name
 			}
-			othersNames := make([]string, len(c.others))
-			for j, k := range c.others {
-				if n := modNames[k]; n != "" {
-					othersNames[j] = n
-				} else {
-					othersNames[j] = k
-				}
+			out.Conflicts[i] = conflictJSON{
+				Path:   c.Path,
+				Owner:  c.Owner.Name,
+				AlsoIn: alsoIn,
+				Winner: c.LoadOrderWinner.Name,
+				Stale:  c.Stale,
 			}
-			out.Conflicts[i] = conflictJSON{Path: c.path, Owner: ownerName, AlsoIn: othersNames}
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -178,25 +130,21 @@ func doConflicts(svc *core.Service, game *domain.Game) error {
 	fmt.Printf("Found %d conflicting file(s):\n\n", len(conflicts))
 
 	for _, c := range conflicts {
-		ownerName := modNames[c.ownerKey]
-		if ownerName == "" {
-			ownerName = c.ownerKey
-		}
-
-		fmt.Printf("  %s\n", c.path)
-		fmt.Printf("    Owner: %s\n", ownerName)
+		fmt.Printf("  %s\n", c.Path)
+		fmt.Printf("    Owner: %s\n", c.Owner.Name)
 		fmt.Printf("    Also in: ")
-		for i, k := range c.others {
-			name := modNames[k]
-			if name == "" {
-				name = k
-			}
+		for i, m := range c.AlsoIn {
 			if i > 0 {
 				fmt.Print(", ")
 			}
-			fmt.Print(name)
+			fmt.Print(m.Name)
 		}
 		fmt.Println()
+		winner := c.LoadOrderWinner.Name
+		if c.Stale {
+			winner += " (stale — redeploy to apply)"
+		}
+		fmt.Printf("    Winner: %s\n", winner)
 		fmt.Println()
 	}
 
