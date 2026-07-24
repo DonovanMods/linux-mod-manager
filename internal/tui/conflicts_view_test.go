@@ -142,6 +142,24 @@ func TestConflictsScreenEmptyState(t *testing.T) {
 	require.Contains(t, model.View(), "No conflicts detected.")
 }
 
+// TestDeployKeyFiresFromConflictsScreen covers the review fix wave: the
+// stale-conflict hint copy names "deploy (D) to apply", so the deploy key
+// must actually fire from this screen - same confirmation modal and
+// machinery as Dashboard/Installed Mods (mirrors
+// TestDeployKeyFromInstalledModsPrompts' own shape).
+func TestDeployKeyFiresFromConflictsScreen(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenConflicts
+
+	updated, _ := model.Update(keyRunes("D"))
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending, "D on the Conflicts screen must open the deploy confirmation modal")
+	require.Equal(t, actionDeploy, model.action.pending.kind)
+}
+
 // TestDashboardConflictCountWired proves Summary.Conflicts - populated from
 // the same Conflicts() fetch the Conflicts screen itself renders, via
 // loadData's refresh cycle - reaches the dashboard's conflict count, which

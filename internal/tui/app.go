@@ -1552,18 +1552,20 @@ func (m Model) helpGroups() []helpGroup {
 		},
 	}
 
-	// conflicts has no mutation bindings of its own yet (Task 3 is read-only
-	// - Deploy stays scoped to Dashboard/Installed Mods, see
-	// deployActiveProfile's own screen guard): Up/Down are documented here
-	// anyway, unlike every OTHER screen (where they're left to the footer's
-	// generic "↑↓/j/k: move" hint), because selecting a row IS this screen's
-	// entire interaction model - it's what reveals the detail pane's stale/
+	// conflicts lists Deploy (the review fix wave extended
+	// deployActiveProfile's screen guard here, so the stale-conflict hint's
+	// "deploy (D) to apply" names a key that actually fires - mirroring how
+	// dashboard/installedMods above list the same binding) plus Up/Down -
+	// documented here unlike every OTHER screen (where they're left to the
+	// footer's generic "↑↓/j/k: move" hint) because selecting a row IS this
+	// screen's core interaction: it's what reveals the detail pane's stale/
 	// in-sync hint copy, not just a cosmetic highlight.
 	conflicts := helpGroup{
 		name: "conflicts",
 		entries: []string{
 			helpEntry(m.keys.Up),
 			helpEntry(m.keys.Down),
+			helpEntry(m.keys.Deploy),
 		},
 	}
 

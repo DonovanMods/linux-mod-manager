@@ -350,33 +350,34 @@ func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	t.Parallel()
 
-	// Height bumped 37->39->40->60->61->65 over time (37->39->40 across
+	// Height bumped 37->39->40->60->61->65->66 over time (37->39->40 across
 	// Phase 5b Task 5's two new help lines; 40->60 in Task 9, when helpView
 	// grew from a flat ~15-line list into per-screen groups covering every
 	// Tasks 4-8 binding - see helpGroups/helpBodyBudget; 60->61 for the
 	// dashboard group's "enter open menu entry" line; 61->65 in Task 3,
 	// whose new "conflicts" help group adds a blank separator, a header, and
-	// two entries - see helpGroups' own conflicts group doc comment).
-	// Verified empirically each time (scratch probes sweeping a height
-	// range, since removed) the same way 5a proved its own 36->37 bump:
-	// below the fitting height, the rendered view consistently comes out
-	// taller than the requested terminal height (lipgloss pads SHORT
+	// two entries; 65->66 in Task 3's review fix wave, which added the
+	// Deploy entry to that group - see helpGroups' own conflicts group doc
+	// comment). Verified empirically each time (scratch probes sweeping a
+	// height range, since removed) the same way 5a proved its own 36->37
+	// bump: below the fitting height, the rendered view consistently comes
+	// out taller than the requested terminal height (lipgloss pads SHORT
 	// content but never clips content taller than the requested budget) -
 	// the party-sheet dashboard's split-panel math (partyDashboardView's
 	// topHeight/menuHeight, both integer divisions of availableContentHeight)
-	// hits its natural minimum before the requested budget does. Height=65
+	// hits its natural minimum before the requested budget does. Height=66
 	// is the first value where the requested content budget finally reaches
 	// that same natural minimum, so the view fits with exactly zero slack
-	// (66 and above, the content grows to fill the larger budget instead).
+	// (67 and above, the content grows to fill the larger budget instead).
 	// This pins the current zero-slack floor - see task-5-brief.md's "prove
 	// pre-existing saturation... like 5a did" allowance for justified
 	// height adjustments.
-	model := sizedPrototypeModel(t, "wizardry", 120, 65)
+	model := sizedPrototypeModel(t, "wizardry", 120, 66)
 	model = updateWithRunes(t, model, "?")
 
 	view := model.View()
 	require.Equal(t, 120, lipgloss.Width(view))
-	require.Equal(t, 65, lipgloss.Height(view))
+	require.Equal(t, 66, lipgloss.Height(view))
 }
 
 func TestThemesUseDistinctLayouts(t *testing.T) {
