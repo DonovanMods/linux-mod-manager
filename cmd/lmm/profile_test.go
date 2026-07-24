@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -385,4 +386,92 @@ func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *te
 
 	assert.Contains(t, out, "  Warning: failed to undeploy Test Mod: ")
 	assert.Contains(t, out, "  ✓ Disabled: Test Mod\n")
+}
+
+// seedApplyCandidateMod stores files (if any) in the game's cache and saves
+// an InstalledMod DB record under the "default" profile with the given
+// Enabled state, WITHOUT adding it to any profile's Mods list - unlike
+// seedDeployableMod/seedInstalledForUpdate, which always add a profile
+// reference. doProfileApply tests need mods that are installed but
+// deliberately absent from profile.Mods (the toDisable case), so callers add
+// their own profile.Mods references only where the scenario calls for it.
+func seedApplyCandidateMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, name, version string, enabled bool, files map[string][]byte) {
+	t.Helper()
+
+	gameCache := svc.GetGameCache(game)
+	for path, content := range files {
+		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+	}
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: version, GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      enabled,
+	}))
+}
+
+// TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods guards Task
+// 1's declared behavior change for doProfileApply: its disable/enable/install
+// buckets used to be built by ranging Go maps (installedByKey/profileKeys),
+// so the order mods were announced in was arbitrary from run to run. This
+// seeds three disable-eligible, three enable-eligible, and three
+// install-eligible mods with a profile.Mods order that deliberately doesn't
+// match alphabetical or DB-insertion order, and asserts the printed order:
+// disable-eligible mods are absent from profile.Mods entirely, so
+// core.OrderByProfile sorts them first by "SourceID:ID" key (proven here by
+// seeding their DB rows in reverse-alphabetical order and expecting
+// alphabetical print order); enable/install-eligible mods are interleaved in
+// a single profile.Mods list, so each bucket must independently preserve its
+// relative position in that list.
+func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+
+	// Disable-eligible: installed+enabled, absent from profile.Mods. Seeded
+	// in reverse order (disC, disB, disA) - core.OrderByProfile sorts
+	// unlisted mods by key, so the print order must come out alphabetical.
+	for _, id := range []string{"disC", "disB", "disA"} {
+		seedApplyCandidateMod(t, svc, game, "src", id, "Dis "+id, "1.0", true, nil)
+	}
+
+	// Enable-eligible: installed+disabled+cached, referenced by profile.Mods.
+	for _, id := range []string{"enA", "enB", "enC"} {
+		seedApplyCandidateMod(t, svc, game, "src", id, "En "+id, "1.0", false, map[string][]byte{id + ".dat": []byte(id)})
+	}
+
+	// profile.Mods interleaves enable/install refs in an order matching
+	// neither alphabetical nor insertion order for either sub-sequence.
+	for _, id := range []string{"enC", "insB", "enA", "insC", "enB", "insA"} {
+		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+	}
+
+	origYes := profileApplyYes
+	profileApplyYes = true
+	t.Cleanup(func() { profileApplyYes = origYes })
+
+	out := captureStdout(t, func() error {
+		return doProfileApply(context.Background(), svc, game, nil)
+	})
+
+	disA, disB, disC := strings.Index(out, "Dis disA"), strings.Index(out, "Dis disB"), strings.Index(out, "Dis disC")
+	require.NotEqual(t, -1, disA, "Dis disA must be printed")
+	require.NotEqual(t, -1, disB, "Dis disB must be printed")
+	require.NotEqual(t, -1, disC, "Dis disC must be printed")
+	assert.Less(t, disA, disB, "mods unlisted in profile.Mods must print in sorted-key order")
+	assert.Less(t, disB, disC, "mods unlisted in profile.Mods must print in sorted-key order")
+
+	enC, enA, enB := strings.Index(out, "En enC"), strings.Index(out, "En enA"), strings.Index(out, "En enB")
+	require.NotEqual(t, -1, enC, "En enC must be printed")
+	require.NotEqual(t, -1, enA, "En enA must be printed")
+	require.NotEqual(t, -1, enB, "En enB must be printed")
+	assert.Less(t, enC, enA, "enable-eligible mods must print in profile.Mods order")
+	assert.Less(t, enA, enB, "enable-eligible mods must print in profile.Mods order")
+
+	insB, insC, insA := strings.Index(out, "src:insB"), strings.Index(out, "src:insC"), strings.Index(out, "src:insA")
+	require.NotEqual(t, -1, insB, "src:insB must be printed")
+	require.NotEqual(t, -1, insC, "src:insC must be printed")
+	require.NotEqual(t, -1, insA, "src:insA must be printed")
+	assert.Less(t, insB, insC, "install-eligible mods must print in profile.Mods order")
+	assert.Less(t, insC, insA, "install-eligible mods must print in profile.Mods order")
 }

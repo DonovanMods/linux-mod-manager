@@ -787,6 +787,80 @@ exit 1`)
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should already be removed by the time after_each runs")
 }
 
+// --- OrderByProfile (Task 1) ---
+
+// TestOrderByProfile table-drives core.OrderByProfile's contract: mods
+// absent from profile.Mods come first (sorted by "SourceID:ID" key), then
+// mods present in profile.Mods in that profile's own order - regardless of
+// the input mods slice's order, and with duplicate keys collapsed to one
+// occurrence.
+func TestOrderByProfile(t *testing.T) {
+	im := func(sourceID, id string) domain.InstalledMod {
+		return domain.InstalledMod{Mod: domain.Mod{SourceID: sourceID, ID: id}}
+	}
+	ref := func(sourceID, id string) domain.ModReference {
+		return domain.ModReference{SourceID: sourceID, ModID: id}
+	}
+	keysOf := func(mods []domain.InstalledMod) []string {
+		keys := make([]string, len(mods))
+		for i, m := range mods {
+			keys[i] = domain.ModKey(m.SourceID, m.ID)
+		}
+		return keys
+	}
+
+	tests := []struct {
+		name     string
+		profile  *domain.Profile
+		mods     []domain.InstalledMod
+		expected []string
+	}{
+		{
+			name:     "listed mods follow profile order regardless of input order",
+			profile:  &domain.Profile{Mods: []domain.ModReference{ref("src", "c"), ref("src", "a"), ref("src", "b")}},
+			mods:     []domain.InstalledMod{im("src", "a"), im("src", "b"), im("src", "c")},
+			expected: []string{"src:c", "src:a", "src:b"},
+		},
+		{
+			name:     "unlisted mods sort first by key, then listed mods follow profile order",
+			profile:  &domain.Profile{Mods: []domain.ModReference{ref("src", "b")}},
+			mods:     []domain.InstalledMod{im("src", "z"), im("src", "b"), im("src", "a")},
+			expected: []string{"src:a", "src:z", "src:b"},
+		},
+		{
+			name:     "empty profile sorts every mod by key",
+			profile:  &domain.Profile{},
+			mods:     []domain.InstalledMod{im("src", "c"), im("src", "a"), im("src", "b")},
+			expected: []string{"src:a", "src:b", "src:c"},
+		},
+		{
+			name:     "nil profile is treated as empty - sorts every mod by key",
+			profile:  nil,
+			mods:     []domain.InstalledMod{im("src", "c"), im("src", "a")},
+			expected: []string{"src:a", "src:c"},
+		},
+		{
+			name:     "a mod repeated in profile.Mods is not duplicated in the output",
+			profile:  &domain.Profile{Mods: []domain.ModReference{ref("src", "a"), ref("src", "a"), ref("src", "b")}},
+			mods:     []domain.InstalledMod{im("src", "a"), im("src", "b")},
+			expected: []string{"src:a", "src:b"},
+		},
+		{
+			name:     "empty mods with a non-empty profile returns empty",
+			profile:  &domain.Profile{Mods: []domain.ModReference{ref("src", "a")}},
+			mods:     nil,
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := core.OrderByProfile(tt.profile, tt.mods)
+			assert.Equal(t, tt.expected, keysOf(got))
+		})
+	}
+}
+
 // --- DeployProfile ---
 
 // TestService_DeployProfile_MultiModDeploysInProfileOrder guards doDeploy's
@@ -828,6 +902,48 @@ func TestService_DeployProfile_MultiModDeploysInProfileOrder(t *testing.T) {
 		_, err := os.Lstat(filepath.Join(gameDir, f))
 		assert.NoError(t, err, "%s should be deployed", f)
 	}
+}
+
+// TestService_DeployProfile_DeployOrderWinsFileConflicts guards Task 1's
+// core motivation: two mods that each own a file at the same relative game
+// path race for "who deploys last, wins" - and before this task, that race
+// was decided by Go's randomized map iteration, not profile.Mods' documented
+// load order (first = lowest priority). Deploying twice - once per profile
+// order - proves the winner tracks profile order, not insertion order or
+// chance: modY (deployed second, both times) wins the first pass, and after
+// ReorderMods flips it to deploy first, modX wins instead.
+func TestService_DeployProfile_DeployOrderWinsFileConflicts(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "modX", "Mod X", "1.0", true, map[string][]byte{"shared.esp": []byte("X-content")})
+	seedNamedInstalledMod(t, svc, game, "src", "modY", "Mod Y", "1.0", true, map[string][]byte{"shared.esp": []byte("Y-content")})
+
+	seedProfileWithMod(t, svc, "g1", "default", "src", "modX", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "modY", "1.0")
+
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Deployed)
+
+	content, err := os.ReadFile(filepath.Join(gameDir, "shared.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "Y-content", string(content), "modY deploys later (last in profile order) and must win the shared file")
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.ReorderMods(game.ID, "default", []domain.ModReference{
+		{SourceID: "src", ModID: "modY", Version: "1.0"},
+		{SourceID: "src", ModID: "modX", Version: "1.0"},
+	}))
+
+	result, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Deployed)
+
+	content, err = os.ReadFile(filepath.Join(gameDir, "shared.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "X-content", string(content), "after reordering the profile, modX now deploys later and must win the shared file")
 }
 
 // TestService_DeployProfile_LinkMethodOverrideHonored guards the --method
@@ -1955,6 +2071,75 @@ func TestService_PlanProfileSwitch_ComputesDisableEnableInstallBuckets(t *testin
 	require.Len(t, plan.ToInstall, 1)
 	assert.Equal(t, "modD", plan.ToInstall[0].ModID)
 	assert.Equal(t, "2.0", plan.ToInstall[0].Version)
+}
+
+// TestService_PlanProfileSwitch_DeterministicOrder guards Task 1's
+// PlanProfileSwitch fix: ToDisable/ToEnable/ToInstall used to be built by
+// ranging Go maps (currentEnabled/targetKeys), so their element order was
+// arbitrary from run to run. This seeds three mods per bucket with
+// profile.Mods orders that deliberately don't match alphabetical or
+// insertion order, plans twice, and asserts: (1) both runs produce identical
+// slices, and (2) ToDisable follows the FROM profile's ("default") Mods
+// order while ToEnable/ToInstall follow the TO profile's ("target") Mods
+// order - interleaved in a single Mods list, to prove each bucket
+// independently preserves its relative order within that shared list.
+func TestService_PlanProfileSwitch_DeterministicOrder(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, err)
+
+	// ToDisable candidates: enabled under "default", absent from "target".
+	// default.Mods is deliberately not alphabetical (disC, disA, disB).
+	for _, id := range []string{"disC", "disA", "disB"} {
+		seedNamedInstalledMod(t, svc, game, "src", id, "Dis "+id, "1.0", true, nil)
+		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+	}
+
+	// ToEnable candidates: installed (under "default") but disabled, cached,
+	// referenced by "target".
+	for _, id := range []string{"enA", "enB", "enC"} {
+		seedNamedInstalledMod(t, svc, game, "src", id, "En "+id, "1.0", false, map[string][]byte{id + ".dat": []byte(id)})
+	}
+
+	// ToInstall candidates: referenced by "target" only, no DB row at all.
+	// target.Mods interleaves enable/install refs in an order that matches
+	// neither alphabetical nor insertion order for either sub-sequence.
+	for _, id := range []string{"enC", "insB", "enA", "insC", "enB", "insA"} {
+		require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+	}
+
+	plan1, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+	plan2, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+
+	assert.Equal(t, plan1.ToDisable, plan2.ToDisable, "two runs must produce identical ToDisable order")
+	assert.Equal(t, plan1.ToEnable, plan2.ToEnable, "two runs must produce identical ToEnable order")
+	assert.Equal(t, plan1.ToInstall, plan2.ToInstall, "two runs must produce identical ToInstall order")
+
+	var disableIDs []string
+	for _, im := range plan1.ToDisable {
+		disableIDs = append(disableIDs, im.ID)
+	}
+	assert.Equal(t, []string{"disC", "disA", "disB"}, disableIDs, "ToDisable must follow the FROM profile's (default) Mods order")
+
+	var enableIDs []string
+	for _, im := range plan1.ToEnable {
+		enableIDs = append(enableIDs, im.ID)
+	}
+	assert.Equal(t, []string{"enC", "enA", "enB"}, enableIDs, "ToEnable must follow the TO profile's (target) Mods order")
+
+	var installIDs []string
+	for _, ref := range plan1.ToInstall {
+		installIDs = append(installIDs, ref.ModID)
+	}
+	assert.Equal(t, []string{"insB", "insC", "insA"}, installIDs, "ToInstall must follow the TO profile's (target) Mods order")
 }
 
 // TestService_PlanProfileSwitch_CacheMissForcesReinstallWithPreservedFileIDs

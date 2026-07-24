@@ -929,6 +929,67 @@ func selectDeployFiles(files []domain.DownloadableFile, storedFileIDs []string) 
 	return []*domain.DownloadableFile{primary()}, false, nil
 }
 
+// OrderByProfile returns mods in a stable, deterministic order for
+// multi-mod operations (deploy, plan/apply): mods absent from profile.Mods
+// first - sorted by "SourceID:ID" key (domain.ModKey) for a reproducible
+// tie-break - followed by mods present in profile.Mods, in profile.Mods
+// order. domain.Profile.Mods documents "first = lowest priority" (see its
+// doc comment), so later entries in that order deploy later and win file
+// conflicts; this function preserves that meaning end to end.
+//
+// profile may be nil - treated as an empty profile, so every mod is
+// "absent" and the whole result is simply sorted by key. Callers with a
+// profile that failed to load (e.g. an unreadable/missing YAML file) use
+// this to stay deterministic without aborting the caller's own operation.
+//
+// Keys are deduplicated: a mod repeated in profile.Mods (which shouldn't
+// normally happen - ReorderMods already dedupes on save) or in mods
+// contributes only its single occurrence to the result, at its first
+// resolved position.
+func OrderByProfile(profile *domain.Profile, mods []domain.InstalledMod) []domain.InstalledMod {
+	byKey := make(map[string]domain.InstalledMod, len(mods))
+	for _, m := range mods {
+		byKey[domain.ModKey(m.SourceID, m.ID)] = m
+	}
+
+	var profileMods []domain.ModReference
+	if profile != nil {
+		profileMods = profile.Mods
+	}
+
+	inProfile := make(map[string]bool, len(profileMods))
+	for _, ref := range profileMods {
+		inProfile[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+
+	var unlisted []domain.InstalledMod
+	for key, m := range byKey {
+		if !inProfile[key] {
+			unlisted = append(unlisted, m)
+		}
+	}
+	sort.Slice(unlisted, func(i, j int) bool {
+		return domain.ModKey(unlisted[i].SourceID, unlisted[i].ID) < domain.ModKey(unlisted[j].SourceID, unlisted[j].ID)
+	})
+
+	ordered := make([]domain.InstalledMod, 0, len(mods))
+	ordered = append(ordered, unlisted...)
+
+	seen := make(map[string]bool, len(profileMods))
+	for _, ref := range profileMods {
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if m, ok := byKey[key]; ok {
+			ordered = append(ordered, m)
+		}
+	}
+
+	return ordered
+}
+
 // DeployProfile redeploys the mods of a profile in profile order: an
 // optional --purge pass first (undeploying every installed mod), then for
 // each mod to deploy - re-downloading from source if its cache entry is
@@ -957,6 +1018,11 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		if err != nil {
 			return result, fmt.Errorf("getting installed mods: %w", err)
 		}
+		// Deterministic purge order: profile.Mods order (nil-safe - an
+		// unreadable profile falls back to OrderByProfile's nil handling
+		// rather than aborting the purge).
+		profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
+		mods = OrderByProfile(profile, mods)
 		enabledBeforePurge = make(map[string]bool)
 		for _, m := range mods {
 			if m.Enabled {
@@ -1524,13 +1590,34 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	var toDisable, toEnable []domain.InstalledMod
 	var toInstall []domain.ModReference
 
-	for key, im := range currentEnabled {
+	// Deterministic order: iterate currentMods in fromProfile's load order
+	// (mods enabled but absent from fromProfile.Mods sort first by key - see
+	// OrderByProfile), filtered down to currentEnabled's members - not `for
+	// key, im := range currentEnabled`, which iterates map order.
+	for _, im := range OrderByProfile(currentProfile, currentMods) {
+		key := domain.ModKey(im.SourceID, im.ID)
+		if _, enabled := currentEnabled[key]; !enabled {
+			continue
+		}
 		if _, inTarget := targetKeys[key]; !inTarget {
-			toDisable = append(toDisable, *im)
+			toDisable = append(toDisable, im)
 		}
 	}
 
-	for key, ref := range targetKeys {
+	// Deterministic order: iterate targetProfile.Mods in its own load
+	// order - not `for key, ref := range targetKeys`, which iterates map
+	// order - keeping the exact per-key classification logic. seenTarget
+	// guards the same dedup targetKeys gave for free (a mod repeated in
+	// targetProfile.Mods, which shouldn't normally happen, is only
+	// classified once).
+	seenTarget := make(map[string]bool, len(targetProfile.Mods))
+	for _, ref := range targetProfile.Mods {
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if seenTarget[key] {
+			continue
+		}
+		seenTarget[key] = true
+
 		im, installed := allInstalled[key]
 		switch {
 		case !installed:

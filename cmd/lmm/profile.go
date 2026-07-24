@@ -966,8 +966,14 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	var toInstall []domain.ModReference
 	needsRedownloadSet := make(map[string]bool) // Track which mods are re-downloads
 
-	// Check installed mods against profile
-	for key, im := range installedByKey {
+	// Check installed mods against profile. Deterministic order: iterate
+	// core.OrderByProfile(profile, installedMods) - not `for key, im :=
+	// range installedByKey`, which iterates map order - keeping installedByKey
+	// only for the membership lookup below.
+	ordered := core.OrderByProfile(profile, installedMods)
+	for i := range ordered {
+		im := &ordered[i]
+		key := im.SourceID + ":" + im.ID
 		if _, inProfile := profileKeys[key]; !inProfile {
 			// Installed but not in profile - disable it
 			if im.Enabled {
@@ -993,8 +999,16 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		}
 	}
 
-	// Check profile mods against installed
-	for key, ref := range profileKeys {
+	// Check profile mods against installed. Deterministic order: iterate
+	// profile.Mods - not `for key, ref := range profileKeys`, which iterates
+	// map order. seen guards the same dedup profileKeys gave for free.
+	seen := make(map[string]bool, len(profile.Mods))
+	for _, ref := range profile.Mods {
+		key := ref.SourceID + ":" + ref.ModID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		if _, installed := installedByKey[key]; !installed {
 			// In profile but not installed
 			toInstall = append(toInstall, ref)
