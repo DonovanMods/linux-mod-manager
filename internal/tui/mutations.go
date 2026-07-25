@@ -917,6 +917,12 @@ func (m Model) resolveCheckUpdatesResult(msg checkUpdatesResultMsg) (Model, tea.
 	model, pa := m.buildAction(actionUpdate, title, updateDetailLines(view), "", func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
 		return applyUpdatesSequentially(ctx, m.actions, updates, progress)
 	})
+	// pendingUpdates retains view for Task 7's changelog viewer ('v' -
+	// updatePendingActionKey, actions.go): both the discriminator ("is the
+	// pending action THIS update batch") and the data the viewer renders
+	// (names, versions, changelogs). Cleared everywhere action.pending
+	// itself is cleared - see Model.pendingUpdates' own doc comment.
+	model.pendingUpdates = &view
 	return model.promptAction(pa), nil
 }
 
@@ -955,6 +961,39 @@ func updateDetailLines(view UpdatesView) []string {
 		lines = append(lines, fmt.Sprintf("%d warning(s) during check", len(view.Warnings)))
 	}
 	return lines
+}
+
+// --- Changelog viewer ('v' on the apply-updates modal) ---
+
+// changelogPickedMsg carries the update the user selected in the "View
+// changelog" picker (see openChangelogFromUpdateModal, actions.go), routed
+// through Update() to resolveChangelogPicked rather than opening the
+// overlay directly from the picker's own choose closure - mirrors
+// policyChosenMsg's own reasoning in full (see that type's doc comment):
+// pendingPicker.choose can only return a tea.Cmd, never a mutated Model, so
+// the actual m.overlay assignment must happen from Update(), against the
+// LIVE model, not a Model the choose closure captured when the picker was
+// built.
+type changelogPickedMsg struct {
+	update UpdateItem
+}
+
+// resolveChangelogPicked handles a changelogPickedMsg: opens the changelog
+// overlay for msg.update against the live Model. m.action.pending should
+// still be the SAME update batch at this point - updateKey routes every key
+// to updatePickerKey while the picker openChangelogFromUpdateModal opened is
+// up (picker is checked before action.pending - see updateKey's own doc
+// comment), so nothing else can touch action.pending in the window between
+// the pick and this message's arrival - but the guard below is kept anyway,
+// defense-in-depth, mirroring resolvePolicyChoice/resolveGameSwitch's own
+// "the window between the pick and this resolution is real" precedent for
+// every OTHER *ChosenMsg resolver in this file.
+func (m Model) resolveChangelogPicked(msg changelogPickedMsg) (Model, tea.Cmd) {
+	if m.action.pending == nil || m.overlay != nil {
+		return m, nil
+	}
+	m.overlay = changelogOverlay(msg.update)
+	return m, nil
 }
 
 // applyUpdatesSequentially applies every entry in updates, in order,
@@ -1356,6 +1395,13 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	m.picker = nil
 	m.inputModal = nil
 	m.overlay = nil
+	// pendingUpdates is Task 7's retained-changelog-view sibling of
+	// action.pending itself (see Model.pendingUpdates' own doc comment) -
+	// action.pending is already guaranteed nil above (this method's own
+	// single-flight guard), so pendingUpdates should already be nil too, but
+	// this is reset here anyway, same defense-in-depth reasoning as the
+	// three modal resets just above.
+	m.pendingUpdates = nil
 
 	m.summary = Summary{Updates: -1, Conflicts: -1}
 	m.mods = nil

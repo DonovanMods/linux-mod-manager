@@ -402,10 +402,22 @@ func (m Model) promptAction(pa pendingAction) Model {
 // false, so startQuit's idle path (immediate tea.Quit) is what fires here,
 // unchanged by Task 6 item d; every other key is swallowed so nothing
 // behind the modal can react to it.
+//
+// Changelog (Task 7) fires ONLY when m.pendingUpdates is set - the
+// discriminator proving the pending action is specifically the apply-updates
+// batch (resolveCheckUpdatesResult, mutations.go, is the only place that
+// ever sets it, always alongside action.pending itself - see
+// Model.pendingUpdates' own doc comment) - so it's a no-op for every other
+// pendingAction kind (Uninstall, Deploy, Purge, Rollback, ...), matching
+// TestVIgnoredOutsideUpdateModal. It's matched before ConfirmAction/
+// CancelAction below only for readability; the bound keys ("v" vs "y"/
+// "enter"/"n"/"esc") never collide, so match order can't change behavior.
 func (m Model) updatePendingActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m.startQuit()
+	case key.Matches(msg, m.keys.Changelog) && m.pendingUpdates != nil:
+		return m.openChangelogFromUpdateModal()
 	case key.Matches(msg, m.keys.ConfirmAction):
 		pa := m.action.pending
 		m.action.pending = nil
@@ -413,10 +425,69 @@ func (m Model) updatePendingActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, pa.confirm()
 	case key.Matches(msg, m.keys.CancelAction):
 		m.action.pending = nil
+		m.pendingUpdates = nil
 		return m, nil
 	default:
 		return m, nil
 	}
+}
+
+// openChangelogFromUpdateModal handles Changelog ('v') while the pending
+// confirmation modal is the update-apply batch (m.pendingUpdates != nil):
+// a single update opens its changelog overlay directly; two or more open a
+// "View changelog" picker naming each "<name> <from> → <to>", whose choose
+// dispatches a changelogPickedMsg (mutations.go) rather than opening the
+// overlay itself - mirroring editSelectedModPolicy/openGameSwitcher's own
+// "choose can only return a tea.Cmd, so a closure captured now but invoked
+// later on selection can't safely mutate the Model" reasoning (see either's
+// doc comment, or changelogPickedMsg's own).
+//
+// Both branches set m.overlay/m.picker DIRECTLY rather than through
+// promptOverlay/promptPicker: those constructors refuse outright while
+// m.action.pending is set (their own single-flight guard), which is exactly
+// the state this method runs in by design - the update batch modal stays
+// pending underneath the changelog view the whole time (updateKey/
+// screenView check overlay/picker before action.pending - see updateKey's
+// own doc comment - so keys/rendering route to the changelog view while
+// it's up) and reappears the instant the overlay/picker closes, simply
+// because action.pending itself is never touched here.
+func (m Model) openChangelogFromUpdateModal() (tea.Model, tea.Cmd) {
+	updates := m.pendingUpdates.Updates
+	if len(updates) == 1 {
+		m.overlay = changelogOverlay(updates[0])
+		return m, nil
+	}
+
+	options := make([]pickerOption, len(updates))
+	for i, u := range updates {
+		options[i] = pickerOption{Label: fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion)}
+	}
+	m.picker = &pendingPicker{
+		title:   "View changelog",
+		options: options,
+		choose: func(idx int) tea.Cmd {
+			u := updates[idx]
+			return func() tea.Msg { return changelogPickedMsg{update: u} }
+		},
+	}
+	return m, nil
+}
+
+// changelogOverlay renders u as the changelog-viewer infoOverlay: title
+// "<name> <from> → <to>", body split on newlines. u.Changelog is already the
+// FULL core.CleanChangelog'd text by the time it reaches here (see
+// UpdateItem.Changelog's own doc comment) - no further stripping or
+// truncation happens here; overlayView's own render-time "+N more" cap
+// handles anything taller than the panel, exactly like every other
+// infoOverlay. An empty Changelog (the source reported none) renders the
+// single line "no changelog available" instead of an empty panel.
+func changelogOverlay(u UpdateItem) *infoOverlay {
+	title := fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion)
+	lines := []string{"no changelog available"}
+	if u.Changelog != "" {
+		lines = strings.Split(u.Changelog, "\n")
+	}
+	return &infoOverlay{title: title, lines: lines}
 }
 
 // actionDrainTimeout bounds how long startQuit waits for a RUNNING action to
@@ -654,7 +725,16 @@ func (m Model) actionModalView() string {
 		}
 	}
 
-	lines = append(lines, "", m.theme.MutedText.Render("y/enter confirm · n/esc cancel"))
+	// Task 7: the hint names the changelog viewer too whenever this modal IS
+	// the apply-updates batch (m.pendingUpdates != nil - see
+	// Model.pendingUpdates/openChangelogFromUpdateModal's own doc comments),
+	// regardless of whether any individual update actually has one (an empty
+	// Changelog still opens the overlay, just with "no changelog available").
+	hint := "y/enter confirm · n/esc cancel"
+	if m.pendingUpdates != nil {
+		hint += " · v changelog"
+	}
+	lines = append(lines, "", m.theme.MutedText.Render(hint))
 
 	return m.panelWithHeight(width, height).Render(strings.Join(lines, "\n"))
 }

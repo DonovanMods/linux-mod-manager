@@ -1805,6 +1805,30 @@ func TestCoreProviderActions_CheckUpdates_OneUpdateAndOneErroringSourceSurfacesW
 	assert.Contains(t, view.Warnings[0], "flaky")
 }
 
+// TestCoreProviderCheckUpdatesPopulatesChangelog guards Phase 6b Task 7's
+// UpdateItem.Changelog wiring: coreProvider.CheckUpdates must run the
+// source's raw HTML changelog through core.CleanChangelog before it ever
+// reaches the TUI - the FULL cleaned text, with no 800/500-char truncation
+// (that stays CLI-side, see core.CleanChangelog's own doc comment) since the
+// changelog overlay itself handles overflow.
+func TestCoreProviderCheckUpdatesPopulatesChangelog(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	seedActionMod(t, svc, game, "src", "modZ", "Mod Z", "1.0", true, nil)
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.updates = []domain.Update{{
+		InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: "modZ", SourceID: "src", Name: "Mod Z", Version: "1.0"}},
+		NewVersion:   "1.1",
+		Changelog:    "<p>Fixed some <b>bugs</b>.</p><p>Added &amp; improved textures.</p>",
+	}}
+
+	view, err := actions.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	require.Len(t, view.Updates, 1)
+	assert.Equal(t, "Fixed some bugs.\n\nAdded & improved textures.", view.Updates[0].Changelog)
+}
+
 // TestCoreProviderActions_CheckUpdates_MapsAuthRequiredError guards the
 // §7/auth mapping for CheckUpdates specifically: unlike the other three
 // methods, CheckUpdates' failure is a JOINED multi-source error (Updater.

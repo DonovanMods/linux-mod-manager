@@ -173,6 +173,15 @@ type InstallPlanView struct {
 type UpdateItem struct {
 	Source, ID, Name       string
 	FromVersion, ToVersion string
+	// Changelog is the update's changelog, already run through
+	// core.CleanChangelog (Phase 6b Task 7) - the FULL cleaned text, with NO
+	// truncation: unlike cmd/lmm/update.go's own 800/500-char CLI
+	// truncation (a presentation concern that stays CLI-side), the TUI's
+	// changelog overlay (mutations.go's openChangelogFromUpdateModal) shows
+	// the whole thing and lets its own render-time "+N more" cap handle
+	// overflow. Empty means the source reported none - the overlay renders
+	// "no changelog available" rather than an empty panel.
+	Changelog string
 }
 
 // UpdatesView is CheckUpdates' result: the available updates plus any
@@ -589,7 +598,11 @@ func (p *prototypeProvider) ApplyInstall(_ context.Context, item ModItem, progre
 // with a non-empty AvailableVersion (see prototype.Mod's doc comment -
 // skyui is canned "auto", ussep "notify", giving at least one of each
 // policy for a future keybinding layer to consult, though UpdateItem itself
-// carries no policy field - see its doc comment).
+// carries no policy field - see its doc comment). Changelog is copied
+// straight from the canned Mod (Phase 6b Task 7): skyui carries a canned
+// multi-line changelog and ussep deliberately leaves it empty, so
+// --prototype mode can demo both the changelog overlay's normal case and
+// its "no changelog available" one.
 func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error) {
 	var view UpdatesView
 	for _, mod := range p.activeMods() {
@@ -599,6 +612,7 @@ func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error)
 		view.Updates = append(view.Updates, UpdateItem{
 			Source: mod.Source, ID: mod.ID, Name: mod.Name,
 			FromVersion: mod.Version, ToVersion: mod.AvailableVersion,
+			Changelog: mod.Changelog,
 		})
 	}
 	return view, nil

@@ -99,6 +99,15 @@ type Mod struct {
 	UpdatePolicy     string
 	AvailableVersion string
 
+	// Changelog feeds prototypeProvider.CheckUpdates' UpdateItem.Changelog
+	// (Phase 6b Task 7): skyui carries a canned multi-line changelog and
+	// ussep deliberately leaves it empty, so --prototype mode can demo both
+	// the changelog overlay's normal case ('v' on the apply-updates modal)
+	// and its "no changelog available" one. Every other InstalledMods entry
+	// leaves this unset, matching AvailableVersion's own "never invent a
+	// phantom update" convention.
+	Changelog string
+
 	// PreviousVersion feeds prototypeProvider.Rollback's fake swap (Task 6):
 	// a non-empty value marks the InstalledMods entry as rollback-eligible,
 	// mirroring domain.InstalledMod.PreviousVersion's own "version before
@@ -126,7 +135,7 @@ func Load() Data {
 			Conflicts: 2,
 		},
 		InstalledMods: []Mod{
-			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true, UpdatePolicy: "auto", AvailableVersion: "5.3"},
+			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true, UpdatePolicy: "auto", AvailableVersion: "5.3", Changelog: "Fixed a crash when opening the inventory with a controller.\nAdded a compatibility patch for the newest SKSE build.\nMinor MCM menu polish."},
 			{ID: "ussep", Name: "USSEP", Source: "nexusmods", Author: "Arthmoor", Version: "4.3", Status: "update", Summary: "Unofficial Skyrim Special Edition Patch.", Downloads: 11_000_000, Endorsements: 420_000, HasEndorsements: true, UpdatePolicy: "notify", AvailableVersion: "4.4"},
 			{ID: "skse-address-library", Name: "SKSE Address Library", Source: "nexusmods", Author: "meh321", Version: "11", Status: "installed", Summary: "Address library for SKSE plugins.", Downloads: 8_900_000, Endorsements: 150_000, HasEndorsements: true, PreviousVersion: "10"},
 			{ID: "immersive-armors", Name: "Immersive Armors", Source: "nexusmods", Author: "hothtrooper44", Version: "8.1", Status: "conflict", Summary: "Adds hundreds of new armor variants.", Downloads: 6_700_000, Endorsements: 380_000, HasEndorsements: true},

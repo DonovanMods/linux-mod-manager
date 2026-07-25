@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 	"text/tabwriter"
 
@@ -222,7 +221,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if len(withChangelog) > 0 {
 		fmt.Println("\nChangelogs:")
 		for _, u := range withChangelog {
-			cl := stripHTMLForTerminal(u.Changelog)
+			cl := core.CleanChangelog(u.Changelog)
 			const maxChangelog = 800
 			if len(cl) > maxChangelog {
 				cl = cl[:maxChangelog] + "\n..."
@@ -303,7 +302,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	newVersion := update.NewVersion
 	fmt.Printf("Updating %s %s → %s...\n", mod.Name, oldVersion, newVersion)
 	if update.Changelog != "" {
-		cl := stripHTMLForTerminal(update.Changelog)
+		cl := core.CleanChangelog(update.Changelog)
 		const maxChangelog = 500
 		if len(cl) > maxChangelog {
 			cl = cl[:maxChangelog] + "..."
@@ -451,19 +450,4 @@ func policyToString(policy domain.UpdatePolicy) string {
 	default:
 		return "notify"
 	}
-}
-
-// stripHTMLForTerminal removes HTML tags for readable terminal output.
-func stripHTMLForTerminal(html string) string {
-	// Replace block/line breaks with newlines
-	html = regexp.MustCompile(`(?i)<br\s*/?>|</p>|<p[^>]*>`).ReplaceAllString(html, "\n")
-	// Remove remaining tags
-	html = regexp.MustCompile(`<[^>]*>`).ReplaceAllString(html, "")
-	// Decode common entities
-	html = strings.ReplaceAll(html, "&nbsp;", " ")
-	html = strings.ReplaceAll(html, "&amp;", "&")
-	html = strings.ReplaceAll(html, "&lt;", "<")
-	html = strings.ReplaceAll(html, "&gt;", ">")
-	html = strings.ReplaceAll(html, "&quot;", "\"")
-	return strings.TrimSpace(html)
 }

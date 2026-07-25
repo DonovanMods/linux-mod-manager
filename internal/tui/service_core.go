@@ -1276,6 +1276,11 @@ func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress 
 // ErrAuthRequired Warning names no specific source - every individual
 // per-source failure is still legible inside the underlying joined
 // "source %s: %w" text this doesn't discard.
+//
+// Each UpdateItem.Changelog is run through core.CleanChangelog (Phase 6b
+// Task 7) - the FULL cleaned text, with no truncation (see that field's own
+// doc comment: the TUI's changelog overlay handles overflow itself, unlike
+// the CLI's 800/500-char truncation, which stays CLI-side).
 func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 	game := p.currentGame()
 	profile := p.currentProfile()
@@ -1290,6 +1295,7 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 		view.Updates = append(view.Updates, UpdateItem{
 			Source: u.InstalledMod.SourceID, ID: u.InstalledMod.ID, Name: u.InstalledMod.Name,
 			FromVersion: u.InstalledMod.Version, ToVersion: u.NewVersion,
+			Changelog: core.CleanChangelog(u.Changelog),
 		})
 	}
 	if checkErr != nil {

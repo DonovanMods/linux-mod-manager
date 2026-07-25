@@ -97,6 +97,14 @@ type KeyMap struct {
 	// the status line instead (no modal). "<" reads as "go back a version",
 	// distinct from every other single-letter/shift-letter binding above.
 	Rollback key.Binding
+	// Changelog is Task 7's changelog-viewer binding (see actions.go's
+	// updatePendingActionKey/openChangelogFromUpdateModal): fires ONLY while
+	// the apply-updates confirmation modal is pending (m.pendingUpdates !=
+	// nil) - a single update opens its changelog overlay directly, two or
+	// more open a "pick one" picker first. Unlike ConfirmAction/CancelAction,
+	// this has no meaning on any ordinary screen, so it carries no outer
+	// updateKey switch case of its own.
+	Changelog key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -241,6 +249,10 @@ func DefaultKeyMap() KeyMap {
 		Rollback: key.NewBinding(
 			key.WithKeys("<"),
 			key.WithHelp("<", "rollback"),
+		),
+		Changelog: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "changelog"),
 		),
 	}
 }

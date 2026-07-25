@@ -2085,6 +2085,150 @@ func TestCheckUpdatesModalContentListsUpdatesAndWarningsCount(t *testing.T) {
 	require.Contains(t, model.action.pending.detail, "1 warning(s) during check")
 }
 
+// --- Check/apply updates: changelog viewer ('v') ---
+
+// openUpdatesModal is the shared setup for the changelog-viewer tests below:
+// dispatches CheckUpdates and resolves its result, leaving the update-apply
+// batch confirmation modal pending with rec's UpdatesViewOut.Updates.
+func openUpdatesModal(t *testing.T, rec *recordingActions) Model {
+	t.Helper()
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending, "openUpdatesModal requires at least one update")
+	return model
+}
+
+// TestUpdateModalVOpensChangelogOverlaySingle guards task-7-brief.md's
+// single-update case: 'v' while the apply-updates modal is pending, with
+// exactly one update, opens the changelog infoOverlay DIRECTLY (no picker),
+// titled "<name> <from> → <to>", body split on newlines - and the batch
+// modal itself must still be pending once the overlay is up (it renders and
+// closes on top, see updateKey's own doc comment on the new stacked-modal
+// ordering) and remains pending after the overlay closes.
+func TestUpdateModalVOpensChangelogOverlaySingle(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Changelog: "Fixed bugs.\nAdded stuff."},
+	}}}
+	model := openUpdatesModal(t, rec)
+
+	// The modal's own hint line names the new key while a changelog is
+	// viewable.
+	require.Contains(t, model.actionModalView(), "v changelog")
+
+	updated, cmd := model.Update(keyRunes("v"))
+	model = updated.(Model)
+	require.Nil(t, cmd, "the single-update case opens the overlay synchronously, no deferred message")
+	require.NotNil(t, model.overlay)
+	require.Nil(t, model.picker)
+	require.Equal(t, "SkyUI 5.2 → 5.3", model.overlay.title)
+	require.Equal(t, []string{"Fixed bugs.", "Added stuff."}, model.overlay.lines)
+	require.NotNil(t, model.action.pending, "the update batch modal must still be pending underneath the overlay")
+
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.Nil(t, model.overlay)
+	require.NotNil(t, model.action.pending, "the update batch modal must still be pending after the overlay closes")
+}
+
+// TestUpdateModalVEmptyChangelog guards the no-changelog case: the overlay
+// still opens, with the single line "no changelog available" rather than an
+// empty line list.
+func TestUpdateModalVEmptyChangelog(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4", Changelog: ""},
+	}}}
+	model := openUpdatesModal(t, rec)
+
+	updated, _ := model.Update(keyRunes("v"))
+	model = updated.(Model)
+	require.NotNil(t, model.overlay)
+	require.Equal(t, []string{"no changelog available"}, model.overlay.lines)
+}
+
+// TestUpdateModalVOpensPickerMultiple guards the multi-update case: 'v'
+// opens a pendingPicker (not the overlay directly) labeled "<name> <from> →
+// <to>" per update; choosing one opens THAT update's changelog overlay, and
+// the batch modal remains pending the whole time.
+func TestUpdateModalVOpensPickerMultiple(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Changelog: "SkyUI notes."},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4", Changelog: ""},
+	}}}
+	model := openUpdatesModal(t, rec)
+
+	updated, cmd := model.Update(keyRunes("v"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.NotNil(t, model.picker, "multiple updates opens a picker, not the overlay directly")
+	require.Nil(t, model.overlay)
+	require.NotNil(t, model.action.pending, "the update batch modal must still be pending underneath the picker")
+	require.Len(t, model.picker.options, 2)
+	require.Equal(t, "SkyUI 5.2 → 5.3", model.picker.options[0].Label)
+	require.Equal(t, "USSEP 4.3 → 4.4", model.picker.options[1].Label)
+
+	// Choosing an option dispatches a deferred message (mirrors
+	// policyChosenMsg/gameChosenMsg's own "choose can only return a tea.Cmd"
+	// reasoning) rather than opening the overlay directly from the closure.
+	updated, chooseCmd := model.Update(keyRunes("1"))
+	model = updated.(Model)
+	require.Nil(t, model.picker, "choosing clears the picker")
+	require.Nil(t, model.overlay, "the overlay must not open until the deferred message is processed")
+	require.NotNil(t, chooseCmd)
+
+	msg := chooseCmd()
+	require.IsType(t, changelogPickedMsg{}, msg)
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.overlay)
+	require.Equal(t, "SkyUI 5.2 → 5.3", model.overlay.title)
+	require.Equal(t, []string{"SkyUI notes."}, model.overlay.lines)
+	require.NotNil(t, model.action.pending, "the update batch modal must still be pending after the picker's overlay opens")
+}
+
+// TestVIgnoredOutsideUpdateModal guards the discriminator itself: 'v' is a
+// no-op with no pending action at all, and a no-op (leaving the OTHER
+// pending action completely untouched) when a DIFFERENT action's
+// confirmation modal is pending - the changelog viewer only ever engages for
+// the update-apply batch (m.pendingUpdates != nil).
+func TestVIgnoredOutsideUpdateModal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no modal at all", func(t *testing.T) {
+		model := modelWithActions(t, &recordingActions{})
+		updated, cmd := model.Update(keyRunes("v"))
+		model = updated.(Model)
+		require.Nil(t, cmd)
+		require.Nil(t, model.overlay)
+		require.Nil(t, model.picker)
+	})
+
+	t.Run("a different pending action", func(t *testing.T) {
+		model := modelWithActions(t, &recordingActions{})
+		model.action.pending = &pendingAction{kind: actionUninstall, title: `Uninstall "SkyUI"?`}
+
+		updated, cmd := model.Update(keyRunes("v"))
+		model = updated.(Model)
+		require.Nil(t, cmd)
+		require.Nil(t, model.overlay)
+		require.Nil(t, model.picker)
+		require.NotNil(t, model.action.pending, "the unrelated pending action must remain untouched")
+		require.Equal(t, `Uninstall "SkyUI"?`, model.action.pending.title)
+	})
+}
+
 // --- Check/apply updates: confirm applies all sequentially ---
 
 // TestCheckUpdatesConfirmAppliesAllSequentiallyInOrder proves confirming

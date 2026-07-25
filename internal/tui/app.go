@@ -105,6 +105,20 @@ type Model struct {
 	// (no choose/submit - see infoOverlay's doc comment).
 	overlay *infoOverlay
 
+	// pendingUpdates is the retained CheckUpdates result behind the
+	// apply-updates confirmation modal (Task 7's changelog viewer - see
+	// resolveCheckUpdatesResult, mutations.go, which sets this alongside
+	// action.pending when that modal opens): non-nil ONLY while
+	// action.pending is that SAME update batch, and it is what
+	// updatePendingActionKey's 'v' case (actions.go) consults to know both
+	// THAT the pending action is the update batch (the discriminator - no
+	// other pendingAction kind ever sets this) and WHICH updates/changelogs
+	// to show. Cleared everywhere action.pending itself is cleared
+	// (updatePendingActionKey's ConfirmAction/CancelAction branches) plus
+	// resolveGameSwitch's defense-in-depth modal reset, so it can never
+	// outlive the modal it describes or leak into a later, unrelated one.
+	pendingUpdates *UpdatesView
+
 	screen   Screen
 	selected map[Screen]int
 	showHelp bool
@@ -531,6 +545,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resolveProfileCreate(msg)
 	case gameChosenMsg:
 		return m.resolveGameSwitch(msg)
+	case changelogPickedMsg:
+		return m.resolveChangelogPicked(msg)
 	case loadFailedMsg:
 		// Stale gen: mirrors dataLoadedMsg's discard above - a superseded
 		// load's failure must not flip the fresh session into stateFailed.
@@ -577,11 +593,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// updateKey routes a keypress to whichever modal (if any) is currently
+// showing, then falls through to the outer per-screen switch below.
+//
+// Picker/inputModal/overlay are checked BEFORE action.pending (Task 7): the
+// changelog viewer (updatePendingActionKey's 'v' case, actions.go) can open
+// an overlay or picker WHILE action.pending is still set - the apply-updates
+// modal waits underneath, reappearing the instant the overlay/picker closes,
+// since action.pending itself is never touched while either is up (see
+// openChangelogFromUpdateModal's own doc comment) - the first time any two of
+// these four ever coexist. Every OTHER combination remains mutually
+// exclusive exactly as before: each promptX constructor's own guard
+// (promptOverlay/promptPicker/promptInput/promptAction) still refuses
+// outright whenever a DIFFERENT one of the four is already up, so this
+// reordering changes nothing for any pre-existing single-modal case - it
+// only matters for the new stacked one. screenView (below) mirrors this same
+// order for the identical reason.
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.action.pending != nil {
-		return m.updatePendingActionKey(msg)
-	}
-
 	if m.picker != nil {
 		return m.updatePickerKey(msg)
 	}
@@ -592,6 +620,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.overlay != nil {
 		return m.updateOverlayKey(msg)
+	}
+
+	if m.action.pending != nil {
+		return m.updatePendingActionKey(msg)
 	}
 
 	// Rule 8: any keypress that isn't a modal response (handled above,
@@ -859,11 +891,12 @@ func (m Model) nav() string {
 	return strings.Join(items, "  ")
 }
 
+// screenView renders whichever modal (if any) is currently showing, mirroring
+// updateKey's own ordering exactly (see that method's doc comment for why
+// picker/inputModal/overlay are checked before action.pending) so a
+// changelog overlay/picker opened on top of the apply-updates modal renders
+// on top too, not the modal waiting underneath it.
 func (m Model) screenView() string {
-	if m.action.pending != nil {
-		return m.actionModalView()
-	}
-
 	if m.picker != nil {
 		return m.pickerView()
 	}
@@ -874,6 +907,10 @@ func (m Model) screenView() string {
 
 	if m.overlay != nil {
 		return m.overlayView()
+	}
+
+	if m.action.pending != nil {
+		return m.actionModalView()
 	}
 
 	switch m.state {
