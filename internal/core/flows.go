@@ -745,6 +745,82 @@ const (
 	// this; only a before_each skip or an --uninstall record-delete
 	// failure does.
 	PurgeModPurged
+
+	// --- Phase 6b Task 8: ApplyImport progress events, extending this same
+	// DeployPhase enum (matching every prior flow's own "extend, don't
+	// fork" precedent). ApplyImport is a behavior-preserving extraction of
+	// cmd/lmm/profile.go's doProfileImport; every phase below corresponds to
+	// one of its own console print sites - see the task report for the full
+	// mapping. Unlike ApplyProfileSwitch's install loop, which gives each
+	// failure reason (fetch/get-files/no-files/file-selection/deploy/save) a
+	// DISTINCT phase, doProfileImport printed every one of those with the
+	// SAME "    Error: %s\n" shape - so ImportModFailed below covers all of
+	// them, Detail carrying whichever reason text applies (fidelity forbids
+	// sharing ApplyProfileSwitch's own install loop verbatim for exactly
+	// this reason - see the task report's sharing-decision entry). ---
+
+	// ImportSaved fires once, immediately after the profile is saved
+	// (ProfileManager.ImportWithOptions succeeds), mirroring doProfileImport's
+	// "\n✓ Imported profile: %s\n". ModName carries the saved profile's name.
+	ImportSaved
+	// ImportInstalling fires once, only when the install loop is actually
+	// about to run (downloads pending, NoInstall unset, and ConfirmInstall -
+	// if any - accepted), mirroring "\nDownloading and installing mods...\n".
+	// Total is the number of mods about to be attempted (len(toDownload)).
+	ImportInstalling
+	// ImportModInstalling fires once per mod in the combined
+	// [NeedsRedownload..., Missing...] download list, before it is even
+	// fetched - mirroring "  Installing %s:%s...\n". SourceID/ModID are the
+	// only identity available at this point (ModName is set once the mod is
+	// fetched, for every LATER event concerning this same ref); Index/Total
+	// count across the whole combined list, matching ApplyProfileSwitch's
+	// SwitchInstallingMod.
+	ImportModInstalling
+	// ImportFallbackUsed fires when a to-be-installed mod's stored file IDs
+	// (the redownload rule's DB-stored ones, or the imported profile's own
+	// ref.FileIDs for a fresh install) were not found on the source and the
+	// primary file was used instead - mirroring doProfileImport's
+	// unconditional (NOT --verbose-gated) "    Warning: stored file IDs not
+	// found, using primary".
+	ImportFallbackUsed
+	// ImportDownloading mirrors the per-mod download-progress readout ("\r
+	// Downloading: %.1f%%") - Percent only, gated on a known total size,
+	// matching every other flow's own gating.
+	ImportDownloading
+	// ImportDownloadDone fires once per attempted mod, unconditionally
+	// (success OR failure alike), immediately after its download loop
+	// finishes - mirroring doProfileImport's own unconditional `fmt.Println()`
+	// right after the download loop, which precedes ImportModFailed's own
+	// leading blank line on failure (see ImportModFailed). A caller wanting
+	// byte-identical output prints a bare `fmt.Println()` here.
+	ImportDownloadDone
+	// ImportModFailed fires for ANY of the download loop's mod-skipping
+	// failure reasons - a failed GetMod, GetModFiles, an empty file list, a
+	// file-selection error, a failed DownloadMod, a failed installer.Install,
+	// or a failed SaveInstalledMod - mirroring doProfileImport's uniform "
+	// Error: %s\n" (Detail already carries the reason text verbatim: "failed
+	// to fetch mod: %v", "failed to get files: %v", "no downloadable files",
+	// the file-selection error's own message, "download failed: %v",
+	// "deploy failed: %v", or "save failed: %v"). The download-failure
+	// variant is preceded by its own extra blank line in the pre-extraction
+	// CLI (printed inside the download loop, before the unconditional
+	// ImportDownloadDone one after it) - a caller wanting byte-identical
+	// output detects this the same way InstallDownloadFailed's own doc
+	// comment describes (checking Detail's text, here for a
+	// "download failed:" prefix) and prints a bare blank line first. Always
+	// non-fatal - the loop always continues to the next ref, matching
+	// failedCount++; continue.
+	ImportModFailed
+	// ImportModInstalled fires once a to-be-installed mod has been fully
+	// installed (downloaded, deployed, saved, profile-upserted) - mirroring
+	// "    ✓ Installed: %s\n". ModName is set (mod.Name, now known).
+	ImportModInstalled
+	// ImportNote fires when UpsertMod (recording the profile's FileIDs after
+	// a successful install) fails - the sole --verbose-gated diagnostic in
+	// the install loop, mirroring "    Warning: could not update profile: %v"
+	// (4-space indent, matching ApplyProfileSwitch's own SwitchInstallNote
+	// convention).
+	ImportNote
 )
 
 // DeployProgress reports incremental status during DeployProfile. Index and
@@ -3438,6 +3514,343 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
 		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName)    //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
+	}
+
+	return result, nil
+}
+
+// --- ImportPlan/ApplyImport (Phase 6b Task 8) ---
+
+// ImportPlan is the pure, displayable result of PlanImport: everything the
+// pre-extraction CLI's pre-import preview (doProfileImport :416-478) needs to
+// render before a caller decides whether/how to proceed (ApplyImport then
+// actually executes one of these). Computed with zero side effects - it
+// parses the given data and inspects existing DB/cache/profile state, but
+// never writes anything.
+type ImportPlan struct {
+	// Profile is the parsed-but-not-yet-saved profile (ProfileManager.
+	// ParseProfile's result) - its Name/Mods drive both the CLI's preview
+	// print and ApplyImport's own save step.
+	Profile *domain.Profile
+
+	// Installed holds every profile mod already installed (a DB row exists)
+	// AND cached at that exact version - nothing to do for these.
+	// NeedsRedownload holds mods with a DB row but no matching cache entry -
+	// installed somewhere, but must be re-fetched. Missing holds mods with
+	// no DB row anywhere (checked across EVERY saved profile for the game,
+	// not just the one being imported into - doProfileImport's cross-profile
+	// scan, :428-438). All three preserve profile.Mods' own order.
+	Installed, NeedsRedownload, Missing []domain.ModReference
+
+	// Exists reports whether a profile with this name is already saved for
+	// the game - purely informational (e.g. so a caller can warn before even
+	// attempting the save); ApplyImport does not consult it, instead letting
+	// ProfileManager.ImportWithOptions' own existence check (driven by
+	// ProfileImportOptions.Force) produce the authoritative error.
+	Exists bool
+
+	// data is the raw import bytes, preserved so ApplyImport can hand them
+	// to ProfileManager.ImportWithOptions unchanged - PlanImport parses via
+	// ParseProfile purely for preview, without persisting anything.
+	data []byte
+
+	// storedFileIDs maps "sourceID:modID" (for every entry in
+	// NeedsRedownload only) to that mod's DB-recorded FileIDs - preserving
+	// doProfileImport's :541-552 rule: a redownload uses the INSTALLED row's
+	// own FileIDs, never the imported profile YAML's ref.FileIDs (which may
+	// be empty or stale, since the row may have been updated - or reinstalled
+	// under a different FileIDs set - after that profile was last exported).
+	storedFileIDs map[string][]string
+}
+
+// PlanImport parses data (an exported profile) and categorizes its mods
+// against game's current installed/cache state, without saving anything or
+// touching the network - mirrors doProfileImport's preview step
+// (:411-459) exactly. ctx is accepted for API consistency with the rest of
+// Service's methods (see PlanProfileSwitch's own doc comment for why a
+// speculative, side-effect-free plan doesn't need it today).
+func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte) (*ImportPlan, error) {
+	pm := s.NewProfileManager()
+
+	profile, err := pm.ParseProfile(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing profile: %w", err)
+	}
+
+	_, existErr := pm.Get(game.ID, profile.Name)
+	exists := existErr == nil
+
+	// installedInfo mirrors doProfileImport's own local type: the DB's
+	// Version/FileIDs for a mod key, needed to (a) check the cache at the
+	// RIGHT version and (b) preserve the redownload FileIDs rule above.
+	type installedInfo struct {
+		Version string
+		FileIDs []string
+	}
+
+	installedMods, _ := s.GetInstalledMods(game.ID, profile.Name)
+	installedData := make(map[string]installedInfo)
+	for _, im := range installedMods {
+		key := im.SourceID + ":" + im.ID
+		installedData[key] = installedInfo{Version: im.Version, FileIDs: im.FileIDs}
+	}
+
+	// Cross-profile scan (:428-438): a mod installed under some OTHER saved
+	// profile still counts as "installed", not "missing". Errors from List/
+	// GetInstalledMods are ignored, matching doProfileImport exactly (a
+	// missing/unreadable profile simply contributes nothing).
+	allProfiles, _ := pm.List(game.ID)
+	for _, p := range allProfiles {
+		mods, _ := s.GetInstalledMods(game.ID, p.Name)
+		for _, im := range mods {
+			key := im.SourceID + ":" + im.ID
+			if _, exists := installedData[key]; !exists {
+				installedData[key] = installedInfo{Version: im.Version, FileIDs: im.FileIDs}
+			}
+		}
+	}
+
+	var installed, needsRedownload, missing []domain.ModReference
+	storedFileIDs := make(map[string][]string)
+	gameCache := s.GetGameCache(game)
+	for _, ref := range profile.Mods {
+		key := ref.SourceID + ":" + ref.ModID
+		info, inDB := installedData[key]
+		switch {
+		case !inDB:
+			missing = append(missing, ref)
+		case gameCache.Exists(game.ID, ref.SourceID, ref.ModID, info.Version):
+			installed = append(installed, ref)
+		default:
+			needsRedownload = append(needsRedownload, ref)
+			storedFileIDs[key] = info.FileIDs
+		}
+	}
+
+	return &ImportPlan{
+		Profile:         profile,
+		Installed:       installed,
+		NeedsRedownload: needsRedownload,
+		Missing:         missing,
+		Exists:          exists,
+		data:            data,
+		storedFileIDs:   storedFileIDs,
+	}, nil
+}
+
+// ProfileImportOptions configures ApplyImport.
+type ProfileImportOptions struct {
+	// Force mirrors doProfileImport's --force: passed straight through to
+	// ProfileManager.ImportWithOptions, allowing the save to overwrite an
+	// already-saved profile of the same name instead of failing.
+	Force bool
+	// NoInstall mirrors --no-install: the install loop never runs at all
+	// (ConfirmInstall is never even consulted - see its own doc comment),
+	// and every pending mod is counted in ProfileImportResult.Skipped instead.
+	NoInstall bool
+
+	// ConfirmInstall, when non-nil and downloads are pending (and NoInstall
+	// is unset), is called AFTER the profile is saved - mirroring the CLI's
+	// own prompt position (doProfileImport's "\nDownload and install mods?
+	// [Y/n]: " sits right after "\n✓ Imported profile: %s\n") - with the
+	// full combined [NeedsRedownload..., Missing...] list. Returning false
+	// skips the install loop entirely (every pending mod is counted in
+	// Skipped, matching a declined prompt's zero-mutations outcome); nil
+	// means proceed unconditionally, matching InstallOptions.ConfirmConflicts'
+	// own "nil = proceed" convention.
+	ConfirmInstall func(toDownload []domain.ModReference) bool
+}
+
+// ProfileImportResult reports the outcome of ApplyImport. As with every other
+// flow's result type, every field is always recorded - there is no
+// verbosity concept in core.
+//
+//   - Notes holds the install loop's sole --verbose-gated diagnostic (a
+//     failed UpsertMod), matching ApplyProfileSwitch's SwitchInstallNote
+//     convention; a caller wanting byte-identical pre-extraction output
+//     should print each entry to stdout ONLY under --verbose, e.g.
+//     `fmt.Printf("    %s\n", n)` (4-space indent).
+//   - Warnings is currently always empty - doProfileImport never printed an
+//     unconditional stderr warning anywhere in its own body - but is kept
+//     for parity with every other flow's result shape and future-proofing.
+//
+// Every Notes entry is ALSO reported via the progress callback at the exact
+// point it is appended (ImportNote - see its DeployPhase doc comment), with
+// Detail equal to the slice entry verbatim.
+//
+// On error (a failed save), the returned result carries any diagnostics
+// accumulated before the failure (none, today, since the save is the very
+// first step) - callers should surface it alongside the error.
+type ProfileImportResult struct {
+	ProfileName                string
+	Installed, Failed, Skipped int
+	Warnings, Notes            []string
+}
+
+// ApplyImport executes a plan produced by PlanImport: saves the profile
+// (ProfileManager.ImportWithOptions), then - unless there is nothing to
+// download, NoInstall is set, or ConfirmInstall declines - downloads and
+// installs every NeedsRedownload/Missing mod, in that order, matching
+// doProfileImport exactly (:481-633). progress may be nil.
+//
+// plan is executed EXACTLY as given - like PlanProfileSwitch/ApplyProfileSwitch,
+// this method never re-plans or re-validates it against current state (see
+// that pair's own doc comments for why a speculative plan is cheap enough to
+// simply discard and recompute instead, for a caller that wants to guard
+// against drift).
+func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, progress func(DeployProgress)) (*ProfileImportResult, error) {
+	result := &ProfileImportResult{}
+	emit := func(p DeployProgress) {
+		if progress != nil {
+			progress(p)
+		}
+	}
+
+	pm := s.NewProfileManager()
+	profile, err := pm.ImportWithOptions(plan.data, opts.Force)
+	if err != nil {
+		return result, fmt.Errorf("importing profile: %w", err)
+	}
+	result.ProfileName = profile.Name
+	emit(DeployProgress{Phase: ImportSaved, ModName: profile.Name})
+
+	toDownload := make([]domain.ModReference, 0, len(plan.NeedsRedownload)+len(plan.Missing))
+	toDownload = append(toDownload, plan.NeedsRedownload...)
+	toDownload = append(toDownload, plan.Missing...)
+
+	if len(toDownload) == 0 {
+		return result, nil
+	}
+	if opts.NoInstall {
+		result.Skipped = len(toDownload)
+		return result, nil
+	}
+	if opts.ConfirmInstall != nil && !opts.ConfirmInstall(toDownload) {
+		result.Skipped = len(toDownload)
+		return result, nil
+	}
+
+	installer := s.GetInstaller(game)
+	total := len(toDownload)
+	emit(DeployProgress{Phase: ImportInstalling, Total: total})
+
+	for idx, ref := range toDownload {
+		// Task 6 item d (cancel-then-drain): checked between mods, never
+		// mid-file-operation - see DeployProfile/ApplyProfileSwitch's
+		// identical check.
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+
+		base := DeployProgress{Index: idx + 1, Total: total, SourceID: ref.SourceID, ModID: ref.ModID}
+		installingEvt := base
+		installingEvt.Phase = ImportModInstalling
+		emit(installingEvt)
+
+		fail := func(reason string) {
+			result.Failed++
+			evt := base
+			evt.Phase, evt.Detail = ImportModFailed, reason
+			emit(evt)
+		}
+
+		mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
+		if err != nil {
+			fail(fmt.Sprintf("failed to fetch mod: %v", err))
+			continue
+		}
+		base.ModName = mod.Name
+
+		files, err := s.GetModFiles(ctx, ref.SourceID, mod)
+		if err != nil {
+			fail(fmt.Sprintf("failed to get files: %v", err))
+			continue
+		}
+		if len(files) == 0 {
+			fail("no downloadable files")
+			continue
+		}
+
+		// Select files to download - use the DB-stored FileIDs for a
+		// redownload, or the imported profile's own FileIDs for a fresh
+		// install (:541-552's rule; see ImportPlan.storedFileIDs' doc
+		// comment for why this can't just be ref.FileIDs uniformly).
+		key := ref.SourceID + ":" + ref.ModID
+		var fileIDsToUse []string
+		if stored, ok := plan.storedFileIDs[key]; ok {
+			fileIDsToUse = stored
+		} else if len(ref.FileIDs) > 0 {
+			fileIDsToUse = ref.FileIDs
+		}
+		filesToDownload, usedFallback, err := selectDeployFiles(files, fileIDsToUse)
+		if err != nil {
+			fail(err.Error())
+			continue
+		}
+		if usedFallback && len(fileIDsToUse) > 0 {
+			fbEvt := base
+			fbEvt.Phase = ImportFallbackUsed
+			emit(fbEvt)
+		}
+
+		var downloadedFileIDs []string
+		downloadFailed := false
+		for _, file := range filesToDownload {
+			progressFn := func(p DownloadProgress) {
+				if p.TotalBytes > 0 {
+					dl := base
+					dl.Phase, dl.Percent = ImportDownloading, p.Percentage
+					emit(dl)
+				}
+			}
+			if _, err := s.DownloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
+				fail(fmt.Sprintf("download failed: %v", err))
+				downloadFailed = true
+				break
+			}
+			downloadedFileIDs = append(downloadedFileIDs, file.ID)
+		}
+		doneEvt := base
+		doneEvt.Phase = ImportDownloadDone
+		emit(doneEvt)
+
+		if downloadFailed {
+			continue
+		}
+
+		if err := installer.Install(ctx, game, mod, profile.Name); err != nil {
+			fail(fmt.Sprintf("deploy failed: %v", err))
+			continue
+		}
+
+		// Save to DB. Normalize GameID to the lmm game (see the comment on
+		// ApplyProfileSwitch's own identical save site for why).
+		installedMod := &domain.InstalledMod{
+			Mod:          *mod,
+			ProfileName:  profile.Name,
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+			FileIDs:      downloadedFileIDs,
+		}
+		installedMod.Mod.GameID = game.ID
+		if err := s.SaveInstalledMod(installedMod); err != nil {
+			fail(fmt.Sprintf("save failed: %v", err))
+			continue
+		}
+
+		modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
+		if err := pm.UpsertMod(game.ID, profile.Name, modRef); err != nil {
+			msg := fmt.Sprintf("Warning: could not update profile: %v", err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = ImportNote, msg
+			emit(evt)
+		}
+
+		result.Installed++
+		installedEvt := base
+		installedEvt.Phase = ImportModInstalled
+		emit(installedEvt)
 	}
 
 	return result, nil
