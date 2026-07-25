@@ -663,8 +663,10 @@ func (m Model) hasVisibleStatus() bool {
 	}
 	// Task 4's post-reorder deploy hint (see Model.orderChanged's own doc
 	// comment): the lowest-priority fallback, shown only when nothing more
-	// specific is already claiming the status line.
-	return m.orderChanged
+	// specific is already claiming the status line AND no action is running
+	// (Copilot PR #73 round 5: a running-but-not-yet-ticking deploy would
+	// otherwise render "order changed — deploy…" DURING the deploy itself).
+	return m.orderChanged && !m.action.running
 }
 
 // statusLine renders the action status line truncated to the terminal's

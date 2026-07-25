@@ -3191,3 +3191,32 @@ func TestMoveKeysSwallowedByFocusedSearchInput(t *testing.T) {
 	require.Contains(t, updated.search.input.Value(), "K")
 	require.Empty(t, rec.ReorderCalls)
 }
+
+// TestReorderHintHiddenWhileActionRunning guards the Copilot PR #73 round-5
+// finding: with m.orderChanged set and an action RUNNING but not yet
+// reporting a progress line (e.g. a deploy before its first tick), the
+// status line must show nothing rather than the "order changed — deploy…"
+// hint — telling the user to deploy DURING the deploy is misleading.
+func TestReorderHintHiddenWhileActionRunning(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{
+		ReorderOutcome: ActionOutcome{Message: "load order updated"},
+	})
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, _ := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.True(t, model.orderChanged)
+	require.Contains(t, model.statusLine(), "order changed — deploy (D) to apply")
+
+	model.action.running = true
+	require.False(t, model.hasVisibleStatus(),
+		"a running action with no progress/status must not surface the reorder hint")
+	require.Empty(t, model.statusLine())
+
+	model.action.running = false
+	require.Contains(t, model.statusLine(), "order changed — deploy (D) to apply",
+		"the hint must return once the action settles without clearing orderChanged")
+}
