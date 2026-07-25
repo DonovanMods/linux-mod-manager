@@ -224,7 +224,12 @@ progress streamed into the status line — one mod failing doesn't stop the
 rest, it's folded into the batch's warnings instead. While that panel is
 open, `v` opens the changelog for the update it names — or, with several
 updates pending, a "View changelog" picker naming each `<mod> <from> →
-<to>` first — as a scrollable overlay. The Dashboard's Updates count shows
+<to>` first — as a scrollable overlay. After a check, `v` also works
+directly on an Installed Mods row: it shows that mod's changelog from the
+most recent check (or says there's none for it). When a confirmed batch
+finishes, an "update results" overlay lists exactly what happened, one
+`✓ <mod> <from> → <to>` (or `✗ <mod>: <error>`) line per update, so the
+applied set is never just a status-line count. The Dashboard's Updates count shows
 `?` until a check has run this session, then reflects the real number (it
 survives unrelated refreshes and only reverts to `?` after an update batch
 is actually applied, since that's what makes the count stale).
