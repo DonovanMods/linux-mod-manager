@@ -20,7 +20,7 @@ func inputModalTestModel(t *testing.T) Model {
 // *submitted (appended, so a test can assert both "was it called" and "with
 // what value").
 func promptTestInput(model Model, validate func(value string) string, submitted *[]string) Model {
-	input := newInputModalTextInput("profile name", model.availableWidth(), model.theme.Panel.GetHorizontalFrameSize())
+	input := newInputModalTextInput("profile name", 64, model.availableWidth(), model.theme.Panel.GetHorizontalFrameSize())
 	return model.promptInput(pendingInput{
 		title:    "Create Profile",
 		input:    input,
@@ -43,6 +43,23 @@ func typeString(t *testing.T, model Model, s string) Model {
 }
 
 func alwaysValid(string) string { return "" }
+
+// promptTestInputRequiring is promptTestInput plus a caller-supplied
+// requiredMsg (see pendingInput's doc comment) - covers export/import's
+// "path required" in place of the zero-value default "name required".
+func promptTestInputRequiring(model Model, requiredMsg string, validate func(value string) string, submitted *[]string) Model {
+	input := newInputModalTextInput("path", 256, model.availableWidth(), model.theme.Panel.GetHorizontalFrameSize())
+	return model.promptInput(pendingInput{
+		title:       "Import Profile",
+		input:       input,
+		requiredMsg: requiredMsg,
+		validate:    validate,
+		submit: func(value string) tea.Cmd {
+			*submitted = append(*submitted, value)
+			return nil
+		},
+	})
+}
 
 func TestInputModalTypeAndSubmit(t *testing.T) {
 	t.Parallel()
@@ -137,4 +154,25 @@ func TestInputModalEmptySubmitShowsNameRequired(t *testing.T) {
 	require.Empty(t, submitted)
 	require.NotNil(t, model.inputModal)
 	require.Contains(t, model.View(), "name required")
+}
+
+// TestInputModalEmptySubmitShowsCustomRequiredMsg covers pendingInput's
+// requiredMsg field (added for export/import's path fields, where "name
+// required" is the wrong noun): a caller that sets it gets ITS copy on an
+// empty submit instead of the "name required" default -
+// TestInputModalEmptySubmitShowsNameRequired above proves the zero value
+// still falls back to "name required" for callers (createProfilePrompt) that
+// never set it.
+func TestInputModalEmptySubmitShowsCustomRequiredMsg(t *testing.T) {
+	t.Parallel()
+
+	var submitted []string
+	model := promptTestInputRequiring(inputModalTestModel(t), "path required", alwaysValid, &submitted)
+
+	model = updateWithKeyType(t, model, tea.KeyEnter)
+
+	require.Empty(t, submitted)
+	require.NotNil(t, model.inputModal)
+	require.Contains(t, model.View(), "path required")
+	require.NotContains(t, model.View(), "name required")
 }

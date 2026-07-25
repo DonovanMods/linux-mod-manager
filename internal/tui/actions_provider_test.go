@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -485,6 +487,120 @@ func TestPrototypeProviderActions_ApplyUpdate_UnknownModErrors(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestPrototypeRollbackSwapsVersions covers Task 6's rollback demo: the
+// canned "skse-address-library" InstalledMods entry (see prototype/data.go's
+// PreviousVersion doc comment) has Version "11"/PreviousVersion "10" -
+// Rollback must swap the two IN PLACE, visible on a repeated Overview,
+// mirroring ApplyUpdate's own "same instance, same session" contract.
+func TestPrototypeRollbackSwapsVersions(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	before := requireModByID(t, mods, "skse-address-library")
+	require.Equal(t, "11", before.Version)
+	require.Equal(t, "10", before.PreviousVersion)
+
+	var ticks []ActionProgress
+	outcome, err := actions.Rollback(context.Background(),
+		ModItem{ID: before.ID, Source: before.Source, Name: before.Name},
+		func(p ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, `Rolled back "SKSE Address Library" to 10`, outcome.Message)
+	require.NotEmpty(t, ticks, "Rollback must stream fake progress ticks like ApplyUpdate/ApplyInstall")
+
+	_, mods, err = provider.Overview(context.Background())
+	require.NoError(t, err)
+	after := requireModByID(t, mods, "skse-address-library")
+	assert.Equal(t, "10", after.Version, "the SAME provider instance must reflect the rollback on the next Overview call")
+	assert.Equal(t, "11", after.PreviousVersion, "the rolled-back-FROM version becomes the new previous version")
+}
+
+// TestPrototypeRollbackNoPreviousVersionErrors guards the defense-in-depth
+// guard on a mod with no PreviousVersion (e.g. "skyui", which only carries
+// an AvailableVersion - see prototype/data.go) - the TUI's own handler
+// already refuses this synchronously (mutations.go's rollbackSelectedMod),
+// but prototypeProvider.Rollback repeats the check anyway.
+func TestPrototypeRollbackNoPreviousVersionErrors(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	_, err := actions.Rollback(context.Background(), ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no previous version available for rollback")
+}
+
+// TestPrototypeRollbackUnknownModErrors mirrors every other prototype
+// mutation's unknown-mod guard (e.g.
+// TestPrototypeProviderActions_ApplyUpdate_UnknownModErrors above).
+func TestPrototypeRollbackUnknownModErrors(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	_, err := actions.Rollback(context.Background(), ModItem{ID: "does-not-exist", Source: "nexusmods"}, nil)
+	assert.Error(t, err)
+}
+
+// TestPrototypeImportAddsProfile covers prototypeProvider's canned Task 9
+// demo end to end: PlanImport returns the canned "imported" plan (one
+// Missing entry, GameID matching the active game), and ApplyImport appends a
+// new "imported" Profiles entry - visible on a repeated Profiles call,
+// mirroring CreateProfile's own "same instance, same session" contract -
+// while reporting ImportedProfile set (same-game, per PlanImport's own doc
+// comment), enabling the demo's post-import switch-offer flow.
+func TestPrototypeImportAddsProfile(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+
+	view, err := actions.PlanImport(context.Background(), []byte("irrelevant"))
+	require.NoError(t, err)
+	assert.Equal(t, "imported", view.Name)
+	assert.NotEmpty(t, view.GameID)
+	assert.Len(t, view.Missing, 1)
+
+	var ticks []ActionProgress
+	outcome, err := actions.ApplyImport(context.Background(), []byte("irrelevant"), func(p ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, "imported", outcome.ImportedProfile)
+	assert.NotEmpty(t, ticks, "ApplyImport must stream fake progress ticks like ApplyUpdate/ApplyInstall/Rollback")
+
+	profiles, err := provider.Profiles(context.Background())
+	require.NoError(t, err)
+	byName := map[string]ProfileItem{}
+	for _, p := range profiles {
+		byName[p.Name] = p
+	}
+	require.Contains(t, byName, "imported", "the SAME provider instance must reflect the import on a repeated Profiles call")
+}
+
+// TestPrototypeExportSucceedsWithoutWriting covers prototypeProvider's Task
+// 10 demo: ExportProfile reports the same success message coreProvider does
+// (task-10-brief.md), but - unlike coreProvider's real os.OpenFile write -
+// never touches the filesystem at all: path names a file that does not
+// exist before the call, and must still not exist afterward, proving
+// prototype mode is side-effect-free outside its own in-memory data field
+// (see this file's own package doc comment on prototypeProvider's shape).
+func TestPrototypeExportSucceedsWithoutWriting(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	outcome, err := actions.ExportProfile(context.Background(), "survival", path)
+	require.NoError(t, err)
+	assert.Equal(t, `exported "survival" to `+path, outcome.Message)
+
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr), "prototypeProvider.ExportProfile must never write to the filesystem")
+}
+
 func requireModByID(t *testing.T, mods []ModItem, id string) ModItem {
 	t.Helper()
 	for _, m := range mods {
@@ -539,14 +655,43 @@ type recordingActions struct {
 	// rebindGame's type assertion succeeds against this fake.
 	SetGameCalls []string
 
+	// ReorderCalls records each ReorderMods call's orderedKeys argument -
+	// Task 4's reorder wiring tests assert against this, mirroring
+	// CreateProfileCalls/DeleteProfileCalls' own single-slice-argument shape
+	// above (one []string per call, not a single flattened slice).
+	ReorderCalls [][]string
+
+	// RollbackCalls records each Rollback call's item argument - Task 6's
+	// rollback wiring tests assert against this, mirroring EnableCalls/
+	// DisableCalls/UninstallCalls' own single-ModItem-argument shape above.
+	RollbackCalls []ModItem
+
+	// PlanImportCalls/ApplyImportCalls record each call's data argument -
+	// Task 9's import wiring tests assert against these, mirroring
+	// PlanCalls/ApplyCalls' own single-argument shape above (a []byte per
+	// call, not a flattened slice).
+	PlanImportCalls  [][]byte
+	ApplyImportCalls [][]byte
+
+	// ExportCalls records each ExportProfile call's {name, path} arguments -
+	// Task 10's export wiring tests assert against this, mirroring
+	// SetPolicyCalls' own struct-per-call shape above (two arguments matter
+	// here, not just one).
+	ExportCalls []struct{ Name, Path string }
+
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
 	CreateProfileOutcome, DeleteProfileOutcome                                   ActionOutcome
 	PurgeOutcome                                                                 ActionOutcome
+	ReorderOutcome                                                               ActionOutcome
+	RollbackOutcome                                                              ActionOutcome
 	PlanView                                                                     SwitchPlanView
 	InstallPlanViewOut                                                           InstallPlanView
 	UpdatesViewOut                                                               UpdatesView
+	PlanImportViewOut                                                            ImportPlanView
+	ApplyImportOutcome                                                           ActionOutcome
+	ExportOutcome                                                                ActionOutcome
 
 	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks/PurgeTicks, if
 	// set, are replayed through the matching method's progress callback (in
@@ -557,6 +702,8 @@ type recordingActions struct {
 	ApplyInstallTicks []ActionProgress
 	ApplyUpdateTicks  []ActionProgress
 	PurgeTicks        []ActionProgress
+	RollbackTicks     []ActionProgress
+	ApplyImportTicks  []ActionProgress
 
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
@@ -564,6 +711,10 @@ type recordingActions struct {
 	CreateProfileErr, DeleteProfileErr                                error
 	PurgeErr                                                          error
 	SetGameErr                                                        error
+	ReorderErr                                                        error
+	RollbackErr                                                       error
+	PlanImportErr, ApplyImportErr                                     error
+	ExportErr                                                         error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -671,6 +822,46 @@ func (r *recordingActions) SetGame(id string) error {
 	return r.SetGameErr
 }
 
+// ReorderMods implements ActionProvider (Task 4).
+func (r *recordingActions) ReorderMods(_ context.Context, orderedKeys []string) (ActionOutcome, error) {
+	r.ReorderCalls = append(r.ReorderCalls, orderedKeys)
+	return r.ReorderOutcome, r.ReorderErr
+}
+
+// Rollback implements ActionProvider (Task 6).
+func (r *recordingActions) Rollback(_ context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	r.RollbackCalls = append(r.RollbackCalls, item)
+	for _, p := range r.RollbackTicks {
+		if progress != nil {
+			progress(p)
+		}
+	}
+	return r.RollbackOutcome, r.RollbackErr
+}
+
+// PlanImport implements ActionProvider (Task 9).
+func (r *recordingActions) PlanImport(_ context.Context, data []byte) (ImportPlanView, error) {
+	r.PlanImportCalls = append(r.PlanImportCalls, data)
+	return r.PlanImportViewOut, r.PlanImportErr
+}
+
+// ApplyImport implements ActionProvider (Task 9).
+func (r *recordingActions) ApplyImport(_ context.Context, data []byte, progress func(ActionProgress)) (ActionOutcome, error) {
+	r.ApplyImportCalls = append(r.ApplyImportCalls, data)
+	for _, p := range r.ApplyImportTicks {
+		if progress != nil {
+			progress(p)
+		}
+	}
+	return r.ApplyImportOutcome, r.ApplyImportErr
+}
+
+// ExportProfile implements ActionProvider (Task 10).
+func (r *recordingActions) ExportProfile(_ context.Context, name, path string) (ActionOutcome, error) {
+	r.ExportCalls = append(r.ExportCalls, struct{ Name, Path string }{name, path})
+	return r.ExportOutcome, r.ExportErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -737,6 +928,26 @@ func (f failingActions) DeleteProfile(context.Context, string) (ActionOutcome, e
 }
 
 func (f failingActions) PurgeProfile(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) ReorderMods(context.Context, []string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) Rollback(context.Context, ModItem, func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) PlanImport(context.Context, []byte) (ImportPlanView, error) {
+	return ImportPlanView{}, f.err()
+}
+
+func (f failingActions) ApplyImport(context.Context, []byte, func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) ExportProfile(context.Context, string, string) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 
@@ -870,6 +1081,16 @@ func TestFailingActionsErrorsOnEveryMethod(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 	_, err = f.ApplyUpdate(ctx, UpdateItem{}, nil)
 	assert.ErrorIs(t, err, sentinel)
+	_, err = f.Rollback(ctx, item, nil)
+	assert.ErrorIs(t, err, sentinel)
+	_, err = f.PlanImport(ctx, nil)
+	assert.ErrorIs(t, err, sentinel)
+	_, err = f.ApplyImport(ctx, nil, nil)
+	assert.ErrorIs(t, err, sentinel)
+	_, err = f.ReorderMods(ctx, nil)
+	assert.ErrorIs(t, err, sentinel)
+	_, err = f.ExportProfile(ctx, "p", "p.yaml")
+	assert.ErrorIs(t, err, sentinel)
 }
 
 func TestFailingActionsDefaultsToGenericErrorWhenUnconfigured(t *testing.T) {
@@ -878,4 +1099,31 @@ func TestFailingActionsDefaultsToGenericErrorWhenUnconfigured(t *testing.T) {
 	f := failingActions{}
 	_, err := f.EnableMod(context.Background(), ModItem{})
 	require.Error(t, err)
+}
+
+// TestPrototypeReorderModsRejectsIncompleteOrDuplicate guards the
+// permutation contract (Copilot PR #73 round 6): orderedKeys missing an
+// installed mod, or naming one twice, must be rejected rather than silently
+// dropping/duplicating mods in the reordered list.
+func TestPrototypeReorderModsRejectsIncompleteOrDuplicate(t *testing.T) {
+	t.Parallel()
+
+	p := NewPrototypeProvider().(*prototypeProvider)
+	mods := p.activeMods()
+	require.GreaterOrEqual(t, len(mods), 2, "fixture needs at least two mods")
+	full := make([]string, len(mods))
+	for i, m := range mods {
+		full[i] = m.Source + ":" + m.ID
+	}
+
+	_, err := p.ReorderMods(context.Background(), full[:len(full)-1])
+	require.ErrorContains(t, err, "every installed mod")
+
+	dup := append([]string{}, full...)
+	dup[len(dup)-1] = dup[0] // right length, one key twice
+	_, err = p.ReorderMods(context.Background(), dup)
+	require.ErrorContains(t, err, "duplicate")
+
+	before := append([]prototype.Mod(nil), p.activeMods()...)
+	require.Equal(t, before, p.activeMods(), "failed validation must not mutate the list")
 }

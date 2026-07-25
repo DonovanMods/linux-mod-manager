@@ -124,10 +124,11 @@ func TestOverlayRendersTitleAndLines(t *testing.T) {
 }
 
 // TestOverlayCapsLines pins the exact-height render invariant for an
-// overlay taller than the panel: it is not scrollable (YAGNI), so overflow
-// collapses into a single dimmed "+N more" tail line, mirroring
-// actionModalView's cap style - never the scroll-follow-selection window
-// pickerView uses (there's no selection to follow).
+// overlay taller than the panel: overflow clips to a scrollable window
+// (Phase 6b Task 7's fix wave - the pre-scroll overlay collapsed overflow
+// into a single non-navigable "+N more" tail, which made long changelogs
+// unreachable), with dimmed "↑/↓ N more" indicator lines naming whatever is
+// clipped, mirroring pickerView's own indicator style.
 func TestOverlayCapsLines(t *testing.T) {
 	t.Parallel()
 
@@ -143,4 +144,71 @@ func TestOverlayCapsLines(t *testing.T) {
 	require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
 		"overlay must never render taller than the content budget")
 	require.Contains(t, view, "more", "clipped lines are named by an indicator line")
+}
+
+// TestOverlayScrollReachesLastLine guards the fix-wave Important: an overlay
+// taller than the panel must actually SCROLL (up/down and their j/k
+// aliases), or the full changelog text UpdateItem.Changelog deliberately
+// retains untruncated is unreachable. The last line must become visible
+// after scrolling to the bottom, further scrolling must clamp (never walk
+// past the end), the height invariant must hold at every offset, and esc
+// must still close.
+func TestOverlayScrollReachesLastLine(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 12) // forces the 8-line content floor
+	lines := make([]string, 20)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("file-%02d.esp", i+1)
+	}
+	model = model.promptOverlay(infoOverlay{title: "Changelog", lines: lines})
+	require.NotNil(t, model.overlay)
+
+	view := model.overlayView()
+	require.Contains(t, view, "file-01.esp", "the window starts at the top")
+	require.NotContains(t, view, "file-20.esp", "the last line starts clipped")
+
+	// Scroll well past the end - the offset must clamp at the bottom.
+	for range 30 {
+		model = updateWithKeyType(t, model, tea.KeyDown)
+	}
+	view = model.overlayView()
+	require.Contains(t, view, "file-20.esp", "the last line must be reachable by scrolling")
+	require.NotContains(t, view, "file-01.esp", "the first line scrolls out of the window")
+	require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+		"the height invariant must hold while scrolled")
+
+	// 'k' (the Up alias) scrolls back up one line.
+	model = updateWithRunes(t, model, "k")
+	view = model.overlayView()
+	require.NotContains(t, view, "file-20.esp", "scrolling up must move the window off the bottom")
+
+	// esc still closes, scrolled or not.
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.Nil(t, model.overlay)
+}
+
+// TestOverlayScrollUpClampsAtTop is TestOverlayScrollReachesLastLine's other
+// clamp: scrolling up at the top is a no-op, and a fully-fitting overlay
+// ignores scroll keys entirely.
+func TestOverlayScrollUpClampsAtTop(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 12)
+	lines := make([]string, 20)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("file-%02d.esp", i+1)
+	}
+	model = model.promptOverlay(infoOverlay{title: "Changelog", lines: lines})
+
+	before := model.overlayView()
+	model = updateWithKeyType(t, model, tea.KeyUp)
+	require.Equal(t, before, model.overlayView(), "scrolling up at the top must be a no-op")
+
+	// A short overlay ignores scroll keys entirely.
+	short := overlayTestModel(t).promptOverlay(infoOverlay{title: "Files", lines: []string{"a", "b"}})
+	beforeShort := short.overlayView()
+	short = updateWithKeyType(t, short, tea.KeyDown)
+	require.Equal(t, beforeShort, short.overlayView(), "a fully-visible overlay must not scroll")
+	require.NotNil(t, short.overlay, "scroll keys must not close the overlay")
 }

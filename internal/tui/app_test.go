@@ -350,31 +350,44 @@ func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	t.Parallel()
 
-	// Height bumped 37->39->40->60->61 over time (37->39->40 across Phase
-	// 5b Task 5's two new help lines; 40->60 in Task 9, when helpView grew
-	// from a flat ~15-line list into per-screen groups covering every Tasks
-	// 4-8 binding - see helpGroups/helpBodyBudget; 60->61 for the dashboard
-	// group's "enter open menu entry" line). Verified empirically
+	// Height bumped 37->39->40->60->61->65->66->68->69->70->71->72 over time
+	// (37->39->40 across Phase 5b Task 5's two new help lines; 40->60 in Task
+	// 9, when helpView grew from a flat ~15-line list into per-screen groups
+	// covering every Tasks 4-8 binding - see helpGroups/helpBodyBudget;
+	// 60->61 for the dashboard group's "enter open menu entry" line; 61->65
+	// in Task 3, whose new "conflicts" help group adds a blank separator, a
+	// header, and two entries; 65->66 in Task 3's review fix wave, which
+	// added the Deploy entry to that group; 66->68 in Task 4, whose
+	// MoveDown/MoveUp entries added two more lines to the installed-mods
+	// group's uncapped content; 68->69 in Phase 6b Task 6, whose new
+	// Rollback entry added one more line to that same group; 69->70 in
+	// Phase 6b Task 9, whose new profiles-group ImportProfile entry added
+	// one more line to that group; 70->71 in Phase 6b Task 10, whose new
+	// profiles-group ExportProfile entry added one more line to that same
+	// group - see helpGroups' own conflicts group doc comment; 71->72 in
+	// fix-wave-2's list-scoped changelog viewer, whose new Changelog entry
+	// added one more line to the installed-mods group. Verified empirically
 	// each time (scratch probes sweeping a height range, since removed) the
 	// same way 5a proved its own 36->37 bump: below the fitting height, the
-	// rendered view consistently comes out one row taller than the
-	// requested terminal height (lipgloss pads SHORT content but never
-	// clips content taller than the requested budget) - the party-sheet
-	// dashboard's split-panel math (partyDashboardView's topHeight/
-	// menuHeight, both integer divisions of availableContentHeight) hits
-	// its natural minimum before the requested budget does. Height=61 is
-	// the first value where the requested content budget finally reaches
-	// that same natural minimum, so the view fits with exactly zero slack
-	// (62 and above, the content grows to fill the larger budget instead).
-	// This pins the current zero-slack floor - see task-5-brief.md's "prove
-	// pre-existing saturation... like 5a did" allowance for justified
-	// height adjustments.
-	model := sizedPrototypeModel(t, "wizardry", 120, 61)
+	// rendered view consistently comes out taller than the requested
+	// terminal height (lipgloss pads SHORT content but never clips content
+	// taller than the requested budget) - the party-sheet dashboard's
+	// split-panel math (partyDashboardView's topHeight/menuHeight, both
+	// integer divisions of availableContentHeight) hits its natural minimum
+	// before the requested budget does. Height=72 is the first value where
+	// the requested content budget finally reaches that same natural
+	// minimum, so the view fits with exactly zero slack (73 and above, the
+	// content grows to fill the larger budget instead; 71 now overflows to
+	// 72, confirmed by re-running this test unmodified against the new
+	// installed-mods-group entry). This pins the current zero-slack floor -
+	// see task-5-brief.md's "prove pre-existing saturation... like 5a did"
+	// allowance for justified height adjustments.
+	model := sizedPrototypeModel(t, "wizardry", 120, 72)
 	model = updateWithRunes(t, model, "?")
 
 	view := model.View()
 	require.Equal(t, 120, lipgloss.Width(view))
-	require.Equal(t, 61, lipgloss.Height(view))
+	require.Equal(t, 72, lipgloss.Height(view))
 }
 
 func TestThemesUseDistinctLayouts(t *testing.T) {
@@ -527,8 +540,9 @@ func (f failingProvider) SourceInfos() []SourceInfo                       { retu
 func (f failingProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, f.err
 }
-func (f failingProvider) DeployedFiles(string, string) ([]string, error) { return nil, f.err }
-func (f failingProvider) ListGames() ([]GameInfo, error)                 { return nil, f.err }
+func (f failingProvider) DeployedFiles(string, string) ([]string, error)    { return nil, f.err }
+func (f failingProvider) ListGames() ([]GameInfo, error)                    { return nil, f.err }
+func (f failingProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, f.err }
 
 func TestModelShowsLoadingBeforeDataArrives(t *testing.T) {
 	t.Parallel()
@@ -585,8 +599,9 @@ func (emptyProvider) SourceInfos() []SourceInfo                       { return n
 func (emptyProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
-func (emptyProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
-func (emptyProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
+func (emptyProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
+func (emptyProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
+func (emptyProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
 
 func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	t.Parallel()
@@ -621,8 +636,9 @@ func (sentinelUpdatesProvider) SourceInfos() []SourceInfo                       
 func (sentinelUpdatesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
-func (sentinelUpdatesProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
-func (sentinelUpdatesProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
+func (sentinelUpdatesProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
+func (sentinelUpdatesProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
+func (sentinelUpdatesProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
 
 // TestFirstLoadHonorsProviderUpdatesSentinel guards the dataLoadedMsg
 // preserve behavior (see mutations_test.go's
@@ -664,6 +680,13 @@ type recordingProvider struct {
 	onOverview          func(context.Context)
 	DeployedFilesResult []string
 	DeployedFilesErr    error
+	// ConflictsResult/ConflictsErr are Task 3's canned-return fields for
+	// Conflicts, mirroring DeployedFilesResult/-Err's own shape exactly (a
+	// plain canned return, never delegated - see DeployedFiles' doc comment
+	// for why: no test using this fake needs Conflicts to reflect the
+	// delegate's own state).
+	ConflictsResult []ConflictItem
+	ConflictsErr    error
 
 	ListGamesResult []GameInfo
 	ListGamesErr    error
@@ -704,6 +727,10 @@ func (r *recordingProvider) Search(ctx context.Context, source, query string, pa
 
 func (r *recordingProvider) DeployedFiles(sourceID, modID string) ([]string, error) {
 	return r.DeployedFilesResult, r.DeployedFilesErr
+}
+
+func (r *recordingProvider) Conflicts(context.Context) ([]ConflictItem, error) {
+	return r.ConflictsResult, r.ConflictsErr
 }
 
 func (r *recordingProvider) ListGames() ([]GameInfo, error) {

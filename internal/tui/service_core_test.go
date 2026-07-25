@@ -22,6 +22,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui"
 )
 
@@ -568,6 +569,121 @@ func TestCoreProviderDeployedFilesEmpty(t *testing.T) {
 	got, err := provider.DeployedFiles("nexusmods", "101")
 	require.NoError(t, err)
 	require.Empty(t, got)
+}
+
+// --- coreProvider: Conflicts (Task 3) ---
+
+// TestCoreProviderConflicts guards coreProvider.Conflicts' mapping from
+// core.ProfileConflict to tui.ConflictItem: names (not raw source:mod keys)
+// and Stale must both come through correctly, in both directions - first
+// the in-sync case (owner == load-order winner after a real deploy), then
+// the stale case (a reorder without a redeploy flips the winner while the
+// DB owner stays put) - mirroring internal/core/conflicts_test.go's own
+// TestGetProfileConflictsWinnerAndStale fixture shape, built here directly
+// against a real *core.Service since seedTwinConflict/seedNamedInstalledMod
+// are unexported to package core_test and unreachable from here.
+func TestCoreProviderConflicts(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{
+		ID:          "conflict-game",
+		Name:        "Conflict Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+		LinkMethod:  domain.LinkSymlink,
+	}
+	require.NoError(t, svc.AddGame(game))
+
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "modX", "1.0", "shared.esp", []byte("X-content")))
+	require.NoError(t, gameCache.Store(game.ID, "src", "modY", "1.0", "shared.esp", []byte("Y-content")))
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "modX", SourceID: "src", GameID: game.ID, Name: "Mod X", Version: "1.0"},
+		ProfileName: "default",
+		Enabled:     true,
+	}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "modY", SourceID: "src", GameID: game.ID, Name: "Mod Y", Version: "1.0"},
+		ProfileName: "default",
+		Enabled:     true,
+	}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modX", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modY", Version: "1.0"}))
+
+	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	provider := tui.NewCoreProvider(svc, game, "default")
+
+	items, err := provider.Conflicts(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+
+	item := items[0]
+	assert.Equal(t, "shared.esp", item.Path)
+	assert.Equal(t, "Mod Y", item.Owner, "modY deploys last in profile order and owns the shared path")
+	assert.Equal(t, "Mod Y", item.Winner)
+	assert.Equal(t, []string{"Mod X"}, item.AlsoIn)
+	assert.False(t, item.Stale)
+
+	// Reorder WITHOUT redeploying: modX becomes the load-order winner while
+	// the DB's recorded owner stays modY - the conflict must now report
+	// Stale, with Winner tracking the new order and Owner unchanged.
+	require.NoError(t, pm.ReorderMods(game.ID, "default", []domain.ModReference{
+		{SourceID: "src", ModID: "modY", Version: "1.0"},
+		{SourceID: "src", ModID: "modX", Version: "1.0"},
+	}))
+
+	items, err = provider.Conflicts(context.Background())
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "Mod Y", items[0].Owner, "DB owner must be unchanged without a redeploy")
+	assert.Equal(t, "Mod X", items[0].Winner, "after the reorder, modX is last in profile order")
+	assert.True(t, items[0].Stale)
+}
+
+// --- coreProvider: Overview load order (Task 4) ---
+
+// TestCoreProviderOverviewFollowsLoadOrder proves Overview's ModItems come
+// back in core.OrderByProfile's order - unlisted mods first (sorted by
+// domain.ModKey), then profile.Mods order - so the list a TUI user reorders
+// on the Installed Mods screen IS deploy order. The fixture's "101"/"102"
+// mods (newCoreProviderFixture) are never added to profile.Mods, so they
+// sort by key ("nexusmods:101" < "nexusmods:102") ahead of a third mod that
+// IS listed.
+func TestCoreProviderOverviewFollowsLoadOrder(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "999", SourceID: "nexusmods", GameID: game.ID, Name: "Zeta", Version: "1.0"},
+		ProfileName: "default",
+		Enabled:     true,
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "nexusmods", ModID: "999"}))
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	require.Len(t, mods, 3)
+
+	names := make([]string, len(mods))
+	for i, m := range mods {
+		names[i] = m.Name
+	}
+	require.Equal(t, []string{"SkyUI", "USSEP", "Zeta"}, names,
+		"unlisted 101/102 sort first by key; listed 999 comes last in profile.Mods order")
 }
 
 // --- coreProvider: ActionProvider ---
@@ -1160,6 +1276,55 @@ func TestCoreProviderActions_PurgeProfile_Empty(t *testing.T) {
 	assert.Empty(t, outcome.Warnings)
 }
 
+// --- coreProvider: ReorderMods (Task 4) ---
+
+// TestCoreProviderReorderModsPreservesRefs covers the two ways ReorderMods
+// builds each domain.ModReference: "modA" is already listed in profile.Mods
+// with a Version/FileIDs that deliberately DIFFER from its current DB
+// record - proving the reorder preserves the PROFILE's own stored ref
+// verbatim rather than silently pulling the DB's current values; "modB" is
+// installed but NOT yet listed in profile.Mods - proving it's synthesized
+// from its DB record (today's actual installed Version/FileIDs) instead of
+// an empty ref.
+func TestCoreProviderReorderModsPreservesRefs(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	seedActionMod(t, svc, game, "src", "modA", "Mod A", "2.0", true, nil)
+	seedActionMod(t, svc, game, "src", "modB", "Mod B", "1.0", true, nil)
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+		SourceID: "src", ModID: "modA", Version: "1.0", FileIDs: []string{"old-file-id"},
+	}))
+	// modB is deliberately left OFF profile.Mods.
+
+	outcome, err := actions.ReorderMods(context.Background(), []string{"src:modB", "src:modA"})
+	require.NoError(t, err)
+	require.Equal(t, "load order updated", outcome.Message)
+
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 2)
+
+	require.Equal(t, "modB", profile.Mods[0].ModID, "new order: modB first")
+	require.Equal(t, "1.0", profile.Mods[0].Version, "unlisted mod synthesized from its current DB record")
+
+	require.Equal(t, "modA", profile.Mods[1].ModID)
+	require.Equal(t, "1.0", profile.Mods[1].Version, "already-listed ref's own Version preserved, not overwritten from the DB's 2.0")
+	require.Equal(t, []string{"old-file-id"}, profile.Mods[1].FileIDs)
+}
+
+// TestCoreProviderReorderModsUnknownKeyErrors proves an orderedKeys entry
+// that matches neither an existing profile ref nor an installed DB record
+// errors instead of silently synthesizing a phantom reference.
+func TestCoreProviderReorderModsUnknownKeyErrors(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modA", "Mod A", "1.0", true, nil)
+
+	_, err := actions.ReorderMods(context.Background(), []string{"src:modA", "src:does-not-exist"})
+	require.Error(t, err)
+}
+
 func TestCoreProviderActions_PlanProfileSwitch_MapsBucketsToDisplayStrings(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	pm := svc.NewProfileManager()
@@ -1641,6 +1806,30 @@ func TestCoreProviderActions_CheckUpdates_OneUpdateAndOneErroringSourceSurfacesW
 	assert.Contains(t, view.Warnings[0], "flaky")
 }
 
+// TestCoreProviderCheckUpdatesPopulatesChangelog guards Phase 6b Task 7's
+// UpdateItem.Changelog wiring: coreProvider.CheckUpdates must run the
+// source's raw HTML changelog through core.CleanChangelog before it ever
+// reaches the TUI - the FULL cleaned text, with no 800/500-char truncation
+// (that stays CLI-side, see core.CleanChangelog's own doc comment) since the
+// changelog overlay itself handles overflow.
+func TestCoreProviderCheckUpdatesPopulatesChangelog(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	seedActionMod(t, svc, game, "src", "modZ", "Mod Z", "1.0", true, nil)
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.updates = []domain.Update{{
+		InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: "modZ", SourceID: "src", Name: "Mod Z", Version: "1.0"}},
+		NewVersion:   "1.1",
+		Changelog:    "<p>Fixed some <b>bugs</b>.</p><p>Added &amp; improved textures.</p>",
+	}}
+
+	view, err := actions.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	require.Len(t, view.Updates, 1)
+	assert.Equal(t, "Fixed some bugs.\n\nAdded & improved textures.", view.Updates[0].Changelog)
+}
+
 // TestCoreProviderActions_CheckUpdates_MapsAuthRequiredError guards the
 // §7/auth mapping for CheckUpdates specifically: unlike the other three
 // methods, CheckUpdates' failure is a JOINED multi-source error (Updater.
@@ -1757,6 +1946,106 @@ func TestCoreProviderActions_ApplyUpdate_MapsNotSupportedError(t *testing.T) {
 		"an updates-capability gap must never suggest the install-path fallback")
 }
 
+// seedActionRollbackReadyMod prepares an installed mod already updated once,
+// ready to be passed to Rollback - mirroring
+// internal/core/flows_rollback_test.go's seedRollbackReadyMod (unexported
+// there, so duplicated here for this package's tests, exactly like
+// seedActionMod above mirrors that package's own seedInstalledMod): an OLD
+// version is installed and cached first, then advanced to a NEW version via
+// the same Replace + ApplyModUpdate + UpsertMod sequence ApplyUpdate itself
+// performs - leaving PreviousVersion/PreviousFileIDs set and the OLD
+// version's cache entry intact, exactly the precondition core.ApplyRollback
+// (and so coreProvider.Rollback) requires.
+func seedActionRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, name, oldVersion, newVersion string, oldFileIDs, newFileIDs []string, oldFiles, newFiles map[string][]byte) *domain.InstalledMod {
+	t.Helper()
+
+	gameCache := svc.GetGameCache(game)
+	for path, content := range oldFiles {
+		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, oldVersion, path, content))
+	}
+	for path, content := range newFiles {
+		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, newVersion, path, content))
+	}
+
+	oldMod := domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: oldVersion, GameID: game.ID}
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          oldMod,
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		LinkMethod:   domain.LinkSymlink,
+		FileIDs:      oldFileIDs,
+	}))
+
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &oldMod, "default"))
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: oldVersion, FileIDs: oldFileIDs}))
+
+	newMod := domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: newVersion, GameID: game.ID}
+	require.NoError(t, installer.Replace(context.Background(), game, &oldMod, &newMod, "default"))
+	require.NoError(t, svc.ApplyModUpdate(sourceID, modID, game.ID, "default", newVersion, newFileIDs))
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: newVersion, FileIDs: newFileIDs}))
+
+	updated, err := svc.GetInstalledMod(sourceID, modID, game.ID, "default")
+	require.NoError(t, err)
+	return updated
+}
+
+// TestCoreProviderRollback proves coreProvider.Rollback wires
+// core.ApplyRollback with the same hook defaults every other mutation uses
+// (Force=false - see hookRunner's doc comment), swaps the mod back to its
+// previous version FOR REAL (a real *core.Service fixture, no recording
+// fake - proving the actual DB/cache/deploy behavior, not just the wiring),
+// and composes the outcome message/warnings exactly like ApplyUpdate's own
+// convention (mergeDiagnostics(result.Warnings, result.Notes)).
+func TestCoreProviderRollback(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	mod := seedActionRollbackReadyMod(t, svc, game, "src", "modR", "Mod R", "1.0", "2.0",
+		[]string{"old-1"}, []string{"new-1"},
+		map[string][]byte{"modr-old.esp": []byte("old-content")},
+		map[string][]byte{"modr-new.esp": []byte("new-content")})
+	require.Equal(t, "2.0", mod.Version)
+	require.Equal(t, "1.0", mod.PreviousVersion)
+
+	var ticks []tui.ActionProgress
+	outcome, err := actions.Rollback(context.Background(),
+		tui.ModItem{Source: "src", ID: "modR", Name: "Mod R"},
+		func(p tui.ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, `Rolled back "Mod R" to 1.0`, outcome.Message)
+	assert.Empty(t, outcome.Warnings)
+	assert.Empty(t, ticks, "rollbackProgressLine's mapping is always false (Task 6) - the happy path emits no progress ticks")
+
+	updated, err := svc.GetInstalledMod("src", "modR", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", updated.Version)
+	assert.Equal(t, "2.0", updated.PreviousVersion, "the DB swap must record the rolled-back-FROM version as the new previous_version")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "modr-old.esp"))
+	assert.NoError(t, err, "the previous version's file must be redeployed")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "modr-new.esp"))
+	assert.True(t, os.IsNotExist(err), "the current version's file must be undeployed")
+}
+
+// TestCoreProviderRollback_NoPreviousVersionErrors guards the first guard
+// core.ApplyRollback checks: a mod that has never been updated has no
+// PreviousVersion, and Rollback must surface that error wrapped with the
+// mod's name - mirroring every other coreProvider mutation's own
+// "<verb>ing %s: %w" wrapping convention (e.g. UninstallMod/DeployProfile
+// above).
+func TestCoreProviderRollback_NoPreviousVersionErrors(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modS", "Mod S", "1.0", true, nil)
+
+	_, err := actions.Rollback(context.Background(), tui.ModItem{Source: "src", ID: "modS", Name: "Mod S"}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no previous version available for rollback")
+}
+
 // TestCoreProviderActions_SetUpdatePolicy_PersistsAndReadsBack is Task 5's
 // TestCoreProviderActions_CreateProfile proves CreateProfile persists a real,
 // empty profile via svc.NewProfileManager().Create, readable back with
@@ -1811,6 +2100,50 @@ func TestCoreProviderActions_DeleteActiveProfileRefused(t *testing.T) {
 	profile, err := pm.Get(game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "default", profile.Name, "the refused delete must leave the active profile untouched")
+}
+
+// TestExportWritesFile proves coreProvider.ExportProfile writes the EXACT
+// bytes ProfileManager.Export itself would return (the same bytes `lmm
+// profile export` prints to stdout - see cmd/lmm/profile.go's
+// doProfileExport) to the given path via a fresh os.OpenFile, and reports
+// the brief's exact outcome message (task-10-brief.md).
+func TestExportWritesFile(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	pm := svc.NewProfileManager()
+	want, err := pm.Export(game.ID, "default")
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	outcome, err := actions.ExportProfile(context.Background(), "default", path)
+	require.NoError(t, err)
+	assert.Equal(t, `exported "default" to `+path, outcome.Message)
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+// TestCoreProviderActions_ExportOverwriteRefused proves a pre-existing path
+// at the target refuses with the brief's exact "file exists: <path>" error
+// (the O_EXCL flag on coreProvider's os.OpenFile call - task-10-brief.md)
+// and leaves the pre-existing file's contents completely untouched. This is
+// the direct coreProvider-level coverage; TestExportRefusesOverwrite
+// (export_test.go) proves the SAME refusal end to end through the TUI's own
+// key -> input -> submit -> status-line flow, verbatim per task-10-brief.md.
+func TestCoreProviderActions_ExportOverwriteRefused(t *testing.T) {
+	actions, _, _ := newCoreActionsFixture(t)
+
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("pre-existing content"), 0o644))
+
+	_, err := actions.ExportProfile(context.Background(), "default", path)
+	require.Error(t, err)
+	assert.Equal(t, "file exists: "+path, err.Error())
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "pre-existing content", string(got), "an overwrite refusal must leave the pre-existing file untouched")
 }
 
 // coreProvider guard: setting "auto" through the ActionProvider seam
@@ -2024,4 +2357,142 @@ exit 0`)
 	require.NoError(t, err)
 	assert.Equal(t, "hit\n", string(secondLogContent),
 		"resolvedHooks must be recomputed after SetGame: the SECOND game's own hook must run, not one cached from the first")
+}
+
+// --- Phase 6b Task 9: PlanImport/ApplyImport ---
+
+// TestCoreProviderActions_PlanImport_MapsPlanToView proves coreProvider.PlanImport
+// maps core.ImportPlan onto ImportPlanView, splitting mods into
+// Installed/NeedsDownload/Missing exactly like core.ImportPlan itself does,
+// each formatted "sourceID:modID vVersion" - matching the CLI's own
+// profile-import preview list-line format (cmd/lmm/profile.go).
+func TestCoreProviderActions_PlanImport_MapsPlanToView(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "installed-mod", "Installed Mod", "1.0", true, map[string][]byte{"i.esp": []byte("i")})
+
+	profile := &domain.Profile{
+		Name: "target", GameID: game.ID,
+		Mods: []domain.ModReference{
+			{SourceID: "src", ModID: "installed-mod", Version: "1.0"},
+			{SourceID: "src", ModID: "missing-mod", Version: "2.0"},
+		},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	view, err := actions.PlanImport(context.Background(), data)
+	require.NoError(t, err)
+	assert.Equal(t, "target", view.Name)
+	assert.Equal(t, game.ID, view.GameID)
+	assert.False(t, view.Exists)
+	assert.Equal(t, []string{"src:installed-mod v1.0"}, view.Installed)
+	assert.Equal(t, []string{"src:missing-mod v2.0"}, view.Missing)
+	assert.Empty(t, view.NeedsDownload)
+}
+
+// TestCoreProviderActions_PlanImport_ParseErrorWraps proves a garbage
+// payload's parse failure is surfaced wrapped, mirroring every other
+// coreProvider plan method's own "planning X: %w" convention.
+func TestCoreProviderActions_PlanImport_ParseErrorWraps(t *testing.T) {
+	actions, _, _ := newCoreActionsFixture(t)
+
+	_, err := actions.PlanImport(context.Background(), []byte("not: valid: yaml: at: all: ["))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "planning import")
+}
+
+// TestCoreProviderActions_ApplyImport_SameGameSavesAndOffersSwitch proves
+// ApplyImport saves the profile for real (readable back via
+// ProfileManager.Get) and sets ActionOutcome.ImportedProfile to the saved
+// name when the imported profile targets the session's own active game -
+// Task 9's signal for the TUI's post-import "switch to it now?" offer.
+func TestCoreProviderActions_ApplyImport_SameGameSavesAndOffersSwitch(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	profile := &domain.Profile{Name: "imported-profile", GameID: game.ID}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	var ticks []tui.ActionProgress
+	outcome, err := actions.ApplyImport(context.Background(), data, func(p tui.ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, "imported-profile", outcome.ImportedProfile, "a same-game import must offer a switch")
+	assert.Contains(t, outcome.Message, "imported-profile")
+
+	saved, err := svc.NewProfileManager().Get(game.ID, "imported-profile")
+	require.NoError(t, err)
+	assert.Equal(t, "imported-profile", saved.Name)
+}
+
+// TestCoreProviderActions_ApplyImport_DifferentGameNeverOffersSwitch proves
+// a cross-game import (the imported profile's own declared GameID differs
+// from the session's active game) still saves successfully but leaves
+// ImportedProfile empty - the TUI must never offer to switch the CURRENT
+// session onto a profile that was saved under a different game entirely.
+func TestCoreProviderActions_ApplyImport_DifferentGameNeverOffersSwitch(t *testing.T) {
+	actions, _, game := newCoreActionsFixture(t)
+	require.NotEqual(t, "other-game", game.ID, "sanity: the fixture's own game ID must differ from this test's cross-game one")
+
+	profile := &domain.Profile{Name: "cross-game-profile", GameID: "other-game"}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	outcome, err := actions.ApplyImport(context.Background(), data, nil)
+	require.NoError(t, err)
+	assert.Empty(t, outcome.ImportedProfile, "a cross-game import must never offer a switch")
+}
+
+// TestCoreProviderActions_ApplyImport_ForceOverwritesExisting proves
+// ApplyImport always passes Force=true: the TUI's preview modal confirm IS
+// the only overwrite consent it has (see ActionProvider.ApplyImport's own
+// doc comment) - re-importing a profile with an already-saved name must
+// succeed and replace its mods, never error the way a Force=false import
+// would.
+func TestCoreProviderActions_ApplyImport_ForceOverwritesExisting(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "existing")
+	require.NoError(t, err)
+
+	profile := &domain.Profile{
+		Name: "existing", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "new-mod", Version: "1.0"}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	_, err = actions.ApplyImport(context.Background(), data, nil)
+	require.NoError(t, err, "ApplyImport must always overwrite (Force=true), never error on an existing name")
+
+	saved, err := pm.Get(game.ID, "existing")
+	require.NoError(t, err)
+	require.Len(t, saved.Mods, 1)
+	assert.Equal(t, "new-mod", saved.Mods[0].ModID, "the overwrite must replace the existing profile's mod list")
+}
+
+// TestCoreProviderReorderModsRejectsIncompleteOrDuplicate mirrors the
+// prototype-side permutation guard (Copilot PR #73 round 6): orderedKeys
+// missing an installed mod, or naming one twice, must error without
+// touching the profile on disk.
+func TestCoreProviderReorderModsRejectsIncompleteOrDuplicate(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modA", "Mod A", "1.0", true, nil)
+	seedActionMod(t, svc, game, "src", "modB", "Mod B", "1.0", true, nil)
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+		SourceID: "src", ModID: "modA", Version: "1.0",
+	}))
+	before, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+
+	_, err = actions.ReorderMods(context.Background(), []string{"src:modA"})
+	require.ErrorContains(t, err, "every installed mod")
+
+	_, err = actions.ReorderMods(context.Background(), []string{"src:modA", "src:modA"})
+	require.ErrorContains(t, err, "duplicate")
+
+	after, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	require.Equal(t, before.Mods, after.Mods, "failed validation must not rewrite the profile")
 }

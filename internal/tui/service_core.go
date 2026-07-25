@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 	"sync"
@@ -121,6 +122,16 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 		return Summary{}, nil, fmt.Errorf("loading installed mods for %s/%s: %w", game.ID, profile, err)
 	}
 
+	// Deterministic load order (Task 4): the SAME order DeployProfile/
+	// PlanProfileSwitch already use (Task 1's core.OrderByProfile), so the
+	// list a user reorders with J/K on this screen IS the order that will
+	// actually deploy - reordering anything else would be reordering a
+	// display fiction. Nil-safe on an unreadable profile.yaml, mirroring
+	// core.DeployProfile's own "don't abort the caller's operation, stay
+	// deterministic anyway" precedent (flows.go).
+	profileYAML, _ := config.LoadProfile(p.svc.ConfigDir(), game.ID, profile)
+	mods = core.OrderByProfile(profileYAML, mods)
+
 	enabled := 0
 	for _, mod := range mods {
 		if mod.Enabled {
@@ -131,13 +142,14 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {
 		items = append(items, ModItem{
-			ID:           mod.ID,
-			Name:         mod.Name,
-			Author:       mod.Author,
-			Version:      mod.Version,
-			Source:       mod.SourceID,
-			Status:       installedModStatus(mod),
-			UpdatePolicy: policyToString(mod.UpdatePolicy),
+			ID:              mod.ID,
+			Name:            mod.Name,
+			Author:          mod.Author,
+			Version:         mod.Version,
+			Source:          mod.SourceID,
+			Status:          installedModStatus(mod),
+			UpdatePolicy:    policyToString(mod.UpdatePolicy),
+			PreviousVersion: mod.PreviousVersion,
 		})
 	}
 
@@ -487,6 +499,36 @@ func (p *coreProvider) DeployedFiles(sourceID, modID string) ([]string, error) {
 	return paths, nil
 }
 
+// Conflicts lists every file conflict the active profile currently has
+// (Task 3), delegating directly to svc.GetProfileConflicts and mapping each
+// core.ProfileConflict to its TUI render model - Owner/Winner/AlsoIn take
+// each ConflictModRef's Name (already falls back to Key when empty - see
+// that type's own doc comment), so no separate fallback is needed here.
+func (p *coreProvider) Conflicts(ctx context.Context) ([]ConflictItem, error) {
+	game := p.currentGame()
+	profile := p.currentProfile()
+	conflicts, err := p.svc.GetProfileConflicts(ctx, game, profile)
+	if err != nil {
+		return nil, fmt.Errorf("getting conflicts for %s/%s: %w", game.ID, profile, err)
+	}
+
+	items := make([]ConflictItem, 0, len(conflicts))
+	for _, c := range conflicts {
+		alsoIn := make([]string, 0, len(c.AlsoIn))
+		for _, ref := range c.AlsoIn {
+			alsoIn = append(alsoIn, ref.Name)
+		}
+		items = append(items, ConflictItem{
+			Path:   c.Path,
+			Owner:  c.Owner.Name,
+			Winner: c.LoadOrderWinner.Name,
+			AlsoIn: alsoIn,
+			Stale:  c.Stale,
+		})
+	}
+	return items, nil
+}
+
 func installedModStatus(mod domain.InstalledMod) string {
 	switch {
 	case mod.Enabled && mod.Deployed:
@@ -790,6 +832,78 @@ func (p *coreProvider) PurgeProfile(ctx context.Context, progress func(ActionPro
 		Message:  fmt.Sprintf("Purged %d mod(s)", result.Purged),
 		Warnings: warnings,
 	}, nil
+}
+
+// ReorderMods persists orderedKeys (Task 4: the FULL desired load order, one
+// domain.ModKey("sourceID:modID") per installed mod - see
+// ActionProvider.ReorderMods' doc comment) as profile.Mods, via
+// ProfileManager.ReorderMods - a local YAML write.
+//
+// Each entry in orderedKeys becomes a domain.ModReference built one of two
+// ways: a mod ALREADY listed in profile.Mods keeps its EXISTING ref's
+// Version/FileIDs verbatim (a reorder must never silently reset either -
+// those fields track what was actually installed/downloaded, which a pure
+// load-order change has no business touching); a mod not yet listed (Task
+// 1's "unlisted" case - present in the installed set but absent from the
+// profile file) is synthesized from its current DB record instead, so it
+// gains a ref carrying today's actual installed Version/FileIDs rather than
+// an empty one.
+func (p *coreProvider) ReorderMods(_ context.Context, orderedKeys []string) (ActionOutcome, error) {
+	game := p.currentGame()
+	profileName := p.currentProfile()
+	pm := p.svc.NewProfileManager()
+
+	profile, err := pm.Get(game.ID, profileName)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("loading profile %s: %w", profileName, err)
+	}
+	existing := make(map[string]domain.ModReference, len(profile.Mods))
+	for _, ref := range profile.Mods {
+		existing[domain.ModKey(ref.SourceID, ref.ModID)] = ref
+	}
+
+	installed, err := p.svc.GetInstalledMods(game.ID, profileName)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("loading installed mods for %s/%s: %w", game.ID, profileName, err)
+	}
+	installedByKey := make(map[string]domain.InstalledMod, len(installed))
+	for _, mod := range installed {
+		installedByKey[domain.ModKey(mod.SourceID, mod.ID)] = mod
+	}
+
+	// Permutation guard (Copilot PR #73 round 6, mirroring the prototype):
+	// orderedKeys must name every installed mod exactly once — a missing or
+	// duplicated key would silently drop or duplicate profile refs.
+	if len(orderedKeys) != len(installed) {
+		return ActionOutcome{}, fmt.Errorf("reorder must include every installed mod: got %d of %d", len(orderedKeys), len(installed))
+	}
+	seen := make(map[string]bool, len(orderedKeys))
+	mods := make([]domain.ModReference, 0, len(orderedKeys))
+	for _, key := range orderedKeys {
+		if seen[key] {
+			return ActionOutcome{}, fmt.Errorf("duplicate mod key: %s", key)
+		}
+		seen[key] = true
+		if ref, ok := existing[key]; ok {
+			mods = append(mods, ref)
+			continue
+		}
+		im, ok := installedByKey[key]
+		if !ok {
+			return ActionOutcome{}, fmt.Errorf("mod not found: %s", key)
+		}
+		mods = append(mods, domain.ModReference{
+			SourceID: im.SourceID,
+			ModID:    im.ID,
+			Version:  im.Version,
+			FileIDs:  im.FileIDs,
+		})
+	}
+
+	if err := pm.ReorderMods(game.ID, profileName, mods); err != nil {
+		return ActionOutcome{}, fmt.Errorf("reordering profile %s: %w", profileName, err)
+	}
+	return ActionOutcome{Message: "load order updated"}, nil
 }
 
 func (p *coreProvider) PlanProfileSwitch(ctx context.Context, profileName string) (SwitchPlanView, error) {
@@ -1174,6 +1288,11 @@ func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress 
 // ErrAuthRequired Warning names no specific source - every individual
 // per-source failure is still legible inside the underlying joined
 // "source %s: %w" text this doesn't discard.
+//
+// Each UpdateItem.Changelog is run through core.CleanChangelog (Phase 6b
+// Task 7) - the FULL cleaned text, with no truncation (see that field's own
+// doc comment: the TUI's changelog overlay handles overflow itself, unlike
+// the CLI's 800/500-char truncation, which stays CLI-side).
 func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 	game := p.currentGame()
 	profile := p.currentProfile()
@@ -1188,6 +1307,7 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 		view.Updates = append(view.Updates, UpdateItem{
 			Source: u.InstalledMod.SourceID, ID: u.InstalledMod.ID, Name: u.InstalledMod.Name,
 			FromVersion: u.InstalledMod.Version, ToVersion: u.NewVersion,
+			Changelog: core.CleanChangelog(u.Changelog),
 		})
 	}
 	if checkErr != nil {
@@ -1242,6 +1362,55 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 	}
 	return ActionOutcome{
 		Message:  fmt.Sprintf("Updated %q to %s", u.Name, upd.NewVersion),
+		Warnings: mergeDiagnostics(result.Warnings, result.Notes),
+	}, nil
+}
+
+// rollbackProgressLine composes an ActionProgress from one core.DeployProgress
+// event during ApplyRollback, mirroring updateProgressLine's shape - but
+// ApplyRollback (Phase 6b Task 5) never downloads anything (the previous
+// version's files already live in the cache - see its own doc comment), so
+// it has no percentage-based phase worth surfacing on the status line the
+// way updateProgressLine's UpdateDownloading case does. Every phase
+// ApplyRollback actually emits (UpdateBeforeEachForced/UpdateWarning/
+// UpdateNote, reused verbatim from ApplyUpdate - see RollbackResult's own
+// doc comment) already reaches the caller through the completed
+// RollbackResult's Warnings/Notes fields (mergeDiagnostics, Rollback below) -
+// exactly mirroring how coreProvider.ApplyUpdate's own updateProgressLine
+// leaves those same three phases unmapped, for the identical reason. Kept as
+// an explicit named function (rather than a literal always-false closure) so
+// a future phase addition has an obvious, precedented place to compose a
+// line.
+func rollbackProgressLine(core.DeployProgress) (ActionProgress, bool) {
+	return ActionProgress{}, false
+}
+
+// Rollback rolls item back to its PreviousVersion via svc.ApplyRollback
+// (Phase 6b Task 5), with the SAME hook configuration
+// UninstallMod/DeployProfile/ApplyUpdate already use (Force=false - see
+// hookRunner's doc comment) - RollbackOptions mirrors UpdateOptions' own
+// hook plumbing exactly (see that type's doc comment in flows.go). The TUI
+// itself refuses a mod with no PreviousVersion synchronously, before this is
+// ever called (mutations.go's rollbackSelectedMod) - core.ApplyRollback
+// repeats the same guard defense-in-depth, so a stale selection still fails
+// cleanly here rather than rolling back the wrong thing.
+func (p *coreProvider) Rollback(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	game := p.currentGame()
+	profile := p.currentProfile()
+	opts := core.RollbackOptions{
+		Hooks:       p.resolvedHooks(game, profile),
+		HookRunner:  p.hookRunner(),
+		HookContext: p.hookContext(game),
+		Force:       false,
+	}
+
+	adapter := deployProgressAdapter(progress, rollbackProgressLine)
+	result, err := p.svc.ApplyRollback(ctx, game, profile, item.Source, item.ID, opts, adapter)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("rolling back %s: %w", item.Name, err)
+	}
+	return ActionOutcome{
+		Message:  fmt.Sprintf("Rolled back %q to %s", result.ModName, result.ToVersion),
 		Warnings: mergeDiagnostics(result.Warnings, result.Notes),
 	}, nil
 }
@@ -1312,4 +1481,151 @@ func switchPlanView(plan *core.SwitchPlan) SwitchPlanView {
 		view.NeedsDownloads = append(view.NeedsDownloads, fmt.Sprintf("%s:%s v%s", ref.SourceID, ref.ModID, ref.Version))
 	}
 	return view
+}
+
+// modRefLabel renders a domain.ModReference as "sourceID:modID vVersion" -
+// matching the CLI's own profile-import preview list-line format
+// (cmd/lmm/profile.go's doProfileImport, "    - %s:%s v%s\n"/"    ↓ %s:%s
+// v%s\n") - shared by every ImportPlanView category below.
+func modRefLabel(ref domain.ModReference) string {
+	return fmt.Sprintf("%s:%s v%s", ref.SourceID, ref.ModID, ref.Version)
+}
+
+// importPlanView maps a core.ImportPlan to its TUI render model - the
+// import-modal analog of switchPlanView/installPlanView.
+func importPlanView(plan *core.ImportPlan) ImportPlanView {
+	view := ImportPlanView{
+		Name:   plan.Profile.Name,
+		GameID: plan.Profile.GameID,
+		Exists: plan.Exists,
+	}
+	for _, ref := range plan.Installed {
+		view.Installed = append(view.Installed, modRefLabel(ref))
+	}
+	for _, ref := range plan.NeedsRedownload {
+		view.NeedsDownload = append(view.NeedsDownload, modRefLabel(ref))
+	}
+	for _, ref := range plan.Missing {
+		view.Missing = append(view.Missing, modRefLabel(ref))
+	}
+	return view
+}
+
+// PlanImport parses data and categorizes its mods against the session's
+// current game/DB/cache state, mapped from svc.PlanImport - the import-modal
+// analog of PlanProfileSwitch/PlanInstall.
+func (p *coreProvider) PlanImport(ctx context.Context, data []byte) (ImportPlanView, error) {
+	plan, err := p.svc.PlanImport(ctx, p.currentGame(), data)
+	if err != nil {
+		return ImportPlanView{}, fmt.Errorf("planning import: %w", err)
+	}
+	return importPlanView(plan), nil
+}
+
+// importProgressLine composes an ActionProgress from one core.DeployProgress
+// event during ApplyImport, mirroring switchProgressLine/installProgressLine's
+// own per-phase-mapping shape (see either's doc comment) - one line per
+// Import* DeployPhase that has something worth a status line.
+// ImportDownloadDone/ImportNote are deliberately left unmapped (default
+// case): the former is just the CLI's blank-line separator after a download
+// (nothing to show), and the latter's sole diagnostic already reaches the
+// caller through the completed result's Notes field (mergeDiagnostics,
+// ApplyImport below) - mirroring updateProgressLine/rollbackProgressLine's
+// own "already covered by the result, not worth a live tick too" convention.
+func importProgressLine(p core.DeployProgress) (ActionProgress, bool) {
+	switch p.Phase {
+	case core.ImportSaved:
+		return ActionProgress{Line: fmt.Sprintf("Imported profile: %s", p.ModName), Percent: -1}, true
+	case core.ImportInstalling:
+		return ActionProgress{Line: fmt.Sprintf("Importing: downloading and installing %d mod(s)…", p.Total), Percent: -1}, true
+	case core.ImportModInstalling:
+		return ActionProgress{Line: fmt.Sprintf("Importing: installing %s:%s (%d/%d)", p.SourceID, p.ModID, p.Index, p.Total), Percent: -1}, true
+	case core.ImportFallbackUsed:
+		return ActionProgress{Line: fmt.Sprintf("Importing: %s:%s - stored file IDs not found, using primary", p.SourceID, p.ModID), Percent: -1}, true
+	case core.ImportDownloading:
+		return ActionProgress{Line: fmt.Sprintf("Importing: downloading %s:%s %.0f%%", p.SourceID, p.ModID, p.Percent), Percent: p.Percent}, true
+	case core.ImportModFailed:
+		return ActionProgress{Line: fmt.Sprintf("Importing: %s:%s failed - %s", p.SourceID, p.ModID, p.Detail), Percent: -1}, true
+	case core.ImportModInstalled:
+		return ActionProgress{Line: fmt.Sprintf("Importing: %s (%d/%d)", p.ModName, p.Index, p.Total), Percent: -1}, true
+	default:
+		return ActionProgress{}, false
+	}
+}
+
+// ApplyImport re-plans data (mirroring ApplyInstall/ApplyProfileSwitch's own
+// re-plan-at-apply precedent - see either's doc comment) and applies it with
+// Force=true (the TUI's preview modal confirm IS the overwrite consent - see
+// ActionProvider.ApplyImport's doc comment), NoInstall=false and
+// ConfirmInstall=nil (proceed unconditionally - the same modal confirm
+// already covers "yes, download and install these too", matching
+// ConfirmConflicts' own "nil = proceed" convention in ApplyInstall above).
+//
+// ImportedProfile (ActionOutcome) is set to the just-saved profile's name
+// ONLY when plan.Profile.GameID matches the session's CURRENTLY ACTIVE game
+// (p.currentGame().ID) - Task 9's signal for offering a follow-up "switch to
+// it now?" confirmation (mutations.go's resolveImportApplied, dispatched
+// from app.go's actionDoneMsg handler). A cross-game import leaves this "":
+// the imported profile was saved under ITS OWN declared game (see
+// ProfileManager.ImportWithOptions - it saves by profile.GameID, not by
+// whatever game this session happens to be bound to), so offering to switch
+// the CURRENT session onto it would either silently fail (wrong game's
+// profile directory) or need a game rebind first - out of scope for this
+// offer, which only ever targets an already-reachable, same-game profile.
+func (p *coreProvider) ApplyImport(ctx context.Context, data []byte, progress func(ActionProgress)) (ActionOutcome, error) {
+	game := p.currentGame()
+	plan, err := p.svc.PlanImport(ctx, game, data)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("planning import: %w", err)
+	}
+
+	opts := core.ProfileImportOptions{Force: true, NoInstall: false, ConfirmInstall: nil}
+	adapter := deployProgressAdapter(progress, importProgressLine)
+	result, err := p.svc.ApplyImport(ctx, game, plan, opts, adapter)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("importing profile: %w", err)
+	}
+
+	outcome := ActionOutcome{
+		Message:  fmt.Sprintf("Imported profile %q (%d installed, %d failed, %d skipped)", result.ProfileName, result.Installed, result.Failed, result.Skipped),
+		Warnings: mergeDiagnostics(result.Warnings, result.Notes),
+	}
+	if plan.Profile.GameID == game.ID {
+		outcome.ImportedProfile = result.ProfileName
+	}
+	return outcome, nil
+}
+
+// ExportProfile writes profile name's exported YAML (ProfileManager.Export -
+// the SAME bytes `lmm profile export` prints to stdout, see
+// cmd/lmm/profile.go's doProfileExport; CLI/TUI parity's own
+// interface-side carve-out lets the CLI keep printing to stdout while the
+// TUI writes to a file, both over the identical pm.Export call) to path via
+// a fresh os.OpenFile - O_EXCL means a path that already names an existing
+// file refuses rather than silently overwriting it, surfacing as exactly
+// "file exists: <path>" (task-10-brief.md's own wording, deliberately NOT
+// wrapped with this method's usual "exporting %s: %w" convention, so the
+// TUI's status line reads a plain, unambiguous refusal). A relative path
+// resolves against the process's current working directory - os.OpenFile's
+// own behavior, nothing special done here.
+func (p *coreProvider) ExportProfile(_ context.Context, name, path string) (ActionOutcome, error) {
+	data, err := p.svc.NewProfileManager().Export(p.currentGame().ID, name)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("exporting profile %s: %w", name, err)
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return ActionOutcome{}, fmt.Errorf("file exists: %s", path)
+		}
+		return ActionOutcome{}, fmt.Errorf("exporting profile %s: %w", name, err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return ActionOutcome{}, fmt.Errorf("exporting profile %s: %w", name, err)
+	}
+
+	return ActionOutcome{Message: fmt.Sprintf("exported %q to %s", name, path)}, nil
 }

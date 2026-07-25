@@ -16,6 +16,13 @@ type Data struct {
 	// for how these back the switcher.
 	AltGame Game
 	AltMods []Mod
+	// Conflicts is the PRIMARY game's canned file-conflict set (Task 3),
+	// feeding prototypeProvider.Conflicts (service.go) for the Conflicts
+	// screen's --prototype demo: one stale entry and one in-sync entry, so
+	// the demo shows both the stale marker and both detail-pane hint copy
+	// variants. The alt game has none - see prototypeProvider.Conflicts' own
+	// doc comment.
+	Conflicts []Conflict
 }
 
 type Game struct {
@@ -42,6 +49,15 @@ type Profile struct {
 // NeedsDownloads plan and --prototype mode can demo the refusal state
 // without any core.Service.
 const NeedsDownloadProfileName = "requiem-overhaul"
+
+// Conflict is one canned file-conflict row (Task 3) - see Data.Conflicts.
+type Conflict struct {
+	Path   string
+	Owner  string
+	Winner string
+	AlsoIn []string
+	Stale  bool
+}
 
 type Stats struct {
 	Installed int
@@ -82,6 +98,24 @@ type Mod struct {
 	// comment. Every other InstalledMods entry leaves both unset.
 	UpdatePolicy     string
 	AvailableVersion string
+
+	// Changelog feeds prototypeProvider.CheckUpdates' UpdateItem.Changelog
+	// (Phase 6b Task 7): skyui carries a canned multi-line changelog and
+	// ussep deliberately leaves it empty, so --prototype mode can demo both
+	// the changelog overlay's normal case ('v' on the apply-updates modal)
+	// and its "no changelog available" one. Every other InstalledMods entry
+	// leaves this unset, matching AvailableVersion's own "never invent a
+	// phantom update" convention.
+	Changelog string
+
+	// PreviousVersion feeds prototypeProvider.Rollback's fake swap (Task 6):
+	// a non-empty value marks the InstalledMods entry as rollback-eligible,
+	// mirroring domain.InstalledMod.PreviousVersion's own "version before
+	// last update" contract - ModItem.PreviousVersion (service.go) is
+	// populated straight from this field. Every other canned mod leaves it
+	// unset, so --prototype mode can also demo the "no previous version to
+	// roll back to" refusal (mutations.go's rollbackSelectedMod) on those.
+	PreviousVersion string
 }
 
 // Load returns static demo data. It must never touch disk, network, DB, or APIs.
@@ -98,12 +132,12 @@ func Load() Data {
 			Installed: 42,
 			Enabled:   39,
 			Updates:   3,
-			Conflicts: 1,
+			Conflicts: 2,
 		},
 		InstalledMods: []Mod{
-			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true, UpdatePolicy: "auto", AvailableVersion: "5.3"},
+			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true, UpdatePolicy: "auto", AvailableVersion: "5.3", Changelog: "Fixed a crash when opening the inventory with a controller.\nAdded a compatibility patch for the newest SKSE build.\nMinor MCM menu polish."},
 			{ID: "ussep", Name: "USSEP", Source: "nexusmods", Author: "Arthmoor", Version: "4.3", Status: "update", Summary: "Unofficial Skyrim Special Edition Patch.", Downloads: 11_000_000, Endorsements: 420_000, HasEndorsements: true, UpdatePolicy: "notify", AvailableVersion: "4.4"},
-			{ID: "skse-address-library", Name: "SKSE Address Library", Source: "nexusmods", Author: "meh321", Version: "11", Status: "installed", Summary: "Address library for SKSE plugins.", Downloads: 8_900_000, Endorsements: 150_000, HasEndorsements: true},
+			{ID: "skse-address-library", Name: "SKSE Address Library", Source: "nexusmods", Author: "meh321", Version: "11", Status: "installed", Summary: "Address library for SKSE plugins.", Downloads: 8_900_000, Endorsements: 150_000, HasEndorsements: true, PreviousVersion: "10"},
 			{ID: "immersive-armors", Name: "Immersive Armors", Source: "nexusmods", Author: "hothtrooper44", Version: "8.1", Status: "conflict", Summary: "Adds hundreds of new armor variants.", Downloads: 6_700_000, Endorsements: 380_000, HasEndorsements: true},
 			{ID: "alternate-start", Name: "Alternate Start", Source: "nexusmods", Author: "Arthmoor", Version: "4.2", Status: "disabled", Summary: "Alternative character start scenarios.", Downloads: 5_200_000, Endorsements: 220_000, HasEndorsements: true},
 		},
@@ -118,6 +152,13 @@ func Load() Data {
 			// computes Reinstall by checking InstalledMods live, so this entry
 			// needs no special-casing beyond simply existing here.
 			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true},
+		},
+		Conflicts: []Conflict{
+			// Stale: the DB owner (Immersive Armors) disagrees with the
+			// load-order winner (USSEP) - a redeploy would flip who wins.
+			{Path: "meshes/armor/steel/f/1stperson/steel_helmet.nif", Owner: "Immersive Armors", Winner: "USSEP", AlsoIn: []string{"USSEP"}, Stale: true},
+			// In-sync: owner and winner already agree.
+			{Path: "textures/frost.dds", Owner: "USSEP", Winner: "USSEP", AlsoIn: []string{"Immersive Armors"}, Stale: false},
 		},
 		Profiles: []Profile{
 			{Name: "survival", Active: true, ModCount: 42},

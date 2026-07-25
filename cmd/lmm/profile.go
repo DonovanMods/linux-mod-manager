@@ -404,232 +404,144 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doProfileImport owns preview-printing, the "Download and install mods?"
+// confirmation prompt, and event-driven console output; the categorization,
+// save, and download/install loop all live in core.PlanImport/
+// core.ApplyImport (Phase 6b Task 8 - see the task report for the full
+// mapping). The prompt is wired as core.ProfileImportOptions.ConfirmInstall,
+// called by ApplyImport at its own restored position (right after the
+// profile is saved) - the same callback-at-the-CLI's-own-prompt-position
+// precedent core.InstallOptions.ConfirmConflicts established; promptErr
+// mirrors confirmInstallConflicts' own seam in install.go for propagating a
+// genuine stdin read failure verbatim instead of collapsing it into a
+// generic error.
 func doProfileImport(ctx context.Context, service *core.Service, game *domain.Game, data []byte) error {
-	pm := getProfileManager(service)
-
-	// Parse profile first to preview
-	profile, err := pm.ParseProfile(data)
+	plan, err := service.PlanImport(ctx, game, data)
 	if err != nil {
-		return fmt.Errorf("parsing profile: %w", err)
-	}
-
-	// Check what mods are already installed (track version and FileIDs for cache check)
-	type installedInfo struct {
-		Version string
-		FileIDs []string
-	}
-	installedMods, _ := service.GetInstalledMods(game.ID, profile.Name)
-	installedData := make(map[string]installedInfo) // key -> version and file IDs
-	for _, im := range installedMods {
-		key := im.SourceID + ":" + im.ID
-		installedData[key] = installedInfo{Version: im.Version, FileIDs: im.FileIDs}
-	}
-
-	// Also check mods from any profile (might be installed under different profile)
-	allProfiles, _ := pm.List(game.ID)
-	for _, p := range allProfiles {
-		mods, _ := service.GetInstalledMods(game.ID, p.Name)
-		for _, im := range mods {
-			key := im.SourceID + ":" + im.ID
-			if _, exists := installedData[key]; !exists {
-				installedData[key] = installedInfo{Version: im.Version, FileIDs: im.FileIDs}
-			}
-		}
-	}
-
-	// Categorize mods - check both DB and cache
-	var installed []domain.ModReference
-	var needsRedownload []domain.ModReference
-	var missing []domain.ModReference
-	needsRedownloadSet := make(map[string]bool) // Track which mods need re-download
-
-	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
-		if info, inDB := installedData[key]; inDB {
-			// In DB - but does cache exist?
-			if service.GetGameCache(game).Exists(game.ID, ref.SourceID, ref.ModID, info.Version) {
-				installed = append(installed, ref)
-			} else {
-				needsRedownload = append(needsRedownload, ref)
-				needsRedownloadSet[key] = true
-			}
-		} else {
-			missing = append(missing, ref)
-		}
-	}
-
-	// Show summary
-	fmt.Printf("Importing profile: %s\n\n", profile.Name)
-	fmt.Printf("Found %d mod(s) in profile.\n", len(profile.Mods))
-	if len(installed) > 0 {
-		fmt.Printf("  ✓ %d already installed\n", len(installed))
-	}
-	if len(needsRedownload) > 0 {
-		fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(needsRedownload))
-		for _, ref := range needsRedownload {
-			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
-		}
-	}
-	if len(missing) > 0 {
-		fmt.Printf("  ↓ %d need to be downloaded:\n", len(missing))
-		for _, ref := range missing {
-			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
-		}
-	}
-
-	// Save the profile
-	profile, err = pm.ImportWithOptions(data, profileImportForce)
-	if err != nil {
-		return fmt.Errorf("importing profile: %w", err)
-	}
-
-	fmt.Printf("\n✓ Imported profile: %s\n", profile.Name)
-
-	// Combine for download loop
-	toDownload := append(needsRedownload, missing...)
-
-	// If nothing to download or --no-install, we're done
-	if len(toDownload) == 0 || profileImportNoInstall {
-		if len(toDownload) > 0 {
-			fmt.Printf("\nSkipped installing %d mod(s). Use 'lmm profile apply %s' to install them later.\n", len(toDownload), profile.Name)
-		}
-		return nil
-	}
-
-	// Ask to install missing mods
-	fmt.Print("\nDownload and install mods? [Y/n]: ")
-	input, err := readPromptLine()
-	if err != nil {
+		// PlanImport's only failure mode is a parse error, already wrapped
+		// ("parsing profile: %w") - matching doProfileImport's own historical
+		// wrapping exactly.
 		return err
 	}
-	if input != "" && input != "y" && input != "yes" {
-		fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", profile.Name)
-		return nil
+
+	// Show summary - printed purely from the plan, matching the
+	// pre-extraction CLI's preview exactly.
+	fmt.Printf("Importing profile: %s\n\n", plan.Profile.Name)
+	totalMods := len(plan.Installed) + len(plan.NeedsRedownload) + len(plan.Missing)
+	fmt.Printf("Found %d mod(s) in profile.\n", totalMods)
+	if len(plan.Installed) > 0 {
+		fmt.Printf("  ✓ %d already installed\n", len(plan.Installed))
+	}
+	if len(plan.NeedsRedownload) > 0 {
+		fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
+		for _, ref := range plan.NeedsRedownload {
+			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+		}
+	}
+	if len(plan.Missing) > 0 {
+		fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
+		for _, ref := range plan.Missing {
+			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+		}
 	}
 
-	// Download and install mods
-	installer := service.GetInstaller(game)
+	toDownloadCount := len(plan.NeedsRedownload) + len(plan.Missing)
 
-	fmt.Println("\nDownloading and installing mods...")
-	var installedCount, failedCount int
+	// promptErr captures a genuine stdin read failure from the "Download and
+	// install mods?" prompt (distinct from an ordinary decline - see
+	// readPromptLine's own doc comment), so it can be propagated verbatim
+	// below instead of collapsing into ApplyImport's generic error.
+	var promptErr error
+	declined := false
 
-	for _, ref := range toDownload {
-		fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
-
-		// Fetch mod details
-		mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
-		if err != nil {
-			fmt.Printf("    Error: failed to fetch mod: %v\n", err)
-			failedCount++
-			continue
-		}
-
-		// Get files
-		files, err := service.GetModFiles(ctx, ref.SourceID, mod)
-		if err != nil {
-			fmt.Printf("    Error: failed to get files: %v\n", err)
-			failedCount++
-			continue
-		}
-
-		if len(files) == 0 {
-			fmt.Printf("    Error: no downloadable files\n")
-			failedCount++
-			continue
-		}
-
-		// Select files to download - use stored FileIDs for re-downloads, or profile FileIDs for new installs
-		key := ref.SourceID + ":" + ref.ModID
-		var fileIDsToUse []string
-		if needsRedownloadSet[key] {
-			// Re-download: use DB-stored FileIDs
-			if info, ok := installedData[key]; ok {
-				fileIDsToUse = info.FileIDs
-			}
-		} else if len(ref.FileIDs) > 0 {
-			// New install: use FileIDs from imported profile
-			fileIDsToUse = ref.FileIDs
-		}
-		filesToDownload, usedFallback, err := selectFilesToDownload(files, fileIDsToUse)
-		if err != nil {
-			fmt.Printf("    Error: %v\n", err)
-			failedCount++
-			continue
-		}
-		if usedFallback && len(fileIDsToUse) > 0 {
-			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
-		}
-
-		// Download each file
-		progressFn := func(p core.DownloadProgress) {
-			if p.TotalBytes > 0 {
-				fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
-			}
-		}
-
-		var downloadedFileIDs []string
-		downloadFailed := false
-		for _, selectedFile := range filesToDownload {
-			_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
+	opts := core.ProfileImportOptions{Force: profileImportForce, NoInstall: profileImportNoInstall}
+	if toDownloadCount > 0 && !profileImportNoInstall {
+		opts.ConfirmInstall = func(toDownload []domain.ModReference) bool {
+			fmt.Print("\nDownload and install mods? [Y/n]: ")
+			input, err := readPromptLine()
 			if err != nil {
-				fmt.Println()
-				fmt.Printf("    Error: download failed: %v\n", err)
-				downloadFailed = true
-				break
+				promptErr = err
+				return false
 			}
-			downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
-		}
-		fmt.Println()
-
-		if downloadFailed {
-			failedCount++
-			continue
-		}
-
-		// Deploy
-		if err := installer.Install(ctx, game, mod, profile.Name); err != nil {
-			fmt.Printf("    Error: deploy failed: %v\n", err)
-			failedCount++
-			continue
-		}
-
-		// Save to DB. Normalize GameID to the lmm game (see comment on the
-		// doProfileSwitch save site for why).
-		installedMod := &domain.InstalledMod{
-			Mod:          *mod,
-			ProfileName:  profile.Name,
-			UpdatePolicy: domain.UpdateNotify,
-			Enabled:      true,
-			FileIDs:      downloadedFileIDs,
-		}
-		installedMod.Mod.GameID = game.ID
-		if err := service.SaveInstalledMod(installedMod); err != nil {
-			fmt.Printf("    Error: save failed: %v\n", err)
-			failedCount++
-			continue
-		}
-
-		// Update profile with actual downloaded FileIDs
-		modRef := domain.ModReference{
-			SourceID: mod.SourceID,
-			ModID:    mod.ID,
-			Version:  mod.Version,
-			FileIDs:  downloadedFileIDs,
-		}
-		if err := pm.UpsertMod(game.ID, profile.Name, modRef); err != nil {
-			if verbose {
-				fmt.Printf("    Warning: could not update profile: %v\n", err)
+			if input != "" && input != "y" && input != "yes" {
+				declined = true
+				fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", plan.Profile.Name)
+				return false
 			}
+			return true
 		}
-
-		fmt.Printf("    ✓ Installed: %s\n", mod.Name)
-		installedCount++
 	}
 
-	fmt.Printf("\n--- Summary ---\n")
-	fmt.Printf("Installed: %d\n", installedCount)
-	if failedCount > 0 {
-		fmt.Printf("Failed: %d\n", failedCount)
+	// progress prints every diagnostic and status line at its exact point of
+	// occurrence, driven entirely by core.ApplyImport's progress events -
+	// including the sole diagnostic that also lands in result.Notes (see
+	// core.ProfileImportResult's doc comment). Notes is never separately
+	// batch-printed below: it has a corresponding event here already.
+	progress := func(p core.DeployProgress) {
+		switch p.Phase {
+		case core.ImportSaved:
+			fmt.Printf("\n✓ Imported profile: %s\n", p.ModName)
+		case core.ImportInstalling:
+			fmt.Println("\nDownloading and installing mods...")
+		case core.ImportModInstalling:
+			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
+		case core.ImportFallbackUsed:
+			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
+		case core.ImportDownloading:
+			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
+		case core.ImportModFailed:
+			if strings.HasPrefix(p.Detail, "download failed:") {
+				fmt.Println()
+			}
+			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.ImportDownloadDone:
+			fmt.Println()
+		case core.ImportModInstalled:
+			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+		case core.ImportNote:
+			if verbose {
+				fmt.Printf("    %s\n", p.Detail)
+			}
+		}
+	}
+
+	result, err := service.ApplyImport(ctx, game, plan, opts, progress)
+	// A genuine stdin read failure inside the ConfirmInstall closure must be
+	// checked UNCONDITIONALLY, before anything else: the closure signals it
+	// by returning false, which ApplyImport treats as an ordinary decline
+	// and returns (result, nil) - so an `err != nil`-gated check would
+	// swallow the failure and fall through to a spurious "--- Summary ---"
+	// block. The pre-extraction CLI returned the error immediately after the
+	// prompt, printing nothing further (fix wave 1, Important 1 - pinned by
+	// TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary).
+	if promptErr != nil {
+		return promptErr
+	}
+	if err != nil {
+		// Diagnostics accumulated before a fatal error were already printed
+		// above, live, via progress. ApplyImport's own error is already
+		// appropriately wrapped (e.g. "importing profile: %w" for a failed
+		// save) or bare (ctx cancellation) - no additional wrapping here.
+		return err
+	}
+
+	switch {
+	case profileImportNoInstall:
+		if result.Skipped > 0 {
+			fmt.Printf("\nSkipped installing %d mod(s). Use 'lmm profile apply %s' to install them later.\n", result.Skipped, result.ProfileName)
+		}
+	case declined:
+		// The decline message was already printed inside the ConfirmInstall
+		// closure above.
+	case toDownloadCount == 0:
+		// Nothing to install - the pre-extraction CLI's early-out never
+		// printed anything further in this case either.
+	default:
+		fmt.Printf("\n--- Summary ---\n")
+		fmt.Printf("Installed: %d\n", result.Installed)
+		if result.Failed > 0 {
+			fmt.Printf("Failed: %d\n", result.Failed)
+		}
 	}
 
 	return nil
@@ -966,8 +878,14 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	var toInstall []domain.ModReference
 	needsRedownloadSet := make(map[string]bool) // Track which mods are re-downloads
 
-	// Check installed mods against profile
-	for key, im := range installedByKey {
+	// Check installed mods against profile. Deterministic order: iterate
+	// core.OrderByProfile(profile, installedMods) - not `for key, im :=
+	// range installedByKey`, which iterates map order - keeping installedByKey
+	// only for the membership lookup below.
+	ordered := core.OrderByProfile(profile, installedMods)
+	for i := range ordered {
+		im := &ordered[i]
+		key := im.SourceID + ":" + im.ID
 		if _, inProfile := profileKeys[key]; !inProfile {
 			// Installed but not in profile - disable it
 			if im.Enabled {
@@ -993,8 +911,16 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		}
 	}
 
-	// Check profile mods against installed
-	for key, ref := range profileKeys {
+	// Check profile mods against installed. Deterministic order: iterate
+	// profile.Mods - not `for key, ref := range profileKeys`, which iterates
+	// map order. seen guards the same dedup profileKeys gave for free.
+	seen := make(map[string]bool, len(profile.Mods))
+	for _, ref := range profile.Mods {
+		key := ref.SourceID + ":" + ref.ModID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		if _, installed := installedByKey[key]; !installed {
 			// In profile but not installed
 			toInstall = append(toInstall, ref)

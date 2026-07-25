@@ -16,14 +16,20 @@ type KeyMap struct {
 	InstalledMods key.Binding
 	Profiles      key.Binding
 	Sources       key.Binding
-	Select        key.Binding
-	Submit        key.Binding
-	Blur          key.Binding
-	NextPage      key.Binding
-	PrevPage      key.Binding
-	CycleSource   key.Binding
-	ConfirmAction key.Binding
-	CancelAction  key.Binding
+	// ConflictsScreen is Task 3's direct-jump binding to ScreenConflicts,
+	// mirroring SearchScreen's own "named screen, separate from the plain
+	// Dashboard/InstalledMods/Profiles/Sources bindings" shape (both name a
+	// specific screen a user might reach some other way too - SearchScreen
+	// via "/", ConflictsScreen has no such alternate entry point yet).
+	ConflictsScreen key.Binding
+	Select          key.Binding
+	Submit          key.Binding
+	Blur            key.Binding
+	NextPage        key.Binding
+	PrevPage        key.Binding
+	CycleSource     key.Binding
+	ConfirmAction   key.Binding
+	CancelAction    key.Binding
 	// ToggleEnable, Uninstall, and Deploy are Phase 5a's Installed
 	// Mods/Dashboard mutation bindings (see mutations.go). Profile switch
 	// deliberately has no binding of its own here - it reuses Select
@@ -75,6 +81,47 @@ type KeyMap struct {
 	// dispatches immediately (no separate confirm modal, mirroring Policy's
 	// own "the choice IS the confirmation" shape).
 	GameSwitch key.Binding
+	// MoveDown and MoveUp are Task 4's load-order reorder bindings on
+	// Installed Mods (see mutations.go's moveSelectedMod): capital J/K
+	// (shift+j/shift+k, aliased ctrl+down/ctrl+up) swap the selected mod with
+	// its neighbor and persist the new order immediately - no confirm modal
+	// (see that method's own doc comment for why). Deliberately distinct from
+	// the lowercase j/k list-navigation bindings (Up/Down above); both remain
+	// fully functional side by side.
+	MoveDown key.Binding
+	MoveUp   key.Binding
+	// Rollback is Task 6's Installed-Mods rollback binding (see mutations.go's
+	// rollbackSelectedMod): fires on ScreenInstalledMods with a mod selected,
+	// behind the standard y/n confirmation modal - the TUI equivalent of
+	// `lmm update rollback <mod-id>`. A mod with no PreviousVersion is refused on
+	// the status line instead (no modal). "<" reads as "go back a version",
+	// distinct from every other single-letter/shift-letter binding above.
+	Rollback key.Binding
+	// Changelog is Task 7's changelog-viewer binding (see actions.go's
+	// updatePendingActionKey/openChangelogFromUpdateModal): fires ONLY while
+	// the apply-updates confirmation modal is pending (m.pendingUpdates !=
+	// nil) - a single update opens its changelog overlay directly, two or
+	// more open a "pick one" picker first. Unlike ConfirmAction/CancelAction,
+	// this has no meaning on any ordinary screen, so it carries no outer
+	// updateKey switch case of its own.
+	Changelog key.Binding
+	// ImportProfile is Phase 6b Task 9's Profiles-screen import binding (see
+	// mutations.go's importProfilePrompt): opens the "path to yaml" input
+	// modal. Capital "I" (distinct from lowercase "i"/Install, Phase 5b's
+	// install-from-search binding, which fires only on ScreenSearch) -
+	// mirroring CreateProfile/DeleteProfile/Purge's own "a capital letter
+	// distinguishes a Profiles/whole-profile action from an unrelated
+	// lowercase one" convention.
+	ImportProfile key.Binding
+	// ExportProfile is Phase 6b Task 10's Profiles-screen export binding (see
+	// mutations.go's exportProfilePrompt): fires on ScreenProfiles with a
+	// profile row selected, opening the "path to save" input modal prefilled
+	// with a default filename - submitting writes the file immediately (no
+	// separate confirm modal, mirroring ImportProfile's own submit-dispatches-
+	// immediately shape). Capital "E" - ImportProfile's own "a capital letter
+	// distinguishes a Profiles/whole-profile action" convention, distinct from
+	// any lowercase binding.
+	ExportProfile key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -127,6 +174,10 @@ func DefaultKeyMap() KeyMap {
 		Sources: key.NewBinding(
 			key.WithKeys("5"),
 			key.WithHelp("5", "sources"),
+		),
+		ConflictsScreen: key.NewBinding(
+			key.WithKeys("6"),
+			key.WithHelp("6", "conflicts"),
 		),
 		Select: key.NewBinding(
 			key.WithKeys("enter"),
@@ -203,6 +254,30 @@ func DefaultKeyMap() KeyMap {
 		GameSwitch: key.NewBinding(
 			key.WithKeys("g"),
 			key.WithHelp("g", "game"),
+		),
+		MoveDown: key.NewBinding(
+			key.WithKeys("J", "ctrl+down"),
+			key.WithHelp("J", "move mod down"),
+		),
+		MoveUp: key.NewBinding(
+			key.WithKeys("K", "ctrl+up"),
+			key.WithHelp("K", "move mod up"),
+		),
+		Rollback: key.NewBinding(
+			key.WithKeys("<"),
+			key.WithHelp("<", "rollback"),
+		),
+		Changelog: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "changelog"),
+		),
+		ImportProfile: key.NewBinding(
+			key.WithKeys("I"),
+			key.WithHelp("I", "import profile"),
+		),
+		ExportProfile: key.NewBinding(
+			key.WithKeys("E"),
+			key.WithHelp("E", "export profile"),
 		),
 	}
 }

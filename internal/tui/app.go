@@ -82,8 +82,15 @@ type Model struct {
 	mods     []ModItem
 	profiles []ProfileItem
 	sources  []SourceInfo
-	search   searchModel
-	action   actionModel
+	// conflicts backs the Conflicts screen (Task 3) - fetched alongside
+	// mods/profiles in the same loadData refresh cycle (see dataLoadedMsg),
+	// not gated behind an explicit user action the way Updates/CheckUpdates
+	// is: conflict detection is a cheap, pure DB/cache read (core.Service.
+	// GetProfileConflicts), so it belongs in the ordinary load rather than a
+	// Phase 5b-style on-demand check.
+	conflicts []ConflictItem
+	search    searchModel
+	action    actionModel
 	// picker is the pending list-choice modal (see picker.go), if any.
 	// Sibling to action.pending: promptPicker/updatePickerKey/pickerView
 	// mirror promptAction/updatePendingActionKey/actionModalView's structure.
@@ -98,11 +105,61 @@ type Model struct {
 	// (no choose/submit - see infoOverlay's doc comment).
 	overlay *infoOverlay
 
+	// pendingUpdates is the retained CheckUpdates result behind the
+	// apply-updates confirmation modal (Task 7's changelog viewer - see
+	// resolveCheckUpdatesResult, mutations.go, the ONLY place that ever
+	// sets it, alongside action.pending when that modal opens): non-nil
+	// ONLY while action.pending is that SAME update batch, and it is what
+	// updatePendingActionKey's 'v' case (actions.go) consults to know both
+	// THAT the pending action is the update batch (the discriminator - no
+	// other pendingAction kind ever sets this) and WHICH updates/changelogs
+	// to show. Invariant: cleared at BOTH points action.pending itself is
+	// cleared - updatePendingActionKey's ConfirmAction branch (the fix-wave
+	// Critical: confirm-only clearing was missed at first, leaking the
+	// stale batch into later, unrelated modals - see
+	// TestUpdateModalConfirmClearsRetainedUpdatesView) and its CancelAction
+	// branch - plus resolveGameSwitch's defense-in-depth modal reset, so it
+	// can never outlive the modal it describes.
+	pendingUpdates *UpdatesView
+
+	// lastUpdates retains the most recent CheckUpdates result for list-scoped
+	// changelog viewing (fix-wave-2 smoke finding #1): 'v' on
+	// ScreenInstalledMods, OUTSIDE any modal (viewSelectedModChangelog,
+	// mutations.go), consults this rather than m.pendingUpdates, which lives
+	// and dies with the apply-updates confirmation modal (see that field's
+	// own doc comment). Once the modal closes - confirm OR cancel - or a
+	// check found zero updates and never opened a modal at all,
+	// pendingUpdates is nil while lastUpdates still holds the same
+	// CheckUpdates result the user just saw, so changelogs stay reachable
+	// from the list itself.
+	//
+	// Set in resolveCheckUpdatesResult (mutations.go) for BOTH the
+	// zero-updates and modal-opening paths - unlike pendingUpdates, which
+	// only the modal-opening path ever sets. Deliberately NOT cleared on the
+	// modal's own confirm/cancel (updatePendingActionKey, actions.go): that
+	// would defeat the whole point of a list-scoped viewer that outlives the
+	// modal. Cleared only in resolveGameSwitch, alongside pendingUpdates' own
+	// defense-in-depth reset, since a different game's updates must never
+	// leak into this one's Installed Mods list.
+	lastUpdates *UpdatesView
+
 	screen   Screen
 	selected map[Screen]int
 	showHelp bool
 	width    int
 	height   int
+
+	// orderChanged is Task 4's post-reorder deploy hint flag: moveSelectedMod
+	// (mutations.go) sets this true after every successful J/K move, and
+	// statusLine (actions.go) falls back to rendering "order changed —
+	// deploy (D) to apply" whenever it's true and there's nothing more
+	// specific (m.action.status) to show - unlike m.action.status, this is
+	// NOT cleared by rule 8's "any keypress clears the status" (app.go's
+	// updateKey), so it survives ordinary navigation until a deploy or
+	// profile-switch action actually resolves successfully (cleared in the
+	// actionDoneMsg case below) or a game switch resets the session
+	// (resolveGameSwitch, mutations.go).
+	orderChanged bool
 }
 
 // loadState tracks where the Model is in its async data-load lifecycle.
@@ -120,10 +177,11 @@ const (
 // game switch reset the session - is discarded exactly like a stale
 // searchResultMsg (the mechanism this mirrors).
 type dataLoadedMsg struct {
-	gen      int
-	summary  Summary
-	mods     []ModItem
-	profiles []ProfileItem
+	gen       int
+	summary   Summary
+	mods      []ModItem
+	profiles  []ProfileItem
+	conflicts []ConflictItem
 }
 
 // loadFailedMsg carries an error from a failed DataProvider load, tagged
@@ -174,6 +232,7 @@ func NewModel(options Options) (Model, error) {
 			ScreenSearch:        0,
 			ScreenProfiles:      0,
 			ScreenSources:       0,
+			ScreenConflicts:     0,
 		},
 	}, nil
 }
@@ -291,8 +350,21 @@ func (m Model) loadData() tea.Msg {
 	if err != nil {
 		return loadFailedMsg{gen: m.loadGen, err: err}
 	}
+	conflicts, err := m.provider.Conflicts(m.ctx)
+	if err != nil {
+		return loadFailedMsg{gen: m.loadGen, err: err}
+	}
+	// The dashboard's conflict count is derived from THIS fetch, not
+	// whatever Overview itself reported (real coreProvider.Overview always
+	// reports the -1 sentinel there - see its own doc comment - and the
+	// prototype's canned Stats.Conflicts is just flavor text): unlike
+	// Updates, which genuinely needs an explicit user-triggered check
+	// (Phase 5b), conflict detection is a plain, cheap read available on
+	// every ordinary refresh, so Summary.Conflicts always reflects the real,
+	// current count once this returns - never the "?" unknown sentinel.
+	summary.Conflicts = len(conflicts)
 
-	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles}
+	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles, conflicts: conflicts}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -326,6 +398,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.summary = summary
 		m.mods = msg.mods
 		m.profiles = msg.profiles
+		m.conflicts = msg.conflicts
 		m.clampSelections()
 		return m, nil
 	case actionDoneMsg:
@@ -347,6 +420,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.action.status = formatOutcomeStatus(msg.outcome)
 		m.action.statusIsError = false
 		m.action.progress = ActionProgress{}
+		// Fix-wave-2 smoke finding #2: a completed batch whose outcome
+		// carries ResultLines (today, only the update-apply batch -
+		// applyUpdatesSequentially, mutations.go) gets a durable per-item
+		// record beyond the status line's aggregate count summary above -
+		// a scrollable info overlay titled "update results" listing each
+		// mod's own "✓ .../✗ ..." line. Placed AFTER the status-line
+		// assignment (the count summary is kept, not replaced) and guarded
+		// on m.overlay == nil, defensively, exactly like resolveChangelogPicked
+		// guards against clobbering an existing overlay - the modal/overlay
+		// machinery is idle whenever an action resolves, by construction, so
+		// this should never actually refuse, but costs nothing to check.
+		// The quit-drain path above already returned before this point, so
+		// draining never reaches here either.
+		if len(msg.outcome.ResultLines) > 0 && m.overlay == nil {
+			m.overlay = &infoOverlay{title: "update results", lines: msg.outcome.ResultLines}
+		}
 		// A fresh switch's target must rebind the session's active-profile
 		// providers BEFORE the refresh below reads them (see rebindProfile
 		// and profileRebinder in actions.go) - otherwise Profiles() keeps
@@ -380,6 +469,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// gen (loadData's value receiver - see its doc comment).
 			m.loadGen++
 		}
+		// A successful deploy or profile switch is exactly what Task 4's
+		// post-reorder hint (m.orderChanged, see its own doc comment) is
+		// waiting for - either one means the reordered load order has now
+		// actually been applied, so the reminder to deploy no longer
+		// applies. A FAILED deploy/switch (actionFailedMsg below) does NOT
+		// clear it: the order is still unapplied in that case, so the hint
+		// should keep reminding the user.
+		if msg.kind == actionDeploy || msg.kind == actionSwitch {
+			m.orderChanged = false
+		}
 		// A completed update-apply batch invalidates the just-checked
 		// Updates count: applying updates changes how many are left, and
 		// Phase 5b has no way to compute the new real number without
@@ -406,6 +505,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var searchCmd tea.Cmd
 			m, searchCmd = m.refreshSearchAfterInstall()
 			cmds = append(cmds, searchCmd)
+		}
+		// Task 9: a successful import whose outcome named a profile (a
+		// same-game import - see ActionOutcome.ImportedProfile's own doc
+		// comment) offers a follow-up "switch to it now?" confirmation,
+		// dispatched as a deferred message (see importAppliedMsg's own doc
+		// comment for why this isn't opened inline, right here, instead).
+		if msg.kind == actionImport && msg.outcome.ImportedProfile != "" {
+			name := msg.outcome.ImportedProfile
+			cmds = append(cmds, func() tea.Msg { return importAppliedMsg{name: name} })
 		}
 		return m, tea.Batch(cmds...)
 	case actionFailedMsg:
@@ -486,6 +594,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resolveProfileCreate(msg)
 	case gameChosenMsg:
 		return m.resolveGameSwitch(msg)
+	case changelogPickedMsg:
+		return m.resolveChangelogPicked(msg)
+	case importDataReadMsg:
+		return m.resolveImportDataRead(msg)
+	case importAppliedMsg:
+		return m.resolveImportApplied(msg)
+	case importSwitchConfirmedMsg:
+		return m.resolveImportSwitchConfirmed(msg)
+	case exportPathSubmittedMsg:
+		return m.resolveExportSubmitted(msg)
 	case loadFailedMsg:
 		// Stale gen: mirrors dataLoadedMsg's discard above - a superseded
 		// load's failure must not flip the fresh session into stateFailed.
@@ -532,11 +650,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// updateKey routes a keypress to whichever modal (if any) is currently
+// showing, then falls through to the outer per-screen switch below.
+//
+// Picker/inputModal/overlay are checked BEFORE action.pending (Task 7): the
+// changelog viewer (updatePendingActionKey's 'v' case, actions.go) can open
+// an overlay or picker WHILE action.pending is still set - the apply-updates
+// modal waits underneath, reappearing the instant the overlay/picker closes,
+// since action.pending itself is never touched while either is up (see
+// openChangelogFromUpdateModal's own doc comment) - the first time any two of
+// these four ever coexist. Every OTHER combination remains mutually
+// exclusive exactly as before: each promptX constructor's own guard
+// (promptOverlay/promptPicker/promptInput/promptAction) still refuses
+// outright whenever a DIFFERENT one of the four is already up, so this
+// reordering changes nothing for any pre-existing single-modal case - it
+// only matters for the new stacked one. screenView (below) mirrors this same
+// order for the identical reason.
 func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.action.pending != nil {
-		return m.updatePendingActionKey(msg)
-	}
-
 	if m.picker != nil {
 		return m.updatePickerKey(msg)
 	}
@@ -547,6 +677,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.overlay != nil {
 		return m.updateOverlayKey(msg)
+	}
+
+	if m.action.pending != nil {
+		return m.updatePendingActionKey(msg)
 	}
 
 	// Rule 8: any keypress that isn't a modal response (handled above,
@@ -628,6 +762,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gotoScreen(ScreenProfiles)
 	case key.Matches(msg, m.keys.Sources):
 		return m.gotoScreen(ScreenSources)
+	case key.Matches(msg, m.keys.ConflictsScreen):
+		return m.gotoScreen(ScreenConflicts)
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 		return m, nil
@@ -661,10 +797,27 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.createProfilePrompt()
 	case key.Matches(msg, m.keys.DeleteProfile):
 		return m.deleteSelectedProfile()
+	case key.Matches(msg, m.keys.ImportProfile):
+		return m.importProfilePrompt()
+	case key.Matches(msg, m.keys.ExportProfile):
+		return m.exportProfilePrompt()
 	case key.Matches(msg, m.keys.Purge):
 		return m.purgeProfilePrompt()
 	case key.Matches(msg, m.keys.GameSwitch):
 		return m.openGameSwitcher()
+	case key.Matches(msg, m.keys.MoveDown):
+		return m.moveSelectedMod(1)
+	case key.Matches(msg, m.keys.MoveUp):
+		return m.moveSelectedMod(-1)
+	case key.Matches(msg, m.keys.Rollback):
+		return m.rollbackSelectedMod()
+	case key.Matches(msg, m.keys.Changelog):
+		// Fix-wave-2 smoke finding #1: 'v' on Installed Mods, OUTSIDE any
+		// modal - the modal-scoped 'v' (updatePendingActionKey, actions.go)
+		// only ever fires from the m.action.pending != nil branch ABOVE this
+		// outer switch (see updateKey's own doc comment on dispatch order),
+		// so the two never collide.
+		return m.viewSelectedModChangelog()
 	default:
 		return m, nil
 	}
@@ -675,7 +828,14 @@ func (m Model) View() string {
 
 	b.WriteString(m.theme.Title.Render("LMM // Linux Mod Manager"))
 	b.WriteString("\n")
-	b.WriteString(m.nav())
+	// Hard-truncated to availableWidth(), matching every other fixed-height
+	// line (footerLine/helpView) - Task 3's 6th screen entry ("[6]
+	// Conflicts") pushed the joined nav bar past 80 columns for the first
+	// time, and an untruncated overlong line here would otherwise trigger
+	// lipgloss's automatic word-wrap and silently grow the view past its
+	// fixed height budget (the same defect class truncate()'s other call
+	// sites already guard against - see its own doc comment).
+	b.WriteString(truncate(m.nav(), m.availableWidth()))
 	b.WriteString("\n\n")
 
 	b.WriteString(m.screenView())
@@ -778,6 +938,8 @@ func (m Model) itemCount(screen Screen) int {
 		return len(m.profiles)
 	case ScreenSources:
 		return len(m.sources)
+	case ScreenConflicts:
+		return len(m.conflicts)
 	default:
 		return len(m.dashboardMenu())
 	}
@@ -797,11 +959,12 @@ func (m Model) nav() string {
 	return strings.Join(items, "  ")
 }
 
+// screenView renders whichever modal (if any) is currently showing, mirroring
+// updateKey's own ordering exactly (see that method's doc comment for why
+// picker/inputModal/overlay are checked before action.pending) so a
+// changelog overlay/picker opened on top of the apply-updates modal renders
+// on top too, not the modal waiting underneath it.
 func (m Model) screenView() string {
-	if m.action.pending != nil {
-		return m.actionModalView()
-	}
-
 	if m.picker != nil {
 		return m.pickerView()
 	}
@@ -812,6 +975,10 @@ func (m Model) screenView() string {
 
 	if m.overlay != nil {
 		return m.overlayView()
+	}
+
+	if m.action.pending != nil {
+		return m.actionModalView()
 	}
 
 	switch m.state {
@@ -839,6 +1006,8 @@ func (m Model) screenView() string {
 		return m.profilesView()
 	case ScreenSources:
 		return m.sourcesView()
+	case ScreenConflicts:
+		return m.conflictsView()
 	default:
 		return m.dashboardView()
 	}
@@ -1301,6 +1470,129 @@ func (m Model) sourcesView() string {
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// conflictsView renders the Conflicts screen (Task 3): every file conflict
+// GetProfileConflicts found for the active profile, one row each, sorted by
+// Path (the query's own contract - see core.GetProfileConflicts' doc
+// comment) - m.conflicts is stored in that order, so no re-sort is needed
+// here. Conflicts only surface for files the DB already knows were
+// deployed (ownership comes from deployed_files - see ConflictItem's own
+// doc comment), so a profile that has never been deployed reports none;
+// the empty-state copy below deliberately does not promise pre-deploy
+// detection.
+func (m Model) conflictsView() string {
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+
+	if len(m.conflicts) == 0 {
+		return m.panelWithHeight(width, height).Render(strings.Join([]string{
+			m.theme.PanelTitle.Render("CONFLICT ORACLE"),
+			m.theme.MutedText.Render("No conflicts detected."),
+		}, "\n"))
+	}
+
+	// Two-pane list/detail layout mirroring commanderDashboardView's width
+	// math: leftWidth + gap + rightWidth sums to EXACTLY width, so
+	// lipgloss.JoinHorizontal's result satisfies the "screenView uses
+	// availableWidth() exactly" invariant every other screen already meets.
+	gap := 1
+	leftWidth := max((width-gap)/2, 1)
+	rightWidth := max(width-gap-leftWidth, 1)
+	paneContentHeight := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		m.panelWithHeight(leftWidth, height).Render(m.conflictsListPane(leftWidth, paneContentHeight)),
+		" ",
+		m.panelWithHeight(rightWidth, height).Render(m.conflictsDetailPane(rightWidth, paneContentHeight)),
+	)
+}
+
+// conflictsListPane renders the selectable FILE/OWNER/WINNER rows, marking a
+// stale conflict (owner disagrees with the load-order winner - a redeploy
+// would change who wins) with a leading "!" so it's visible without opening
+// the detail pane. Column widths derive from the pane's actual content
+// width (mirroring searchResultsPane/profileRow's own proportional-with-
+// floor approach) so the columns can never sum past it; overflowing values
+// truncate rather than reaching lipgloss's automatic line-wrap, which would
+// silently break the exact-height layout invariant. Rows beyond maxLines
+// are omitted for the same reason a short terminal can outnumber the
+// available rows.
+func (m Model) conflictsListPane(width, maxLines int) string {
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+	const markerWidth = 2 // "! "/"  " stale marker
+	const gaps = 2        // separating spaces between the 3 columns
+	const minPath = 8
+
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	avail := max(innerWidth-prefixWidth-markerWidth-gaps, minPath)
+	ownerWidth := min(14, max(avail/4, 1))
+	winnerWidth := min(14, max(avail/4, 1))
+	pathWidth := max(avail-ownerWidth-winnerWidth, minPath)
+
+	headerLine := fmt.Sprintf("  %-*s %-*s %s",
+		pathWidth, "FILE", ownerWidth, "OWNER", "WINNER")
+	rows := []string{
+		m.theme.PanelTitle.Render("CONFLICT ORACLE"),
+		m.theme.MutedText.Render(truncate(headerLine, innerWidth)),
+	}
+
+	items := m.conflicts
+	budget := maxLines - len(rows)
+	if budget < 0 {
+		budget = 0
+	}
+	if len(items) > budget {
+		items = items[:budget]
+	}
+
+	for i, c := range items {
+		marker := "  "
+		if c.Stale {
+			marker = m.theme.WarningText.Render("! ")
+		}
+		line := marker + fmt.Sprintf("%-*s %-*s %s",
+			pathWidth, truncate(c.Path, pathWidth),
+			ownerWidth, truncate(c.Owner, ownerWidth),
+			truncate(c.Winner, winnerWidth))
+		rows = append(rows, m.row(i, line))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// conflictsDetailPane renders the fields for the currently selected
+// conflict: path/owner/winner, every other providing mod (AlsoIn), and a
+// hint line whose copy depends on Stale - task-3-brief.md's wording is used
+// verbatim since it's the only place in the TUI that explains what a stale
+// conflict means and how to resolve it.
+func (m Model) conflictsDetailPane(width, maxLines int) string {
+	idx := m.selected[ScreenConflicts]
+	if idx < 0 || idx >= len(m.conflicts) {
+		return m.theme.MutedText.Render("No selection.")
+	}
+	c := m.conflicts[idx]
+
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	lines := []string{
+		m.theme.PanelTitle.Render("DETAIL"),
+		truncate(fmt.Sprintf("File:   %s", c.Path), innerWidth),
+		truncate(fmt.Sprintf("Owner:  %s", c.Owner), innerWidth),
+		truncate(fmt.Sprintf("Winner: %s", c.Winner), innerWidth),
+	}
+	if len(c.AlsoIn) > 0 {
+		lines = append(lines, truncate("Also in: "+strings.Join(c.AlsoIn, ", "), innerWidth))
+	}
+
+	hint := "reorder mods (J/K on installed) to change the winner"
+	if c.Stale {
+		hint = fmt.Sprintf("load order says %s should win — deploy (D) to apply", c.Winner)
+	}
+	lines = append(lines, "", truncate(m.theme.MutedText.Render(hint), innerWidth))
+
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	return strings.Join(lines, "\n")
+}
+
 // helpGroup is one labeled section of the help panel: a screen name (or
 // "global") plus the key entries that apply to it. Group labels are
 // lowercase per Task 9's copy convention (see helpGroups).
@@ -1333,7 +1625,7 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.Help),
 			helpEntry(m.keys.NextScreen),
 			helpEntry(m.keys.PrevScreen),
-			fmt.Sprintf("%-16s %s", "1-5", "jump to a screen"),
+			fmt.Sprintf("%-16s %s", "1-6", "jump to a screen"),
 			helpEntry(m.keys.GameSwitch),
 		},
 	}
@@ -1363,6 +1655,21 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.Files),
 			helpEntry(m.keys.Policy),
 			helpEntry(m.keys.Purge),
+			// MoveDown/MoveUp are Task 4's load-order reorder keys (see
+			// mutations.go's moveSelectedMod).
+			helpEntry(m.keys.MoveDown),
+			helpEntry(m.keys.MoveUp),
+			// Rollback is Task 6's rollback-behind-confirmation key (see
+			// mutations.go's rollbackSelectedMod).
+			helpEntry(m.keys.Rollback),
+			// Changelog is fix-wave-2's list-scoped changelog-viewer key (see
+			// mutations.go's viewSelectedModChangelog) - distinct from the
+			// modal-scoped 'v' (updatePendingActionKey/
+			// openChangelogFromUpdateModal, actions.go), which has no help
+			// entry of its own since it only ever applies while the
+			// apply-updates modal is already up (see keys.go's Changelog
+			// doc comment).
+			helpEntry(m.keys.Changelog),
 		},
 	}
 
@@ -1390,15 +1697,39 @@ func (m Model) helpGroups() []helpGroup {
 			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "switch profile"),
 			helpEntry(m.keys.CreateProfile),
 			helpEntry(m.keys.DeleteProfile),
+			// ImportProfile is Task 9's import binding (see mutations.go's
+			// importProfilePrompt).
+			helpEntry(m.keys.ImportProfile),
+			// ExportProfile is Task 10's export binding (see mutations.go's
+			// exportProfilePrompt).
+			helpEntry(m.keys.ExportProfile),
 		},
 	}
 
-	fixed := []helpGroup{dashboard, installedMods, search, profiles}
+	// conflicts lists Deploy (the review fix wave extended
+	// deployActiveProfile's screen guard here, so the stale-conflict hint's
+	// "deploy (D) to apply" names a key that actually fires - mirroring how
+	// dashboard/installedMods above list the same binding) plus Up/Down -
+	// documented here unlike every OTHER screen (where they're left to the
+	// footer's generic "↑↓/j/k: move" hint) because selecting a row IS this
+	// screen's core interaction: it's what reveals the detail pane's stale/
+	// in-sync hint copy, not just a cosmetic highlight.
+	conflicts := helpGroup{
+		name: "conflicts",
+		entries: []string{
+			helpEntry(m.keys.Up),
+			helpEntry(m.keys.Down),
+			helpEntry(m.keys.Deploy),
+		},
+	}
+
+	fixed := []helpGroup{dashboard, installedMods, search, profiles, conflicts}
 	screenGroupName := map[Screen]string{
 		ScreenDashboard:     dashboard.name,
 		ScreenInstalledMods: installedMods.name,
 		ScreenSearch:        search.name,
 		ScreenProfiles:      profiles.name,
+		ScreenConflicts:     conflicts.name,
 	}
 	if name, ok := screenGroupName[m.screen]; ok {
 		for i, g := range fixed {
@@ -1416,13 +1747,24 @@ func (m Model) helpGroups() []helpGroup {
 // helpBodyBudget bounds how many content rows the help panel's group list
 // may use, so a long grouped list can't crowd screenView down past its own
 // floor (matching availableContentHeight's own max(...,8)) - the same
-// "+N more" cap overlayView uses, sized so the two floors agree exactly:
+// "+N more" cap style actionModalView uses (overlayView's former cap, until
+// Task 7's fix wave made the overlay scroll instead), sized so the two
+// floors agree exactly:
 // when the list is capped, screenView gets precisely its floor of 8; when
 // it isn't, screenView gets whatever room the (smaller) natural list left,
 // same as before Task 9.
 func (m Model) helpBodyBudget() int {
 	if m.height == 0 {
-		return 40
+		// Bumped 40->50 in Task 4: the full uncapped group list was already
+		// at 41 lines after Task 3's conflicts group (silently one past the
+		// old 40 default), and the installed-mods group's two new
+		// MoveDown/MoveUp entries pushed it further past 40, to 43 -
+		// TestHelpViewListsPerScreenGroups depends on this staying
+		// "generous" enough to render every group's content, per this
+		// method's own doc comment. 50 leaves headroom above today's 43 for
+		// the next few tasks' bindings, rather than needing a re-bump for
+		// every single addition.
+		return 50
 	}
 	status := 0
 	if m.hasVisibleStatus() {

@@ -4,35 +4,46 @@
 **Scope:** Add a Bubble Tea/Lip Gloss TUI to `lmm`, starting with visual prototypes and iterating toward a real service-backed interface.
 **Out of scope:** Replacing the existing CLI, changing config formats, implementing image thumbnails, background update daemons, or redesigning core mod-management behavior.
 
-> **Status (2026-07-21): Phases 0–5 are COMPLETE** — Phases 0–3 shipped as **v1.4.0**
+> **Status (2026-07-24): Phases 0–6 are COMPLETE** — Phases 0–3 shipped as **v1.4.0**
 > (PRs #31/#33/#34/#36/#38; issues #30/#32/#35), Phase 4 (search and detail browsing)
 > shipped as **v1.5.0** (PR #41; issue #40; tag `v1.5.0`), **Phase 5a** (enable/
 > disable, uninstall, deploy, and profile switch, each behind a confirmation modal,
 > plus the async action machinery, status line, and `--prototype` parity) shipped as
-> **v1.11.0**, and **Phase 5b** (install-from-search with a plan-preview modal and
+> **v1.11.0**, **Phase 5b** (install-from-search with a plan-preview modal and
 > streaming download/extract/deploy progress; check/apply updates with per-update
 > progress; lifting the profile-switch download refusal so a switch needing
 > not-yet-installed mods downloads and installs them itself, with disclosure in the
 > confirmation modal; hardening — cancel-then-drain on quit instead of killing a
 > running mutation mid-step, a profile-switch/search data-race guard, and restored
-> enable/disable diagnostics) shipped as **v1.12.0**.
+> enable/disable diagnostics) shipped as **v1.12.0**, **Phase 6a** (deployed-files
+> panel, update-policy editing, in-TUI game switcher, profile create/delete, purge
+> behind a confirmation view, and a restructured per-screen help overlay) shipped as
+> **v1.13.0** (PR #69; issue #37), and **Phase 6b** (a conflicts screen with
+> per-file owner/load-order-winner/stale detail; deterministic multi-mod deploy
+> ordering so a reorder + redeploy reliably changes conflict winners; inline
+> load-order reorder on Installed Mods; update rollback; a changelog viewer in the
+> update flow; and profile export/import) completes the remaining issue #37 scope,
+> pending release as **v1.14.0**.
 >
-> **Phase 6 (conflict/update/profile workflows, per its section below, plus the
-> Phase 6 additions tracked on issue #37) is next.** Before planning it, read:
+> **Phase 6 is COMPLETE.** issue #37's Phase 5/6 scope additions are now fully
+> covered (see the **"CLI-parity coverage and roadmap gaps"** tables below,
+> updated to reflect this). Remaining backlog:
 >
-> - this file's Phase 6 section, and the **"CLI-parity coverage and roadmap gaps"**
->   tables below,
-> - **issue #37** (Phase 5/6 scope additions — 5a shipped the `uninstall` addition
->   it called out; everything else it lists is Phase 6), and
 > - **issue #42** (short/narrow-terminal hardening + polish backlog — still open;
 >   5a closed its "quit doesn't cancel in-flight search/action contexts" lifecycle
->   item; the height/width-overflow class and test/tooling polish remain).
+>   item; the height/width-overflow class and test/tooling polish remain), and
+> - Phase 7 below (man page, `NO_COLOR` verification, and the release version bump
+>   — most of the docs/keybindings/CHANGELOG work it lists was pulled forward into
+>   Phase 6b's own docs sweep).
 >
 > Branches come off `main` (protected — PRs only). Execution records:
 > `docs/plans/archive/2026-07-13-tui-phase2-close-and-phase3.md`,
 > `docs/plans/archive/2026-07-13-tui-phase4-search-impl.md`,
 > `docs/plans/archive/2026-07-19-tui-phase5a-mutations-impl.md`,
-> `docs/plans/archive/2026-07-21-tui-phase5b-network-actions-impl.md`.
+> `docs/plans/archive/2026-07-21-tui-phase5b-network-actions-impl.md`,
+> `docs/plans/archive/2026-07-23-tui-phase6a-workflows-impl.md`,
+> `docs/plans/2026-07-23-tui-phase6b-workflows-impl.md` (not yet archived — rides
+> the release PR per Task 12).
 
 The TUI should feel like an 80s console RPG / DOS utility: Wizardry or Ultima in spirit, but still useful for managing real mod lists. Haunted terminal artifact, not hostile UX.
 
@@ -455,7 +466,8 @@ lmm tui --prototype --theme dos
   status line, one or more opens a batch confirmation modal that applies all
   of them sequentially with per-update progress, folding a per-mod failure
   into the batch's warnings instead of aborting the rest. Per-item selection
-  is deliberately out of scope — Phase 6.
+  remained deliberately out of scope through Phase 6 (6a/6b); no future phase
+  has picked it up yet.
 
 **Tasks:**
 
@@ -525,11 +537,25 @@ updates, downloading profile switches):
   current step (bounded drain) instead of killing it. — **satisfied**
 - `go test ./...` (incl. `-race`) passes. — **satisfied**
 
-**Phase 5 is COMPLETE.** Phase 6 is next.
+**Phase 5 is COMPLETE.**
 
 ---
 
-## Phase 6 — Conflict/update/profile workflows
+## Phase 6 — Conflict/update/profile workflows ✅ (complete, v1.13.0 + v1.14.0)
+
+> **Phase 6a ✅ (complete, PR #69, v1.13.0):** deployed-files panel (`f`),
+> update-policy editing (`P`), in-TUI game switcher (`g`), profile create/
+> delete (`c`/`d`), purge behind a confirmation view (`X`), and the help
+> overlay restructured into per-screen groups. **Phase 6b ✅ (complete,
+> pending release as v1.14.0):** conflicts screen (`6`) with per-file owner/
+> load-order-winner/stale detail, built on deterministic multi-mod deploy
+> ordering so a reorder + redeploy reliably changes conflict winners; inline
+> load-order reorder on Installed Mods (`J`/`K`); update rollback (`<`); a
+> changelog viewer in the update flow (`v`); and profile export/import
+> (`E`/`I`). **Phase 6 is COMPLETE.** See
+> `docs/plans/archive/2026-07-23-tui-phase6a-workflows-impl.md` and
+> `docs/plans/2026-07-23-tui-phase6b-workflows-impl.md` for full task-by-task
+> execution records.
 
 **Goal:** Move from basic actions to the workflows that make a TUI materially better than the CLI.
 
@@ -540,22 +566,36 @@ updates, downloading profile switches):
    - owning mods
    - load-order winner
    - suggested resolution hints
+   - **6b: delivered** — the Conflicts screen (`6`); see its README/CHANGELOG
+     entries for the stale-marker and resolution-hint details.
 2. Add load-order/profile management affordances:
-   - move mod up/down where supported
-   - switch active profile
-   - export/import profile entry points
+   - move mod up/down where supported — **6b: delivered** (`J`/`K` on
+     Installed Mods, persisted per move)
+   - switch active profile — **5a: delivered** (`enter` on Profiles)
+   - export/import profile entry points — **6b: delivered** (`E`/`I` on
+     Profiles)
+   - (profile create/delete were added to this set by the CLI-parity audit
+     below and shipped in **6a**: `c`/`d` on Profiles)
 3. Add update workflow:
-   - list available updates
-   - show changelog/details where available
-   - apply selected/all eligible updates
-   - respect per-mod update policies
-4. Add help overlay that explains workflow-specific keys.
+   - list available updates — **5b: delivered**
+   - show changelog/details where available — **6b: delivered** (`v` on the
+     apply-updates confirmation modal)
+   - apply selected/all eligible updates — **5b: delivered** (all eligible;
+     per-item selection remains out of scope)
+   - respect per-mod update policies — **6a: delivered** (`P` policy editor)
+   - update rollback — added to this set by the CLI-parity audit below;
+     **6b: delivered** (`<` on Installed Mods)
+4. Add help overlay that explains workflow-specific keys. — **6a: delivered**
+   (restructured per-screen groups); **6b: delivered** (conflicts group,
+   reorder/rollback/export/import entries, changelog hint).
 
 **Exit criteria:**
 
-- TUI handles the common daily mod-management loop.
-- Conflicts and updates are easier to inspect than via CLI tables.
-- `go test ./...` passes.
+- TUI handles the common daily mod-management loop. — **satisfied**
+- Conflicts and updates are easier to inspect than via CLI tables. —
+  **satisfied** (Conflicts screen groups by file with resolution hints;
+  changelog viewer surfaces update detail inline)
+- `go test ./...` passes. — **satisfied**
 
 ---
 
@@ -706,7 +746,7 @@ This section audits every CLI capability against the TUI and the phases above, s
 
 | CLI capability | TUI status |
 | --- | --- |
-| `status` (game/profile/mod counts) | Dashboard summary; update/conflict counts render `?` until Phase 6 |
+| `status` (game/profile/mod counts) | Dashboard summary; Updates shows `?` until a check runs this session, then the real count (Phase 5b, v1.12.0); Conflicts always reflects real detection (Phase 6b) |
 | `list` (installed mods) | Installed Mods view (read-only) |
 | `list --profiles` | Profile roster (read-only, active marker) |
 | Game selection at launch | Works today via the global `-g/--game` flag (`lmm tui -g skyrim-se`) |
@@ -717,21 +757,33 @@ This section audits every CLI capability against the TUI and the phases above, s
 | --- | --- |
 | `search`, `show` (details), auth-required messaging | Phase 4 |
 | `install`, `enable`, `disable`, `deploy`, `profile switch`, `update` (check/apply) | Phase 5 |
-| `conflicts`, `profile reorder` (load order), `profile export`/`import` entry points, update changelogs, respecting per-mod policies | Phase 6 |
 
-### Roadmap gaps — **added** to phases by this audit
+`conflicts`, `profile reorder`/export/import, update changelogs, and
+per-mod policies (originally slated here for Phase 6) shipped — see
+"Covered — issue #37 roadmap gaps" below.
 
-| Capability | Assigned | Rationale |
-| --- | --- | --- |
-| `uninstall <mod-id>` | **Phase 5** (add to the initial action set) | Same confirmation/async machinery as install; its omission from the P5 list was an oversight |
-| `update rollback <mod-id>` | **Phase 6** (update workflow) | Belongs beside apply-updates; rollback is the safety net the update view should surface |
-| `mod set-update` (notify/auto/pin) | **Phase 6** (update workflow) | P6 only *respects* policies; editing them from the update list is the natural affordance |
-| In-TUI game selector/switcher | **Phase 6** | Original BACKLOG feature ("Game selector view") dropped when this plan was drafted; multi-game users otherwise must restart the TUI. Switching only — game add/detect/set-default stay CLI-only |
-| `purge` | **Phase 6** | Destructive; requires the P5 confirmation view, and pairs with the deploy workflow |
-| `files <mod-id>` (deployed file listing) | **Phase 6** (fold into conflict/detail panels) | The P6 conflict view already renders per-file data; a per-mod file panel reuses it |
-| `profile create` / `profile delete` | **Phase 6** (profile management affordances) | P6 has switch/reorder/export/import; create/delete complete the management loop |
+### Covered — issue #37 roadmap gaps
 
-### Deliberately CLI-only for now (revisit post-Phase 6)
+Every row this audit originally assigned to a phase (as a roadmap gap, below) has now shipped, split across Phase 5a (v1.11.0), 6a (v1.13.0), and 6b (pending v1.14.0):
+
+| Capability | TUI status |
+| --- | --- |
+| `conflicts` | Conflicts screen (`6`): per-file owner, load-order winner, stale marker, resolution hint; `D` deploys directly from the screen (**6b**) |
+| `profile reorder` (load order) | `J`/`K` (`ctrl+down`/`ctrl+up`) on Installed Mods swap the selected mod with its neighbor and persist immediately; the list renders in load order (**6b**) |
+| `profile export`/`import` entry points | `E`/`I` on Profiles: export refuses to overwrite, import shows a categorized preview (new/installed/overwrite/cross-game) before downloading and installing, with an optional immediate switch (**6b**) |
+| update changelogs | `v` on the apply-updates confirmation modal opens a scrollable changelog overlay (a picker first, if several updates are pending) (**6b**) |
+| `update rollback <mod-id>` | `<` on Installed Mods, behind a confirmation prompt; a mod with no previous version is refused on the status line (**6b**) |
+| respecting per-mod update policies (check/apply skips pinned/local mods) | Delivered with check/apply updates itself (**5b**), not a separate item |
+| `mod set-update` (notify/auto/pin) | `P` on Installed Mods opens a notify/auto/pin picker; picking one applies immediately (**6a**) |
+| In-TUI game selector/switcher | `g`, any screen: picks from every configured game, rebinding the session and reloading (**6a**) |
+| `purge` | `X` on Dashboard/Installed Mods, behind a confirmation prompt; an empty profile short-circuits with a one-line message (**6a**) |
+| `files <mod-id>` (deployed file listing) | `f` on Installed Mods opens a scrollable per-mod deployed-files panel (**6a**) |
+| `profile create` / `profile delete` | `c`/`d` on Profiles; create validates duplicates/invalid names inline, delete refuses the active profile (**6a**) |
+| `uninstall <mod-id>` | `x` on Installed Mods (added to the Phase 5 action set by this same audit; shipped **5a**) |
+
+### Deliberately CLI-only for now
+
+Phase 6 has shipped (see above); none of the rows below has been assigned to a future phase — they remain deliberate deferrals, not oversights.
 
 | Capability | Reason |
 | --- | --- |
@@ -743,4 +795,4 @@ This section audits every CLI capability against the TUI and the phases above, s
 | `game add` / `game detect` / `game set-default` / `game clear-default` | Setup-time operations, usually once per machine; keep setup in the CLI, browsing/management in the TUI |
 | Settings view; configurable keybindings (vim/standard) | Original BACKLOG wish-list items; post-v1 TUI polish once the workflows above exist. Theme is already configurable per the Phase 2 decision note |
 
-Track execution of the **added** items in the corresponding phase issues as those phases begin; this table is the checklist to copy from.
+The audit's **added** items (see "Covered — issue #37 roadmap gaps" above) have all shipped; nothing from this section remains open.

@@ -938,6 +938,9 @@ func (f *fakeSwitchableProvider) Search(context.Context, string, string, int) (S
 
 func (f *fakeSwitchableProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
 func (f *fakeSwitchableProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
+func (f *fakeSwitchableProvider) Conflicts(context.Context) ([]ConflictItem, error) {
+	return nil, nil
+}
 
 func (f *fakeSwitchableProvider) Profiles(context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(f.names))
@@ -1061,6 +1064,9 @@ func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _ int) (
 }
 func (p *searchCancelProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
 func (p *searchCancelProvider) ListGames() ([]GameInfo, error)                 { return p.listGames, nil }
+func (p *searchCancelProvider) Conflicts(context.Context) ([]ConflictItem, error) {
+	return nil, nil
+}
 
 // SetGame implements actions.go's optional gameRebinder hook.
 func (p *searchCancelProvider) SetGame(id string) error {
@@ -2079,6 +2085,208 @@ func TestCheckUpdatesModalContentListsUpdatesAndWarningsCount(t *testing.T) {
 	require.Contains(t, model.action.pending.detail, "1 warning(s) during check")
 }
 
+// --- Check/apply updates: changelog viewer ('v') ---
+
+// openUpdatesModal is the shared setup for the changelog-viewer tests below:
+// dispatches CheckUpdates and resolves its result, leaving the update-apply
+// batch confirmation modal pending with rec's UpdatesViewOut.Updates.
+func openUpdatesModal(t *testing.T, rec *recordingActions) Model {
+	t.Helper()
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending, "openUpdatesModal requires at least one update")
+	return model
+}
+
+// TestUpdateModalVOpensChangelogOverlaySingle guards task-7-brief.md's
+// single-update case: 'v' while the apply-updates modal is pending, with
+// exactly one update, opens the changelog infoOverlay DIRECTLY (no picker),
+// titled "<name> <from> → <to>", body split on newlines - and the batch
+// modal itself must still be pending once the overlay is up (it renders and
+// closes on top, see updateKey's own doc comment on the new stacked-modal
+// ordering) and remains pending after the overlay closes.
+func TestUpdateModalVOpensChangelogOverlaySingle(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Changelog: "Fixed bugs.\nAdded stuff."},
+	}}}
+	model := openUpdatesModal(t, rec)
+
+	// The modal's own hint line names the new key while a changelog is
+	// viewable.
+	require.Contains(t, model.actionModalView(), "v changelog")
+
+	updated, cmd := model.Update(keyRunes("v"))
+	model = updated.(Model)
+	require.Nil(t, cmd, "the single-update case opens the overlay synchronously, no deferred message")
+	require.NotNil(t, model.overlay)
+	require.Nil(t, model.picker)
+	require.Equal(t, "SkyUI 5.2 → 5.3", model.overlay.title)
+	require.Equal(t, []string{"Fixed bugs.", "Added stuff."}, model.overlay.lines)
+	require.NotNil(t, model.action.pending, "the update batch modal must still be pending underneath the overlay")
+
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.Nil(t, model.overlay)
+	require.NotNil(t, model.action.pending, "the update batch modal must still be pending after the overlay closes")
+}
+
+// TestUpdateModalVEmptyChangelog guards the no-changelog case: the overlay
+// still opens, with the single line "no changelog available" rather than an
+// empty line list.
+func TestUpdateModalVEmptyChangelog(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4", Changelog: ""},
+	}}}
+	model := openUpdatesModal(t, rec)
+
+	updated, _ := model.Update(keyRunes("v"))
+	model = updated.(Model)
+	require.NotNil(t, model.overlay)
+	require.Equal(t, []string{"no changelog available"}, model.overlay.lines)
+}
+
+// TestUpdateModalVOpensPickerMultiple guards the multi-update case: 'v'
+// opens a pendingPicker (not the overlay directly) labeled "<name> <from> →
+// <to>" per update; choosing one opens THAT update's changelog overlay, and
+// the batch modal remains pending the whole time.
+func TestUpdateModalVOpensPickerMultiple(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Changelog: "SkyUI notes."},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4", Changelog: ""},
+	}}}
+	model := openUpdatesModal(t, rec)
+
+	updated, cmd := model.Update(keyRunes("v"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.NotNil(t, model.picker, "multiple updates opens a picker, not the overlay directly")
+	require.Nil(t, model.overlay)
+	require.NotNil(t, model.action.pending, "the update batch modal must still be pending underneath the picker")
+	require.Len(t, model.picker.options, 2)
+	require.Equal(t, "SkyUI 5.2 → 5.3", model.picker.options[0].Label)
+	require.Equal(t, "USSEP 4.3 → 4.4", model.picker.options[1].Label)
+
+	// Choosing an option dispatches a deferred message (mirrors
+	// policyChosenMsg/gameChosenMsg's own "choose can only return a tea.Cmd"
+	// reasoning) rather than opening the overlay directly from the closure.
+	updated, chooseCmd := model.Update(keyRunes("1"))
+	model = updated.(Model)
+	require.Nil(t, model.picker, "choosing clears the picker")
+	require.Nil(t, model.overlay, "the overlay must not open until the deferred message is processed")
+	require.NotNil(t, chooseCmd)
+
+	msg := chooseCmd()
+	require.IsType(t, changelogPickedMsg{}, msg)
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.overlay)
+	require.Equal(t, "SkyUI 5.2 → 5.3", model.overlay.title)
+	require.Equal(t, []string{"SkyUI notes."}, model.overlay.lines)
+	require.NotNil(t, model.action.pending, "the update batch modal must still be pending after the picker's overlay opens")
+}
+
+// TestUpdateModalConfirmClearsRetainedUpdatesView guards the fix-wave
+// Critical: confirming the update batch (not just cancelling it) must clear
+// m.pendingUpdates too. Before the fix, only CancelAction/resolveGameSwitch
+// cleared it, so a LATER, unrelated confirmation modal (here: uninstall)
+// still saw the stale retained view - its hint grew a bogus "v changelog"
+// entry and 'v' opened the changelog picker/overlay for the
+// already-applied batch on top of it.
+func TestUpdateModalConfirmClearsRetainedUpdatesView(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Changelog: "Fixed bugs."},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4", Changelog: "More fixes."},
+	}}}
+	model := openUpdatesModal(t, rec)
+	require.NotNil(t, model.pendingUpdates)
+
+	// Confirm the batch: the retained view must clear WITH action.pending,
+	// not linger until some later cancel.
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.Nil(t, model.action.pending)
+	require.Nil(t, model.pendingUpdates, "confirming the update batch must clear the retained updates view")
+
+	// Let the batch resolve; the done path must not resurrect it.
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+	updated, _ := model.Update(doneMsg)
+	model = updated.(Model)
+	require.Nil(t, model.pendingUpdates, "the done path must not resurrect the retained updates view")
+
+	// Fix-wave-2 finding #2: a completed update batch also opens the
+	// "update results" overlay (see TestActionDoneOpensUpdateResultsOverlay)
+	// - dismiss it like a user would, exactly as esc always closes an
+	// overlay, before checking the LATER modal below; this test's own
+	// concern is pendingUpdates, not that overlay.
+	require.NotNil(t, model.overlay, "sanity: the results overlay opened")
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.Nil(t, model.overlay)
+
+	// A later, unrelated confirmation modal must be completely untouched by
+	// the earlier batch: no "v changelog" hint, and 'v' does nothing.
+	model.screen = ScreenInstalledMods
+	updated, _ = model.Update(keyRunes("x"))
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending, "the uninstall confirmation must have opened")
+	require.Equal(t, actionUninstall, model.action.pending.kind)
+	require.NotContains(t, model.actionModalView(), "v changelog",
+		"an unrelated modal must not advertise the changelog viewer")
+
+	updated, cmd := model.Update(keyRunes("v"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.overlay)
+	require.Nil(t, model.picker)
+	require.NotNil(t, model.action.pending, "'v' must leave the unrelated modal untouched")
+}
+
+// TestVIgnoredOutsideUpdateModal guards the discriminator itself: 'v' is a
+// no-op with no pending action at all, and a no-op (leaving the OTHER
+// pending action completely untouched) when a DIFFERENT action's
+// confirmation modal is pending - the changelog viewer only ever engages for
+// the update-apply batch (m.pendingUpdates != nil).
+func TestVIgnoredOutsideUpdateModal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no modal at all", func(t *testing.T) {
+		model := modelWithActions(t, &recordingActions{})
+		updated, cmd := model.Update(keyRunes("v"))
+		model = updated.(Model)
+		require.Nil(t, cmd)
+		require.Nil(t, model.overlay)
+		require.Nil(t, model.picker)
+	})
+
+	t.Run("a different pending action", func(t *testing.T) {
+		model := modelWithActions(t, &recordingActions{})
+		model.action.pending = &pendingAction{kind: actionUninstall, title: `Uninstall "SkyUI"?`}
+
+		updated, cmd := model.Update(keyRunes("v"))
+		model = updated.(Model)
+		require.Nil(t, cmd)
+		require.Nil(t, model.overlay)
+		require.Nil(t, model.picker)
+		require.NotNil(t, model.action.pending, "the unrelated pending action must remain untouched")
+		require.Equal(t, `Uninstall "SkyUI"?`, model.action.pending.title)
+	})
+}
+
 // --- Check/apply updates: confirm applies all sequentially ---
 
 // TestCheckUpdatesConfirmAppliesAllSequentiallyInOrder proves confirming
@@ -2222,6 +2430,165 @@ func TestApplyUpdatesSequentially_CtxCancelledMidBatchStopsWithoutChurningWarnin
 	require.Equal(t, 1, actions.calls, "must stop calling ApplyUpdate once ctx is cancelled, not churn through the rest")
 	require.Equal(t, "Applied 1 update(s)", outcome.Message)
 	require.Empty(t, outcome.Warnings, "the two updates that never got a chance to apply must not be recorded as canceled-warnings")
+}
+
+// --- Fix-wave-2 finding #2: per-mod results overlay after an update batch ---
+
+// TestApplyUpdatesSequentiallyResultLines guards applyUpdatesSequentially's
+// per-item ResultLines collection: a "✓ <name> <from> → <to>" line per
+// successful update, a "✗ <name>: <error>" line per failed one, in the SAME
+// order the batch was given - independent of the aggregate Message/Warnings
+// this already covered (TestCheckUpdatesConfirmAppliesAllSequentiallyInOrder/
+// TestCheckUpdatesMidBatchFailureContinuesAndWarns).
+func TestApplyUpdatesSequentiallyResultLines(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+	rec := &recordingActions{
+		UpdatesViewOut:     UpdatesView{Updates: updates},
+		ApplyUpdateErrByID: map[string]error{"ussep": errors.New("connection refused")},
+	}
+
+	outcome, err := applyUpdatesSequentially(context.Background(), rec, updates, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"✓ SkyUI 5.2 → 5.3",
+		"✗ USSEP: connection refused",
+	}, outcome.ResultLines)
+}
+
+// TestApplyUpdatesSequentiallyResultLines_CtxCancelledSkipsRemainder mirrors
+// TestApplyUpdatesSequentially_CtxCancelledMidBatchStopsWithoutChurningWarnings
+// for ResultLines: an update that never got a chance to run because the ctx
+// was cancelled mid-batch gets NO line at all - it neither succeeded nor
+// failed, it simply never ran.
+func TestApplyUpdatesSequentiallyResultLines_CtxCancelledSkipsRemainder(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	actions := &cancelingActions{recordingActions: &recordingActions{}, cancel: cancel, cancelAt: 1}
+
+	outcome, err := applyUpdatesSequentially(ctx, actions, updates, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"✓ SkyUI 5.2 → 5.3"}, outcome.ResultLines)
+}
+
+// TestActionDoneOpensUpdateResultsOverlay is the end-to-end happy path:
+// confirming the apply-updates batch, once it resolves, opens a scrollable
+// info overlay titled "update results" listing each update's own outcome
+// line - the durable "which mods updated" record the smoke test found
+// missing from the aggregate "Applied N update(s)" status line alone.
+func TestActionDoneOpensUpdateResultsOverlay(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}}}
+	model := openUpdatesModal(t, rec)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, _ := model.Update(doneMsg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.overlay, "a completed update batch must open the results overlay")
+	require.Equal(t, "update results", model.overlay.title)
+	require.Equal(t, []string{
+		"✓ SkyUI 5.2 → 5.3",
+		"✓ USSEP 4.3 → 4.4",
+	}, model.overlay.lines)
+	// The status line still keeps the aggregate count summary - the overlay
+	// is additive, not a replacement.
+	require.Contains(t, model.action.status, "Applied 2 update(s)")
+}
+
+// TestActionDoneOpensUpdateResultsOverlayPartialFailure covers the mixed
+// batch: the overlay's lines include the ✗ line for the failed update
+// alongside the ✓ lines for the ones that succeeded.
+func TestActionDoneOpensUpdateResultsOverlayPartialFailure(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{
+		UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+			{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+			{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+		}},
+		ApplyUpdateErrByID: map[string]error{"ussep": errors.New("connection refused")},
+	}
+	model := openUpdatesModal(t, rec)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	doneMsg := runActionCmd(t, confirmCmd)
+
+	updated, _ := model.Update(doneMsg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.overlay)
+	require.Equal(t, "update results", model.overlay.title)
+	require.Contains(t, model.overlay.lines, "✓ SkyUI 5.2 → 5.3")
+	require.Contains(t, model.overlay.lines, "✗ USSEP: connection refused")
+}
+
+// TestActionDoneDrainPathOpensNoResultsOverlay guards the quit-drain
+// interaction: an actionDoneMsg arriving while m.action.draining is true must
+// resolve straight to tea.Quit (resolveDrainedQuit) and open NOTHING - not
+// even the results overlay - since the app is exiting regardless.
+func TestActionDoneDrainPathOpensNoResultsOverlay(t *testing.T) {
+	t.Parallel()
+
+	outcome := ActionOutcome{Message: "Applied 1 update(s)", ResultLines: []string{"✓ SkyUI 5.2 → 5.3"}}
+	model := modelWithActions(t, &recordingActions{})
+	model, pa := model.buildAction(actionUpdate, "Apply 1 update(s)?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return outcome, nil
+	})
+	model = model.promptAction(pa)
+	updated, _ := model.Update(keyRunes("y"))
+	model = updated.(Model)
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	model = updated.(Model)
+	require.True(t, model.action.draining)
+	gen := model.action.gen
+
+	updated, doneCmd := model.Update(actionDoneMsg{gen: gen, kind: actionUpdate, outcome: outcome})
+	model = updated.(Model)
+	require.Nil(t, model.overlay, "a quit-triggered drain must not open the results overlay")
+	require.NotNil(t, doneCmd)
+	require.Equal(t, tea.Quit(), doneCmd())
+}
+
+// TestActionDoneNoResultLinesOpensNoOverlay guards every OTHER action kind
+// (ResultLines nil/empty, the common case for everything but the update
+// batch): actionDoneMsg must not open an overlay at all when there's nothing
+// to show, matching ActionOutcome.ResultLines' own "renderers may ignore it"
+// contract.
+func TestActionDoneNoResultLinesOpensNoOverlay(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return ActionOutcome{Message: "Deployed 5 mod(s)"}, nil
+	})
+	model = model.promptAction(pa)
+	updated, _ := model.Update(keyRunes("y"))
+	model = updated.(Model)
+	gen := model.action.gen
+
+	updated, _ = model.Update(actionDoneMsg{gen: gen, kind: actionDeploy, outcome: ActionOutcome{Message: "Deployed 5 mod(s)"}})
+	model = updated.(Model)
+	require.Nil(t, model.overlay)
 }
 
 // --- Check/apply updates: stale plan-fetch discard + fetch error ---
@@ -2637,4 +3004,219 @@ func TestFilesKeyErrorGoesToStatusLine(t *testing.T) {
 	require.Nil(t, model.overlay)
 	require.True(t, model.action.statusIsError)
 	require.Equal(t, singleLine("db read failed"), model.action.status)
+}
+
+// --- Load-order reorder (J/K on Installed Mods) ---
+//
+// The prototype provider's canned Installed Mods list (prototype/data.go)
+// is, in order: skyui, ussep, skse-address-library, immersive-armors,
+// alternate-start - all source "nexusmods". modelWithActions loads this
+// list unmodified (see its own doc comment), so every test below can assert
+// against these exact names/positions.
+
+// TestMoveSelectedModDownPersistsOrder covers the full round trip for 'J' on
+// the top row: m.mods swaps rows 0/1, selection follows the moved mod to its
+// new slot, the provider is called with the FULL new key order (not just the
+// two swapped entries), and m.orderChanged flips so the deploy hint shows.
+func TestMoveSelectedModDownPersistsOrder(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{ReorderOutcome: ActionOutcome{Message: "load order updated"}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	require.Equal(t, "SkyUI", model.mods[0].Name)
+	require.Equal(t, "USSEP", model.mods[1].Name)
+	require.False(t, model.orderChanged)
+
+	updated, cmd := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.NotNil(t, cmd, "a successful move must also refresh so Conflicts/dashboard reflect the new order")
+	require.IsType(t, dataLoadedMsg{}, cmd())
+
+	require.Equal(t, "USSEP", model.mods[0].Name, "row 0 now holds what was row 1")
+	require.Equal(t, "SkyUI", model.mods[1].Name, "row 1 now holds what was row 0")
+	require.Equal(t, 1, model.selected[ScreenInstalledMods], "selection follows the moved mod")
+
+	require.Len(t, rec.ReorderCalls, 1)
+	require.Equal(t, []string{
+		"nexusmods:ussep",
+		"nexusmods:skyui",
+		"nexusmods:skse-address-library",
+		"nexusmods:immersive-armors",
+		"nexusmods:alternate-start",
+	}, rec.ReorderCalls[0], "provider must receive the FULL new order, not just the two swapped keys")
+
+	require.True(t, model.orderChanged)
+}
+
+// TestMoveAtListEdgeNoop proves 'K' at row 0 and 'J' at the last row are
+// no-ops: no provider call, no mutation, selection untouched.
+func TestMoveAtListEdgeNoop(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, cmd := model.Update(keyRunes("K"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, "SkyUI", model.mods[0].Name)
+	require.Equal(t, 0, model.selected[ScreenInstalledMods])
+	require.Empty(t, rec.ReorderCalls)
+
+	last := len(model.mods) - 1
+	model.selected[ScreenInstalledMods] = last
+	lastName := model.mods[last].Name
+
+	updated, cmd = model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, lastName, model.mods[last].Name)
+	require.Equal(t, last, model.selected[ScreenInstalledMods])
+	require.Empty(t, rec.ReorderCalls)
+}
+
+// TestReorderInertWhileActionRunning proves the single-flight guard: an
+// in-flight action blocks a move entirely (silent no-op, mirroring
+// switchSelectedProfile/checkForUpdates' own explicit running/pending check
+// - moveSelectedMod never reaches buildAction's own guard, since it's
+// dispatched synchronously, not through buildAction at all).
+func TestReorderInertWhileActionRunning(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	model.action.running = true
+
+	updated, cmd := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, "SkyUI", model.mods[0].Name)
+	require.Equal(t, 0, model.selected[ScreenInstalledMods])
+	require.Empty(t, rec.ReorderCalls)
+	require.False(t, model.orderChanged)
+}
+
+// TestReorderErrorRefreshesFromDisk covers a ReorderMods failure (e.g. a
+// disk write error): the status line renders the error, m.mods is left
+// exactly as it was (the write never took effect - no point showing a
+// locally-swapped order the disk doesn't actually have), no
+// m.orderChanged hint is set, and a refresh (m.loadData) is dispatched so
+// the list reflects disk truth on the next render.
+func TestReorderErrorRefreshesFromDisk(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{ReorderErr: errors.New("disk write failed")}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, cmd := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.NotNil(t, cmd, "a refresh must be dispatched on failure")
+	require.IsType(t, dataLoadedMsg{}, cmd())
+
+	require.Equal(t, singleLine("disk write failed"), model.action.status)
+	require.True(t, model.action.statusIsError)
+	require.False(t, model.orderChanged)
+	require.Equal(t, "SkyUI", model.mods[0].Name, "list stays as-is; the dispatched refresh corrects it from disk")
+	require.Equal(t, 0, model.selected[ScreenInstalledMods])
+}
+
+// TestReorderSetsDeployHint proves the full hint lifecycle: a successful
+// move sets m.orderChanged and the status line renders the hint text; a
+// SUCCESSFUL deploy's actionDoneMsg clears it again (see app.go's
+// actionDoneMsg case).
+func TestReorderSetsDeployHint(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{
+		ReorderOutcome: ActionOutcome{Message: "load order updated"},
+		DeployOutcome:  ActionOutcome{Message: "Deployed 5 mod(s)"},
+	}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, _ := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.True(t, model.orderChanged)
+	require.Contains(t, model.statusLine(), "order changed — deploy (D) to apply")
+
+	// A plain navigation keypress must NOT clear the hint (unlike
+	// m.action.status, which rule 8 clears on every non-quit keypress) -
+	// the hint is meant to survive ordinary browsing until deploy/switch.
+	updated, _ = model.Update(keyRunes("k"))
+	model = updated.(Model)
+	require.True(t, model.orderChanged)
+	require.Contains(t, model.statusLine(), "order changed — deploy (D) to apply")
+
+	updated, _ = model.Update(keyRunes("D"))
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, actionDeploy, model.action.pending.kind)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, _ = model.Update(doneMsg)
+	model = updated.(Model)
+	require.False(t, model.orderChanged, "the hint clears once the deploy resolves successfully")
+}
+
+// TestMoveKeysSwallowedByFocusedSearchInput proves 'J'/'K' type into the
+// search box instead of triggering a reorder while ScreenSearch is focused -
+// the existing focused-input swallow branch (updateKey, app.go) runs before
+// the mutation-key switch this is dispatched from, so this is inertness by
+// construction, matching every other single-letter mutation key's own test
+// of the same guard (e.g. TestToggleEnableKeyInertWhileSearchFocused).
+func TestMoveKeysSwallowedByFocusedSearchInput(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	updated := updateWithRunes(t, model, "3") // jump to search, focused
+	updated = updateWithRunes(t, updated, "J")
+	updated = updateWithRunes(t, updated, "K")
+
+	require.True(t, updated.search.input.Focused())
+	require.Contains(t, updated.search.input.Value(), "J")
+	require.Contains(t, updated.search.input.Value(), "K")
+	require.Empty(t, rec.ReorderCalls)
+}
+
+// TestReorderHintHiddenWhileActionRunning guards the Copilot PR #73 round-5
+// finding: with m.orderChanged set and an action RUNNING but not yet
+// reporting a progress line (e.g. a deploy before its first tick), the
+// status line must show nothing rather than the "order changed — deploy…"
+// hint — telling the user to deploy DURING the deploy is misleading.
+func TestReorderHintHiddenWhileActionRunning(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{
+		ReorderOutcome: ActionOutcome{Message: "load order updated"},
+	})
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+
+	updated, _ := model.Update(keyRunes("J"))
+	model = updated.(Model)
+	require.True(t, model.orderChanged)
+	require.Contains(t, model.statusLine(), "order changed — deploy (D) to apply")
+
+	model.action.running = true
+	require.False(t, model.hasVisibleStatus(),
+		"a running action with no progress/status must not surface the reorder hint")
+	require.Empty(t, model.statusLine())
+
+	model.action.running = false
+	require.Contains(t, model.statusLine(), "order changed — deploy (D) to apply",
+		"the hint must return once the action settles without clearing orderChanged")
 }

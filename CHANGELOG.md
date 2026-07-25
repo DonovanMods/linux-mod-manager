@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-24
+
+### Added
+
+- TUI conflicts screen (key `6`, in the screen-jump/nav rotation): lists every game-directory file two or more enabled mods provide, with the current owner, the load-order winner, every other providing mod, and a "stale" marker when the deployed copy no longer matches the winner; selecting a row shows a resolution hint. `D` deploys the active profile directly from this screen. The Dashboard's conflict count now reflects real detection instead of a placeholder
+- Inline load-order reorder on Installed Mods (`J`/`K`, also `ctrl+down`/`ctrl+up`): swaps the selected mod with its neighbor and persists the new order immediately; a hint reads "order changed — deploy (`D`) to apply" until you redeploy, and the list itself now renders in load order
+- Update rollback in the TUI (`<` on Installed Mods), behind a confirmation prompt — the TUI equivalent of `lmm update rollback`; a mod with no previous version is refused on the status line instead
+- A changelog viewer in the update flow (`v` on the apply-updates confirmation modal): opens a scrollable overlay of the selected update's changelog, or a "View changelog" picker naming each `<mod> <from> → <to>` first when several updates are pending. `v` also works on an Installed Mods row after a check, showing that mod's changelog from the most recent results
+- A per-mod "update results" overlay after a confirmed update batch finishes: one `✓ <mod> <from> → <to>` or `✗ <mod>: <error>` line per update, mirroring the CLI's per-mod output, so the applied set is visible beyond the status-line count
+- Profile import in the TUI (`I` on Profiles): a "path to YAML" input, followed by a categorized preview (new mods, already-installed mods, overwrite/cross-game warnings), then downloads and installs as needed with an optional immediate switch to the imported profile
+- Profile export in the TUI (`E` on Profiles): a "path to save" input prefilled with a default filename; refuses to overwrite an existing file
+- `lmm conflicts` now prints a `Winner:` line per conflict (the load-order winner, with a stale marker and redeploy hint when it disagrees with the current owner); `--json` gains matching `winner`/`stale` fields
+- Info overlays (deployed-files panel, changelog viewer) now scroll, instead of clipping content taller than the panel
+- Core: `GetProfileConflicts`, `ApplyRollback`, `PlanImport`/`ApplyImport`, `CleanChangelog`, and `OrderByProfile` extracted into `internal/core` so the TUI and CLI share the same logic; CLI behavior is unchanged (byte-identical output) aside from the `conflicts` sorting/`Winner:` additions above
+
+### Changed
+
+- Multi-mod deploy paths (profile apply/switch, purge order) now iterate mods in profile load order deterministically, instead of an unspecified order — reordering and redeploying now reliably flips which mod wins a file conflict. This is a user-visible behavior change for any profile with unresolved file conflicts
+- `lmm conflicts` output is now sorted by file path
+
+### Fixed
+
+- `lmm conflicts` could never actually detect a conflict: ownership was tracked in a single-owner deployed-files table, so a per-mod "which files does this mod provide" query could never collide with another mod's. Conflict detection now sources each enabled mod's provided files from its cache manifest, while ownership still comes from the deploy records
+
 ## [1.13.1] - 2026-07-23
 
 ### Security
@@ -841,7 +865,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.3...v1.13.0
 [1.12.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.2...v1.12.3

@@ -45,6 +45,17 @@ type ModItem struct {
 	// no policy of their own) - only Overview/the Installed Mods screen ever
 	// populates it.
 	UpdatePolicy string
+	// PreviousVersion is the version this mod would roll back to via '<' on
+	// Installed Mods (Task 6, mutations.go's rollbackSelectedMod) - "" means
+	// no previous version is available (the mod has never been updated, or
+	// has already been rolled back once), which the handler refuses
+	// synchronously rather than opening a modal. coreProvider populates this
+	// from domain.InstalledMod.PreviousVersion (service_core.go's Overview
+	// mapping); prototypeProvider from the canned Mod.PreviousVersion field
+	// (see that type's doc comment). Empty for a Search-derived ModItem,
+	// mirroring UpdatePolicy's own "only Overview populates it" convention
+	// above.
+	PreviousVersion string
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of
@@ -66,6 +77,23 @@ type ProfileItem struct {
 	Name     string
 	Active   bool
 	ModCount int
+}
+
+// ConflictItem is one renderable file-conflict row for the Conflicts screen
+// (Task 3): Owner/Winner/AlsoIn carry display NAMES only, mirroring
+// core.ConflictModRef's own Name field (which already falls back to Key
+// when a mod has no installed record supplying a name - see that type's doc
+// comment) - callers never need the raw source:mod key here, only what to
+// show. Stale mirrors core.ProfileConflict.Stale: true means the DB's
+// recorded owner disagrees with the load-order winner (the profile was
+// reordered, or deploy order was once nondeterministic, since the last
+// deploy) - a redeploy would change who wins.
+type ConflictItem struct {
+	Path   string
+	Owner  string
+	Winner string
+	AlsoIn []string
+	Stale  bool
 }
 
 // GameInfo is one renderable configured-game row for the in-TUI game
@@ -122,6 +150,18 @@ type DataProvider interface {
 	// binding - see mutations.go's openGameSwitcher). Exactly one entry has
 	// Active set: the game this session is currently bound to.
 	ListGames() ([]GameInfo, error)
+	// Conflicts lists every file conflict the active profile currently has
+	// (Task 3), sorted by Path - mirroring core.GetProfileConflicts' own
+	// contract, which every implementation of this method is expected to
+	// delegate to (directly, for coreProvider, or via canned data for
+	// prototypeProvider). Fetched alongside Overview/Profiles in the same
+	// loadData refresh cycle (app.go), not gated behind an explicit user
+	// action the way Updates/CheckUpdates is: detection is local-only (DB
+	// reads plus a directory walk of each enabled mod's cache - no network),
+	// so it rides every ordinary load. The walks scale with installed-mod
+	// count and cache size; if refreshes ever feel slow on very large mod
+	// sets, memoizing per (mod, version) manifest is the obvious lever.
+	Conflicts(ctx context.Context) ([]ConflictItem, error)
 }
 
 // prototypeProvider serves the static demo data set. It must never touch
@@ -327,6 +367,28 @@ func (p *prototypeProvider) DeployedFiles(sourceID, modID string) ([]string, err
 	return files, nil
 }
 
+// Conflicts returns the PRIMARY game's canned conflict set (see
+// prototype.Data.Conflicts' doc comment); the alt game (see altActive's own
+// doc comment) has no canned conflicts at all - its minimal 1-2 mod demo set
+// has no interesting conflict scenario to show, mirroring AltMods leaving
+// Dependencies/Conflicts/etc. unset elsewhere.
+func (p *prototypeProvider) Conflicts(_ context.Context) ([]ConflictItem, error) {
+	if p.altActive {
+		return nil, nil
+	}
+	items := make([]ConflictItem, 0, len(p.data.Conflicts))
+	for _, c := range p.data.Conflicts {
+		items = append(items, ConflictItem{
+			Path:   c.Path,
+			Owner:  c.Owner,
+			Winner: c.Winner,
+			AlsoIn: append([]string(nil), c.AlsoIn...),
+			Stale:  c.Stale,
+		})
+	}
+	return items, nil
+}
+
 func (p *prototypeProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(p.data.Profiles))
 	for _, profile := range p.data.Profiles {
@@ -354,6 +416,7 @@ func modItems(mods []prototype.Mod) []ModItem {
 			Endorsements:    mod.Endorsements,
 			HasEndorsements: mod.HasEndorsements,
 			UpdatePolicy:    mod.UpdatePolicy,
+			PreviousVersion: mod.PreviousVersion,
 		})
 	}
 	return items

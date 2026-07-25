@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
 
@@ -104,6 +105,61 @@ type ActionProvider interface {
 	// comment). progress may be nil, like every other streaming
 	// ActionProvider method.
 	PurgeProfile(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error)
+
+	// ReorderMods persists a new load order for every installed mod (Task
+	// 4's J/K reorder keys on Installed Mods - see mutations.go's
+	// moveSelectedMod): orderedKeys is the FULL desired order, one
+	// domain.ModKey("sourceID:modID") per installed mod, exactly once - the
+	// order the mods will actually deploy in (last wins file conflicts, per
+	// core.OrderByProfile). A local YAML write, no network call, no hooks -
+	// called SYNCHRONOUSLY by moveSelectedMod (the same documented sync
+	// exception DeployedFiles carries above), not through
+	// buildAction/promptAction's async confirm machinery. Outcome.Message is
+	// "load order updated".
+	ReorderMods(ctx context.Context, orderedKeys []string) (ActionOutcome, error)
+
+	// Rollback reverts item to its PreviousVersion (Task 6's '<' binding on
+	// Installed Mods - see mutations.go's rollbackSelectedMod), wired onto
+	// core.Service.ApplyRollback (Phase 6b Task 5's extraction of
+	// cmd/lmm/update.go's doUpdateRollback). A mod with no PreviousVersion
+	// is refused SYNCHRONOUSLY by the TUI, on the status line, before this
+	// is ever called - mirroring DeleteProfile's active-profile guard's own
+	// "status-line refusal, no modal" shape (see that method's doc comment)
+	// - but every implementation repeats the guard defense-in-depth, exactly
+	// like DeleteProfile's own coreProvider/prototypeProvider methods do.
+	// progress may be nil, like every other streaming ActionProvider method.
+	Rollback(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error)
+
+	// PlanImport parses data (an exported profile - Phase 6b Task 9's 'I'
+	// binding on Profiles, see mutations.go's importProfilePrompt) and
+	// categorizes its mods against the session's current game/DB/cache
+	// state, without saving anything - the import-modal analog of
+	// PlanProfileSwitch/PlanInstall. data is the raw bytes the TUI already
+	// read from disk (os.ReadFile, mutations.go) - this method never touches
+	// the filesystem itself.
+	PlanImport(ctx context.Context, data []byte) (ImportPlanView, error)
+	// ApplyImport re-plans data (mirroring ApplyProfileSwitch/ApplyInstall's
+	// own re-plan-at-apply precedent - see either's doc comment) and applies
+	// it: the profile is saved (overwriting an existing same-named one is
+	// always allowed - the preview modal's own confirm IS the TUI's only
+	// overwrite consent, unlike the CLI's separate --force flag) and every
+	// pending mod is downloaded and installed unconditionally (no CLI-style
+	// --no-install/prompt-decline equivalent exists in the TUI). progress
+	// may be nil, like every other streaming ActionProvider method.
+	ApplyImport(ctx context.Context, data []byte, progress func(ActionProgress)) (ActionOutcome, error)
+
+	// ExportProfile writes profile name's exported bytes (the same format
+	// ProfileManager.Export/`lmm profile export` already produce) to path
+	// (Phase 6b Task 10's 'E' binding on Profiles - see mutations.go's
+	// exportProfilePrompt): a local filesystem write, no network call - the
+	// same documented sync exception ReorderMods/DeployedFiles carry (see
+	// ReorderMods' own doc comment), called SYNCHRONOUSLY by
+	// resolveExportSubmitted rather than through buildAction/promptAction's
+	// async confirm machinery. A pre-existing file at path is refused rather
+	// than silently overwritten - coreProvider's own doc comment gives the
+	// exact mechanism and error wording. Outcome.Message is `exported "<name>"
+	// to <path>`.
+	ExportProfile(ctx context.Context, name, path string) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -114,6 +170,46 @@ type ActionProvider interface {
 type ActionOutcome struct {
 	Message  string   // one-line success summary, e.g. `Enabled "SkyUI"` / "Deployed 5 mod(s)"
 	Warnings []string // non-fatal diagnostics: the underlying flow result's Warnings then Notes, in that order
+
+	// ImportedProfile names the profile a successful ApplyImport (Phase 6b
+	// Task 9) just saved, but ONLY when it targets the session's CURRENTLY
+	// ACTIVE game - the signal app.go's actionDoneMsg handler uses to
+	// dispatch a deferred "switch to it now?" offer (mutations.go's
+	// importAppliedMsg/resolveImportApplied). Every other ActionProvider
+	// method, and a cross-game import (the imported profile's own declared
+	// game differs from the active one), leaves this "" - treated
+	// identically to switchedTo's own "nothing to do" zero value (see
+	// actionDoneMsg's doc comment), except this NEVER rebinds anything by
+	// itself: it only names a candidate the session MIGHT switch to next,
+	// pending explicit user confirmation via the offer.
+	ImportedProfile string
+
+	// ResultLines is an OPTIONAL list of per-item detail lines for a batch
+	// outcome (fix-wave-2 smoke finding #2): only applyUpdatesSequentially
+	// (mutations.go), the apply-updates batch's confirm-time body, populates
+	// this today - one "✓ <name> <from> → <to>" line per successful update,
+	// one "✗ <name>: <error>" line per failed one, in the SAME order the
+	// batch was applied. Every other ActionProvider call leaves this nil,
+	// same as ImportedProfile's own "" zero value above - app.go's
+	// actionDoneMsg handler treats a nil/empty ResultLines as "nothing to
+	// show" and opens no overlay for it. This is a TUI-side struct, not part
+	// of the ActionProvider interface itself, so adding it required no
+	// interface/method change on either provider (coreProvider/
+	// prototypeProvider): renderers besides the update batch's are free to
+	// ignore it entirely.
+	ResultLines []string
+}
+
+// ImportPlanView is the render model for the import preview modal, mapped
+// from core.ImportPlan (see coreProvider's importPlanView) or computed
+// directly from prototype demo data - the import-modal analog of
+// SwitchPlanView/InstallPlanView. Mod entries are formatted
+// "sourceID:modID vVersion", matching the CLI's own profile-import preview
+// list lines (cmd/lmm/profile.go's doProfileImport).
+type ImportPlanView struct {
+	Name, GameID                      string
+	Installed, NeedsDownload, Missing []string
+	Exists                            bool // a profile with this name is already saved for the game
 }
 
 // SwitchPlanView is the render model for the profile-switch confirmation
@@ -148,6 +244,16 @@ type InstallPlanView struct {
 type UpdateItem struct {
 	Source, ID, Name       string
 	FromVersion, ToVersion string
+	// Changelog is the update's changelog, already run through
+	// core.CleanChangelog (Phase 6b Task 7) - the FULL cleaned text, with NO
+	// truncation: unlike cmd/lmm/update.go's own 800/500-char CLI
+	// truncation (a presentation concern that stays CLI-side), the TUI's
+	// changelog overlay (actions.go's openChangelogFromUpdateModal) shows
+	// the whole thing, scrollable (see infoOverlay.offset) so every line is
+	// reachable however long it runs. Empty means the source reported none -
+	// the overlay renders "no changelog available" rather than an empty
+	// panel.
+	Changelog string
 }
 
 // UpdatesView is CheckUpdates' result: the available updates plus any
@@ -564,7 +670,11 @@ func (p *prototypeProvider) ApplyInstall(_ context.Context, item ModItem, progre
 // with a non-empty AvailableVersion (see prototype.Mod's doc comment -
 // skyui is canned "auto", ussep "notify", giving at least one of each
 // policy for a future keybinding layer to consult, though UpdateItem itself
-// carries no policy field - see its doc comment).
+// carries no policy field - see its doc comment). Changelog is copied
+// straight from the canned Mod (Phase 6b Task 7): skyui carries a canned
+// multi-line changelog and ussep deliberately leaves it empty, so
+// --prototype mode can demo both the changelog overlay's normal case and
+// its "no changelog available" one.
 func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error) {
 	var view UpdatesView
 	for _, mod := range p.activeMods() {
@@ -574,6 +684,7 @@ func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error)
 		view.Updates = append(view.Updates, UpdateItem{
 			Source: mod.Source, ID: mod.ID, Name: mod.Name,
 			FromVersion: mod.Version, ToVersion: mod.AvailableVersion,
+			Changelog: mod.Changelog,
 		})
 	}
 	return view, nil
@@ -662,4 +773,111 @@ func (p *prototypeProvider) PurgeProfile(_ context.Context, progress func(Action
 	}
 
 	return ActionOutcome{Message: fmt.Sprintf("Purged %d mod(s)", purged)}, nil
+}
+
+// ReorderMods reorders the ACTIVE game's installed-mods slice (routed
+// through activeMods()/setActiveMods - see activeMods' own doc comment on
+// why every prototypeProvider mutation must go through these rather than
+// touching p.data.InstalledMods directly) to match orderedKeys exactly: each
+// key is looked up via domain.ModKey(mod.Source, mod.ID) against the current
+// activeMods() set. An unknown key (one that doesn't match any currently
+// active mod) errors rather than silently dropping or ignoring it - the
+// caller (moveSelectedMod) always derives orderedKeys FROM the active list
+// itself, so this should never actually happen in practice; it's checked
+// anyway rather than trusting the caller blindly.
+func (p *prototypeProvider) ReorderMods(_ context.Context, orderedKeys []string) (ActionOutcome, error) {
+	mods := p.activeMods()
+	byKey := make(map[string]prototype.Mod, len(mods))
+	for _, mod := range mods {
+		byKey[domain.ModKey(mod.Source, mod.ID)] = mod
+	}
+
+	// Permutation guard (Copilot PR #73 round 6): the interface contract
+	// says orderedKeys names every installed mod exactly once; a missing or
+	// duplicated key would silently drop or duplicate mods in the list.
+	if len(orderedKeys) != len(mods) {
+		return ActionOutcome{}, fmt.Errorf("reorder must include every installed mod: got %d of %d", len(orderedKeys), len(mods))
+	}
+	seen := make(map[string]bool, len(orderedKeys))
+	reordered := make([]prototype.Mod, 0, len(orderedKeys))
+	for _, key := range orderedKeys {
+		if seen[key] {
+			return ActionOutcome{}, fmt.Errorf("duplicate mod key: %s", key)
+		}
+		seen[key] = true
+		mod, ok := byKey[key]
+		if !ok {
+			return ActionOutcome{}, fmt.Errorf("mod not found: %s", key)
+		}
+		reordered = append(reordered, mod)
+	}
+
+	p.setActiveMods(reordered)
+	return ActionOutcome{Message: "load order updated"}, nil
+}
+
+// Rollback swaps the ACTIVE game's matching InstalledMods entry's
+// Version/PreviousVersion in place (Task 6) - visible in a repeated
+// Overview, mirroring ApplyUpdate's own "same instance, same session"
+// contract. A mod with no PreviousVersion is refused defense-in-depth
+// (mirrors DeleteProfile's active-profile guard above), even though the
+// TUI's own handler (mutations.go's rollbackSelectedMod) already checks this
+// synchronously before ever calling here.
+func (p *prototypeProvider) Rollback(_ context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error) {
+	idx := p.findInstalledIndex(item.Source, item.ID)
+	if idx < 0 {
+		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	mods := p.activeMods()
+	mod := &mods[idx]
+	if mod.PreviousVersion == "" {
+		return ActionOutcome{}, errors.New("no previous version available for rollback")
+	}
+
+	fakeProgressTicks(progress, fmt.Sprintf("Rolling back %s", mod.Name))
+
+	fromVersion, toVersion := mod.Version, mod.PreviousVersion
+	mod.Version, mod.PreviousVersion = toVersion, fromVersion
+	return ActionOutcome{Message: fmt.Sprintf("Rolled back %q to %s", mod.Name, toVersion)}, nil
+}
+
+// PlanImport returns a canned plan (Task 9's --prototype demo): a single
+// profile named "imported", targeting the session's CURRENTLY ACTIVE game
+// (p.activeGame - see its own doc comment) so the same-game "switch to it
+// now?" offer is demoable end to end (see ApplyImport below), with one
+// canned Missing mod entry and nothing else - deliberately minimal, mirroring
+// PlanProfileSwitch/PlanInstall's own "never invent a phantom X beyond what's
+// canned" convention. data is ignored entirely: the demo never actually
+// parses whatever file the user picked.
+func (p *prototypeProvider) PlanImport(_ context.Context, _ []byte) (ImportPlanView, error) {
+	return ImportPlanView{
+		Name:    "imported",
+		GameID:  p.activeGame().ID,
+		Missing: []string{"nexusmods:demo-mod v1.0"},
+	}, nil
+}
+
+// ApplyImport appends a new canned Profiles entry named "imported" - visible
+// in a repeated Profiles call, mirroring CreateProfile's own "same instance,
+// same session" contract - and reports ImportedProfile set, since
+// PlanImport's canned GameID always matches the active game (so the demo's
+// post-import switch offer is reachable). data is ignored, matching
+// PlanImport above.
+func (p *prototypeProvider) ApplyImport(_ context.Context, _ []byte, progress func(ActionProgress)) (ActionOutcome, error) {
+	fakeProgressTicks(progress, "Importing imported")
+	p.data.Profiles = append(p.data.Profiles, prototype.Profile{Name: "imported"})
+	return ActionOutcome{
+		Message:         `Imported profile "imported"`,
+		ImportedProfile: "imported",
+	}, nil
+}
+
+// ExportProfile reports the SAME success message coreProvider's own real
+// write does (task-10-brief.md), but never touches the filesystem: unlike
+// every prototypeProvider mutation above (which mutates p.data, still
+// side-effect-free outside its own in-memory field), this demo has no
+// canned file content to write and no reason to actually create a file on
+// the user's disk during a --prototype demo session.
+func (p *prototypeProvider) ExportProfile(_ context.Context, name, path string) (ActionOutcome, error) {
+	return ActionOutcome{Message: fmt.Sprintf("exported %q to %s", name, path)}, nil
 }

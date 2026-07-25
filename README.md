@@ -145,7 +145,7 @@ lmm mod set-update 12345 --game skyrim-se --pin
 
 ### Terminal UI
 
-Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, switch profiles, install from search results, and check/apply updates — with every mutating action behind a confirmation prompt:
+Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, reorder load order, resolve file conflicts, switch profiles, install from search results, check/apply updates (with changelogs and rollback), edit update policies, view a mod's deployed files, purge a profile, switch games, and create/delete/export/import profiles — with every mutating action behind a confirmation prompt:
 
 ```bash
 lmm tui                     # real data
@@ -154,16 +154,17 @@ lmm tui --prototype         # demo mode with static fake data
 ```
 
 Keys: `tab`/`h`/`l` cycle screens (landing on Search this way does not focus
-the input), `1`–`5` jump directly (`3` focuses search immediately, like `/`;
-`5` opens Sources), `↑↓`/`j`/`k` move, `enter` open/select (on Profiles,
-switch to the selected profile; selecting "Search Archives" from the
-Dashboard menu also focuses search — explicit search intent focuses,
-passive cycling doesn't), `/` focus search from anywhere, type query,
-`enter` to search, `esc` unfocus (clears focus; afterward `s` cycles
-sources, number keys switch screens), `n`/`p` next/previous page, `e`/`x`/`D`
-enable-disable/uninstall/deploy (see below), `i` install the selected search
-result (Search, input blurred — see below), `u` check for updates (Dashboard
-or Installed Mods — see below), `?` help, `q` quit.
+the input), `1`–`6` jump directly (`3` focuses search immediately, like `/`;
+`5` opens Sources, `6` opens Conflicts), `↑↓`/`j`/`k` move, `enter`
+open/select (on Profiles, switch to the selected profile; selecting "Search
+Archives" from the Dashboard menu also focuses search — explicit search
+intent focuses, passive cycling doesn't), `/` focus search from anywhere,
+type query, `enter` to search, `esc` unfocus (clears focus; afterward `s`
+cycles sources, number keys switch screens), `n`/`p` next/previous page,
+`e`/`x`/`D` enable-disable/uninstall/deploy (see below), `i` install the
+selected search result (Search, input blurred — see below), `u` check for
+updates (Dashboard or Installed Mods — see below), `g` switch games (any
+screen — see below), `?` help, `q` quit.
 
 The Search screen defaults to **All sources**, mirroring the CLI: the typed
 query runs concurrently against every source configured for the game. Press
@@ -192,7 +193,27 @@ On **Installed Mods**, `e` toggles the selected mod's enable/disable state
 else disables) and `x` uninstalls it — removing deployed files, cache, and
 its profile entry, running uninstall hooks along the way. `D` deploys the
 active profile (using its current enabled mods) from either Installed Mods
-or the Dashboard.
+or the Dashboard. `f` opens a scrollable panel listing the selected mod's
+deployed files (`f` again, or `esc`, closes it). `P` opens a notify/auto/pin
+picker for the selected mod's update policy — picking one applies
+immediately, no separate confirmation. `J`/`K` (also `ctrl+down`/`ctrl+up`)
+swap the selected mod with its neighbor in load order and persist the new
+order right away; the list itself renders in load order, and a hint reads
+"order changed — deploy (`D`) to apply" until you redeploy. `<` rolls the
+selected mod back to its previous version behind a confirmation prompt — a
+mod with no previous version is refused on the status line instead. `X`, on
+Dashboard or Installed Mods, purges the active profile (undeploying every
+currently-deployed mod) behind a confirmation prompt; an empty profile
+short-circuits with a one-line "no mods installed" message.
+
+The **Conflicts** screen (key `6`) lists every game-directory file that two
+or more enabled mods provide: the current load-order winner, every other
+mod that also provides the file, and a "stale" marker when the deployed
+copy no longer matches the winner (a reorder or update landed but hasn't
+been redeployed yet). Selecting a row shows a resolution hint — reorder
+(`J`/`K`) or disable the losing mod, then redeploy. `D` deploys the active
+profile directly from this screen, same as Installed Mods/Dashboard. The
+Dashboard's conflict count reflects this screen's real detection.
 
 `u`, on Dashboard or Installed Mods, checks every checkable installed mod
 for updates (pinned and local mods are skipped) — "Checking for updates…"
@@ -200,10 +221,18 @@ on the status line while it runs. Zero updates reports a one-line status;
 one or more opens a confirmation panel listing each `<mod> <from> → <to>`,
 and confirming applies all of them in sequence with per-update download
 progress streamed into the status line — one mod failing doesn't stop the
-rest, it's folded into the batch's warnings instead. The Dashboard's Updates
-count shows `?` until a check has run this session, then reflects the real
-number (it survives unrelated refreshes and only reverts to `?` after an
-update batch is actually applied, since that's what makes the count stale).
+rest, it's folded into the batch's warnings instead. While that panel is
+open, `v` opens the changelog for the update it names — or, with several
+updates pending, a "View changelog" picker naming each `<mod> <from> →
+<to>` first — as a scrollable overlay. After a check, `v` also works
+directly on an Installed Mods row: it shows that mod's changelog from the
+most recent check (or says there's none for it). When a confirmed batch
+finishes, an "update results" overlay lists exactly what happened, one
+`✓ <mod> <from> → <to>` (or `✗ <mod>: <error>`) line per update, so the
+applied set is never just a status-line count. The Dashboard's Updates count shows
+`?` until a check has run this session, then reflects the real number (it
+survives unrelated refreshes and only reverts to `?` after an update batch
+is actually applied, since that's what makes the count stale).
 
 On **Profiles**, `enter` on a profile other than the active one plans the
 switch and shows a preview: mods to enable/disable, or "No mod changes; set
@@ -212,12 +241,27 @@ profile just reports "Already on profile ..." with no modal. If the plan
 needs mods that aren't installed yet, the preview also discloses what it
 will fetch (`Will download & install N mod(s):` plus one `↓` line per mod)
 — confirming downloads and installs them as part of applying the switch,
-streaming the same progress as an install.
+streaming the same progress as an install. `c` opens an input for a new
+profile name, validated inline against duplicates and invalid characters;
+`d` deletes the selected profile behind a confirmation prompt, refusing the
+active profile on the status line instead. `I` opens a "path to YAML" input
+for profile import: lmm plans the import and shows a categorized preview
+(new mods, already-installed mods, overwrite/cross-game warnings), then
+confirming downloads and installs mods as needed, with an optional
+immediate switch to the imported profile afterward. `E` opens a "path to
+save" input, prefilled with a default filename, for profile export;
+submitting refuses to overwrite an existing file.
 
-Every mutating action — enable/disable, uninstall, deploy, profile switch,
-install, apply updates — opens a confirmation panel describing what will
-change before it runs: `y`/`enter` confirms, `n`/`esc` cancels, and only one
-action can be in flight at a time. Install, apply-updates, and any switch
+`g`, on any screen, opens a picker of every game configured in
+`games.yaml` with the active one marked; picking one rebinds the session
+(data providers, active profile, sources) and reloads the current screen.
+
+Every mutating action — enable/disable, uninstall, deploy, reorder, rollback,
+purge, profile switch/create/delete/import, install, apply updates — opens a
+confirmation panel describing what will change before it runs (reorder and
+policy edits apply immediately instead, since the choice itself is the
+confirmation): `y`/`enter` confirms, `n`/`esc` cancels, and only one action
+can be in flight at a time. Install, apply-updates, and any switch
 that downloads mods stream live progress into the status line while they
 run; once an action finishes, a one-line status message reports the outcome
 (including a warning count, if the flow reported any) and clears on your
@@ -844,7 +888,7 @@ The mod cache location can be customized via `cache_path` in `config.yaml`.
 - [x] Conflict detection (file conflicts, circular dependency warnings)
 - [x] Mod file verification (checksums, --fix re-download)
 - [ ] Automatic dependency installation
-- [ ] Interactive TUI (Bubble Tea) - see BACKLOG.md
+- [x] Interactive TUI (Bubble Tea) - see the Terminal UI section above
 - [x] CurseForge integration
 - [ ] Additional mod sources (ESOUI)
 - [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
