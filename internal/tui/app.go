@@ -107,16 +107,19 @@ type Model struct {
 
 	// pendingUpdates is the retained CheckUpdates result behind the
 	// apply-updates confirmation modal (Task 7's changelog viewer - see
-	// resolveCheckUpdatesResult, mutations.go, which sets this alongside
-	// action.pending when that modal opens): non-nil ONLY while
-	// action.pending is that SAME update batch, and it is what
+	// resolveCheckUpdatesResult, mutations.go, the ONLY place that ever
+	// sets it, alongside action.pending when that modal opens): non-nil
+	// ONLY while action.pending is that SAME update batch, and it is what
 	// updatePendingActionKey's 'v' case (actions.go) consults to know both
 	// THAT the pending action is the update batch (the discriminator - no
 	// other pendingAction kind ever sets this) and WHICH updates/changelogs
-	// to show. Cleared everywhere action.pending itself is cleared
-	// (updatePendingActionKey's ConfirmAction/CancelAction branches) plus
-	// resolveGameSwitch's defense-in-depth modal reset, so it can never
-	// outlive the modal it describes or leak into a later, unrelated one.
+	// to show. Invariant: cleared at BOTH points action.pending itself is
+	// cleared - updatePendingActionKey's ConfirmAction branch (the fix-wave
+	// Critical: confirm-only clearing was missed at first, leaking the
+	// stale batch into later, unrelated modals - see
+	// TestUpdateModalConfirmClearsRetainedUpdatesView) and its CancelAction
+	// branch - plus resolveGameSwitch's defense-in-depth modal reset, so it
+	// can never outlive the modal it describes.
 	pendingUpdates *UpdatesView
 
 	screen   Screen
@@ -1665,7 +1668,9 @@ func (m Model) helpGroups() []helpGroup {
 // helpBodyBudget bounds how many content rows the help panel's group list
 // may use, so a long grouped list can't crowd screenView down past its own
 // floor (matching availableContentHeight's own max(...,8)) - the same
-// "+N more" cap overlayView uses, sized so the two floors agree exactly:
+// "+N more" cap style actionModalView uses (overlayView's former cap, until
+// Task 7's fix wave made the overlay scroll instead), sized so the two
+// floors agree exactly:
 // when the list is capped, screenView gets precisely its floor of 8; when
 // it isn't, screenView gets whatever room the (smaller) natural list left,
 // same as before Task 9.

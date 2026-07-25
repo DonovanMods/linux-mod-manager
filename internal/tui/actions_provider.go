@@ -177,10 +177,11 @@ type UpdateItem struct {
 	// core.CleanChangelog (Phase 6b Task 7) - the FULL cleaned text, with NO
 	// truncation: unlike cmd/lmm/update.go's own 800/500-char CLI
 	// truncation (a presentation concern that stays CLI-side), the TUI's
-	// changelog overlay (mutations.go's openChangelogFromUpdateModal) shows
-	// the whole thing and lets its own render-time "+N more" cap handle
-	// overflow. Empty means the source reported none - the overlay renders
-	// "no changelog available" rather than an empty panel.
+	// changelog overlay (actions.go's openChangelogFromUpdateModal) shows
+	// the whole thing, scrollable (see infoOverlay.offset) so every line is
+	// reachable however long it runs. Empty means the source reported none -
+	// the overlay renders "no changelog available" rather than an empty
+	// panel.
 	Changelog string
 }
 

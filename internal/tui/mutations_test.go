@@ -2198,6 +2198,55 @@ func TestUpdateModalVOpensPickerMultiple(t *testing.T) {
 	require.NotNil(t, model.action.pending, "the update batch modal must still be pending after the picker's overlay opens")
 }
 
+// TestUpdateModalConfirmClearsRetainedUpdatesView guards the fix-wave
+// Critical: confirming the update batch (not just cancelling it) must clear
+// m.pendingUpdates too. Before the fix, only CancelAction/resolveGameSwitch
+// cleared it, so a LATER, unrelated confirmation modal (here: uninstall)
+// still saw the stale retained view - its hint grew a bogus "v changelog"
+// entry and 'v' opened the changelog picker/overlay for the
+// already-applied batch on top of it.
+func TestUpdateModalConfirmClearsRetainedUpdatesView(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Changelog: "Fixed bugs."},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4", Changelog: "More fixes."},
+	}}}
+	model := openUpdatesModal(t, rec)
+	require.NotNil(t, model.pendingUpdates)
+
+	// Confirm the batch: the retained view must clear WITH action.pending,
+	// not linger until some later cancel.
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	require.Nil(t, model.action.pending)
+	require.Nil(t, model.pendingUpdates, "confirming the update batch must clear the retained updates view")
+
+	// Let the batch resolve; the done path must not resurrect it.
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+	updated, _ := model.Update(doneMsg)
+	model = updated.(Model)
+	require.Nil(t, model.pendingUpdates, "the done path must not resurrect the retained updates view")
+
+	// A later, unrelated confirmation modal must be completely untouched by
+	// the earlier batch: no "v changelog" hint, and 'v' does nothing.
+	model.screen = ScreenInstalledMods
+	updated, _ = model.Update(keyRunes("x"))
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending, "the uninstall confirmation must have opened")
+	require.Equal(t, actionUninstall, model.action.pending.kind)
+	require.NotContains(t, model.actionModalView(), "v changelog",
+		"an unrelated modal must not advertise the changelog viewer")
+
+	updated, cmd := model.Update(keyRunes("v"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.overlay)
+	require.Nil(t, model.picker)
+	require.NotNil(t, model.action.pending, "'v' must leave the unrelated modal untouched")
+}
+
 // TestVIgnoredOutsideUpdateModal guards the discriminator itself: 'v' is a
 // no-op with no pending action at all, and a no-op (leaving the OTHER
 // pending action completely untouched) when a DIFFERENT action's

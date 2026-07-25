@@ -421,6 +421,15 @@ func (m Model) updatePendingActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.ConfirmAction):
 		pa := m.action.pending
 		m.action.pending = nil
+		// pendingUpdates lives and dies with action.pending (see
+		// Model.pendingUpdates' doc comment): left uncleared here, the
+		// retained batch would leak into the NEXT unrelated confirmation
+		// modal - a bogus "v changelog" hint and a 'v' that opens the
+		// already-applied batch's changelogs on top of it (fix-wave
+		// Critical; TestUpdateModalConfirmClearsRetainedUpdatesView).
+		// Nothing on the actionDoneMsg/actionFailedMsg paths can resurrect
+		// it - resolveCheckUpdatesResult is the only assignment.
+		m.pendingUpdates = nil
 		m.action.running = true
 		return m, pa.confirm()
 	case key.Matches(msg, m.keys.CancelAction):
@@ -477,10 +486,11 @@ func (m Model) openChangelogFromUpdateModal() (tea.Model, tea.Cmd) {
 // "<name> <from> → <to>", body split on newlines. u.Changelog is already the
 // FULL core.CleanChangelog'd text by the time it reaches here (see
 // UpdateItem.Changelog's own doc comment) - no further stripping or
-// truncation happens here; overlayView's own render-time "+N more" cap
-// handles anything taller than the panel, exactly like every other
-// infoOverlay. An empty Changelog (the source reported none) renders the
-// single line "no changelog available" instead of an empty panel.
+// truncation happens here; the overlay's own scrolling (updateOverlayKey's
+// Up/Down window over infoOverlay.offset) makes anything taller than the
+// panel reachable, exactly like every other infoOverlay. An empty Changelog
+// (the source reported none) renders the single line "no changelog
+// available" instead of an empty panel.
 func changelogOverlay(u UpdateItem) *infoOverlay {
 	title := fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion)
 	lines := []string{"no changelog available"}
