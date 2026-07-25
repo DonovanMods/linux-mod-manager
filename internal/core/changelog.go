@@ -20,11 +20,16 @@ import (
 // stripHTMLForTerminal) and internal/tui's coreProvider.CheckUpdates
 // (service_core.go), so the CLI and TUI strip a source's raw HTML changelog
 // identically.
+var (
+	changelogBreakRE = regexp.MustCompile(`(?i)<br\s*/?>|</p>|<p[^>]*>`)
+	changelogTagRE   = regexp.MustCompile(`<[^>]*>`)
+)
+
 func CleanChangelog(html string) string {
 	// Replace block/line breaks with newlines
-	html = regexp.MustCompile(`(?i)<br\s*/?>|</p>|<p[^>]*>`).ReplaceAllString(html, "\n")
+	html = changelogBreakRE.ReplaceAllString(html, "\n")
 	// Remove remaining tags
-	html = regexp.MustCompile(`<[^>]*>`).ReplaceAllString(html, "")
+	html = changelogTagRE.ReplaceAllString(html, "")
 	// Decode common entities
 	html = strings.ReplaceAll(html, "&nbsp;", " ")
 	html = strings.ReplaceAll(html, "&amp;", "&")
