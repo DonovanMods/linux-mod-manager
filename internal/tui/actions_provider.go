@@ -792,8 +792,19 @@ func (p *prototypeProvider) ReorderMods(_ context.Context, orderedKeys []string)
 		byKey[domain.ModKey(mod.Source, mod.ID)] = mod
 	}
 
+	// Permutation guard (Copilot PR #73 round 6): the interface contract
+	// says orderedKeys names every installed mod exactly once; a missing or
+	// duplicated key would silently drop or duplicate mods in the list.
+	if len(orderedKeys) != len(mods) {
+		return ActionOutcome{}, fmt.Errorf("reorder must include every installed mod: got %d of %d", len(orderedKeys), len(mods))
+	}
+	seen := make(map[string]bool, len(orderedKeys))
 	reordered := make([]prototype.Mod, 0, len(orderedKeys))
 	for _, key := range orderedKeys {
+		if seen[key] {
+			return ActionOutcome{}, fmt.Errorf("duplicate mod key: %s", key)
+		}
+		seen[key] = true
 		mod, ok := byKey[key]
 		if !ok {
 			return ActionOutcome{}, fmt.Errorf("mod not found: %s", key)

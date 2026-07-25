@@ -2469,3 +2469,30 @@ func TestCoreProviderActions_ApplyImport_ForceOverwritesExisting(t *testing.T) {
 	require.Len(t, saved.Mods, 1)
 	assert.Equal(t, "new-mod", saved.Mods[0].ModID, "the overwrite must replace the existing profile's mod list")
 }
+
+// TestCoreProviderReorderModsRejectsIncompleteOrDuplicate mirrors the
+// prototype-side permutation guard (Copilot PR #73 round 6): orderedKeys
+// missing an installed mod, or naming one twice, must error without
+// touching the profile on disk.
+func TestCoreProviderReorderModsRejectsIncompleteOrDuplicate(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modA", "Mod A", "1.0", true, nil)
+	seedActionMod(t, svc, game, "src", "modB", "Mod B", "1.0", true, nil)
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+		SourceID: "src", ModID: "modA", Version: "1.0",
+	}))
+	before, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+
+	_, err = actions.ReorderMods(context.Background(), []string{"src:modA"})
+	require.ErrorContains(t, err, "every installed mod")
+
+	_, err = actions.ReorderMods(context.Background(), []string{"src:modA", "src:modA"})
+	require.ErrorContains(t, err, "duplicate")
+
+	after, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	require.Equal(t, before.Mods, after.Mods, "failed validation must not rewrite the profile")
+}

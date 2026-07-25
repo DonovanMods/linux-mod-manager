@@ -871,8 +871,19 @@ func (p *coreProvider) ReorderMods(_ context.Context, orderedKeys []string) (Act
 		installedByKey[domain.ModKey(mod.SourceID, mod.ID)] = mod
 	}
 
+	// Permutation guard (Copilot PR #73 round 6, mirroring the prototype):
+	// orderedKeys must name every installed mod exactly once — a missing or
+	// duplicated key would silently drop or duplicate profile refs.
+	if len(orderedKeys) != len(installed) {
+		return ActionOutcome{}, fmt.Errorf("reorder must include every installed mod: got %d of %d", len(orderedKeys), len(installed))
+	}
+	seen := make(map[string]bool, len(orderedKeys))
 	mods := make([]domain.ModReference, 0, len(orderedKeys))
 	for _, key := range orderedKeys {
+		if seen[key] {
+			return ActionOutcome{}, fmt.Errorf("duplicate mod key: %s", key)
+		}
+		seen[key] = true
 		if ref, ok := existing[key]; ok {
 			mods = append(mods, ref)
 			continue

@@ -1100,3 +1100,30 @@ func TestFailingActionsDefaultsToGenericErrorWhenUnconfigured(t *testing.T) {
 	_, err := f.EnableMod(context.Background(), ModItem{})
 	require.Error(t, err)
 }
+
+// TestPrototypeReorderModsRejectsIncompleteOrDuplicate guards the
+// permutation contract (Copilot PR #73 round 6): orderedKeys missing an
+// installed mod, or naming one twice, must be rejected rather than silently
+// dropping/duplicating mods in the reordered list.
+func TestPrototypeReorderModsRejectsIncompleteOrDuplicate(t *testing.T) {
+	t.Parallel()
+
+	p := NewPrototypeProvider().(*prototypeProvider)
+	mods := p.activeMods()
+	require.GreaterOrEqual(t, len(mods), 2, "fixture needs at least two mods")
+	full := make([]string, len(mods))
+	for i, m := range mods {
+		full[i] = m.Source + ":" + m.ID
+	}
+
+	_, err := p.ReorderMods(context.Background(), full[:len(full)-1])
+	require.ErrorContains(t, err, "every installed mod")
+
+	dup := append([]string{}, full...)
+	dup[len(dup)-1] = dup[0] // right length, one key twice
+	_, err = p.ReorderMods(context.Background(), dup)
+	require.ErrorContains(t, err, "duplicate")
+
+	before := append([]prototype.Mod(nil), p.activeMods()...)
+	require.Equal(t, before, p.activeMods(), "failed validation must not mutate the list")
+}
