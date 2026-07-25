@@ -179,3 +179,21 @@ func TestGetProfileConflictsMissingCacheSkipsMod(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, conflicts)
 }
+
+// TestGetProfileConflictsCancelledContext pins the ctx.Err() check between
+// per-mod cache walks (Copilot PR #73 round 2): a cancelled context returns
+// promptly with the context's error instead of walking remaining caches.
+func TestGetProfileConflictsCancelledContext(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := seedTwinConflict(t, svc,
+		map[string][]byte{"shared.esp": []byte("X-content")},
+		map[string][]byte{"shared.esp": []byte("Y-content")},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	conflicts, err := svc.GetProfileConflicts(ctx, game, "default")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, conflicts)
+}

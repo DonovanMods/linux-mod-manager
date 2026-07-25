@@ -47,9 +47,11 @@ type ProfileConflict struct {
 // The profile's load order is read via the ProfileManager; a profile that
 // fails to load is treated as empty (nil), so every provider counts as
 // unlisted and ordering stays deterministic (sorted by key) rather than the
-// query aborting - mirroring OrderByProfile's nil handling. ctx is accepted
-// for API consistency with the rest of Service's methods; today's algorithm
-// performs no I/O that needs it.
+// query aborting - mirroring OrderByProfile's nil handling. The query reads
+// the DB (GetInstalledMods, GetFileOwner) and walks each enabled mod's cache
+// directory (ListFiles); ctx is checked between per-mod cache walks so a
+// caller cancelling mid-query (e.g. the TUI's quit-drain) gets ctx.Err()
+// promptly instead of paying for the remaining walks.
 func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, profileName string) ([]ProfileConflict, error) {
 	mods, err := s.GetInstalledMods(game.ID, profileName)
 	if err != nil {
@@ -87,6 +89,9 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 	gameCache := s.GetGameCache(game)
 	fileToKeys := make(map[string][]string)
 	for _, m := range enabled {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		files, err := gameCache.ListFiles(game.ID, m.SourceID, m.ID, m.Version)
 		if err != nil {
 			continue
