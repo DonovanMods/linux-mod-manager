@@ -26,8 +26,10 @@ Shows the configured game's installed mods, profiles, and status using the
 same config, database, and game resolution as the CLI commands. Search mod
 sources interactively, inspect the source registry, and manage mods in
 place - enable/disable, uninstall, deploy, switch profiles, install from
-search results, and check for updates - with every mutating action behind a
-confirmation prompt.
+search results, check for updates (with changelogs and rollback), reorder
+load order, resolve file conflicts, edit update policies, view deployed
+files, purge a profile, switch games, and create/delete/export/import
+profiles - with every mutating action behind a confirmation prompt.
 
 Use --prototype for a demo mode backed by static fake data:
 
