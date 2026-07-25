@@ -45,6 +45,14 @@ func TestRollbackKeyOpensConfirmModal(t *testing.T) {
 	require.NotNil(t, model.action.pending)
 	require.Equal(t, actionRollback, model.action.pending.kind)
 	require.Equal(t, `Roll back "SKSE Address Library" v11 → v10?`, model.action.pending.title)
+	// Pins the caveat line's exact shape: it must match sibling modals
+	// (uninstall/deploy stop after the hook-mention sentence) and stop
+	// there - no trailing "may leave a mix of both versions applied"
+	// sentence, which both broke tone parity with siblings and truncated
+	// on screen at 80 cols. require.Contains on a []string checks for an
+	// exact matching element, so this also proves no extra sentence was
+	// appended to it.
+	require.Contains(t, model.action.pending.detail, "Replaces deployed files with the previous version; rollback hooks will run.")
 	require.Empty(t, rec.RollbackCalls, "nothing must mutate before confirm")
 
 	confirmed, confirmCmd := model.Update(keyRunes("y"))

@@ -209,7 +209,7 @@ func (m Model) rollbackSelectedMod() (Model, tea.Cmd) {
 	}
 
 	title := fmt.Sprintf("Roll back %q v%s → v%s?", item.Name, item.Version, item.PreviousVersion)
-	detail := m.gameProfileDetail("Replaces deployed files with the previous version; rollback hooks will run. A failure partway may leave a mix of both versions applied.")
+	detail := m.gameProfileDetail("Replaces deployed files with the previous version; rollback hooks will run.")
 	model, pa := m.buildAction(actionRollback, title, detail, "", func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
 		return m.actions.Rollback(ctx, item, progress)
 	})
