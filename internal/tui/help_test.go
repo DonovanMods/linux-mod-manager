@@ -26,6 +26,10 @@ func TestHelpViewListsPerScreenGroups(t *testing.T) {
 	for _, want := range []string{
 		"global", "dashboard", "installed mods", "search", "profiles", "conflicts",
 		"files", "policy", "purge", "game", "new profile", "delete profile",
+		// changelog is fix-wave-2 finding #1's list-scoped changelog viewer
+		// ('v' on Installed Mods, outside any modal - viewSelectedModChangelog,
+		// mutations.go), added to the installed-mods group.
+		"changelog",
 	} {
 		require.Contains(t, view, want, "missing %q", want)
 	}

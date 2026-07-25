@@ -216,6 +216,75 @@ func (m Model) rollbackSelectedMod() (Model, tea.Cmd) {
 	return model.promptAction(pa), nil
 }
 
+// --- List-scoped changelog viewing ('v' on Installed Mods, no modal) ---
+
+// viewSelectedModChangelog handles 'v' on Installed Mods OUTSIDE any modal
+// (fix-wave-2 smoke finding #1): the modal-scoped 'v'
+// (updatePendingActionKey/openChangelogFromUpdateModal, actions.go) only
+// exists while the apply-updates confirmation modal is up - once that modal
+// closes (confirm or cancel) or a check found zero updates and never opened
+// one at all, changelogs became unreachable even though the user is still
+// looking at the very same Installed Mods list. This is the same key,
+// dispatched from updateKey's outer switch (which the focused-search-input
+// branch and every modal already run ahead of - see updateKey's own doc
+// comment), reading m.lastUpdates - the retained CheckUpdates result that
+// outlives the modal - instead of m.pendingUpdates, which dies with it (see
+// Model.lastUpdates' own doc comment).
+//
+// Guards mirror this file's other list keys: wrong screen or an out-of-range
+// selection (empty list) is a silent no-op, mirroring
+// rollbackSelectedMod/showDeployedFiles' own guard/selection shape. This
+// needs no m.actions/m.provider != nil check (it's a pure read over
+// already-retained Model state, no provider call at all) - but DOES need the
+// single-flight guard (m.action.running || m.action.pending != nil)
+// explicitly, mirroring moveSelectedMod's own reasoning: updateKey only
+// routes here when picker/inputModal/overlay/action.pending are already all
+// nil, but a CheckUpdates fetch in flight (m.action.running, no modal up
+// yet) isn't covered by that routing guard, and opening a changelog overlay
+// mid-fetch would be confusing.
+//
+// Three outcomes:
+//   - m.lastUpdates == nil (no check has run this session, or a game switch
+//     cleared it - resolveGameSwitch): a benign status line, not an error,
+//     directing the user to 'u' first.
+//   - checked (even a zero-updates check sets lastUpdates - see
+//     resolveCheckUpdatesResult), but no entry in m.lastUpdates.Updates
+//     matches the selected mod's (Source, ID): a benign status line naming
+//     the mod.
+//   - a match: opens its changelog overlay via the existing changelogOverlay
+//     helper (actions.go) - identical title/empty-text rendering to the
+//     modal-scoped path, so the two entry points are indistinguishable once
+//     the overlay is open.
+func (m Model) viewSelectedModChangelog() (Model, tea.Cmd) {
+	if m.screen != ScreenInstalledMods {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	item, ok := m.selectedMod()
+	if !ok {
+		return m, nil
+	}
+
+	if m.lastUpdates == nil {
+		m.action.status = "no update info — check updates (u) first"
+		m.action.statusIsError = false
+		return m, nil
+	}
+
+	for _, u := range m.lastUpdates.Updates {
+		if u.Source == item.Source && u.ID == item.ID {
+			m = m.promptOverlay(*changelogOverlay(u))
+			return m, nil
+		}
+	}
+
+	m.action.status = fmt.Sprintf("no update changelog for %q", item.Name)
+	m.action.statusIsError = false
+	return m, nil
+}
+
 // --- Load-order reorder (J/K on Installed Mods) ---
 
 // moveSelectedMod handles MoveDown ('J', delta=+1) and MoveUp ('K',
@@ -929,6 +998,12 @@ func (m Model) resolveCheckUpdatesResult(msg checkUpdatesResultMsg) (Model, tea.
 	if len(view.Updates) == 0 {
 		m.action.status = formatOutcomeStatus(ActionOutcome{Message: "No updates available.", Warnings: view.Warnings})
 		m.action.statusIsError = false
+		// lastUpdates is set here too (fix-wave-2 smoke finding #1), even
+		// though no modal ever opens on this path: an EMPTY retained result
+		// still answers 'v' on Installed Mods with the correct "checked, no
+		// entry for this mod" status line rather than the "never checked at
+		// all" one - see viewSelectedModChangelog's own doc comment.
+		m.lastUpdates = &view
 		return m, nil
 	}
 
@@ -943,6 +1018,10 @@ func (m Model) resolveCheckUpdatesResult(msg checkUpdatesResultMsg) (Model, tea.
 	// (names, versions, changelogs). Cleared everywhere action.pending
 	// itself is cleared - see Model.pendingUpdates' own doc comment.
 	model.pendingUpdates = &view
+	// lastUpdates shares the SAME view (fix-wave-2 smoke finding #1): unlike
+	// pendingUpdates, it is NOT cleared when the modal above closes - see
+	// Model.lastUpdates' own doc comment.
+	model.lastUpdates = &view
 	return model.promptAction(pa), nil
 }
 
@@ -1422,6 +1501,13 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	// this is reset here anyway, same defense-in-depth reasoning as the
 	// three modal resets just above.
 	m.pendingUpdates = nil
+	// lastUpdates (fix-wave-2 smoke finding #1) is pendingUpdates' list-
+	// scoped sibling (see Model.lastUpdates' own doc comment): NOT already
+	// implied nil by the guard above (unlike pendingUpdates, it deliberately
+	// outlives the modal), so this reset is the ONLY place it's ever
+	// cleared - a different game's retained CheckUpdates result must never
+	// answer 'v' on the new game's Installed Mods list.
+	m.lastUpdates = nil
 
 	m.summary = Summary{Updates: -1, Conflicts: -1}
 	m.mods = nil

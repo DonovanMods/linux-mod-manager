@@ -122,6 +122,27 @@ type Model struct {
 	// can never outlive the modal it describes.
 	pendingUpdates *UpdatesView
 
+	// lastUpdates retains the most recent CheckUpdates result for list-scoped
+	// changelog viewing (fix-wave-2 smoke finding #1): 'v' on
+	// ScreenInstalledMods, OUTSIDE any modal (viewSelectedModChangelog,
+	// mutations.go), consults this rather than m.pendingUpdates, which lives
+	// and dies with the apply-updates confirmation modal (see that field's
+	// own doc comment). Once the modal closes - confirm OR cancel - or a
+	// check found zero updates and never opened a modal at all,
+	// pendingUpdates is nil while lastUpdates still holds the same
+	// CheckUpdates result the user just saw, so changelogs stay reachable
+	// from the list itself.
+	//
+	// Set in resolveCheckUpdatesResult (mutations.go) for BOTH the
+	// zero-updates and modal-opening paths - unlike pendingUpdates, which
+	// only the modal-opening path ever sets. Deliberately NOT cleared on the
+	// modal's own confirm/cancel (updatePendingActionKey, actions.go): that
+	// would defeat the whole point of a list-scoped viewer that outlives the
+	// modal. Cleared only in resolveGameSwitch, alongside pendingUpdates' own
+	// defense-in-depth reset, since a different game's updates must never
+	// leak into this one's Installed Mods list.
+	lastUpdates *UpdatesView
+
 	screen   Screen
 	selected map[Screen]int
 	showHelp bool
@@ -774,6 +795,13 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.moveSelectedMod(-1)
 	case key.Matches(msg, m.keys.Rollback):
 		return m.rollbackSelectedMod()
+	case key.Matches(msg, m.keys.Changelog):
+		// Fix-wave-2 smoke finding #1: 'v' on Installed Mods, OUTSIDE any
+		// modal - the modal-scoped 'v' (updatePendingActionKey, actions.go)
+		// only ever fires from the m.action.pending != nil branch ABOVE this
+		// outer switch (see updateKey's own doc comment on dispatch order),
+		// so the two never collide.
+		return m.viewSelectedModChangelog()
 	default:
 		return m, nil
 	}
@@ -1618,6 +1646,14 @@ func (m Model) helpGroups() []helpGroup {
 			// Rollback is Task 6's rollback-behind-confirmation key (see
 			// mutations.go's rollbackSelectedMod).
 			helpEntry(m.keys.Rollback),
+			// Changelog is fix-wave-2's list-scoped changelog-viewer key (see
+			// mutations.go's viewSelectedModChangelog) - distinct from the
+			// modal-scoped 'v' (updatePendingActionKey/
+			// openChangelogFromUpdateModal, actions.go), which has no help
+			// entry of its own since it only ever applies while the
+			// apply-updates modal is already up (see keys.go's Changelog
+			// doc comment).
+			helpEntry(m.keys.Changelog),
 		},
 	}
 
