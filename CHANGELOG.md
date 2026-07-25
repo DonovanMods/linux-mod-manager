@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-24
+
 ### Added
 
 - TUI conflicts screen (key `6`, in the screen-jump/nav rotation): lists every game-directory file two or more enabled mods provide, with the current owner, the load-order winner, every other providing mod, and a "stale" marker when the deployed copy no longer matches the winner; selecting a row shows a resolution hint. `D` deploys the active profile directly from this screen. The Dashboard's conflict count now reflects real detection instead of a placeholder
@@ -862,7 +864,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.3...v1.13.0
 [1.12.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.2...v1.12.3
