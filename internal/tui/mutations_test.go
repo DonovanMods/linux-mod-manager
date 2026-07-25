@@ -2863,7 +2863,8 @@ func TestMoveSelectedModDownPersistsOrder(t *testing.T) {
 
 	updated, cmd := model.Update(keyRunes("J"))
 	model = updated.(Model)
-	require.Nil(t, cmd)
+	require.NotNil(t, cmd, "a successful move must also refresh so Conflicts/dashboard reflect the new order")
+	require.IsType(t, dataLoadedMsg{}, cmd())
 
 	require.Equal(t, "USSEP", model.mods[0].Name, "row 0 now holds what was row 1")
 	require.Equal(t, "SkyUI", model.mods[1].Name, "row 1 now holds what was row 0")

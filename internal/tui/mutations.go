@@ -242,8 +242,11 @@ func (m Model) rollbackSelectedMod() (Model, tea.Cmd) {
 // selection/edge condition that isn't itself an error.
 //
 // On success: the swapped order becomes m.mods, selection follows the moved
-// mod to its new slot, and m.orderChanged is set (see its own doc comment)
-// so the status line reminds the user to deploy. On failure: m.mods is left
+// mod to its new slot, m.orderChanged is set (see its own doc comment) so the
+// status line reminds the user to deploy, and a refresh (m.loadData) is
+// dispatched so the Conflicts screen and dashboard conflict count - both of
+// which depend on load order - pick up the new winner immediately rather
+// than lagging one unrelated action behind. On failure: m.mods is left
 // untouched (the write never took effect) and a refresh is dispatched so the
 // list reflects disk truth - mirroring the design's own "errors surface in
 // the status line and the list refreshes to disk truth" contract.
@@ -288,7 +291,7 @@ func (m Model) moveSelectedMod(delta int) (Model, tea.Cmd) {
 	m.mods = mods
 	m.selected[ScreenInstalledMods] = target
 	m.orderChanged = true
-	return m, nil
+	return m, m.loadData
 }
 
 // --- Update policy ('P' on Installed Mods) ---
