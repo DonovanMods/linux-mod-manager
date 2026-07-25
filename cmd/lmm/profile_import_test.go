@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"regexp"
 	"testing"
 	"time"
 
@@ -77,6 +78,19 @@ func buildImportProfileData(t *testing.T, gameID, name string, mods []domain.Mod
 	data, err := config.ExportProfile(&domain.Profile{Name: name, GameID: gameID, Mods: mods})
 	require.NoError(t, err)
 	return data
+}
+
+// downloadProgressRe matches doProfileImport's carriage-returned download
+// progress readouts ("\r    Downloading: 47.3%") - the ONLY
+// non-deterministic part of the download paths' output (how many ticks fire,
+// and at which percentages, depends on chunk timing). stripDownloadProgress
+// removes them so those paths can be pinned with exact full-output equality
+// like every other path; everything else, including the ImportDownloadDone
+// newline that terminates the progress line, is deterministic and kept.
+var downloadProgressRe = regexp.MustCompile(`\r    Downloading: [0-9.]+%`)
+
+func stripDownloadProgress(out string) string {
+	return downloadProgressRe.ReplaceAllString(out, "")
 }
 
 // TestDoProfileImport_AllInstalled_PrintsSummaryAndSkipsInstallStep pins the
@@ -154,13 +168,22 @@ func TestDoProfileImport_NeedsRedownload_ReinstallsUsingStoredFileIDs(t *testing
 		})
 	})
 
-	assert.Contains(t, out, "  ⚠ 1 cache missing, need re-download:\n")
-	assert.Contains(t, out, "    - test-src:mod1 v1.0\n")
-	assert.Contains(t, out, "\n✓ Imported profile: target\n")
-	assert.Contains(t, out, "\nDownload and install mods? [Y/n]: ")
-	assert.Contains(t, out, "  Installing test-src:mod1...\n")
-	assert.Contains(t, out, "    ✓ Installed: Mod One\n")
-	assert.Contains(t, out, "\n--- Summary ---\nInstalled: 1\n")
+	assert.Equal(t, "Importing profile: target\n"+
+		"\n"+
+		"Found 1 mod(s) in profile.\n"+
+		"  ⚠ 1 cache missing, need re-download:\n"+
+		"    - test-src:mod1 v1.0\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
+		"\n"+
+		"Download and install mods? [Y/n]: \n"+
+		"Downloading and installing mods...\n"+
+		"  Installing test-src:mod1...\n"+
+		"\n"+
+		"    ✓ Installed: Mod One\n"+
+		"\n"+
+		"--- Summary ---\n"+
+		"Installed: 1\n", stripDownloadProgress(out))
 
 	installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
 	require.NoError(t, err)
@@ -185,11 +208,22 @@ func TestDoProfileImport_MissingWithInstall_AcceptedInstallsMod(t *testing.T) {
 		})
 	})
 
-	assert.Contains(t, out, "  ↓ 1 need to be downloaded:\n    - test-src:mod1 v1.0\n")
-	assert.Contains(t, out, "\nDownload and install mods? [Y/n]: ")
-	assert.Contains(t, out, "  Installing test-src:mod1...\n")
-	assert.Contains(t, out, "    ✓ Installed: Mod One\n")
-	assert.Contains(t, out, "\n--- Summary ---\nInstalled: 1\n")
+	assert.Equal(t, "Importing profile: target\n"+
+		"\n"+
+		"Found 1 mod(s) in profile.\n"+
+		"  ↓ 1 need to be downloaded:\n"+
+		"    - test-src:mod1 v1.0\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
+		"\n"+
+		"Download and install mods? [Y/n]: \n"+
+		"Downloading and installing mods...\n"+
+		"  Installing test-src:mod1...\n"+
+		"\n"+
+		"    ✓ Installed: Mod One\n"+
+		"\n"+
+		"--- Summary ---\n"+
+		"Installed: 1\n", stripDownloadProgress(out))
 
 	_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
 	require.NoError(t, err)
@@ -212,9 +246,15 @@ func TestDoProfileImport_PromptDeclined_NoInstallHappens(t *testing.T) {
 		})
 	})
 
-	assert.Contains(t, out, "\nDownload and install mods? [Y/n]: ")
-	assert.Contains(t, out, "Skipped. Use 'lmm profile apply target' to install them later.\n")
-	assert.NotContains(t, out, "--- Summary ---")
+	assert.Equal(t, "Importing profile: target\n"+
+		"\n"+
+		"Found 1 mod(s) in profile.\n"+
+		"  ↓ 1 need to be downloaded:\n"+
+		"    - test-src:mod1 v1.0\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
+		"\n"+
+		"Download and install mods? [Y/n]: Skipped. Use 'lmm profile apply target' to install them later.\n", out)
 
 	_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
 	assert.Error(t, err, "declining must leave zero install mutations")
@@ -274,8 +314,15 @@ func TestDoProfileImport_NoInstallFlag_SkipsPromptEntirely(t *testing.T) {
 	out := string(outBytes)
 
 	require.NoError(t, doErr)
-	assert.Contains(t, out, "\nSkipped installing 1 mod(s). Use 'lmm profile apply target' to install them later.\n")
-	assert.NotContains(t, out, "Download and install mods?")
+	assert.Equal(t, "Importing profile: target\n"+
+		"\n"+
+		"Found 1 mod(s) in profile.\n"+
+		"  ↓ 1 need to be downloaded:\n"+
+		"    - test-src:mod1 v1.0\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
+		"\n"+
+		"Skipped installing 1 mod(s). Use 'lmm profile apply target' to install them later.\n", out)
 
 	_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
 	assert.Error(t, err)
@@ -300,12 +347,60 @@ func TestDoProfileImport_ForceOverwritesExistingProfile(t *testing.T) {
 		return doProfileImport(context.Background(), svc, game, data)
 	})
 
-	assert.Contains(t, out, "✓ Imported profile: target\n")
+	assert.Equal(t, "Importing profile: target\n"+
+		"\n"+
+		"Found 1 mod(s) in profile.\n"+
+		"  ↓ 1 need to be downloaded:\n"+
+		"    - test-src:new-mod v1.0\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
+		"\n"+
+		"Skipped installing 1 mod(s). Use 'lmm profile apply target' to install them later.\n", out)
 
 	saved, err := pm.Get(game.ID, "target")
 	require.NoError(t, err)
 	require.Len(t, saved.Mods, 1)
 	assert.Equal(t, "new-mod", saved.Mods[0].ModID, "--force must overwrite the existing profile's mod list")
+}
+
+// TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary pins
+// the prompt's genuine-I/O-failure path (fix wave 1, Important 1): when
+// readPromptLine fails with a non-EOF error, doProfileImport must propagate
+// that error - the pre-extraction CLI's own `if err != nil { return err }`
+// right after the prompt - and must NOT print the "--- Summary ---" block
+// (the regression: ConfirmInstall returning false made ApplyImport treat
+// the failure as an ordinary decline, so the error was swallowed and a
+// spurious "Installed: 0" summary printed). The failure is simulated by
+// swapping os.Stdin for an already-CLOSED pipe read end: reading a closed
+// *os.File returns os.ErrClosed (non-EOF), which readPromptLineFrom wraps
+// as "reading input: ...".
+func TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
+
+	oldStdin := os.Stdin
+	stdinR, stdinW, perr := os.Pipe()
+	require.NoError(t, perr)
+	require.NoError(t, stdinW.Close())
+	require.NoError(t, stdinR.Close()) // closed BEFORE the read: os.ErrClosed, a non-EOF failure
+	os.Stdin = stdinR
+	t.Cleanup(func() { os.Stdin = oldStdin })
+
+	out, doErr := captureStdoutErr(t, func() error {
+		return doProfileImport(context.Background(), svc, game, data)
+	})
+
+	require.Error(t, doErr, "a genuine stdin read failure must propagate, never be swallowed as a decline")
+	assert.ErrorIs(t, doErr, os.ErrClosed)
+	assert.Contains(t, doErr.Error(), "reading input")
+	assert.NotContains(t, out, "--- Summary ---", "a prompt read failure must not fall through to the summary block")
+	assert.NotContains(t, out, "Skipped", "a prompt read failure is not a decline")
+
+	_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
+	assert.Error(t, err, "no install may happen after a failed prompt read")
 }
 
 // TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError pins the
@@ -328,8 +423,12 @@ func TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError(t *testing.T) 
 	require.Error(t, doErr)
 	assert.Contains(t, doErr.Error(), "profile already exists: target")
 	assert.Contains(t, doErr.Error(), "use --force")
-	assert.Contains(t, out, "Importing profile: target\n")
-	assert.NotContains(t, out, "Imported profile", "a failed save must never print the success line")
+	assert.Equal(t, "Importing profile: target\n"+
+		"\n"+
+		"Found 1 mod(s) in profile.\n"+
+		"  ↓ 1 need to be downloaded:\n"+
+		"    - test-src:new-mod v1.0\n", out,
+		"a failed save must print the preview only - never the success line or anything after it")
 
 	saved, err := pm.Get(game.ID, "target")
 	require.NoError(t, err)

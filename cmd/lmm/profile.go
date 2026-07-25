@@ -506,14 +506,22 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	result, err := service.ApplyImport(ctx, game, plan, opts, progress)
+	// A genuine stdin read failure inside the ConfirmInstall closure must be
+	// checked UNCONDITIONALLY, before anything else: the closure signals it
+	// by returning false, which ApplyImport treats as an ordinary decline
+	// and returns (result, nil) - so an `err != nil`-gated check would
+	// swallow the failure and fall through to a spurious "--- Summary ---"
+	// block. The pre-extraction CLI returned the error immediately after the
+	// prompt, printing nothing further (fix wave 1, Important 1 - pinned by
+	// TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary).
+	if promptErr != nil {
+		return promptErr
+	}
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already printed
 		// above, live, via progress. ApplyImport's own error is already
 		// appropriately wrapped (e.g. "importing profile: %w" for a failed
 		// save) or bare (ctx cancellation) - no additional wrapping here.
-		if promptErr != nil {
-			return promptErr
-		}
 		return err
 	}
 
