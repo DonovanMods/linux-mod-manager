@@ -1087,6 +1087,10 @@ func TestFailingActionsErrorsOnEveryMethod(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 	_, err = f.ApplyImport(ctx, nil, nil)
 	assert.ErrorIs(t, err, sentinel)
+	_, err = f.ReorderMods(ctx, nil)
+	assert.ErrorIs(t, err, sentinel)
+	_, err = f.ExportProfile(ctx, "p", "p.yaml")
+	assert.ErrorIs(t, err, sentinel)
 }
 
 func TestFailingActionsDefaultsToGenericErrorWhenUnconfigured(t *testing.T) {

@@ -2,7 +2,9 @@ package core_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -221,5 +223,36 @@ func TestGetProfileConflictsCacheReadErrorPropagates(t *testing.T) {
 	conflicts, err := svc.GetProfileConflicts(context.Background(), game, "default")
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "listing cache files")
+	assert.Nil(t, conflicts)
+}
+
+// TestGetProfileConflictsOwnerLookupErrorPropagates pins the storage-error
+// split on GetFileOwner (Copilot PR #73 round 4): "no owner recorded" skips
+// the path (pre-extraction behavior), but a genuine storage failure aborts
+// the query instead of silently under-reporting conflicts. The failure is
+// forced deterministically by dropping deployed_files via a second SQLite
+// connection (the installVersionBlockingTrigger technique, flows_rollback_test.go).
+func TestGetProfileConflictsOwnerLookupErrorPropagates(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := seedTwinConflict(t, svc,
+		map[string][]byte{"shared.esp": []byte("X-content")},
+		map[string][]byte{"shared.esp": []byte("Y-content")},
+	)
+
+	conn, err := sql.Open("sqlite", filepath.Join(dataDir, "lmm.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	_, err = conn.Exec(`DROP TABLE deployed_files`)
+	require.NoError(t, err)
+
+	conflicts, err := svc.GetProfileConflicts(context.Background(), game, "default")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "file owner")
 	assert.Nil(t, conflicts)
 }

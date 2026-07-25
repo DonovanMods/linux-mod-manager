@@ -131,7 +131,12 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 		}
 
 		ownerSourceID, ownerModID, found, err := s.GetFileOwner(game.ID, profileName, path)
-		if err != nil || !found {
+		if err != nil {
+			// GetFileOwner errs only on storage failure; conflating that with
+			// "no owner recorded" would silently under-report conflicts.
+			return nil, fmt.Errorf("looking up file owner for %s: %w", path, err)
+		}
+		if !found {
 			continue
 		}
 		ownerKey := domain.ModKey(ownerSourceID, ownerModID)
