@@ -53,6 +53,30 @@ func TestCreateProfileDuplicateNameValidatesInModal(t *testing.T) {
 	require.Empty(t, rec.CreateProfileCalls)
 }
 
+// TestCreateProfileEmptySubmitShowsNameRequired proves createProfilePrompt's
+// pendingInput is byte-unchanged by the addition of requiredMsg (Minor #5,
+// input_modal.go): it never sets the field, so an empty submit still falls
+// back to the generic "name required" default - mirroring
+// TestInputModalEmptySubmitShowsNameRequired's unit-level version of the same
+// contract, but through the real caller this time.
+func TestCreateProfileEmptySubmitShowsNameRequired(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenProfiles
+
+	updated, _ := model.Update(keyRunes("c"))
+	model = updated.(Model)
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+
+	require.Nil(t, cmd, "an empty submit must not dispatch anything")
+	require.NotNil(t, model.inputModal, "modal must stay open on an empty submit")
+	require.Equal(t, "name required", model.inputModal.errMsg)
+	require.Empty(t, rec.CreateProfileCalls)
+}
+
 // TestCreateProfilePathTraversalNameValidatesInModal covers the validate
 // closure's path-traversal check: names containing path separators or ".."
 // would become file paths under the profiles directory (the config layer

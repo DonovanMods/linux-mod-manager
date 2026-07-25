@@ -45,6 +45,33 @@ func TestExportKeyOpensPathInputPrefilled(t *testing.T) {
 	require.Equal(t, "skyrim-se-survival.yaml", model.inputModal.input.Value())
 }
 
+// TestExportEmptySubmitShowsPathRequired covers exportProfilePrompt's
+// requiredMsg (Minor #5, input_modal.go): the input starts prefilled (see
+// TestExportKeyOpensPathInputPrefilled above), so this clears it first
+// (mirrors TestExportSuccessStatusLine's own SetValue precedent for editing
+// the path) to reach the empty-submit case - which must say "path required",
+// not the generic "name required".
+func TestExportEmptySubmitShowsPathRequired(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenProfiles
+	model.selected[ScreenProfiles] = 0 // "survival"
+
+	updated, _ := model.Update(keyRunes("E"))
+	model = updated.(Model)
+	model.inputModal.input.SetValue("")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+
+	require.Nil(t, cmd, "an empty submit must not dispatch anything")
+	require.NotNil(t, model.inputModal, "modal must stay open on an empty submit")
+	require.Equal(t, "path required", model.inputModal.errMsg)
+	require.Empty(t, rec.ExportCalls)
+}
+
 // TestExportSuccessStatusLine drives the full 'E' -> prefilled path -> enter
 // round trip against a recordingActions fake configured to succeed, proving
 // ExportProfile is called with the selected profile's name and the (possibly

@@ -75,6 +75,30 @@ func TestImportUnreadablePathErrorsInModal(t *testing.T) {
 	require.Empty(t, rec.ApplyImportCalls)
 }
 
+// TestImportEmptySubmitShowsPathRequired covers importProfilePrompt's
+// requiredMsg (Minor #5, input_modal.go): submitting with nothing typed must
+// say "path required", not the generic "name required" - this is a path
+// field, and validate (the os.ReadFile check) is never even reached for an
+// empty value (mirrors TestInputModalEmptySubmitShowsNameRequired's "empty is
+// checked first" precedent).
+func TestImportEmptySubmitShowsPathRequired(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenProfiles
+
+	updated, _ := model.Update(keyRunes("I"))
+	model = updated.(Model)
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+
+	require.Nil(t, cmd, "an empty submit must not dispatch anything")
+	require.NotNil(t, model.inputModal, "modal must stay open on an empty submit")
+	require.Equal(t, "path required", model.inputModal.errMsg)
+	require.Empty(t, rec.PlanImportCalls)
+}
+
 // TestImportPreviewModalFromPlan drives the full read->plan round trip:
 // submitting a readable path dispatches a deferred importDataReadMsg, which
 // Update() routes to resolveImportDataRead - PlanImport runs against the

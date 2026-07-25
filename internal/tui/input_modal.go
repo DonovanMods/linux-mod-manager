@@ -12,8 +12,9 @@ import (
 // a value, mirroring pendingPicker's role for the list-choice modal (see
 // picker.go) and pendingAction's for the confirm modal (see actions.go).
 // validate is consulted only for a non-empty trimmed value (the empty case
-// is handled directly by updateInputModalKey's own "name required" check,
-// so callers need not special-case it); "" means the value is acceptable,
+// is handled directly by submitInputModal's own required-field check - see
+// requiredMsg below - so callers need not special-case it); "" means the
+// value is acceptable,
 // any other string is shown in-modal as the error and keeps the modal open.
 // submit is invoked exactly once, when the value passes both checks - never
 // on cancel, and never while an error is showing.
@@ -27,9 +28,15 @@ type pendingInput struct {
 	// second, differently-worded submit ("enter import", not "enter
 	// create"). Existing callers (createProfilePrompt) are unaffected by
 	// simply never setting this.
-	hint     string
-	validate func(value string) string // "" = ok, else error copy shown in-modal
-	submit   func(value string) tea.Cmd
+	hint string
+	// requiredMsg overrides submitInputModal's default "name required" error
+	// for an empty submit - "" (the zero value) keeps that default, which is
+	// right for a name field (createProfilePrompt, unaffected by simply
+	// never setting this) but wrong for a path field: importProfilePrompt/
+	// exportProfilePrompt set this to "path required" instead.
+	requiredMsg string
+	validate    func(value string) string // "" = ok, else error copy shown in-modal
+	submit      func(value string) tea.Cmd
 }
 
 // newInputModalTextInput builds a textinput.Model configured for use inside
@@ -68,9 +75,10 @@ func (m Model) promptInput(p pendingInput) Model {
 
 // updateInputModalKey handles every key while the input modal is shown, and
 // is the focused-input law applied to a modal: Select (enter) attempts a
-// submission - trim the value, "name required" if empty, else validate(value)
-// (a non-empty result becomes errMsg and the modal stays open, exactly like
-// an empty value), and on success clear the modal and return submit(value);
+// submission - trim the value, p.requiredMsg (or "name required", its
+// default) if empty, else validate(value) (a non-empty result becomes errMsg
+// and the modal stays open, exactly like an empty value), and on success
+// clear the modal and return submit(value);
 // Blur (esc) clears the modal without calling submit; ctrl+c quits (matched
 // directly by string, NOT via m.keys.Quit, whose bound keys also include a
 // plain "q" that must be typeable here - see the doc comment on isQuitKey's
@@ -105,7 +113,10 @@ func (m Model) updateInputModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) submitInputModal(p *pendingInput) (tea.Model, tea.Cmd) {
 	value := strings.TrimSpace(p.input.Value())
 	if value == "" {
-		p.errMsg = "name required"
+		p.errMsg = p.requiredMsg
+		if p.errMsg == "" {
+			p.errMsg = "name required"
+		}
 		return m, nil
 	}
 	if errMsg := p.validate(value); errMsg != "" {

@@ -2018,6 +2018,7 @@ func TestCoreProviderRollback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, `Rolled back "Mod R" to 1.0`, outcome.Message)
 	assert.Empty(t, outcome.Warnings)
+	assert.Empty(t, ticks, "rollbackProgressLine's mapping is always false (Task 6) - the happy path emits no progress ticks")
 
 	updated, err := svc.GetInstalledMod("src", "modR", game.ID, "default")
 	require.NoError(t, err)

@@ -1498,9 +1498,10 @@ func (m Model) importProfilePrompt() (Model, tea.Cmd) {
 	// nested home directory), so the input needs considerably more room.
 	input := newInputModalTextInput("path to profile.yaml", 256, m.availableWidth(), m.theme.Panel.GetHorizontalFrameSize())
 	pi := pendingInput{
-		title: "import profile — path to yaml",
-		input: input,
-		hint:  "enter import · esc cancel",
+		title:       "import profile — path to yaml",
+		input:       input,
+		hint:        "enter import · esc cancel",
+		requiredMsg: "path required",
 		validate: func(value string) string {
 			read, err := os.ReadFile(value)
 			if err != nil {
@@ -1722,10 +1723,11 @@ func (m Model) exportProfilePrompt() (Model, tea.Cmd) {
 
 	name := profile.Name
 	pi := pendingInput{
-		title:    "export profile — path to save",
-		input:    input,
-		hint:     "enter export · esc cancel",
-		validate: func(string) string { return "" },
+		title:       "export profile — path to save",
+		input:       input,
+		hint:        "enter export · esc cancel",
+		requiredMsg: "path required",
+		validate:    func(string) string { return "" },
 		submit: func(value string) tea.Cmd {
 			return func() tea.Msg { return exportPathSubmittedMsg{name: name, path: value} }
 		},
