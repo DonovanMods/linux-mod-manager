@@ -2101,6 +2101,50 @@ func TestCoreProviderActions_DeleteActiveProfileRefused(t *testing.T) {
 	assert.Equal(t, "default", profile.Name, "the refused delete must leave the active profile untouched")
 }
 
+// TestExportWritesFile proves coreProvider.ExportProfile writes the EXACT
+// bytes ProfileManager.Export itself would return (the same bytes `lmm
+// profile export` prints to stdout - see cmd/lmm/profile.go's
+// doProfileExport) to the given path via a fresh os.OpenFile, and reports
+// the brief's exact outcome message (task-10-brief.md).
+func TestExportWritesFile(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	pm := svc.NewProfileManager()
+	want, err := pm.Export(game.ID, "default")
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	outcome, err := actions.ExportProfile(context.Background(), "default", path)
+	require.NoError(t, err)
+	assert.Equal(t, `exported "default" to `+path, outcome.Message)
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+// TestCoreProviderActions_ExportOverwriteRefused proves a pre-existing path
+// at the target refuses with the brief's exact "file exists: <path>" error
+// (the O_EXCL flag on coreProvider's os.OpenFile call - task-10-brief.md)
+// and leaves the pre-existing file's contents completely untouched. This is
+// the direct coreProvider-level coverage; TestExportRefusesOverwrite
+// (export_test.go) proves the SAME refusal end to end through the TUI's own
+// key -> input -> submit -> status-line flow, verbatim per task-10-brief.md.
+func TestCoreProviderActions_ExportOverwriteRefused(t *testing.T) {
+	actions, _, _ := newCoreActionsFixture(t)
+
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("pre-existing content"), 0o644))
+
+	_, err := actions.ExportProfile(context.Background(), "default", path)
+	require.Error(t, err)
+	assert.Equal(t, "file exists: "+path, err.Error())
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "pre-existing content", string(got), "an overwrite refusal must leave the pre-existing file untouched")
+}
+
 // coreProvider guard: setting "auto" through the ActionProvider seam
 // persists via svc.SetModUpdatePolicy, visible in a direct
 // svc.GetInstalledMod read-back as domain.UpdateAuto - a real Service

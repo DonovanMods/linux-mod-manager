@@ -1665,3 +1665,94 @@ type importSwitchConfirmedMsg struct{ name string }
 func (m Model) resolveImportSwitchConfirmed(msg importSwitchConfirmedMsg) (Model, tea.Cmd) {
 	return m.switchToProfileNamed(msg.name)
 }
+
+// --- Profile export ('E' on Profiles) ---
+
+// exportPathSubmittedMsg carries the selected profile's name and the path
+// the user typed into the "export profile — path to save" input modal (see
+// exportProfilePrompt), routed through Update() to resolveExportSubmitted -
+// mirroring profileCreateSubmittedMsg's own reasoning in full (see its doc
+// comment): pendingInput.submit can only return a tea.Cmd, never a mutated
+// Model, so the actual ExportProfile call - which needs the LIVE m.actions,
+// in case a game switch rebound it in the window between submit and this
+// resolving - must run inside Update().
+type exportPathSubmittedMsg struct{ name, path string }
+
+// exportProfilePrompt handles 'E' on Profiles (task-10-brief.md's profile
+// export flow): a no-op on the wrong screen, an out-of-range selection, with
+// no ActionProvider configured, or while another action/plan/modal is
+// already in flight - mirrors importProfilePrompt's own guard shape, plus a
+// row-selection requirement (export always acts on ONE specific already-
+// visible profile, unlike import which needs none).
+//
+// Opens the input modal titled "export profile — path to save" with the
+// input PREFILLED "<gameID>-<name>.yaml" (m.activeGameID(), the selected
+// profile's own Name) - unlike createProfilePrompt/importProfilePrompt's
+// blank starting value, so the common case (accept the sensible default) is
+// just enter. validate is a no-op (always ""): unlike importProfilePrompt's
+// I/O-performing validate (which must confirm a path is READABLE before
+// ever dispatching), there is nothing to check about a path meant for
+// WRITING here - an unwritable directory or a pre-existing file both surface
+// as an ActionProvider error on the status line after submit instead (see
+// resolveExportSubmitted), exactly like every other ActionProvider error in
+// this file. An empty/whitespace-only value never reaches validate at all:
+// submitInputModal's own "name required" check (input_modal.go) already
+// refuses it, on the already-trimmed value, before validate is ever called -
+// the same generic guard createProfilePrompt's own doc comment notes it
+// never needs to duplicate.
+func (m Model) exportProfilePrompt() (Model, tea.Cmd) {
+	if m.screen != ScreenProfiles || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	idx := m.selected[ScreenProfiles]
+	if idx < 0 || idx >= len(m.profiles) {
+		return m, nil
+	}
+	profile := m.profiles[idx]
+
+	input := newInputModalTextInput("path to save profile.yaml", 256, m.availableWidth(), m.theme.Panel.GetHorizontalFrameSize())
+	input.SetValue(fmt.Sprintf("%s-%s.yaml", m.activeGameID(), profile.Name))
+	input.CursorEnd()
+
+	name := profile.Name
+	pi := pendingInput{
+		title:    "export profile — path to save",
+		input:    input,
+		hint:     "enter export · esc cancel",
+		validate: func(string) string { return "" },
+		submit: func(value string) tea.Cmd {
+			return func() tea.Msg { return exportPathSubmittedMsg{name: name, path: value} }
+		},
+	}
+	return m.promptInput(pi), nil
+}
+
+// resolveExportSubmitted handles a fresh exportPathSubmittedMsg: calls
+// actions.ExportProfile SYNCHRONOUSLY (a local filesystem write - no async
+// dispatch/gen/cancel bookkeeping needed, the same documented sync exception
+// ReorderMods/DeployedFiles carry - see ReorderMods' own doc comment) against
+// the LIVE model's actions. A failure (including the overwrite refusal,
+// coreProvider's own "file exists: <path>") lands on the status line as an
+// error; a success renders the outcome's message the same way
+// actionDoneMsg's handler does (formatOutcomeStatus, app.go) - there is no
+// confirmation modal for export to clear here, unlike every buildAction-
+// routed mutation, since the modal's own submit WAS the user's confirmation
+// (mirroring resolveProfileCreate's identical "no second confirm gate"
+// framing).
+func (m Model) resolveExportSubmitted(msg exportPathSubmittedMsg) (Model, tea.Cmd) {
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	outcome, err := m.actions.ExportProfile(m.ctx, msg.name, msg.path)
+	if err != nil {
+		m.action.status = singleLine(err.Error())
+		m.action.statusIsError = true
+		return m, nil
+	}
+	m.action.status = formatOutcomeStatus(outcome)
+	m.action.statusIsError = false
+	return m, nil
+}

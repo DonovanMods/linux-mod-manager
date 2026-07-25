@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -578,6 +580,27 @@ func TestPrototypeImportAddsProfile(t *testing.T) {
 	require.Contains(t, byName, "imported", "the SAME provider instance must reflect the import on a repeated Profiles call")
 }
 
+// TestPrototypeExportSucceedsWithoutWriting covers prototypeProvider's Task
+// 10 demo: ExportProfile reports the same success message coreProvider does
+// (task-10-brief.md), but - unlike coreProvider's real os.OpenFile write -
+// never touches the filesystem at all: path names a file that does not
+// exist before the call, and must still not exist afterward, proving
+// prototype mode is side-effect-free outside its own in-memory data field
+// (see this file's own package doc comment on prototypeProvider's shape).
+func TestPrototypeExportSucceedsWithoutWriting(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	path := filepath.Join(t.TempDir(), "export.yaml")
+	outcome, err := actions.ExportProfile(context.Background(), "survival", path)
+	require.NoError(t, err)
+	assert.Equal(t, `exported "survival" to `+path, outcome.Message)
+
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr), "prototypeProvider.ExportProfile must never write to the filesystem")
+}
+
 func requireModByID(t *testing.T, mods []ModItem, id string) ModItem {
 	t.Helper()
 	for _, m := range mods {
@@ -650,6 +673,12 @@ type recordingActions struct {
 	PlanImportCalls  [][]byte
 	ApplyImportCalls [][]byte
 
+	// ExportCalls records each ExportProfile call's {name, path} arguments -
+	// Task 10's export wiring tests assert against this, mirroring
+	// SetPolicyCalls' own struct-per-call shape above (two arguments matter
+	// here, not just one).
+	ExportCalls []struct{ Name, Path string }
+
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
@@ -662,6 +691,7 @@ type recordingActions struct {
 	UpdatesViewOut                                                               UpdatesView
 	PlanImportViewOut                                                            ImportPlanView
 	ApplyImportOutcome                                                           ActionOutcome
+	ExportOutcome                                                                ActionOutcome
 
 	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks/PurgeTicks, if
 	// set, are replayed through the matching method's progress callback (in
@@ -684,6 +714,7 @@ type recordingActions struct {
 	ReorderErr                                                        error
 	RollbackErr                                                       error
 	PlanImportErr, ApplyImportErr                                     error
+	ExportErr                                                         error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -825,6 +856,12 @@ func (r *recordingActions) ApplyImport(_ context.Context, data []byte, progress 
 	return r.ApplyImportOutcome, r.ApplyImportErr
 }
 
+// ExportProfile implements ActionProvider (Task 10).
+func (r *recordingActions) ExportProfile(_ context.Context, name, path string) (ActionOutcome, error) {
+	r.ExportCalls = append(r.ExportCalls, struct{ Name, Path string }{name, path})
+	return r.ExportOutcome, r.ExportErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -907,6 +944,10 @@ func (f failingActions) PlanImport(context.Context, []byte) (ImportPlanView, err
 }
 
 func (f failingActions) ApplyImport(context.Context, []byte, func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) ExportProfile(context.Context, string, string) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 

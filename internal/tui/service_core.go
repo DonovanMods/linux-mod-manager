@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 	"sync"
@@ -1582,4 +1583,38 @@ func (p *coreProvider) ApplyImport(ctx context.Context, data []byte, progress fu
 		outcome.ImportedProfile = result.ProfileName
 	}
 	return outcome, nil
+}
+
+// ExportProfile writes profile name's exported YAML (ProfileManager.Export -
+// the SAME bytes `lmm profile export` prints to stdout, see
+// cmd/lmm/profile.go's doProfileExport; CLI/TUI parity's own
+// interface-side carve-out lets the CLI keep printing to stdout while the
+// TUI writes to a file, both over the identical pm.Export call) to path via
+// a fresh os.OpenFile - O_EXCL means a path that already names an existing
+// file refuses rather than silently overwriting it, surfacing as exactly
+// "file exists: <path>" (task-10-brief.md's own wording, deliberately NOT
+// wrapped with this method's usual "exporting %s: %w" convention, so the
+// TUI's status line reads a plain, unambiguous refusal). A relative path
+// resolves against the process's current working directory - os.OpenFile's
+// own behavior, nothing special done here.
+func (p *coreProvider) ExportProfile(_ context.Context, name, path string) (ActionOutcome, error) {
+	data, err := p.svc.NewProfileManager().Export(p.currentGame().ID, name)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("exporting profile %s: %w", name, err)
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return ActionOutcome{}, fmt.Errorf("file exists: %s", path)
+		}
+		return ActionOutcome{}, fmt.Errorf("exporting profile %s: %w", name, err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return ActionOutcome{}, fmt.Errorf("exporting profile %s: %w", name, err)
+	}
+
+	return ActionOutcome{Message: fmt.Sprintf("exported %q to %s", name, path)}, nil
 }

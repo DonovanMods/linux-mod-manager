@@ -113,6 +113,15 @@ type KeyMap struct {
 	// distinguishes a Profiles/whole-profile action from an unrelated
 	// lowercase one" convention.
 	ImportProfile key.Binding
+	// ExportProfile is Phase 6b Task 10's Profiles-screen export binding (see
+	// mutations.go's exportProfilePrompt): fires on ScreenProfiles with a
+	// profile row selected, opening the "path to save" input modal prefilled
+	// with a default filename - submitting writes the file immediately (no
+	// separate confirm modal, mirroring ImportProfile's own submit-dispatches-
+	// immediately shape). Capital "E" - ImportProfile's own "a capital letter
+	// distinguishes a Profiles/whole-profile action" convention, distinct from
+	// any lowercase binding.
+	ExportProfile key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -265,6 +274,10 @@ func DefaultKeyMap() KeyMap {
 		ImportProfile: key.NewBinding(
 			key.WithKeys("I"),
 			key.WithHelp("I", "import profile"),
+		),
+		ExportProfile: key.NewBinding(
+			key.WithKeys("E"),
+			key.WithHelp("E", "export profile"),
 		),
 	}
 }

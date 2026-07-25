@@ -565,6 +565,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resolveImportApplied(msg)
 	case importSwitchConfirmedMsg:
 		return m.resolveImportSwitchConfirmed(msg)
+	case exportPathSubmittedMsg:
+		return m.resolveExportSubmitted(msg)
 	case loadFailedMsg:
 		// Stale gen: mirrors dataLoadedMsg's discard above - a superseded
 		// load's failure must not flip the fresh session into stateFailed.
@@ -760,6 +762,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.deleteSelectedProfile()
 	case key.Matches(msg, m.keys.ImportProfile):
 		return m.importProfilePrompt()
+	case key.Matches(msg, m.keys.ExportProfile):
+		return m.exportProfilePrompt()
 	case key.Matches(msg, m.keys.Purge):
 		return m.purgeProfilePrompt()
 	case key.Matches(msg, m.keys.GameSwitch):
@@ -1644,6 +1648,9 @@ func (m Model) helpGroups() []helpGroup {
 			// ImportProfile is Task 9's import binding (see mutations.go's
 			// importProfilePrompt).
 			helpEntry(m.keys.ImportProfile),
+			// ExportProfile is Task 10's export binding (see mutations.go's
+			// exportProfilePrompt).
+			helpEntry(m.keys.ExportProfile),
 		},
 	}
 

@@ -350,9 +350,9 @@ func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	t.Parallel()
 
-	// Height bumped 37->39->40->60->61->65->66->68->69->70 over time (37->39->40
-	// across Phase 5b Task 5's two new help lines; 40->60 in Task 9, when
-	// helpView grew from a flat ~15-line list into per-screen groups
+	// Height bumped 37->39->40->60->61->65->66->68->69->70->71 over time
+	// (37->39->40 across Phase 5b Task 5's two new help lines; 40->60 in Task
+	// 9, when helpView grew from a flat ~15-line list into per-screen groups
 	// covering every Tasks 4-8 binding - see helpGroups/helpBodyBudget;
 	// 60->61 for the dashboard group's "enter open menu entry" line; 61->65
 	// in Task 3, whose new "conflicts" help group adds a blank separator, a
@@ -362,28 +362,30 @@ func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	// group's uncapped content; 68->69 in Phase 6b Task 6, whose new
 	// Rollback entry added one more line to that same group; 69->70 in
 	// Phase 6b Task 9, whose new profiles-group ImportProfile entry added
-	// one more line to that group - see helpGroups' own conflicts group doc
-	// comment. Verified empirically each time (scratch probes sweeping a
-	// height range, since removed) the same way 5a proved its own 36->37
-	// bump: below the fitting height, the rendered view consistently comes
-	// out taller than the requested terminal height (lipgloss pads SHORT
-	// content but never clips content taller than the requested budget) -
-	// the party-sheet dashboard's split-panel math (partyDashboardView's
+	// one more line to that group; 70->71 in Phase 6b Task 10, whose new
+	// profiles-group ExportProfile entry added one more line to that same
+	// group - see helpGroups' own conflicts group doc comment. Verified
+	// empirically each time (scratch probes sweeping a height range, since
+	// removed) the same way 5a proved its own 36->37 bump: below the fitting
+	// height, the rendered view consistently comes out taller than the
+	// requested terminal height (lipgloss pads SHORT content but never clips
+	// content taller than the requested budget) - the party-sheet
+	// dashboard's split-panel math (partyDashboardView's
 	// topHeight/menuHeight, both integer divisions of availableContentHeight)
-	// hits its natural minimum before the requested budget does. Height=70
+	// hits its natural minimum before the requested budget does. Height=71
 	// is the first value where the requested content budget finally reaches
 	// that same natural minimum, so the view fits with exactly zero slack
-	// (71 and above, the content grows to fill the larger budget instead;
-	// 69 now overflows to 70, confirmed by re-running this test unmodified
+	// (72 and above, the content grows to fill the larger budget instead;
+	// 70 now overflows to 71, confirmed by re-running this test unmodified
 	// against the new profiles-group entry). This pins the current
 	// zero-slack floor - see task-5-brief.md's "prove pre-existing
 	// saturation... like 5a did" allowance for justified height adjustments.
-	model := sizedPrototypeModel(t, "wizardry", 120, 70)
+	model := sizedPrototypeModel(t, "wizardry", 120, 71)
 	model = updateWithRunes(t, model, "?")
 
 	view := model.View()
 	require.Equal(t, 120, lipgloss.Width(view))
-	require.Equal(t, 70, lipgloss.Height(view))
+	require.Equal(t, 71, lipgloss.Height(view))
 }
 
 func TestThemesUseDistinctLayouts(t *testing.T) {

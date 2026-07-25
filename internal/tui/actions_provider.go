@@ -147,6 +147,19 @@ type ActionProvider interface {
 	// --no-install/prompt-decline equivalent exists in the TUI). progress
 	// may be nil, like every other streaming ActionProvider method.
 	ApplyImport(ctx context.Context, data []byte, progress func(ActionProgress)) (ActionOutcome, error)
+
+	// ExportProfile writes profile name's exported bytes (the same format
+	// ProfileManager.Export/`lmm profile export` already produce) to path
+	// (Phase 6b Task 10's 'E' binding on Profiles - see mutations.go's
+	// exportProfilePrompt): a local filesystem write, no network call - the
+	// same documented sync exception ReorderMods/DeployedFiles carry (see
+	// ReorderMods' own doc comment), called SYNCHRONOUSLY by
+	// resolveExportSubmitted rather than through buildAction/promptAction's
+	// async confirm machinery. A pre-existing file at path is refused rather
+	// than silently overwritten - coreProvider's own doc comment gives the
+	// exact mechanism and error wording. Outcome.Message is `exported "<name>"
+	// to <path>`.
+	ExportProfile(ctx context.Context, name, path string) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -831,4 +844,14 @@ func (p *prototypeProvider) ApplyImport(_ context.Context, _ []byte, progress fu
 		Message:         `Imported profile "imported"`,
 		ImportedProfile: "imported",
 	}, nil
+}
+
+// ExportProfile reports the SAME success message coreProvider's own real
+// write does (task-10-brief.md), but never touches the filesystem: unlike
+// every prototypeProvider mutation above (which mutates p.data, still
+// side-effect-free outside its own in-memory field), this demo has no
+// canned file content to write and no reason to actually create a file on
+// the user's disk during a --prototype demo session.
+func (p *prototypeProvider) ExportProfile(_ context.Context, name, path string) (ActionOutcome, error) {
+	return ActionOutcome{Message: fmt.Sprintf("exported %q to %s", name, path)}, nil
 }
