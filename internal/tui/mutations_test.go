@@ -2229,6 +2229,15 @@ func TestUpdateModalConfirmClearsRetainedUpdatesView(t *testing.T) {
 	model = updated.(Model)
 	require.Nil(t, model.pendingUpdates, "the done path must not resurrect the retained updates view")
 
+	// Fix-wave-2 finding #2: a completed update batch also opens the
+	// "update results" overlay (see TestActionDoneOpensUpdateResultsOverlay)
+	// - dismiss it like a user would, exactly as esc always closes an
+	// overlay, before checking the LATER modal below; this test's own
+	// concern is pendingUpdates, not that overlay.
+	require.NotNil(t, model.overlay, "sanity: the results overlay opened")
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.Nil(t, model.overlay)
+
 	// A later, unrelated confirmation modal must be completely untouched by
 	// the earlier batch: no "v changelog" hint, and 'v' does nothing.
 	model.screen = ScreenInstalledMods
@@ -2421,6 +2430,165 @@ func TestApplyUpdatesSequentially_CtxCancelledMidBatchStopsWithoutChurningWarnin
 	require.Equal(t, 1, actions.calls, "must stop calling ApplyUpdate once ctx is cancelled, not churn through the rest")
 	require.Equal(t, "Applied 1 update(s)", outcome.Message)
 	require.Empty(t, outcome.Warnings, "the two updates that never got a chance to apply must not be recorded as canceled-warnings")
+}
+
+// --- Fix-wave-2 finding #2: per-mod results overlay after an update batch ---
+
+// TestApplyUpdatesSequentiallyResultLines guards applyUpdatesSequentially's
+// per-item ResultLines collection: a "✓ <name> <from> → <to>" line per
+// successful update, a "✗ <name>: <error>" line per failed one, in the SAME
+// order the batch was given - independent of the aggregate Message/Warnings
+// this already covered (TestCheckUpdatesConfirmAppliesAllSequentiallyInOrder/
+// TestCheckUpdatesMidBatchFailureContinuesAndWarns).
+func TestApplyUpdatesSequentiallyResultLines(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+	rec := &recordingActions{
+		UpdatesViewOut:     UpdatesView{Updates: updates},
+		ApplyUpdateErrByID: map[string]error{"ussep": errors.New("connection refused")},
+	}
+
+	outcome, err := applyUpdatesSequentially(context.Background(), rec, updates, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"✓ SkyUI 5.2 → 5.3",
+		"✗ USSEP: connection refused",
+	}, outcome.ResultLines)
+}
+
+// TestApplyUpdatesSequentiallyResultLines_CtxCancelledSkipsRemainder mirrors
+// TestApplyUpdatesSequentially_CtxCancelledMidBatchStopsWithoutChurningWarnings
+// for ResultLines: an update that never got a chance to run because the ctx
+// was cancelled mid-batch gets NO line at all - it neither succeeded nor
+// failed, it simply never ran.
+func TestApplyUpdatesSequentiallyResultLines_CtxCancelledSkipsRemainder(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	actions := &cancelingActions{recordingActions: &recordingActions{}, cancel: cancel, cancelAt: 1}
+
+	outcome, err := applyUpdatesSequentially(ctx, actions, updates, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"✓ SkyUI 5.2 → 5.3"}, outcome.ResultLines)
+}
+
+// TestActionDoneOpensUpdateResultsOverlay is the end-to-end happy path:
+// confirming the apply-updates batch, once it resolves, opens a scrollable
+// info overlay titled "update results" listing each update's own outcome
+// line - the durable "which mods updated" record the smoke test found
+// missing from the aggregate "Applied N update(s)" status line alone.
+func TestActionDoneOpensUpdateResultsOverlay(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}}}
+	model := openUpdatesModal(t, rec)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, _ := model.Update(doneMsg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.overlay, "a completed update batch must open the results overlay")
+	require.Equal(t, "update results", model.overlay.title)
+	require.Equal(t, []string{
+		"✓ SkyUI 5.2 → 5.3",
+		"✓ USSEP 4.3 → 4.4",
+	}, model.overlay.lines)
+	// The status line still keeps the aggregate count summary - the overlay
+	// is additive, not a replacement.
+	require.Contains(t, model.action.status, "Applied 2 update(s)")
+}
+
+// TestActionDoneOpensUpdateResultsOverlayPartialFailure covers the mixed
+// batch: the overlay's lines include the ✗ line for the failed update
+// alongside the ✓ lines for the ones that succeeded.
+func TestActionDoneOpensUpdateResultsOverlayPartialFailure(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{
+		UpdatesViewOut: UpdatesView{Updates: []UpdateItem{
+			{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+			{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+		}},
+		ApplyUpdateErrByID: map[string]error{"ussep": errors.New("connection refused")},
+	}
+	model := openUpdatesModal(t, rec)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	doneMsg := runActionCmd(t, confirmCmd)
+
+	updated, _ := model.Update(doneMsg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.overlay)
+	require.Equal(t, "update results", model.overlay.title)
+	require.Contains(t, model.overlay.lines, "✓ SkyUI 5.2 → 5.3")
+	require.Contains(t, model.overlay.lines, "✗ USSEP: connection refused")
+}
+
+// TestActionDoneDrainPathOpensNoResultsOverlay guards the quit-drain
+// interaction: an actionDoneMsg arriving while m.action.draining is true must
+// resolve straight to tea.Quit (resolveDrainedQuit) and open NOTHING - not
+// even the results overlay - since the app is exiting regardless.
+func TestActionDoneDrainPathOpensNoResultsOverlay(t *testing.T) {
+	t.Parallel()
+
+	outcome := ActionOutcome{Message: "Applied 1 update(s)", ResultLines: []string{"✓ SkyUI 5.2 → 5.3"}}
+	model := modelWithActions(t, &recordingActions{})
+	model, pa := model.buildAction(actionUpdate, "Apply 1 update(s)?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return outcome, nil
+	})
+	model = model.promptAction(pa)
+	updated, _ := model.Update(keyRunes("y"))
+	model = updated.(Model)
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	model = updated.(Model)
+	require.True(t, model.action.draining)
+	gen := model.action.gen
+
+	updated, doneCmd := model.Update(actionDoneMsg{gen: gen, kind: actionUpdate, outcome: outcome})
+	model = updated.(Model)
+	require.Nil(t, model.overlay, "a quit-triggered drain must not open the results overlay")
+	require.NotNil(t, doneCmd)
+	require.Equal(t, tea.Quit(), doneCmd())
+}
+
+// TestActionDoneNoResultLinesOpensNoOverlay guards every OTHER action kind
+// (ResultLines nil/empty, the common case for everything but the update
+// batch): actionDoneMsg must not open an overlay at all when there's nothing
+// to show, matching ActionOutcome.ResultLines' own "renderers may ignore it"
+// contract.
+func TestActionDoneNoResultLinesOpensNoOverlay(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return ActionOutcome{Message: "Deployed 5 mod(s)"}, nil
+	})
+	model = model.promptAction(pa)
+	updated, _ := model.Update(keyRunes("y"))
+	model = updated.(Model)
+	gen := model.action.gen
+
+	updated, _ = model.Update(actionDoneMsg{gen: gen, kind: actionDeploy, outcome: ActionOutcome{Message: "Deployed 5 mod(s)"}})
+	model = updated.(Model)
+	require.Nil(t, model.overlay)
 }
 
 // --- Check/apply updates: stale plan-fetch discard + fetch error ---

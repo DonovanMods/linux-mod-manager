@@ -183,6 +183,21 @@ type ActionOutcome struct {
 	// itself: it only names a candidate the session MIGHT switch to next,
 	// pending explicit user confirmation via the offer.
 	ImportedProfile string
+
+	// ResultLines is an OPTIONAL list of per-item detail lines for a batch
+	// outcome (fix-wave-2 smoke finding #2): only applyUpdatesSequentially
+	// (mutations.go), the apply-updates batch's confirm-time body, populates
+	// this today - one "✓ <name> <from> → <to>" line per successful update,
+	// one "✗ <name>: <error>" line per failed one, in the SAME order the
+	// batch was applied. Every other ActionProvider call leaves this nil,
+	// same as ImportedProfile's own "" zero value above - app.go's
+	// actionDoneMsg handler treats a nil/empty ResultLines as "nothing to
+	// show" and opens no overlay for it. This is a TUI-side struct, not part
+	// of the ActionProvider interface itself, so adding it required no
+	// interface/method change on either provider (coreProvider/
+	// prototypeProvider): renderers besides the update batch's are free to
+	// ignore it entirely.
+	ResultLines []string
 }
 
 // ImportPlanView is the render model for the import preview modal, mapped

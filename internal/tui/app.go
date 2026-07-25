@@ -420,6 +420,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.action.status = formatOutcomeStatus(msg.outcome)
 		m.action.statusIsError = false
 		m.action.progress = ActionProgress{}
+		// Fix-wave-2 smoke finding #2: a completed batch whose outcome
+		// carries ResultLines (today, only the update-apply batch -
+		// applyUpdatesSequentially, mutations.go) gets a durable per-item
+		// record beyond the status line's aggregate count summary above -
+		// a scrollable info overlay titled "update results" listing each
+		// mod's own "✓ .../✗ ..." line. Placed AFTER the status-line
+		// assignment (the count summary is kept, not replaced) and guarded
+		// on m.overlay == nil, defensively, exactly like resolveChangelogPicked
+		// guards against clobbering an existing overlay - the modal/overlay
+		// machinery is idle whenever an action resolves, by construction, so
+		// this should never actually refuse, but costs nothing to check.
+		// The quit-drain path above already returned before this point, so
+		// draining never reaches here either.
+		if len(msg.outcome.ResultLines) > 0 && m.overlay == nil {
+			m.overlay = &infoOverlay{title: "update results", lines: msg.outcome.ResultLines}
+		}
 		// A fresh switch's target must rebind the session's active-profile
 		// providers BEFORE the refresh below reads them (see rebindProfile
 		// and profileRebinder in actions.go) - otherwise Profiles() keeps

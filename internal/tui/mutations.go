@@ -1117,9 +1117,19 @@ func (m Model) resolveChangelogPicked(msg changelogPickedMsg) (Model, tea.Cmd) {
 // remaining update into its own "context canceled" warning entry - those
 // mods simply never got a chance to apply, which is not the same thing as
 // each of them individually failing.
+//
+// The returned outcome's ResultLines (fix-wave-2 smoke finding #2) gives the
+// batch a durable per-mod record beyond the aggregate "Applied N update(s)"
+// Message: one "✓ <name> <from> → <to>" line per successful update, one
+// "✗ <name>: <error>" line per failed one, in the SAME order as the batch -
+// a ctx-cancelled remainder gets NO line at all (mirroring the Warnings
+// behavior just above: those mods never ran, which isn't the same thing as
+// failing). app.go's actionDoneMsg handler renders these as a scrollable
+// info overlay titled "update results" once the batch resolves.
 func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updates []UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
 	applied := 0
 	var warnings []string
+	var resultLines []string
 	for _, u := range updates {
 		if ctx.Err() != nil {
 			break
@@ -1127,14 +1137,17 @@ func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updat
 		outcome, err := actions.ApplyUpdate(ctx, u, progress)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %s", u.Name, singleLine(err.Error())))
+			resultLines = append(resultLines, fmt.Sprintf("✗ %s: %s", u.Name, singleLine(err.Error())))
 			continue
 		}
 		applied++
 		warnings = append(warnings, outcome.Warnings...)
+		resultLines = append(resultLines, fmt.Sprintf("✓ %s %s → %s", u.Name, u.FromVersion, u.ToVersion))
 	}
 	return ActionOutcome{
-		Message:  fmt.Sprintf("Applied %d update(s)", applied),
-		Warnings: warnings,
+		Message:     fmt.Sprintf("Applied %d update(s)", applied),
+		Warnings:    warnings,
+		ResultLines: resultLines,
 	}, nil
 }
 
