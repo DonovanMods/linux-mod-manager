@@ -1,13 +1,13 @@
                                                                                                                         
   LMM // Linux Mod Manager                                                                                              
-  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources                                              
+  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources  [6] Conflicts                               
                                                                                                                         
   ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
   │ CRT STATUS STACK                                                                                                 │  
   │ ▓ GAME       Skyrim Special Edition                                                                              │  
   │ ▓ PROFILE    survival                                                                                            │  
   │ ▓ MODS       39/42                                                                                               │  
-  │ ▓ SIGNAL     3 updates, 1 conflict                                                                               │  
+  │ ▓ SIGNAL     3 updates, 2 conflict                                                                               │  
   │                                                                                                                  │  
   │ > Installed Mods                                                                                                 │  
   │   Search Archives                                                                                                │  
