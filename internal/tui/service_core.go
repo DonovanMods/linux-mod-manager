@@ -1470,3 +1470,116 @@ func switchPlanView(plan *core.SwitchPlan) SwitchPlanView {
 	}
 	return view
 }
+
+// modRefLabel renders a domain.ModReference as "sourceID:modID vVersion" -
+// matching the CLI's own profile-import preview list-line format
+// (cmd/lmm/profile.go's doProfileImport, "    - %s:%s v%s\n"/"    ↓ %s:%s
+// v%s\n") - shared by every ImportPlanView category below.
+func modRefLabel(ref domain.ModReference) string {
+	return fmt.Sprintf("%s:%s v%s", ref.SourceID, ref.ModID, ref.Version)
+}
+
+// importPlanView maps a core.ImportPlan to its TUI render model - the
+// import-modal analog of switchPlanView/installPlanView.
+func importPlanView(plan *core.ImportPlan) ImportPlanView {
+	view := ImportPlanView{
+		Name:   plan.Profile.Name,
+		GameID: plan.Profile.GameID,
+		Exists: plan.Exists,
+	}
+	for _, ref := range plan.Installed {
+		view.Installed = append(view.Installed, modRefLabel(ref))
+	}
+	for _, ref := range plan.NeedsRedownload {
+		view.NeedsDownload = append(view.NeedsDownload, modRefLabel(ref))
+	}
+	for _, ref := range plan.Missing {
+		view.Missing = append(view.Missing, modRefLabel(ref))
+	}
+	return view
+}
+
+// PlanImport parses data and categorizes its mods against the session's
+// current game/DB/cache state, mapped from svc.PlanImport - the import-modal
+// analog of PlanProfileSwitch/PlanInstall.
+func (p *coreProvider) PlanImport(ctx context.Context, data []byte) (ImportPlanView, error) {
+	plan, err := p.svc.PlanImport(ctx, p.currentGame(), data)
+	if err != nil {
+		return ImportPlanView{}, fmt.Errorf("planning import: %w", err)
+	}
+	return importPlanView(plan), nil
+}
+
+// importProgressLine composes an ActionProgress from one core.DeployProgress
+// event during ApplyImport, mirroring switchProgressLine/installProgressLine's
+// own per-phase-mapping shape (see either's doc comment) - one line per
+// Import* DeployPhase that has something worth a status line.
+// ImportDownloadDone/ImportNote are deliberately left unmapped (default
+// case): the former is just the CLI's blank-line separator after a download
+// (nothing to show), and the latter's sole diagnostic already reaches the
+// caller through the completed result's Notes field (mergeDiagnostics,
+// ApplyImport below) - mirroring updateProgressLine/rollbackProgressLine's
+// own "already covered by the result, not worth a live tick too" convention.
+func importProgressLine(p core.DeployProgress) (ActionProgress, bool) {
+	switch p.Phase {
+	case core.ImportSaved:
+		return ActionProgress{Line: fmt.Sprintf("Imported profile: %s", p.ModName), Percent: -1}, true
+	case core.ImportInstalling:
+		return ActionProgress{Line: fmt.Sprintf("Importing: downloading and installing %d mod(s)…", p.Total), Percent: -1}, true
+	case core.ImportModInstalling:
+		return ActionProgress{Line: fmt.Sprintf("Importing: installing %s:%s (%d/%d)", p.SourceID, p.ModID, p.Index, p.Total), Percent: -1}, true
+	case core.ImportFallbackUsed:
+		return ActionProgress{Line: fmt.Sprintf("Importing: %s:%s - stored file IDs not found, using primary", p.SourceID, p.ModID), Percent: -1}, true
+	case core.ImportDownloading:
+		return ActionProgress{Line: fmt.Sprintf("Importing: downloading %s:%s %.0f%%", p.SourceID, p.ModID, p.Percent), Percent: p.Percent}, true
+	case core.ImportModFailed:
+		return ActionProgress{Line: fmt.Sprintf("Importing: %s:%s failed - %s", p.SourceID, p.ModID, p.Detail), Percent: -1}, true
+	case core.ImportModInstalled:
+		return ActionProgress{Line: fmt.Sprintf("Importing: %s (%d/%d)", p.ModName, p.Index, p.Total), Percent: -1}, true
+	default:
+		return ActionProgress{}, false
+	}
+}
+
+// ApplyImport re-plans data (mirroring ApplyInstall/ApplyProfileSwitch's own
+// re-plan-at-apply precedent - see either's doc comment) and applies it with
+// Force=true (the TUI's preview modal confirm IS the overwrite consent - see
+// ActionProvider.ApplyImport's doc comment), NoInstall=false and
+// ConfirmInstall=nil (proceed unconditionally - the same modal confirm
+// already covers "yes, download and install these too", matching
+// ConfirmConflicts' own "nil = proceed" convention in ApplyInstall above).
+//
+// ImportedProfile (ActionOutcome) is set to the just-saved profile's name
+// ONLY when plan.Profile.GameID matches the session's CURRENTLY ACTIVE game
+// (p.currentGame().ID) - Task 9's signal for offering a follow-up "switch to
+// it now?" confirmation (mutations.go's resolveImportApplied, dispatched
+// from app.go's actionDoneMsg handler). A cross-game import leaves this "":
+// the imported profile was saved under ITS OWN declared game (see
+// ProfileManager.ImportWithOptions - it saves by profile.GameID, not by
+// whatever game this session happens to be bound to), so offering to switch
+// the CURRENT session onto it would either silently fail (wrong game's
+// profile directory) or need a game rebind first - out of scope for this
+// offer, which only ever targets an already-reachable, same-game profile.
+func (p *coreProvider) ApplyImport(ctx context.Context, data []byte, progress func(ActionProgress)) (ActionOutcome, error) {
+	game := p.currentGame()
+	plan, err := p.svc.PlanImport(ctx, game, data)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("planning import: %w", err)
+	}
+
+	opts := core.ProfileImportOptions{Force: true, NoInstall: false, ConfirmInstall: nil}
+	adapter := deployProgressAdapter(progress, importProgressLine)
+	result, err := p.svc.ApplyImport(ctx, game, plan, opts, adapter)
+	if err != nil {
+		return ActionOutcome{}, fmt.Errorf("importing profile: %w", err)
+	}
+
+	outcome := ActionOutcome{
+		Message:  fmt.Sprintf("Imported profile %q (%d installed, %d failed, %d skipped)", result.ProfileName, result.Installed, result.Failed, result.Skipped),
+		Warnings: mergeDiagnostics(result.Warnings, result.Notes),
+	}
+	if plan.Profile.GameID == game.ID {
+		outcome.ImportedProfile = result.ProfileName
+	}
+	return outcome, nil
+}

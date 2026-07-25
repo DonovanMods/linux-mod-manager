@@ -544,6 +544,40 @@ func TestPrototypeRollbackUnknownModErrors(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestPrototypeImportAddsProfile covers prototypeProvider's canned Task 9
+// demo end to end: PlanImport returns the canned "imported" plan (one
+// Missing entry, GameID matching the active game), and ApplyImport appends a
+// new "imported" Profiles entry - visible on a repeated Profiles call,
+// mirroring CreateProfile's own "same instance, same session" contract -
+// while reporting ImportedProfile set (same-game, per PlanImport's own doc
+// comment), enabling the demo's post-import switch-offer flow.
+func TestPrototypeImportAddsProfile(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+
+	view, err := actions.PlanImport(context.Background(), []byte("irrelevant"))
+	require.NoError(t, err)
+	assert.Equal(t, "imported", view.Name)
+	assert.NotEmpty(t, view.GameID)
+	assert.Len(t, view.Missing, 1)
+
+	var ticks []ActionProgress
+	outcome, err := actions.ApplyImport(context.Background(), []byte("irrelevant"), func(p ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, "imported", outcome.ImportedProfile)
+	assert.NotEmpty(t, ticks, "ApplyImport must stream fake progress ticks like ApplyUpdate/ApplyInstall/Rollback")
+
+	profiles, err := provider.Profiles(context.Background())
+	require.NoError(t, err)
+	byName := map[string]ProfileItem{}
+	for _, p := range profiles {
+		byName[p.Name] = p
+	}
+	require.Contains(t, byName, "imported", "the SAME provider instance must reflect the import on a repeated Profiles call")
+}
+
 func requireModByID(t *testing.T, mods []ModItem, id string) ModItem {
 	t.Helper()
 	for _, m := range mods {
@@ -609,6 +643,13 @@ type recordingActions struct {
 	// DisableCalls/UninstallCalls' own single-ModItem-argument shape above.
 	RollbackCalls []ModItem
 
+	// PlanImportCalls/ApplyImportCalls record each call's data argument -
+	// Task 9's import wiring tests assert against these, mirroring
+	// PlanCalls/ApplyCalls' own single-argument shape above (a []byte per
+	// call, not a flattened slice).
+	PlanImportCalls  [][]byte
+	ApplyImportCalls [][]byte
+
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
@@ -619,6 +660,8 @@ type recordingActions struct {
 	PlanView                                                                     SwitchPlanView
 	InstallPlanViewOut                                                           InstallPlanView
 	UpdatesViewOut                                                               UpdatesView
+	PlanImportViewOut                                                            ImportPlanView
+	ApplyImportOutcome                                                           ActionOutcome
 
 	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks/PurgeTicks, if
 	// set, are replayed through the matching method's progress callback (in
@@ -630,6 +673,7 @@ type recordingActions struct {
 	ApplyUpdateTicks  []ActionProgress
 	PurgeTicks        []ActionProgress
 	RollbackTicks     []ActionProgress
+	ApplyImportTicks  []ActionProgress
 
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
@@ -639,6 +683,7 @@ type recordingActions struct {
 	SetGameErr                                                        error
 	ReorderErr                                                        error
 	RollbackErr                                                       error
+	PlanImportErr, ApplyImportErr                                     error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -763,6 +808,23 @@ func (r *recordingActions) Rollback(_ context.Context, item ModItem, progress fu
 	return r.RollbackOutcome, r.RollbackErr
 }
 
+// PlanImport implements ActionProvider (Task 9).
+func (r *recordingActions) PlanImport(_ context.Context, data []byte) (ImportPlanView, error) {
+	r.PlanImportCalls = append(r.PlanImportCalls, data)
+	return r.PlanImportViewOut, r.PlanImportErr
+}
+
+// ApplyImport implements ActionProvider (Task 9).
+func (r *recordingActions) ApplyImport(_ context.Context, data []byte, progress func(ActionProgress)) (ActionOutcome, error) {
+	r.ApplyImportCalls = append(r.ApplyImportCalls, data)
+	for _, p := range r.ApplyImportTicks {
+		if progress != nil {
+			progress(p)
+		}
+	}
+	return r.ApplyImportOutcome, r.ApplyImportErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -837,6 +899,14 @@ func (f failingActions) ReorderMods(context.Context, []string) (ActionOutcome, e
 }
 
 func (f failingActions) Rollback(context.Context, ModItem, func(ActionProgress)) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) PlanImport(context.Context, []byte) (ImportPlanView, error) {
+	return ImportPlanView{}, f.err()
+}
+
+func (f failingActions) ApplyImport(context.Context, []byte, func(ActionProgress)) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 
@@ -971,6 +1041,10 @@ func TestFailingActionsErrorsOnEveryMethod(t *testing.T) {
 	_, err = f.ApplyUpdate(ctx, UpdateItem{}, nil)
 	assert.ErrorIs(t, err, sentinel)
 	_, err = f.Rollback(ctx, item, nil)
+	assert.ErrorIs(t, err, sentinel)
+	_, err = f.PlanImport(ctx, nil)
+	assert.ErrorIs(t, err, sentinel)
+	_, err = f.ApplyImport(ctx, nil, nil)
 	assert.ErrorIs(t, err, sentinel)
 }
 

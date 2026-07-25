@@ -59,6 +59,14 @@ const (
 	// default status+refresh path already covers it, exactly like
 	// actionPurge above.
 	actionRollback
+	// actionImport is Phase 6b Task 9's Profiles-screen import action kind
+	// (see mutations.go's importProfilePrompt/resolveImportDataRead).
+	// app.go's actionDoneMsg handler DOES branch on it specifically, like
+	// actionInstall's search refresh: a successful import whose outcome
+	// names a profile (ActionOutcome.ImportedProfile, set only for a
+	// same-game import - see that field's own doc comment) dispatches a
+	// deferred "switch to it now?" offer (importAppliedMsg, mutations.go).
+	actionImport
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation

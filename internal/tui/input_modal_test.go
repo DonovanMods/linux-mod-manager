@@ -20,7 +20,7 @@ func inputModalTestModel(t *testing.T) Model {
 // *submitted (appended, so a test can assert both "was it called" and "with
 // what value").
 func promptTestInput(model Model, validate func(value string) string, submitted *[]string) Model {
-	input := newInputModalTextInput("profile name", model.availableWidth(), model.theme.Panel.GetHorizontalFrameSize())
+	input := newInputModalTextInput("profile name", 64, model.availableWidth(), model.theme.Panel.GetHorizontalFrameSize())
 	return model.promptInput(pendingInput{
 		title:    "Create Profile",
 		input:    input,

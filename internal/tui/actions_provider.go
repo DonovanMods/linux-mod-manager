@@ -129,6 +129,24 @@ type ActionProvider interface {
 	// like DeleteProfile's own coreProvider/prototypeProvider methods do.
 	// progress may be nil, like every other streaming ActionProvider method.
 	Rollback(ctx context.Context, item ModItem, progress func(ActionProgress)) (ActionOutcome, error)
+
+	// PlanImport parses data (an exported profile - Phase 6b Task 9's 'I'
+	// binding on Profiles, see mutations.go's importProfilePrompt) and
+	// categorizes its mods against the session's current game/DB/cache
+	// state, without saving anything - the import-modal analog of
+	// PlanProfileSwitch/PlanInstall. data is the raw bytes the TUI already
+	// read from disk (os.ReadFile, mutations.go) - this method never touches
+	// the filesystem itself.
+	PlanImport(ctx context.Context, data []byte) (ImportPlanView, error)
+	// ApplyImport re-plans data (mirroring ApplyProfileSwitch/ApplyInstall's
+	// own re-plan-at-apply precedent - see either's doc comment) and applies
+	// it: the profile is saved (overwriting an existing same-named one is
+	// always allowed - the preview modal's own confirm IS the TUI's only
+	// overwrite consent, unlike the CLI's separate --force flag) and every
+	// pending mod is downloaded and installed unconditionally (no CLI-style
+	// --no-install/prompt-decline equivalent exists in the TUI). progress
+	// may be nil, like every other streaming ActionProvider method.
+	ApplyImport(ctx context.Context, data []byte, progress func(ActionProgress)) (ActionOutcome, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -139,6 +157,31 @@ type ActionProvider interface {
 type ActionOutcome struct {
 	Message  string   // one-line success summary, e.g. `Enabled "SkyUI"` / "Deployed 5 mod(s)"
 	Warnings []string // non-fatal diagnostics: the underlying flow result's Warnings then Notes, in that order
+
+	// ImportedProfile names the profile a successful ApplyImport (Phase 6b
+	// Task 9) just saved, but ONLY when it targets the session's CURRENTLY
+	// ACTIVE game - the signal app.go's actionDoneMsg handler uses to
+	// dispatch a deferred "switch to it now?" offer (mutations.go's
+	// importAppliedMsg/resolveImportApplied). Every other ActionProvider
+	// method, and a cross-game import (the imported profile's own declared
+	// game differs from the active one), leaves this "" - treated
+	// identically to switchedTo's own "nothing to do" zero value (see
+	// actionDoneMsg's doc comment), except this NEVER rebinds anything by
+	// itself: it only names a candidate the session MIGHT switch to next,
+	// pending explicit user confirmation via the offer.
+	ImportedProfile string
+}
+
+// ImportPlanView is the render model for the import preview modal, mapped
+// from core.ImportPlan (see coreProvider's importPlanView) or computed
+// directly from prototype demo data - the import-modal analog of
+// SwitchPlanView/InstallPlanView. Mod entries are formatted
+// "sourceID:modID vVersion", matching the CLI's own profile-import preview
+// list lines (cmd/lmm/profile.go's doProfileImport).
+type ImportPlanView struct {
+	Name, GameID                      string
+	Installed, NeedsDownload, Missing []string
+	Exists                            bool // a profile with this name is already saved for the game
 }
 
 // SwitchPlanView is the render model for the profile-switch confirmation
@@ -757,4 +800,35 @@ func (p *prototypeProvider) Rollback(_ context.Context, item ModItem, progress f
 	fromVersion, toVersion := mod.Version, mod.PreviousVersion
 	mod.Version, mod.PreviousVersion = toVersion, fromVersion
 	return ActionOutcome{Message: fmt.Sprintf("Rolled back %q to %s", mod.Name, toVersion)}, nil
+}
+
+// PlanImport returns a canned plan (Task 9's --prototype demo): a single
+// profile named "imported", targeting the session's CURRENTLY ACTIVE game
+// (p.activeGame - see its own doc comment) so the same-game "switch to it
+// now?" offer is demoable end to end (see ApplyImport below), with one
+// canned Missing mod entry and nothing else - deliberately minimal, mirroring
+// PlanProfileSwitch/PlanInstall's own "never invent a phantom X beyond what's
+// canned" convention. data is ignored entirely: the demo never actually
+// parses whatever file the user picked.
+func (p *prototypeProvider) PlanImport(_ context.Context, _ []byte) (ImportPlanView, error) {
+	return ImportPlanView{
+		Name:    "imported",
+		GameID:  p.activeGame().ID,
+		Missing: []string{"nexusmods:demo-mod v1.0"},
+	}, nil
+}
+
+// ApplyImport appends a new canned Profiles entry named "imported" - visible
+// in a repeated Profiles call, mirroring CreateProfile's own "same instance,
+// same session" contract - and reports ImportedProfile set, since
+// PlanImport's canned GameID always matches the active game (so the demo's
+// post-import switch offer is reachable). data is ignored, matching
+// PlanImport above.
+func (p *prototypeProvider) ApplyImport(_ context.Context, _ []byte, progress func(ActionProgress)) (ActionOutcome, error) {
+	fakeProgressTicks(progress, "Importing imported")
+	p.data.Profiles = append(p.data.Profiles, prototype.Profile{Name: "imported"})
+	return ActionOutcome{
+		Message:         `Imported profile "imported"`,
+		ImportedProfile: "imported",
+	}, nil
 }

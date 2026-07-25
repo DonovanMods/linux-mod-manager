@@ -18,24 +18,32 @@ import (
 // submit is invoked exactly once, when the value passes both checks - never
 // on cancel, and never while an error is showing.
 type pendingInput struct {
-	title    string
-	input    textinput.Model
-	errMsg   string
+	title  string
+	input  textinput.Model
+	errMsg string
+	// hint overrides inputModalView's default "enter create · esc cancel"
+	// footer - "" (the zero value) keeps that default, which every
+	// pendingInput used until Task 9's importProfilePrompt introduced a
+	// second, differently-worded submit ("enter import", not "enter
+	// create"). Existing callers (createProfilePrompt) are unaffected by
+	// simply never setting this.
+	hint     string
 	validate func(value string) string // "" = ok, else error copy shown in-modal
 	submit   func(value string) tea.Cmd
 }
 
 // newInputModalTextInput builds a textinput.Model configured for use inside
 // a pendingInput, following the same construction pattern newSearchModel
-// uses (search.go): CharLimit 64 (shorter than search's 120 - modal inputs
-// are short values like a profile name, not a free-text query) and Width
-// derived from the current available width via searchInputWidthFor, so a
-// value near the viewport width scrolls horizontally instead of word-wrapping
-// inside the width-set modal panel.
-func newInputModalTextInput(placeholder string, availableWidth, panelHorizontalFrameSize int) textinput.Model {
+// uses (search.go): charLimit (shorter than search's 120 for a short value
+// like a profile name - see createProfilePrompt's own 64; a filesystem path
+// needs considerably more room - see importProfilePrompt's own 256, Task 9)
+// and Width derived from the current available width via
+// searchInputWidthFor, so a value near the viewport width scrolls
+// horizontally instead of word-wrapping inside the width-set modal panel.
+func newInputModalTextInput(placeholder string, charLimit, availableWidth, panelHorizontalFrameSize int) textinput.Model {
 	input := textinput.New()
 	input.Placeholder = placeholder
-	input.CharLimit = 64
+	input.CharLimit = charLimit
 	input.Width = searchInputWidthFor(availableWidth, panelHorizontalFrameSize)
 	return input
 }
@@ -132,7 +140,11 @@ func (m Model) inputModalView() string {
 	if p.errMsg != "" {
 		lines = append(lines, truncate(m.theme.DangerText.Render(p.errMsg), panelContentWidth))
 	}
-	lines = append(lines, "", m.theme.MutedText.Render("enter create · esc cancel"))
+	hint := p.hint
+	if hint == "" {
+		hint = "enter create · esc cancel"
+	}
+	lines = append(lines, "", m.theme.MutedText.Render(hint))
 
 	return m.panelWithHeight(width, height).Render(strings.Join(lines, "\n"))
 }

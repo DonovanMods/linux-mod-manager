@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -428,33 +429,50 @@ type planFailedMsg struct {
 }
 
 // switchSelectedProfile handles enter on Profiles (task-7-brief.md's
-// profile-switch flow): a no-op on the wrong screen, an empty list, with no
-// ActionProvider, or while another action/plan is already in flight
-// (single-flight, checked explicitly here since this branch runs before any
-// pendingAction exists for buildAction/promptAction's own guard to catch).
-// The active profile resolves synchronously ("Already on profile <name>",
-// no modal - see resolvePlanResult's AlreadyActive branch for the
-// defensive counterpart of this same check); any other profile dispatches
-// an async PlanProfileSwitch, reusing action.gen/action.cancel exactly like
-// buildAction does, so the result is subject to the same staleness
-// discipline before it's allowed to open a modal.
+// profile-switch flow): a no-op on the wrong screen, an empty list, or with
+// no ActionProvider - the screen/selection-specific guards switchToProfileNamed
+// itself doesn't need (see that method's own doc comment for the rest of
+// the flow, shared with Task 9's post-import "switch to it now?" offer).
 func (m Model) switchSelectedProfile() (Model, tea.Cmd) {
 	if m.screen != ScreenProfiles || m.actions == nil {
+		return m, nil
+	}
+	idx := m.selected[ScreenProfiles]
+	if idx < 0 || idx >= len(m.profiles) {
+		return m, nil
+	}
+	return m.switchToProfileNamed(m.profiles[idx].Name)
+}
+
+// switchToProfileNamed is the profile-name-addressed core of
+// switchSelectedProfile (task-7-brief.md's profile-switch flow, above -
+// looks up name from the currently selected Profiles row) and Task 9's
+// resolveImportSwitchConfirmed (the post-import "switch to it now?" offer,
+// which already knows the name it wants and has no row selection involved
+// at all - task-9-brief.md: "reuse switchSelectedProfile's machinery - do
+// not duplicate the switch flow"). Both funnel through here so there is
+// exactly one PlanProfileSwitch dispatch/gen/cancel/status-line shape to
+// maintain: single-flight (running/pending), the active-profile short
+// circuit ("Already on profile <name>", no modal - mirroring
+// resolvePlanResult's AlreadyActive branch, the defensive counterpart of
+// this same check), and an async PlanProfileSwitch dispatch reusing
+// action.gen/action.cancel exactly like buildAction does, so the result is
+// subject to the same staleness discipline before it's allowed to open a
+// modal.
+func (m Model) switchToProfileNamed(name string) (Model, tea.Cmd) {
+	if m.actions == nil {
 		return m, nil
 	}
 	if m.action.running || m.action.pending != nil {
 		return m, nil
 	}
 
-	idx := m.selected[ScreenProfiles]
-	if idx < 0 || idx >= len(m.profiles) {
-		return m, nil
-	}
-	profile := m.profiles[idx]
-	if profile.Active {
-		m.action.status = fmt.Sprintf("Already on profile %q", profile.Name)
-		m.action.statusIsError = false
-		return m, nil
+	for _, p := range m.profiles {
+		if p.Name == name && p.Active {
+			m.action.status = fmt.Sprintf("Already on profile %q", name)
+			m.action.statusIsError = false
+			return m, nil
+		}
 	}
 
 	if m.action.cancel != nil {
@@ -469,7 +487,6 @@ func (m Model) switchSelectedProfile() (Model, tea.Cmd) {
 	m.action.statusIsError = false
 
 	actions := m.actions
-	name := profile.Name
 	return m, func() tea.Msg {
 		view, err := actions.PlanProfileSwitch(ctx, name)
 		if err != nil {
@@ -1083,7 +1100,7 @@ func (m Model) createProfilePrompt() (Model, tea.Cmd) {
 		existing[p.Name] = true
 	}
 
-	input := newInputModalTextInput("profile name", m.availableWidth(), m.theme.Panel.GetHorizontalFrameSize())
+	input := newInputModalTextInput("profile name", 64, m.availableWidth(), m.theme.Panel.GetHorizontalFrameSize())
 	pi := pendingInput{
 		title: "new profile",
 		input: input,
@@ -1422,4 +1439,229 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 
 	m.state = stateLoading
 	return m, m.loadData
+}
+
+// --- Profile import ('I' on Profiles) ---
+
+// importDataReadMsg carries the raw bytes read from the path the user typed
+// into the "import profile — path to yaml" input modal (see
+// importProfilePrompt) - dispatched by that modal's own submit closure once
+// its validate step has already confirmed the file is readable (see
+// importProfilePrompt's own doc comment for why the read itself happens
+// there, not here), routed through Update() to resolveImportDataRead exactly
+// like profileCreateSubmittedMsg/policyChosenMsg are routed to their own
+// resolvers (see policyChosenMsg's doc comment for the shared reasoning):
+// pendingInput.submit can only return a tea.Cmd, never a mutated Model, so
+// the actual PlanImport call - which needs the LIVE m.actions, in case a
+// game switch rebound it in the window between submit and this resolving -
+// must run inside Update().
+type importDataReadMsg struct{ data []byte }
+
+// importProfilePrompt handles 'I' on Profiles (task-9-brief.md's profile
+// import flow): a no-op on the wrong screen, with no ActionProvider
+// configured, or while another action/plan/modal is already in flight -
+// mirrors createProfilePrompt's own guard shape. Opens the input modal
+// titled "import profile — path to yaml".
+//
+// Unlike every other pendingInput in this file, validate here performs I/O
+// (os.ReadFile) rather than a pure string check: this is what lets a bad
+// path fail INSIDE the modal (TestImportUnreadablePathErrorsInModal - the
+// modal stays open with the OS error as errMsg, exactly like a duplicate
+// profile name does for createProfilePrompt) instead of round-tripping
+// through a deferred message first. Reading a small local YAML file
+// synchronously here is the same category of "local, not network I/O"
+// exception openGameSwitcher's ListGames call documents - not something
+// that needs the deferred-message treatment network calls (PlanProfileSwitch
+// et al.) get.
+//
+// validate and submit share the read bytes through the closure-captured
+// `data` variable: submitInputModal (input_modal.go) always calls validate
+// BEFORE submit, synchronously, in the same call - so by the time submit
+// runs, data is already populated whenever validate returned "" (ok). A
+// validation error leaves data untouched, but submit is never reached in
+// that case (submitInputModal returns before calling it), so no stale bytes
+// from an earlier attempt can leak into a later successful one.
+func (m Model) importProfilePrompt() (Model, tea.Cmd) {
+	if m.screen != ScreenProfiles || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+
+	var data []byte
+	// 256, not createProfilePrompt's 64: a filesystem path (unlike a short
+	// profile name) routinely runs well past 64 characters (e.g. a deeply
+	// nested home directory), so the input needs considerably more room.
+	input := newInputModalTextInput("path to profile.yaml", 256, m.availableWidth(), m.theme.Panel.GetHorizontalFrameSize())
+	pi := pendingInput{
+		title: "import profile — path to yaml",
+		input: input,
+		hint:  "enter import · esc cancel",
+		validate: func(value string) string {
+			read, err := os.ReadFile(value)
+			if err != nil {
+				return err.Error()
+			}
+			data = read
+			return ""
+		},
+		submit: func(string) tea.Cmd {
+			return func() tea.Msg { return importDataReadMsg{data: data} }
+		},
+	}
+	return m.promptInput(pi), nil
+}
+
+// activeGameID returns the ID of the game DataProvider.ListGames reports as
+// active ("exactly one entry has Active set" - see that method's own doc
+// comment), or "" if ListGames errors or (unreachably, per its own contract)
+// reports none. A defensive fallback, never itself surfaced as an error: its
+// only consumer (importDetailLines' cross-game warning) treats "" as "can't
+// tell, don't warn" rather than risking a false positive.
+func (m Model) activeGameID() string {
+	games, err := m.provider.ListGames()
+	if err != nil {
+		return ""
+	}
+	for _, g := range games {
+		if g.Active {
+			return g.ID
+		}
+	}
+	return ""
+}
+
+// importDetailLines renders an ImportPlanView as the import preview modal's
+// detail lines (task-9-brief.md): a profile-name header, an "overwrites
+// existing profile" warning when Exists, a "different game: <id>" warning
+// when view.GameID names a game other than the session's own active one
+// (activeGameID - "" from that means undeterminable, so no warning rather
+// than a guess), then per-category counts + mod names for
+// Installed/NeedsDownload/Missing, in that order - the same three-way split
+// core.ImportPlan itself uses. Mirrors switchDetailLines/installDetailLines'
+// own per-category rendering convention; the modal's existing "+N more"
+// overflow cap (actionModalView) handles a long list without this needing to
+// truncate itself.
+func importDetailLines(view ImportPlanView, activeGameID string) []string {
+	lines := []string{fmt.Sprintf("Profile: %s", view.Name)}
+	if view.Exists {
+		lines = append(lines, "overwrites existing profile")
+	}
+	if activeGameID != "" && view.GameID != "" && view.GameID != activeGameID {
+		lines = append(lines, fmt.Sprintf("different game: %s", view.GameID))
+	}
+	if len(view.Installed) > 0 {
+		lines = append(lines, fmt.Sprintf("%d already installed:", len(view.Installed)))
+		for _, name := range view.Installed {
+			lines = append(lines, fmt.Sprintf("  %s", name))
+		}
+	}
+	if len(view.NeedsDownload) > 0 {
+		lines = append(lines, fmt.Sprintf("%d need re-download:", len(view.NeedsDownload)))
+		for _, name := range view.NeedsDownload {
+			lines = append(lines, fmt.Sprintf("  ↓ %s", name))
+		}
+	}
+	if len(view.Missing) > 0 {
+		lines = append(lines, fmt.Sprintf("%d need to be downloaded:", len(view.Missing)))
+		for _, name := range view.Missing {
+			lines = append(lines, fmt.Sprintf("  ↓ %s", name))
+		}
+	}
+	return lines
+}
+
+// resolveImportDataRead handles a fresh importDataReadMsg: calls
+// actions.PlanImport SYNCHRONOUSLY (a local parse - no async
+// dispatch/gen/cancel bookkeeping needed, unlike PlanProfileSwitch/
+// PlanInstall's network-backed plans) against the LIVE model's actions - a
+// parse/categorize failure lands on the status line as an error, matching
+// resolvePlanFailure's own rendering; a success builds and shows the import
+// preview modal via buildAction, with ApplyImport (fed the SAME data bytes)
+// as the confirm body.
+func (m Model) resolveImportDataRead(msg importDataReadMsg) (Model, tea.Cmd) {
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+
+	view, err := m.actions.PlanImport(m.ctx, msg.data)
+	if err != nil {
+		m.action.status = singleLine(err.Error())
+		m.action.statusIsError = true
+		return m, nil
+	}
+
+	data := msg.data
+	title := fmt.Sprintf("Import profile %q?", view.Name)
+	model, pa := m.buildAction(actionImport, title, importDetailLines(view, m.activeGameID()), "", func(ctx context.Context, progress func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.ApplyImport(ctx, data, progress)
+	})
+	return model.promptAction(pa), nil
+}
+
+// importAppliedMsg is dispatched by app.go's actionDoneMsg handler
+// immediately after a successful actionImport whose outcome named a profile
+// to offer switching to (ActionOutcome.ImportedProfile - see its own doc
+// comment: set only for a same-game import). Carries just the name, exactly
+// like gameChosenMsg carries just an id (see that type's doc comment for the
+// shared "resolve against the LIVE model" reasoning) - dispatched as a Cmd
+// rather than opened inline in the actionDoneMsg case itself so this
+// resolves through the same "deferred msg, guarded resolution" idiom every
+// other modal-opening resolve* handler in this file uses, rather than being
+// a one-off exception.
+type importAppliedMsg struct{ name string }
+
+// resolveImportApplied handles a fresh importAppliedMsg: opens a "switch to
+// <name> now?" yes/no picker for the profile actionImport just saved -
+// reachable only when ApplyImport's outcome named one (see
+// ActionOutcome.ImportedProfile's own doc comment). This is a pendingPicker,
+// not a pendingAction/buildAction confirm: confirming it never calls an
+// ActionProvider method directly (see importSwitchConfirmedMsg's doc
+// comment for why) - it re-enters switchToProfileNamed's own async
+// plan-fetch chain instead, which needs a picker-style "choose, don't touch
+// action.running" resolution (choosePickerOption, picker.go), unlike
+// buildAction's "one direct ActionProvider call" shape. Guarded like every
+// other picker-opening handler (running/pending); promptPicker's own guard
+// repeats this defense-in-depth, same as every other promptX call here.
+func (m Model) resolveImportApplied(msg importAppliedMsg) (Model, tea.Cmd) {
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	name := msg.name
+	picker := pendingPicker{
+		title:   fmt.Sprintf("switch to %q now?", name),
+		options: []pickerOption{{Label: "yes"}, {Label: "no"}},
+		choose: func(idx int) tea.Cmd {
+			if idx != 0 {
+				return nil
+			}
+			return func() tea.Msg { return importSwitchConfirmedMsg{name: name} }
+		},
+	}
+	return m.promptPicker(picker), nil
+}
+
+// importSwitchConfirmedMsg is dispatched by resolveImportApplied's "switch to
+// <name> now?" picker when the user picks "yes" - mirroring
+// policyChosenMsg/gameChosenMsg's own reasoning in full (see either's doc
+// comment): pendingPicker.choose can only return a tea.Cmd, never a mutated
+// Model, so the actual switchToProfileNamed call (which mutates
+// action.gen/cancel/running/status) must run inside Update(), against the
+// LIVE model, one tick later.
+type importSwitchConfirmedMsg struct{ name string }
+
+// resolveImportSwitchConfirmed handles an importSwitchConfirmedMsg - the
+// "yes" branch of resolveImportApplied's offer - by routing into
+// switchToProfileNamed for the newly imported profile's name, exactly like
+// switchSelectedProfile's own Select-key path does (task-9-brief.md: "reuse
+// switchSelectedProfile's machinery - do not duplicate the switch flow"). No
+// separate ApplyProfileSwitch call is written here: switchToProfileNamed
+// already owns single-flight guarding, the active-profile short circuit, and
+// the async PlanProfileSwitch dispatch that eventually opens the REAL switch
+// confirmation modal (with its own Enable/Disable/NeedsDownloads detail) -
+// this "yes" is deliberately a SECOND, separate confirmation on top of that
+// one, not a shortcut past it.
+func (m Model) resolveImportSwitchConfirmed(msg importSwitchConfirmedMsg) (Model, tea.Cmd) {
+	return m.switchToProfileNamed(msg.name)
 }

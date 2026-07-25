@@ -22,6 +22,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui"
 )
 
@@ -2311,4 +2312,115 @@ exit 0`)
 	require.NoError(t, err)
 	assert.Equal(t, "hit\n", string(secondLogContent),
 		"resolvedHooks must be recomputed after SetGame: the SECOND game's own hook must run, not one cached from the first")
+}
+
+// --- Phase 6b Task 9: PlanImport/ApplyImport ---
+
+// TestCoreProviderActions_PlanImport_MapsPlanToView proves coreProvider.PlanImport
+// maps core.ImportPlan onto ImportPlanView, splitting mods into
+// Installed/NeedsDownload/Missing exactly like core.ImportPlan itself does,
+// each formatted "sourceID:modID vVersion" - matching the CLI's own
+// profile-import preview list-line format (cmd/lmm/profile.go).
+func TestCoreProviderActions_PlanImport_MapsPlanToView(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "installed-mod", "Installed Mod", "1.0", true, map[string][]byte{"i.esp": []byte("i")})
+
+	profile := &domain.Profile{
+		Name: "target", GameID: game.ID,
+		Mods: []domain.ModReference{
+			{SourceID: "src", ModID: "installed-mod", Version: "1.0"},
+			{SourceID: "src", ModID: "missing-mod", Version: "2.0"},
+		},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	view, err := actions.PlanImport(context.Background(), data)
+	require.NoError(t, err)
+	assert.Equal(t, "target", view.Name)
+	assert.Equal(t, game.ID, view.GameID)
+	assert.False(t, view.Exists)
+	assert.Equal(t, []string{"src:installed-mod v1.0"}, view.Installed)
+	assert.Equal(t, []string{"src:missing-mod v2.0"}, view.Missing)
+	assert.Empty(t, view.NeedsDownload)
+}
+
+// TestCoreProviderActions_PlanImport_ParseErrorWraps proves a garbage
+// payload's parse failure is surfaced wrapped, mirroring every other
+// coreProvider plan method's own "planning X: %w" convention.
+func TestCoreProviderActions_PlanImport_ParseErrorWraps(t *testing.T) {
+	actions, _, _ := newCoreActionsFixture(t)
+
+	_, err := actions.PlanImport(context.Background(), []byte("not: valid: yaml: at: all: ["))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "planning import")
+}
+
+// TestCoreProviderActions_ApplyImport_SameGameSavesAndOffersSwitch proves
+// ApplyImport saves the profile for real (readable back via
+// ProfileManager.Get) and sets ActionOutcome.ImportedProfile to the saved
+// name when the imported profile targets the session's own active game -
+// Task 9's signal for the TUI's post-import "switch to it now?" offer.
+func TestCoreProviderActions_ApplyImport_SameGameSavesAndOffersSwitch(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	profile := &domain.Profile{Name: "imported-profile", GameID: game.ID}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	var ticks []tui.ActionProgress
+	outcome, err := actions.ApplyImport(context.Background(), data, func(p tui.ActionProgress) { ticks = append(ticks, p) })
+	require.NoError(t, err)
+	assert.Equal(t, "imported-profile", outcome.ImportedProfile, "a same-game import must offer a switch")
+	assert.Contains(t, outcome.Message, "imported-profile")
+
+	saved, err := svc.NewProfileManager().Get(game.ID, "imported-profile")
+	require.NoError(t, err)
+	assert.Equal(t, "imported-profile", saved.Name)
+}
+
+// TestCoreProviderActions_ApplyImport_DifferentGameNeverOffersSwitch proves
+// a cross-game import (the imported profile's own declared GameID differs
+// from the session's active game) still saves successfully but leaves
+// ImportedProfile empty - the TUI must never offer to switch the CURRENT
+// session onto a profile that was saved under a different game entirely.
+func TestCoreProviderActions_ApplyImport_DifferentGameNeverOffersSwitch(t *testing.T) {
+	actions, _, game := newCoreActionsFixture(t)
+	require.NotEqual(t, "other-game", game.ID, "sanity: the fixture's own game ID must differ from this test's cross-game one")
+
+	profile := &domain.Profile{Name: "cross-game-profile", GameID: "other-game"}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	outcome, err := actions.ApplyImport(context.Background(), data, nil)
+	require.NoError(t, err)
+	assert.Empty(t, outcome.ImportedProfile, "a cross-game import must never offer a switch")
+}
+
+// TestCoreProviderActions_ApplyImport_ForceOverwritesExisting proves
+// ApplyImport always passes Force=true: the TUI's preview modal confirm IS
+// the only overwrite consent it has (see ActionProvider.ApplyImport's own
+// doc comment) - re-importing a profile with an already-saved name must
+// succeed and replace its mods, never error the way a Force=false import
+// would.
+func TestCoreProviderActions_ApplyImport_ForceOverwritesExisting(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "existing")
+	require.NoError(t, err)
+
+	profile := &domain.Profile{
+		Name: "existing", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "new-mod", Version: "1.0"}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	_, err = actions.ApplyImport(context.Background(), data, nil)
+	require.NoError(t, err, "ApplyImport must always overwrite (Force=true), never error on an existing name")
+
+	saved, err := pm.Get(game.ID, "existing")
+	require.NoError(t, err)
+	require.Len(t, saved.Mods, 1)
+	assert.Equal(t, "new-mod", saved.Mods[0].ModID, "the overwrite must replace the existing profile's mod list")
 }

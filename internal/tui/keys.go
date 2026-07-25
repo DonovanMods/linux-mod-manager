@@ -105,6 +105,14 @@ type KeyMap struct {
 	// this has no meaning on any ordinary screen, so it carries no outer
 	// updateKey switch case of its own.
 	Changelog key.Binding
+	// ImportProfile is Phase 6b Task 9's Profiles-screen import binding (see
+	// mutations.go's importProfilePrompt): opens the "path to yaml" input
+	// modal. Capital "I" (distinct from lowercase "i"/Install, Phase 5b's
+	// install-from-search binding, which fires only on ScreenSearch) -
+	// mirroring CreateProfile/DeleteProfile/Purge's own "a capital letter
+	// distinguishes a Profiles/whole-profile action from an unrelated
+	// lowercase one" convention.
+	ImportProfile key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -253,6 +261,10 @@ func DefaultKeyMap() KeyMap {
 		Changelog: key.NewBinding(
 			key.WithKeys("v"),
 			key.WithHelp("v", "changelog"),
+		),
+		ImportProfile: key.NewBinding(
+			key.WithKeys("I"),
+			key.WithHelp("I", "import profile"),
 		),
 	}
 }

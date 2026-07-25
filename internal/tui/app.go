@@ -469,6 +469,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m, searchCmd = m.refreshSearchAfterInstall()
 			cmds = append(cmds, searchCmd)
 		}
+		// Task 9: a successful import whose outcome named a profile (a
+		// same-game import - see ActionOutcome.ImportedProfile's own doc
+		// comment) offers a follow-up "switch to it now?" confirmation,
+		// dispatched as a deferred message (see importAppliedMsg's own doc
+		// comment for why this isn't opened inline, right here, instead).
+		if msg.kind == actionImport && msg.outcome.ImportedProfile != "" {
+			name := msg.outcome.ImportedProfile
+			cmds = append(cmds, func() tea.Msg { return importAppliedMsg{name: name} })
+		}
 		return m, tea.Batch(cmds...)
 	case actionFailedMsg:
 		if msg.gen != m.action.gen {
@@ -550,6 +559,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resolveGameSwitch(msg)
 	case changelogPickedMsg:
 		return m.resolveChangelogPicked(msg)
+	case importDataReadMsg:
+		return m.resolveImportDataRead(msg)
+	case importAppliedMsg:
+		return m.resolveImportApplied(msg)
+	case importSwitchConfirmedMsg:
+		return m.resolveImportSwitchConfirmed(msg)
 	case loadFailedMsg:
 		// Stale gen: mirrors dataLoadedMsg's discard above - a superseded
 		// load's failure must not flip the fresh session into stateFailed.
@@ -743,6 +758,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.createProfilePrompt()
 	case key.Matches(msg, m.keys.DeleteProfile):
 		return m.deleteSelectedProfile()
+	case key.Matches(msg, m.keys.ImportProfile):
+		return m.importProfilePrompt()
 	case key.Matches(msg, m.keys.Purge):
 		return m.purgeProfilePrompt()
 	case key.Matches(msg, m.keys.GameSwitch):
@@ -1624,6 +1641,9 @@ func (m Model) helpGroups() []helpGroup {
 			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "switch profile"),
 			helpEntry(m.keys.CreateProfile),
 			helpEntry(m.keys.DeleteProfile),
+			// ImportProfile is Task 9's import binding (see mutations.go's
+			// importProfilePrompt).
+			helpEntry(m.keys.ImportProfile),
 		},
 	}
 
