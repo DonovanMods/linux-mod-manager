@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -195,5 +196,30 @@ func TestGetProfileConflictsCancelledContext(t *testing.T) {
 
 	conflicts, err := svc.GetProfileConflicts(ctx, game, "default")
 	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, conflicts)
+}
+
+// TestGetProfileConflictsCacheReadErrorPropagates pins the skip-vs-fail
+// split (Copilot PR #73 round 3): a MISSING cache entry skips the mod
+// (TestGetProfileConflictsMissingCacheSkipsMod), but any other cache read
+// failure (here: permissions) aborts the query with the error instead of
+// silently under-reporting conflicts.
+func TestGetProfileConflictsCacheReadErrorPropagates(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	svc := newFlowsTestService(t)
+	game := seedTwinConflict(t, svc,
+		map[string][]byte{"shared.esp": []byte("X-content")},
+		map[string][]byte{"shared.esp": []byte("Y-content")},
+	)
+
+	modXCache := svc.GetGameCache(game).ModPath("g1", "src", "modX", "1.0")
+	require.NoError(t, os.Chmod(modXCache, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(modXCache, 0o755) })
+
+	conflicts, err := svc.GetProfileConflicts(context.Background(), game, "default")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "listing cache files")
 	assert.Nil(t, conflicts)
 }

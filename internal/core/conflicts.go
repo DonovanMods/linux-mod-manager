@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -39,7 +41,9 @@ type ProfileConflict struct {
 // source install-time conflict checking uses) - NOT from the deployed_files
 // table, whose single-owner-per-path schema can only ever name one provider
 // per file; a mod whose cache entry is missing (e.g. manually deleted)
-// simply contributes no files rather than failing the query. Ownership per
+// simply contributes no files rather than failing the query, while any
+// other cache read failure (permissions, corruption) aborts with an error
+// rather than silently under-reporting conflicts. Ownership per
 // path still comes from deployed_files (GetFileOwner); a path with no
 // recorded owner is skipped, matching the pre-extraction CLI's behavior of
 // only reporting conflicts on tracked deployments.
@@ -94,7 +98,13 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 		}
 		files, err := gameCache.ListFiles(game.ID, m.SourceID, m.ID, m.Version)
 		if err != nil {
-			continue
+			// A missing cache entry (e.g. manually deleted) just means the mod
+			// provides nothing; any OTHER read failure (permissions, corruption)
+			// would silently under-report conflicts if skipped, so it aborts.
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("listing cache files for %s: %w", domain.ModKey(m.SourceID, m.ID), err)
 		}
 		key := domain.ModKey(m.SourceID, m.ID)
 		for _, f := range files {

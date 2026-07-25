@@ -156,8 +156,11 @@ type DataProvider interface {
 	// delegate to (directly, for coreProvider, or via canned data for
 	// prototypeProvider). Fetched alongside Overview/Profiles in the same
 	// loadData refresh cycle (app.go), not gated behind an explicit user
-	// action the way Updates/CheckUpdates is: conflict detection is a pure,
-	// cheap DB/cache read, so it belongs in every ordinary load.
+	// action the way Updates/CheckUpdates is: detection is local-only (DB
+	// reads plus a directory walk of each enabled mod's cache - no network),
+	// so it rides every ordinary load. The walks scale with installed-mod
+	// count and cache size; if refreshes ever feel slow on very large mod
+	// sets, memoizing per (mod, version) manifest is the obvious lever.
 	Conflicts(ctx context.Context) ([]ConflictItem, error)
 }
 
