@@ -148,6 +148,43 @@ func TestSelectionMovementIsClamped(t *testing.T) {
 	require.Equal(t, 0, model.SelectedIndex(ScreenInstalledMods))
 }
 
+// Selectable list screens must (a) never exceed the height budget and
+// (b) keep the selected row visible when navigation walks past the fold —
+// previously rows were rendered unbounded, so on short terminals the
+// highlight scrolled out of the panel while the detail/selection state kept
+// updating invisibly (#42).
+func TestListScreensFitHeightBudgetAndFollowSelectionOnShortTerminals(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		key    string // number key jumping to the screen
+		screen Screen
+	}{
+		{"installed mods", "2", ScreenInstalledMods},
+		{"profiles", "4", ScreenProfiles},
+		{"sources", "5", ScreenSources},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			model := sizedPrototypeModel(t, "wizardry", 80, 12)
+			model = updateWithRunes(t, model, tc.key)
+
+			// Walk selection to the last row; the list is longer than the
+			// short terminal's budget for at least installed mods.
+			for i := 0; i < model.itemCount(tc.screen); i++ {
+				model = updateWithMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+			}
+			view := model.screenView()
+			require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
+
+			// The selected (last) row must be rendered: its highlighted "> "
+			// marker must appear somewhere in the view.
+			require.Contains(t, view, "> ", "selection marker must stay visible after walking past the fold")
+		})
+	}
+}
+
 func TestSearchAndQuitBindings(t *testing.T) {
 	t.Parallel()
 
@@ -336,14 +373,180 @@ func TestDashboardLayoutsDoNotOverflowNarrowTerminals(t *testing.T) {
 	}
 }
 
+// Dashboards must never render more lines than availableContentHeight():
+// lipgloss pads short panels but never clips tall ones, so any layout whose
+// content exceeds its panel's height budget silently overflows the terminal
+// (#42; reproduced at 120x21 where the party layout rendered 15 lines into
+// a 14-line budget). Every theme layout is checked at each size because the
+// four dashboard views split the budget differently.
+func TestDashboardLayoutsFitHeightBudgetOnShortTerminals(t *testing.T) {
+	t.Parallel()
+	sizes := []struct{ width, height int }{{120, 21}, {80, 14}, {40, 12}, {40, 10}}
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		for _, size := range sizes {
+			t.Run(fmt.Sprintf("%s-%dx%d", themeName, size.width, size.height), func(t *testing.T) {
+				t.Parallel()
+				model := sizedPrototypeModel(t, themeName, size.width, size.height)
+				view := model.screenView()
+				require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
+			})
+		}
+	}
+}
+
+// Commander's half-width panels are narrow enough at small widths (40x12:
+// panel width ~19, content ~15) that an untruncated menu label like
+// "> Consult Conflict Oracle" lipgloss-auto-wraps into two physical lines
+// inside the panel. clampLines counts logical lines, so a wrapped row slips
+// past the clamp and silently grows the view over the height budget (#42);
+// the fix is per-line truncation to the panel's content width, the same
+// pattern sourcesView uses.
+func TestCommanderDashboardRowsDoNotWrapAtNarrowWidths(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "dos", 40, 12)
+	require.LessOrEqual(t, lipgloss.Height(model.screenView()), model.availableContentHeight())
+}
+
+// At the floor height (80x8: content budget 8, panel content budget 6) the
+// commander left panel's six lines fit exactly, so no clamping may occur: any
+// budget fudge (an earlier fix subtracted an extra 1) clamps them to four
+// plus "+2 more" and silently hides the Enabled/Updates lines (#42). Only the
+// left panel mentions "Updates" — the commander menu rows do not — so its
+// presence pins the whole panel rendering unclamped.
+func TestCommanderDashboardFloorHeightKeepsWholeLeftPanel(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "dos", 80, 8)
+	require.Contains(t, model.screenView(), "Updates")
+}
+
+// Long dynamic values (game/profile names interpolated into dashboard rows,
+// e.g. "Mods:    %d installed / %d enabled" or "> GAME     %s") must not
+// lipgloss-auto-wrap inside their panel: clampLines counts logical lines, so
+// a wrapped row renders as two physical lines it cannot see, silently
+// growing the view past the height budget (#42) — the same defect class
+// TestCommanderDashboardRowsDoNotWrapAtNarrowWidths pins for commander's
+// static menu labels, here triggered by data instead of layout. Prototype
+// data is short, so the plain short-terminal test cannot catch this; the
+// long names are set directly on the model to simulate real-world values.
+// Multiple sizes matter: at 40x12 party's tiny per-panel budget happens to
+// clamp the long lines away before they can wrap, so only 120x21 (where
+// topBudget keeps all four lines and the ~90-col names wrap inside the
+// 55-col half panel) exposes the party-layout variant of the defect.
+func TestDashboardLayoutsFitHeightBudgetWithLongDynamicValues(t *testing.T) {
+	t.Parallel()
+	sizes := []struct{ width, height int }{{120, 21}, {80, 14}, {40, 12}}
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		for _, size := range sizes {
+			t.Run(fmt.Sprintf("%s-%dx%d", themeName, size.width, size.height), func(t *testing.T) {
+				t.Parallel()
+
+				model := sizedPrototypeModel(t, themeName, size.width, size.height)
+				model.summary.GameName = strings.Repeat("Very Long Game Name ", 4)
+				model.summary.ProfileName = strings.Repeat("Very Long Profile Name ", 4)
+				view := model.screenView()
+				require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
+			})
+		}
+	}
+}
+
 func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 120, 36)
+	// All four themes, because each maps to a different dashboard layout
+	// (TestThemesUseDistinctLayouts) and the four layouts split the height
+	// budget differently — a wizardry-only check left the other three
+	// layouts' exact-height invariant unguarded (#42 review).
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		t.Run(themeName, func(t *testing.T) {
+			t.Parallel()
 
-	for _, screen := range screens {
-		model.screen = screen
-		require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()), screen.String())
+			model := sizedPrototypeModel(t, themeName, 120, 36)
+
+			for _, screen := range screens {
+				model.screen = screen
+				require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()), screen.String())
+			}
+		})
+	}
+}
+
+// The short-terminal companion to
+// TestScreenViewsUseExactAvailableHeightOnLargeTerminals: at ANY size,
+// screenView() must render at most availableContentHeight() lines — the
+// large-terminal test pins "exactly", this one pins "never more", which is
+// the half lipgloss cannot enforce (it pads but never clips) (#42).
+func TestScreenViewsFitHeightBudgetAtAllSizes(t *testing.T) {
+	t.Parallel()
+	sizes := []struct{ width, height int }{{120, 21}, {80, 14}, {80, 12}, {40, 12}, {40, 10}, {80, 8}}
+	for _, size := range sizes {
+		for i, screen := range screens {
+			t.Run(fmt.Sprintf("%v-%dx%d", screen, size.width, size.height), func(t *testing.T) {
+				t.Parallel()
+				model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+				model = updateWithRunes(t, model, fmt.Sprintf("%d", i+1))
+				if screen == ScreenSearch {
+					model.search.state = searchReady
+					model.search.page = populatedSearchPage()
+				}
+				view := model.screenView()
+				require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+					"screen %v must not overflow at %dx%d", screen, size.width, size.height)
+			})
+		}
+	}
+}
+
+// stateFailed/searchFailed/zero-results all interpolate unbounded dynamic
+// text (an arbitrary error's .Error() string, or the user's own search
+// query) directly into a Width-constrained panel — the same wrap defect
+// class TestScreenViewsFitHeightBudgetAtAllSizes pinned for the dashboards
+// (reachable there by fixed layout data; reachable here by runtime data an
+// attacker or a misbehaving source could make arbitrarily long) (#42).
+func TestErrorAndEmptyStatesFitHeightBudgetWithLongDynamicText(t *testing.T) {
+	t.Parallel()
+
+	longText := strings.Repeat("catastrophic failure contacting the archive ", 20) // ~900 runes
+	longQuery := strings.Repeat("ancient-tome-of-forbidden-modding-secrets ", 20)  // ~860 runes
+
+	sizes := []struct{ width, height int }{{40, 12}, {80, 8}}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("stateFailed-%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			model.state = stateFailed
+			model.loadErr = errors.New(longText)
+
+			view := model.screenView()
+			require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+				"stateFailed must not overflow at %dx%d", size.width, size.height)
+		})
+
+		t.Run(fmt.Sprintf("searchFailed-%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			model = updateWithRunes(t, model, "3") // ScreenSearch's nav key (its index+1 in screens)
+			model.search.state = searchFailed
+			model.search.err = errors.New(longText)
+
+			view := model.screenView()
+			require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+				"searchFailed must not overflow at %dx%d", size.width, size.height)
+		})
+
+		t.Run(fmt.Sprintf("searchReadyZeroResults-%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			model = updateWithRunes(t, model, "3")
+			model.search.state = searchReady
+			model.search.page = SearchPage{Query: longQuery, Source: "nexusmods"}
+
+			view := model.screenView()
+			require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+				"zero-results must not overflow at %dx%d", size.width, size.height)
+		})
 	}
 }
 

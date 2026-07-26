@@ -986,13 +986,21 @@ func (m Model) screenView() string {
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
 			Render(m.theme.PanelTitle.Render("Consulting the archives..."))
 	case stateFailed:
+		lines := []string{
+			m.theme.PanelTitle.Render("THE RITUAL FAILED"),
+			m.theme.DangerText.Render(m.loadErr.Error()),
+			"",
+			m.theme.MutedText.Render("q: quit"),
+		}
+		// m.loadErr is arbitrary runtime data (a wrapped source/network error)
+		// with no length bound; truncateLines (see clamp.go) keeps it from
+		// lipgloss-auto-wrapping past the height budget (#42).
+		panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+		lines = m.truncateLines(lines, panelContentWidth)
+		contentBudget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
+		lines = m.clampLines(lines, contentBudget)
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
-			Render(strings.Join([]string{
-				m.theme.PanelTitle.Render("THE RITUAL FAILED"),
-				m.theme.DangerText.Render(m.loadErr.Error()),
-				"",
-				m.theme.MutedText.Render("q: quit"),
-			}, "\n"))
+			Render(strings.Join(lines, "\n"))
 	}
 
 	switch m.screen {
@@ -1026,6 +1034,8 @@ func (m Model) dashboardView() string {
 	}
 }
 
+// partyDashboardView clamps each panel's content to its height budget to
+// prevent silently growing beyond the terminal (#42).
 func (m Model) partyDashboardView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
@@ -1035,31 +1045,44 @@ func (m Model) partyDashboardView() string {
 	topHeight := splitHeight / 2
 	menuHeight := splitHeight - topHeight
 
-	party := strings.Join([]string{
+	topBudget := max(topHeight-m.theme.Panel.GetVerticalBorderSize(), 1)
+	menuBudget := max(menuHeight-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	partyLines := m.clampLines([]string{
 		m.theme.PanelTitle.Render("PARTY"),
 		fmt.Sprintf("Game:    %s", m.summary.GameName),
 		fmt.Sprintf("Profile: %s", m.summary.ProfileName),
 		fmt.Sprintf("Mods:    %d installed / %d enabled", m.summary.Installed, m.summary.Enabled),
-	}, "\n")
+	}, topBudget)
 
-	quest := strings.Join([]string{
+	questLines := m.clampLines([]string{
 		m.theme.PanelTitle.Render("QUEST LOG"),
 		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(countLabel(m.summary.Updates))),
 		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
 		"Last deploy: ?",
-	}, "\n")
+	}, topBudget)
 
-	menu := strings.Join(
+	menuLines := m.clampLines(
 		append([]string{m.theme.PanelTitle.Render("COMMANDS")}, m.dashboardMenuRows()...),
-		"\n")
+		menuBudget)
+
+	// A long game/profile name would otherwise lipgloss-auto-wrap inside the
+	// half-width top panels; truncateLines (see clamp.go) prevents that (#42).
+	topContentWidth := max(panelWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	menuContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	partyLines = m.truncateLines(partyLines, topContentWidth)
+	questLines = m.truncateLines(questLines, topContentWidth)
+	menuLines = m.truncateLines(menuLines, menuContentWidth)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.panelWithHeight(panelWidth, topHeight).Render(party),
+		m.panelWithHeight(panelWidth, topHeight).Render(strings.Join(partyLines, "\n")),
 		" ",
-		m.panelWithHeight(panelWidth, topHeight).Render(quest),
-	) + "\n" + m.panelWithHeight(width, menuHeight).Render(menu)
+		m.panelWithHeight(panelWidth, topHeight).Render(strings.Join(questLines, "\n")),
+	) + "\n" + m.panelWithHeight(width, menuHeight).Render(strings.Join(menuLines, "\n"))
 }
 
+// terminalDashboardView clamps content to the height budget to prevent
+// silently growing beyond the terminal (#42).
 func (m Model) terminalDashboardView() string {
 	rows := []string{
 		m.theme.PanelTitle.Render("BOOT SEQUENCE // MOD GUILD TERMINAL"),
@@ -1070,9 +1093,17 @@ func (m Model) terminalDashboardView() string {
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
+	budget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
+	rows = m.clampLines(rows, budget)
+	// A long game/profile name would otherwise lipgloss-auto-wrap into extra
+	// physical lines; truncateLines (see clamp.go) prevents that (#42).
+	contentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	rows = m.truncateLines(rows, contentWidth)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// commanderDashboardView clamps each side's content to its height budget to
+// prevent silently growing beyond the terminal (#42).
 func (m Model) commanderDashboardView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
@@ -1080,25 +1111,36 @@ func (m Model) commanderDashboardView() string {
 	leftWidth := max((width-gap)/2, 1)
 	rightWidth := max(width-gap-leftWidth, 1)
 
-	left := strings.Join([]string{
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+	leftLines := m.clampLines([]string{
 		m.theme.PanelTitle.Render("ACTIVE PROFILE"),
 		m.summary.ProfileName,
 		"",
 		fmt.Sprintf("Game     %s", m.summary.GameName),
 		fmt.Sprintf("Enabled  %d", m.summary.Enabled),
 		fmt.Sprintf("Updates  %s", countLabel(m.summary.Updates)),
-	}, "\n")
-	right := strings.Join(
+	}, contentBudget)
+	rightLines := m.clampLines(
 		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
-		"\n")
+		contentBudget)
+
+	// These half-width panels are narrow enough at small terminal widths that
+	// an overlong row ("> Consult Conflict Oracle" at width 40) would
+	// lipgloss-auto-wrap; truncateLines (see clamp.go) prevents that (#42).
+	leftContentWidth := max(leftWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	rightContentWidth := max(rightWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	leftLines = m.truncateLines(leftLines, leftContentWidth)
+	rightLines = m.truncateLines(rightLines, rightContentWidth)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.panelWithHeight(leftWidth, height).Render(left),
+		m.panelWithHeight(leftWidth, height).Render(strings.Join(leftLines, "\n")),
 		" ",
-		m.panelWithHeight(rightWidth, height).Render(right),
+		m.panelWithHeight(rightWidth, height).Render(strings.Join(rightLines, "\n")),
 	)
 }
 
+// crtDashboardView clamps content to the height budget to prevent
+// silently growing beyond the terminal (#42).
 func (m Model) crtDashboardView() string {
 	rows := []string{
 		m.theme.PanelTitle.Render("CRT STATUS STACK"),
@@ -1109,19 +1151,32 @@ func (m Model) crtDashboardView() string {
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
+	budget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
+	rows = m.clampLines(rows, budget)
+	// A long game/profile name would otherwise lipgloss-auto-wrap into extra
+	// physical lines; truncateLines (see clamp.go) prevents that (#42).
+	contentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	rows = m.truncateLines(rows, contentWidth)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// modsView renders the Installed Mods screen: selectable list of active-profile
+// mods with windowed height (never exceeds budget) and scroll-follow-selection
+// (selected row stays visible when navigation walks past the fold, #42).
 func (m Model) modsView() string {
-	rows := []string{m.theme.PanelTitle.Render("SPELLBOOK: INSTALLED MODS")}
-	rows = append(rows, "[/] Search")
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	rows := []string{m.theme.PanelTitle.Render("SPELLBOOK: INSTALLED MODS"), "[/] Search"}
 	if len(m.mods) == 0 {
 		rows = append(rows, m.theme.MutedText.Render("No mods installed yet. 'lmm install <mod>' begins the quest."))
 	}
-	for i, mod := range m.mods {
-		rows = append(rows, m.modRow(i, m.availableWidth(), mod))
-	}
-	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+	listBudget := max(contentBudget-len(rows), 0)
+	rows = append(rows, m.windowedRows(len(m.mods), m.selected[ScreenInstalledMods], listBudget, func(i int) string {
+		return m.modRow(i, width, m.mods[i])
+	})...)
+	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
 // searchHeaderLines renders the two lines shared by every search state: the
@@ -1170,8 +1225,16 @@ func (m Model) searchWarningLine(width int) string {
 }
 
 // searchSinglePanel wraps header+body lines in one full-bounds panel, used by
-// every search state except the ready-with-results two-pane layout.
+// every search state except the ready-with-results two-pane layout. Several
+// of those states interpolate unbounded dynamic text (searchFailed's
+// m.search.err.Error(), zero-results' user-supplied query), so lines are run
+// through truncateLines (see clamp.go) before the row count is clamped to the
+// panel's content budget (#42).
 func (m Model) searchSinglePanel(lines []string) string {
+	panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	lines = m.truncateLines(lines, panelContentWidth)
+	contentBudget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
+	lines = m.clampLines(lines, contentBudget)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
 		Render(strings.Join(lines, "\n"))
 }
@@ -1270,8 +1333,10 @@ func (m Model) searchReadyView(header []string) string {
 // whatever's left, so the columns can never sum past innerWidth. Overflowing
 // values truncate instead of overflowing into lipgloss's automatic line
 // wrap, which would silently break the exact-height layout invariant. Rows
-// beyond maxLines are omitted for the same reason (a full page of results
-// can outnumber the available rows on a short terminal).
+// beyond maxLines scroll-follow the selection via m.windowedRows instead of
+// a first-N slice — a first-N slice let the highlight vanish off-screen
+// once selection walked past the fold, even though the detail pane kept
+// tracking the invisible selection (#42).
 func (m Model) searchResultsPane(width, maxLines int) string {
 	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
 
@@ -1294,12 +1359,8 @@ func (m Model) searchResultsPane(width, maxLines int) string {
 	nameWidth := max(avail-statusWidth-versionWidth-sourceWidth, 1)
 
 	results := m.search.page.Results
-	if len(results) > maxLines {
-		results = results[:maxLines]
-	}
-
-	rows := make([]string, 0, len(results))
-	for i, item := range results {
+	rowFor := func(i int) string {
+		item := results[i]
 		status := fmt.Sprintf("%-*s", statusWidth, truncate(item.Status, statusWidth))
 		if item.Status == "installed" {
 			status = m.theme.WarningText.Render(status)
@@ -1317,18 +1378,22 @@ func (m Model) searchResultsPane(width, maxLines int) string {
 				versionWidth, truncate(item.Version, versionWidth),
 				status)
 		}
-		rows = append(rows, m.row(i, line))
+		return m.row(i, line)
 	}
-	return strings.Join(rows, "\n")
+	return strings.Join(m.windowedRows(len(results), m.selected[ScreenSearch], maxLines, rowFor), "\n")
 }
 
 // searchDetailPane renders the fields for the currently selected result.
 // Unknown endorsements render "?" (countLabel convention: never fake data).
 // Labels and free-text values are truncated to the pane's content width for
 // the same reason searchResultsPane truncates: overflow would trigger an
-// unpredictable automatic re-wrap inside the bordered panel. The summary is
-// clipped to whatever vertical budget remains after the fixed fields so a
-// long summary can never grow the pane past maxLines.
+// unpredictable automatic re-wrap inside the bordered panel. The 8 fixed
+// field lines are themselves clamped to maxLines (via m.clampLines) before
+// the summary is considered — on a floor-height terminal the fields alone
+// can exceed the pane's budget, and the summary's own clipping only ever
+// accounted for the fields fitting (#42). The summary is then clipped to
+// whatever vertical budget remains after the (now-clamped) fixed fields so
+// a long summary can never grow the pane past maxLines.
 func (m Model) searchDetailPane(width, maxLines int) string {
 	results := m.search.page.Results
 	idx := m.selected[ScreenSearch]
@@ -1344,9 +1409,21 @@ func (m Model) searchDetailPane(width, maxLines int) string {
 
 	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 	labelWidth := min(13, max(innerWidth-1, 1)) // len("Endorsements ") == 13
-	valueWidth := max(innerWidth-labelWidth, 1)
+	// Floored at 0, not 1: truncate already returns "" for width <= 0
+	// (app.go's truncate), so a pathologically narrow pane (innerWidth 1,
+	// labelWidth 1) simply renders no value instead of a value column wider
+	// than what's left after the label (#42).
+	valueWidth := max(innerWidth-labelWidth, 0)
 	field := func(label, value string) string {
 		return fmt.Sprintf("%-*s%s", labelWidth, truncate(label, labelWidth), truncate(value, valueWidth))
+	}
+
+	// Status gets the same WarningText treatment as searchResultsPane's
+	// status column when installed — this was the one place the status was
+	// spelled out in full and the one place it didn't pop (#42).
+	statusValue := truncate(item.Status, valueWidth)
+	if item.Status == "installed" {
+		statusValue = m.theme.WarningText.Render(statusValue)
 	}
 
 	lines := []string{
@@ -1355,10 +1432,11 @@ func (m Model) searchDetailPane(width, maxLines int) string {
 		field("Author", item.Author),
 		field("Version", item.Version),
 		field("Source", item.Source),
-		field("Status", item.Status),
+		fmt.Sprintf("%-*s%s", labelWidth, truncate("Status", labelWidth), statusValue),
 		field("Downloads", fmt.Sprintf("%d", item.Downloads)),
 		field("Endorsements", endorsements),
 	}
+	lines = m.clampLines(lines, maxLines)
 
 	if summaryBudget := maxLines - len(lines) - 1; summaryBudget > 0 && item.Summary != "" {
 		lines = append(lines, "")
@@ -1398,12 +1476,20 @@ func (m Model) searchFooterLine() string {
 	return footer
 }
 
+// profilesView renders the Profiles screen: selectable list of profiles with
+// windowed height (never exceeds budget) and scroll-follow-selection (selected
+// row stays visible when navigation walks past the fold, #42).
 func (m Model) profilesView() string {
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
 	rows := []string{m.theme.PanelTitle.Render("PROFILE ROSTER")}
-	for i, profile := range m.profiles {
-		rows = append(rows, m.profileRow(i, m.availableWidth(), profile))
-	}
-	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+	listBudget := max(contentBudget-len(rows), 0)
+	rows = append(rows, m.windowedRows(len(m.profiles), m.selected[ScreenProfiles], listBudget, func(i int) string {
+		return m.profileRow(i, width, m.profiles[i])
+	})...)
+	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
 // profileRow renders one Profiles row: active marker / name / mod count.
@@ -1443,15 +1529,21 @@ func (m Model) profileRow(index, width int, profile ProfileItem) string {
 // registered with the DataProvider (built-in and user-defined), one row
 // each, in the single-pane list style profilesView uses. Unlike
 // `lmm source list`, there is no error/status column — see SourceInfo's doc
-// comment for why definition-load failures never reach this screen.
+// comment for why definition-load failures never reach this screen. The list
+// has windowed height (never exceeds budget) and scroll-follow-selection
+// (selected row stays visible when navigation walks past the fold, #42).
 func (m Model) sourcesView() string {
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
 	// Calculate the panel's content width, which is narrower than availableWidth()
 	// by the panel's horizontal frame size (border + padding). Rows that render
 	// INSIDE this panel must be truncated to this width to prevent lipgloss from
 	// re-wrapping overlong lines and growing the view past its fixed height
 	// budget; see the fix in commit 2c075e3 for the same issue in searchView's
 	// zero-results warning.
-	panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	panelContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 
 	// "  " matches m.row()'s 2-column selection-marker prefix ("> "/"  ") so
 	// the header lines up with the data columns below it instead of starting
@@ -1462,12 +1554,20 @@ func (m Model) sourcesView() string {
 		m.theme.PanelTitle.Render("SOURCE REGISTRY"),
 		m.theme.MutedText.Render(headerLine),
 	}
-	for i, src := range m.sources {
-		line := fmt.Sprintf("%-20s %-12s %-6s %s", src.ID, src.Type, src.Auth, src.Capabilities)
-		line = truncate(line, panelContentWidth)
-		rows = append(rows, m.row(i, line))
-	}
-	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+	listBudget := max(contentBudget-len(rows), 0)
+	rows = append(rows, m.windowedRows(len(m.sources), m.selected[ScreenSources], listBudget, func(i int) string {
+		line := fmt.Sprintf("%-20s %-12s %-6s %s", m.sources[i].ID, m.sources[i].Type, m.sources[i].Auth, m.sources[i].Capabilities)
+		return m.row(i, line)
+	})...)
+	// Truncate each row to the panel's content width AFTER m.row()'s per-row
+	// call above, not before: the data fields are already width-bound by the
+	// %-20s/%-12s/%-6s format verbs, but m.row() then prepends its own 2-column
+	// "> "/"  " selection marker on top of that, which is what actually pushes
+	// a row past panelContentWidth. Truncating pre-marker (as the render
+	// closure once did) left that overhang in place; only this outer pass,
+	// applied to the marker-included row, is load-bearing (#42).
+	rows = m.truncateLines(rows, panelContentWidth)
+	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
 // conflictsView renders the Conflicts screen (Task 3): every file conflict
@@ -1513,9 +1613,9 @@ func (m Model) conflictsView() string {
 // width (mirroring searchResultsPane/profileRow's own proportional-with-
 // floor approach) so the columns can never sum past it; overflowing values
 // truncate rather than reaching lipgloss's automatic line-wrap, which would
-// silently break the exact-height layout invariant. Rows beyond maxLines
-// are omitted for the same reason a short terminal can outnumber the
-// available rows.
+// silently break the exact-height layout invariant. The list has windowed
+// height (never exceeds budget) and scroll-follow-selection (selected row
+// stays visible when navigation walks past the fold, #42).
 func (m Model) conflictsListPane(width, maxLines int) string {
 	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
 	const markerWidth = 2 // "! "/"  " stale marker
@@ -1535,16 +1635,9 @@ func (m Model) conflictsListPane(width, maxLines int) string {
 		m.theme.MutedText.Render(truncate(headerLine, innerWidth)),
 	}
 
-	items := m.conflicts
-	budget := maxLines - len(rows)
-	if budget < 0 {
-		budget = 0
-	}
-	if len(items) > budget {
-		items = items[:budget]
-	}
-
-	for i, c := range items {
+	budget := max(maxLines-len(rows), 0)
+	rowFor := func(i int) string {
+		c := m.conflicts[i]
 		marker := "  "
 		if c.Stale {
 			marker = m.theme.WarningText.Render("! ")
@@ -1553,8 +1646,9 @@ func (m Model) conflictsListPane(width, maxLines int) string {
 			pathWidth, truncate(c.Path, pathWidth),
 			ownerWidth, truncate(c.Owner, ownerWidth),
 			truncate(c.Winner, winnerWidth))
-		rows = append(rows, m.row(i, line))
+		return m.row(i, line)
 	}
+	rows = append(rows, m.windowedRows(len(m.conflicts), m.selected[ScreenConflicts], budget, rowFor)...)
 	return strings.Join(rows, "\n")
 }
 

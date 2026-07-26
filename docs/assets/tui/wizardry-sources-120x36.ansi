@@ -1,0 +1,36 @@
+                                                                                                                        
+  LMM // Linux Mod Manager                                                                                              
+  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources  [6] Conflicts                               
+                                                                                                                        
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+  │ SOURCE REGISTRY                                                                                                  │  
+  │   ID                   TYPE         AUTH   CAPABILITIES                                                          │  
+  │ > curseforge           built-in     n/a    search,updates                                                        │  
+  │   local-mods           directory    n/a    search,updates                                                        │  
+  │   nexusmods            built-in     yes    search,deps,updates,auth                                              │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+                                                                                                                        
+  ?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: c…  
+                                                                                                                        

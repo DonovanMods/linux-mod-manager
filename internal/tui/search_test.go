@@ -455,3 +455,116 @@ func TestSubmitWithNoConfiguredSourcesFailsClearly(t *testing.T) {
 	require.Equal(t, searchFailed, m.search.state)
 	require.Contains(t, m.View(), "no mod sources configured")
 }
+
+// populatedSearchPage mirrors the field shape TestSearchViewRendersStates
+// uses (search_test.go:283-289: Name/Author/Version/Status/Summary), but
+// multiplies the rows out well past any short-terminal budget so the
+// windowing/clamp tests below have something to scroll and clip. Result 0
+// is "installed" so the styled-status test has a real target to find.
+func populatedSearchPage() SearchPage {
+	results := make([]ModItem, 0, 10)
+	for i := range 10 {
+		status := "available"
+		if i == 0 {
+			status = "installed"
+		}
+		results = append(results, ModItem{
+			Name:    fmt.Sprintf("SkyMod%d", i),
+			Author:  "schlangster",
+			Version: "5.2",
+			Status:  status,
+			Summary: "UI overhaul.",
+		})
+	}
+	return SearchPage{
+		Query: "sky", Source: "nexusmods", Page: 0, PageSize: 10, TotalCount: 25,
+		Results: results,
+	}
+}
+
+// Selection walking past the visible rows previously left NO highlighted
+// row anywhere (the pane rendered results[:maxLines] while the selection
+// index kept climbing) even though the detail pane tracked the invisible
+// selection (#42). The pane now scroll-follows the selection.
+func TestSearchResultsPaneFollowsSelectionOnShortTerminals(t *testing.T) {
+	t.Parallel()
+	model := sizedPrototypeModel(t, "wizardry", 80, 12)
+	model = updateWithRunes(t, model, "3")
+	model = updateWithKeyType(t, model, tea.KeyEsc) // arrow keys are screen-level; only reach selection once blurred
+	model.search.state = searchReady
+	model.search.page = populatedSearchPage()
+
+	last := len(model.search.page.Results) - 1
+	for i := 0; i < last; i++ {
+		model = updateWithMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	require.Equal(t, last, model.selected[ScreenSearch])
+
+	view := model.screenView()
+	require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
+	require.Contains(t, view, "> ", "selected row must be visible")
+	require.Contains(t, view, "↑", "clipped rows above must be named")
+}
+
+// The detail pane's 8 fixed field lines previously ignored maxLines
+// entirely — on a floor-height terminal the pane's content budget can be
+// as low as 3, so the fixed fields alone overflowed the pane (#42).
+func TestSearchDetailPaneClampsFixedFieldsOnShortTerminals(t *testing.T) {
+	t.Parallel()
+	model := sizedPrototypeModel(t, "wizardry", 80, 8) // floor height
+	model = updateWithRunes(t, model, "3")
+	model.search.state = searchReady
+	model.search.page = populatedSearchPage()
+
+	view := model.screenView()
+	require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
+}
+
+// valueWidth's floor of 1 could exceed innerWidth in pathologically narrow
+// panes (innerWidth 1 → label 1 + value 1 = 2 columns) (#42). Zero-width
+// values must render nothing rather than overflow; every rendered line
+// stays within the pane width.
+func TestSearchDetailPaneAllowsZeroWidthValues(t *testing.T) {
+	t.Parallel()
+	model := sizedPrototypeModel(t, "wizardry", 40, 24)
+	model = updateWithRunes(t, model, "3")
+	model.search.state = searchReady
+	model.search.page = populatedSearchPage()
+
+	view := model.screenView()
+	for _, line := range strings.Split(view, "\n") {
+		require.LessOrEqual(t, lipgloss.Width(line), model.availableWidth())
+	}
+}
+
+// The results list styles "installed" via WarningText but the detail
+// pane's Status field was plain — the one place the status is spelled out
+// was the one place it didn't pop (#42 cosmetic item). Two traps make the
+// naive whole-view assertion vacuous, so this test dodges both:
+//
+//  1. It targets searchDetailPane DIRECTLY rather than the composed
+//     screenView — the results list renders the identical styled bytes for
+//     the same item, so a whole-view Contains is satisfied by the list and
+//     guards nothing about the detail pane.
+//  2. It swaps in a Transform-marked WarningText — in this non-TTY test
+//     environment lipgloss degrades to no color, so the real style's
+//     Render output is byte-identical to the plain value and Contains
+//     could never fail. The Transform marker makes "styled" observable
+//     without ANSI while still exercising the pane's real
+//     m.theme.WarningText code path.
+func TestSearchDetailPaneStylesInstalledStatus(t *testing.T) {
+	t.Parallel()
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	model = updateWithRunes(t, model, "3")
+	model.search.state = searchReady
+	model.search.page = populatedSearchPage() // result 0 ("selected" by default) has Status "installed"
+	model.theme.WarningText = model.theme.WarningText.Transform(func(s string) string { return "«" + s + "»" })
+
+	// At width 40 the pane's innerWidth is 36 → labelWidth 13, valueWidth
+	// 23, so "installed" (9 runes) renders untruncated and the styled form
+	// must appear verbatim.
+	view := model.searchDetailPane(40, 30)
+	require.Contains(t, view, model.theme.WarningText.Render("installed"))
+	require.Equal(t, "«installed»", model.theme.WarningText.Render("installed"),
+		"marker sanity: the styled form must be distinguishable from the plain value")
+}
