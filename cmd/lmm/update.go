@@ -158,13 +158,15 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			return nil
 		}
 		// "All mods are up to date" would be false if the only reason there is
-		// nothing to report is that every mod was skipped.
-		if pinned := countPinned(installed); pinned == len(installed) {
+		// nothing to report is that every mod was skipped. An empty profile
+		// returned earlier, so len(installed) is non-zero here.
+		pinned := countPinned(installed)
+		if pinned == len(installed) {
 			printPinnedSkipped(pinned)
 			return nil
 		}
 		fmt.Println("All mods are up to date.")
-		if pinned := countPinned(installed); pinned > 0 {
+		if pinned > 0 {
 			fmt.Println()
 			printPinnedSkipped(pinned)
 		}
