@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -73,6 +74,15 @@ type Model struct {
 	// Init/Update/View take no context parameter, so commands (e.g.
 	// startSearch) close over m.ctx to reach it from goroutines.
 	ctx context.Context
+
+	// now is the injectable clock seam for lastDeployLabel (#106a): every
+	// dashboard layout renders "Last deploy" by calling lastDeployLabel(m.
+	// now(), m.summary.LastDeploy) at View() time rather than caching a
+	// precomputed label at load time, so the relative age keeps advancing
+	// between refreshes without a fake extra refresh cycle. Defaults to
+	// time.Now in NewModel; tests override it with a fixed func to pin
+	// exact "Nh ago" text deterministically (see dashboard view tests).
+	now func() time.Time
 
 	state   loadState
 	loadErr error
@@ -234,6 +244,7 @@ func NewModel(options Options) (Model, error) {
 		provider: options.Provider,
 		actions:  options.Actions,
 		ctx:      options.Ctx,
+		now:      time.Now,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
 		// Updates starts at its own "-1 unknown" sentinel (Summary's own
@@ -1086,7 +1097,7 @@ func (m Model) partyDashboardView() string {
 		m.theme.PanelTitle.Render("QUEST LOG"),
 		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(countLabel(m.summary.Updates))),
 		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
-		"Last deploy: ?",
+		fmt.Sprintf("Last deploy: %s", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 	}, topBudget)
 
 	menuLines := m.clampLines(
@@ -1117,6 +1128,7 @@ func (m Model) terminalDashboardView() string {
 		fmt.Sprintf("> PROFILE  %s", m.summary.ProfileName),
 		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.summary.Installed, m.summary.Enabled),
 		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", m.theme.WarningText.Render(countLabel(m.summary.Updates)), m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
+		fmt.Sprintf("> DEPLOY   %s", strings.ToUpper(lastDeployLabel(m.now(), m.summary.LastDeploy))),
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
@@ -1146,6 +1158,7 @@ func (m Model) commanderDashboardView() string {
 		fmt.Sprintf("Game     %s", m.summary.GameName),
 		fmt.Sprintf("Enabled  %d", m.summary.Enabled),
 		fmt.Sprintf("Updates  %s", countLabel(m.summary.Updates)),
+		fmt.Sprintf("Deploy   %s", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 	}, contentBudget)
 	rightLines := m.clampLines(
 		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
@@ -1175,6 +1188,7 @@ func (m Model) crtDashboardView() string {
 		fmt.Sprintf("▓ %-10s %s", "PROFILE", m.summary.ProfileName),
 		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.summary.Enabled, m.summary.Installed),
 		fmt.Sprintf("▓ %-10s %s updates, %s conflict", "SIGNAL", countLabel(m.summary.Updates), countLabel(m.summary.Conflicts)),
+		fmt.Sprintf("▓ %-10s %s", "DEPLOY", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
@@ -2075,6 +2089,33 @@ func countLabel(n int) string {
 		return "?"
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// lastDeployLabel renders Summary.LastDeploy (#106a's dashboard "Last
+// deploy" row) for display: nil (never deployed) is "never"; otherwise a
+// coarse relative age - "just now" under a minute, then minutes, then
+// hours, then days - up to 6 days, past which a plain date reads better
+// than an ever-growing "N days ago". now is passed in explicitly (see
+// Model.now's doc comment) rather than read via time.Now() here, keeping
+// this a pure function that every case in TestLastDeployLabel can pin
+// exactly without a fake clock or sleep.
+func lastDeployLabel(now time.Time, t *time.Time) string {
+	if t == nil {
+		return "never"
+	}
+	age := now.Sub(*t)
+	switch {
+	case age < time.Minute:
+		return "just now"
+	case age < time.Hour:
+		return fmt.Sprintf("%dm ago", int(age/time.Minute))
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(age/time.Hour))
+	case age < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(age/(24*time.Hour)))
+	default:
+		return t.Format("2006-01-02")
+	}
 }
 
 // truncate returns s trimmed to at most width display columns, marking a cut

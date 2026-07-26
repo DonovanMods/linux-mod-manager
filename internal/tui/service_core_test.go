@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -389,6 +390,41 @@ func TestCoreProviderOverview(t *testing.T) {
 	require.Equal(t, "101", byName["SkyUI"].ID, "ModItem.ID must carry the installed mod's ID")
 	require.Equal(t, "disabled", byName["USSEP"].Status)
 	require.Equal(t, "102", byName["USSEP"].ID)
+}
+
+// TestCoreProviderOverview_LastDeployNilBeforeAnyDeploy (#106a) pins the
+// "never deployed" case straight through the Overview boundary: a fresh
+// fixture with no DeployProfile call yet must report Summary.LastDeploy as
+// nil, not a zero time.Time (a zero value would misrender as a bogus date
+// via lastDeployLabel rather than "never").
+func TestCoreProviderOverview_LastDeployNilBeforeAnyDeploy(t *testing.T) {
+	provider, _, _ := newCoreProviderFixture(t)
+
+	summary, _, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, summary.LastDeploy)
+}
+
+// TestCoreProviderOverview_LastDeploySetAfterDeploy (#106a) pins the wiring
+// from core.Service.GetLastDeployTime through coreProvider.Overview: after a
+// real DeployProfile call records deployed_files rows, Summary.LastDeploy
+// must be non-nil and no earlier than the call itself.
+func TestCoreProviderOverview_LastDeploySetAfterDeploy(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	require.NoError(t, svc.NewProfileManager().AddMod(game.ID, "default", domain.ModReference{SourceID: "nexusmods", ModID: "101"}))
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "nexusmods", "101", "5.2", "SkyUI.esp", []byte("data")))
+
+	before := time.Now()
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	summary, _, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, summary.LastDeploy)
+	assert.False(t, summary.LastDeploy.Before(before.Add(-time.Second)),
+		"last deploy time should be at/after the DeployProfile call")
 }
 
 func TestCoreProviderProfiles(t *testing.T) {

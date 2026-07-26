@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
@@ -20,6 +21,22 @@ type Summary struct {
 	Enabled     int
 	Updates     int // -1 = unknown (no update check has run)
 	Conflicts   int // -1 = unknown
+	// LastDeploy is the timestamp of the active profile's most recent deploy
+	// (#106a's dashboard "Last deploy" row), or nil when unknown. Unlike
+	// Updates/Conflicts' "-1 = unknown" int sentinel, nil is the natural
+	// "no value" for a *time.Time and needs no separate sentinel constant.
+	// coreProvider.Overview populates this from core.Service.
+	// GetLastDeployTime, where nil specifically means "this profile has
+	// never been deployed" (a normal state, not an error - see that method's
+	// doc comment); prototypeProvider.Overview instead sets a canned recent
+	// time so --prototype mode has something to show (see
+	// prototype.Stats.LastDeploy's doc comment) - the alt game's minimal
+	// demo set (Data.AltMods) leaves it nil, same as its Updates/Conflicts
+	// sentinels. Rendering is lastDeployLabel's job (app.go): it takes the
+	// current time as an explicit parameter (Model.now) rather than calling
+	// time.Now() itself, so the label is recomputed fresh on every View()
+	// call instead of going stale between loadData refreshes.
+	LastDeploy *time.Time
 }
 
 // ModItem is one renderable mod row. ID, together with Source, fully
@@ -249,6 +266,7 @@ func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, err
 		// so the alt branch below derives Installed/Enabled directly from
 		// it and leaves Updates/Conflicts at the "unknown" sentinel, same
 		// as coreProvider.Overview's real convention.
+		lastDeploy := p.data.Stats.LastDeploy
 		return Summary{
 			GameName:    p.activeGame().Name,
 			ProfileName: p.data.Profile.Name,
@@ -256,6 +274,7 @@ func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, err
 			Enabled:     p.data.Stats.Enabled,
 			Updates:     p.data.Stats.Updates,
 			Conflicts:   p.data.Stats.Conflicts,
+			LastDeploy:  &lastDeploy,
 		}, modItems(mods), nil
 	}
 

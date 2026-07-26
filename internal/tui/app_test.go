@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,6 +20,48 @@ func TestNewPrototypeModelDefaultsToDashboard(t *testing.T) {
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 	require.Equal(t, ScreenDashboard, model.CurrentScreen())
+}
+
+// TestLastDeployLabel (#106a) pins lastDeployLabel's contract: nil -> "never";
+// a coarse relative age for anything less than 7 days old (minutes/hours/
+// days, whichever is coarsest without rounding to zero); and a plain date
+// once "N days ago" stops being a useful unit. now is passed explicitly
+// (mirroring Model.now, see that field's doc comment) so this pure function
+// needs no wall-clock read of its own to test deterministically.
+func TestLastDeployLabel(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name string
+		t    *time.Time
+		want string
+	}{
+		{name: "nil is never deployed", t: nil, want: "never"},
+		{name: "under a minute", t: addTo(now, -30*time.Second), want: "just now"},
+		{name: "minutes", t: addTo(now, -5*time.Minute), want: "5m ago"},
+		{name: "hours", t: addTo(now, -3*time.Hour), want: "3h ago"},
+		{name: "just under a day rounds to hours", t: addTo(now, -23*time.Hour), want: "23h ago"},
+		{name: "days", t: addTo(now, -2*24*time.Hour), want: "2d ago"},
+		{name: "just under a week", t: addTo(now, -6*24*time.Hour-23*time.Hour), want: "6d ago"},
+		{name: "exactly a week falls back to a date", t: addTo(now, -7*24*time.Hour), want: "2026-07-19"},
+		{name: "a month ago falls back to a date", t: addTo(now, -30*24*time.Hour), want: "2026-06-26"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, lastDeployLabel(now, tc.t))
+		})
+	}
+}
+
+// addTo returns a *time.Time offset from base by d - a small helper so the
+// table above can write "-30*time.Second" style deltas without a temporary
+// variable per case.
+func addTo(base time.Time, d time.Duration) *time.Time {
+	t := base.Add(d)
+	return &t
 }
 
 func TestNewPrototypeModelRejectsInvalidTheme(t *testing.T) {
@@ -456,17 +499,22 @@ func TestCommanderDashboardRowsDoNotWrapAtNarrowWidths(t *testing.T) {
 	require.LessOrEqual(t, lipgloss.Height(model.screenView()), model.availableContentHeight())
 }
 
-// At the floor height (80x8: content budget 8, panel content budget 6) the
-// commander left panel's six lines fit exactly, so no clamping may occur: any
-// budget fudge (an earlier fix subtracted an extra 1) clamps them to four
-// plus "+2 more" and silently hides the Enabled/Updates lines (#42). Only the
-// left panel mentions "Updates" — the commander menu rows do not — so its
-// presence pins the whole panel rendering unclamped.
+// At 80x16 (content budget 9, panel content budget 7) the commander left
+// panel's seven lines - #106a added "Deploy" as the seventh - fit exactly,
+// so no clamping may occur: any budget fudge (an earlier fix subtracted an
+// extra 1) clamps them to shorter plus "+N more" and silently hides the
+// Enabled/Updates/Deploy lines (#42). Only the left panel mentions "Updates"
+// — the commander menu rows do not — so its presence pins the whole panel
+// rendering unclamped. Originally pinned at the 80x8 floor height when the
+// panel had six lines (see git history); #106a's new row no longer fits
+// unclamped at that floor, so this now uses the next size up (80x16) where
+// all seven lines fit exactly.
 func TestCommanderDashboardFloorHeightKeepsWholeLeftPanel(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "dos", 80, 8)
+	model := sizedPrototypeModel(t, "dos", 80, 16)
 	require.Contains(t, model.screenView(), "Updates")
+	require.Contains(t, model.screenView(), "Deploy")
 }
 
 // Long dynamic values (game/profile names interpolated into dashboard rows,
@@ -497,6 +545,57 @@ func TestDashboardLayoutsFitHeightBudgetWithLongDynamicValues(t *testing.T) {
 				require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
 			})
 		}
+	}
+}
+
+// TestDashboardLayoutsRenderLastDeploy (#106a) pins the wiring from
+// Summary.LastDeploy through to each dashboard layout's rendered text: every
+// theme (party/terminal/commander/crt - see layoutForTheme) must render
+// lastDeployLabel's EXACT text for a known now/LastDeploy pair, not just
+// some deploy-shaped placeholder. model.now is overridden directly (package-
+// internal seam, see Model.now's doc comment) so the label is pinned exactly
+// rather than asserting a loose "contains a number and 'ago'" pattern.
+func TestDashboardLayoutsRenderLastDeploy(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
+	deployedAt := now.Add(-3 * time.Hour)
+
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		t.Run(themeName, func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, themeName, 120, 24)
+			model.now = func() time.Time { return now }
+			model.summary.LastDeploy = &deployedAt
+
+			// Terminal (amber) upper-cases every dashboard row (see its own
+			// "> DEPLOY" row) to match its all-caps boot-sequence voice, so
+			// the assertion normalizes case rather than special-casing that
+			// one theme.
+			require.Contains(t, strings.ToUpper(model.screenView()), "3H AGO")
+		})
+	}
+}
+
+// TestDashboardLayoutsRenderNeverDeployed (#106a) is
+// TestDashboardLayoutsRenderLastDeploy's nil-value companion: every layout
+// must render lastDeployLabel's "never" for a nil LastDeploy (the
+// coreProvider-real "this profile has never been deployed" case - see
+// Summary.LastDeploy's doc comment), not silently fall back to a zero-time
+// date or blank row.
+func TestDashboardLayoutsRenderNeverDeployed(t *testing.T) {
+	t.Parallel()
+
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		t.Run(themeName, func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, themeName, 120, 24)
+			model.summary.LastDeploy = nil
+
+			require.Contains(t, strings.ToUpper(model.screenView()), "NEVER")
+		})
 	}
 }
 
