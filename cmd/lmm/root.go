@@ -24,7 +24,7 @@ import (
 var ErrCancelled = errors.New("cancelled")
 
 var (
-	version = "1.14.1"
+	version = "1.15.0"
 
 	// Global flags
 	configDir  string
