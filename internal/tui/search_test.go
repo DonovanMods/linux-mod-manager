@@ -539,16 +539,32 @@ func TestSearchDetailPaneAllowsZeroWidthValues(t *testing.T) {
 
 // The results list styles "installed" via WarningText but the detail
 // pane's Status field was plain — the one place the status is spelled out
-// was the one place it didn't pop (#42 cosmetic item).
+// was the one place it didn't pop (#42 cosmetic item). Two traps make the
+// naive whole-view assertion vacuous, so this test dodges both:
+//
+//  1. It targets searchDetailPane DIRECTLY rather than the composed
+//     screenView — the results list renders the identical styled bytes for
+//     the same item, so a whole-view Contains is satisfied by the list and
+//     guards nothing about the detail pane.
+//  2. It swaps in a Transform-marked WarningText — in this non-TTY test
+//     environment lipgloss degrades to no color, so the real style's
+//     Render output is byte-identical to the plain value and Contains
+//     could never fail. The Transform marker makes "styled" observable
+//     without ANSI while still exercising the pane's real
+//     m.theme.WarningText code path.
 func TestSearchDetailPaneStylesInstalledStatus(t *testing.T) {
 	t.Parallel()
 	model := sizedPrototypeModel(t, "wizardry", 100, 30)
 	model = updateWithRunes(t, model, "3")
 	model.search.state = searchReady
 	model.search.page = populatedSearchPage() // result 0 ("selected" by default) has Status "installed"
+	model.theme.WarningText = model.theme.WarningText.Transform(func(s string) string { return "«" + s + "»" })
 
-	// WarningText produces ANSI styling; the plain-rendered field would
-	// contain the literal unstyled value. Assert the styled form appears.
-	view := model.screenView()
+	// At width 40 the pane's innerWidth is 36 → labelWidth 13, valueWidth
+	// 23, so "installed" (9 runes) renders untruncated and the styled form
+	// must appear verbatim.
+	view := model.searchDetailPane(40, 30)
 	require.Contains(t, view, model.theme.WarningText.Render("installed"))
+	require.Equal(t, "«installed»", model.theme.WarningText.Render("installed"),
+		"marker sanity: the styled form must be distinguishable from the plain value")
 }
