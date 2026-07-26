@@ -357,14 +357,51 @@ func TestDashboardLayoutsFitHeightBudgetOnShortTerminals(t *testing.T) {
 	}
 }
 
+// Commander's half-width panels are narrow enough at small widths (40x12:
+// panel width ~19, content ~15) that an untruncated menu label like
+// "> Consult Conflict Oracle" lipgloss-auto-wraps into two physical lines
+// inside the panel. clampLines counts logical lines, so a wrapped row slips
+// past the clamp and silently grows the view over the height budget (#42);
+// the fix is per-line truncation to the panel's content width, the same
+// pattern sourcesView uses.
+func TestCommanderDashboardRowsDoNotWrapAtNarrowWidths(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "dos", 40, 12)
+	require.LessOrEqual(t, lipgloss.Height(model.screenView()), model.availableContentHeight())
+}
+
+// At the floor height (80x8: content budget 8, panel content budget 6) the
+// commander left panel's six lines fit exactly, so no clamping may occur: any
+// budget fudge (an earlier fix subtracted an extra 1) clamps them to four
+// plus "+2 more" and silently hides the Enabled/Updates lines (#42). Only the
+// left panel mentions "Updates" — the commander menu rows do not — so its
+// presence pins the whole panel rendering unclamped.
+func TestCommanderDashboardFloorHeightKeepsWholeLeftPanel(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "dos", 80, 8)
+	require.Contains(t, model.screenView(), "Updates")
+}
+
 func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 120, 36)
+	// All four themes, because each maps to a different dashboard layout
+	// (TestThemesUseDistinctLayouts) and the four layouts split the height
+	// budget differently — a wizardry-only check left the other three
+	// layouts' exact-height invariant unguarded (#42 review).
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		t.Run(themeName, func(t *testing.T) {
+			t.Parallel()
 
-	for _, screen := range screens {
-		model.screen = screen
-		require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()), screen.String())
+			model := sizedPrototypeModel(t, themeName, 120, 36)
+
+			for _, screen := range screens {
+				model.screen = screen
+				require.Equal(t, model.availableContentHeight(), lipgloss.Height(model.screenView()), screen.String())
+			}
+		})
 	}
 }
 

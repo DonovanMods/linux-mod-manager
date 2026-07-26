@@ -1091,23 +1091,38 @@ func (m Model) commanderDashboardView() string {
 	leftWidth := max((width-gap)/2, 1)
 	rightWidth := max(width-gap-leftWidth, 1)
 
-	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize()-1, 1)
-	left := strings.Join(m.clampLines([]string{
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+	leftLines := m.clampLines([]string{
 		m.theme.PanelTitle.Render("ACTIVE PROFILE"),
 		m.summary.ProfileName,
 		"",
 		fmt.Sprintf("Game     %s", m.summary.GameName),
 		fmt.Sprintf("Enabled  %d", m.summary.Enabled),
 		fmt.Sprintf("Updates  %s", countLabel(m.summary.Updates)),
-	}, contentBudget), "\n")
-	right := strings.Join(m.clampLines(
+	}, contentBudget)
+	rightLines := m.clampLines(
 		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
-		contentBudget), "\n")
+		contentBudget)
+
+	// Truncate every row to its panel's content width (sourcesView's per-line
+	// pattern): these half-width panels are narrow enough at small terminal
+	// widths that an overlong row ("> Consult Conflict Oracle" at width 40)
+	// would lipgloss-auto-wrap into two physical lines inside the panel —
+	// invisible to clampLines' logical-line count, so the wrap would silently
+	// grow the view past the height budget (#42).
+	leftContentWidth := max(leftWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	rightContentWidth := max(rightWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	for i, line := range leftLines {
+		leftLines[i] = truncate(line, leftContentWidth)
+	}
+	for i, line := range rightLines {
+		rightLines[i] = truncate(line, rightContentWidth)
+	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.panelWithHeight(leftWidth, height).Render(left),
+		m.panelWithHeight(leftWidth, height).Render(strings.Join(leftLines, "\n")),
 		" ",
-		m.panelWithHeight(rightWidth, height).Render(right),
+		m.panelWithHeight(rightWidth, height).Render(strings.Join(rightLines, "\n")),
 	)
 }
 
