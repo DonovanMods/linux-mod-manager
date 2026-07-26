@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -27,6 +28,19 @@ type updateJSONOutput struct {
 	GameID  string          `json:"game_id"`
 	Profile string          `json:"profile"`
 	Updates []updateModJSON `json:"updates"`
+	// Skipped reports installed mods that were never checked, so a consumer
+	// can tell "nothing to update" apart from "nothing was looked at". An
+	// empty updates array means both, and only this distinguishes them.
+	Skipped updateSkippedJSON `json:"skipped"`
+	// Error is set when the check itself failed. An empty updates array
+	// otherwise means "nothing to update"; with this set it means the answer
+	// is unknown. Omitted on success so the common document stays unchanged.
+	Error string `json:"error,omitempty"`
+}
+
+type updateSkippedJSON struct {
+	Pinned int `json:"pinned"`
+	Local  int `json:"local"`
 }
 
 type updateModJSON struct {
@@ -117,14 +131,54 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if len(args) > 0 {
 		modID := args[0]
 		var targetMod *domain.InstalledMod
+		// Mod IDs are only unique within a source, so the same ID can appear
+		// more than once in a profile. Collect every candidate rather than
+		// keeping one: naming an arbitrary source would be wrong roughly half
+		// the time. Matching on source as well as ID is also what used to make
+		// a local mod look absent from its own profile.
+		var candidates []*domain.InstalledMod
 		for i := range installed {
-			if installed[i].ID == modID && installed[i].SourceID == updateSource {
+			if installed[i].ID != modID {
+				continue
+			}
+			if installed[i].SourceID == updateSource {
 				targetMod = &installed[i]
 				break
 			}
+			candidates = append(candidates, &installed[i])
 		}
 		if targetMod == nil {
-			return fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+			switch len(candidates) {
+			case 0:
+				return fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+			case 1:
+				if candidates[0].SourceID == domain.SourceLocal {
+					// Present, just not checkable — informational, not an error.
+					fmt.Printf("%s is a local mod — no remote source to check for updates.\n", candidates[0].Name)
+					return nil
+				}
+				return fmt.Errorf("mod %s in profile %s belongs to source %q, not %q; retry with --source %s",
+					modID, profileName, candidates[0].SourceID, updateSource, candidates[0].SourceID)
+			default:
+				sources := make([]string, 0, len(candidates))
+				hasLocal := false
+				for _, c := range candidates {
+					sources = append(sources, c.SourceID)
+					if c.SourceID == domain.SourceLocal {
+						hasLocal = true
+					}
+				}
+				sort.Strings(sources) // deterministic regardless of install order
+				// The local caveat only earns its place when one of the
+				// candidates actually is local; on a purely remote ambiguity
+				// (nexusmods vs curseforge) it is noise.
+				caveat := ""
+				if hasLocal {
+					caveat = " (local mods cannot be update-checked)"
+				}
+				return fmt.Errorf("mod %s is in profile %s under multiple sources (%s); retry with --source to choose%s",
+					modID, profileName, strings.Join(sources, ", "), caveat)
+			}
 		}
 
 		return applySingleUpdate(ctx, service, game, targetMod, profileName)
@@ -139,42 +193,77 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// Check for updates (partial results returned even when some mods fail to fetch)
 	updater := service.NewUpdater()
-	updates, err := updater.CheckUpdates(ctx, game, installed)
-	if err != nil {
-		if errors.Is(err, domain.ErrAuthRequired) {
+	updates, checkErr := updater.CheckUpdates(ctx, game, installed)
+	if checkErr != nil {
+		if errors.Is(checkErr, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
 		}
 		// Surface warning but continue to show partial updates
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", checkErr)
+	}
+
+	// finish is returned at every exit below rather than bailing out early: a
+	// partial check still has results worth printing and auto-updates worth
+	// applying, so the non-zero exit has to come after that work, not instead
+	// of it. ErrReported because the failure is already on stderr (or in the
+	// JSON document) and Execute must not print it twice.
+	finish := func() error {
+		if checkErr != nil {
+			return fmt.Errorf("update check incomplete: %w", ErrReported)
+		}
+		return nil
 	}
 
 	if len(updates) == 0 {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(updateJSONOutput{GameID: game.ID, Profile: profileName, Updates: []updateModJSON{}}); err != nil {
+			skips := core.CountUpdateSkips(installed)
+			out := updateJSONOutput{
+				GameID: game.ID, Profile: profileName, Updates: []updateModJSON{},
+				Skipped: updateSkippedJSON{Pinned: skips.Pinned, Local: skips.Local},
+			}
+			if checkErr != nil {
+				out.Error = checkErr.Error()
+			}
+			if err := enc.Encode(out); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
-			return nil
+			return finish()
 		}
 		// "All mods are up to date" would be false if the only reason there is
 		// nothing to report is that every mod was skipped. An empty profile
 		// returned earlier, so len(installed) is non-zero here.
-		pinned := countPinned(installed)
-		if pinned == len(installed) {
-			printPinnedSkipped(pinned)
-			return nil
+		skips := core.CountUpdateSkips(installed)
+		if skips.Total() == len(installed) {
+			printSkipped(skips)
+			return finish()
 		}
-		fmt.Println("All mods are up to date.")
-		if pinned > 0 {
+		// A failed check produces no updates too. Claiming currency here would
+		// repeat the defect this whole command's reporting was fixed for: the
+		// warning goes to stderr, so a caller reading stdout would see only a
+		// false success.
+		if checkErr != nil {
+			fmt.Println("Update check did not complete — see the warning above. No results to report.")
+		} else {
+			fmt.Println("All mods are up to date.")
+		}
+		if skips.Total() > 0 {
 			fmt.Println()
-			printPinnedSkipped(pinned)
+			printSkipped(skips)
 		}
-		return nil
+		return finish()
 	}
 
 	if jsonOutput {
-		out := updateJSONOutput{GameID: game.ID, Profile: profileName, Updates: make([]updateModJSON, len(updates))}
+		skips := core.CountUpdateSkips(installed)
+		out := updateJSONOutput{
+			GameID: game.ID, Profile: profileName, Updates: make([]updateModJSON, len(updates)),
+			Skipped: updateSkippedJSON{Pinned: skips.Pinned, Local: skips.Local},
+		}
+		if checkErr != nil {
+			out.Error = checkErr.Error()
+		}
 		for i, u := range updates {
 			out.Updates[i] = updateModJSON{
 				ModID:        u.InstalledMod.ID,
@@ -189,7 +278,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding json: %w", err)
 		}
-		return nil
+		return finish()
 	}
 
 	// Display available updates with policy
@@ -222,9 +311,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	fmt.Printf("\n%d update(s) available.\n", len(updates))
-	if pinned := countPinned(installed); pinned > 0 {
+	if skips := core.CountUpdateSkips(installed); skips.Total() > 0 {
 		fmt.Println()
-		printPinnedSkipped(pinned)
+		printSkipped(skips)
 	}
 
 	// Show changelogs where available
@@ -258,7 +347,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			}
 		}
 		fmt.Println("\nUse without --dry-run to apply updates.")
-		return nil
+		return finish()
 	}
 
 	// Apply auto-updates
@@ -294,7 +383,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 	}
 
-	return nil
+	return finish()
 }
 
 func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, profileName string) error {
@@ -465,34 +554,29 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	return nil
 }
 
-// countPinned reports how many installed mods CheckUpdates will skip because
-// they are pinned. Pinned mods never become update rows, so without this they
-// disappear from `lmm update` output entirely.
-func countPinned(installed []domain.InstalledMod) int {
-	n := 0
-	for _, mod := range installed {
-		if mod.UpdatePolicy == domain.UpdatePinned {
-			n++
-		}
-	}
-	return n
-}
-
-// printPinnedSkipped notes skipped pinned mods, if any. No-op at zero so the
-// common case stays quiet.
+// printSkipped notes the mods CheckUpdates filtered out, if any. No-op at zero
+// so the common case stays quiet.
 //
-// Emits no leading blank line: when every mod is pinned this is the whole
+// Pinned and local get separate lines because the remedies differ: a pin is a
+// reversible choice, a local mod has no remote and never will.
+//
+// Emits no leading blank line: when every mod is skipped this is the whole
 // output, and a leading newline would render as a stray blank first line.
 // Callers with preceding output add their own separator.
-func printPinnedSkipped(pinned int) {
-	if pinned == 0 {
-		return
+func printSkipped(skips core.UpdateSkips) {
+	if skips.Pinned > 0 {
+		fmt.Printf("%d pinned mod%s skipped — see `lmm list -v`.\n", skips.Pinned, plural(skips.Pinned))
 	}
-	plural := "s"
-	if pinned == 1 {
-		plural = ""
+	if skips.Local > 0 {
+		fmt.Printf("%d local mod%s skipped (no remote source to check).\n", skips.Local, plural(skips.Local))
 	}
-	fmt.Printf("%d pinned mod%s skipped — see `lmm list -v`.\n", pinned, plural)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func policyToString(policy domain.UpdatePolicy) string {

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-07-25
+
+### Changed
+
+- **`lmm update` now exits non-zero when the update check itself fails.** Previously it exited 0 even when every source errored, so a script could not tell a completed check from a failed one. Partial results are still printed and auto-updates are still applied before the non-zero exit — the change is the exit status, not the work done. **If you script `lmm update`, check your error handling**: a run that used to appear to succeed during an outage will now fail
+- `lmm update --json` gains an `error` field, set only when the check failed. The document is otherwise unchanged, and stdout still contains exactly one JSON document in the failure case
+
+### Added
+
+- `lmm update --json` gains a `skipped` block reporting how many installed mods were never checked, by reason (`pinned`, `local`). An empty `updates` array previously meant both "nothing to update" and "nothing was looked at", with no way to tell them apart
+- The TUI's update check reports skipped mods as a `Not checked:` warning, matching what the CLI prints
+
+### Fixed
+
+- `lmm update` printed "All mods are up to date" when every installed mod was a local import. Local mods have no remote source and are filtered before any source is queried, so nothing was ever compared. Local and pinned mods are now reported separately, since the remedies differ — a pin can be lifted, a local mod can never be checked
+- `lmm update <mod-id>` failed with "mod X not found in profile Y" (exit 1) for a local mod that *was* in the profile. The lookup matched on source as well as ID, and the resolved source is the game's configured remote, so a local mod could never match. It now says the mod is local and exits 0; a mod genuinely absent from the profile is still an error. A mod belonging to a different configured source now names the source to retry with, instead of claiming the mod is missing
+- The TUI reported a local mod as "already up to date" for the same reason, and now says it is local
+
 ## [1.15.0] - 2026-07-25
 
 ### Added
@@ -892,7 +910,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.15.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.16.0...HEAD
+[1.16.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.1...v1.14.0

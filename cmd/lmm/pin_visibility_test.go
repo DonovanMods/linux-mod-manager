@@ -143,8 +143,18 @@ func TestDoUpdate_SomePinned_SeparatesFromPrecedingOutput(t *testing.T) {
 	setPolicy(t, svc, game, "a", domain.UpdatePinned)
 
 	out := captureStdout(t, func() error {
-		return doUpdate(context.Background(), svc, game, nil)
+		// Mod B's source is unregistered, so the check fails and doUpdate
+		// reports non-zero; this test is about the separator.
+		_ = doUpdate(context.Background(), svc, game, nil)
+		return nil
 	})
 
-	assert.Contains(t, out, "up to date.\n\n1 pinned mod skipped", "needs a blank line after preceding output")
+	// Asserts the separator, not the preceding sentence: which summary line
+	// precedes it depends on whether the check succeeded, and tying the two
+	// together made this test encode a bug (it used to accept "All mods are up
+	// to date" after a check that had actually failed).
+	assert.Contains(t, out, "\n\n1 pinned mod skipped", "needs a blank line after preceding output")
+	// HasPrefix, not out[:1]: a regression that suppressed output entirely
+	// should fail this assertion, not panic on an index out of range.
+	assert.False(t, strings.HasPrefix(out, "\n"), "but not a leading blank line")
 }

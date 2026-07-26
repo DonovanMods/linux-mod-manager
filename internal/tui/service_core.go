@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -1293,6 +1294,47 @@ func (p *coreProvider) ApplyInstall(ctx context.Context, item ModItem, progress 
 // Task 7) - the FULL cleaned text, with no truncation (see that field's own
 // doc comment: the TUI's changelog overlay handles overflow itself, unlike
 // the CLI's 800/500-char truncation, which stays CLI-side).
+// notCheckedMessage explains an empty update result for a single mod. Zero
+// results has two very different causes: the mod was compared against its
+// source and is current, or it was filtered out by core.UpdateCheckable and
+// never compared at all. Reporting the second as "up to date" claims currency
+// that was never established - a pinned mod may well have a newer version.
+func notCheckedMessage(name string, mod domain.InstalledMod) string {
+	switch {
+	case mod.UpdatePolicy == domain.UpdatePinned:
+		return fmt.Sprintf("%q is pinned — not checked (P to change)", name)
+	case mod.SourceID == domain.SourceLocal:
+		return fmt.Sprintf("%q is a local mod — no remote source to check", name)
+	default:
+		return fmt.Sprintf("%q is already up to date", name)
+	}
+}
+
+// updateSkipWarning describes mods core.CheckUpdates filtered out, for
+// UpdatesView.Warnings. Empty when nothing was skipped, so the common case adds
+// no noise. Mirrors cmd/lmm/update.go's printSkipped; the counts come from the
+// same core helper, so the two interfaces cannot disagree about what happened.
+func updateSkipWarning(skips core.UpdateSkips) string {
+	var parts []string
+	if skips.Pinned > 0 {
+		parts = append(parts, fmt.Sprintf("%d pinned mod%s (P to change)", skips.Pinned, tuiPlural(skips.Pinned)))
+	}
+	if skips.Local > 0 {
+		parts = append(parts, fmt.Sprintf("%d local mod%s (no remote source)", skips.Local, tuiPlural(skips.Local)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Not checked: " + strings.Join(parts, ", ")
+}
+
+func tuiPlural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
 func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 	game := p.currentGame()
 	profile := p.currentProfile()
@@ -1309,6 +1351,9 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 			FromVersion: u.InstalledMod.Version, ToVersion: u.NewVersion,
 			Changelog: core.CleanChangelog(u.Changelog),
 		})
+	}
+	if skipped := updateSkipWarning(core.CountUpdateSkips(installed)); skipped != "" {
+		view.Warnings = append(view.Warnings, skipped)
 	}
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
@@ -1342,13 +1387,7 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("checking update for %s", u.Name), u.Source, err)
 	}
 	if len(updates) == 0 {
-		// Pinned mods are filtered out before the source is queried, so no
-		// version comparison happened - saying "up to date" would claim
-		// currency that was never checked.
-		if mod.UpdatePolicy == domain.UpdatePinned {
-			return ActionOutcome{Message: fmt.Sprintf("%q is pinned — not checked (P to change)", u.Name)}, nil
-		}
-		return ActionOutcome{Message: fmt.Sprintf("%q is already up to date", u.Name)}, nil
+		return ActionOutcome{Message: notCheckedMessage(u.Name, *mod)}, nil
 	}
 	upd := updates[0]
 
