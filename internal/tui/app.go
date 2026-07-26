@@ -1176,16 +1176,23 @@ func (m Model) crtDashboardView() string {
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// modsView renders the Installed Mods screen: selectable list of active-profile
+// mods with windowed height (never exceeds budget) and scroll-follow-selection
+// (selected row stays visible when navigation walks past the fold, #42).
 func (m Model) modsView() string {
-	rows := []string{m.theme.PanelTitle.Render("SPELLBOOK: INSTALLED MODS")}
-	rows = append(rows, "[/] Search")
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	rows := []string{m.theme.PanelTitle.Render("SPELLBOOK: INSTALLED MODS"), "[/] Search"}
 	if len(m.mods) == 0 {
 		rows = append(rows, m.theme.MutedText.Render("No mods installed yet. 'lmm install <mod>' begins the quest."))
 	}
-	for i, mod := range m.mods {
-		rows = append(rows, m.modRow(i, m.availableWidth(), mod))
-	}
-	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+	listBudget := max(contentBudget-len(rows), 0)
+	rows = append(rows, m.windowedRows(len(m.mods), m.selected[ScreenInstalledMods], listBudget, func(i int) string {
+		return m.modRow(i, width, m.mods[i])
+	})...)
+	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
 // searchHeaderLines renders the two lines shared by every search state: the
@@ -1462,12 +1469,20 @@ func (m Model) searchFooterLine() string {
 	return footer
 }
 
+// profilesView renders the Profiles screen: selectable list of profiles with
+// windowed height (never exceeds budget) and scroll-follow-selection (selected
+// row stays visible when navigation walks past the fold, #42).
 func (m Model) profilesView() string {
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
 	rows := []string{m.theme.PanelTitle.Render("PROFILE ROSTER")}
-	for i, profile := range m.profiles {
-		rows = append(rows, m.profileRow(i, m.availableWidth(), profile))
-	}
-	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+	listBudget := max(contentBudget-len(rows), 0)
+	rows = append(rows, m.windowedRows(len(m.profiles), m.selected[ScreenProfiles], listBudget, func(i int) string {
+		return m.profileRow(i, width, m.profiles[i])
+	})...)
+	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
 // profileRow renders one Profiles row: active marker / name / mod count.
@@ -1507,15 +1522,21 @@ func (m Model) profileRow(index, width int, profile ProfileItem) string {
 // registered with the DataProvider (built-in and user-defined), one row
 // each, in the single-pane list style profilesView uses. Unlike
 // `lmm source list`, there is no error/status column — see SourceInfo's doc
-// comment for why definition-load failures never reach this screen.
+// comment for why definition-load failures never reach this screen. The list
+// has windowed height (never exceeds budget) and scroll-follow-selection
+// (selected row stays visible when navigation walks past the fold, #42).
 func (m Model) sourcesView() string {
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
 	// Calculate the panel's content width, which is narrower than availableWidth()
 	// by the panel's horizontal frame size (border + padding). Rows that render
 	// INSIDE this panel must be truncated to this width to prevent lipgloss from
 	// re-wrapping overlong lines and growing the view past its fixed height
 	// budget; see the fix in commit 2c075e3 for the same issue in searchView's
 	// zero-results warning.
-	panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	panelContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 
 	// "  " matches m.row()'s 2-column selection-marker prefix ("> "/"  ") so
 	// the header lines up with the data columns below it instead of starting
@@ -1526,12 +1547,13 @@ func (m Model) sourcesView() string {
 		m.theme.PanelTitle.Render("SOURCE REGISTRY"),
 		m.theme.MutedText.Render(headerLine),
 	}
-	for i, src := range m.sources {
-		line := fmt.Sprintf("%-20s %-12s %-6s %s", src.ID, src.Type, src.Auth, src.Capabilities)
+	listBudget := max(contentBudget-len(rows), 0)
+	rows = append(rows, m.windowedRows(len(m.sources), m.selected[ScreenSources], listBudget, func(i int) string {
+		line := fmt.Sprintf("%-20s %-12s %-6s %s", m.sources[i].ID, m.sources[i].Type, m.sources[i].Auth, m.sources[i].Capabilities)
 		line = truncate(line, panelContentWidth)
-		rows = append(rows, m.row(i, line))
-	}
-	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
+		return m.row(i, line)
+	})...)
+	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
 // conflictsView renders the Conflicts screen (Task 3): every file conflict

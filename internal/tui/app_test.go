@@ -148,6 +148,43 @@ func TestSelectionMovementIsClamped(t *testing.T) {
 	require.Equal(t, 0, model.SelectedIndex(ScreenInstalledMods))
 }
 
+// Selectable list screens must (a) never exceed the height budget and
+// (b) keep the selected row visible when navigation walks past the fold —
+// previously rows were rendered unbounded, so on short terminals the
+// highlight scrolled out of the panel while the detail/selection state kept
+// updating invisibly (#42).
+func TestListScreensFitHeightBudgetAndFollowSelectionOnShortTerminals(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		key    string // number key jumping to the screen
+		screen Screen
+	}{
+		{"installed mods", "2", ScreenInstalledMods},
+		{"profiles", "4", ScreenProfiles},
+		{"sources", "5", ScreenSources},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			model := sizedPrototypeModel(t, "wizardry", 80, 12)
+			model = updateWithRunes(t, model, tc.key)
+
+			// Walk selection to the last row; the list is longer than the
+			// short terminal's budget for at least installed mods.
+			for i := 0; i < model.itemCount(tc.screen); i++ {
+				model = updateWithMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+			}
+			view := model.screenView()
+			require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
+
+			// The selected (last) row must be rendered: its highlighted "> "
+			// marker must appear somewhere in the view.
+			require.Contains(t, view, "> ", "selection marker must stay visible after walking past the fold")
+		})
+	}
+}
+
 func TestSearchAndQuitBindings(t *testing.T) {
 	t.Parallel()
 
