@@ -35,7 +35,9 @@ func New(path string) (*DB, error) {
 		return nil, fmt.Errorf("setting pragmas: %w", err)
 	}
 
-	// After the pragmas, so the WAL/SHM sidecars exist and get tightened too.
+	// Before any write, so the main database file is already 0600 when SQLite
+	// creates the WAL/SHM sidecars — it derives their mode from this file. The
+	// sidecars do not exist yet at this point; they are handled after migrations.
 	if err := restrictPermissions(path); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
 			return nil, fmt.Errorf("%w (closing database: %v)", err, closeErr)
