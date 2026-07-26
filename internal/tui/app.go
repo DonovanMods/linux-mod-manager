@@ -1817,7 +1817,10 @@ func (m Model) row(index int, label string) string {
 	return prefix + label
 }
 
-// modRow renders one Installed Mods row: name / status / author / version.
+// modRow renders one Installed Mods row: name / status / flags / author /
+// version. The flags column is a fixed width so it is blank rather than absent
+// for an unpinned mod - a variable-width flag would shift author and version
+// between rows, the same alignment defect described below.
 // Finding 2 (smoke test): the name column used to be a fixed 28 runes with
 // no truncation, so a longer name overflowed it and shifted every
 // subsequent column to the right, breaking row alignment. Status/author/
@@ -1830,21 +1833,36 @@ func (m Model) row(index int, label string) string {
 // never reach lipgloss's automatic line-wrap.
 func (m Model) modRow(index, width int, mod ModItem) string {
 	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
-	const gaps = 3        // separating spaces between the 4 columns
+	const gaps = 4        // separating spaces between the 5 columns
 	const minName = 8
+	// Fixed, not proportional: the marker is the whole point of the column, so
+	// it must not be the first thing a narrow terminal truncates.
+	const flagsWidth = 3 // "pin"
 
 	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth-gaps, minName)
 	statusWidth := min(11, max(avail/6, 1)) // "disabled"/"deployed" are 8 runes
 	authorWidth := min(16, max(avail/5, 1))
 	versionWidth := min(7, max(avail/8, 1))
-	nameWidth := max(avail-statusWidth-authorWidth-versionWidth, minName)
+	nameWidth := max(avail-flagsWidth-statusWidth-authorWidth-versionWidth, minName)
 
-	line := fmt.Sprintf("%-*s %-*s %-*s %*s",
+	line := fmt.Sprintf("%-*s %-*s %-*s %-*s %*s",
 		nameWidth, truncate(mod.Name, nameWidth),
 		statusWidth, truncate(mod.Status, statusWidth),
+		flagsWidth, modFlags(mod),
 		authorWidth, truncate(mod.Author, authorWidth),
 		versionWidth, truncate(mod.Version, versionWidth))
 	return m.row(index, line)
+}
+
+// modFlags renders the per-mod flag column: "pin" for a mod held back from
+// update checks, empty otherwise. The wire string is "pin" (not the CLI's
+// "pinned") per ModItem.UpdatePolicy's documented values - see
+// service_core.go's policyToString for why the two interfaces differ.
+func modFlags(mod ModItem) string {
+	if mod.UpdatePolicy == "pin" {
+		return "pin"
+	}
+	return ""
 }
 
 func (m Model) panel(width int) lipgloss.Style {

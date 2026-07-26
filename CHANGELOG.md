@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-25
+
+### Added
+
+- `lmm list --verbose` gains a `POLICY` column showing each mod's update policy (`notify`, `auto`, or `pinned`), and `lmm list --json` gains a matching `update_policy` field. The field is emitted unconditionally rather than gated on `--verbose`, since a JSON consumer has no other way to see that a mod is held back from updates
+- The TUI's Installed Mods rows gain a flags column marking pinned mods with `pin`. Pin state was previously discoverable only by opening the `P` policy picker on each mod one at a time
+
+### Fixed
+
+- `lmm update <mod-id>` reported a pinned mod as "already up to date". Pinned mods are filtered out before their source is ever queried, so no version comparison happened and a newer version may well have existed. It now says the mod is pinned, at which version, and names the command that unpins it. The TUI's equivalent message had the same problem and the same fix
+- `lmm update` no longer prints "All mods are up to date" when every installed mod was skipped as pinned, and now reports how many pinned mods it skipped when there were any
+
 ## [1.14.1] - 2026-07-25
 
 ### Security
@@ -880,7 +892,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.0...v1.13.1

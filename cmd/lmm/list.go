@@ -30,6 +30,10 @@ type listModJSON struct {
 	Enabled  bool   `json:"enabled"`
 	Deployed bool   `json:"deployed"`
 	Method   string `json:"link_method"`
+	// UpdatePolicy is "notify", "auto", or "pinned". Emitted unconditionally,
+	// not gated on --verbose: a JSON consumer has no other way to see that a
+	// mod is held back from updates.
+	UpdatePolicy string `json:"update_policy"`
 }
 
 var listCmd = &cobra.Command{
@@ -82,13 +86,14 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 				sourceDisplay = "local"
 			}
 			out.Mods[i] = listModJSON{
-				ID:       mod.ID,
-				Name:     mod.Name,
-				Version:  mod.Version,
-				Source:   sourceDisplay,
-				Enabled:  mod.Enabled,
-				Deployed: mod.Deployed,
-				Method:   mod.LinkMethod.String(),
+				ID:           mod.ID,
+				Name:         mod.Name,
+				Version:      mod.Version,
+				Source:       sourceDisplay,
+				Enabled:      mod.Enabled,
+				Deployed:     mod.Deployed,
+				Method:       mod.LinkMethod.String(),
+				UpdatePolicy: policyToString(mod.UpdatePolicy),
 			}
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -115,8 +120,8 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	header := "ID\tNAME\tVERSION\tAUTHOR"
 	sep := "--\t----\t-------\t------"
 	if verbose {
-		header = "ID\tNAME\tVERSION\tAUTHOR\tSOURCE\tENABLED\tDEPLOYED\tMETHOD"
-		sep = "--\t----\t-------\t------\t------\t-------\t--------\t------"
+		header = "ID\tNAME\tVERSION\tAUTHOR\tSOURCE\tENABLED\tDEPLOYED\tMETHOD\tPOLICY"
+		sep = "--\t----\t-------\t------\t------\t-------\t--------\t------\t------"
 	}
 	if _, err := fmt.Fprintln(w, header); err != nil {
 		return fmt.Errorf("writing header: %w", err)
@@ -144,7 +149,7 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 			if mod.SourceID == domain.SourceLocal {
 				sourceDisplay = "(local)"
 			}
-			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String())
+			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String(), policyToString(mod.UpdatePolicy))
 		} else {
 			row = fmt.Sprintf("%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20))
 		}

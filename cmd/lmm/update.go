@@ -157,7 +157,19 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			}
 			return nil
 		}
+		// "All mods are up to date" would be false if the only reason there is
+		// nothing to report is that every mod was skipped. An empty profile
+		// returned earlier, so len(installed) is non-zero here.
+		pinned := countPinned(installed)
+		if pinned == len(installed) {
+			printPinnedSkipped(pinned)
+			return nil
+		}
 		fmt.Println("All mods are up to date.")
+		if pinned > 0 {
+			fmt.Println()
+			printPinnedSkipped(pinned)
+		}
 		return nil
 	}
 
@@ -210,6 +222,10 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	fmt.Printf("\n%d update(s) available.\n", len(updates))
+	if pinned := countPinned(installed); pinned > 0 {
+		fmt.Println()
+		printPinnedSkipped(pinned)
+	}
 
 	// Show changelogs where available
 	var withChangelog []domain.Update
@@ -293,6 +309,14 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	}
 
 	if len(updates) == 0 {
+		// A pinned mod is filtered out before the source is queried, so no
+		// version comparison ever happened — reporting it as up to date would
+		// claim currency that was never checked.
+		if mod.UpdatePolicy == domain.UpdatePinned {
+			fmt.Printf("%s is pinned at v%s and was not checked.\n", mod.Name, mod.Version)
+			fmt.Printf("Unpin with: lmm mod set-update %s --notify\n", mod.ID)
+			return nil
+		}
 		fmt.Printf("%s is already up to date (v%s).\n", mod.Name, mod.Version)
 		return nil
 	}
@@ -439,6 +463,36 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 
 	fmt.Printf("\n✓ Rolled back: %s %s → %s\n", result.ModName, result.FromVersion, result.ToVersion)
 	return nil
+}
+
+// countPinned reports how many installed mods CheckUpdates will skip because
+// they are pinned. Pinned mods never become update rows, so without this they
+// disappear from `lmm update` output entirely.
+func countPinned(installed []domain.InstalledMod) int {
+	n := 0
+	for _, mod := range installed {
+		if mod.UpdatePolicy == domain.UpdatePinned {
+			n++
+		}
+	}
+	return n
+}
+
+// printPinnedSkipped notes skipped pinned mods, if any. No-op at zero so the
+// common case stays quiet.
+//
+// Emits no leading blank line: when every mod is pinned this is the whole
+// output, and a leading newline would render as a stray blank first line.
+// Callers with preceding output add their own separator.
+func printPinnedSkipped(pinned int) {
+	if pinned == 0 {
+		return
+	}
+	plural := "s"
+	if pinned == 1 {
+		plural = ""
+	}
+	fmt.Printf("%d pinned mod%s skipped — see `lmm list -v`.\n", pinned, plural)
 }
 
 func policyToString(policy domain.UpdatePolicy) string {
