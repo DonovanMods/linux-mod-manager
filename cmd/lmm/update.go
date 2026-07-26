@@ -51,6 +51,37 @@ type updateModJSON struct {
 	UpdatePolicy string `json:"update_policy"`
 }
 
+// singleUpdateJSON is the one-document --json result of `lmm update <mod-id>`
+// and `lmm update rollback <mod-id>`. It is deliberately NOT updateJSONOutput:
+// that document reports a *check* over many mods (updates[], skipped counts);
+// this reports a *single applied event*, so an updates[] array here would imply
+// a batch that never happened. Emitted exactly once, on stdout, at the end of
+// the operation. Failures never reach this type — they return before any
+// document is written, and Execute renders {"error":...} instead, keeping the
+// one-document-on-stdout invariant without ErrReported.
+type singleUpdateJSON struct {
+	ModID       string `json:"mod_id"`
+	Name        string `json:"name"`
+	FromVersion string `json:"from_version"`
+	ToVersion   string `json:"to_version,omitempty"` // omitted for up_to_date / skipped
+	Changelog   string `json:"changelog,omitempty"`
+	// Status: "updated" | "up_to_date" | "skipped" | "available" | "rolled_back"
+	Status string `json:"status"`
+	// Reason qualifies status=="skipped": "pinned" | "local". Omitted otherwise.
+	Reason string `json:"reason,omitempty"`
+}
+
+// emitSingleUpdateJSON writes doc as the sole JSON document on stdout,
+// 2-space indented to match updateJSONOutput's existing formatting.
+func emitSingleUpdateJSON(doc singleUpdateJSON) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return fmt.Errorf("encoding json: %w", err)
+	}
+	return nil
+}
+
 var updateCmd = &cobra.Command{
 	Use:   "update [mod-id]",
 	Short: "Check for or apply mod updates",
@@ -123,8 +154,26 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	if len(installed) == 0 {
-		fmt.Println("No mods installed.")
-		return nil
+		switch {
+		case jsonOutput && len(args) > 0:
+			// Fall through to the single-mod lookup below: with nothing
+			// installed, candidates stays empty and it reports the same
+			// "not found in profile" error as any other absent mod.
+		case jsonOutput:
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			out := updateJSONOutput{
+				GameID: game.ID, Profile: profileName, Updates: []updateModJSON{},
+				Skipped: updateSkippedJSON{},
+			}
+			if err := enc.Encode(out); err != nil {
+				return fmt.Errorf("encoding json: %w", err)
+			}
+			return nil
+		default:
+			fmt.Println("No mods installed.")
+			return nil
+		}
 	}
 
 	// If specific mod ID provided, update just that mod
@@ -154,6 +203,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			case 1:
 				if candidates[0].SourceID == domain.SourceLocal {
 					// Present, just not checkable — informational, not an error.
+					if jsonOutput {
+						return emitSingleUpdateJSON(singleUpdateJSON{
+							ModID: modID, Name: candidates[0].Name, FromVersion: candidates[0].Version, Status: "skipped", Reason: "local",
+						})
+					}
 					fmt.Printf("%s is a local mod — no remote source to check for updates.\n", candidates[0].Name)
 					return nil
 				}
@@ -402,9 +456,19 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// version comparison ever happened — reporting it as up to date would
 		// claim currency that was never checked.
 		if mod.UpdatePolicy == domain.UpdatePinned {
+			if jsonOutput {
+				return emitSingleUpdateJSON(singleUpdateJSON{
+					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, Status: "skipped", Reason: "pinned",
+				})
+			}
 			fmt.Printf("%s is pinned at v%s and was not checked.\n", mod.Name, mod.Version)
 			fmt.Printf("Unpin with: lmm mod set-update %s --notify\n", mod.ID)
 			return nil
+		}
+		if jsonOutput {
+			return emitSingleUpdateJSON(singleUpdateJSON{
+				ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, Status: "up_to_date",
+			})
 		}
 		fmt.Printf("%s is already up to date (v%s).\n", mod.Name, mod.Version)
 		return nil
@@ -413,27 +477,42 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	update := updates[0]
 	oldVersion := mod.Version
 	newVersion := update.NewVersion
-	fmt.Printf("Updating %s %s → %s...\n", mod.Name, oldVersion, newVersion)
-	if update.Changelog != "" {
-		cl := core.CleanChangelog(update.Changelog)
-		const maxChangelog = 500
-		if len(cl) > maxChangelog {
-			cl = cl[:maxChangelog] + "..."
+	if !jsonOutput {
+		fmt.Printf("Updating %s %s → %s...\n", mod.Name, oldVersion, newVersion)
+		if update.Changelog != "" {
+			cl := core.CleanChangelog(update.Changelog)
+			const maxChangelog = 500
+			if len(cl) > maxChangelog {
+				cl = cl[:maxChangelog] + "..."
+			}
+			fmt.Println("Changelog:")
+			for _, line := range strings.Split(strings.TrimSpace(cl), "\n") {
+				fmt.Printf("  %s\n", line)
+			}
+			fmt.Println()
 		}
-		fmt.Println("Changelog:")
-		for _, line := range strings.Split(strings.TrimSpace(cl), "\n") {
-			fmt.Printf("  %s\n", line)
-		}
-		fmt.Println()
 	}
 
 	if updateDryRun {
+		if jsonOutput {
+			return emitSingleUpdateJSON(singleUpdateJSON{
+				ModID: mod.ID, Name: mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
+				Changelog: update.Changelog, Status: "available",
+			})
+		}
 		fmt.Println("(dry-run: no changes applied)")
 		return nil
 	}
 
 	if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
 		return err
+	}
+
+	if jsonOutput {
+		return emitSingleUpdateJSON(singleUpdateJSON{
+			ModID: mod.ID, Name: mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
+			Changelog: update.Changelog, Status: "updated",
+		})
 	}
 
 	fmt.Printf("\n✓ Updated: %s %s → %s\n", mod.Name, oldVersion, newVersion)
@@ -458,17 +537,17 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	progress := func(p core.DeployProgress) {
 		switch p.Phase {
 		case core.UpdateDownloading:
-			if verbose {
+			if verbose && !jsonOutput {
 				fmt.Printf("\r  Downloading: %.1f%%", p.Percent)
 			}
 		case core.UpdateDownloadDone:
-			if verbose {
+			if verbose && !jsonOutput {
 				fmt.Println()
 			}
 		case core.UpdateBeforeEachForced, core.UpdateWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		case core.UpdateNote:
-			if verbose {
+			if verbose && !jsonOutput {
 				fmt.Printf("  %s\n", p.Detail)
 			}
 		}
@@ -525,7 +604,9 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		return fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
 	}
 
-	fmt.Printf("Rolling back %s %s → %s...\n", mod.Name, mod.Version, mod.PreviousVersion)
+	if !jsonOutput {
+		fmt.Printf("Rolling back %s %s → %s...\n", mod.Name, mod.Version, mod.PreviousVersion)
+	}
 
 	opts := core.RollbackOptions{
 		Hooks:       getResolvedHooks(service, game, profileName),
@@ -539,7 +620,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		case core.UpdateBeforeEachForced, core.UpdateWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		case core.UpdateNote:
-			if verbose {
+			if verbose && !jsonOutput {
 				fmt.Printf("  %s\n", p.Detail)
 			}
 		}
@@ -548,6 +629,13 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	result, err := service.ApplyRollback(ctx, game, profileName, mod.SourceID, mod.ID, opts, progress)
 	if err != nil {
 		return err
+	}
+
+	if jsonOutput {
+		return emitSingleUpdateJSON(singleUpdateJSON{
+			ModID: mod.ID, Name: result.ModName, FromVersion: result.FromVersion, ToVersion: result.ToVersion,
+			Status: "rolled_back",
+		})
 	}
 
 	fmt.Printf("\n✓ Rolled back: %s %s → %s\n", result.ModName, result.FromVersion, result.ToVersion)
