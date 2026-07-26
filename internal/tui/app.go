@@ -981,16 +981,22 @@ func (m Model) itemCount(screen Screen) int {
 func (m Model) nav() string {
 	items := make([]string, 0, len(screens))
 	for i, screen := range screens {
-		label := fmt.Sprintf("[%d] %s", i+1, screen)
+		var label string
 		if screen == m.screen {
-			// "• " lives INSIDE the styled span (not prepended outside it)
-			// so the current screen stays identifiable by more than color
-			// alone (#91 audit) - color-only distinction disappears
-			// entirely under NO_COLOR/--no-color/non-color terminals,
-			// where Selected and MutedText render byte-identical text.
-			label = m.theme.Selected.Render("• " + label)
+			// •N• replaces the [N] cell so the current screen stays
+			// identifiable by more than color alone (#91 audit) -
+			// color-only distinction disappears entirely under
+			// NO_COLOR/--no-color/non-color terminals, where Selected and
+			// MutedText render byte-identical text. SAME WIDTH is load-
+			// bearing (PR #107 review): the first fix prefixed "• ", which
+			// grew the line and shifted View()'s hard truncation so the
+			// rightmost label degraded at 80 cols (the committed goldens
+			// caught it as a dangling "•…"). Swapping glyphs inside the
+			// existing three-cell number slot adds zero width, so marking
+			// a screen current can never change where the nav truncates.
+			label = m.theme.Selected.Render(fmt.Sprintf("•%d• %s", i+1, screen))
 		} else {
-			label = m.theme.MutedText.Render(label)
+			label = m.theme.MutedText.Render(fmt.Sprintf("[%d] %s", i+1, screen))
 		}
 		items = append(items, label)
 	}

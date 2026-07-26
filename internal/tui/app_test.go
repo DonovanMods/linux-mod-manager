@@ -77,7 +77,11 @@ func TestNewPrototypeModelRejectsInvalidTheme(t *testing.T) {
 // (NO_COLOR, --no-color, or any non-color terminal) the two labels render
 // identically and the current screen becomes unrecoverable from the nav
 // line alone. The fix must add a plain-text distinguisher inside the
-// styled span, not rely on color.
+// styled span, not rely on color — and (PR #107 review) that
+// distinguisher must be SAME-WIDTH (•N• replacing [N]), not additive: an
+// additive "• " prefix grew the nav line and shifted the hard-truncation
+// cut, degrading the tail label at narrow widths (see
+// TestNavMarkerAddsNoWidth for that regression's dedicated guard).
 //
 // Uses the search_test.go Transform-marker technique (see
 // TestSearchDetailPaneStylesInstalledStatus) on theme.Selected: this
@@ -97,26 +101,84 @@ func TestNavMarksCurrentScreenWithoutColor(t *testing.T) {
 
 	nav := model.nav()
 
-	currentLabel := fmt.Sprintf("[%d] %s", model.screenIndex()+1, model.screen)
-	styled := model.theme.Selected.Render("• " + currentLabel)
+	currentLabel := fmt.Sprintf("•%d• %s", model.screenIndex()+1, model.screen)
+	styled := model.theme.Selected.Render(currentLabel)
 	require.Contains(t, nav, styled,
 		"marker sanity: the current screen's label must go through the real Selected style, marker included")
 
 	// The actual regression guard: the Selected-rendered span for the
 	// current screen must carry a plain-text distinguisher (independent of
-	// the Transform/color styling around it), and no other screen's label
-	// may carry that same marker.
+	// the Transform/color styling around it), the marker must REPLACE the
+	// bracket cell (same width) rather than sit alongside it, and no other
+	// screen's label may carry that same marker.
 	inner := strings.TrimSuffix(strings.TrimPrefix(styled, "«"), "»")
-	require.Contains(t, inner, "•", "current screen's nav label must carry a non-color marker")
+	require.Contains(t, inner, "•3•", "current screen's number cell must render as •N•")
+	require.NotContains(t, nav, "[3]",
+		"the bracket cell is replaced by •N•, not kept alongside it — same width is the whole point")
 
 	for i, screen := range screens {
 		if screen == model.screen {
 			continue
 		}
 		otherLabel := fmt.Sprintf("[%d] %s", i+1, screen)
-		muted := model.theme.MutedText.Render(otherLabel)
-		require.NotContains(t, muted, "•", "non-current screens must not carry the current-screen marker")
+		require.Contains(t, nav, model.theme.MutedText.Render(otherLabel),
+			"non-current screens keep the plain [N] form")
 	}
+	require.Equal(t, 2, strings.Count(nav, "•"),
+		"exactly one •N• cell: only the current screen carries the marker")
+}
+
+// TestNavMarkerAddsNoWidth pins the PR #107 review finding: the first #91
+// marker was an additive "• " prefix, which grew the nav line by two cells
+// and shifted View()'s hard truncation (see View's nav truncate comment)
+// so the rightmost label degraded at widths where the unmarked nav fit
+// exactly. The marker must be zero-growth: •N• is the same three cells as
+// [N], so marking a screen current never changes where (or whether) the
+// nav line truncates.
+//
+// NOTE the nav line has been wider than an 80-column terminal's budget
+// since Task 3 added the sixth entry (View's own comment) — at 80 cols the
+// tail label truncates with or without any marker (the pre-marker golden
+// already showed "[5] Sources  […"), so "Conflicts readable at 80" is not
+// achievable by any marker form and is NOT what this asserts. What IS
+// guaranteed, and asserted here: (1) at the exact width where the unmarked
+// nav fits, the marked nav still fits — the additive prefix broke exactly
+// this; (2) at 80 cols the marked nav truncates at the same cut as the
+// unmarked form, leaving the same labels visible.
+func TestNavMarkerAddsNoWidth(t *testing.T) {
+	t.Parallel()
+
+	// The unmarked nav line, built the same way nav() builds it: every
+	// screen in its plain [N] form. Derived rather than hardcoded so the
+	// test tracks future screen additions/renames.
+	labels := make([]string, 0, len(screens))
+	for i, screen := range screens {
+		labels = append(labels, fmt.Sprintf("[%d] %s", i+1, screen))
+	}
+	unmarked := strings.Join(labels, "  ")
+
+	// (1) Boundary width: terminal sized so availableWidth() == the
+	// unmarked nav's width exactly. The full View() pipeline (which owns
+	// the truncate call) must still show the LAST screen's marked label
+	// intact when it is current — under the additive prefix this was the
+	// first width to regress.
+	model := sizedPrototypeModel(t, "wizardry", lipgloss.Width(unmarked)+4, 24)
+	require.Equal(t, lipgloss.Width(unmarked), model.availableWidth(),
+		"width sanity: this terminal width must make the unmarked nav an exact fit")
+	model.screen = ScreenConflicts
+	require.Contains(t, model.View(), fmt.Sprintf("•%d• %s", len(screens), ScreenConflicts),
+		"zero-growth marker: the last label must survive intact at the exact-fit width")
+
+	// (2) Zero growth everywhere: whichever screen is current, the nav
+	// line's cell width is identical — the marker can never move the cut.
+	model.screen = ScreenDashboard
+	base := lipgloss.Width(model.nav())
+	for _, screen := range screens {
+		model.screen = screen
+		require.Equal(t, base, lipgloss.Width(model.nav()), screen.String())
+	}
+	require.Equal(t, lipgloss.Width(unmarked), base,
+		"marked nav must be exactly as wide as the unmarked form")
 }
 
 func TestNumberKeysNavigateScreens(t *testing.T) {
