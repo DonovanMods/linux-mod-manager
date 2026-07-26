@@ -2,9 +2,11 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 )
 
@@ -180,4 +182,61 @@ func TestDashboardConflictCountWired(t *testing.T) {
 	require.Equal(t, 2, model.summary.Conflicts, "the dashboard count must come from the real Conflicts() fetch, not the provider's own Overview sentinel")
 	require.Contains(t, model.dashboardView(), "2 file conflict")
 	require.NotContains(t, model.dashboardView(), "? file conflict", "the '?' placeholder must be replaced once a real count is known")
+}
+
+// longConflictsProvider returns conflicts with enough entries to overflow
+// the 80x12 terminal budget when displayed in the conflicts list pane.
+type longConflictsProvider struct{}
+
+func (longConflictsProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{}, nil, nil
+}
+func (longConflictsProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (longConflictsProvider) Sources() []string                               { return nil }
+func (longConflictsProvider) SourceInfos() []SourceInfo                       { return nil }
+func (longConflictsProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
+func (longConflictsProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
+func (longConflictsProvider) ListGames() ([]GameInfo, error)                 { return nil, nil }
+func (longConflictsProvider) Conflicts(context.Context) ([]ConflictItem, error) {
+	// Generate 20 conflicts to overflow the 80x12 budget (12 lines total,
+	// minus title + header = 10 lines available, easily exceeded by 20 items).
+	conflicts := make([]ConflictItem, 20)
+	for i := 0; i < 20; i++ {
+		conflicts[i] = ConflictItem{
+			Path:   fmt.Sprintf("file_%02d.nif", i),
+			Owner:  fmt.Sprintf("Mod%d", i%5),
+			Winner: fmt.Sprintf("Winner%d", (i+1)%5),
+			AlsoIn: []string{"OtherMod"},
+			Stale:  i%2 == 0,
+		}
+	}
+	return conflicts, nil
+}
+
+// TestConflictsListFollowsSelectionOnShortTerminals proves conflictsListPane
+// uses scroll-follow-selection windowing: the selected row stays visible when
+// navigating past the fold, instead of the old first-N slice behavior where
+// the highlight simply vanished off-screen (#42).
+func TestConflictsListFollowsSelectionOnShortTerminals(t *testing.T) {
+	t.Parallel()
+	model, err := NewModel(Options{Theme: "wizardry", Provider: longConflictsProvider{}})
+	require.NoError(t, err)
+
+	loaded, _ := model.Update(model.Init()())
+	updated, _ := loaded.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	model = updated.(Model)
+
+	model = updateWithRunes(t, model, "6") // jump to conflicts screen
+
+	last := len(model.conflicts) - 1
+	for i := 0; i < last; i++ {
+		model = updateWithMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	require.Equal(t, last, model.selected[ScreenConflicts])
+
+	view := model.screenView()
+	require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
+	require.Contains(t, view, "> ", "selected conflict must be visible")
 }

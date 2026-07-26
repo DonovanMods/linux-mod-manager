@@ -1614,9 +1614,9 @@ func (m Model) conflictsView() string {
 // width (mirroring searchResultsPane/profileRow's own proportional-with-
 // floor approach) so the columns can never sum past it; overflowing values
 // truncate rather than reaching lipgloss's automatic line-wrap, which would
-// silently break the exact-height layout invariant. Rows beyond maxLines
-// are omitted for the same reason a short terminal can outnumber the
-// available rows.
+// silently break the exact-height layout invariant. The list has windowed
+// height (never exceeds budget) and scroll-follow-selection (selected row
+// stays visible when navigation walks past the fold, #42).
 func (m Model) conflictsListPane(width, maxLines int) string {
 	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
 	const markerWidth = 2 // "! "/"  " stale marker
@@ -1636,16 +1636,9 @@ func (m Model) conflictsListPane(width, maxLines int) string {
 		m.theme.MutedText.Render(truncate(headerLine, innerWidth)),
 	}
 
-	items := m.conflicts
-	budget := maxLines - len(rows)
-	if budget < 0 {
-		budget = 0
-	}
-	if len(items) > budget {
-		items = items[:budget]
-	}
-
-	for i, c := range items {
+	budget := max(maxLines-len(rows), 0)
+	rowFor := func(i int) string {
+		c := m.conflicts[i]
 		marker := "  "
 		if c.Stale {
 			marker = m.theme.WarningText.Render("! ")
@@ -1654,8 +1647,9 @@ func (m Model) conflictsListPane(width, maxLines int) string {
 			pathWidth, truncate(c.Path, pathWidth),
 			ownerWidth, truncate(c.Owner, ownerWidth),
 			truncate(c.Winner, winnerWidth))
-		rows = append(rows, m.row(i, line))
+		return m.row(i, line)
 	}
+	rows = append(rows, m.windowedRows(len(m.conflicts), m.selected[ScreenConflicts], budget, rowFor)...)
 	return strings.Join(rows, "\n")
 }
 
