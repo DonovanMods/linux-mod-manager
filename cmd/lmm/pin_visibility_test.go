@@ -115,3 +115,36 @@ func TestDoUpdate_ReportsSkippedPinnedCount(t *testing.T) {
 
 	assert.Contains(t, out, "2 pinned", "should report how many mods were skipped")
 }
+
+// TestDoUpdate_AllPinned_NoLeadingBlankLine: when every mod is pinned the
+// skipped-count line is the entire output, so a leading newline shows up as a
+// stray blank first line with nothing to separate it from.
+func TestDoUpdate_AllPinned_NoLeadingBlankLine(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.SourceIDs = map[string]string{"src": "src"}
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	setPolicy(t, svc, game, "a", domain.UpdatePinned)
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.False(t, strings.HasPrefix(out, "\n"), "output must not open with a blank line, got %q", out)
+	assert.Contains(t, out, "1 pinned mod skipped")
+}
+
+// TestDoUpdate_SomePinned_SeparatesFromPrecedingOutput: the counterpart — when
+// something is printed first, the line still needs a blank line above it.
+func TestDoUpdate_SomePinned_SeparatesFromPrecedingOutput(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.SourceIDs = map[string]string{"src": "src"}
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
+	setPolicy(t, svc, game, "a", domain.UpdatePinned)
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "up to date.\n\n1 pinned mod skipped", "needs a blank line after preceding output")
+}

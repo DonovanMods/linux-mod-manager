@@ -164,7 +164,10 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			return nil
 		}
 		fmt.Println("All mods are up to date.")
-		printPinnedSkipped(countPinned(installed))
+		if pinned := countPinned(installed); pinned > 0 {
+			fmt.Println()
+			printPinnedSkipped(pinned)
+		}
 		return nil
 	}
 
@@ -217,7 +220,10 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	fmt.Printf("\n%d update(s) available.\n", len(updates))
-	printPinnedSkipped(countPinned(installed))
+	if pinned := countPinned(installed); pinned > 0 {
+		fmt.Println()
+		printPinnedSkipped(pinned)
+	}
 
 	// Show changelogs where available
 	var withChangelog []domain.Update
@@ -472,6 +478,10 @@ func countPinned(installed []domain.InstalledMod) int {
 
 // printPinnedSkipped notes skipped pinned mods, if any. No-op at zero so the
 // common case stays quiet.
+//
+// Emits no leading blank line: when every mod is pinned this is the whole
+// output, and a leading newline would render as a stray blank first line.
+// Callers with preceding output add their own separator.
 func printPinnedSkipped(pinned int) {
 	if pinned == 0 {
 		return
@@ -480,7 +490,7 @@ func printPinnedSkipped(pinned int) {
 	if pinned == 1 {
 		plural = ""
 	}
-	fmt.Printf("\n%d pinned mod%s skipped — see `lmm list -v`.\n", pinned, plural)
+	fmt.Printf("%d pinned mod%s skipped — see `lmm list -v`.\n", pinned, plural)
 }
 
 func policyToString(policy domain.UpdatePolicy) string {
