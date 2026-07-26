@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -233,6 +234,12 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 			}
 		}
 		out.EnabledModCount = enabled
+
+		lastDeploy, err := service.GetLastDeployTime(gameID, defaultProfile.Name)
+		if err != nil {
+			return fmt.Errorf("getting last deploy time: %w", err)
+		}
+		out.LastDeploy = lastDeploy
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
@@ -250,6 +257,12 @@ type statusGameDetailJSON struct {
 	ActiveProfile     string              `json:"active_profile,omitempty"`
 	InstalledModCount int                 `json:"installed_mod_count,omitempty"`
 	EnabledModCount   int                 `json:"enabled_mod_count,omitempty"`
+	// LastDeploy is nil for a profile that has never been deployed. Kept
+	// omitempty (task-4-brief.md / lmm-repo-conventions' JSON-contract-
+	// additions-are-MINOR precedent): an unset field, not a null or zero
+	// time, is what makes this an additive change existing consumers can
+	// ignore entirely.
+	LastDeploy *time.Time `json:"last_deploy,omitempty"`
 }
 
 type statusProfileJSON struct {
@@ -336,7 +349,27 @@ func showGameStatus(service *core.Service, gameID string) error {
 		if len(mods) > 0 {
 			fmt.Printf("  Enabled: %d, Disabled: %d\n", enabled, disabled)
 		}
+
+		lastDeploy, err := service.GetLastDeployTime(gameID, defaultProfile.Name)
+		if err != nil {
+			return fmt.Errorf("getting last deploy time: %w", err)
+		}
+		fmt.Printf("  Last Deploy: %s\n", formatLastDeploy(lastDeploy))
 	}
 
 	return nil
+}
+
+// formatLastDeploy renders a game's last-deploy timestamp for the CLI's
+// plain-text status output: nil (never deployed) is "never"; otherwise an
+// absolute, local "YYYY-MM-DD HH:MM" timestamp. Deliberately NOT the TUI's
+// relative-age rendering (lastDeployLabel, internal/tui/app.go) - the CLI's
+// output is scriptable/parseable, so a stable absolute format that doesn't
+// change between two invocations a second apart is preferable to a coarse
+// "3m ago" that would.
+func formatLastDeploy(t *time.Time) string {
+	if t == nil {
+		return "never"
+	}
+	return t.Local().Format("2006-01-02 15:04")
 }

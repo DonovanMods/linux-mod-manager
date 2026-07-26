@@ -171,9 +171,27 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 		ProfileName: profile,
 		Installed:   len(mods),
 		Enabled:     enabled,
-		Updates:     -1, // unknown: on-demand checks are wired (CheckUpdates, Phase 5b); a persistent, always-visible summary-strip COUNT is Phase 6
-		Conflicts:   -1, // unknown: conflict detection is a Phase 6 workflow
-		LastDeploy:  lastDeploy,
+		// Updates and Conflicts are BOTH always the -1 "unknown" sentinel
+		// straight out of Overview, but for different reasons - neither is a
+		// missing feature (#106b/#106c closeout: both features have long
+		// since shipped):
+		//   - Updates genuinely IS unknown here: it requires an explicit,
+		//     user-triggered check (there is no cheap "is there an update"
+		//     read), so Overview has nothing to report until
+		//     resolveCheckUpdatesResult (mutations.go) sets m.summary.Updates
+		//     to the real, already-in-hand count after a check completes.
+		//   - Conflicts is NOT actually unknown by the time a caller sees it:
+		//     Model.loadData (app.go) always fetches DataProvider.Conflicts()
+		//     immediately after this call and overwrites summary.Conflicts
+		//     with the real, current count on every ordinary refresh (a
+		//     plain, cheap read, unlike Updates). This -1 here is only ever
+		//     the momentary value between "Overview returned" and "loadData
+		//     finished computing the live count" - callers that skip that
+		//     step (rare, e.g. a test constructing Summary directly) are the
+		//     only ones that would ever observe it as -1.
+		Updates:    -1,
+		Conflicts:  -1,
+		LastDeploy: lastDeploy,
 	}, items, nil
 }
 
