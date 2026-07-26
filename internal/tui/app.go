@@ -1568,6 +1568,15 @@ func (m Model) sourcesView() string {
 		line = truncate(line, panelContentWidth)
 		return m.row(i, line)
 	})...)
+	// Truncate each row to the panel's content width (modRow's per-line idiom):
+	// a long source data value would otherwise lipgloss-auto-wrap into extra
+	// physical lines that clampLines' logical-line count cannot see, silently
+	// growing the view past the height budget (#42).
+	contentWidth := panelContentWidth
+	for i, row := range rows {
+		rows[i] = truncate(row, contentWidth)
+	}
+	rows = m.clampLines(rows, contentBudget)
 	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 

@@ -473,6 +473,32 @@ func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 	}
 }
 
+// The short-terminal companion to
+// TestScreenViewsUseExactAvailableHeightOnLargeTerminals: at ANY size,
+// screenView() must render at most availableContentHeight() lines — the
+// large-terminal test pins "exactly", this one pins "never more", which is
+// the half lipgloss cannot enforce (it pads but never clips) (#42).
+func TestScreenViewsFitHeightBudgetAtAllSizes(t *testing.T) {
+	t.Parallel()
+	sizes := []struct{ width, height int }{{120, 21}, {80, 14}, {80, 12}, {40, 12}, {40, 10}, {80, 8}}
+	for _, size := range sizes {
+		for i, screen := range screens {
+			t.Run(fmt.Sprintf("%v-%dx%d", screen, size.width, size.height), func(t *testing.T) {
+				t.Parallel()
+				model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+				model = updateWithRunes(t, model, fmt.Sprintf("%d", i+1))
+				if screen == ScreenSearch {
+					model.search.state = searchReady
+					model.search.page = populatedSearchPage()
+				}
+				view := model.screenView()
+				require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+					"screen %v must not overflow at %dx%d", screen, size.width, size.height)
+			})
+		}
+	}
+}
+
 func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	t.Parallel()
 
