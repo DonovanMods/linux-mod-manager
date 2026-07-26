@@ -33,7 +33,7 @@ var ErrCancelled = errors.New("cancelled")
 var ErrReported = errors.New("already reported")
 
 var (
-	version = "1.16.0"
+	version = "1.17.0"
 
 	// Global flags
 	configDir  string
