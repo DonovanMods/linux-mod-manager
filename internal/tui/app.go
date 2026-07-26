@@ -1026,6 +1026,8 @@ func (m Model) dashboardView() string {
 	}
 }
 
+// partyDashboardView clamps each panel's content to its height budget to
+// prevent silently growing beyond the terminal (#42).
 func (m Model) partyDashboardView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
@@ -1035,23 +1037,26 @@ func (m Model) partyDashboardView() string {
 	topHeight := splitHeight / 2
 	menuHeight := splitHeight - topHeight
 
-	party := strings.Join([]string{
+	topBudget := max(topHeight-m.theme.Panel.GetVerticalBorderSize(), 1)
+	menuBudget := max(menuHeight-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	party := strings.Join(m.clampLines([]string{
 		m.theme.PanelTitle.Render("PARTY"),
 		fmt.Sprintf("Game:    %s", m.summary.GameName),
 		fmt.Sprintf("Profile: %s", m.summary.ProfileName),
 		fmt.Sprintf("Mods:    %d installed / %d enabled", m.summary.Installed, m.summary.Enabled),
-	}, "\n")
+	}, topBudget), "\n")
 
-	quest := strings.Join([]string{
+	quest := strings.Join(m.clampLines([]string{
 		m.theme.PanelTitle.Render("QUEST LOG"),
 		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(countLabel(m.summary.Updates))),
 		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
 		"Last deploy: ?",
-	}, "\n")
+	}, topBudget), "\n")
 
-	menu := strings.Join(
+	menu := strings.Join(m.clampLines(
 		append([]string{m.theme.PanelTitle.Render("COMMANDS")}, m.dashboardMenuRows()...),
-		"\n")
+		menuBudget), "\n")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		m.panelWithHeight(panelWidth, topHeight).Render(party),
@@ -1060,6 +1065,8 @@ func (m Model) partyDashboardView() string {
 	) + "\n" + m.panelWithHeight(width, menuHeight).Render(menu)
 }
 
+// terminalDashboardView clamps content to the height budget to prevent
+// silently growing beyond the terminal (#42).
 func (m Model) terminalDashboardView() string {
 	rows := []string{
 		m.theme.PanelTitle.Render("BOOT SEQUENCE // MOD GUILD TERMINAL"),
@@ -1070,9 +1077,13 @@ func (m Model) terminalDashboardView() string {
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
+	budget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
+	rows = m.clampLines(rows, budget)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
+// commanderDashboardView clamps each side's content to its height budget to
+// prevent silently growing beyond the terminal (#42).
 func (m Model) commanderDashboardView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
@@ -1080,17 +1091,18 @@ func (m Model) commanderDashboardView() string {
 	leftWidth := max((width-gap)/2, 1)
 	rightWidth := max(width-gap-leftWidth, 1)
 
-	left := strings.Join([]string{
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize()-1, 1)
+	left := strings.Join(m.clampLines([]string{
 		m.theme.PanelTitle.Render("ACTIVE PROFILE"),
 		m.summary.ProfileName,
 		"",
 		fmt.Sprintf("Game     %s", m.summary.GameName),
 		fmt.Sprintf("Enabled  %d", m.summary.Enabled),
 		fmt.Sprintf("Updates  %s", countLabel(m.summary.Updates)),
-	}, "\n")
-	right := strings.Join(
+	}, contentBudget), "\n")
+	right := strings.Join(m.clampLines(
 		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
-		"\n")
+		contentBudget), "\n")
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		m.panelWithHeight(leftWidth, height).Render(left),
@@ -1099,6 +1111,8 @@ func (m Model) commanderDashboardView() string {
 	)
 }
 
+// crtDashboardView clamps content to the height budget to prevent
+// silently growing beyond the terminal (#42).
 func (m Model) crtDashboardView() string {
 	rows := []string{
 		m.theme.PanelTitle.Render("CRT STATUS STACK"),
@@ -1109,6 +1123,8 @@ func (m Model) crtDashboardView() string {
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
+	budget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
+	rows = m.clampLines(rows, budget)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 

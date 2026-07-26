@@ -336,6 +336,27 @@ func TestDashboardLayoutsDoNotOverflowNarrowTerminals(t *testing.T) {
 	}
 }
 
+// Dashboards must never render more lines than availableContentHeight():
+// lipgloss pads short panels but never clips tall ones, so any layout whose
+// content exceeds its panel's height budget silently overflows the terminal
+// (#42; reproduced at 120x21 where the party layout rendered 15 lines into
+// a 14-line budget). Every theme layout is checked at each size because the
+// four dashboard views split the budget differently.
+func TestDashboardLayoutsFitHeightBudgetOnShortTerminals(t *testing.T) {
+	t.Parallel()
+	sizes := []struct{ width, height int }{{120, 21}, {80, 14}, {40, 12}, {40, 10}}
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		for _, size := range sizes {
+			t.Run(fmt.Sprintf("%s-%dx%d", themeName, size.width, size.height), func(t *testing.T) {
+				t.Parallel()
+				model := sizedPrototypeModel(t, themeName, size.width, size.height)
+				view := model.screenView()
+				require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
+			})
+		}
+	}
+}
+
 func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 	t.Parallel()
 
