@@ -57,12 +57,29 @@ func TestWindowedRows(t *testing.T) {
 		require.Contains(t, got[len(got)-1], "more", "clipped rows below are named")
 	})
 
+	t.Run("budget 3 takes the indicator path", func(t *testing.T) {
+		// 3 is the lowest budget where the "↑/↓ N more" indicators fit;
+		// pin the boundary so the indicator-free tiny-budget branch below
+		// never creeps upward.
+		got := m.windowedRows(6, 5, 3, render)
+		require.LessOrEqual(t, len(got), 3)
+		require.Contains(t, strings.Join(got, "\n"), "row-5")
+		require.Contains(t, got[0], "↑")
+		require.Contains(t, got[0], "more", "clipped rows above are named")
+	})
+
 	t.Run("tiny budgets never overflow", func(t *testing.T) {
+		// n spans budget+1..6 so the near-fit cases (n barely over budget)
+		// are covered too: those are where a naive pickerWindow(n, sel,
+		// budget+2) delegation would hit its everything-fits fast path and
+		// hand back all n rows, overflowing the budget.
 		for budget := 1; budget <= 2; budget++ {
-			for selected := 0; selected < 6; selected++ {
-				got := m.windowedRows(6, selected, budget, render)
-				require.LessOrEqual(t, len(got), budget, "budget %d selected %d", budget, selected)
-				require.Contains(t, strings.Join(got, "\n"), fmt.Sprintf("row-%d", selected))
+			for n := budget + 1; n <= 6; n++ {
+				for selected := 0; selected < n; selected++ {
+					got := m.windowedRows(n, selected, budget, render)
+					require.LessOrEqual(t, len(got), budget, "n %d budget %d selected %d", n, budget, selected)
+					require.Contains(t, strings.Join(got, "\n"), fmt.Sprintf("row-%d", selected))
+				}
 			}
 		}
 	})

@@ -44,8 +44,18 @@ func (m Model) windowedRows(n, selected, budget int, render func(i int) string) 
 		return rows
 	}
 	if budget < 3 {
-		windowSize := budget
-		start := min(max(selected-(windowSize-1)/2, 0), n-windowSize)
+		// pickerWindow unconditionally reserves two of its budget rows for
+		// the "↑/↓ N more" indicators, which this branch does not emit, so
+		// asking it for budget+2 yields the same centered, clamped window
+		// of exactly budget rows without duplicating its math. One wrinkle:
+		// when n <= budget+2 its everything-fits fast path hands back the
+		// whole list, which would overflow here (n > budget in this
+		// branch), so re-center on the selection in that case.
+		start, windowSize := pickerWindow(n, selected, budget+2)
+		if windowSize > budget {
+			windowSize = budget
+			start = min(max(selected-(windowSize-1)/2, 0), n-windowSize)
+		}
 		rows := make([]string, 0, windowSize)
 		for i := start; i < start+windowSize; i++ {
 			rows = append(rows, render(i))
