@@ -59,7 +59,10 @@ func TestApplySingleUpdate_JSON(t *testing.T) {
 		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
 			[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 		src.AddDownload("new-1", []byte("new-content"))
-		src.changelogs["mod1"] = "Fixed bugs."
+		// HTML changelog: the JSON document must carry the cleaned form, same
+		// as the human output - upstream changelogs are HTML and consumers
+		// should not have to strip tags themselves.
+		src.changelogs["mod1"] = "<b>Fixed</b> bugs.<br>More &amp; more."
 
 		out := captureStdout(t, func() error {
 			return applySingleUpdate(context.Background(), svc, game, mod, "default")
@@ -71,7 +74,7 @@ func TestApplySingleUpdate_JSON(t *testing.T) {
 		assert.Equal(t, "Mod One", doc.Name)
 		assert.Equal(t, "1.0", doc.FromVersion)
 		assert.Equal(t, "2.0", doc.ToVersion)
-		assert.Equal(t, "Fixed bugs.", doc.Changelog)
+		assert.Equal(t, "Fixed bugs.\nMore & more.", doc.Changelog)
 		assert.Equal(t, "updated", doc.Status)
 		assert.Empty(t, doc.Reason)
 		assert.NotContains(t, out, "Updating")
@@ -129,7 +132,7 @@ func TestApplySingleUpdate_JSON(t *testing.T) {
 			[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 		// Deliberately no AddDownload: if applyUpdate were ever called under
 		// dry-run, the download would 404 and surface as a visible failure.
-		src.changelogs["mod1"] = "Fixed bugs."
+		src.changelogs["mod1"] = "<b>Fixed</b> bugs."
 
 		out := captureStdout(t, func() error {
 			return applySingleUpdate(context.Background(), svc, game, mod, "default")
@@ -139,7 +142,7 @@ func TestApplySingleUpdate_JSON(t *testing.T) {
 		decodeSingleDoc(t, out, &doc)
 		assert.Equal(t, "1.0", doc.FromVersion)
 		assert.Equal(t, "2.0", doc.ToVersion)
-		assert.Equal(t, "Fixed bugs.", doc.Changelog)
+		assert.Equal(t, "Fixed bugs.", doc.Changelog, "JSON carries the cleaned changelog, not raw HTML")
 		assert.Equal(t, "available", doc.Status)
 
 		updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")

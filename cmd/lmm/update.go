@@ -495,9 +495,11 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 
 	if updateDryRun {
 		if jsonOutput {
+			// Cleaned like the human output (upstream changelogs are HTML),
+			// but untruncated - the 500-char cap is a display concern.
 			return emitSingleUpdateJSON(singleUpdateJSON{
 				ModID: mod.ID, Name: mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
-				Changelog: update.Changelog, Status: "available",
+				Changelog: core.CleanChangelog(update.Changelog), Status: "available",
 			})
 		}
 		fmt.Println("(dry-run: no changes applied)")
@@ -511,7 +513,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	if jsonOutput {
 		return emitSingleUpdateJSON(singleUpdateJSON{
 			ModID: mod.ID, Name: mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
-			Changelog: update.Changelog, Status: "updated",
+			Changelog: core.CleanChangelog(update.Changelog), Status: "updated",
 		})
 	}
 
