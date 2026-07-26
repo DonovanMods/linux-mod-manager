@@ -1,6 +1,9 @@
 package db_test
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -63,6 +66,51 @@ func TestNew_AppliesAllMigrations(t *testing.T) {
 	err = database.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version)
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, version, 7, "schema_migrations should have at least version 7")
+}
+
+// TestNew_RestrictsFilePermissions pins that the database is owner-only. It holds
+// auth tokens in plaintext (#79), and SQLite creates it 0644 under a typical umask.
+func TestNew_RestrictsFilePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+
+	database, err := db.New(path)
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0600), info.Mode().Perm(), "database must not be group- or world-readable")
+
+	// WAL mode is on, so the sidecars carry the same token bytes.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sidecar := path + suffix
+		info, err := os.Stat(sidecar)
+		if os.IsNotExist(err) {
+			continue
+		}
+		require.NoError(t, err)
+		assert.Equal(t, fs.FileMode(0600), info.Mode().Perm(), "%s must not be group- or world-readable", sidecar)
+	}
+}
+
+// TestNew_TightensExistingPermissions covers installs predating the fix: an already
+// world-readable database must be tightened on open, not just on creation.
+func TestNew_TightensExistingPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+
+	database, err := db.New(path)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+
+	require.NoError(t, os.Chmod(path, 0644))
+
+	reopened, err := db.New(path)
+	require.NoError(t, err)
+	defer func() { _ = reopened.Close() }()
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0600), info.Mode().Perm(), "existing permissive database should be tightened on open")
 }
 
 func TestInstalledMods_SaveAndGet(t *testing.T) {

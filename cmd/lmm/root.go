@@ -142,7 +142,10 @@ func initService() (*core.Service, error) {
 	if err := os.MkdirAll(cfg.ConfigDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating config dir: %w", err)
 	}
-	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+	// Owner-only: this holds lmm.db, whose auth_tokens table stores API keys in
+	// plaintext. Also closes the window between SQLite creating the DB at 0644 and
+	// the db package tightening it.
+	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
 		return nil, fmt.Errorf("creating data dir: %w", err)
 	}
 	if err := os.MkdirAll(cfg.CacheDir, 0755); err != nil {

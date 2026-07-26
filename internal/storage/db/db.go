@@ -2,10 +2,18 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 
 	_ "modernc.org/sqlite"
 )
+
+// secureFileMode is the permission mask for the database and its WAL/SHM sidecars.
+// The auth_tokens table holds API keys in plaintext, so the file must not be
+// readable by other local users.
+const secureFileMode = 0600
 
 // DB wraps the SQLite database connection
 type DB struct {
@@ -27,6 +35,14 @@ func New(path string) (*DB, error) {
 		return nil, fmt.Errorf("setting pragmas: %w", err)
 	}
 
+	// After the pragmas, so the WAL/SHM sidecars exist and get tightened too.
+	if err := restrictPermissions(path); err != nil {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			return nil, fmt.Errorf("%w (closing database: %v)", err, closeErr)
+		}
+		return nil, err
+	}
+
 	database := &DB{DB: sqlDB}
 
 	if err := database.migrate(); err != nil {
@@ -37,4 +53,24 @@ func New(path string) (*DB, error) {
 	}
 
 	return database, nil
+}
+
+// restrictPermissions tightens the database file and its WAL/SHM sidecars to
+// owner-only. SQLite creates these itself — 0644 under a typical umask — so they
+// can only be fixed after the fact; the data directory is created 0700 by the
+// caller, which keeps the brief window between creation and chmod from being
+// useful. Applied on every open, so databases predating this get tightened too.
+//
+// Paths that do not exist are skipped: an in-memory database (":memory:") has no
+// file, and the sidecars are absent until WAL mode has something to write.
+func restrictPermissions(path string) error {
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(p, secureFileMode); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("restricting permissions on %s: %w", p, err)
+		}
+	}
+	return nil
 }
