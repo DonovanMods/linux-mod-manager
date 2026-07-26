@@ -1956,9 +1956,13 @@ func (m Model) modRow(index, width int, mod ModItem) string {
 	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
 	const gaps = 4        // separating spaces between the 5 columns
 	const minName = 8
-	// Fixed, not proportional: the marker is the whole point of the column, so
-	// it must not be the first thing a narrow terminal truncates.
-	const flagsWidth = 3 // "pin"
+	// Fixed, not proportional: the flags are the whole point of the column, so
+	// they must not be the first thing a narrow terminal truncates. 5, not 3
+	// ("pin"), so the pin flag and the "updated this session" marker (Task 2,
+	// #77) can coexist without colliding: a pinned mod that was ALSO just
+	// updated (a manual apply overrides the policy for one run) renders
+	// "pin *" - see modFlags' doc comment for the exact layout.
+	const flagsWidth = 5
 
 	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth-gaps, minName)
 	statusWidth := min(11, max(avail/6, 1)) // "disabled"/"deployed" are 8 runes
@@ -1969,21 +1973,58 @@ func (m Model) modRow(index, width int, mod ModItem) string {
 	line := fmt.Sprintf("%-*s %-*s %-*s %-*s %*s",
 		nameWidth, truncate(mod.Name, nameWidth),
 		statusWidth, truncate(mod.Status, statusWidth),
-		flagsWidth, modFlags(mod),
+		flagsWidth, m.modFlags(mod),
 		authorWidth, truncate(mod.Author, authorWidth),
 		versionWidth, truncate(mod.Version, versionWidth))
 	return m.row(index, line)
 }
 
-// modFlags renders the per-mod flag column: "pin" for a mod held back from
-// update checks, empty otherwise. The wire string is "pin" (not the CLI's
-// "pinned") per ModItem.UpdatePolicy's documented values - see
-// service_core.go's policyToString for why the two interfaces differ.
-func modFlags(mod ModItem) string {
+// modFlags renders the per-mod flag column: "pin" (left-aligned in the
+// first 3 columns) for a mod held back from update checks, and "*" (the
+// last column) for a mod actually updated THIS session - not merely
+// checked. The wire string "pin" (not the CLI's "pinned") matches
+// ModItem.UpdatePolicy's documented values - see service_core.go's
+// policyToString for why the two interfaces differ. The fixed
+// "%-3s %s" shape always fills exactly flagsWidth (5) columns - "pin *",
+// "pin  ", "    *", or "     " - so pin and the marker can appear
+// independently, together, or not at all without ever shifting the
+// author/version columns that follow (mirrors the pin-only column's own
+// fixed-width reasoning above modRow).
+func (m Model) modFlags(mod ModItem) string {
+	pin := ""
 	if mod.UpdatePolicy == "pin" {
-		return "pin"
+		pin = "pin"
 	}
-	return ""
+	marker := " "
+	if m.wasUpdatedThisSession(mod) {
+		marker = "*"
+	}
+	return fmt.Sprintf("%-3s %s", pin, marker)
+}
+
+// wasUpdatedThisSession reports whether mod was actually brought current by
+// an update applied this session, per task-2-brief.md's decided design: mod
+// must match an entry in m.lastUpdates.Updates by Source+ID (the same key
+// viewSelectedModChangelog uses, mutations.go) AND mod's CURRENT Version
+// must already equal that entry's ToVersion. The version comparison is
+// load-bearing, not redundant: m.lastUpdates is set on EVERY CheckUpdates
+// call (resolveCheckUpdatesResult, mutations.go), including one whose
+// confirm modal was cancelled or whose apply failed partway through - such
+// a checked-but-unapplied entry still matches by Source+ID while the mod's
+// Version remains the OLD one, so without this comparison the marker would
+// falsely claim an update that never happened. Session lifetime rides
+// m.lastUpdates' own lifetime (cleared only on game switch,
+// resolveGameSwitch/mutations.go) - no new lifecycle code needed.
+func (m Model) wasUpdatedThisSession(mod ModItem) bool {
+	if m.lastUpdates == nil {
+		return false
+	}
+	for _, u := range m.lastUpdates.Updates {
+		if u.Source == mod.Source && u.ID == mod.ID {
+			return mod.Version == u.ToVersion
+		}
+	}
+	return false
 }
 
 func (m Model) panel(width int) lipgloss.Style {
