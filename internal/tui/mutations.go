@@ -43,6 +43,11 @@ func (m Model) gameProfileDetail(effect string) []string {
 	}
 }
 
+// policyModalTitle formats the title for policy picker and confirmation.
+func policyModalTitle(modName string) string {
+	return fmt.Sprintf("Update policy — %s", modName)
+}
+
 // toggleSelectedModEnable handles 'e' on Installed Mods: the direction
 // comes from the selected item's Status (task-7-brief.md's Keybindings
 // section) - "disabled" enables, anything else (coreProvider's "enabled"/
@@ -437,7 +442,7 @@ func (m Model) editSelectedModPolicy() (Model, tea.Cmd) {
 	}
 
 	picker := pendingPicker{
-		title:    fmt.Sprintf("Update policy — %s", item.Name),
+		title:    policyModalTitle(item.Name),
 		options:  options,
 		selected: selected,
 		choose: func(idx int) tea.Cmd {
@@ -475,10 +480,8 @@ func (m Model) resolvePolicyChoice(msg policyChosenMsg) (Model, tea.Cmd) {
 	}
 	item := msg.item
 	policy := msg.policy
-	title := fmt.Sprintf("Update policy — %s", item.Name)
-	actions := m.actions
-	model, pa := m.buildAction(actionSetPolicy, title, nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
-		return actions.SetUpdatePolicy(ctx, item, policy)
+	model, pa := m.buildAction(actionSetPolicy, policyModalTitle(item.Name), nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.SetUpdatePolicy(ctx, item, policy)
 	})
 	model.action.running = true
 	return model, pa.confirm()
@@ -558,9 +561,8 @@ func (m Model) switchToProfileNamed(name string) (Model, tea.Cmd) {
 	m.action.status = "Planning switch…"
 	m.action.statusIsError = false
 
-	actions := m.actions
 	return m, func() tea.Msg {
-		view, err := actions.PlanProfileSwitch(ctx, name)
+		view, err := m.actions.PlanProfileSwitch(ctx, name)
 		if err != nil {
 			return planFailedMsg{gen: gen, err: err}
 		}
@@ -762,9 +764,8 @@ func (m Model) installSelectedSearchResult() (Model, tea.Cmd) {
 	m.action.status = "Planning install…"
 	m.action.statusIsError = false
 
-	actions := m.actions
 	return m, func() tea.Msg {
-		view, err := actions.PlanInstall(ctx, item)
+		view, err := m.actions.PlanInstall(ctx, item)
 		if err != nil {
 			return installPlanFailedMsg{gen: gen, err: err}
 		}
@@ -943,9 +944,8 @@ func (m Model) checkForUpdates() (Model, tea.Cmd) {
 	m.action.status = "Checking for updates…"
 	m.action.statusIsError = false
 
-	actions := m.actions
 	return m, func() tea.Msg {
-		view, err := actions.CheckUpdates(ctx)
+		view, err := m.actions.CheckUpdates(ctx)
 		if err != nil {
 			return checkUpdatesFailedMsg{gen: gen, err: err}
 		}
@@ -1231,10 +1231,8 @@ func (m Model) resolveProfileCreate(msg profileCreateSubmittedMsg) (Model, tea.C
 		return m, nil
 	}
 	name := msg.name
-	actions := m.actions
-	title := fmt.Sprintf("Create profile %q?", name)
-	model, pa := m.buildAction(actionCreateProfile, title, nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
-		return actions.CreateProfile(ctx, name)
+	model, pa := m.buildAction(actionCreateProfile, "", nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.CreateProfile(ctx, name)
 	})
 	model.action.running = true
 	return model, pa.confirm()

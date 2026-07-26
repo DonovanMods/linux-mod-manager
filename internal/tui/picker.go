@@ -45,6 +45,14 @@ func (m Model) promptPicker(p pendingPicker) Model {
 // "n" that a picker's option labels may legitimately start with -
 // cancels without choosing; quit keys still quit (via startQuit); every
 // other key is swallowed so nothing behind the modal can react to it.
+//
+// Quit is matched with a raw key.Matches, NOT m.isQuitKey, deliberately
+// diverging from updateOverlayKey (#68): the overlay's "search can never be
+// focused while the overlay is up" invariant does not hold for pickers -
+// an async-opened picker (e.g. resolveImportApplied's switch-profile
+// prompt, which appears whenever the import finishes) can land on top of a
+// focused search input, and isQuitKey would then swallow a plain "q"
+// instead of quitting.
 func (m Model) updatePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	p := m.picker
 

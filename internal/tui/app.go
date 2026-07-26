@@ -1736,13 +1736,19 @@ type helpGroup struct {
 	entries []string
 }
 
+// helpRow formats a single help-panel row: left-aligned key (16 chars),
+// space, description.
+func helpRow(key, desc string) string {
+	return fmt.Sprintf("%-16s %s", key, desc)
+}
+
 // helpEntry formats one keybinding as a help-panel row, reusing the
 // binding's own key.WithHelp key/description from keys.go rather than
 // restating it - the single source of truth for "what does this key do"
 // stays in DefaultKeyMap.
 func helpEntry(kb key.Binding) string {
 	h := kb.Help()
-	return fmt.Sprintf("%-16s %s", h.Key, h.Desc)
+	return helpRow(h.Key, h.Desc)
 }
 
 // helpGroups builds the full, ordered set of help groups: "global" always
@@ -1760,7 +1766,7 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.Help),
 			helpEntry(m.keys.NextScreen),
 			helpEntry(m.keys.PrevScreen),
-			fmt.Sprintf("%-16s %s", "1-6", "jump to a screen"),
+			helpRow("1-6", "jump to a screen"),
 			helpEntry(m.keys.GameSwitch),
 		},
 	}
@@ -1773,7 +1779,7 @@ func (m Model) helpGroups() []helpGroup {
 			// (openSelectedMenuEntry), so the description is written out
 			// here rather than reusing keys.go's generic "open" - the same
 			// ad-hoc shape as the profiles group's "switch profile" below.
-			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "open menu entry"),
+			helpRow(m.keys.Select.Help().Key, "open menu entry"),
 			helpEntry(m.keys.Deploy),
 			helpEntry(m.keys.CheckUpdates),
 			helpEntry(m.keys.Purge),
@@ -1829,7 +1835,7 @@ func (m Model) helpGroups() []helpGroup {
 			// Select.Help() says elsewhere - so this one entry is written
 			// out rather than reusing helpEntry, matching the actual
 			// behavior on this screen.
-			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "switch profile"),
+			helpRow(m.keys.Select.Help().Key, "switch profile"),
 			helpEntry(m.keys.CreateProfile),
 			helpEntry(m.keys.DeleteProfile),
 			// ImportProfile is Task 9's import binding (see mutations.go's
@@ -1869,8 +1875,7 @@ func (m Model) helpGroups() []helpGroup {
 	if name, ok := screenGroupName[m.screen]; ok {
 		for i, g := range fixed {
 			if g.name == name {
-				promoted := append([]helpGroup{g}, fixed[:i]...)
-				fixed = append(promoted, fixed[i+1:]...)
+				fixed = append(append([]helpGroup{g}, fixed[:i]...), fixed[i+1:]...)
 				break
 			}
 		}
