@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -62,7 +65,10 @@ func TestDoUpdate_ReportsSkippedLocalCount(t *testing.T) {
 	seedLocalMod(t, svc, game, "localA", "Local A")
 
 	out := captureStdout(t, func() error {
-		return doUpdate(context.Background(), svc, game, nil)
+		// The seeded remote source is unregistered, so the check fails and
+		// doUpdate reports non-zero; this test is about the output.
+		_ = doUpdate(context.Background(), svc, game, nil)
+		return nil
 	})
 
 	assert.Contains(t, out, "1 local mod", "should report the skipped local mod")
@@ -135,7 +141,8 @@ func TestDoUpdate_CheckFailed_DoesNotClaimUpToDate(t *testing.T) {
 	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 
 	out := captureStdout(t, func() error {
-		return doUpdate(context.Background(), svc, game, nil)
+		_ = doUpdate(context.Background(), svc, game, nil)
+		return nil
 	})
 
 	assert.NotContains(t, out, "up to date", "the check failed, so currency was never established")
@@ -180,4 +187,93 @@ func TestDoUpdate_AmbiguousRemoteOnly_OmitsLocalCaveat(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "curseforge, nexusmods", "sources listed, sorted")
 	assert.NotContains(t, err.Error(), "local mods cannot", "no local candidate, so no local caveat")
+}
+
+// TestDoUpdate_CheckFailed_ReturnsError: a check that failed should exit
+// non-zero. It reported the failure itself (warning on stderr plus the
+// "did not complete" line), so ErrReported suppresses a duplicate message.
+func TestDoUpdate_CheckFailed_ReturnsError(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+
+	var err error
+	_ = captureStdout(t, func() error {
+		err = doUpdate(context.Background(), svc, game, nil)
+		return nil
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrReported, "already reported, so Execute must not print it again")
+}
+
+// TestDoUpdate_CheckFailed_JSONCarriesError: --json consumers cannot see the
+// stderr warning, so the failure has to be in the document itself.
+func TestDoUpdate_CheckFailed_JSONCarriesError(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	var err error
+	raw := captureStdout(t, func() error {
+		err = doUpdate(context.Background(), svc, game, nil)
+		return nil
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrReported)
+
+	// Exactly one document: if Execute also printed {"error":...}, a caller
+	// piping stdout to a parser would choke on trailing content.
+	dec := json.NewDecoder(strings.NewReader(raw))
+	var out struct {
+		Error   string `json:"error"`
+		Updates []any  `json:"updates"`
+	}
+	require.NoError(t, dec.Decode(&out))
+	assert.NotEmpty(t, out.Error, "the failure must be visible in the JSON")
+	assert.Empty(t, out.Updates)
+	assert.False(t, dec.More(), "stdout must hold exactly one JSON document")
+}
+
+// TestDoUpdate_CheckSucceeded_ReturnsNil guards the other direction: a check
+// that completed must not start failing just because nothing needed updating.
+func TestDoUpdate_CheckSucceeded_ReturnsNil(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	seedLocalMod(t, svc, game, "localA", "Local A") // filtered, so no source is queried
+
+	_ = captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	err := func() error {
+		var e error
+		_ = captureStdout(t, func() error {
+			e = doUpdate(context.Background(), svc, game, nil)
+			return nil
+		})
+		return e
+	}()
+	assert.NoError(t, err, "nothing failed; everything was simply skipped")
+}
+
+// TestReportError_SuppressesAlreadyReported pins the Execute-side contract.
+func TestReportError_SuppressesAlreadyReported(t *testing.T) {
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		reportError(fmt.Errorf("wrapped: %w", ErrReported))
+		return nil
+	})
+	assert.Empty(t, out, "an already-reported error must not be printed again")
+
+	out = captureStdout(t, func() error {
+		reportError(errors.New("some other failure"))
+		return nil
+	})
+	assert.Contains(t, out, "some other failure", "unreported errors still print")
 }

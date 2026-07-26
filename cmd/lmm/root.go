@@ -23,6 +23,15 @@ import (
 // When returned from a command, Execute exits with code 2.
 var ErrCancelled = errors.New("cancelled")
 
+// ErrReported marks a failure the command has already communicated in its own
+// output format. Execute still exits 1, but prints nothing further.
+//
+// Needed because the two would otherwise collide: under --json, Execute prints
+// {"error":"..."} on any returned error, so a command that has already written
+// a complete JSON document would emit a second one and break any caller piping
+// stdout to a parser.
+var ErrReported = errors.New("already reported")
+
 var (
 	version = "1.16.0"
 
@@ -116,12 +125,21 @@ func Execute() {
 		if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
 			os.Exit(2)
 		}
-		if jsonOutput {
-			fmt.Printf(`{"error":%q}`+"\n", err.Error())
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
+		reportError(err)
 		os.Exit(1)
+	}
+}
+
+// reportError prints err in the active output format, unless the command
+// already reported it (ErrReported).
+func reportError(err error) {
+	if errors.Is(err, ErrReported) {
+		return
+	}
+	if jsonOutput {
+		fmt.Printf(`{"error":%q}`+"\n", err.Error())
+	} else {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 }
 

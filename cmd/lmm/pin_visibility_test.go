@@ -143,7 +143,10 @@ func TestDoUpdate_SomePinned_SeparatesFromPrecedingOutput(t *testing.T) {
 	setPolicy(t, svc, game, "a", domain.UpdatePinned)
 
 	out := captureStdout(t, func() error {
-		return doUpdate(context.Background(), svc, game, nil)
+		// Mod B's source is unregistered, so the check fails and doUpdate
+		// reports non-zero; this test is about the separator.
+		_ = doUpdate(context.Background(), svc, game, nil)
+		return nil
 	})
 
 	// Asserts the separator, not the preceding sentence: which summary line

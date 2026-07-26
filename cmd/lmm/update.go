@@ -32,6 +32,10 @@ type updateJSONOutput struct {
 	// can tell "nothing to update" apart from "nothing was looked at". An
 	// empty updates array means both, and only this distinguishes them.
 	Skipped updateSkippedJSON `json:"skipped"`
+	// Error is set when the check itself failed. An empty updates array
+	// otherwise means "nothing to update"; with this set it means the answer
+	// is unknown. Omitted on success so the common document stays unchanged.
+	Error string `json:"error,omitempty"`
 }
 
 type updateSkippedJSON struct {
@@ -198,18 +202,34 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		fmt.Fprintf(os.Stderr, "Warning: %v\n", checkErr)
 	}
 
+	// finish is returned at every exit below rather than bailing out early: a
+	// partial check still has results worth printing and auto-updates worth
+	// applying, so the non-zero exit has to come after that work, not instead
+	// of it. ErrReported because the failure is already on stderr (or in the
+	// JSON document) and Execute must not print it twice.
+	finish := func() error {
+		if checkErr != nil {
+			return fmt.Errorf("update check incomplete: %w", ErrReported)
+		}
+		return nil
+	}
+
 	if len(updates) == 0 {
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			skips := core.CountUpdateSkips(installed)
-			if err := enc.Encode(updateJSONOutput{
+			out := updateJSONOutput{
 				GameID: game.ID, Profile: profileName, Updates: []updateModJSON{},
 				Skipped: updateSkippedJSON{Pinned: skips.Pinned, Local: skips.Local},
-			}); err != nil {
+			}
+			if checkErr != nil {
+				out.Error = checkErr.Error()
+			}
+			if err := enc.Encode(out); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
-			return nil
+			return finish()
 		}
 		// "All mods are up to date" would be false if the only reason there is
 		// nothing to report is that every mod was skipped. An empty profile
@@ -217,7 +237,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		skips := core.CountUpdateSkips(installed)
 		if skips.Total() == len(installed) {
 			printSkipped(skips)
-			return nil
+			return finish()
 		}
 		// A failed check produces no updates too. Claiming currency here would
 		// repeat the defect this whole command's reporting was fixed for: the
@@ -232,7 +252,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Println()
 			printSkipped(skips)
 		}
-		return nil
+		return finish()
 	}
 
 	if jsonOutput {
@@ -240,6 +260,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		out := updateJSONOutput{
 			GameID: game.ID, Profile: profileName, Updates: make([]updateModJSON, len(updates)),
 			Skipped: updateSkippedJSON{Pinned: skips.Pinned, Local: skips.Local},
+		}
+		if checkErr != nil {
+			out.Error = checkErr.Error()
 		}
 		for i, u := range updates {
 			out.Updates[i] = updateModJSON{
@@ -255,7 +278,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding json: %w", err)
 		}
-		return nil
+		return finish()
 	}
 
 	// Display available updates with policy
@@ -324,7 +347,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			}
 		}
 		fmt.Println("\nUse without --dry-run to apply updates.")
-		return nil
+		return finish()
 	}
 
 	// Apply auto-updates
@@ -360,7 +383,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 	}
 
-	return nil
+	return finish()
 }
 
 func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, profileName string) error {
