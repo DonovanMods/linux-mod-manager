@@ -235,7 +235,12 @@ func TestDoUpdate_CheckFailed_JSONCarriesError(t *testing.T) {
 	require.NoError(t, dec.Decode(&out))
 	assert.NotEmpty(t, out.Error, "the failure must be visible in the JSON")
 	assert.Empty(t, out.Updates)
-	assert.False(t, dec.More(), "stdout must hold exactly one JSON document")
+	// Checks the unread remainder rather than Decoder.More(). More() does in
+	// fact return true for a second top-level document, but that is incidental
+	// to what it documents ("another element in the current array or object"),
+	// and it says nothing about trailing bytes that are not valid JSON.
+	trailing := strings.TrimSpace(raw[dec.InputOffset():])
+	assert.Empty(t, trailing, "stdout must hold exactly one JSON document, found trailing content")
 }
 
 // TestDoUpdate_CheckSucceeded_ReturnsNil guards the other direction: a check
