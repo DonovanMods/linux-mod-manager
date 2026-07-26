@@ -31,11 +31,54 @@ func TestNew_RunsMigrations(t *testing.T) {
 	err = database.QueryRow("SELECT COUNT(*) FROM installed_mods").Scan(&count)
 	assert.NoError(t, err)
 
-	err = database.QueryRow("SELECT COUNT(*) FROM mod_cache").Scan(&count)
-	assert.NoError(t, err)
-
 	err = database.QueryRow("SELECT COUNT(*) FROM auth_tokens").Scan(&count)
 	assert.NoError(t, err)
+}
+
+// TestNew_DropsModCacheTable pins the removal of the mod_cache table. It was
+// created in v1 and never read or written — caching is keyed by directory layout
+// in internal/storage/cache, with no DB mirror.
+func TestNew_DropsModCacheTable(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	var count int
+	err = database.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'mod_cache'").Scan(&count)
+	require.NoError(t, err)
+	assert.Zero(t, count, "mod_cache should have been dropped")
+}
+
+// TestNew_DropsModCacheTableOnUpgrade covers the upgrade path rather than a fresh
+// install: a database left at v10 still has the table and must lose it on open.
+func TestNew_DropsModCacheTableOnUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+
+	database, err := db.New(path)
+	require.NoError(t, err)
+
+	// Rewind to v10 and recreate the table as v1 left it.
+	_, err = database.Exec("DELETE FROM schema_migrations WHERE version >= 11")
+	require.NoError(t, err)
+	_, err = database.Exec(`CREATE TABLE mod_cache (
+		source_id TEXT NOT NULL,
+		mod_id TEXT NOT NULL,
+		game_id TEXT NOT NULL,
+		metadata TEXT,
+		cached_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY(source_id, mod_id, game_id)
+	)`)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+
+	reopened, err := db.New(path)
+	require.NoError(t, err)
+	defer func() { _ = reopened.Close() }()
+
+	var count int
+	err = reopened.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'mod_cache'").Scan(&count)
+	require.NoError(t, err)
+	assert.Zero(t, count, "upgrading from v10 should drop mod_cache")
 }
 
 // TestNew_AppliesAllMigrations verifies migrations v4–v7 are applied (installed_mod_files, deployed, checksum, deployed_files).

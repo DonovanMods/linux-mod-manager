@@ -225,7 +225,6 @@ lmm status --game skyrim-se
 
 Internal state and metadata:
 
-- Mod cache metadata (source, ID, version, files)
 - Installation records
 - Download history
 - Authentication tokens (encrypted)
@@ -255,11 +254,15 @@ User-editable configuration:
 ├── lmm.db               # SQLite database
 ├── cache/
 │   └── <game-slug>/
-│       └── <mod-id>/
-│           ├── metadata.json
-│           └── files/
+│       └── <source-id>-<mod-id>/
+│           └── <version>/
 └── downloads/           # Temporary download location
 ```
+
+The cache carries no sidecar metadata: a cached mod is identified entirely by its
+path, and its contents are enumerated by walking the directory. This keeps the
+cache self-describing — deleting a directory by hand is a valid way to evict it,
+with nothing left to reconcile.
 
 ---
 

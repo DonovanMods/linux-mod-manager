@@ -32,6 +32,7 @@ func (d *DB) migrate() error {
 		migrateV8,
 		migrateV9,
 		migrateV10,
+		migrateV11,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -176,5 +177,14 @@ func migrateV9(d *DB) error {
 
 func migrateV10(d *DB) error {
 	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN previous_file_ids TEXT DEFAULT '[]'`)
+	return err
+}
+
+// migrateV11 drops mod_cache, created in v1 and never read or written. The cache
+// is keyed entirely by directory layout (internal/storage/cache), so a DB mirror
+// would only add a way for the two to disagree; the metadata that turned out to
+// matter was added to installed_mods in v9 instead.
+func migrateV11(d *DB) error {
+	_, err := d.Exec(`DROP TABLE IF EXISTS mod_cache`)
 	return err
 }
