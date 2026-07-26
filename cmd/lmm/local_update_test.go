@@ -122,3 +122,41 @@ func TestDoUpdate_JSONReportsSkipped(t *testing.T) {
 	assert.Equal(t, 1, out.Skipped.Local)
 	assert.Equal(t, 1, out.Skipped.Pinned)
 }
+
+// TestDoUpdate_CheckFailed_DoesNotClaimUpToDate: when CheckUpdates fails, the
+// warning goes to stderr and stdout used to say "All mods are up to date" —
+// currency was never established, and a caller reading stdout sees a false
+// success. Same defect class as the local/pinned cases this file covers.
+//
+// The seeded mod's source is not registered with the service, so the check
+// errors and returns no updates.
+func TestDoUpdate_CheckFailed_DoesNotClaimUpToDate(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "up to date", "the check failed, so currency was never established")
+}
+
+// TestDoUpdate_SingleMod_AmbiguousAcrossSources: mod IDs are only unique within
+// a source, so a profile can hold the same ID twice. Reporting one arbitrarily
+// as "belongs to source X" would name whichever happened to come last.
+func TestDoUpdate_SingleMod_AmbiguousAcrossSources(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	seedLocalMod(t, svc, game, "12345", "Local Twin")
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "12345", SourceID: "curseforge", Name: "Remote Twin", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+
+	err := doUpdate(context.Background(), svc, game, []string{"12345"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "curseforge", "must name the candidate sources")
+	assert.Contains(t, err.Error(), domain.SourceLocal, "must name the candidate sources")
+}

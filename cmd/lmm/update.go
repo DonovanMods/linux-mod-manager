@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -125,7 +126,13 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// If specific mod ID provided, update just that mod
 	if len(args) > 0 {
 		modID := args[0]
-		var targetMod, otherSourceMod *domain.InstalledMod
+		var targetMod *domain.InstalledMod
+		// Mod IDs are only unique within a source, so the same ID can appear
+		// more than once in a profile. Collect every candidate rather than
+		// keeping one: naming an arbitrary source would be wrong roughly half
+		// the time. Matching on source as well as ID is also what used to make
+		// a local mod look absent from its own profile.
+		var candidates []*domain.InstalledMod
 		for i := range installed {
 			if installed[i].ID != modID {
 				continue
@@ -134,22 +141,29 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 				targetMod = &installed[i]
 				break
 			}
-			// Same ID, different source. Remember it so a mod that IS in the
-			// profile is never reported as missing: matching on source as well
-			// as ID used to make a local mod look absent.
-			otherSourceMod = &installed[i]
+			candidates = append(candidates, &installed[i])
 		}
 		if targetMod == nil {
-			if otherSourceMod == nil {
+			switch len(candidates) {
+			case 0:
 				return fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+			case 1:
+				if candidates[0].SourceID == domain.SourceLocal {
+					// Present, just not checkable — informational, not an error.
+					fmt.Printf("%s is a local mod — no remote source to check for updates.\n", candidates[0].Name)
+					return nil
+				}
+				return fmt.Errorf("mod %s in profile %s belongs to source %q, not %q; retry with --source %s",
+					modID, profileName, candidates[0].SourceID, updateSource, candidates[0].SourceID)
+			default:
+				sources := make([]string, 0, len(candidates))
+				for _, c := range candidates {
+					sources = append(sources, c.SourceID)
+				}
+				sort.Strings(sources) // deterministic regardless of install order
+				return fmt.Errorf("mod %s is in profile %s under multiple sources (%s); retry with --source to choose (local mods cannot be update-checked)",
+					modID, profileName, strings.Join(sources, ", "))
 			}
-			if otherSourceMod.SourceID == domain.SourceLocal {
-				// Present, just not checkable — informational, not an error.
-				fmt.Printf("%s is a local mod — no remote source to check for updates.\n", otherSourceMod.Name)
-				return nil
-			}
-			return fmt.Errorf("mod %s in profile %s belongs to source %q, not %q; retry with --source %s",
-				modID, profileName, otherSourceMod.SourceID, updateSource, otherSourceMod.SourceID)
 		}
 
 		return applySingleUpdate(ctx, service, game, targetMod, profileName)
@@ -164,13 +178,13 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// Check for updates (partial results returned even when some mods fail to fetch)
 	updater := service.NewUpdater()
-	updates, err := updater.CheckUpdates(ctx, game, installed)
-	if err != nil {
-		if errors.Is(err, domain.ErrAuthRequired) {
+	updates, checkErr := updater.CheckUpdates(ctx, game, installed)
+	if checkErr != nil {
+		if errors.Is(checkErr, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
 		}
 		// Surface warning but continue to show partial updates
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", checkErr)
 	}
 
 	if len(updates) == 0 {
@@ -194,7 +208,15 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			printSkipped(skips)
 			return nil
 		}
-		fmt.Println("All mods are up to date.")
+		// A failed check produces no updates too. Claiming currency here would
+		// repeat the defect this whole command's reporting was fixed for: the
+		// warning goes to stderr, so a caller reading stdout would see only a
+		// false success.
+		if checkErr != nil {
+			fmt.Println("Update check did not complete — see the warning above. No results to report.")
+		} else {
+			fmt.Println("All mods are up to date.")
+		}
 		if skips.Total() > 0 {
 			fmt.Println()
 			printSkipped(skips)

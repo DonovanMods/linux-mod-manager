@@ -146,5 +146,10 @@ func TestDoUpdate_SomePinned_SeparatesFromPrecedingOutput(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, "up to date.\n\n1 pinned mod skipped", "needs a blank line after preceding output")
+	// Asserts the separator, not the preceding sentence: which summary line
+	// precedes it depends on whether the check succeeded, and tying the two
+	// together made this test encode a bug (it used to accept "All mods are up
+	// to date" after a check that had actually failed).
+	assert.Contains(t, out, "\n\n1 pinned mod skipped", "needs a blank line after preceding output")
+	assert.NotEqual(t, "\n", out[:1], "but not a leading blank line")
 }
