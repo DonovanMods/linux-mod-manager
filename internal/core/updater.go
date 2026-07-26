@@ -26,46 +26,6 @@ func NewUpdater(registry *source.Registry) *Updater {
 // like NexusMods address games by their own domain, so each source's batch is
 // translated via game.SourceIDs before the call (empty mapping = keep the lmm
 // id, matching the search-side semantics in Service.SearchMods/GetMod).
-// UpdateCheckable reports whether CheckUpdates will query a source for mod.
-// Two reasons it will not: the mod is pinned (a user choice, reversible with
-// `lmm mod set-update`), or it is a local import with no remote to ask.
-//
-// Exported because both interfaces need to explain the gap between "mods
-// installed" and "mods checked" - without it, a filtered mod silently vanishes
-// from update output and the user is told everything is up to date. Callers
-// must use this rather than re-testing the fields, so the reported counts can
-// never drift from what CheckUpdates actually skipped.
-func UpdateCheckable(mod domain.InstalledMod) bool {
-	return mod.UpdatePolicy != domain.UpdatePinned && mod.SourceID != domain.SourceLocal
-}
-
-// UpdateSkips counts the mods CheckUpdates will filter out, by reason. The two
-// are reported separately because the remedies differ: a pin can be lifted, a
-// local mod can never be checked.
-type UpdateSkips struct {
-	Pinned int
-	Local  int
-}
-
-// Total is the number of mods that will not be checked at all.
-func (s UpdateSkips) Total() int { return s.Pinned + s.Local }
-
-// CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
-// that is both pinned and local counts once, as pinned, so Total never exceeds
-// len(installed).
-func CountUpdateSkips(installed []domain.InstalledMod) UpdateSkips {
-	var s UpdateSkips
-	for _, mod := range installed {
-		switch {
-		case mod.UpdatePolicy == domain.UpdatePinned:
-			s.Pinned++
-		case mod.SourceID == domain.SourceLocal:
-			s.Local++
-		}
-	}
-	return s
-}
-
 func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod) ([]domain.Update, error) {
 	var checkable []domain.InstalledMod
 	for _, mod := range installed {
@@ -123,6 +83,46 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 		return allUpdates, fmt.Errorf("update check had %d source error(s): %w", len(checkErrs), errors.Join(checkErrs...))
 	}
 	return allUpdates, nil
+}
+
+// UpdateCheckable reports whether CheckUpdates will query a source for mod.
+// Two reasons it will not: the mod is pinned (a user choice, reversible with
+// `lmm mod set-update`), or it is a local import with no remote to ask.
+//
+// Exported because both interfaces need to explain the gap between "mods
+// installed" and "mods checked" - without it, a filtered mod silently vanishes
+// from update output and the user is told everything is up to date. Callers
+// must use this rather than re-testing the fields, so the reported counts can
+// never drift from what CheckUpdates actually skipped.
+func UpdateCheckable(mod domain.InstalledMod) bool {
+	return mod.UpdatePolicy != domain.UpdatePinned && mod.SourceID != domain.SourceLocal
+}
+
+// UpdateSkips counts the mods CheckUpdates will filter out, by reason. The two
+// are reported separately because the remedies differ: a pin can be lifted, a
+// local mod can never be checked.
+type UpdateSkips struct {
+	Pinned int
+	Local  int
+}
+
+// Total is the number of mods that will not be checked at all.
+func (s UpdateSkips) Total() int { return s.Pinned + s.Local }
+
+// CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
+// that is both pinned and local counts once, as pinned, so Total never exceeds
+// len(installed).
+func CountUpdateSkips(installed []domain.InstalledMod) UpdateSkips {
+	var s UpdateSkips
+	for _, mod := range installed {
+		switch {
+		case mod.UpdatePolicy == domain.UpdatePinned:
+			s.Pinned++
+		case mod.SourceID == domain.SourceLocal:
+			s.Local++
+		}
+	}
+	return s
 }
 
 // GetAutoUpdateMods filters installed mods to those with auto-update enabled

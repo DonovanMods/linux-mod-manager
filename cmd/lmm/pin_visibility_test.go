@@ -151,5 +151,7 @@ func TestDoUpdate_SomePinned_SeparatesFromPrecedingOutput(t *testing.T) {
 	// together made this test encode a bug (it used to accept "All mods are up
 	// to date" after a check that had actually failed).
 	assert.Contains(t, out, "\n\n1 pinned mod skipped", "needs a blank line after preceding output")
-	assert.NotEqual(t, "\n", out[:1], "but not a leading blank line")
+	// HasPrefix, not out[:1]: a regression that suppressed output entirely
+	// should fail this assertion, not panic on an index out of range.
+	assert.False(t, strings.HasPrefix(out, "\n"), "but not a leading blank line")
 }

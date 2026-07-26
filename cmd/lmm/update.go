@@ -157,12 +157,23 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 					modID, profileName, candidates[0].SourceID, updateSource, candidates[0].SourceID)
 			default:
 				sources := make([]string, 0, len(candidates))
+				hasLocal := false
 				for _, c := range candidates {
 					sources = append(sources, c.SourceID)
+					if c.SourceID == domain.SourceLocal {
+						hasLocal = true
+					}
 				}
 				sort.Strings(sources) // deterministic regardless of install order
-				return fmt.Errorf("mod %s is in profile %s under multiple sources (%s); retry with --source to choose (local mods cannot be update-checked)",
-					modID, profileName, strings.Join(sources, ", "))
+				// The local caveat only earns its place when one of the
+				// candidates actually is local; on a purely remote ambiguity
+				// (nexusmods vs curseforge) it is noise.
+				caveat := ""
+				if hasLocal {
+					caveat = " (local mods cannot be update-checked)"
+				}
+				return fmt.Errorf("mod %s is in profile %s under multiple sources (%s); retry with --source to choose%s",
+					modID, profileName, strings.Join(sources, ", "), caveat)
 			}
 		}
 

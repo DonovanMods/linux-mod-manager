@@ -160,3 +160,24 @@ func TestDoUpdate_SingleMod_AmbiguousAcrossSources(t *testing.T) {
 	assert.Contains(t, err.Error(), "curseforge", "must name the candidate sources")
 	assert.Contains(t, err.Error(), domain.SourceLocal, "must name the candidate sources")
 }
+
+// TestDoUpdate_AmbiguousRemoteOnly_OmitsLocalCaveat: the local aside is only
+// relevant when a candidate actually is local; on a purely remote ambiguity it
+// is noise.
+func TestDoUpdate_AmbiguousRemoteOnly_OmitsLocalCaveat(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	for _, src := range []string{"nexusmods", "curseforge"} {
+		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+			Mod:          domain.Mod{ID: "12345", SourceID: src, Name: "Twin " + src, Version: "1.0", GameID: game.ID},
+			ProfileName:  "default",
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+		}))
+	}
+
+	err := doUpdate(context.Background(), svc, game, []string{"12345"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "curseforge, nexusmods", "sources listed, sorted")
+	assert.NotContains(t, err.Error(), "local mods cannot", "no local candidate, so no local caveat")
+}
