@@ -43,10 +43,14 @@ func TestGenerateThemeSnapshots(t *testing.T) {
 		ScreenConflicts:     "conflicts",
 	}
 
-	// capture builds a model for themeName, sizes it, navigates to screen
-	// via its number-key binding ("1"-"6"), and (for the search screen)
-	// populates it with ready results before rendering the view.
-	capture := func(themeName string, screen Screen, width, height int) string {
+	// capture builds a model for themeName, sizes it, navigates to screen via
+	// its number-key binding (navIndex+1, matching the sweep test in
+	// app_test.go's TestScreenViewsFitHeightBudgetAtAllSizes — deriving the
+	// key from the screens slice's own index rather than int(screen)+1 keeps
+	// both tests correct even if Screen's iota values ever stop lining up
+	// with the number-key bindings), and (for the search screen) populates it
+	// with ready results before rendering the view.
+	capture := func(themeName string, screen Screen, navIndex, width, height int) string {
 		model, err := NewPrototypeModel(Options{Theme: themeName})
 		require.NoError(t, err)
 
@@ -61,7 +65,7 @@ func TestGenerateThemeSnapshots(t *testing.T) {
 		model = updated.(Model)
 
 		if screen != ScreenDashboard {
-			key := fmt.Sprintf("%d", int(screen)+1)
+			key := fmt.Sprintf("%d", navIndex+1)
 			navigated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
 			model = navigated.(Model)
 		}
@@ -80,16 +84,18 @@ func TestGenerateThemeSnapshots(t *testing.T) {
 
 	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
 		for _, size := range sizes {
-			view := capture(themeName, ScreenDashboard, size.width, size.height)
+			view := capture(themeName, ScreenDashboard, 0, size.width, size.height)
 			name := fmt.Sprintf("%s-%s-%dx%d.ansi", themeName, slugs[ScreenDashboard], size.width, size.height)
 			write(name, view)
 		}
 	}
 
-	otherScreens := []Screen{ScreenInstalledMods, ScreenSearch, ScreenProfiles, ScreenSources, ScreenConflicts}
-	for _, screen := range otherScreens {
+	for i, screen := range screens {
+		if screen == ScreenDashboard {
+			continue
+		}
 		for _, size := range sizes {
-			view := capture("wizardry", screen, size.width, size.height)
+			view := capture("wizardry", screen, i, size.width, size.height)
 			name := fmt.Sprintf("wizardry-%s-%dx%d.ansi", slugs[screen], size.width, size.height)
 			write(name, view)
 		}

@@ -9,6 +9,9 @@ import "fmt"
 // view can honor its height budget the same way: lipgloss's Height() pads
 // short content but never clips tall content, so any view that renders more
 // lines than its panel's budget silently grows past the terminal (#42).
+// Contract: when lines already fits budget, the returned slice IS lines
+// (the same backing array, not a copy) — callers must not mutate the
+// result in place unless they also own the input slice.
 func (m Model) clampLines(lines []string, budget int) []string {
 	if budget <= 0 {
 		return nil
@@ -74,4 +77,19 @@ func (m Model) windowedRows(n, selected, budget int, render func(i int) string) 
 		rows = append(rows, m.theme.MutedText.Render(fmt.Sprintf("↓ %d more", below)))
 	}
 	return rows
+}
+
+// truncateLines truncates every line to width in place, mutating and
+// returning lines. Extracted from the ~6 near-identical per-line loops the
+// dashboards/sourcesView/searchSinglePanel each hand-rolled: lipgloss's
+// Width() re-wraps any line longer than a panel's content width into extra
+// physical rows, which is invisible to clampLines' logical-line count, so
+// every view that places dynamic content inside a Width()-constrained panel
+// must truncate line-by-line first (ANSI-safe, display-width aware — see
+// truncate's own doc comment) (#42).
+func (m Model) truncateLines(lines []string, width int) []string {
+	for i, line := range lines {
+		lines[i] = truncate(line, width)
+	}
+	return lines
 }

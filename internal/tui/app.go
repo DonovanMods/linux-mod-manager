@@ -992,16 +992,11 @@ func (m Model) screenView() string {
 			"",
 			m.theme.MutedText.Render("q: quit"),
 		}
-		// Truncate each line to the panel's content width (modRow/sourcesView's
-		// per-line idiom): m.loadErr is arbitrary runtime data (a wrapped
-		// source/network error) with no length bound, and an overlong line
-		// would otherwise lipgloss-auto-wrap into extra physical rows that
-		// clampLines' logical-line count below can't see, silently growing
-		// this view past the height budget (#42).
+		// m.loadErr is arbitrary runtime data (a wrapped source/network error)
+		// with no length bound; truncateLines (see clamp.go) keeps it from
+		// lipgloss-auto-wrapping past the height budget (#42).
 		panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
-		for i, line := range lines {
-			lines[i] = truncate(line, panelContentWidth)
-		}
+		lines = m.truncateLines(lines, panelContentWidth)
 		contentBudget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
 		lines = m.clampLines(lines, contentBudget)
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
@@ -1071,22 +1066,13 @@ func (m Model) partyDashboardView() string {
 		append([]string{m.theme.PanelTitle.Render("COMMANDS")}, m.dashboardMenuRows()...),
 		menuBudget)
 
-	// Truncate every row to its panel's content width (commander's per-line
-	// idiom): a long game/profile name would otherwise lipgloss-auto-wrap
-	// inside the half-width top panels, and the wrap's extra physical line is
-	// invisible to clampLines' logical-line count, silently growing the view
-	// past the height budget (#42).
+	// A long game/profile name would otherwise lipgloss-auto-wrap inside the
+	// half-width top panels; truncateLines (see clamp.go) prevents that (#42).
 	topContentWidth := max(panelWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
 	menuContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	for i, line := range partyLines {
-		partyLines[i] = truncate(line, topContentWidth)
-	}
-	for i, line := range questLines {
-		questLines[i] = truncate(line, topContentWidth)
-	}
-	for i, line := range menuLines {
-		menuLines[i] = truncate(line, menuContentWidth)
-	}
+	partyLines = m.truncateLines(partyLines, topContentWidth)
+	questLines = m.truncateLines(questLines, topContentWidth)
+	menuLines = m.truncateLines(menuLines, menuContentWidth)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		m.panelWithHeight(panelWidth, topHeight).Render(strings.Join(partyLines, "\n")),
@@ -1109,14 +1095,10 @@ func (m Model) terminalDashboardView() string {
 	rows = append(rows, m.dashboardMenuRows()...)
 	budget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
 	rows = m.clampLines(rows, budget)
-	// Truncate each row to the panel's content width (commander's per-line
-	// idiom): a long game/profile name would otherwise lipgloss-auto-wrap
-	// into extra physical lines that clampLines' logical-line count cannot
-	// see, silently growing the view past the height budget (#42).
+	// A long game/profile name would otherwise lipgloss-auto-wrap into extra
+	// physical lines; truncateLines (see clamp.go) prevents that (#42).
 	contentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	for i, row := range rows {
-		rows[i] = truncate(row, contentWidth)
-	}
+	rows = m.truncateLines(rows, contentWidth)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
@@ -1142,20 +1124,13 @@ func (m Model) commanderDashboardView() string {
 		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
 		contentBudget)
 
-	// Truncate every row to its panel's content width (sourcesView's per-line
-	// pattern): these half-width panels are narrow enough at small terminal
-	// widths that an overlong row ("> Consult Conflict Oracle" at width 40)
-	// would lipgloss-auto-wrap into two physical lines inside the panel —
-	// invisible to clampLines' logical-line count, so the wrap would silently
-	// grow the view past the height budget (#42).
+	// These half-width panels are narrow enough at small terminal widths that
+	// an overlong row ("> Consult Conflict Oracle" at width 40) would
+	// lipgloss-auto-wrap; truncateLines (see clamp.go) prevents that (#42).
 	leftContentWidth := max(leftWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
 	rightContentWidth := max(rightWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	for i, line := range leftLines {
-		leftLines[i] = truncate(line, leftContentWidth)
-	}
-	for i, line := range rightLines {
-		rightLines[i] = truncate(line, rightContentWidth)
-	}
+	leftLines = m.truncateLines(leftLines, leftContentWidth)
+	rightLines = m.truncateLines(rightLines, rightContentWidth)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
 		m.panelWithHeight(leftWidth, height).Render(strings.Join(leftLines, "\n")),
@@ -1178,14 +1153,10 @@ func (m Model) crtDashboardView() string {
 	rows = append(rows, m.dashboardMenuRows()...)
 	budget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
 	rows = m.clampLines(rows, budget)
-	// Truncate each row to the panel's content width (commander's per-line
-	// idiom): a long game/profile name would otherwise lipgloss-auto-wrap
-	// into extra physical lines that clampLines' logical-line count cannot
-	// see, silently growing the view past the height budget (#42).
+	// A long game/profile name would otherwise lipgloss-auto-wrap into extra
+	// physical lines; truncateLines (see clamp.go) prevents that (#42).
 	contentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	for i, row := range rows {
-		rows[i] = truncate(row, contentWidth)
-	}
+	rows = m.truncateLines(rows, contentWidth)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
@@ -1254,21 +1225,14 @@ func (m Model) searchWarningLine(width int) string {
 }
 
 // searchSinglePanel wraps header+body lines in one full-bounds panel, used by
-// every search state except the ready-with-results two-pane layout.
-// searchSinglePanel is the shared render path for every search state except
-// searchReady's two-pane results view. Several of those states interpolate
-// unbounded dynamic text (searchFailed's m.search.err.Error(), zero-results'
-// user-supplied query) with no length limit, so every caller's lines get
-// truncated to the panel's content width here (modRow/sourcesView's per-line
-// idiom) before clamping the row count to the panel's content budget —
-// otherwise an overlong line would lipgloss-auto-wrap into extra physical
-// rows that clampLines' logical-line count can't see, silently growing the
-// view past the height budget (#42).
+// every search state except the ready-with-results two-pane layout. Several
+// of those states interpolate unbounded dynamic text (searchFailed's
+// m.search.err.Error(), zero-results' user-supplied query), so lines are run
+// through truncateLines (see clamp.go) before the row count is clamped to the
+// panel's content budget (#42).
 func (m Model) searchSinglePanel(lines []string) string {
 	panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	for i, line := range lines {
-		lines[i] = truncate(line, panelContentWidth)
-	}
+	lines = m.truncateLines(lines, panelContentWidth)
 	contentBudget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
 	lines = m.clampLines(lines, contentBudget)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
@@ -1593,18 +1557,16 @@ func (m Model) sourcesView() string {
 	listBudget := max(contentBudget-len(rows), 0)
 	rows = append(rows, m.windowedRows(len(m.sources), m.selected[ScreenSources], listBudget, func(i int) string {
 		line := fmt.Sprintf("%-20s %-12s %-6s %s", m.sources[i].ID, m.sources[i].Type, m.sources[i].Auth, m.sources[i].Capabilities)
-		line = truncate(line, panelContentWidth)
 		return m.row(i, line)
 	})...)
-	// Truncate each row to the panel's content width (modRow's per-line idiom):
-	// a long source data value would otherwise lipgloss-auto-wrap into extra
-	// physical lines that clampLines' logical-line count cannot see, silently
-	// growing the view past the height budget (#42).
-	contentWidth := panelContentWidth
-	for i, row := range rows {
-		rows[i] = truncate(row, contentWidth)
-	}
-	rows = m.clampLines(rows, contentBudget)
+	// Truncate each row to the panel's content width AFTER m.row()'s per-row
+	// call above, not before: the data fields are already width-bound by the
+	// %-20s/%-12s/%-6s format verbs, but m.row() then prepends its own 2-column
+	// "> "/"  " selection marker on top of that, which is what actually pushes
+	// a row past panelContentWidth. Truncating pre-marker (as the render
+	// closure once did) left that overhang in place; only this outer pass,
+	// applied to the marker-included row, is load-bearing (#42).
+	rows = m.truncateLines(rows, panelContentWidth)
 	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
