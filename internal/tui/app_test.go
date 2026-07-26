@@ -499,6 +499,57 @@ func TestScreenViewsFitHeightBudgetAtAllSizes(t *testing.T) {
 	}
 }
 
+// stateFailed/searchFailed/zero-results all interpolate unbounded dynamic
+// text (an arbitrary error's .Error() string, or the user's own search
+// query) directly into a Width-constrained panel — the same wrap defect
+// class TestScreenViewsFitHeightBudgetAtAllSizes pinned for the dashboards
+// (reachable there by fixed layout data; reachable here by runtime data an
+// attacker or a misbehaving source could make arbitrarily long) (#42).
+func TestErrorAndEmptyStatesFitHeightBudgetWithLongDynamicText(t *testing.T) {
+	t.Parallel()
+
+	longText := strings.Repeat("catastrophic failure contacting the archive ", 20) // ~900 runes
+	longQuery := strings.Repeat("ancient-tome-of-forbidden-modding-secrets ", 20)  // ~860 runes
+
+	sizes := []struct{ width, height int }{{40, 12}, {80, 8}}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("stateFailed-%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			model.state = stateFailed
+			model.loadErr = errors.New(longText)
+
+			view := model.screenView()
+			require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+				"stateFailed must not overflow at %dx%d", size.width, size.height)
+		})
+
+		t.Run(fmt.Sprintf("searchFailed-%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			model = updateWithRunes(t, model, "3") // ScreenSearch's nav key (its index+1 in screens)
+			model.search.state = searchFailed
+			model.search.err = errors.New(longText)
+
+			view := model.screenView()
+			require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+				"searchFailed must not overflow at %dx%d", size.width, size.height)
+		})
+
+		t.Run(fmt.Sprintf("searchReadyZeroResults-%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+			model := sizedPrototypeModel(t, "wizardry", size.width, size.height)
+			model = updateWithRunes(t, model, "3")
+			model.search.state = searchReady
+			model.search.page = SearchPage{Query: longQuery, Source: "nexusmods"}
+
+			view := model.screenView()
+			require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+				"zero-results must not overflow at %dx%d", size.width, size.height)
+		})
+	}
+}
+
 func TestViewFitsTerminalBoundsWithHelpVisible(t *testing.T) {
 	t.Parallel()
 

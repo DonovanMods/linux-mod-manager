@@ -986,13 +986,26 @@ func (m Model) screenView() string {
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
 			Render(m.theme.PanelTitle.Render("Consulting the archives..."))
 	case stateFailed:
+		lines := []string{
+			m.theme.PanelTitle.Render("THE RITUAL FAILED"),
+			m.theme.DangerText.Render(m.loadErr.Error()),
+			"",
+			m.theme.MutedText.Render("q: quit"),
+		}
+		// Truncate each line to the panel's content width (modRow/sourcesView's
+		// per-line idiom): m.loadErr is arbitrary runtime data (a wrapped
+		// source/network error) with no length bound, and an overlong line
+		// would otherwise lipgloss-auto-wrap into extra physical rows that
+		// clampLines' logical-line count below can't see, silently growing
+		// this view past the height budget (#42).
+		panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+		for i, line := range lines {
+			lines[i] = truncate(line, panelContentWidth)
+		}
+		contentBudget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
+		lines = m.clampLines(lines, contentBudget)
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
-			Render(strings.Join([]string{
-				m.theme.PanelTitle.Render("THE RITUAL FAILED"),
-				m.theme.DangerText.Render(m.loadErr.Error()),
-				"",
-				m.theme.MutedText.Render("q: quit"),
-			}, "\n"))
+			Render(strings.Join(lines, "\n"))
 	}
 
 	switch m.screen {
@@ -1242,7 +1255,22 @@ func (m Model) searchWarningLine(width int) string {
 
 // searchSinglePanel wraps header+body lines in one full-bounds panel, used by
 // every search state except the ready-with-results two-pane layout.
+// searchSinglePanel is the shared render path for every search state except
+// searchReady's two-pane results view. Several of those states interpolate
+// unbounded dynamic text (searchFailed's m.search.err.Error(), zero-results'
+// user-supplied query) with no length limit, so every caller's lines get
+// truncated to the panel's content width here (modRow/sourcesView's per-line
+// idiom) before clamping the row count to the panel's content budget —
+// otherwise an overlong line would lipgloss-auto-wrap into extra physical
+// rows that clampLines' logical-line count can't see, silently growing the
+// view past the height budget (#42).
 func (m Model) searchSinglePanel(lines []string) string {
+	panelContentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	for i, line := range lines {
+		lines[i] = truncate(line, panelContentWidth)
+	}
+	contentBudget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
+	lines = m.clampLines(lines, contentBudget)
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
 		Render(strings.Join(lines, "\n"))
 }
