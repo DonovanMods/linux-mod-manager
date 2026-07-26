@@ -332,10 +332,10 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		return s.ingestLocalToCache(gameCache, game, mod, file, localPath)
 	}
 
-	// Create temp directory for download
-	tempDir, err := os.MkdirTemp("", "lmm-download-*")
+	// Stage the download under the data dir, not $TMPDIR — see newStagingDir.
+	tempDir, err := newStagingDir(s.stagingRoot(), "lmm-download-*")
 	if err != nil {
-		return nil, fmt.Errorf("creating temp directory: %w", err)
+		return nil, err
 	}
 	defer func() {
 		if cerr := os.RemoveAll(tempDir); err == nil && cerr != nil {
