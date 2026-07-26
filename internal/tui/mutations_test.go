@@ -3220,3 +3220,152 @@ func TestReorderHintHiddenWhileActionRunning(t *testing.T) {
 	require.Contains(t, model.statusLine(), "order changed — deploy (D) to apply",
 		"the hint must return once the action settles without clearing orderChanged")
 }
+
+// --- Task 7 #68: resolver drop-window sweep ---
+//
+// Every resolve* handler this file (and import_test.go/export_test.go)
+// covers can, in principle, have its message land while the model is
+// already busy with something else - the "window between the pick and this
+// resolution is real" hazard resolvePolicyChoice/resolveProfileCreate's own
+// doc comments describe for their *ChosenMsg/*SubmittedMsg siblings
+// (mutations.go). Two different mechanisms guard against that, and this
+// sweep covers only the resolvers guarded by the SECOND one:
+//
+//  1. Six resolvers (resolvePlanResult/Failure, resolveInstallPlanResult/
+//     Failure, resolveCheckUpdatesResult/Failure) carry a `gen` field on
+//     their message and are guarded entirely by app.go's stale-gen filter
+//     BEFORE the resolver is ever called - the resolver itself never
+//     rechecks m.action.running/pending. That mechanism already has its own
+//     dedicated coverage: TestSwitchPlanStaleResultDiscarded/
+//     TestSwitchPlanStaleFailureDiscarded, TestInstallPlanStaleResultDiscarded/
+//     TestInstallPlanStaleFailureDiscarded, and
+//     TestCheckUpdatesPlanStaleResultDiscarded/TestCheckUpdatesStaleFailureDiscarded
+//     (all above). Feeding these six through a "set running/pending, then
+//     call the resolver directly" table would assert something false - the
+//     resolver does not drop on that condition, only app.go's gen check
+//     does - so they deliberately resist the uniform harness below and are
+//     left to their existing individual coverage instead.
+//  2. The four resolvers below (no `gen` field on their message at all - see
+//     each type's own definition) instead re-check m.action.running/pending
+//     THEMSELVES, at the top of the resolver, before touching anything -
+//     this table exercises exactly that guard, directly.
+//
+// resolveChangelogPicked is neither: its own guard (m.action.pending == nil
+// || m.overlay != nil) runs the OPPOSITE direction - a pending update batch
+// is REQUIRED for it to proceed, not a busy-signal that blocks it - so it
+// gets its own dedicated tests below instead of a slot in this table.
+func TestResolversDroppedWhileBusy(t *testing.T) {
+	t.Parallel()
+
+	type busyCase struct {
+		name  string
+		setup func(m *Model)
+	}
+	busyCases := []busyCase{
+		{"action running", func(m *Model) { m.action.running = true }},
+		{"action pending (another modal already up)", func(m *Model) {
+			m.action.pending = &pendingAction{title: "Some other action"}
+		}},
+	}
+
+	type resolverCase struct {
+		name  string
+		msg   tea.Msg
+		check func(t *testing.T, rec *recordingActions)
+	}
+	resolverCases := []resolverCase{
+		{
+			name: "resolveImportDataRead",
+			msg:  importDataReadMsg{data: []byte("irrelevant")},
+			check: func(t *testing.T, rec *recordingActions) {
+				require.Empty(t, rec.PlanImportCalls, "PlanImport must never be reached while busy")
+			},
+		},
+		{
+			name:  "resolveImportApplied",
+			msg:   importAppliedMsg{name: "raider-pack"},
+			check: func(t *testing.T, rec *recordingActions) {},
+		},
+		{
+			// resolveImportSwitchConfirmed has no guard of its own - it
+			// delegates straight to switchToProfileNamed (mutations.go),
+			// which carries the identical running/pending guard this table
+			// exercises for every other entry.
+			name: "resolveImportSwitchConfirmed",
+			msg:  importSwitchConfirmedMsg{name: "raider-pack"},
+			check: func(t *testing.T, rec *recordingActions) {
+				require.Empty(t, rec.PlanCalls, "PlanProfileSwitch must never be reached while busy")
+			},
+		},
+		{
+			name: "resolveExportSubmitted",
+			msg:  exportPathSubmittedMsg{name: "survival", path: "/tmp/survival.yaml"},
+			check: func(t *testing.T, rec *recordingActions) {
+				require.Empty(t, rec.ExportCalls, "ExportProfile must never be reached while busy")
+			},
+		},
+	}
+
+	for _, bc := range busyCases {
+		for _, rc := range resolverCases {
+			t.Run(rc.name+"/"+bc.name, func(t *testing.T) {
+				t.Parallel()
+
+				rec := &recordingActions{}
+				model := modelWithActions(t, rec)
+				bc.setup(&model)
+				wantRunning, wantPending, wantStatus := model.action.running, model.action.pending, model.action.status
+
+				updated, cmd := model.Update(rc.msg)
+				m := updated.(Model)
+
+				require.Nil(t, cmd, "a dropped resolver must not dispatch anything")
+				require.Equal(t, wantRunning, m.action.running, "busy state must be untouched")
+				require.Same(t, wantPending, m.action.pending, "the already-pending modal must be left completely undisturbed")
+				require.Equal(t, wantStatus, m.action.status, "no status line may be written while dropped")
+				require.Nil(t, m.picker, "a dropped resolver must never open a picker")
+				require.Nil(t, m.inputModal, "a dropped resolver must never open an input modal")
+				rc.check(t, rec)
+			})
+		}
+	}
+}
+
+// TestChangelogPickedDroppedWithoutPendingBatch covers resolveChangelogPicked's
+// actual guard (mutations.go): with no pending update batch (m.action.pending
+// == nil), there is nothing left for the picked update's changelog to be
+// shown alongside, so the message is dropped instead of opening the overlay.
+func TestChangelogPickedDroppedWithoutPendingBatch(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	require.Nil(t, model.action.pending)
+
+	update := UpdateItem{Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Changelog: "notes"}
+	updated, cmd := model.Update(changelogPickedMsg{update: update})
+	m := updated.(Model)
+
+	require.Nil(t, cmd)
+	require.Nil(t, m.overlay, "no pending update batch means nothing to show a changelog alongside")
+}
+
+// TestChangelogPickedDroppedWhenOverlayAlreadyOpen covers the second half of
+// resolveChangelogPicked's guard: even with a pending update batch, an
+// already-open overlay (e.g. from a previous 'v' pick) must not be replaced
+// by a second changelogPickedMsg racing in behind it.
+func TestChangelogPickedDroppedWhenOverlayAlreadyOpen(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.action.pending = &pendingAction{title: "Apply 1 update(s)?"}
+	model.overlay = changelogOverlay(UpdateItem{Name: "Existing", FromVersion: "1.0", ToVersion: "1.1", Changelog: "existing notes"})
+
+	update := UpdateItem{Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Changelog: "new notes"}
+	updated, cmd := model.Update(changelogPickedMsg{update: update})
+	m := updated.(Model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "Existing 1.0 → 1.1", m.overlay.title, "an already-open overlay must not be replaced")
+}

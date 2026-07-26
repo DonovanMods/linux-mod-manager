@@ -879,20 +879,52 @@ func TestEnterOutsideDashboardIsANoop(t *testing.T) {
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 }
 
-type failingProvider struct{ err error }
+// stubProvider is a no-op DataProvider implementing all 8 methods with their
+// zero value (empty Summary/nil slice/nil error throughout) - meant to be
+// embedded by a test fake that only needs to override the ONE method its
+// test actually exercises, instead of restating every other method just to
+// satisfy the interface (see failingProvider/emptyProvider/
+// sentinelUpdatesProvider below for the pattern this replaced). Do NOT
+// reach for this where a fake's explicitness IS the point - e.g.
+// recordingProvider (below) exists specifically for its per-field
+// configurability and call recording, and several fakes elsewhere in this
+// package (noSourcesProvider, fakeSwitchableProvider, searchCancelProvider,
+// conflictsFakeProvider, longSourcesProvider/longConflictsProvider) spell
+// out every method because each one's return value independently matters to
+// what its test documents - collapsing those onto this stub would trade a
+// self-describing fake for one where "why does this method return X" needs
+// a diff against stubProvider to answer.
+type stubProvider struct{}
+
+func (stubProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{}, nil, nil
+}
+func (stubProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (stubProvider) Sources() []string                               { return nil }
+func (stubProvider) SourceInfos() []SourceInfo                       { return nil }
+func (stubProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
+func (stubProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
+func (stubProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
+func (stubProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
+
+// failingProvider embeds stubProvider and overrides only Overview - the ONE
+// method that matters here: loadData (app.go) calls Overview first and
+// returns immediately on its error, before Profiles/Conflicts are ever
+// reached, so TestLoadFailureRendersErrorState below never exercises any
+// other method. (Sources() is still called unconditionally at NewModel time
+// by newSearchModel, but that happens before Init/loadData runs and this
+// test never touches the search screen, so stubProvider's nil default there
+// is harmless too.)
+type failingProvider struct {
+	stubProvider
+	err error
+}
 
 func (f failingProvider) Overview(context.Context) (Summary, []ModItem, error) {
 	return Summary{}, nil, f.err
 }
-func (f failingProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, f.err }
-func (f failingProvider) Sources() []string                               { return []string{"nexusmods"} }
-func (f failingProvider) SourceInfos() []SourceInfo                       { return nil }
-func (f failingProvider) Search(context.Context, string, string, int) (SearchPage, error) {
-	return SearchPage{}, f.err
-}
-func (f failingProvider) DeployedFiles(string, string) ([]string, error)    { return nil, f.err }
-func (f failingProvider) ListGames() ([]GameInfo, error)                    { return nil, f.err }
-func (f failingProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, f.err }
 
 func TestModelShowsLoadingBeforeDataArrives(t *testing.T) {
 	t.Parallel()
@@ -938,20 +970,18 @@ func TestNewModelRequiresProvider(t *testing.T) {
 	require.ErrorContains(t, err, "provider")
 }
 
-type emptyProvider struct{}
+// emptyProvider embeds stubProvider and overrides only Sources - and that
+// override is load-bearing, not tidiness: newSearchModel (search.go) calls
+// provider.Sources() unconditionally at construction, and an empty result
+// flips the search screen straight to searchFailed ("no mod sources
+// configured"), which TestEmptyStatesRenderHonestCopy below never expects -
+// it drives screen 3 and asserts the ordinary idle-search hint. Every other
+// DataProvider method's zero-value response (no mods, no profiles, empty
+// search page) is exactly the honest-empty-state behavior this fake exists
+// to produce, so stubProvider's defaults serve those unchanged.
+type emptyProvider struct{ stubProvider }
 
-func (emptyProvider) Overview(context.Context) (Summary, []ModItem, error) {
-	return Summary{}, nil, nil
-}
-func (emptyProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
-func (emptyProvider) Sources() []string                               { return []string{"nexusmods"} }
-func (emptyProvider) SourceInfos() []SourceInfo                       { return nil }
-func (emptyProvider) Search(context.Context, string, string, int) (SearchPage, error) {
-	return SearchPage{}, nil
-}
-func (emptyProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
-func (emptyProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
-func (emptyProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
+func (emptyProvider) Sources() []string { return []string{"nexusmods"} }
 
 func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	t.Parallel()
@@ -974,21 +1004,16 @@ func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 
 // sentinelUpdatesProvider mirrors coreProvider.Overview's real shape: no
 // update check has ever run, so Updates/Conflicts report the -1 "unknown"
-// sentinel from the very first load.
-type sentinelUpdatesProvider struct{}
+// sentinel from the very first load. Embeds stubProvider and overrides only
+// Overview - TestFirstLoadHonorsProviderUpdatesSentinel below only ever
+// reads model.summary.Updates after Init(), never the search screen (unlike
+// emptyProvider above), so stubProvider's nil Sources() default - which
+// would otherwise flip search to searchFailed - never comes into play here.
+type sentinelUpdatesProvider struct{ stubProvider }
 
 func (sentinelUpdatesProvider) Overview(context.Context) (Summary, []ModItem, error) {
 	return Summary{Updates: -1, Conflicts: -1}, nil, nil
 }
-func (sentinelUpdatesProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
-func (sentinelUpdatesProvider) Sources() []string                               { return []string{"nexusmods"} }
-func (sentinelUpdatesProvider) SourceInfos() []SourceInfo                       { return nil }
-func (sentinelUpdatesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
-	return SearchPage{}, nil
-}
-func (sentinelUpdatesProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
-func (sentinelUpdatesProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
-func (sentinelUpdatesProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
 
 // TestFirstLoadHonorsProviderUpdatesSentinel guards the dataLoadedMsg
 // preserve behavior (see mutations_test.go's
