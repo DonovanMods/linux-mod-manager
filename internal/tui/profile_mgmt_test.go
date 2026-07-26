@@ -244,6 +244,36 @@ func TestDeleteProfileActiveRefusedOnStatusLine(t *testing.T) {
 	require.Empty(t, rec.DeleteProfileCalls)
 }
 
+// TestDeleteProfileActiveDoesNotStompRunningActionStatus covers Task 6's #68
+// status-stomp guard: deleteSelectedProfile's active-profile refusal used to
+// write m.action.status unconditionally, even while some OTHER action was
+// already running and had its own live status text on screen. Pressing 'd'
+// on the active row while running must leave that text untouched instead of
+// clobbering it with "cannot delete the active profile" - mirroring
+// resolvePolicyChoice's identical "don't stomp a running action's own
+// status" guard (policy_test.go's
+// TestPolicyChoiceDropDoesNotStompRunningActionStatus).
+func TestDeleteProfileActiveDoesNotStompRunningActionStatus(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenProfiles
+	model.selected[ScreenProfiles] = 0 // "survival", the canned active profile
+	require.True(t, model.profiles[0].Active)
+	model.action.running = true
+	model.action.status = "Deploying…"
+	model.action.statusIsError = false
+
+	updated, cmd := model.Update(keyRunes("d"))
+	model = updated.(Model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "Deploying…", model.action.status, "a running action's own live status must not be stomped")
+	require.False(t, model.action.statusIsError)
+	require.Empty(t, rec.DeleteProfileCalls)
+}
+
 // TestDeleteProfileConfirmFlow covers the standard confirm-modal path for a
 // non-active row: 'd' opens a modal naming the profile, 'y' confirms,
 // DeleteProfile is called with that name, and the resulting actionDoneMsg

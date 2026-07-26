@@ -98,6 +98,13 @@ func (m Model) updateInputModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Select):
 		return m.submitInputModal(p)
 	default:
+		// #68: a stale errMsg (from a previous failed submit) used to keep
+		// showing here even after the user started editing the value it no
+		// longer describes. Any edit keystroke clears it immediately, before
+		// the input itself even sees the rune - the next Select re-derives a
+		// fresh errMsg (or none) from validate/requiredMsg against whatever's
+		// actually in the field now.
+		p.errMsg = ""
 		var cmd tea.Cmd
 		p.input, cmd = p.input.Update(msg)
 		return m, cmd
@@ -155,7 +162,14 @@ func (m Model) inputModalView() string {
 	if hint == "" {
 		hint = "enter create · esc cancel"
 	}
-	lines = append(lines, "", m.theme.MutedText.Render(hint))
+	// #68: unlike title/input/errMsg above, this line was never truncated -
+	// an overlong caller-supplied hint (importProfilePrompt/
+	// exportProfilePrompt set an arbitrary string here) word-wraps inside the
+	// fixed-Width panel instead of overflowing horizontally, silently growing
+	// the modal past its documented fixed-height budget. truncate() to the
+	// same panelContentWidth its siblings already use keeps this modal
+	// exactly as tall as every other modal, regardless of hint length.
+	lines = append(lines, "", truncate(m.theme.MutedText.Render(hint), panelContentWidth))
 
 	return m.panelWithHeight(width, height).Render(strings.Join(lines, "\n"))
 }

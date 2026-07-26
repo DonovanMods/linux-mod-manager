@@ -51,6 +51,34 @@ func TestPurgeKeyNoModsShortCircuitsToStatus(t *testing.T) {
 	require.Zero(t, rec.PurgeCalls)
 }
 
+// TestPurgeKeyNoModsDoesNotStompRunningActionStatus covers Task 6's #68
+// status-stomp guard: purgeProfilePrompt's zero-mods short-circuit used to
+// write m.action.status unconditionally, even while some OTHER action was
+// already running with its own live status text on screen. Pressing 'X'
+// with an empty mods list while running must leave that text untouched
+// instead of clobbering it with "no mods installed" - mirroring
+// resolvePolicyChoice's identical guard (policy_test.go's
+// TestPolicyChoiceDropDoesNotStompRunningActionStatus).
+func TestPurgeKeyNoModsDoesNotStompRunningActionStatus(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.mods = nil
+	model.action.running = true
+	model.action.status = "Deploying…"
+	model.action.statusIsError = false
+
+	updated, cmd := model.Update(keyRunes("X"))
+	model = updated.(Model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "Deploying…", model.action.status, "a running action's own live status must not be stomped")
+	require.False(t, model.action.statusIsError)
+	require.Zero(t, rec.PurgeCalls)
+}
+
 // TestPurgeConfirmStreamsProgressAndReportsOutcome drives the full pump
 // pipeline (mirroring TestInstallProgressStreamsIntoStatusLine/
 // TestActionProgressStreamsWhileRunningThenActionDoneClearsIt in

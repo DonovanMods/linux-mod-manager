@@ -474,8 +474,15 @@ func (m Model) editSelectedModPolicy() (Model, tea.Cmd) {
 // buildAction's refusal alone would leave this method setting
 // running=true below for an action that never actually started, sticking
 // the single-flight guard with nothing to ever clear it.
+//
+// #68: this drop used to be perfectly silent, leaving the user with no sign
+// their picker choice had no effect. setIdleStatus (actions.go) sets a muted
+// "busy" hint, but only when hasVisibleStatus reports the line is free -
+// preserving the one thing that actually matters here, a running action's
+// own live status/progress text, which must never be stomped by this hint.
 func (m Model) resolvePolicyChoice(msg policyChosenMsg) (Model, tea.Cmd) {
 	if m.action.running || m.action.pending != nil {
+		m.setIdleStatus("busy — choice ignored", false)
 		return m, nil
 	}
 	item := msg.item
@@ -1249,6 +1256,13 @@ func (m Model) resolveProfileCreate(msg profileCreateSubmittedMsg) (Model, tea.C
 // DeleteProfile repeats the same guard defense-in-depth (see its doc
 // comment), but the TUI-level check is what keeps this a clean status-line
 // refusal instead of a modal the user could still confirm into an error.
+//
+// #68: this refusal is reachable even while a DIFFERENT action is already
+// running (m.action.running gates the status-clearing rule 8 in updateKey,
+// not this switch's key dispatch - see updateKey's own doc comment), so it
+// used to stomp that running action's own live status/progress text
+// unconditionally. setIdleStatus (actions.go) applies the same
+// hasVisibleStatus-gated guard resolvePolicyChoice's picker-drop hint uses.
 func (m Model) deleteSelectedProfile() (Model, tea.Cmd) {
 	if m.screen != ScreenProfiles || m.actions == nil {
 		return m, nil
@@ -1259,8 +1273,7 @@ func (m Model) deleteSelectedProfile() (Model, tea.Cmd) {
 	}
 	profile := m.profiles[idx]
 	if profile.Active {
-		m.action.status = singleLine(errCannotDeleteActiveProfile)
-		m.action.statusIsError = true
+		m.setIdleStatus(singleLine(errCannotDeleteActiveProfile), true)
 		return m, nil
 	}
 
@@ -1300,13 +1313,20 @@ func (m Model) deleteSelectedProfile() (Model, tea.Cmd) {
 // confirmation-modal "+N more" overflow cap (actionModalView,
 // actionModalMaxDetailLines) handles a long list without this needing to
 // truncate itself.
+//
+// #68: like deleteSelectedProfile's active-profile refusal, this
+// zero-mods short-circuit is reachable while a DIFFERENT action is already
+// running (m.action.running doesn't gate this switch's key dispatch in
+// updateKey - only rule 8's status-clearing does), so it used to stomp that
+// running action's own live status/progress text unconditionally.
+// setIdleStatus (actions.go) applies the same hasVisibleStatus-gated guard
+// resolvePolicyChoice's picker-drop hint uses.
 func (m Model) purgeProfilePrompt() (Model, tea.Cmd) {
 	if (m.screen != ScreenDashboard && m.screen != ScreenInstalledMods) || m.actions == nil {
 		return m, nil
 	}
 	if len(m.mods) == 0 {
-		m.action.status = "no mods installed"
-		m.action.statusIsError = false
+		m.setIdleStatus("no mods installed", false)
 		return m, nil
 	}
 

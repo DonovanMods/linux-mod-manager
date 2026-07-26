@@ -669,6 +669,32 @@ func (m Model) hasVisibleStatus() bool {
 	return m.orderChanged && !m.action.running
 }
 
+// setIdleStatus sets the status line's text/error flag, but ONLY when
+// nothing more important already owns it (hasVisibleStatus). This is the
+// guard shared by three call sites (#68): resolvePolicyChoice's
+// picker-drop hint, and purgeProfilePrompt/deleteSelectedProfile's
+// synchronous "nothing to do"/"refused" status writes (mutations.go) - none
+// of the three may stomp a RUNNING action's own live status/progress text
+// (statusLine gives that priority over a stored action.status - see its own
+// doc comment), which is exactly what hasVisibleStatus already reports.
+// Deliberately a no-op rather than queuing the write for later: the caller
+// has nothing more useful to say once the running action's own status
+// eventually clears the line (actionDoneMsg/actionFailedMsg overwrite
+// action.status unconditionally - app.go), so silently dropping the write
+// here is the least invasive option that still surfaces the message
+// whenever the line is actually free - including the case where an action
+// IS running but hasn't posted any status/progress of its own yet (e.g.
+// actionSetPolicy never sets an in-flight status text - see
+// resolvePolicyChoice's own doc comment), which hasVisibleStatus correctly
+// reports as "nothing owns the line" too.
+func (m *Model) setIdleStatus(status string, isError bool) {
+	if m.hasVisibleStatus() {
+		return
+	}
+	m.action.status = status
+	m.action.statusIsError = isError
+}
+
 // statusLine renders the action status line truncated to the terminal's
 // content width — "" when hasVisibleStatus reports nothing to show, matching
 // contentChromeHeight's height-budget accounting: nothing to show renders
