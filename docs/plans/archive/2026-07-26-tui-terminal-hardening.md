@@ -1,7 +1,5 @@
 # TUI Terminal Hardening Implementation Plan (#42, EPIC #104)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Every TUI screen renders within its height budget at any terminal size (clamp or scroll-window instead of silently overflowing), plus the test/snapshot/cosmetic polish items from issue #42.
 
 **Architecture:** Two shared primitives in a new `internal/tui/clamp.go` — `clampLines` ("+N more" tail collapse, the `helpView`/`actionModalView` idiom extracted) and `windowedRows` (scroll-follow-selection windowing reusing `pickerWindow` from `picker.go:171`) — then applied per screen. Selectable lists get windowing (selection always visible); static content gets clamping.
