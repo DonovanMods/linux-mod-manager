@@ -1342,6 +1342,12 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("checking update for %s", u.Name), u.Source, err)
 	}
 	if len(updates) == 0 {
+		// Pinned mods are filtered out before the source is queried, so no
+		// version comparison happened - saying "up to date" would claim
+		// currency that was never checked.
+		if mod.UpdatePolicy == domain.UpdatePinned {
+			return ActionOutcome{Message: fmt.Sprintf("%q is pinned — not checked (P to change)", u.Name)}, nil
+		}
 		return ActionOutcome{Message: fmt.Sprintf("%q is already up to date", u.Name)}, nil
 	}
 	upd := updates[0]
