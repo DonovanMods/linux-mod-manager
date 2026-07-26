@@ -1341,8 +1341,10 @@ func (m Model) searchReadyView(header []string) string {
 // whatever's left, so the columns can never sum past innerWidth. Overflowing
 // values truncate instead of overflowing into lipgloss's automatic line
 // wrap, which would silently break the exact-height layout invariant. Rows
-// beyond maxLines are omitted for the same reason (a full page of results
-// can outnumber the available rows on a short terminal).
+// beyond maxLines scroll-follow the selection via m.windowedRows instead of
+// a first-N slice — a first-N slice let the highlight vanish off-screen
+// once selection walked past the fold, even though the detail pane kept
+// tracking the invisible selection (#42).
 func (m Model) searchResultsPane(width, maxLines int) string {
 	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
 
@@ -1365,12 +1367,8 @@ func (m Model) searchResultsPane(width, maxLines int) string {
 	nameWidth := max(avail-statusWidth-versionWidth-sourceWidth, 1)
 
 	results := m.search.page.Results
-	if len(results) > maxLines {
-		results = results[:maxLines]
-	}
-
-	rows := make([]string, 0, len(results))
-	for i, item := range results {
+	rowFor := func(i int) string {
+		item := results[i]
 		status := fmt.Sprintf("%-*s", statusWidth, truncate(item.Status, statusWidth))
 		if item.Status == "installed" {
 			status = m.theme.WarningText.Render(status)
@@ -1388,18 +1386,22 @@ func (m Model) searchResultsPane(width, maxLines int) string {
 				versionWidth, truncate(item.Version, versionWidth),
 				status)
 		}
-		rows = append(rows, m.row(i, line))
+		return m.row(i, line)
 	}
-	return strings.Join(rows, "\n")
+	return strings.Join(m.windowedRows(len(results), m.selected[ScreenSearch], maxLines, rowFor), "\n")
 }
 
 // searchDetailPane renders the fields for the currently selected result.
 // Unknown endorsements render "?" (countLabel convention: never fake data).
 // Labels and free-text values are truncated to the pane's content width for
 // the same reason searchResultsPane truncates: overflow would trigger an
-// unpredictable automatic re-wrap inside the bordered panel. The summary is
-// clipped to whatever vertical budget remains after the fixed fields so a
-// long summary can never grow the pane past maxLines.
+// unpredictable automatic re-wrap inside the bordered panel. The 8 fixed
+// field lines are themselves clamped to maxLines (via m.clampLines) before
+// the summary is considered — on a floor-height terminal the fields alone
+// can exceed the pane's budget, and the summary's own clipping only ever
+// accounted for the fields fitting (#42). The summary is then clipped to
+// whatever vertical budget remains after the (now-clamped) fixed fields so
+// a long summary can never grow the pane past maxLines.
 func (m Model) searchDetailPane(width, maxLines int) string {
 	results := m.search.page.Results
 	idx := m.selected[ScreenSearch]
@@ -1415,9 +1417,21 @@ func (m Model) searchDetailPane(width, maxLines int) string {
 
 	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 	labelWidth := min(13, max(innerWidth-1, 1)) // len("Endorsements ") == 13
-	valueWidth := max(innerWidth-labelWidth, 1)
+	// Floored at 0, not 1: truncate already returns "" for width <= 0
+	// (app.go's truncate), so a pathologically narrow pane (innerWidth 1,
+	// labelWidth 1) simply renders no value instead of a value column wider
+	// than what's left after the label (#42).
+	valueWidth := max(innerWidth-labelWidth, 0)
 	field := func(label, value string) string {
 		return fmt.Sprintf("%-*s%s", labelWidth, truncate(label, labelWidth), truncate(value, valueWidth))
+	}
+
+	// Status gets the same WarningText treatment as searchResultsPane's
+	// status column when installed — this was the one place the status was
+	// spelled out in full and the one place it didn't pop (#42).
+	statusValue := truncate(item.Status, valueWidth)
+	if item.Status == "installed" {
+		statusValue = m.theme.WarningText.Render(statusValue)
 	}
 
 	lines := []string{
@@ -1426,10 +1440,11 @@ func (m Model) searchDetailPane(width, maxLines int) string {
 		field("Author", item.Author),
 		field("Version", item.Version),
 		field("Source", item.Source),
-		field("Status", item.Status),
+		fmt.Sprintf("%-*s%s", labelWidth, truncate("Status", labelWidth), statusValue),
 		field("Downloads", fmt.Sprintf("%d", item.Downloads)),
 		field("Endorsements", endorsements),
 	}
+	lines = m.clampLines(lines, maxLines)
 
 	if summaryBudget := maxLines - len(lines) - 1; summaryBudget > 0 && item.Summary != "" {
 		lines = append(lines, "")
