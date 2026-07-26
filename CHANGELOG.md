@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-07-26
+
+### Fixed
+
+- **`lmm update <mod-id>` and `lmm update rollback <mod-id>` now honor `--json`.** Previously every success path printed human text and only failures produced JSON, so piping the single-mod form to a parser worked only when the command failed. Both forms now emit exactly one JSON document on stdout: `{mod_id, name, from_version, to_version, changelog, status, reason}` with `status` one of `updated`, `up_to_date`, `skipped` (with `reason` `pinned` or `local`), `available` (dry-run), or `rolled_back`. Failures still write no document — the error is emitted as the sole `{"error": ...}` with a non-zero exit, preserving the one-document invariant. This is distinct from the bulk `lmm update --json` document, which reports a check over many mods rather than a single applied event
+- `--json --verbose` no longer leaks download/progress text onto stdout ahead of the JSON document in the single-mod update and rollback paths
+- `lmm update --json` with zero installed mods printed `No mods installed.` as plain text. The bulk form now emits the standard check document with an empty `updates` array; the single-mod form reports the standard mod-not-found error as JSON. Plain-text output is unchanged
+
 ## [1.16.0] - 2026-07-25
 
 ### Changed
@@ -910,7 +918,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.16.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.0...HEAD
+[1.17.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.1...v1.15.0
 [1.14.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.0...v1.14.1
