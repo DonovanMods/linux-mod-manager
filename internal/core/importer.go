@@ -33,14 +33,26 @@ type ImportResult struct {
 type Importer struct {
 	cache     *cache.Cache
 	extractor *Extractor
+	// stagingRoot is where archives are extracted before being committed to the
+	// cache. Empty means fall back to $TMPDIR — see newStagingDir.
+	stagingRoot string
 }
 
-// NewImporter creates a new Importer
+// NewImporter creates a new Importer that stages extraction in the OS temp dir.
+// Prefer Service.NewImporter, which stages under the data dir instead.
 func NewImporter(cache *cache.Cache) *Importer {
 	return &Importer{
 		cache:     cache,
 		extractor: NewExtractor(),
 	}
+}
+
+// NewImporter creates an Importer for game, staging archive extraction under the
+// service's data dir rather than $TMPDIR.
+func (s *Service) NewImporter(game *domain.Game) *Importer {
+	imp := NewImporter(s.GetGameCache(game))
+	imp.stagingRoot = s.stagingRoot()
+	return imp
 }
 
 // Import imports a mod from a local archive file
@@ -114,10 +126,10 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			return nil, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
 		}
 
-		// Extract to temp directory first
-		tempDir, err := os.MkdirTemp("", "lmm-import-*")
+		// Extract to a staging directory first
+		tempDir, err := newStagingDir(i.stagingRoot, "lmm-import-*")
 		if err != nil {
-			return nil, fmt.Errorf("creating temp directory: %w", err)
+			return nil, err
 		}
 		defer func() {
 			if cerr := os.RemoveAll(tempDir); err == nil && cerr != nil {

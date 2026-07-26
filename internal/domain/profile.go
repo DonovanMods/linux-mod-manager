@@ -17,14 +17,17 @@ type GameHooksExplicit struct {
 
 // Profile represents a collection of mods with a specific configuration
 type Profile struct {
-	Name          string            // Profile identifier
-	GameID        string            // Which game this profile is for
-	Mods          []ModReference    // Mods in load order (first = lowest priority)
-	Overrides     map[string][]byte // Config file overrides (path -> content)
-	LinkMethod    LinkMethod        // Override game's default link method (optional)
-	IsDefault     bool              // Is this the default profile for the game?
-	Hooks         GameHooks         // Profile-level hook overrides
-	HooksExplicit GameHooksExplicit // Tracks which hooks were explicitly set
+	Name       string            // Profile identifier
+	GameID     string            // Which game this profile is for
+	Mods       []ModReference    // Mods in load order (first = lowest priority)
+	Overrides  map[string][]byte // Config file overrides (path -> content)
+	LinkMethod LinkMethod        // Override game's default link method (optional)
+	// LinkMethodExplicit distinguishes "not set" (inherit from game/global) from an
+	// explicit "symlink", which is LinkMethod's zero value. Mirrors Game.LinkMethodExplicit.
+	LinkMethodExplicit bool
+	IsDefault          bool              // Is this the default profile for the game?
+	Hooks              GameHooks         // Profile-level hook overrides
+	HooksExplicit      GameHooksExplicit // Tracks which hooks were explicitly set
 }
 
 // ExportedProfile is the YAML-serializable format for sharing

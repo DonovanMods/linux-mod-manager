@@ -96,7 +96,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	}
 
 	// Create importer
-	importer := core.NewImporter(service.GetGameCache(game))
+	importer := service.NewImporter(game)
 
 	// Set up import options
 	opts := core.ImportOptions{
@@ -358,7 +358,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	}
 
 	// Create importer and scan
-	importer := core.NewImporter(service.GetGameCache(game))
+	importer := service.NewImporter(game)
 	opts := core.ScanOptions{
 		ProfileName: profileName,
 		DryRun:      importDryRun,
@@ -528,7 +528,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 		}
 
 		// Check for duplicates before importing
-		importer := core.NewImporter(service.GetGameCache(game))
+		importer := service.NewImporter(game)
 		if dup := importer.FindDuplicateMod(r.Mod.Name, currentMods); dup != nil {
 			fmt.Printf("  ⊘ %s: skipped (duplicate of \"%s\")\n", r.FileName, dup.Name)
 			skipped++

@@ -215,12 +215,13 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 		if err := config.SaveGame(svcCfg.ConfigDir, game); err != nil {
 			return fmt.Errorf("saving game %s: %w", g.Slug, err)
 		}
+		// No LinkMethod: a detected game's default profile should inherit the
+		// game/global setting, not pin an override.
 		defaultProfile := &domain.Profile{
-			Name:       "default",
-			GameID:     g.Slug,
-			Mods:       nil,
-			LinkMethod: domain.LinkSymlink,
-			IsDefault:  true,
+			Name:      "default",
+			GameID:    g.Slug,
+			Mods:      nil,
+			IsDefault: true,
 		}
 		if err := config.SaveProfile(svcCfg.ConfigDir, defaultProfile); err != nil {
 			return fmt.Errorf("creating default profile for %s: %w", g.Slug, err)

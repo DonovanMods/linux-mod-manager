@@ -24,7 +24,7 @@ import (
 var ErrCancelled = errors.New("cancelled")
 
 var (
-	version = "1.14.0"
+	version = "1.14.1"
 
 	// Global flags
 	configDir  string
@@ -142,8 +142,16 @@ func initService() (*core.Service, error) {
 	if err := os.MkdirAll(cfg.ConfigDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating config dir: %w", err)
 	}
-	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+	// Owner-only: this holds lmm.db, whose auth_tokens table stores API keys in
+	// plaintext, plus the downloads staging root. Also closes the window between
+	// SQLite creating the DB at 0644 and the db package tightening it.
+	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
 		return nil, fmt.Errorf("creating data dir: %w", err)
+	}
+	// MkdirAll leaves an existing directory's mode alone, so installs predating
+	// the line above keep a 0755 data dir without this.
+	if err := os.Chmod(cfg.DataDir, 0700); err != nil {
+		return nil, fmt.Errorf("restricting data dir: %w", err)
 	}
 	if err := os.MkdirAll(cfg.CacheDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating cache dir: %w", err)

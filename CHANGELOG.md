@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-07-25
+
+### Security
+
+- `~/.local/share/lmm/lmm.db` is now created owner-only (`0600`), along with its `-wal`/`-shm` sidecars, and the data directory is created `0700` instead of `0755`. The database stores auth tokens in plaintext, and SQLite created it world-readable under a typical umask, so any other local user could read your NexusMods/CurseForge API keys. Permissions are re-applied on every open, so existing installs are fixed the next time `lmm` runs. This is a mitigation, not a replacement for encrypting the tokens themselves (#79)
+
+### Fixed
+
+- Profiles no longer accumulate a `link_method: symlink` line the user never set. `LinkMethod.String()` never returns an empty string, so the `omitempty` tag never fired and every profile mutation (create, add/remove mod, reorder, set-default, import) rewrote the file with a phantom override; exported profiles carried it to other machines too. The key is now written only when explicitly set. Note the profile-level override still has no effect at deploy time — that remains #81
+- Downloads and local-archive imports are staged under `~/.local/share/lmm/downloads` (the location the PRD has always specified) instead of `$TMPDIR`. `/tmp` is tmpfs on most modern distributions, so large mod archives were being downloaded and extracted in RAM
+
+### Changed
+
+- Dropped the `mod_cache` table (schema v11). It was created by the v1 migration and never read or written — the cache is keyed entirely by directory layout, with no database mirror to fall out of sync
+
 ## [1.14.0] - 2026-07-24
 
 ### Added
@@ -865,7 +880,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.1...HEAD
+[1.14.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.12.3...v1.13.0

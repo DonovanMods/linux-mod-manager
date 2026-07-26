@@ -1,6 +1,9 @@
 package db_test
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -28,11 +31,54 @@ func TestNew_RunsMigrations(t *testing.T) {
 	err = database.QueryRow("SELECT COUNT(*) FROM installed_mods").Scan(&count)
 	assert.NoError(t, err)
 
-	err = database.QueryRow("SELECT COUNT(*) FROM mod_cache").Scan(&count)
-	assert.NoError(t, err)
-
 	err = database.QueryRow("SELECT COUNT(*) FROM auth_tokens").Scan(&count)
 	assert.NoError(t, err)
+}
+
+// TestNew_DropsModCacheTable pins the removal of the mod_cache table. It was
+// created in v1 and never read or written — caching is keyed by directory layout
+// in internal/storage/cache, with no DB mirror.
+func TestNew_DropsModCacheTable(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	var count int
+	err = database.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'mod_cache'").Scan(&count)
+	require.NoError(t, err)
+	assert.Zero(t, count, "mod_cache should have been dropped")
+}
+
+// TestNew_DropsModCacheTableOnUpgrade covers the upgrade path rather than a fresh
+// install: a database left at v10 still has the table and must lose it on open.
+func TestNew_DropsModCacheTableOnUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+
+	database, err := db.New(path)
+	require.NoError(t, err)
+
+	// Rewind to v10 and recreate the table as v1 left it.
+	_, err = database.Exec("DELETE FROM schema_migrations WHERE version >= 11")
+	require.NoError(t, err)
+	_, err = database.Exec(`CREATE TABLE mod_cache (
+		source_id TEXT NOT NULL,
+		mod_id TEXT NOT NULL,
+		game_id TEXT NOT NULL,
+		metadata TEXT,
+		cached_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY(source_id, mod_id, game_id)
+	)`)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+
+	reopened, err := db.New(path)
+	require.NoError(t, err)
+	defer func() { _ = reopened.Close() }()
+
+	var count int
+	err = reopened.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'mod_cache'").Scan(&count)
+	require.NoError(t, err)
+	assert.Zero(t, count, "upgrading from v10 should drop mod_cache")
 }
 
 // TestNew_AppliesAllMigrations verifies migrations v4–v7 are applied (installed_mod_files, deployed, checksum, deployed_files).
@@ -63,6 +109,50 @@ func TestNew_AppliesAllMigrations(t *testing.T) {
 	err = database.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version)
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, version, 7, "schema_migrations should have at least version 7")
+}
+
+// TestNew_RestrictsFilePermissions pins that the database is owner-only. It holds
+// auth tokens in plaintext (#79), and SQLite creates it 0644 under a typical umask.
+func TestNew_RestrictsFilePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+
+	database, err := db.New(path)
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0600), info.Mode().Perm(), "database must not be group- or world-readable")
+
+	// WAL mode is on, so the sidecars carry the same token bytes. They are
+	// required to exist rather than skipped-if-absent: migrations write, which
+	// creates them, and a skip would make this assertion vacuous.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sidecar := path + suffix
+		info, err := os.Stat(sidecar)
+		require.NoError(t, err, "%s should exist once migrations have written", sidecar)
+		assert.Equal(t, fs.FileMode(0600), info.Mode().Perm(), "%s must not be group- or world-readable", sidecar)
+	}
+}
+
+// TestNew_TightensExistingPermissions covers installs predating the fix: an already
+// world-readable database must be tightened on open, not just on creation.
+func TestNew_TightensExistingPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+
+	database, err := db.New(path)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+
+	require.NoError(t, os.Chmod(path, 0644))
+
+	reopened, err := db.New(path)
+	require.NoError(t, err)
+	defer func() { _ = reopened.Close() }()
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0600), info.Mode().Perm(), "existing permissive database should be tightened on open")
 }
 
 func TestInstalledMods_SaveAndGet(t *testing.T) {

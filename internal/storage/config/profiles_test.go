@@ -160,3 +160,131 @@ func TestDeleteProfile_RejectsInvalidName(t *testing.T) {
 		})
 	}
 }
+
+// profileYAML reads a saved profile back as raw text, so tests can assert on the
+// keys actually written rather than on what a round-trip happens to reconstruct.
+func profileYAML(t *testing.T, configDir, gameID, profileName string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(configDir, "games", gameID, "profiles", profileName+".yaml"))
+	require.NoError(t, err)
+	return string(data)
+}
+
+// TestSaveProfile_OmitsLinkMethodWhenNotExplicit guards the regression that made
+// the profile-level override unimplementable: LinkMethod.String() never returns
+// "", so `omitempty` never fired and every profile file gained a phantom
+// `link_method: symlink` — indistinguishable from a deliberate choice.
+func TestSaveProfile_OmitsLinkMethodWhenNotExplicit(t *testing.T) {
+	configDir := t.TempDir()
+	profile := &domain.Profile{Name: "default", GameID: "skyrim-se"}
+
+	require.NoError(t, SaveProfile(configDir, profile))
+
+	assert.NotContains(t, profileYAML(t, configDir, "skyrim-se", "default"), "link_method",
+		"a profile with no explicit link method must not write the key")
+}
+
+func TestSaveProfile_WritesExplicitLinkMethod(t *testing.T) {
+	configDir := t.TempDir()
+	profile := &domain.Profile{
+		Name:               "default",
+		GameID:             "skyrim-se",
+		LinkMethod:         domain.LinkCopy,
+		LinkMethodExplicit: true,
+	}
+
+	require.NoError(t, SaveProfile(configDir, profile))
+
+	assert.Contains(t, profileYAML(t, configDir, "skyrim-se", "default"), "link_method: copy")
+}
+
+// TestSaveProfile_PreservesExplicitSymlink pins the case the explicit flag exists
+// for: symlink is the zero value, so without the flag it is indistinguishable
+// from unset and would be dropped on save.
+func TestSaveProfile_PreservesExplicitSymlink(t *testing.T) {
+	configDir := t.TempDir()
+	profile := &domain.Profile{
+		Name:               "default",
+		GameID:             "skyrim-se",
+		LinkMethod:         domain.LinkSymlink,
+		LinkMethodExplicit: true,
+	}
+
+	require.NoError(t, SaveProfile(configDir, profile))
+
+	assert.Contains(t, profileYAML(t, configDir, "skyrim-se", "default"), "link_method: symlink")
+}
+
+func TestLoadProfile_TracksLinkMethodExplicit(t *testing.T) {
+	tests := map[string]struct {
+		yaml           string
+		wantExplicit   bool
+		wantLinkMethod domain.LinkMethod
+	}{
+		"absent":   {"name: default\ngame_id: skyrim-se\n", false, domain.LinkSymlink},
+		"hardlink": {"name: default\ngame_id: skyrim-se\nlink_method: hardlink\n", true, domain.LinkHardlink},
+		"symlink":  {"name: default\ngame_id: skyrim-se\nlink_method: symlink\n", true, domain.LinkSymlink},
+	}
+
+	for label, tc := range tests {
+		t.Run(label, func(t *testing.T) {
+			configDir := t.TempDir()
+			profileDir := filepath.Join(configDir, "games", "skyrim-se", "profiles")
+			require.NoError(t, os.MkdirAll(profileDir, 0755))
+			require.NoError(t, os.WriteFile(filepath.Join(profileDir, "default.yaml"), []byte(tc.yaml), 0644))
+
+			profile, err := LoadProfile(configDir, "skyrim-se", "default")
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.wantExplicit, profile.LinkMethodExplicit)
+			assert.Equal(t, tc.wantLinkMethod, profile.LinkMethod)
+		})
+	}
+}
+
+// TestSaveProfile_RoundTripDoesNotInventLinkMethod is the end-to-end shape of the
+// bug: every profile mutation goes load -> modify -> save, so a phantom key added
+// on save would be read back as explicit on the next load and become permanent.
+func TestSaveProfile_RoundTripDoesNotInventLinkMethod(t *testing.T) {
+	configDir := t.TempDir()
+	require.NoError(t, SaveProfile(configDir, &domain.Profile{Name: "default", GameID: "skyrim-se"}))
+
+	loaded, err := LoadProfile(configDir, "skyrim-se", "default")
+	require.NoError(t, err)
+	require.False(t, loaded.LinkMethodExplicit)
+
+	require.NoError(t, SaveProfile(configDir, loaded))
+
+	assert.NotContains(t, profileYAML(t, configDir, "skyrim-se", "default"), "link_method")
+}
+
+func TestExportProfile_OmitsLinkMethodWhenNotExplicit(t *testing.T) {
+	data, err := ExportProfile(&domain.Profile{Name: "default", GameID: "skyrim-se"})
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(data), "link_method",
+		"an exported profile must not carry a link method the user never set")
+}
+
+func TestExportProfile_WritesExplicitLinkMethod(t *testing.T) {
+	data, err := ExportProfile(&domain.Profile{
+		Name:               "default",
+		GameID:             "skyrim-se",
+		LinkMethod:         domain.LinkHardlink,
+		LinkMethodExplicit: true,
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, string(data), "link_method: hardlink")
+}
+
+func TestImportProfile_TracksLinkMethodExplicit(t *testing.T) {
+	imported, err := ImportProfile([]byte("name: default\ngame_id: skyrim-se\n"))
+	require.NoError(t, err)
+	assert.False(t, imported.LinkMethodExplicit, "absent link_method must not import as explicit")
+
+	imported, err = ImportProfile([]byte("name: default\ngame_id: skyrim-se\nlink_method: copy\n"))
+	require.NoError(t, err)
+	assert.True(t, imported.LinkMethodExplicit)
+	assert.Equal(t, domain.LinkCopy, imported.LinkMethod)
+}

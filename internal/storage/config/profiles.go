@@ -135,11 +135,12 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 	}
 
 	profile := &domain.Profile{
-		Name:       cfg.Name,
-		GameID:     cfg.GameID,
-		LinkMethod: domain.ParseLinkMethod(cfg.LinkMethod),
-		IsDefault:  cfg.IsDefault,
-		Mods:       make([]domain.ModReference, len(cfg.Mods)),
+		Name:               cfg.Name,
+		GameID:             cfg.GameID,
+		LinkMethod:         domain.ParseLinkMethod(cfg.LinkMethod),
+		LinkMethodExplicit: cfg.LinkMethod != "",
+		IsDefault:          cfg.IsDefault,
+		Mods:               make([]domain.ModReference, len(cfg.Mods)),
 	}
 
 	for i, m := range cfg.Mods {
@@ -169,11 +170,16 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 		return err
 	}
 	cfg := ProfileConfig{
-		Name:       profile.Name,
-		GameID:     profile.GameID,
-		LinkMethod: profile.LinkMethod.String(),
-		IsDefault:  profile.IsDefault,
-		Mods:       make([]ModReferenceConfig, len(profile.Mods)),
+		Name:      profile.Name,
+		GameID:    profile.GameID,
+		IsDefault: profile.IsDefault,
+		Mods:      make([]ModReferenceConfig, len(profile.Mods)),
+	}
+	// Only write link_method if explicitly set: String() never returns "", so
+	// assigning it unconditionally defeats `omitempty` and bakes a phantom
+	// symlink override into every profile file.
+	if profile.LinkMethodExplicit {
+		cfg.LinkMethod = profile.LinkMethod.String()
 	}
 
 	for i, m := range profile.Mods {
@@ -256,10 +262,12 @@ func DeleteProfile(configDir, gameID, profileName string) error {
 // ExportProfile exports a profile to a portable format
 func ExportProfile(profile *domain.Profile) ([]byte, error) {
 	exported := domain.ExportedProfile{
-		Name:       profile.Name,
-		GameID:     profile.GameID,
-		Mods:       profile.Mods,
-		LinkMethod: profile.LinkMethod.String(),
+		Name:   profile.Name,
+		GameID: profile.GameID,
+		Mods:   profile.Mods,
+	}
+	if profile.LinkMethodExplicit {
+		exported.LinkMethod = profile.LinkMethod.String()
 	}
 	if len(profile.Overrides) > 0 {
 		exported.Overrides = make(map[string]string)
@@ -284,10 +292,11 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 	}
 
 	p := &domain.Profile{
-		Name:       exported.Name,
-		GameID:     exported.GameID,
-		Mods:       exported.Mods,
-		LinkMethod: domain.ParseLinkMethod(exported.LinkMethod),
+		Name:               exported.Name,
+		GameID:             exported.GameID,
+		Mods:               exported.Mods,
+		LinkMethod:         domain.ParseLinkMethod(exported.LinkMethod),
+		LinkMethodExplicit: exported.LinkMethod != "",
 	}
 	if len(exported.Overrides) > 0 {
 		p.Overrides = make(map[string][]byte)
