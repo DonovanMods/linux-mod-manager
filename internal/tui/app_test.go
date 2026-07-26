@@ -384,6 +384,37 @@ func TestCommanderDashboardFloorHeightKeepsWholeLeftPanel(t *testing.T) {
 	require.Contains(t, model.screenView(), "Updates")
 }
 
+// Long dynamic values (game/profile names interpolated into dashboard rows,
+// e.g. "Mods:    %d installed / %d enabled" or "> GAME     %s") must not
+// lipgloss-auto-wrap inside their panel: clampLines counts logical lines, so
+// a wrapped row renders as two physical lines it cannot see, silently
+// growing the view past the height budget (#42) — the same defect class
+// TestCommanderDashboardRowsDoNotWrapAtNarrowWidths pins for commander's
+// static menu labels, here triggered by data instead of layout. Prototype
+// data is short, so the plain short-terminal test cannot catch this; the
+// long names are set directly on the model to simulate real-world values.
+// Multiple sizes matter: at 40x12 party's tiny per-panel budget happens to
+// clamp the long lines away before they can wrap, so only 120x21 (where
+// topBudget keeps all four lines and the ~90-col names wrap inside the
+// 55-col half panel) exposes the party-layout variant of the defect.
+func TestDashboardLayoutsFitHeightBudgetWithLongDynamicValues(t *testing.T) {
+	t.Parallel()
+	sizes := []struct{ width, height int }{{120, 21}, {80, 14}, {40, 12}}
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		for _, size := range sizes {
+			t.Run(fmt.Sprintf("%s-%dx%d", themeName, size.width, size.height), func(t *testing.T) {
+				t.Parallel()
+
+				model := sizedPrototypeModel(t, themeName, size.width, size.height)
+				model.summary.GameName = strings.Repeat("Very Long Game Name ", 4)
+				model.summary.ProfileName = strings.Repeat("Very Long Profile Name ", 4)
+				view := model.screenView()
+				require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
+			})
+		}
+	}
+}
+
 func TestScreenViewsUseExactAvailableHeightOnLargeTerminals(t *testing.T) {
 	t.Parallel()
 

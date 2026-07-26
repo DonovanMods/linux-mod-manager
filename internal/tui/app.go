@@ -1040,29 +1040,46 @@ func (m Model) partyDashboardView() string {
 	topBudget := max(topHeight-m.theme.Panel.GetVerticalBorderSize(), 1)
 	menuBudget := max(menuHeight-m.theme.Panel.GetVerticalBorderSize(), 1)
 
-	party := strings.Join(m.clampLines([]string{
+	partyLines := m.clampLines([]string{
 		m.theme.PanelTitle.Render("PARTY"),
 		fmt.Sprintf("Game:    %s", m.summary.GameName),
 		fmt.Sprintf("Profile: %s", m.summary.ProfileName),
 		fmt.Sprintf("Mods:    %d installed / %d enabled", m.summary.Installed, m.summary.Enabled),
-	}, topBudget), "\n")
+	}, topBudget)
 
-	quest := strings.Join(m.clampLines([]string{
+	questLines := m.clampLines([]string{
 		m.theme.PanelTitle.Render("QUEST LOG"),
 		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(countLabel(m.summary.Updates))),
 		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
 		"Last deploy: ?",
-	}, topBudget), "\n")
+	}, topBudget)
 
-	menu := strings.Join(m.clampLines(
+	menuLines := m.clampLines(
 		append([]string{m.theme.PanelTitle.Render("COMMANDS")}, m.dashboardMenuRows()...),
-		menuBudget), "\n")
+		menuBudget)
+
+	// Truncate every row to its panel's content width (commander's per-line
+	// idiom): a long game/profile name would otherwise lipgloss-auto-wrap
+	// inside the half-width top panels, and the wrap's extra physical line is
+	// invisible to clampLines' logical-line count, silently growing the view
+	// past the height budget (#42).
+	topContentWidth := max(panelWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	menuContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	for i, line := range partyLines {
+		partyLines[i] = truncate(line, topContentWidth)
+	}
+	for i, line := range questLines {
+		questLines[i] = truncate(line, topContentWidth)
+	}
+	for i, line := range menuLines {
+		menuLines[i] = truncate(line, menuContentWidth)
+	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.panelWithHeight(panelWidth, topHeight).Render(party),
+		m.panelWithHeight(panelWidth, topHeight).Render(strings.Join(partyLines, "\n")),
 		" ",
-		m.panelWithHeight(panelWidth, topHeight).Render(quest),
-	) + "\n" + m.panelWithHeight(width, menuHeight).Render(menu)
+		m.panelWithHeight(panelWidth, topHeight).Render(strings.Join(questLines, "\n")),
+	) + "\n" + m.panelWithHeight(width, menuHeight).Render(strings.Join(menuLines, "\n"))
 }
 
 // terminalDashboardView clamps content to the height budget to prevent
@@ -1079,6 +1096,14 @@ func (m Model) terminalDashboardView() string {
 	rows = append(rows, m.dashboardMenuRows()...)
 	budget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
 	rows = m.clampLines(rows, budget)
+	// Truncate each row to the panel's content width (commander's per-line
+	// idiom): a long game/profile name would otherwise lipgloss-auto-wrap
+	// into extra physical lines that clampLines' logical-line count cannot
+	// see, silently growing the view past the height budget (#42).
+	contentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	for i, row := range rows {
+		rows[i] = truncate(row, contentWidth)
+	}
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
@@ -1140,6 +1165,14 @@ func (m Model) crtDashboardView() string {
 	rows = append(rows, m.dashboardMenuRows()...)
 	budget := max(m.availableContentHeight()-m.theme.Panel.GetVerticalBorderSize(), 1)
 	rows = m.clampLines(rows, budget)
+	// Truncate each row to the panel's content width (commander's per-line
+	// idiom): a long game/profile name would otherwise lipgloss-auto-wrap
+	// into extra physical lines that clampLines' logical-line count cannot
+	// see, silently growing the view past the height budget (#42).
+	contentWidth := max(m.availableWidth()-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	for i, row := range rows {
+		rows[i] = truncate(row, contentWidth)
+	}
 	return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).Render(strings.Join(rows, "\n"))
 }
 
