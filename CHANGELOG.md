@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-07-26
+
+### Fixed
+
+- **The TUI no longer overflows short terminals.** Every screen now renders within its height budget at any terminal size: dashboard panels clamp overflowing content with a `+N more` tail, and the installed-mods, profiles, sources, search-results, and conflicts lists scroll to follow the selection (with `↑/↓ N more` indicators) instead of letting the highlighted row walk invisibly off-screen while the detail pane kept tracking it
+- Dashboard panels and the sources list truncate over-wide rows instead of letting long game, profile, or mod names wrap and silently grow the rendered height past the terminal
+- Error and empty states (load failure, search failure, zero search results) clamp long error messages and queries for the same reason
+- The search detail pane fits its fixed fields into short panes, tolerates pathologically narrow panes with zero-width value columns, and styles an `installed` status to match the results list
+
+### Changed
+
+- The TUI snapshot harness (`UPDATE_TUI_SNAPSHOTS=1`) now captures every screen — including a populated search — instead of only the dashboard, under the new naming `{theme}-{screen}-{width}x{height}.ansi`
+
 ## [1.17.0] - 2026-07-26
 
 ### Fixed
@@ -918,7 +931,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.1...HEAD
+[1.17.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.14.1...v1.15.0
