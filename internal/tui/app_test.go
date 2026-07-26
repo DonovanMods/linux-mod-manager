@@ -28,6 +28,54 @@ func TestNewPrototypeModelRejectsInvalidTheme(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestNavMarksCurrentScreenWithoutColor is the #91 audit's other finding:
+// nav() (app.go) distinguished the current screen from the rest ONLY by
+// theme.Selected's color versus theme.MutedText's — with color unavailable
+// (NO_COLOR, --no-color, or any non-color terminal) the two labels render
+// identically and the current screen becomes unrecoverable from the nav
+// line alone. The fix must add a plain-text distinguisher inside the
+// styled span, not rely on color.
+//
+// Uses the search_test.go Transform-marker technique (see
+// TestSearchDetailPaneStylesInstalledStatus) on theme.Selected: this
+// non-TTY test environment degrades lipgloss to no color, so a bare
+// require.Contains on ANSI bytes would pass vacuously regardless of
+// whether nav()'s current-screen branch actually ran. Transform makes the
+// Selected-styled span observable (via «...») without depending on color,
+// which lets this test assert BOTH that the plain-text marker exists AND
+// that it lives inside the real Selected-rendered span for the current
+// screen (not just appended somewhere in the line).
+func TestNavMarksCurrentScreenWithoutColor(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	model.theme.Selected = model.theme.Selected.Transform(func(s string) string { return "«" + s + "»" })
+	model.screen = ScreenSearch
+
+	nav := model.nav()
+
+	currentLabel := fmt.Sprintf("[%d] %s", model.screenIndex()+1, model.screen)
+	styled := model.theme.Selected.Render("• " + currentLabel)
+	require.Contains(t, nav, styled,
+		"marker sanity: the current screen's label must go through the real Selected style, marker included")
+
+	// The actual regression guard: the Selected-rendered span for the
+	// current screen must carry a plain-text distinguisher (independent of
+	// the Transform/color styling around it), and no other screen's label
+	// may carry that same marker.
+	inner := strings.TrimSuffix(strings.TrimPrefix(styled, "«"), "»")
+	require.Contains(t, inner, "•", "current screen's nav label must carry a non-color marker")
+
+	for i, screen := range screens {
+		if screen == model.screen {
+			continue
+		}
+		otherLabel := fmt.Sprintf("[%d] %s", i+1, screen)
+		muted := model.theme.MutedText.Render(otherLabel)
+		require.NotContains(t, muted, "•", "non-current screens must not carry the current-screen marker")
+	}
+}
+
 func TestNumberKeysNavigateScreens(t *testing.T) {
 	t.Parallel()
 

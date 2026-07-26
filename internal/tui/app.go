@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/theme"
@@ -48,6 +49,17 @@ type Options struct {
 	// Ctx seeds Model.ctx; see that field for why the context is stored
 	// rather than threaded as a parameter.
 	Ctx context.Context
+	// NoColor mirrors the root --no-color flag and NO_COLOR env var (#91):
+	// when true, NewModel pins lipgloss's process-global color profile to
+	// termenv.Ascii before constructing the theme, so every style renders
+	// plain text. Empirically, lipgloss resolves a Style's color profile at
+	// Render() time by dereferencing the shared *Renderer the Style
+	// captured at construction (see Style.Render/Renderer.ColorProfile) -
+	// the pin therefore also takes effect for styles built earlier in the
+	// same process - but pinning before theme construction keeps the
+	// ordering obviously correct rather than relying on that render-time
+	// detail.
+	NoColor bool
 }
 
 // Model is the root Bubble Tea model for the lmm TUI.
@@ -195,6 +207,16 @@ type loadFailedMsg struct {
 func NewModel(options Options) (Model, error) {
 	if options.Provider == nil {
 		return Model{}, fmt.Errorf("TUI options: provider is required")
+	}
+	if options.NoColor {
+		// Pinning termenv.Ascii disables lipgloss's usual escape-sequence
+		// output process-wide, so both this Model's own styles AND anything
+		// else in the process that renders through lipgloss's default
+		// renderer go plain. Acceptable for the TUI binary (its only
+		// caller): the CLI's own colorGreen/Red/Yellow helpers (cmd/lmm/
+		// root.go) build ANSI escapes by hand rather than through lipgloss,
+		// so they are unaffected by this process-global state.
+		lipgloss.SetColorProfile(termenv.Ascii)
 	}
 	t, err := theme.ByName(options.Theme)
 	if err != nil {
@@ -950,7 +972,12 @@ func (m Model) nav() string {
 	for i, screen := range screens {
 		label := fmt.Sprintf("[%d] %s", i+1, screen)
 		if screen == m.screen {
-			label = m.theme.Selected.Render(label)
+			// "• " lives INSIDE the styled span (not prepended outside it)
+			// so the current screen stays identifiable by more than color
+			// alone (#91 audit) - color-only distinction disappears
+			// entirely under NO_COLOR/--no-color/non-color terminals,
+			// where Selected and MutedText render byte-identical text.
+			label = m.theme.Selected.Render("• " + label)
 		} else {
 			label = m.theme.MutedText.Render(label)
 		}
