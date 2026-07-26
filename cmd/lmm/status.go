@@ -237,7 +237,7 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 
 		lastDeploy, err := service.GetLastDeployTime(gameID, defaultProfile.Name)
 		if err != nil {
-			return fmt.Errorf("getting last deploy time: %w", err)
+			return fmt.Errorf("status: last deploy time: %w", err)
 		}
 		out.LastDeploy = lastDeploy
 	}
@@ -352,7 +352,7 @@ func showGameStatus(service *core.Service, gameID string) error {
 
 		lastDeploy, err := service.GetLastDeployTime(gameID, defaultProfile.Name)
 		if err != nil {
-			return fmt.Errorf("getting last deploy time: %w", err)
+			return fmt.Errorf("status: last deploy time: %w", err)
 		}
 		fmt.Printf("  Last Deploy: %s\n", formatLastDeploy(lastDeploy))
 	}

@@ -1,6 +1,6 @@
                                                                                 
   LMM // Linux Mod Manager                                                      
-  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources  […  
+  • [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources …  
                                                                                 
   ╭──────────────────────────────────────────────────────────────────────────╮  
   │ CRT STATUS STACK                                                         │  
@@ -8,13 +8,13 @@
   │ ▓ PROFILE    survival                                                    │  
   │ ▓ MODS       39/42                                                       │  
   │ ▓ SIGNAL     3 updates, 2 conflict                                       │  
+  │ ▓ DEPLOY     3h ago                                                      │  
   │                                                                          │  
   │ > Installed Mods                                                         │  
   │   Search Archives                                                        │  
   │   Profiles                                                               │  
   │   Sources                                                                │  
   │   Consult Conflict Oracle                                                │  
-  │                                                                          │  
   │                                                                          │  
   │                                                                          │  
   │                                                                          │  

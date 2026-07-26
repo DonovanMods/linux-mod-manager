@@ -160,10 +160,11 @@ func TestCheckFileConflicts_Empty(t *testing.T) {
 
 // --- GetLastDeployTime (#106a) ---
 
-// TestGetLastDeployTime_NeverDeployed pins the "never deployed" case:
-// SELECT MAX(deployed_at) over zero matching rows returns SQL NULL, which
-// must surface as a nil *time.Time with a nil error - never-deployed is a
-// normal state (e.g. a freshly added profile), not a storage error.
+// TestGetLastDeployTime_NeverDeployed pins the "never deployed" case: the
+// query orders by deployed_at DESC and takes LIMIT 1, so zero matching rows
+// means QueryRow returns sql.ErrNoRows, which the implementation maps to a
+// nil *time.Time with a nil error - never-deployed is a normal state (e.g. a
+// freshly added profile), not a storage error.
 func TestGetLastDeployTime_NeverDeployed(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)

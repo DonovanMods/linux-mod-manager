@@ -156,11 +156,11 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 
 	// #106a: recomputed on EVERY Overview call (every loadData refresh, not
 	// just after a deploy action) - unlike Updates, which needs an explicit
-	// user-triggered check, this is a plain, cheap DB read (a single indexed
-	// lookup, same shape as Conflicts' own "ride every ordinary load"
-	// reasoning - see DataProvider.Conflicts' doc comment), so there is no
-	// staleness/preservation logic to write here, unlike dataLoadedMsg's
-	// Updates-preservation special case (app.go).
+	// user-triggered check, this is a plain, cheap DB read (an index-prefix
+	// scan ordered and limited to one row, same shape as Conflicts' own
+	// "ride every ordinary load" reasoning - see DataProvider.Conflicts' doc
+	// comment), so there is no staleness/preservation logic to write here,
+	// unlike dataLoadedMsg's Updates-preservation special case (app.go).
 	lastDeploy, err := p.svc.GetLastDeployTime(game.ID, profile)
 	if err != nil {
 		return Summary{}, nil, fmt.Errorf("loading last deploy time for %s/%s: %w", game.ID, profile, err)

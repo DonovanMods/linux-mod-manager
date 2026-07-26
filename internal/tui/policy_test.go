@@ -327,6 +327,7 @@ func TestPolicyChoiceDroppedWhileConfirmModalPending(t *testing.T) {
 	require.False(t, model.action.running, "a dropped pick must never set running - nothing would ever clear it")
 	require.NotNil(t, model.action.pending, "the confirm modal must stay up, undisturbed")
 	require.Empty(t, rec.SetPolicyCalls)
+	require.Equal(t, "busy — choice ignored", model.action.status, "the pending-confirm drop must surface the same busy hint as the running-action drop")
 }
 
 // TestPolicyChoiceDropShowsHintWhenNothingOwnsLine covers Task 6's #68 fix:
