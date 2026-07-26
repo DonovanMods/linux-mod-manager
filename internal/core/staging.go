@@ -30,8 +30,14 @@ func (s *Service) stagingRoot() string {
 // Callers own the returned directory and must remove it.
 func newStagingDir(root, pattern string) (string, error) {
 	if root != "" {
-		if err := os.MkdirAll(root, 0755); err != nil {
+		// 0700, not 0755: in-flight downloads and extracted mod trees live here.
+		// Inheriting privacy from the data dir is not enough — an install predating
+		// the data dir being tightened may still be 0755.
+		if err := os.MkdirAll(root, 0700); err != nil {
 			return "", fmt.Errorf("creating staging directory: %w", err)
+		}
+		if err := os.Chmod(root, 0700); err != nil {
+			return "", fmt.Errorf("restricting staging directory: %w", err)
 		}
 	}
 

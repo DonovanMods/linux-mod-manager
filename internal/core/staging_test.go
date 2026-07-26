@@ -1,6 +1,7 @@
 package core
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,21 @@ func TestNewStagingDir_CreatesUnderRoot(t *testing.T) {
 	assert.Equal(t, root, filepath.Dir(dir), "staging dir should be created directly under the root")
 	assert.DirExists(t, dir)
 	assert.True(t, strings.HasPrefix(filepath.Base(dir), "lmm-download-"), "pattern should be honored, got %q", filepath.Base(dir))
+}
+
+// TestNewStagingDir_RootIsOwnerOnly pins the staging root to 0700. In-flight
+// downloads and extracted mod trees live here, and relying on the data dir's
+// permissions is not enough: a legacy install's data dir may still be 0755.
+func TestNewStagingDir_RootIsOwnerOnly(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "downloads")
+
+	dir, err := newStagingDir(root, "lmm-download-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	info, err := os.Stat(root)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0700), info.Mode().Perm(), "staging root must not be group- or world-readable")
 }
 
 // TestNewStagingDir_CreatesMissingRoot: the downloads directory is created on

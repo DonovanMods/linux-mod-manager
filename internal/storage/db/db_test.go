@@ -124,14 +124,13 @@ func TestNew_RestrictsFilePermissions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fs.FileMode(0600), info.Mode().Perm(), "database must not be group- or world-readable")
 
-	// WAL mode is on, so the sidecars carry the same token bytes.
+	// WAL mode is on, so the sidecars carry the same token bytes. They are
+	// required to exist rather than skipped-if-absent: migrations write, which
+	// creates them, and a skip would make this assertion vacuous.
 	for _, suffix := range []string{"-wal", "-shm"} {
 		sidecar := path + suffix
 		info, err := os.Stat(sidecar)
-		if os.IsNotExist(err) {
-			continue
-		}
-		require.NoError(t, err)
+		require.NoError(t, err, "%s should exist once migrations have written", sidecar)
 		assert.Equal(t, fs.FileMode(0600), info.Mode().Perm(), "%s must not be group- or world-readable", sidecar)
 	}
 }

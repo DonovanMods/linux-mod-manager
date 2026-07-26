@@ -52,6 +52,18 @@ func New(path string) (*DB, error) {
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 
+	// Again after migrations: the WAL/SHM sidecars do not exist yet at the call
+	// above (verified — the pragma alone does not create them), so they are only
+	// tightened here. They currently land at 0600 regardless, because SQLite
+	// derives their mode from the main database file we just restricted, but that
+	// is driver behavior rather than a contract — this makes it explicit.
+	if err := restrictPermissions(path); err != nil {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			return nil, fmt.Errorf("%w (closing database: %v)", err, closeErr)
+		}
+		return nil, err
+	}
+
 	return database, nil
 }
 
