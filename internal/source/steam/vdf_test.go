@@ -98,3 +98,71 @@ func TestParseVDF_MalformedNoValue(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unexpected end after key")
 }
+
+// --- getLibraryPaths (map -> []string extraction), tested directly ---
+
+func TestGetLibraryPaths_MissingLibraryFoldersKey(t *testing.T) {
+	root := VDFMap{"somethingelse": VDFMap{}}
+	assert.Nil(t, getLibraryPaths(root))
+}
+
+func TestGetLibraryPaths_LibraryFoldersNotAMap(t *testing.T) {
+	// "libraryfolders" present but as a plain string value, not a nested block.
+	root := VDFMap{"libraryfolders": "not-a-map"}
+	assert.Nil(t, getLibraryPaths(root))
+}
+
+func TestGetLibraryPaths_SkipsEntriesWithoutPathButKeepsScanning(t *testing.T) {
+	vdf := `
+"libraryfolders"
+{
+	"0"
+	{
+		"label"		"no path field here"
+	}
+	"1"
+	{
+		"path"		"/mnt/steam"
+	}
+}
+`
+	root, err := ParseVDF(strings.NewReader(vdf))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/mnt/steam"}, getLibraryPaths(root))
+}
+
+func TestGetLibraryPaths_SkipsEmptyPathValue(t *testing.T) {
+	vdf := `
+"libraryfolders"
+{
+	"0"
+	{
+		"path"		""
+	}
+}
+`
+	root, err := ParseVDF(strings.NewReader(vdf))
+	require.NoError(t, err)
+	assert.Nil(t, getLibraryPaths(root))
+}
+
+func TestGetLibraryPaths_StopsAtFirstNonSequentialKey(t *testing.T) {
+	// Keys "0" and "2" (no "1") - extraction stops at the first gap, so "2" is
+	// never reached even though it's present in the map.
+	vdf := `
+"libraryfolders"
+{
+	"0"
+	{
+		"path"		"/first"
+	}
+	"2"
+	{
+		"path"		"/skipped"
+	}
+}
+`
+	root, err := ParseVDF(strings.NewReader(vdf))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/first"}, getLibraryPaths(root))
+}
