@@ -36,6 +36,7 @@ func TestPurgeCmd_NoGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(purgeCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(purgeCmd); rootCmd.AddCommand(purgeCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -69,6 +70,7 @@ func TestPurgeCmd_GameNotFound(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(purgeCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(purgeCmd); rootCmd.AddCommand(purgeCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -111,6 +113,7 @@ func TestPurgeCmd_NoModsToPurge(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(purgeCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(purgeCmd); rootCmd.AddCommand(purgeCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)

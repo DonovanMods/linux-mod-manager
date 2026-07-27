@@ -96,6 +96,7 @@ func TestSearchCmd_NoGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(searchCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(searchCmd); rootCmd.AddCommand(searchCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -113,6 +114,7 @@ func TestSearchCmd_NoQuery(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(searchCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(searchCmd); rootCmd.AddCommand(searchCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)

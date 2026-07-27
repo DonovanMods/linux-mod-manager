@@ -33,6 +33,7 @@ func runSourceCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(sourceCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
@@ -177,6 +178,7 @@ func TestSourceListCmd_ErrorRows(t *testing.T) {
 		t.Helper()
 		cmd := &cobra.Command{Use: "test"}
 		cmd.AddCommand(sourceCmd)
+		t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
 		buf := new(bytes.Buffer)
 		cmd.SetOut(buf)
 		cmd.SetErr(buf)

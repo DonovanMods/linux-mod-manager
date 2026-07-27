@@ -13,6 +13,7 @@ func TestListCmd_NoGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(listCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(listCmd); rootCmd.AddCommand(listCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)

@@ -48,6 +48,7 @@ func TestDeployCmd_NoGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(deployCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(deployCmd); rootCmd.AddCommand(deployCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)

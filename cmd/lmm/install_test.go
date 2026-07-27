@@ -44,6 +44,7 @@ func TestInstallCmd_NoGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(installCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(installCmd); rootCmd.AddCommand(installCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -62,6 +63,7 @@ func TestInstallCmd_NoQueryOrID(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(installCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(installCmd); rootCmd.AddCommand(installCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -105,6 +107,7 @@ func TestInstallCmd_GameNotFound(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(installCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(installCmd); rootCmd.AddCommand(installCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -137,6 +140,7 @@ func TestInstallCmd_VersionFlag_RejectedBeforeGameResolution(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(installCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(installCmd); rootCmd.AddCommand(installCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)

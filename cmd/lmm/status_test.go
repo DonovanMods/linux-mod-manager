@@ -33,6 +33,7 @@ func TestStatusCmd_NoGames(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(statusCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(statusCmd); rootCmd.AddCommand(statusCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -53,6 +54,7 @@ func TestStatusCmd_WithGameFlag_NoGamesConfigured(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(statusCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(statusCmd); rootCmd.AddCommand(statusCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -65,28 +67,35 @@ func TestStatusCmd_WithGameFlag_NoGamesConfigured(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestStatusCmd_AcceptsGameFlag tests that status accepts the game flag
+// TestStatusCmd_AcceptsGameFlag tests that status accepts the game flag.
+//
+// Drives this through the real rootCmd rather than a throwaway replica
+// root: cobra computes and caches each command's merged inherited-flags
+// set the first time it's asked for, and never invalidates the cache. A
+// second root registering its own competing "--game" PersistentFlags and
+// temporarily adopting the shared statusCmd singleton would permanently
+// poison statusCmd's cached flag set with the throwaway's flag object
+// (and its usage string) instead of rootCmd's real one - for the rest of
+// the test binary, not just this test - which is exactly what broke the
+// man-page drift test (#104) before this was found: the generated
+// lmm-status.1 rendered "game ID" (the throwaway's usage text) instead of
+// the real "game ID to operate on" (root.go's), regardless of test order,
+// because nothing can un-cache a cobra command's flag set short of
+// ResetFlags(), which would also wipe the command's own real flags.
 func TestStatusCmd_AcceptsGameFlag(t *testing.T) {
-	// The status command should accept the --game flag from the root command
-	// This is a persistent flag from rootCmd, so we test via the full command setup
-
 	// Reset state
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 	gameID = ""
 
-	// Create a fresh root command for this test
-	testRoot := &cobra.Command{Use: "lmm"}
-	testRoot.PersistentFlags().StringVarP(&gameID, "game", "g", "", "game ID")
-	testRoot.AddCommand(statusCmd)
-
 	buf := new(bytes.Buffer)
-	testRoot.SetOut(buf)
-	testRoot.SetErr(buf)
-	testRoot.SetArgs([]string{"status", "--game", "test-game"})
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+	rootCmd.SetArgs([]string{"status", "--game", "test-game"})
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
 
 	// Command succeeds (shows "No games configured"), but flag should be parsed
-	err := testRoot.Execute()
+	err := rootCmd.Execute()
 	assert.NoError(t, err)
 	assert.Equal(t, "test-game", gameID)
 }
@@ -105,6 +114,7 @@ func TestStatusCmd_ShowsDefaultGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(statusCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(statusCmd); rootCmd.AddCommand(statusCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
