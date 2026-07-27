@@ -91,6 +91,48 @@ func TestIngestLocalToCacheArchiveCopyModeUsesDeclaredFileName(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "cached file must NOT be named after localPath's basename when file.FileName is declared")
 }
 
+// TestPrepareStagingCleansPartialStagingOnCopyFailure is a regression test
+// for a reviewer-caught behavior break in the #52 item 11 extraction:
+// pre-refactor, the caller armed `defer os.RemoveAll(stagePath)` BEFORE the
+// Exists/copyDir step, so a copyDir failure partway through (stagePath
+// already partially populated on disk) still got cleaned up on return.
+// prepareStaging's first cut returned ("", "", err) on a copyDir failure
+// instead - callers only register their defer AFTER checking the error, so
+// it never runs, and they don't even have stagePath's value to clean up
+// manually. Partial staging debris then leaks (self-healing only if the
+// exact same source/id/version is retried, since prepareStaging always
+// RemoveAlls stagePath on entry).
+//
+// Reproduced by seeding an existing cache entry with a subdirectory whose
+// permissions are stripped to 0000: copyDir's top-level MkdirAll(stagePath)
+// (and, per copyDirFollowing's recursion, MkdirAll(stagePath/sealed) too)
+// succeed before os.ReadDir(cachePath/sealed) hits EACCES and aborts the
+// whole copy - leaving exactly the kind of partial stagePath this guards
+// against.
+func TestPrepareStagingCleansPartialStagingOnCopyFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission checks, so this EACCES setup can't fail")
+	}
+
+	gameCache := cache.New(t.TempDir())
+	game := &domain.Game{ID: "g1"}
+	mod := &domain.Mod{ID: "modX", SourceID: "src", Version: "1.0"}
+
+	require.NoError(t, gameCache.Store("g1", "src", "modX", "1.0", "sealed/inner.txt", []byte("x")))
+	cachePath := gameCache.ModPath("g1", "src", "modX", "1.0")
+	sealedDir := filepath.Join(cachePath, "sealed")
+	require.NoError(t, os.Chmod(sealedDir, 0000))
+	t.Cleanup(func() { _ = os.Chmod(sealedDir, 0755) }) // restore before TempDir's own cleanup removes it
+
+	expectedStagePath := cachePath + ".staging"
+
+	_, _, err := prepareStaging(gameCache, game, mod)
+	require.Error(t, err)
+
+	_, statErr := os.Stat(expectedStagePath)
+	assert.True(t, os.IsNotExist(statErr), "prepareStaging must not leave partial staging debris behind on a copyDir failure")
+}
+
 func TestIngestLocalToCacheMissingPath(t *testing.T) {
 	svc, gameCache := newLocalIngestService(t)
 

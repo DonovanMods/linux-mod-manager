@@ -464,9 +464,15 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 // ingestLocalToCache differ only in how they populate stagePath afterward,
 // never in how they get there.
 //
-// Callers MUST defer os.RemoveAll(stagePath) themselves immediately after a
-// nil error return - a defer registered inside this function would fire
-// before the caller finishes using stagePath.
+// Contract: on a nil error return, stagePath exists and is ready to write
+// into, and the CALLER now owns its cleanup - callers MUST defer
+// os.RemoveAll(stagePath) themselves immediately after (a defer registered
+// inside this function would fire before the caller finishes using
+// stagePath). On a non-nil error return, no staging debris remains - a
+// mid-copy failure must leave stagePath exactly as absent as it was before
+// this call, matching the pre-extraction behavior where the caller's own
+// defer was armed BEFORE the copy step (see
+// TestPrepareStagingCleansPartialStagingOnCopyFailure).
 func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
 	cachePath = gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
 	stagePath = cachePath + ".staging"
@@ -475,6 +481,13 @@ func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) 
 	}
 	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 		if err := copyDir(cachePath, stagePath); err != nil {
+			// Best-effort: restore the "no debris" guarantee even though
+			// copyDir itself already failed. A cleanup failure here isn't
+			// worth surfacing over the original error - it's the same
+			// filesystem that just failed on us, and the .staging path will
+			// simply be cleared again (os.RemoveAll above) on the next
+			// attempt for this exact (SourceID, ID, Version) either way.
+			_ = os.RemoveAll(stagePath)
 			return "", "", fmt.Errorf("staging existing cache: %w", err)
 		}
 	}
