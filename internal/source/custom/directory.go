@@ -95,7 +95,10 @@ func (d *Directory) scan() ([]dirMod, error) {
 		// falls through both branches below and is silently dropped.
 		info, err := os.Stat(entryPath)
 		if err != nil {
-			continue // broken symlink or a race with concurrent deletion; skip like ReadDir would
+			if os.IsNotExist(err) {
+				continue // dangling symlink (or a race with concurrent deletion); skip like ReadDir-based classification would have
+			}
+			return nil, fmt.Errorf("source %q: stat %s: %w", d.id, entryPath, err)
 		}
 
 		if info.IsDir() {

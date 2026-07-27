@@ -298,6 +298,66 @@ func TestDirectorySearch_FollowsSymlinkedModDir(t *testing.T) {
 	assert.Equal(t, "1.0", res.Mods[0].Version)
 }
 
+// TestDirectoryScan_SkipsDanglingSymlink locks in the one case scan() is
+// allowed to skip silently: a symlink whose target no longer exists. Its
+// os.Stat fails with ENOENT, which is exactly what a plain os.ReadDir-based
+// classification would already have missed (the entry just wouldn't be
+// there) - so it is not a scan-fatal error.
+func TestDirectoryScan_SkipsDanglingSymlink(t *testing.T) {
+	root := t.TempDir()
+
+	require.NoError(t, os.Symlink(filepath.Join(root, "missing-target"), filepath.Join(root, "Dangling-1.0")))
+
+	def := SourceDefinition{
+		ID:        "dangling",
+		Name:      "Dangling",
+		Type:      TypeDirectory,
+		Directory: &DirectoryConfig{Path: root},
+	}
+	d, err := NewDirectory(def)
+	require.NoError(t, err)
+
+	res, err := d.Search(context.Background(), source.SearchQuery{})
+	require.NoError(t, err)
+	assert.Empty(t, res.Mods, "dangling symlink must be skipped silently, not surfaced as a mod or a scan error")
+}
+
+// TestDirectoryScan_NonENOENTStatErrorPropagates is a regression test: scan()
+// must not swallow stat errors that aren't "the entry doesn't exist" (the
+// never-swallow-errors rule). We force a non-ENOENT failure by symlinking to
+// a target buried inside a directory with its execute/search bit removed, so
+// resolving the symlink fails with EACCES rather than ENOENT.
+func TestDirectoryScan_NonENOENTStatErrorPropagates(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission checks, so this EACCES setup can't fail")
+	}
+
+	root := t.TempDir()
+
+	sealed := filepath.Join(root, "sealed")
+	require.NoError(t, os.MkdirAll(sealed, 0755))
+	target := filepath.Join(sealed, "target-mod")
+	require.NoError(t, os.MkdirAll(target, 0755))
+	require.NoError(t, os.Chmod(sealed, 0000))
+	t.Cleanup(func() { _ = os.Chmod(sealed, 0755) }) // restore before TempDir's own cleanup removes it
+
+	require.NoError(t, os.Symlink(target, filepath.Join(root, "BrokenPerm-1.0")))
+
+	def := SourceDefinition{
+		ID:        "broken-perm",
+		Name:      "Broken Perm",
+		Type:      TypeDirectory,
+		Directory: &DirectoryConfig{Path: root},
+	}
+	d, err := NewDirectory(def)
+	require.NoError(t, err)
+
+	_, err = d.Search(context.Background(), source.SearchQuery{})
+	require.Error(t, err, "a non-ENOENT stat error must propagate, not be silently skipped")
+	assert.Contains(t, err.Error(), "BrokenPerm-1.0")
+	assert.True(t, errors.Is(err, os.ErrPermission), "wrapped error should preserve the underlying permission error")
+}
+
 // TestNameAndVersionFrom covers the v/V trim boundary: separators (-_ ) must
 // always be trimmed, but a "v"/"V" should only be trimmed when the version
 // pattern actually consumed it as a prefix (immediately adjacent to the
