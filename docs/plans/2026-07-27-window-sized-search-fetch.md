@@ -8,7 +8,7 @@
 
 - Branch: `feat/window-sized-search-fetch` off `main`; PR closes NOTHING automatically — #111 gets a completion comment noting Tier 1 shipped and Tier 2 remains with #109 (issue stays open or closes per PR review; default: close #111 with the comment noting the Tier-2 handoff, since the issue's own text scopes Tier 2 to #109's machinery). Decision: CLOSE #111, Tier 2 tracked by #109.
 - Version: MINOR → 1.19.0 (user-visible behavior change in fetch semantics; internal interface change).
-- TDD RED-first; gofmt/vet/full suite per commit; add files BY NAME; goldens: the 120x36 search capture MAY change (bigger fetch → more canned rows rendered? NO — prototype canned set is fixed at 10 results and snapshot harness injects populatedSearchPage directly, bypassing Search; predict NO golden changes, audit in finalize).
+- TDD RED-first; gofmt/vet/full suite per commit; add files BY NAME; goldens: the 120x36 search capture MAY change (bigger fetch → more canned rows rendered? NO — prototype canned set is fixed at 5 results and snapshot harness injects populatedSearchPage directly, bypassing Search; predict NO golden changes, audit in finalize).
 - CLI unaffected (its own searchPageSize(limit) path). Single-source AND all-sources both use the computed size (SearchAllSources takes pageSize already; SearchMods too — service_core.go:289,317 just swap the constant for the param).
 - Clamp: fetch size = max(pane row budget, 10) capped at 50 — never fetch fewer than today's behavior, never hammer sources for huge windows. Constants documented.
 
