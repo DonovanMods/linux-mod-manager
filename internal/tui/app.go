@@ -2220,7 +2220,15 @@ func (m Model) contentChromeHeight() int {
 // above (#111 Tier 1): a very tall terminal's visible budget is not, by
 // itself, a reason to request 100+ results from a real source's API in one
 // call - 50 is a deliberate ~5x headroom over SearchPageSize's historical
-// fixed size, not "as many as fit on screen". SearchPageSize (service.go)
+// fixed size, not "as many as fit on screen". Verified against the live
+// NexusMods API (2026-07-27, final-review follow-up): a count-50 search
+// request is honored verbatim - 50 rows returned, no server-side clamp, no
+// error - so a full page at this cap keeps the short-page exhaustion
+// heuristic truthful. A source that DID silently clamp below a requested
+// page size would read as exhausted with results still remaining; if a
+// future source behaves that way, cap per-source (a capability) rather
+// than raising this constant - see #109's Tier-2 note.
+// SearchPageSize (service.go)
 // is the corresponding floor - see its own doc comment for why the same
 // constant also doubles as every DataProvider.Search implementation's
 // pageSize <= 0 fallback.
