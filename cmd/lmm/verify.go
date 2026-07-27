@@ -42,11 +42,12 @@ Without arguments, verifies all cached mods for the specified game.
 With a mod ID, verifies only that specific mod.
 
 Each file is reported with one of:
-  + NAME (FILE) - OK                    cached and checksum matches
-  X NAME (FILE) - MISSING               version not present in cache
-  ? NAME (FILE) - NO CHECKSUM           cached, but no checksum was ever stored
-  ! NAME - FILE COUNT MISMATCH          cache exists but is empty (per-mod, not per-file)
-  ? Unknown mod ID - SKIPPED            checksum row references a mod no longer installed
+
+    + NAME (FILE) - OK                  cached and checksum matches
+    X NAME (FILE) - MISSING             version not present in cache
+    ? NAME (FILE) - NO CHECKSUM         cached, but no checksum was ever stored
+    ! NAME - FILE COUNT MISMATCH        cache exists but is empty (per-mod, not per-file)
+    ? Unknown mod ID - SKIPPED          checksum row references a mod no longer installed
 
 Use --fix to re-download files that are MISSING or have NO CHECKSUM,
 storing a fresh checksum afterwards. FILE COUNT MISMATCH and SKIPPED

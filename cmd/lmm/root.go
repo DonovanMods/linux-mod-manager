@@ -56,21 +56,23 @@ plus user-defined custom sources (directory scans, static manifests, or REST
 APIs — see 'lmm source --help').
 
 Both a CLI (this command tree) and an interactive TUI ('lmm tui') are
-available; run 'lmm <command> --help' for details on any subcommand.
+available; run 'lmm COMMAND --help' for details on any subcommand.
 
 EXIT CODES
-  0  success
-  1  error
-  2  cancelled by the user (e.g. declined a confirmation prompt)
+
+    0  success
+    1  error
+    2  cancelled by the user (e.g. declined a confirmation prompt)
 
 FILES
-  ~/.config/lmm/        Configuration: games.yaml, config.yaml, per-game
-                         profiles, and sources/*.yaml (custom source
-                         definitions). Override with --config.
-  ~/.local/share/lmm/    Data: lmm.db (mod metadata and auth tokens),
-                         cache/ (downloaded and extracted mod files), and
-                         downloads/ (staging area for in-flight downloads
-                         and archive extraction). Override with --data.`,
+
+    ~/.config/lmm/        Configuration: games.yaml, config.yaml, per-game
+                          profiles, and sources/*.yaml (custom source
+                          definitions). Override with --config.
+    ~/.local/share/lmm/   Data: lmm.db (mod metadata and auth tokens),
+                          cache/ (downloaded and extracted mod files), and
+                          downloads/ (staging area for in-flight downloads
+                          and archive extraction). Override with --data.`,
 	Version:       version,
 	SilenceUsage:  true, // Runtime errors should not print usage
 	SilenceErrors: true, // We handle error output in Execute()

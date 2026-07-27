@@ -20,8 +20,9 @@ var sourceCmd = &cobra.Command{
 	Long: `List registered mod sources and validate user-defined source definitions.
 
 Custom sources (directory scans, static manifests, or REST APIs) are
-defined as YAML files under <configDir>/sources/*.yaml - see the Custom
-Sources section of the project README for the file format.`,
+defined as YAML files in the sources/ directory under the config dir
+(~/.config/lmm/sources/*.yaml by default) - see the Custom Sources
+section of the project README for the file format.`,
 }
 
 // sourceInfo is one row of `lmm source list` output.

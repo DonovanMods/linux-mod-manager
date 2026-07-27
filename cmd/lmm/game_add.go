@@ -22,8 +22,8 @@ var gameAddCmd = &cobra.Command{
 	Long: `Interactively add a new game configuration.
 
 Prompts for a source to look the game up in, then its install path and
-mod path (defaulting to <install path>/mods), and saves the result to
-games.yaml along with an empty default profile.
+mod path (defaulting to the install path plus "/mods"), and saves the
+result to games.yaml along with an empty default profile.
 
 Supports adding games from:
   - CurseForge (searchable game list; requires 'lmm auth login curseforge' first)

@@ -49,9 +49,10 @@ searched concurrently and the results are merged. Results already
 installed in the target profile (-p/--profile, default: active profile)
 are marked [installed].
 
-Use --category and --tag to filter results. Both are source-specific and
-passed through as-is (currently honored by NexusMods); the values a given
-source accepts depend on that source.
+Use --category and --tag to filter results; support varies by source.
+--category is honored by NexusMods and CurseForge; --tag is currently
+NexusMods only. Custom sources (directory/manifest/API) ignore both.
+The values each source accepts are source-specific.
 
 Examples:
   lmm search skyui --game skyrim-se

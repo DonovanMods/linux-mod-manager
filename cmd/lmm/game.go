@@ -71,9 +71,9 @@ var gameDetectCmd = &cobra.Command{
 	Long: `Scan Steam libraries for known moddable games and optionally add them to games.yaml.
 
 Prompts for which games to add (e.g. 1,2 or all or none). Each added
-game gets a NexusMods source mapping (when a matching NexusMods slug is
-known), the symlink link method, and an empty default profile; edit
-games.yaml afterwards for anything more specific.
+game gets a NexusMods source mapping, the symlink link method, and an
+empty default profile; edit games.yaml afterwards for anything more
+specific, including the NexusMods slug if none was detected.
 
 Examples:
   lmm game detect`,

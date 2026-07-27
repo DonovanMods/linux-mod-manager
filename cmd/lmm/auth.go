@@ -73,7 +73,8 @@ For CurseForge:
   3. Copy your API key
 
 For a custom source, either enter the key at the prompt, or skip login
-entirely and set LMM_<ID>_API_KEY (ID uppercased, dashes replaced with
+entirely and set an environment variable instead: LMM_MYSOURCE_API_KEY
+for a source with id "mysource" (id uppercased, dashes become
 underscores) - lmm reads that on every run.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runAuthLogin,
