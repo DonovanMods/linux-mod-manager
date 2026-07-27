@@ -1016,10 +1016,27 @@ func (m Model) itemCount(screen Screen) int {
 // SAME WIDTH is load-bearing (PR #107 review): the first fix prefixed
 // "• ", which grew the line and shifted the hard truncation so the
 // rightmost label degraded at 80 cols (the committed goldens caught it as
-// a dangling "•…"). Because the marker only swaps glyphs inside the
-// existing three-cell number slot, it adds zero width in every tier - so
-// which screen is current can never change a tier's measured width, and
-// therefore never changes which tier gets picked.
+// a dangling "•…"). The glyph swap itself - [N] versus •N• inside that one
+// three-cell slot - is zero-width in every tier: it never changes a tier's
+// measured width by itself.
+//
+// That is NOT the same as tier selection being current-screen-independent.
+// Tiers 1 and 3 render every screen the same way regardless of which one is
+// current, so their total width IS constant across screens - but tier 2
+// renders a label for the current screen ONLY, so tier 2's total width is
+// 29 + len(current screen's label) BY DESIGN, and varies with whoever is
+// current. Near a tier boundary this matters: at ~40 cols, navigating onto
+// "Installed Mods" (the longest label) can push tier 2 over budget and flip
+// the nav to tier 3, then flip back to tier 2 the moment you leave it (see
+// TestNavCompressesToNumbersOnlyAt40Columns). This is a deliberate
+// tradeoff, not an oversight - nav() measures each candidate per render
+// rather than pinning tier 2's budget to its worst-case label, because
+// pinning would force tier 3 for ALL SIX screens at every width in that
+// range, when five of them fit tier 2 comfortably. The flip is confined to
+// a narrow band of pathological widths, and whichever tier renders, its
+// measured width always honestly fits availableWidth() - that invariant
+// (not "width never depends on current screen") is what tier selection
+// actually guarantees.
 func (m Model) nav() string {
 	width := m.availableWidth()
 	for _, tier := range []func() string{m.navFull, m.navCurrentLabelOnly, m.navNumbersOnly} {
