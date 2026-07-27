@@ -267,8 +267,16 @@ func TestNavCompressesToNumbersOnlyAt40Columns(t *testing.T) {
 	width := model.availableWidth()
 
 	require.LessOrEqual(t, lipgloss.Width(nav), width)
+	// Assert the actual rendered cell tokens, not bare digits — a bare "%d"
+	// Contains could be satisfied by an unrelated digit (an ANSI parameter
+	// byte, a count elsewhere in the line) and let a missing cell slip
+	// through.
 	for i := range screens {
-		require.Contains(t, nav, fmt.Sprintf("%d", i+1), "every number cell must be present")
+		cell := fmt.Sprintf("[%d]", i+1)
+		if screens[i] == model.screen {
+			cell = fmt.Sprintf("•%d•", i+1)
+		}
+		require.Contains(t, nav, cell, "every number cell must render as its [N]/•N• token")
 	}
 	require.Contains(t, nav, "•2•", "current screen keeps its marker in the numbers-only tier")
 	require.NotContains(t, nav, "Installed Mods",
