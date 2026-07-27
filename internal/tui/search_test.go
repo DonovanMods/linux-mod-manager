@@ -294,8 +294,32 @@ func TestAggregateFooterOmitsMisleadingTotalPages(t *testing.T) {
 
 	footer := model.searchFooterLine()
 	require.NotContains(t, footer, "/", "aggregate TotalCount/PageSize must not render a misleading total-pages figure")
-	require.Contains(t, footer, "30 results")
+	require.Contains(t, footer, "30 shown")
 	require.NotContains(t, footer, "n next", "exhausted aggregate must not offer a dead next page")
+}
+
+// TestAggregateFooterCountsShownRowsNotSummedTotals guards the count half of
+// the aggregate footer (user smoke finding, PR #110): the summed TotalCount
+// under-reports whenever any contributing source doesn't report totals (its
+// contribution to the sum is 0 while its rows are real), so a merged page of
+// 13 rows rendered "(3 results)". The aggregate footer must count the rows
+// actually on the page — the only figure that is true by construction —
+// never the summed totals.
+func TestAggregateFooterCountsShownRowsNotSummedTotals(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.state = searchReady
+	model.search.page = SearchPage{
+		// One source reported TotalCount 3; another contributed 10 rows but
+		// reports no totals (contributes 0 to the sum) — 13 real rows.
+		Query: "m", Source: "", Page: 0, PageSize: 10, TotalCount: 3, Exhausted: false,
+		Results: make([]ModItem, 13),
+	}
+
+	footer := model.searchFooterLine()
+	require.Contains(t, footer, "13 shown", "the footer must count the rows on the page")
+	require.NotContains(t, footer, "3 result", "the under-reported summed total must not render")
 }
 
 // TestAggregateZeroResultsHonestNoticeWhenNoSourceSupportsSearch guards #58

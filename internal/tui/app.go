@@ -1542,8 +1542,15 @@ func (m Model) searchFooterLine() string {
 	footer := fmt.Sprintf("Page %d", current)
 	switch {
 	case page.Source == "":
-		if page.TotalCount > 0 {
-			footer = fmt.Sprintf("Page %d (%d results)", current, page.TotalCount)
+		// Aggregate pages count the rows actually shown, never the summed
+		// per-source TotalCount: a source that doesn't report totals
+		// contributes 0 to the sum while its rows are real, so the sum
+		// under-reports (a 13-row merged page once rendered "(3 results)" —
+		// user smoke finding, PR #110). len(Results) is the only figure
+		// that is true by construction here; single-source pages below keep
+		// the genuine reported totals.
+		if len(page.Results) > 0 {
+			footer = fmt.Sprintf("Page %d (%d shown)", current, len(page.Results))
 		}
 	case page.TotalCount > 0 && page.PageSize > 0:
 		totalPages := (page.TotalCount + page.PageSize - 1) / page.PageSize
