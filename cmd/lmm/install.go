@@ -356,7 +356,11 @@ func looksOpaqueFileName(fileName string) bool {
 // wires the real version->file resolver.
 func installVersionGuard() error {
 	if installVersion != "" {
-		return fmt.Errorf("--version is not yet supported: version-specific installs need the version→file resolver tracked by #96/#97 (EPIC #98); omit --version to install the latest")
+		// User-facing wording points at the workaround that exists today
+		// (--file picks an exact file, --show-archived surfaces old
+		// versions) rather than internal issue IDs — those live in this
+		// guard's doc comment for maintainers, not in the error.
+		return fmt.Errorf("--version is not yet supported: to install a specific version today, pick its file with --file (add --show-archived to list older versions); omit --version to install the latest")
 	}
 	return nil
 }
