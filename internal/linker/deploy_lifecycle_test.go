@@ -237,3 +237,84 @@ func TestCleanupEmptyDirs_MissingRootDoesNotPanic(t *testing.T) {
 		linker.CleanupEmptyDirs(missing)
 	})
 }
+
+// TestLinker_Deploy_OverwritesExistingForeignFile pins current, deliberate
+// remove-then-place (or truncate-in-place) semantics: Deploy does not check
+// whether something unrelated already sits at dst before replacing it.
+//
+//   - symlink.go: Deploy explicitly os.Remove(dst)s any existing entry, then
+//     os.Symlink(src, dst).
+//   - hardlink.go: Deploy explicitly os.Remove(dst)s any existing entry, then
+//     os.Link(src, dst).
+//   - copy.go: Deploy has no explicit removal step; it opens dst with
+//     os.O_CREATE|os.O_WRONLY|os.O_TRUNC and overwrites its content in place.
+//
+// In all three cases whatever previously occupied dst — including a foreign,
+// unrelated file — is silently discarded. This pairs with the existence-only
+// IsDeployed behavior pinned above: the caller has no way to detect, via this
+// package alone, that dst held something else before Deploy ran.
+func TestLinker_Deploy_OverwritesExistingForeignFile(t *testing.T) {
+	tests := []struct {
+		name      string
+		newLinker func() linker.Linker
+		verify    func(t *testing.T, srcFile, dstFile string)
+	}{
+		{
+			name:      "symlink",
+			newLinker: func() linker.Linker { return linker.NewSymlink() },
+			verify: func(t *testing.T, srcFile, dstFile string) {
+				t.Helper()
+				info, err := os.Lstat(dstFile)
+				require.NoError(t, err)
+				assert.True(t, info.Mode()&os.ModeSymlink != 0, "dst should now be a symlink")
+
+				target, err := os.Readlink(dstFile)
+				require.NoError(t, err)
+				assert.Equal(t, srcFile, target, "symlink should point at source")
+			},
+		},
+		{
+			name:      "hardlink",
+			newLinker: func() linker.Linker { return linker.NewHardlink() },
+			verify: func(t *testing.T, srcFile, dstFile string) {
+				t.Helper()
+				srcInfo, err := os.Stat(srcFile)
+				require.NoError(t, err)
+				dstInfo, err := os.Stat(dstFile)
+				require.NoError(t, err)
+				assert.True(t, os.SameFile(srcInfo, dstInfo), "dst should now share source's inode")
+			},
+		},
+		{
+			name:      "copy",
+			newLinker: func() linker.Linker { return linker.NewCopy() },
+			verify: func(t *testing.T, srcFile, dstFile string) {
+				t.Helper()
+				content, err := os.ReadFile(dstFile)
+				require.NoError(t, err)
+				assert.Equal(t, []byte("source content"), content, "dst should now hold source's content")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			srcFile := filepath.Join(dir, "src.txt")
+			dstFile := filepath.Join(dir, "dst.txt")
+			require.NoError(t, os.WriteFile(srcFile, []byte("source content"), 0644))
+			require.NoError(t, os.WriteFile(dstFile, []byte("foreign content"), 0644))
+
+			l := tt.newLinker()
+			require.NoError(t, l.Deploy(srcFile, dstFile))
+
+			content, err := os.ReadFile(dstFile)
+			require.NoError(t, err)
+			assert.NotEqual(t, []byte("foreign content"), content, "foreign content must be gone after Deploy")
+
+			tt.verify(t, srcFile, dstFile)
+		})
+	}
+}
