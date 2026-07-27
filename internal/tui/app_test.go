@@ -1009,19 +1009,35 @@ func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
 	require.True(t, opened.(Model).search.input.Focused(), "dashboard menu's explicit Search Archives entry must auto-focus")
 }
 
-func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {
+// TestDashboardEnterOnOracleEntryOpensConflicts replaces the old
+// ...StaysPut test, which pinned Enter-on-Oracle as a NO-OP with the
+// comment "no screen exists for it yet". Phase 6b shipped ScreenConflicts
+// (v1.14.0) but neither the menu entry's target nor this test was updated,
+// so the stale pin silently protected a dead menu entry until a user smoke
+// test caught it (PR #113 round). Both dashboardMenu variants (default
+// "Consult Conflict Oracle" and amber's "ASK CONFLICT ORACLE") must
+// navigate.
+func TestDashboardEnterOnOracleEntryOpensConflicts(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
-	require.NoError(t, err)
+	for _, themeName := range []string{"wizardry", "amber"} {
+		t.Run(themeName, func(t *testing.T) {
+			t.Parallel()
 
-	// Move to the last entry (Conflict Oracle) — no screen exists for it yet.
-	// 4 presses: Installed Mods -> Search -> Profiles -> Sources -> Oracle.
-	for range 4 {
-		model = updateWithRunes(t, model, "j")
+			model := sizedPrototypeModel(t, themeName, 100, 30)
+
+			// Move to the last entry (Conflict Oracle). 4 presses:
+			// Installed Mods -> Search -> Profiles -> Sources -> Oracle.
+			for range 4 {
+				model = updateWithRunes(t, model, "j")
+			}
+			opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			require.Equal(t, ScreenConflicts, opened.(Model).CurrentScreen(),
+				"the Oracle menu entry must open the Conflicts screen")
+			require.False(t, opened.(Model).search.input.Focused(),
+				"conflicts is not a search-intent entry — no input focus")
+		})
 	}
-	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	require.Equal(t, ScreenDashboard, opened.(Model).CurrentScreen())
 }
 
 func TestEnterOutsideDashboardIsANoop(t *testing.T) {

@@ -303,7 +303,10 @@ func (m Model) dashboardMenu() []menuItem {
 			{label: "QUERY ARCHIVE INDEX", target: ScreenSearch, hasTarget: true},
 			{label: "LOAD PROFILE ROSTER", target: ScreenProfiles, hasTarget: true},
 			{label: "SCRY SOURCE REGISTRY", target: ScreenSources, hasTarget: true},
-			{label: "ASK CONFLICT ORACLE"},
+			// Targetless until Phase 6b shipped ScreenConflicts; the wiring
+			// lagged behind the screen and Enter silently no-opped (user
+			// smoke find, PR #113).
+			{label: "ASK CONFLICT ORACLE", target: ScreenConflicts, hasTarget: true},
 		}
 	}
 	return []menuItem{
@@ -311,7 +314,7 @@ func (m Model) dashboardMenu() []menuItem {
 		{label: "Search Archives", target: ScreenSearch, hasTarget: true},
 		{label: "Profiles", target: ScreenProfiles, hasTarget: true},
 		{label: "Sources", target: ScreenSources, hasTarget: true},
-		{label: "Consult Conflict Oracle"},
+		{label: "Consult Conflict Oracle", target: ScreenConflicts, hasTarget: true},
 	}
 }
 
