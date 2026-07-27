@@ -49,6 +49,7 @@ func TestModSetUpdateCmd_NoGame(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	modCmdCopy := &cobra.Command{Use: "mod"}
 	modCmdCopy.AddCommand(modSetUpdateCmd)
+	t.Cleanup(func() { modCmd.RemoveCommand(modSetUpdateCmd); modCmd.AddCommand(modSetUpdateCmd) })
 	cmd.AddCommand(modCmdCopy)
 
 	buf := new(bytes.Buffer)
@@ -141,6 +142,7 @@ func TestModEnableCmd_NoGame(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	modCmdCopy := &cobra.Command{Use: "mod"}
 	modCmdCopy.AddCommand(modEnableCmd)
+	t.Cleanup(func() { modCmd.RemoveCommand(modEnableCmd); modCmd.AddCommand(modEnableCmd) })
 	cmd.AddCommand(modCmdCopy)
 
 	buf := new(bytes.Buffer)
@@ -159,6 +161,7 @@ func TestModDisableCmd_NoGame(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	modCmdCopy := &cobra.Command{Use: "mod"}
 	modCmdCopy.AddCommand(modDisableCmd)
+	t.Cleanup(func() { modCmd.RemoveCommand(modDisableCmd); modCmd.AddCommand(modDisableCmd) })
 	cmd.AddCommand(modCmdCopy)
 
 	buf := new(bytes.Buffer)
@@ -177,6 +180,7 @@ func TestModEnableCmd_NoModID(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	modCmdCopy := &cobra.Command{Use: "mod"}
 	modCmdCopy.AddCommand(modEnableCmd)
+	t.Cleanup(func() { modCmd.RemoveCommand(modEnableCmd); modCmd.AddCommand(modEnableCmd) })
 	cmd.AddCommand(modCmdCopy)
 
 	buf := new(bytes.Buffer)
@@ -195,6 +199,7 @@ func TestModDisableCmd_NoModID(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	modCmdCopy := &cobra.Command{Use: "mod"}
 	modCmdCopy.AddCommand(modDisableCmd)
+	t.Cleanup(func() { modCmd.RemoveCommand(modDisableCmd); modCmd.AddCommand(modDisableCmd) })
 	cmd.AddCommand(modCmdCopy)
 
 	buf := new(bytes.Buffer)

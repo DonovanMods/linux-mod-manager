@@ -88,8 +88,15 @@ var profileImportCmd = &cobra.Command{
 	Short: "Import a profile",
 	Long: `Import a profile from a YAML file.
 
+Missing mods are downloaded and installed automatically, after a
+confirmation prompt. Use --no-install to skip that entirely and just
+save the profile, installing nothing. Use --force to overwrite an
+existing profile with the same name instead of failing.
+
 Examples:
-  lmm profile import survival.yaml --game skyrim-se`,
+  lmm profile import survival.yaml --game skyrim-se
+  lmm profile import survival.yaml --game skyrim-se --no-install
+  lmm profile import survival.yaml --game skyrim-se --force`,
 	Args: cobra.ExactArgs(1),
 	RunE: runProfileImport,
 }
@@ -116,10 +123,16 @@ var profileReorderCmd = &cobra.Command{
 
 With no arguments, prints the current load order.
 With mod IDs as arguments, sets the new order (first ID = lowest priority).
-Mods not listed are appended at the end.
+Mods not listed are appended at the end. A mod ID shared by mods from
+different sources is ambiguous; qualify it as "source:modid" instead.
+
+Use -p/--profile to target a profile other than the active one - this
+flag belongs to 'reorder' itself, distinct from the game's active profile
+used by other 'profile' subcommands.
 
 Examples:
   lmm profile reorder --game skyrim-se
+  lmm profile reorder --game skyrim-se --profile survival
   lmm profile reorder 12345 67890 11111 --game skyrim-se`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runProfileReorder,
@@ -131,11 +144,13 @@ var profileApplyCmd = &cobra.Command{
 	Long: `Make the system match the profile by installing/enabling/disabling mods.
 
 Use this after manually editing a profile YAML to apply those changes.
-If no name is given, uses the current/default profile.
+If no name is given, uses the current/default profile. Prompts for
+confirmation before making any changes; pass -y/--yes to skip the prompt.
 
 Examples:
   lmm profile apply --game skyrim-se
-  lmm profile apply survival --game skyrim-se`,
+  lmm profile apply survival --game skyrim-se
+  lmm profile apply survival --game skyrim-se --yes`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runProfileApply,
 }

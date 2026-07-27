@@ -27,6 +27,7 @@ func TestUpdateCmd_NoGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(updateCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(updateCmd); rootCmd.AddCommand(updateCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -69,6 +70,7 @@ func TestUpdateRollbackCmd_NoGame(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	updateCmdCopy := &cobra.Command{Use: "update"}
 	updateCmdCopy.AddCommand(updateRollbackCmd)
+	t.Cleanup(func() { updateCmd.RemoveCommand(updateRollbackCmd); updateCmd.AddCommand(updateRollbackCmd) })
 	cmd.AddCommand(updateCmdCopy)
 
 	buf := new(bytes.Buffer)

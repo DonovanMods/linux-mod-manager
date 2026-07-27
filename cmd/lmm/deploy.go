@@ -29,7 +29,9 @@ Use this when changing deployment methods (symlink, hardlink, copy)
 or if mod files need to be refreshed.
 
 Without a mod ID, deploys all enabled mods in the current profile.
-With a mod ID, deploys only that specific mod.
+With a mod ID, deploys only that specific mod; -s/--source (default:
+nexusmods) then identifies which source that mod ID belongs to. -s is
+ignored when deploying the whole profile.
 
 Use --purge to remove all deployed mods before deploying. This ensures
 a clean slate, useful when mods have gotten out of sync.
@@ -42,6 +44,7 @@ Examples:
   lmm deploy --game skyrim-se --method hardlink
   lmm deploy --game skyrim-se --purge
   lmm deploy 12345 --game skyrim-se
+  lmm deploy 12345 --game skyrim-se --source curseforge
   lmm deploy 12345 --game skyrim-se --method copy`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runDeploy,

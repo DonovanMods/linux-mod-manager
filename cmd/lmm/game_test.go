@@ -38,6 +38,7 @@ func TestGameSetDefault_NoArgs(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	gameCmdCopy := &cobra.Command{Use: "game"}
 	gameCmdCopy.AddCommand(gameSetDefaultCmd)
+	t.Cleanup(func() { gameCmd.RemoveCommand(gameSetDefaultCmd); gameCmd.AddCommand(gameSetDefaultCmd) })
 	cmd.AddCommand(gameCmdCopy)
 
 	buf := new(bytes.Buffer)

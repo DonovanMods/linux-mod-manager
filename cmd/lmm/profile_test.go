@@ -43,6 +43,7 @@ func TestProfileListCmd_NoGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(profileCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(profileCmd); rootCmd.AddCommand(profileCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -59,6 +60,7 @@ func TestProfileCreateCmd_NoGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(profileCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(profileCmd); rootCmd.AddCommand(profileCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -75,6 +77,7 @@ func TestProfileCreateCmd_NoName(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(profileCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(profileCmd); rootCmd.AddCommand(profileCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)

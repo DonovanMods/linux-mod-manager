@@ -37,7 +37,13 @@ A conflict occurs when multiple mods want to deploy the same file path.
 The mod listed as "owner" is the one whose file is currently deployed;
 the "winner" is the mod that would own the file after a fresh deploy,
 per the profile's load order (later mods override earlier ones). When
-the two disagree, the conflict is stale - redeploy to apply load order.
+the two disagree, the "Winner:" line is suffixed "(stale — redeploy to
+apply)" - the deployed file is out of date with the current load order
+until you redeploy.
+
+--json emits {game_id, profile, conflicts: [{path, owner, also_in,
+winner, stale}]}; winner and stale carry the same information as the
+human output's "Winner:" line and its stale suffix.
 
 Note: File tracking requires mods to be installed/deployed with lmm version 0.9.0+.
 Older mods may need to be redeployed to track their files.

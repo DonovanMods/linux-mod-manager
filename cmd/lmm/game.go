@@ -19,7 +19,12 @@ import (
 var gameCmd = &cobra.Command{
 	Use:   "game",
 	Short: "Game management commands",
-	Long:  `Commands for managing game configurations.`,
+	Long: `Commands for managing game configurations: which games are known to
+lmm, their install/mod paths and configured sources (games.yaml), and
+the default game used when --game/-g is omitted.
+
+Use 'lmm game add' to configure a game interactively, or 'lmm game
+detect' to find Steam installs automatically.`,
 }
 
 var gameSetDefaultCmd = &cobra.Command{
@@ -27,7 +32,7 @@ var gameSetDefaultCmd = &cobra.Command{
 	Short: "Set the default game",
 	Long: `Set the default game so you don't have to specify --game for every command.
 
-Example:
+Examples:
   lmm game set-default skyrim-se
   lmm game set-default starrupture`,
 	Args: cobra.ExactArgs(1),
@@ -37,17 +42,27 @@ Example:
 var gameShowDefaultCmd = &cobra.Command{
 	Use:   "show-default",
 	Short: "Show the current default game",
-	Long:  `Display the currently configured default game.`,
-	Args:  cobra.NoArgs,
-	RunE:  runGameShowDefault,
+	Long: `Display the currently configured default game, or a note that none is
+set.
+
+Examples:
+  lmm game show-default`,
+	Args: cobra.NoArgs,
+	RunE: runGameShowDefault,
 }
 
 var gameClearDefaultCmd = &cobra.Command{
 	Use:   "clear-default",
 	Short: "Clear the default game setting",
-	Long:  `Remove the default game setting, requiring --game flag for all commands.`,
-	Args:  cobra.NoArgs,
-	RunE:  runGameClearDefault,
+	Long: `Remove the default game setting.
+
+Every command that needs a game (install, search, list, and so on) then
+requires an explicit --game/-g flag until a new default is set.
+
+Examples:
+  lmm game clear-default`,
+	Args: cobra.NoArgs,
+	RunE: runGameClearDefault,
 }
 
 var gameDetectCmd = &cobra.Command{
@@ -55,7 +70,13 @@ var gameDetectCmd = &cobra.Command{
 	Short: "Detect Steam games and add them to config",
 	Long: `Scan Steam libraries for known moddable games and optionally add them to games.yaml.
 
-Prompts for which games to add (e.g. 1,2 or all or none).`,
+Prompts for which games to add (e.g. 1,2 or all or none). Each added
+game gets a NexusMods source mapping, the symlink link method, and an
+empty default profile; edit games.yaml afterwards for anything more
+specific, including the NexusMods slug if none was detected.
+
+Examples:
+  lmm game detect`,
 	Args: cobra.NoArgs,
 	RunE: runGameDetect,
 }

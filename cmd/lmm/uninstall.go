@@ -25,10 +25,16 @@ var uninstallCmd = &cobra.Command{
 By default, the mod files are removed from the game directory and the cache.
 Use --keep-cache to preserve the cached files for potential reinstallation.
 
+Without -s/--source, every installed mod in the profile is searched for a
+matching ID and the first hit is used; if the same ID is installed from
+more than one source, pass -s/--source to name the one you mean. Use
+--force to continue uninstalling even if an uninstall hook fails.
+
 Examples:
   lmm uninstall 12345 --game skyrim-se
   lmm uninstall 12345 --game skyrim-se --profile survival
-  lmm uninstall 12345 --game skyrim-se --keep-cache`,
+  lmm uninstall 12345 --game skyrim-se --keep-cache
+  lmm uninstall 12345 --game skyrim-se --source curseforge`,
 	Args: cobra.ExactArgs(1),
 	RunE: runUninstall,
 }

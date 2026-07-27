@@ -17,7 +17,12 @@ import (
 var sourceCmd = &cobra.Command{
 	Use:   "source",
 	Short: "Manage mod sources",
-	Long:  "List registered mod sources and validate user-defined source definitions.",
+	Long: `List registered mod sources and validate user-defined source definitions.
+
+Custom sources (directory scans, static manifests, or REST APIs) are
+defined as YAML files in the sources/ directory under the config dir
+(~/.config/lmm/sources/*.yaml by default) - see the Custom Sources
+section of the project README for the file format.`,
 }
 
 // sourceInfo is one row of `lmm source list` output.
@@ -33,7 +38,11 @@ type sourceInfo struct {
 var sourceListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all mod sources",
-	Long:  "List built-in and user-defined mod sources, including definitions that failed to load.",
+	Long: `List built-in and user-defined mod sources, including definitions that failed to load.
+
+Examples:
+  lmm source list
+  lmm source list --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// registerCustomSources' init-time stderr warnings would double up on
 		// the error rows rendered below (#52 item 14): the same broken
@@ -128,8 +137,17 @@ var (
 var sourceValidateCmd = &cobra.Command{
 	Use:   "validate <file>",
 	Short: "Validate a source definition file",
-	Long:  "Parse and validate a user-defined source definition YAML file, reporting any problems. With --probe, also perform a live smoke test (directory scan, manifest fetch+parse, or an API call).",
-	Args:  cobra.ExactArgs(1),
+	Long: `Parse and validate a user-defined source definition YAML file, reporting any problems.
+
+With --probe, also perform a live smoke test: a directory scan, a
+manifest fetch+parse, or an API call. For an api-type definition with no
+search endpoint, --id supplies a known mod ID to probe get_mod with.
+
+Examples:
+  lmm source validate ~/.config/lmm/sources/my-source.yaml
+  lmm source validate ~/.config/lmm/sources/my-source.yaml --probe
+  lmm source validate ~/.config/lmm/sources/my-source.yaml --probe --id 12345`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		def, err := config.LoadSourceDefinitionFile(args[0])
 		if err != nil {

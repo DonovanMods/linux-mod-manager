@@ -30,9 +30,13 @@ Useful for:
 - Re-linking a local mod to its CurseForge or NexusMods ID
 - Adding missing metadata
 
-When --source and --source-id are provided together, the mod is re-linked
-to the specified source. If the source is available, metadata is fetched
-automatically.
+Providing --source and/or --source-id re-links the mod: whichever of the
+two you omit keeps its current value. If the resulting source is
+configured for this game and isn't "local", metadata (name, author,
+version, summary, URL) is fetched from it automatically and applied to
+any field you didn't explicitly override with --name/--author/--version.
+Re-linking moves the mod to its new source:id in the database and
+profile - it is not merely a display change.
 
 Examples:
   lmm mod edit abc123 --name "Better Mod Name" --version 1.2.3

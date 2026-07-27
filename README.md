@@ -10,7 +10,7 @@ A terminal-based mod manager for Linux that provides a CLI interface for searchi
 - **Rollback Support**: Revert to previous mod versions when updates cause issues
 - **Flexible Deployment**: Symlink, hardlink, or copy mods to game directories
 - **Dependency Resolution**: Automatically fetches and installs mod dependencies
-- **Paginated Search**: Browse results page-by-page with clean cancel support
+- **Infinite-Scroll Search**: Browse a continuously loading result list with clean cancel support
 - **Pure Go**: No CGO required, easy cross-compilation
 
 ## Installation
@@ -160,8 +160,10 @@ open/select (on Profiles, switch to the selected profile; selecting "Search
 Archives" from the Dashboard menu also focuses search — explicit search
 intent focuses, passive cycling doesn't), `/` focus search from anywhere,
 type query, `enter` to search, `esc` unfocus (clears focus; afterward `s`
-cycles sources, number keys switch screens), `n`/`p` next/previous page,
-`e`/`x`/`D` enable-disable/uninstall/deploy (see below), `i` install the
+cycles sources, number keys switch screens), `n`/`p` skip a paneful of
+results ahead/back (search results load continuously — there are no
+pages to turn; `n`/`p` just move the selection by a screenful, refilling
+the buffer as needed), `e`/`x`/`D` enable-disable/uninstall/deploy (see below), `i` install the
 selected search result (Search, input blurred — see below), `u` check for
 updates (Dashboard or Installed Mods — see below), `g` switch games (any
 screen — see below), `?` help, `q` quit.
@@ -328,7 +330,7 @@ Mods can be deployed using three methods:
 | `hardlink` | Hard links (transparent to games, requires same filesystem)    |
 | `copy`     | Full file copies (maximum compatibility, uses more disk space) |
 
-**Priority**: Per-game `link_method` in `games.yaml` takes precedence over `default_link_method` in `config.yaml`. If neither is set, defaults to `symlink`.
+**Priority**: Per-game `link_method` in `games.yaml` takes precedence over `default_link_method` in `config.yaml`. If neither is set, defaults to `symlink`. A profile-level `link_method` is parsed and round-tripped through export/import but currently has no effect at deploy time ([#81](https://github.com/DonovanMods/linux-mod-manager/issues/81)) — see [Configuration reference](docs/configuration.md) for details.
 
 ### Cache Path Priority
 
@@ -726,7 +728,7 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `--verbose`  | `-v`  | Enable verbose output                                                                                      |
 | `--config`   |       | Custom config directory                                                                                    |
 | `--data`     |       | Custom data directory                                                                                      |
-| `--json`     |       | Output in JSON (list, status, search, update, conflicts, verify, mod show); errors print `{"error":"..."}` |
+| `--json`     |       | Output in JSON (list, status, search, update, conflicts, verify, mod show, source list); errors print `{"error":"..."}` |
 | `--no-hooks` |       | Disable all hooks at runtime                                                                               |
 | `--no-color` |       | Disable colored output (respects NO_COLOR env)                                                             |
 
@@ -736,11 +738,18 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | -------------------------------------- | ---------------------------------------------------- |
 | `lmm search <query>`                   | Search all configured sources concurrently           |
 | `lmm search <query> --source ID`       | Search a single source instead of all configured ones |
-| `lmm search <query> --category ID`     | Filter by NexusMods category                         |
-| `lmm search <query> --tag TAG`         | Filter by tag (repeat for multiple)                  |
-| `lmm install <query>`                  | Search and install a mod                             |
+| `lmm search <query> --category ID`     | Filter by category (NexusMods and CurseForge)        |
+| `lmm search <query> --tag TAG`         | Filter by tag (NexusMods only; repeat for multiple)  |
+| `lmm install [query]`                  | Search and install a mod (query optional with `--id`) |
 | `lmm install --id <mod-id>`            | Install by mod ID                                    |
+| `lmm install --id <mod-id> --file <file-id>` | Install a specific file, skipping file selection |
+| `lmm install --show-archived`          | Include archived/old files when selecting a file      |
+| `lmm install --no-deps`                | Skip automatic dependency installation                 |
+| `lmm install --source ID` / `-s`       | Use a specific source (default: sole configured source; prompts when several are configured, `-y` picks the first alphabetically) |
 | `lmm uninstall <mod-id>`               | Uninstall a mod                                      |
+| `lmm uninstall <mod-id> --keep-cache`  | Uninstall but keep the cached mod files                |
+| `lmm import`                           | Scan `mod_path` for untracked mods and import them (see [Import](#import) below) |
+| `lmm import <archive-path>`            | Import one local mod archive                           |
 | `lmm list`                             | List installed mods                                  |
 | `lmm list --profiles`                  | List profiles for the game                           |
 | `lmm status`                           | Show current status                                  |
@@ -750,7 +759,7 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm update --dry-run`                 | Preview what would update                            |
 | `lmm update rollback <mod-id>`         | Rollback to previous version                         |
 | `lmm verify`                           | Verify cached mod files (see below)                  |
-| `lmm verify --fix`                     | Re-download missing or corrupted files               |
+| `lmm verify --fix`                     | Re-download missing files, populate missing checksums |
 | `lmm mod enable <mod-id>`              | Enable a disabled mod                                |
 | `lmm mod disable <mod-id>`             | Disable mod (keep in cache)                          |
 | `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                          |
@@ -758,11 +767,14 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm mod set-update <mod-id> --pin`    | Pin mod to current version                           |
 | `lmm mod show <mod-id>`                | Show mod details (description, image, etc.)          |
 | `lmm mod files <mod-id>`               | List files deployed by mod                           |
+| `lmm mod edit <current-id>`            | Edit mod details (name, version, author, source, ID)  |
 | `lmm game set-default <game-id>`       | Set the default game                                 |
 | `lmm game show-default`                | Show current default game                            |
 | `lmm game clear-default`               | Clear the default game setting                       |
-| `lmm auth login [source]`              | Authenticate with a source (nexusmods or curseforge) |
-| `lmm auth logout`                      | Remove stored credentials                            |
+| `lmm game add`                         | Interactively add a new game configuration             |
+| `lmm game detect`                      | Scan Steam libraries for known moddable games          |
+| `lmm auth login [source]`              | Authenticate with a source (any source declaring auth; nexusmods/curseforge validated live) |
+| `lmm auth logout [source]`             | Remove stored credentials                            |
 | `lmm auth status`                      | Show authentication status                           |
 | `lmm profile list`                     | List profiles                                        |
 | `lmm profile create <name>`            | Create a profile                                     |
@@ -784,6 +796,32 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm source validate <file>`           | Validate a user-defined source definition           |
 | `lmm source validate --probe <file>`   | Also live-smoke-test the definition (scan/fetch/API call) |
 | `lmm source validate --probe --id <mod-id> <file>` | Probe an `api` definition that has no `search` endpoint |
+
+`lmm install --version <version>` is not yet supported and returns a clear error naming the alternative; to install a specific version today, pick its file with `--file` (add `--show-archived` to list older files) instead of `--version` — omitting `--version` installs the latest.
+
+### Exit Codes
+
+| Code | Meaning                                                    |
+| ---- | ----------------------------------------------------------- |
+| `0`  | Success                                                      |
+| `1`  | Error                                                        |
+| `2`  | Cancelled by the user (e.g. declined a confirmation prompt)  |
+
+### Import
+
+`lmm import` has two distinct modes, chosen by whether an archive path is given:
+
+- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one against CurseForge by name (skip with `--skip-match`), and imports whatever is left after confirmation. Useful for mods that were installed manually — e.g. CurseForge mods whose author has disabled API downloads. `--dry-run` and `--skip-match` only apply to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
+- **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to CurseForge if configured) to fetch and attach source metadata as part of the import.
+
+Either way, a mod that ends up unmatched to any remote source is imported as local — it deploys and installs normally, but `lmm update` has nothing to check it against and will never notify about it.
+
+```bash
+lmm import --game hytale                    # Scan mod_path for untracked mods
+lmm import --game hytale --dry-run          # Preview what would be imported
+lmm import ./my-mod.zip --game skyrim-se    # Import a specific archive
+lmm import ./mod.zip --game skyrim-se --id 12345 --source curseforge
+```
 
 ### Search
 
@@ -839,6 +877,8 @@ When you run `lmm update`, the tool checks each installed mod against the source
 - **+ ModName (fileID) - OK** - Cache exists and checksum stored.
 - **X ModName (fileID) - MISSING (version X not in cache)** - Cached files for that mod version are missing; use `--fix` to re-download.
 - **? ModName (fileID) - NO CHECKSUM** - File was installed without a stored checksum (e.g. before checksum support or with `--skip-verify`).
+- **! ModName - FILE COUNT MISMATCH** - The cache directory exists but is empty, when downloads were expected (per-mod, not per-file); not repaired by `--fix`.
+- **? Unknown mod ID - SKIPPED** - A stored checksum row references a mod that's no longer installed; not repaired by `--fix`.
 
 ## Architecture
 
@@ -848,35 +888,43 @@ internal/
 ├── domain/               # Core types (Mod, Profile, Game)
 ├── source/               # Mod source abstraction
 │   ├── nexusmods/        # NexusMods API client
-│   └── curseforge/       # CurseForge API client
+│   ├── curseforge/       # CurseForge API client
+│   ├── custom/           # User-defined sources (directory, manifest, api)
+│   ├── steam/            # Steam library scanning (for 'lmm game detect')
+│   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirects)
 ├── storage/
 │   ├── db/               # SQLite storage
 │   ├── config/           # YAML configuration
 │   └── cache/            # Mod file cache
 ├── linker/               # Deployment strategies
-└── core/                 # Business logic
-    ├── service.go        # Main orchestrator
-    ├── installer.go      # Install/uninstall
-    ├── updater.go        # Update checking
-    ├── downloader.go     # HTTP downloads
-    └── extractor.go      # Archive extraction
+├── core/                 # Business logic
+│   ├── service.go        # Main orchestrator
+│   ├── installer.go      # Install/uninstall
+│   ├── updater.go        # Update checking
+│   ├── downloader.go     # HTTP downloads
+│   └── extractor.go      # Archive extraction
+└── tui/                  # Bubble Tea application
+    ├── prototype/        # --prototype demo mode (static fake data)
+    └── theme/            # Color themes (wizardry, amber, dos, green)
 ```
 
 ## File Locations
 
-| Type           | Path                                   |
-| -------------- | --------------------------------------- |
-| Config         | `~/.config/lmm/`                       |
-| Custom Sources | `~/.config/lmm/sources/*.yaml`         |
-| Database       | `~/.local/share/lmm/lmm.db`            |
-| Mod Cache      | `~/.local/share/lmm/cache/` (default)  |
+| Type             | Path                                   |
+| ---------------- | --------------------------------------- |
+| Config           | `~/.config/lmm/`                       |
+| Custom Sources   | `~/.config/lmm/sources/*.yaml`         |
+| Database         | `~/.local/share/lmm/lmm.db`            |
+| Mod Cache        | `~/.local/share/lmm/cache/` (default)  |
+| Download Staging | `~/.local/share/lmm/downloads/` (in-flight downloads and archive extraction) |
 
-The mod cache location can be customized via `cache_path` in `config.yaml`.
+The mod cache location can be customized via `cache_path` in `config.yaml`. Setting a per-game `cache_path` in `games.yaml` changes that game's on-disk layout too: the global cache is `cache/<game-id>/<source-id>-<mod-id>/<version>/`, but a game-scoped `cache_path` drops the `<game-id>` segment since the configured directory is already specific to that game (`<cache_path>/<source-id>-<mod-id>/<version>/`).
 
 ## Documentation
 
 - **[Configuration reference](docs/configuration.md)** – All options for `config.yaml` and `games.yaml` (including hooks, link method, sources).
-- **Man pages** – In `docs/man/man1/`: `lmm(1)`, `lmm-install(1)`, `lmm-list(1)`, `lmm-search(1)`, `lmm-status(1)`, `lmm-verify(1)`, `lmm-game(1)`, `lmm-profile(1)`, `lmm-update(1)`, `lmm-mod(1)`, `lmm-conflicts(1)`, `lmm-deploy(1)`, `lmm-purge(1)`. View with `man -l docs/man/man1/lmm.1` or install to your man path.
+- **Man pages** – In [`docs/man/man1/`](docs/man/man1/), one page per command and subcommand, generated from the CLI's own `--help` text (`make man`; a drift test fails CI if the pages fall out of sync). View with `man -l docs/man/man1/lmm.1` or install to your man path.
+- **[CHANGELOG.md](CHANGELOG.md)** – Release history and notable changes.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** – How to build, test, and submit changes.
 
 ## Roadmap
@@ -887,10 +935,10 @@ The mod cache location can be customized via `cache_path` in `config.yaml`.
 - [x] Mod dependency detection from NexusMods
 - [x] Conflict detection (file conflicts, circular dependency warnings)
 - [x] Mod file verification (checksums, --fix re-download)
-- [ ] Automatic dependency installation
+- [x] Automatic dependency installation (opt out with `--no-deps`)
 - [x] Interactive TUI (Bubble Tea) - see the Terminal UI section above
 - [x] CurseForge integration
-- [ ] Additional mod sources (ESOUI)
+- [ ] Additional first-party built-in sources beyond NexusMods/CurseForge
 - [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
 - [ ] Backup and restore
 

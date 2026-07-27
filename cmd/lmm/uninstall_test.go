@@ -39,6 +39,7 @@ func TestUninstallCmd_NoGame(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(uninstallCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(uninstallCmd); rootCmd.AddCommand(uninstallCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -56,6 +57,7 @@ func TestUninstallCmd_NoModID(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(uninstallCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(uninstallCmd); rootCmd.AddCommand(uninstallCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -89,6 +91,7 @@ func TestUninstallCmd_GameNotFound(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(uninstallCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(uninstallCmd); rootCmd.AddCommand(uninstallCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)

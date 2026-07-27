@@ -15,7 +15,7 @@ Thank you for your interest in contributing to lmm (Linux Mod Manager).
 
 1. **Issues**: Development work is tracked via GitHub Issues. Check open issues before starting.
 2. **Tests**: Prefer test-first development. Use table-driven tests and in-memory SQLite / temp dirs where appropriate.
-3. **Architecture**: See [CLAUDE.md](CLAUDE.md) and [docs/PRD.md](docs/PRD.md) for architecture and domain overview.
+3. **Architecture**: See [CLAUDE.md](CLAUDE.md) and [README.md](README.md) for architecture and domain overview. (The original PRD is archived at [docs/plans/archive/2026-01-22-PRD.md](docs/plans/archive/2026-01-22-PRD.md) for historical reference.)
 
 ## Submitting changes
 
@@ -34,3 +34,4 @@ Thank you for your interest in contributing to lmm (Linux Mod Manager).
 
 - Update [CHANGELOG.md](CHANGELOG.md) for user-facing changes under `[Unreleased]`.
 - Update this file or [README.md](README.md) if you change build, test, or contribution steps.
+- Man pages in `docs/man/man1/` are generated from the CLI's own `--help` text, not hand-written. If you change any command's `Short`/`Long` text or flags, run `make man` to regenerate them and include the result in your commit — a drift test (`TestGenManTree_MatchesCommittedPages` in `cmd/lmm/genman_test.go`) fails CI otherwise.

@@ -139,6 +139,7 @@ func TestAuthLoginCmd_UnsupportedSource(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -160,6 +161,7 @@ func TestAuthLoginCmd_UnsupportedSourceMentionsCustomSources(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -183,6 +185,7 @@ func TestAuthLogoutCmd_NoStoredCredentials(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -202,6 +205,7 @@ func TestAuthLogoutCmd_NotAuthenticated(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -230,6 +234,7 @@ func TestAuthStatusCmd_NotAuthenticated(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -260,6 +265,7 @@ func TestAuthStatusCmd_WithEnvVar(t *testing.T) {
 
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -295,6 +301,7 @@ func TestAuthStatusCmd_WithStoredToken(t *testing.T) {
 	// Now run status
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
@@ -326,6 +333,7 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 	// Now run logout
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
 
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)

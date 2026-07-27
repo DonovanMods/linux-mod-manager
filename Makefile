@@ -1,4 +1,4 @@
-.PHONY: all build run install test test-verbose coverage fmt vet lint clean help
+.PHONY: all build run install test test-verbose coverage fmt vet lint clean help man
 
 # Build variables
 BINARY_NAME := lmm
@@ -71,6 +71,10 @@ update:
 	@go get -u ./...
 	@go mod tidy
 	@trunk upgrade
+
+## man: Regenerate man pages from the command tree
+man:
+	@GOCACHE=$(GOCACHE_LOCAL) go run $(MAIN_PATH) gen-man docs/man/man1
 
 ## clean: Remove build artifacts
 clean:
