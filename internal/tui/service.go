@@ -148,10 +148,10 @@ type SearchPage struct {
 	// only meaningful for all-sources searches (Source == ""), where
 	// TotalCount is summed across sources with independent pagination
 	// cursors and therefore cannot bound a single global PageSize the way a
-	// single source's TotalCount does - see hasNextPage's doc comment for
-	// how this replaces that unsafe math. Always false (its zero value) for
-	// single-source searches, which keep using the pre-existing
-	// TotalCount/PageSize math instead.
+	// single source's TotalCount does - see roundExhausted's doc comment
+	// (search.go) for how this replaces that unsafe math. Always false (its
+	// zero value) for single-source searches, which keep using the
+	// pre-existing TotalCount/PageSize math instead.
 	Exhausted bool
 	// AttemptedCount mirrors core.AggregateSearchResult.AttemptedCount (#58
 	// item 3): only meaningful for all-sources searches (Source == "").
@@ -437,9 +437,11 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, page
 		//   - Exhausted is true exactly when this page reached the end of
 		//     the canned set (end == len(matched)) - #111 Tier 1 made this
 		//     a real computation instead of an unconditional true, now that
-		//     the canned set can genuinely span more than one page when
-		//     pageSize is small; hasNextPage's aggregate branch (`!Exhausted`)
-		//     depends on this being honest, not just true-by-convention.
+		//     the canned set can genuinely span more than one round when
+		//     pageSize is small; roundExhausted's aggregate branch (search.go,
+		//     `!Exhausted`) - and, downstream of it, searchFooterLine's "all N
+		//     shown" wording (app.go) - depend on this being honest, not just
+		//     true-by-convention.
 		//   - AttemptedCount is the canned SEARCHABLE source count, derived
 		//     from SourceInfos() (not hardcoded) - all three of its entries
 		//     advertise "search" in their Capabilities string, matching

@@ -899,19 +899,36 @@ func installDetailLines(view InstallPlanView) []string {
 // refreshing only the most-recently-fetched round would leave every
 // EARLIER round's installed-markers stale the moment the user has scrolled
 // past round 0. This refetches EVERY round the session has already fetched
-// (0..fetchRound-1), sequentially, inside ONE tea.Cmd, and rebuilds the
-// buffer wholesale from the merged result via beginNewSession +
-// searchResultRefresh (search.go/app.go) - which clamps the selection to
-// the rebuilt buffer's new length rather than resetting it to the top, and
-// restores fetchRound (carried on the message as rounds, since
-// beginNewSession itself resets it to 0) so a SUBSEQUENT scroll-triggered
-// refill correctly requests the round AFTER what this refresh already
-// covered, not round 0 again. Ordering within the rebuilt buffer may shift
-// slightly if the underlying catalog changed between the original fetch and
-// now (a source's own internal ordering is not guaranteed stable across
-// independent calls) - accepted, since staying wrong (a stale "available"
-// marker on a mod the user just installed) is worse than a harmless
-// reorder.
+// (0..fetchRound-1), sequentially, inside ONE tea.Cmd, accumulating into a
+// LOCAL scratch buffer that never touches m.search at all until the whole
+// rebuild has fully succeeded - see beginRefresh's doc comment (search.go)
+// for why this is a non-destructive sibling of startSearch's
+// beginNewSession, not beginNewSession itself.
+//
+// #111 Tier 3 fix round 4 (task review finding): the EARLIER version of
+// this function called beginNewSession up front, which reset the buffer to
+// nil and flipped state to searchLoading BEFORE the rebuild Cmd even ran -
+// so a transient mid-loop error (a single flaky round out of N) discarded
+// an arbitrarily deep scrolled buffer, contradicting refillSearch's own
+// established non-destructive principle (see its searchFailedMsg handling
+// in app.go). A failed round now returns searchFailedMsg{kind:
+// searchResultRefresh}, which Update (app.go) handles by leaving
+// state/buffer/everything else EXACTLY as they were and surfacing only a
+// muted status notice - there is nothing to roll back, because nothing was
+// ever mutated on the failure path.
+//
+// On SUCCESS, the merged result reaches Update via searchResultMsg{kind:
+// searchResultRefresh}, which clamps the selection to the rebuilt buffer's
+// new length rather than resetting it to the top, and restores fetchRound
+// (carried on the message as rounds, since a plain generation bump doesn't
+// touch it - unlike beginNewSession, beginRefresh never resets fetchRound
+// either) so a SUBSEQUENT scroll-triggered refill correctly requests the
+// round AFTER what this refresh already covered, not round 0 again.
+// Ordering within the rebuilt buffer may shift slightly if the underlying
+// catalog changed between the original fetch and now (a source's own
+// internal ordering is not guaranteed stable across independent calls) -
+// accepted, since staying wrong (a stale "available" marker on a mod the
+// user just installed) is worse than a harmless reorder.
 //
 // A no-op (nil cmd, m unchanged) when there's no completed search to
 // refresh (searchIdle/searchLoading/searchFailed/searchAuthRequired) -
@@ -929,7 +946,7 @@ func (m Model) refreshSearchAfterInstall() (Model, tea.Cmd) {
 	source := m.search.page.Source
 	rounds := m.search.fetchRound
 
-	m, ctx, gen := m.beginNewSession()
+	m, ctx, gen := m.beginRefresh()
 	provider := m.provider
 	fetchSize := m.search.fetchSize
 

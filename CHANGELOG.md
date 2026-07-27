@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The TUI sizes search fetches to the window.** Each search asks every source for enough rows to fill the visible results pane by itself (minimum 10 — never fewer than before — capped at 50 per source, a limit verified against the live NexusMods API), instead of always 10. The size is fixed when the search is submitted, so paging with n/p stays arithmetically consistent; a terminal resize applies from the next search.
+- **TUI search results are now a single infinite-scrolling list — no pages.** Each search asks every source for enough rows to fill the visible results pane by itself (minimum 10 — never fewer than before — capped at 50 per source, a limit verified against the live NexusMods API); scrolling near the end quietly fetches more from every source, and keeps doing so until each is exhausted. The footer reports load status instead of a page number — "X of Y loaded" for a single source with a known total, otherwise "X loaded · more available" while more can still be fetched or "all X shown" once everything has been. `n`/`p` jump a paneful at a time instead of turning a page. The per-search fetch size is fixed at submit time; a terminal resize applies from the next search.
 
 ## [1.18.3] - 2026-07-27
 

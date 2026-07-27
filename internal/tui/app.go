@@ -690,14 +690,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.search.gen {
 			return m, nil
 		}
-		if msg.kind == searchResultRefill {
-			// A refill failure must not destroy an already-useful buffer
-			// (#111 Tier 3): silently stop trying further rounds instead of
-			// routing to searchFailed/searchAuthRequired, which would wipe
-			// the visible results over what might be a transient hiccup on
-			// data the user hasn't even scrolled to yet.
+		switch msg.kind {
+		case searchResultRefill:
+			// A refill failure must not destroy an already-useful buffer,
+			// NOR permanently give up (#111 Tier 3 fix round 4 - task
+			// review finding: this used to set providerExhausted
+			// unconditionally, making the footer falsely claim "all N
+			// shown" with no way to retry). providerExhausted means the
+			// PROVIDER said there's nothing left - a failed ATTEMPT is not
+			// that. fetchRound is untouched here (only ever advanced on a
+			// SUCCESSFUL searchResultRefill, see the case above), so the
+			// next low-water-triggering movement
+			// (afterSearchSelectionMove -> maybeRefillSearch) naturally
+			// retries the SAME round. That retry can only ever be fired by
+			// a real keypress - maybeRefillSearch is never called from a
+			// timer or loop, only from Up/Down/NextPage's handlers - so
+			// this can't spin into a tight automatic retry loop; a user
+			// holding Down will keep retrying on every press, which is the
+			// intended "just keep scrolling and it'll pick back up"
+			// behavior, not a bug.
 			m.search.refilling = false
-			m.search.providerExhausted = true
+			m.setIdleStatus("couldn't load more — will retry", false)
+			return m, nil
+		case searchResultRefresh:
+			// A refresh failure must leave the PRE-refresh buffer and
+			// searchReady state exactly as they were (#111 Tier 3 fix
+			// round 4): refreshSearchAfterInstall's beginRefresh
+			// (search.go) never touches either up front - see its own doc
+			// comment - so there is nothing to roll back here; just
+			// surface a muted notice.
+			m.setIdleStatus("couldn't refresh results", false)
 			return m, nil
 		}
 		// The sentinel source ("" == all sources) has no single source name to

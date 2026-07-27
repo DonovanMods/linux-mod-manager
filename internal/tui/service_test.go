@@ -143,9 +143,12 @@ func TestPrototypeProviderSearchAllSourcesRendersWarning(t *testing.T) {
 // single, non-paginated fetch (there is no real "page 2" to demo), so it
 // must report itself Exhausted like a genuinely-exhausted real aggregate
 // would - otherwise --prototype's search screen shows a permanently dead
-// "n next" hint (pre-#58, the old TotalCount/PageSize math happened to
-// correctly end the canned set; #58's aggregate-aware hasNextPage broke
-// that by trusting Exhausted instead, which prototypeProvider never set).
+// "more available" footer hint that scrolling into never actually refills
+// (pre-#58, the old TotalCount/PageSize math happened to correctly end the
+// canned set; #58's aggregate-aware hasNextPage - since superseded by
+// roundExhausted/searchFooterLine's providerExhausted-driven wording, #111
+// Tier 3 - broke that by trusting Exhausted instead, which
+// prototypeProvider never set).
 // AttemptedCount must likewise reflect the canned SEARCHABLE source count
 // (len(SourceInfos()), all three of which advertise "search" - see
 // SourceInfos' doc comment) rather than 0, or every zero-match demo search

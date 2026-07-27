@@ -1175,3 +1175,120 @@ func TestStaleGenRefillResultDropped(t *testing.T) {
 	m := updated.(Model)
 	require.Equal(t, []ModItem{{ID: "keep"}}, m.search.buffer, "a stale-gen refill must not touch the current session's buffer")
 }
+
+// --- #111 Tier 3 fix round 4: non-destructive refresh/refill failures ---
+
+// roundErrorProvider succeeds through round errorOnRound-1 and fails
+// starting at errorOnRound - lets a test put a REAL provider error partway
+// through a multi-round refill/refresh sequence. calls records every
+// requested round (the page argument), in order. A single canned source of
+// `total` deterministic rows, sliced by page/pageSize like the real
+// providers do.
+type roundErrorProvider struct {
+	stubProvider
+	total        int
+	errorOnRound int
+	calls        []int
+}
+
+func (p *roundErrorProvider) Sources() []string { return []string{"stub"} }
+
+func (p *roundErrorProvider) Search(_ context.Context, source, query string, page, pageSize int) (SearchPage, error) {
+	p.calls = append(p.calls, page)
+	if page >= p.errorOnRound {
+		return SearchPage{}, errors.New("connection reset")
+	}
+	start := min(page*pageSize, p.total)
+	end := min(start+pageSize, p.total)
+	items := make([]ModItem, 0, end-start)
+	for i := start; i < end; i++ {
+		items = append(items, ModItem{ID: fmt.Sprintf("m%d", i), Name: fmt.Sprintf("Mod %d", i)})
+	}
+	return SearchPage{
+		Results: items, Query: query, Source: source, Page: page, PageSize: pageSize,
+		TotalCount: p.total, Exhausted: (page+1)*pageSize >= p.total,
+	}, nil
+}
+
+// TestRefreshFailureMidRebuildPreservesBuffer guards the task-reviewer
+// finding: refreshSearchAfterInstall used to reset the buffer (via
+// beginNewSession) BEFORE its rebuild Cmd even ran, so a mid-loop error
+// discarded an arbitrarily deep scrolled buffer over what might be a
+// transient hiccup - contradicting the refill path's own established
+// non-destructive principle. A failed refresh must leave the PRE-refresh
+// buffer and searchReady state exactly as they were, surfacing only a
+// muted status notice.
+func TestRefreshFailureMidRebuildPreservesBuffer(t *testing.T) {
+	t.Parallel()
+
+	provider := &roundErrorProvider{total: 100, errorOnRound: 999} // no errors yet
+	model := aggregateRoundScreenModel(t, provider)
+	model = submitSearch(t, model, "x") // round 0: buffer = 10
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	updated, cmd := model.Update(keyRunes("n")) // triggers a refill: round 1
+	require.NotNil(t, cmd)
+	model = updated.(Model)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+	require.Len(t, model.search.buffer, 20)
+	require.Equal(t, 2, model.search.fetchRound)
+	preBuffer := append([]ModItem(nil), model.search.buffer...)
+
+	// A post-install refresh must refetch rounds 0 and 1 - fail it on round
+	// 1, the SECOND of the two.
+	provider.errorOnRound = 1
+	provider.calls = nil
+	model, cmd = model.refreshSearchAfterInstall()
+	require.NotNil(t, cmd)
+	updated, _ = model.Update(cmd())
+	model = updated.(Model)
+
+	require.Equal(t, []int{0, 1}, provider.calls, "round 0 succeeded, round 1 failed mid-rebuild")
+	require.Equal(t, searchReady, model.search.state, "a refresh failure must not blank the screen")
+	require.Equal(t, preBuffer, model.search.buffer, "the PRE-refresh buffer must survive a mid-rebuild error")
+	require.NotEmpty(t, model.action.status, "a muted notice must surface")
+	require.False(t, model.action.statusIsError, "the notice is muted, not a hard error")
+}
+
+// TestRefillFailureDoesNotPermanentlyExhaustAndRetries guards the task-
+// reviewer finding: a refill ERROR used to unconditionally set
+// providerExhausted, permanently claiming "all N shown" with no way to
+// retry even though the provider never actually said there was nothing
+// left - it was just one failed attempt. A refill failure must clear
+// refilling and surface a transient muted notice WITHOUT setting
+// providerExhausted, so the next low-water-triggering movement naturally
+// retries the SAME round (fetchRound is never advanced on failure).
+func TestRefillFailureDoesNotPermanentlyExhaustAndRetries(t *testing.T) {
+	t.Parallel()
+
+	provider := &roundErrorProvider{total: 100, errorOnRound: 1} // round 0 ok, round 1 (the refill) fails
+	model := aggregateRoundScreenModel(t, provider)
+	model = submitSearch(t, model, "x")
+	require.Len(t, provider.calls, 1)
+
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	updated, cmd := model.Update(keyRunes("n")) // triggers the failing refill (round 1)
+	require.NotNil(t, cmd)
+	model = updated.(Model)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+
+	require.Len(t, provider.calls, 2, "the failed attempt")
+	require.False(t, model.search.providerExhausted, "a failed ATTEMPT is not the provider saying there's nothing left")
+	require.False(t, model.search.refilling)
+	require.Contains(t, model.searchFooterLine(), "more available", "footer must not falsely claim everything is loaded")
+	require.NotEmpty(t, model.action.status)
+	require.False(t, model.action.statusIsError, "the notice is muted, not a hard error")
+
+	// A FURTHER movement must retry the SAME round - prove it actually
+	// succeeds once the transient error clears.
+	provider.errorOnRound = 999
+	updated, cmd = model.Update(keyRunes("n"))
+	require.NotNil(t, cmd, "a further movement must retry the refill")
+	model = updated.(Model)
+	result, _ = model.Update(cmd())
+	model = result.(Model)
+
+	require.Equal(t, []int{0, 1, 1}, provider.calls, "the retry re-requested round 1, not round 2")
+	require.Len(t, model.search.buffer, 20, "the retry's rows were appended")
+}

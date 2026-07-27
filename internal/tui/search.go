@@ -324,11 +324,15 @@ func (s *searchModel) applyRoundResult(round SearchPage, replace bool, exhausted
 
 // beginNewSession cancels any in-flight search, bumps the generation, and
 // resets every per-session accumulator (#111 Tier 3's buffer/fetchRound/
-// providerExhausted/warnings/refilling) to start fresh - shared by
-// startSearch (a genuine new query) and refreshSearchAfterInstall (which
-// keeps the query/source but must still invalidate whatever's in flight and
-// rebuild from scratch, mutations.go). Returns the derived ctx and
-// generation the caller's dispatch closure needs.
+// providerExhausted/warnings/refilling) to start fresh - exclusively
+// startSearch's (a genuine new query, with nothing on screen worth
+// preserving - it flips state to searchLoading, which blanks the results
+// pane until round 0 lands). Returns the derived ctx and generation the
+// caller's dispatch closure needs.
+//
+// refreshSearchAfterInstall (mutations.go) does NOT use this - see
+// beginRefresh below for why a refresh needs a non-destructive sibling
+// instead (#111 Tier 3 fix round 4).
 func (m Model) beginNewSession() (Model, context.Context, int) {
 	if m.search.cancel != nil {
 		m.search.cancel()
@@ -342,6 +346,28 @@ func (m Model) beginNewSession() (Model, context.Context, int) {
 	m.search.providerExhausted = false
 	m.search.refilling = false
 	m.search.warnings = nil
+	return m, ctx, m.search.gen
+}
+
+// beginRefresh cancels any in-flight search and bumps the generation
+// WITHOUT touching state, buffer, or any other accumulator (#111 Tier 3 fix
+// round 4) - refreshSearchAfterInstall's non-destructive sibling to
+// beginNewSession. Unlike a genuine new query, a refresh has a
+// PERFECTLY GOOD buffer already on screen: the whole point of task review's
+// finding is that a mid-rebuild error must leave that buffer (and
+// searchReady) exactly as they were, which is only possible if nothing gets
+// reset before the rebuild is known to have fully succeeded. The rebuild
+// Cmd (refreshSearchAfterInstall) accumulates into its own local buffer and
+// only reaches Update via a searchResultRefresh message on success -
+// applyRoundResult is what actually swaps it in, and ONLY on that success
+// path.
+func (m Model) beginRefresh() (Model, context.Context, int) {
+	if m.search.cancel != nil {
+		m.search.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.search.cancel = cancel
+	m.search.gen++
 	return m, ctx, m.search.gen
 }
 
