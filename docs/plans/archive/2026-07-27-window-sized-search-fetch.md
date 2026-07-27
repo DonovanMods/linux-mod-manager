@@ -1,5 +1,16 @@
 # Window-Sized Search Fetch Implementation Plan (#111 Tier 1 — EPIC #104)
 
+> **Historical note — partially superseded before merge.** This plan's
+> window-derived fetch quantum shipped as designed, but its page/requery
+> model (sticky page-size requeries, `n`/`p` as fetch-page navigation,
+> `startSearch(page)`) was replaced mid-PR by an infinite-scroll redesign
+> after user smoke testing: search results became a single buffered list
+> that refills near the end; `n`/`p` are paneful selection jumps; there is
+> no page-based requerying. See PR #114's description and the `[1.19.0]`
+> CHANGELOG entry for what actually shipped. Test-plan bullets below that
+> reference "press n → requery" or "page == 0" describe the superseded
+> design.
+
 **Goal:** The TUI's search fetch size derives from the visible results-pane budget at query time instead of the fixed 10-per-source, so a tall terminal fills its pane and short ones stop over-fetching. Tier 2 (fetch-to-fill looping) stays with #109 — NOT this plan.
 
 **Architecture:** `DataProvider.Search` gains a `pageSize int` parameter (internal interface; all fakes updated — `stubProvider` absorbs most). The Model computes the fetch size once per query session (`m.searchFetchSize()`, derived from `availableContentHeight()` minus search chrome, clamped) at submit, stores it in search state, and every fetch of that session (submit + n/p requeries) passes it — resize takes effect on the NEXT query, keeping pagination arithmetic self-consistent within a session.
