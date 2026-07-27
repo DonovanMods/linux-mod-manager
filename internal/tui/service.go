@@ -13,7 +13,7 @@ import (
 // SearchPageSize is DataProvider.Search's defensive fallback page size, used
 // by every implementation whenever a caller passes pageSize <= 0 (a stray
 // direct call, or a test that doesn't care about sizing), and the floor of
-// m.searchFetchSize()'s derived clamp range (search.go) - a floor-height
+// m.searchFetchSize()'s derived clamp range (app.go) - a floor-height
 // terminal's search still returns this many results rather than shrinking
 // further. Originally mirrored the CLI picker's own fixed displayPageSize
 // (cmd/lmm/install.go) as the TUI's ONLY page size; #111 Tier 1 replaced
@@ -182,7 +182,7 @@ type DataProvider interface {
 	// Search queries one source, or every one of the game's configured
 	// sources when source is "" (the documented all-sources sentinel).
 	// pageSize is the number of results to fetch for this page (#111 Tier
-	// 1's window-sized fetch - see Model.searchFetchSize in search.go/app.go
+	// 1's window-sized fetch - see Model.searchFetchSize in app.go
 	// for how the TUI derives it); implementations fall back to
 	// SearchPageSize when pageSize <= 0, a defensive default for callers
 	// that don't derive a real one (see SearchPageSize's own doc comment).
