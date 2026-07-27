@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-07-27
+
+### Added
+
+- **Man pages are now generated from the CLI's own help text** via a hidden `gen-man` command and a `make man` target, with a test that fails whenever help text changes without regeneration — ending the drift that had left every hand-written page stale since v1.0. Coverage grew from 13 pages to 49: first-ever pages for `tui`, `import`, `source`, `auth`, and `uninstall`, plus every `game`/`mod`/`profile`/`update` subcommand and the shell-completion family
+- Release archives now include the man pages (`docs/man/man1/`)
+
+### Changed
+
+- **CLI help-text overhaul** — `--help` output was rewritten to man-page quality across every command: `lmm --help` now documents exit codes (0 success, 1 error, 2 cancelled) and file locations; `lmm update --help` documents both `--json` document shapes (bulk check vs single-mod/rollback) and the non-zero exit on a failed check; `conflicts` documents the winner/stale output and JSON fields; `verify` documents all five output states and the exact `--fix` scope; `auth login`/`logout` document that any source declaring `auth` works positionally (the interactive picker remains built-ins only); `install` documents the `--id`+`--file` skip-search workflow, `--show-archived`, and `--version`'s not-yet-supported guard; `search` documents `--category`/`--tag` source support honestly; the root `--json` flag help now lists all eight JSON-capable commands
+
+### Fixed
+
+- Command tests no longer corrupt the shared command tree: ~36 test sites reparented real subcommands onto throwaway roots without restoring them (Cobra's `AddCommand` never detaches from the previous parent), and one test permanently poisoned `status`'s cached inherited-flags set with a duplicate `--game` flag — invisible until the man-page generator became the first consumer to depend on the tree's integrity
+
+### Documentation
+
+- README currency pass: TUI search described as infinite scroll (`n`/`p` skip a paneful — the old "next/previous page" wording predated v1.19.0), dependency auto-install marked shipped in the Roadmap (contradicted the Features list), architecture tree gained `internal/tui` and the `custom`/`steam`/`httpclient` source packages, the commands table gained `import`, `game add`, `game detect`, `mod edit`, and the missing `install`/`uninstall` flags, plus new Exit Codes and Import sections, file locations for `sources/*.yaml` and the `downloads/` staging dir, and a CHANGELOG link
+- `docs/configuration.md`: profile-level `link_method` is now documented as parsed-but-inert at deploy time (#81) — effective precedence is game-level then global — and the file gained a Custom Sources cross-reference it always claimed to have
+- The original PRD moved to `docs/plans/archive/2026-01-22-PRD.md` with a historical banner (OAuth, a Settings screen, and its `games.yaml` schema never shipped as written)
+- Repo `CLAUDE.md` architecture/file-location guidance brought current
+
 ## [1.19.0] - 2026-07-27
 
 ### Changed
@@ -982,7 +1004,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.19.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.0...HEAD
+[1.20.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.3...v1.19.0
 [1.18.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.2...v1.18.3
 [1.18.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.1...v1.18.2
