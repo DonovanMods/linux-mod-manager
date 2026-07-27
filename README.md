@@ -10,7 +10,7 @@ A terminal-based mod manager for Linux that provides a CLI interface for searchi
 - **Rollback Support**: Revert to previous mod versions when updates cause issues
 - **Flexible Deployment**: Symlink, hardlink, or copy mods to game directories
 - **Dependency Resolution**: Automatically fetches and installs mod dependencies
-- **Paginated Search**: Browse results page-by-page with clean cancel support
+- **Infinite-Scroll Search**: Browse a continuously loading result list with clean cancel support
 - **Pure Go**: No CGO required, easy cross-compilation
 
 ## Installation
@@ -745,7 +745,7 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm install --id <mod-id> --file <file-id>` | Install a specific file, skipping file selection |
 | `lmm install --show-archived`          | Include archived/old files when selecting a file      |
 | `lmm install --no-deps`                | Skip automatic dependency installation                 |
-| `lmm install --source ID` / `-s`       | Use a specific source (default: first configured alphabetically) |
+| `lmm install --source ID` / `-s`       | Use a specific source (default: sole configured source; prompts when several are configured, `-y` picks the first alphabetically) |
 | `lmm uninstall <mod-id>`               | Uninstall a mod                                      |
 | `lmm uninstall <mod-id> --keep-cache`  | Uninstall but keep the cached mod files                |
 | `lmm import`                           | Scan `mod_path` for untracked mods and import them (see [Import](#import) below) |
@@ -877,7 +877,7 @@ When you run `lmm update`, the tool checks each installed mod against the source
 - **+ ModName (fileID) - OK** - Cache exists and checksum stored.
 - **X ModName (fileID) - MISSING (version X not in cache)** - Cached files for that mod version are missing; use `--fix` to re-download.
 - **? ModName (fileID) - NO CHECKSUM** - File was installed without a stored checksum (e.g. before checksum support or with `--skip-verify`).
-- **! ModName - FILE COUNT MISMATCH** - The cache directory exists but is empty, when downloads were expected (per-mod, not per-file); use `--fix` to re-download.
+- **! ModName - FILE COUNT MISMATCH** - The cache directory exists but is empty, when downloads were expected (per-mod, not per-file); not repaired by `--fix`.
 - **? Unknown mod ID - SKIPPED** - A stored checksum row references a mod that's no longer installed; not repaired by `--fix`.
 
 ## Architecture

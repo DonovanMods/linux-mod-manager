@@ -305,7 +305,7 @@ Examples:
 }
 
 func init() {
-	installCmd.Flags().StringVarP(&installSource, "source", "s", "", "mod source (default: first configured source alphabetically)")
+	installCmd.Flags().StringVarP(&installSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured, -y picks the first alphabetically)")
 	installCmd.Flags().StringVarP(&installProfile, "profile", "p", "", "profile to install to (default: active profile)")
 	installCmd.Flags().StringVar(&installVersion, "version", "", "not yet supported; use --file to pick a specific file instead (latest is installed otherwise)")
 	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")
@@ -393,7 +393,9 @@ func runInstall(cmd *cobra.Command, args []string) error {
 }
 
 func doInstall(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	// Resolve source: use flag if set, otherwise first configured source
+	// Resolve source: flag if set; else the sole configured source, an
+	// interactive prompt when several are configured, or the first
+	// alphabetically under --yes.
 	var err error
 	installSource, err = resolveSource(game, installSource, installYes)
 	if err != nil {
