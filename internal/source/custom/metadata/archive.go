@@ -6,9 +6,10 @@ import (
 	"strings"
 )
 
-// modInfoFileName is the exact (case-sensitive) name Detect and
-// ResolveArchive look for; case-insensitive matching is tracked separately
-// (see issue #52).
+// modInfoFileName is the name Detect and ResolveArchive look for. Matching is
+// case-insensitive (strings.EqualFold) in both, since mod packagers ship
+// inconsistent casing (ModInfo.xml, modinfo.xml, MODINFO.XML) and Linux
+// filesystems are case-sensitive (see issue #52).
 const modInfoFileName = "ModInfo.xml"
 
 // maxModInfoSize is the maximum allowed size (in bytes) for a ModInfo.xml entry
@@ -70,11 +71,11 @@ func findModInfoEntry(files []*zip.File) *zip.File {
 		parts := strings.Split(f.Name, "/")
 		switch len(parts) {
 		case 1:
-			if parts[0] == modInfoFileName {
+			if strings.EqualFold(parts[0], modInfoFileName) {
 				return f
 			}
 		case 2:
-			if nested == nil && parts[1] == modInfoFileName {
+			if nested == nil && strings.EqualFold(parts[1], modInfoFileName) {
 				nested = f
 			}
 		}

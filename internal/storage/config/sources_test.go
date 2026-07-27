@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -53,6 +54,22 @@ directory:
 		assert.Contains(t, files, "invalid.yaml")
 	})
 
+	t.Run("unreadable sources dir is a hard error", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses directory permission checks, so this EACCES setup can't fail")
+		}
+
+		configDir := t.TempDir()
+		srcDir := filepath.Join(configDir, "sources")
+		require.NoError(t, os.MkdirAll(srcDir, 0755))
+		require.NoError(t, os.Chmod(srcDir, 0000))
+		t.Cleanup(func() { _ = os.Chmod(srcDir, 0755) }) // restore before TempDir's own cleanup removes it
+
+		_, _, err := LoadSourceDefinitions(configDir)
+		require.Error(t, err, "an unreadable sources directory must be a hard error, not silently skipped")
+		assert.Contains(t, err.Error(), "sources")
+	})
+
 	t.Run("duplicate ids across files are rejected", func(t *testing.T) {
 		configDir := t.TempDir()
 		srcDir := filepath.Join(configDir, "sources")
@@ -72,6 +89,23 @@ directory:
 		require.Len(t, loadErrs, 1)
 		assert.ErrorContains(t, loadErrs[0].Err, "duplicate")
 	})
+}
+
+// customLoadErr is a distinct error type used to prove SourceLoadError.Unwrap
+// lets errors.As reach the wrapped cause, not just SourceLoadError itself.
+type customLoadErr struct{ detail string }
+
+func (e *customLoadErr) Error() string { return "custom: " + e.detail }
+
+// TestSourceLoadError_UnwrapRoundTrip pins that SourceLoadError.Unwrap exposes
+// Err so errors.As can match a wrapped cause through it (issue #52 item 9).
+func TestSourceLoadError_UnwrapRoundTrip(t *testing.T) {
+	cause := &customLoadErr{detail: "boom"}
+	sle := SourceLoadError{File: "bad.yaml", Err: cause}
+
+	var target *customLoadErr
+	require.True(t, errors.As(sle, &target), "errors.As must unwrap SourceLoadError to reach the wrapped cause")
+	assert.Same(t, cause, target)
 }
 
 func TestLoadSourceDefinitionFile(t *testing.T) {

@@ -61,6 +61,16 @@ type Options struct {
 	// ordering obviously correct rather than relying on that render-time
 	// detail.
 	NoColor bool
+	// GameName is the active game's display name, threaded into
+	// newSearchModel (#58 item 5's wording-parity fix) so the TUI's
+	// no-sources-configured diagnostic and all-sources honesty notice can
+	// name the game the same way the CLI's own diagnostics do. Optional: an
+	// empty GameName (every test double that doesn't set it) falls back to
+	// a generic "this game" - see noSourcesConfiguredErr. NewPrototypeModel
+	// ignores this field entirely and derives its own from the canned
+	// active game, mirroring how it already discards a caller-supplied
+	// Provider/Actions.
+	GameName string
 }
 
 // Model is the root Bubble Tea model for the lmm TUI.
@@ -253,7 +263,7 @@ func NewModel(options Options) (Model, error) {
 		// "no load has happened yet" for "a check already found zero
 		// updates" on the very first load.
 		summary: Summary{Updates: -1, Conflicts: -1},
-		search:  newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize()),
+		search:  newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize(), options.GameName),
 		// sources is seeded synchronously (like search's source list above)
 		// rather than through loadData/dataLoadedMsg: SourceInfos is a
 		// read-only view of already-registered sources, not an I/O call that
@@ -274,13 +284,15 @@ func NewModel(options Options) (Model, error) {
 // Provider and Actions are wired from the SAME prototypeProvider instance
 // (see NewPrototypeProvider's doc comment), so actions confirmed through
 // the returned Model are visible in its own subsequent reads — whatever the
-// caller passed in either field is discarded.
+// caller passed in either field is discarded. options.GameName is likewise
+// discarded and derived from the canned active game (see prototypeProvider.
+// activeGame) instead, mirroring Provider/Actions above (#58 item 5) - a
+// caller has no real game to name in demo mode.
 func NewPrototypeModel(options Options) (Model, error) {
-	provider := NewPrototypeProvider()
+	provider := newPrototypeProviderConcrete()
 	options.Provider = provider
-	if actions, ok := provider.(ActionProvider); ok {
-		options.Actions = actions
-	}
+	options.Actions = provider
+	options.GameName = provider.activeGame().Name
 	return NewModel(options)
 }
 
@@ -1308,9 +1320,20 @@ func (m Model) searchView() string {
 			if warning := m.searchWarningLine(panelContentWidth); warning != "" {
 				header = append(header, warning)
 			}
-			return m.searchSinglePanel(append(header,
-				m.theme.MutedText.Render(fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, sourceLabel(m.search.page.Source))),
-			))
+			// #58 item 3: an all-sources search (Source == "") whose
+			// AttemptedCount is 0 means NONE of the game's configured
+			// sources support searching at all - a genuinely different
+			// condition from a capable source finding zero matches, which
+			// "No archives matched" would otherwise claim just as
+			// confidently. Single-source searches never populate
+			// AttemptedCount (it stays its 0 zero value), so this branch is
+			// gated on the all-sources sentinel too, not AttemptedCount
+			// alone.
+			msg := fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, sourceLabel(m.search.page.Source))
+			if m.search.page.Source == "" && m.search.page.AttemptedCount == 0 {
+				msg = fmt.Sprintf("None of %s's sources support searching; install by ID instead.", displayGameName(m.search.gameName))
+			}
+			return m.searchSinglePanel(append(header, m.theme.MutedText.Render(msg)))
 		}
 		if warning := m.searchWarningLine(m.availableWidth()); warning != "" {
 			header = append(header, warning)
@@ -1504,12 +1527,32 @@ func (m Model) searchDetailPane(width, maxLines int) string {
 // page is shown. In both cases, the "n next"/"p prev" hints only render when
 // the corresponding key would actually act, so a page-1 footer never shows a
 // dead "p prev" hint.
+//
+// All-sources pages (Source == "") never render a "Page N/M" figure at all
+// (#58 item 1): M would have to come from TotalCount/PageSize, but
+// TotalCount there is SUMMED across sources that paginate independently (see
+// hasNextPage's doc comment) - a figure computed from it would promise a
+// page count the merge can't keep. The result COUNT is still trustworthy
+// (it's a plain sum of what was actually returned), so that part renders
+// unchanged; only the "/M" half is aggregate-unsafe.
 func (m Model) searchFooterLine() string {
 	page := m.search.page
 	current := page.Page + 1
 
 	footer := fmt.Sprintf("Page %d", current)
-	if page.TotalCount > 0 && page.PageSize > 0 {
+	switch {
+	case page.Source == "":
+		// Aggregate pages count the rows actually shown, never the summed
+		// per-source TotalCount: a source that doesn't report totals
+		// contributes 0 to the sum while its rows are real, so the sum
+		// under-reports (a 13-row merged page once rendered "(3 results)" —
+		// user smoke finding, PR #110). len(Results) is the only figure
+		// that is true by construction here; single-source pages below keep
+		// the genuine reported totals.
+		if len(page.Results) > 0 {
+			footer = fmt.Sprintf("Page %d (%d shown)", current, len(page.Results))
+		}
+	case page.TotalCount > 0 && page.PageSize > 0:
 		totalPages := (page.TotalCount + page.PageSize - 1) / page.PageSize
 		footer = fmt.Sprintf("Page %d/%d (%d results)", current, totalPages, page.TotalCount)
 	}

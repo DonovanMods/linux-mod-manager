@@ -255,6 +255,181 @@ func TestPaginationKeysRequeryWithinBounds(t *testing.T) {
 	require.Nil(t, cmd, "prev on page 0 is a no-op")
 }
 
+// TestAggregateHasNextPageRespectsExhaustedNotSummedTotalCount guards #58
+// item 1: an all-sources page (Source == "") reports a summed TotalCount
+// that does NOT bound a single page the way single-source search's does
+// (see hasNextPage's doc comment) - only Exhausted may be trusted. 3 sources
+// x 10-mod catalogs (TotalCount 30, PageSize 10) used to make hasNextPage
+// claim a page 2 that queries would return empty; Exhausted (now populated
+// by coreProvider.Search from core.AggregateSearchResult) is the fix.
+func TestAggregateHasNextPageRespectsExhaustedNotSummedTotalCount(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.state = searchReady
+	model.search.page = SearchPage{
+		Query: "m", Source: "", Page: 0, PageSize: 10, TotalCount: 30, Exhausted: true,
+		Results: make([]ModItem, 30),
+	}
+	require.False(t, model.search.hasNextPage(), "every source already exhausted, despite TotalCount/PageSize suggesting 3 pages")
+
+	model.search.page.Exhausted = false
+	require.True(t, model.search.hasNextPage(), "a source might still have more")
+}
+
+// TestAggregateFooterOmitsMisleadingTotalPages guards the footer half of the
+// same fix: aggregate TotalCount/PageSize cannot produce a trustworthy
+// "Page N/M" figure (see searchFooterLine's doc comment), so it must not
+// render one at all for an all-sources page, while still showing the result
+// count and correctly omitting "n next" once Exhausted.
+func TestAggregateFooterOmitsMisleadingTotalPages(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.state = searchReady
+	model.search.page = SearchPage{
+		Query: "m", Source: "", Page: 0, PageSize: 10, TotalCount: 30, Exhausted: true,
+		Results: make([]ModItem, 30),
+	}
+
+	footer := model.searchFooterLine()
+	require.NotContains(t, footer, "/", "aggregate TotalCount/PageSize must not render a misleading total-pages figure")
+	require.Contains(t, footer, "30 shown")
+	require.NotContains(t, footer, "n next", "exhausted aggregate must not offer a dead next page")
+}
+
+// TestAggregateFooterCountsShownRowsNotSummedTotals guards the count half of
+// the aggregate footer (user smoke finding, PR #110): the summed TotalCount
+// under-reports whenever any contributing source doesn't report totals (its
+// contribution to the sum is 0 while its rows are real), so a merged page of
+// 13 rows rendered "(3 results)". The aggregate footer must count the rows
+// actually on the page — the only figure that is true by construction —
+// never the summed totals.
+func TestAggregateFooterCountsShownRowsNotSummedTotals(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.state = searchReady
+	model.search.page = SearchPage{
+		// One source reported TotalCount 3; another contributed 10 rows but
+		// reports no totals (contributes 0 to the sum) — 13 real rows.
+		Query: "m", Source: "", Page: 0, PageSize: 10, TotalCount: 3, Exhausted: false,
+		Results: make([]ModItem, 13),
+	}
+
+	footer := model.searchFooterLine()
+	require.Contains(t, footer, "13 shown", "the footer must count the rows on the page")
+	require.NotContains(t, footer, "3 result", "the under-reported summed total must not render")
+}
+
+// TestAggregateZeroResultsHonestNoticeWhenNoSourceSupportsSearch guards #58
+// item 3's TUI half: AttemptedCount == 0 on an all-sources zero-results page
+// means none of the game's sources support searching at all - a different
+// condition than a capable source legitimately finding nothing - so the
+// zero-results view must render a distinct, honest message instead of the
+// ordinary "No archives matched" copy.
+func TestAggregateZeroResultsHonestNoticeWhenNoSourceSupportsSearch(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.state = searchReady
+	model.search.page = SearchPage{Query: "m", Source: "", AttemptedCount: 0}
+
+	view := model.View()
+	require.NotContains(t, view, "No archives matched", "must not look like an ordinary empty search")
+	require.Contains(t, view, "support searching", "must render the honest no-searchable-sources notice")
+}
+
+// TestHonestNoticeFallsBackToThisGameWithoutAGameName guards the notice's
+// displayGameName fallback: a model constructed without Options.GameName
+// (a test double, or any future name-less construction) must render
+// "None of this game's sources..." rather than the malformed possessive
+// "None of 's sources..." (#58 review follow-up; same fallback
+// noSourcesConfiguredErr has always had).
+func TestHonestNoticeFallsBackToThisGameWithoutAGameName(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.gameName = ""
+	model.search.state = searchReady
+	model.search.page = SearchPage{Query: "m", Source: "", AttemptedCount: 0}
+
+	view := model.View()
+	require.Contains(t, view, "None of this game's sources", "empty game name must fall back, not render a malformed possessive")
+	require.NotContains(t, view, "None of 's sources", "the malformed form must be impossible")
+}
+
+// TestSingleSourceZeroResultsUnaffectedByHonestyNotice guards that the fix
+// above is scoped to all-sources mode only: a single real source's ordinary
+// zero-result page must keep its existing copy regardless of AttemptedCount
+// (which single-source search never populates).
+func TestSingleSourceZeroResultsUnaffectedByHonestyNotice(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.state = searchReady
+	model.search.page = SearchPage{Query: "nothing", Source: "nexusmods"}
+
+	view := model.View()
+	require.Contains(t, view, "No archives matched")
+}
+
+// TestPrototypeAllSourcesSearchHasNoDeadNextPageHint is an integration
+// counterpart to TestAggregateHasNextPageRespectsExhaustedNotSummedTotalCount
+// that drives the REAL --prototype Search path (searchScreenModel's default
+// sourceIdx 0 is the all-sources sentinel) instead of a hand-built
+// SearchPage - a whole-branch-review finding: prototypeProvider.Search never
+// set Exhausted, so hasNextPage's new `!Exhausted` aggregate branch defaulted
+// it to false, meaning EVERY --prototype all-sources search rendered a
+// permanently dead "n next" hint (pre-#58 the old TotalCount/PageSize math
+// happened to correctly end the canned, non-paginated set).
+func TestPrototypeAllSourcesSearchHasNoDeadNextPageHint(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t) // "3" already focused; default source is "" (all-sources)
+	for _, r := range "sky" {
+		model = updateWithRunes(t, model, string(r))
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+	require.Equal(t, searchReady, model.search.state)
+
+	require.False(t, model.search.hasNextPage(), "the canned set is a single-page fetch; there is no real next page to demo")
+	require.NotContains(t, model.View(), "n next", "must not offer a dead next-page hint")
+}
+
+// TestPrototypeAllSourcesZeroMatchRendersOrdinaryEmptyCopy is the
+// integration counterpart to
+// TestAggregateZeroResultsHonestNoticeWhenNoSourceSupportsSearch: a genuine
+// zero-match --prototype all-sources search (query that hits none of the
+// canned mods) must render the ORDINARY "No archives matched" copy, not the
+// no-searchable-sources honesty notice - prototypeProvider.Search never set
+// AttemptedCount, so it defaulted to 0, the exact "no source supports
+// search" signal, which is false in --prototype mode (all 3 canned sources
+// advertise search capability).
+func TestPrototypeAllSourcesZeroMatchRendersOrdinaryEmptyCopy(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t) // default source is "" (all-sources)
+	for _, r := range "zzz-nothing-matches" {
+		model = updateWithRunes(t, model, string(r))
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+	require.Equal(t, searchReady, model.search.state)
+	require.Empty(t, model.search.page.Results)
+
+	view := model.View()
+	require.Contains(t, view, "No archives matched", "a genuine zero-match demo search is not the same as zero searchable sources")
+	require.NotContains(t, view, "support searching")
+}
+
 func TestCtrlCQuitsWhileSearchInputFocused(t *testing.T) {
 	t.Parallel()
 	model := searchScreenModel(t) // "3" already focused the input
@@ -365,10 +540,14 @@ func (noSourcesProvider) DeployedFiles(string, string) ([]string, error)    { re
 func (noSourcesProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
 func (noSourcesProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
 
+// TestZeroRealSourcesShowsConfiguredSourcesDiagnosticOnConstruction also
+// guards #58 item 5's wording-parity fix: the TUI's diagnostic must match
+// the CLI's own noSourcesConfiguredErr (cmd/lmm/search.go) verbatim,
+// substituting the SAME game name via Options.GameName.
 func TestZeroRealSourcesShowsConfiguredSourcesDiagnosticOnConstruction(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewModel(Options{Theme: "wizardry", Provider: noSourcesProvider{}})
+	model, err := NewModel(Options{Theme: "wizardry", Provider: noSourcesProvider{}, GameName: "Test Game"})
 	require.NoError(t, err)
 	loaded, _ := model.Update(model.Init()())
 	model = loaded.(Model)
@@ -376,6 +555,11 @@ func TestZeroRealSourcesShowsConfiguredSourcesDiagnosticOnConstruction(t *testin
 	model = updateWithRunes(t, model, "3") // jump to search screen; no submit
 	require.Equal(t, searchFailed, model.search.state, "diagnostic fires at construction, not just on submit")
 	require.Contains(t, model.View(), "no mod sources configured")
+
+	// The full message may be display-truncated at typical test widths, so
+	// assert parity against the underlying error text directly, not View().
+	require.EqualError(t, model.search.err,
+		"no mod sources configured for Test Game; add sources with 'lmm game add' or edit games.yaml")
 }
 
 func TestSearchViewStaysWithinBounds(t *testing.T) {
@@ -441,6 +625,11 @@ func TestTruncateIsDisplayWidthAware(t *testing.T) {
 	require.Equal(t, "short", truncate("short", 10))
 }
 
+// TestSubmitWithNoConfiguredSourcesFailsClearly also guards #58 item 5's
+// wording-parity fix. searchScreenModel builds via NewPrototypeModel, which
+// threads the canned active game's real name ("Skyrim Special Edition", see
+// prototype.Data.Game) into searchModel.gameName - so the guard's message
+// must name that game, matching the CLI's noSourcesConfiguredErr form.
 func TestSubmitWithNoConfiguredSourcesFailsClearly(t *testing.T) {
 	t.Parallel()
 
@@ -454,6 +643,11 @@ func TestSubmitWithNoConfiguredSourcesFailsClearly(t *testing.T) {
 	require.Nil(t, cmd, "no search command without a source")
 	require.Equal(t, searchFailed, m.search.state)
 	require.Contains(t, m.View(), "no mod sources configured")
+
+	// The full message may be display-truncated at typical test widths, so
+	// assert parity against the underlying error text directly, not View().
+	require.EqualError(t, m.search.err,
+		"no mod sources configured for Skyrim Special Edition; add sources with 'lmm game add' or edit games.yaml")
 }
 
 // populatedSearchPage mirrors the field shape TestSearchViewRendersStates

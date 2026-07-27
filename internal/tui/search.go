@@ -2,7 +2,7 @@ package tui
 
 import (
 	"context"
-	"errors"
+	"fmt"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,6 +33,12 @@ type searchModel struct {
 	authSource string
 	gen        int
 	cancel     context.CancelFunc
+	// gameName is the active game's display name, threaded in at
+	// construction (see newSearchModel) so noSourcesConfiguredErr and the
+	// all-sources honesty notice (searchView's zero-results branch) can name
+	// the game the same way the CLI's own diagnostics do (#58 item 5's
+	// wording-parity fix) instead of a generic "this game".
+	gameName string
 }
 
 // searchResultMsg carries a completed search page, tagged with the
@@ -51,11 +57,31 @@ type searchFailedMsg struct {
 	source string
 }
 
-// errNoSourcesConfigured is surfaced whenever a game has zero real (i.e.
+// noSourcesConfiguredErr is surfaced whenever a game has zero real (i.e.
 // non-sentinel) configured sources, both proactively at model construction
 // (newSearchModel) and defensively if startSearch is somehow reached in that
-// state. It mirrors the CLI's noSourcesConfiguredErr diagnostic.
-var errNoSourcesConfigured = errors.New("no mod sources configured for this game; add one with 'lmm game add' or edit games.yaml")
+// state. Wording mirrors the CLI's own noSourcesConfiguredErr (cmd/lmm/
+// search.go) verbatim, substituting gameName the same way (#58 item 5's
+// wording-parity fix — the two used to drift: "for this game"/"add one"
+// here vs. "for %s"/"add sources" there). gameName empty (a test double
+// that never threads a real name through newSearchModel) falls back to "this
+// game", preserving the pre-parity-fix message for those callers.
+func noSourcesConfiguredErr(gameName string) error {
+	return fmt.Errorf("no mod sources configured for %s; add sources with 'lmm game add' or edit games.yaml", displayGameName(gameName))
+}
+
+// displayGameName renders a game name for user-facing copy, falling back to
+// "this game" when the caller never threaded a real name through (a test
+// double, or any future Options.GameName-less construction). Shared by
+// noSourcesConfiguredErr and searchView's no-searchable-sources notice so
+// neither can render a malformed possessive like "None of 's sources..."
+// (#58 review follow-up).
+func displayGameName(gameName string) string {
+	if gameName == "" {
+		return "this game"
+	}
+	return gameName
+}
 
 // searchInputPromptAllowance reserves room for the query input's "> " prompt
 // plus its trailing cursor cell, so searchInputWidthFor's value-viewport
@@ -88,17 +114,21 @@ func searchInputWidthFor(availableWidth, panelHorizontalFrameSize int) int {
 // is nothing to search), so the model starts in searchFailed with the
 // configured-sources diagnostic rather than silently offering a dead "All
 // sources" default (CARRIED REVIEW NOTE from issue #54 hardening).
-func newSearchModel(provider DataProvider, panelHorizontalFrameSize int) searchModel {
+//
+// gameName is stored on the returned model (searchModel.gameName) for
+// noSourcesConfiguredErr and the all-sources honesty notice to name the
+// active game, mirroring the CLI's own diagnostics (#58 item 5).
+func newSearchModel(provider DataProvider, panelHorizontalFrameSize int, gameName string) searchModel {
 	input := textinput.New()
 	input.Placeholder = "search the archives"
 	input.CharLimit = 120
 	input.Width = searchInputWidthFor(defaultContentWidth, panelHorizontalFrameSize)
 
 	realSources := provider.Sources()
-	s := searchModel{input: input, sources: append([]string{""}, realSources...)}
+	s := searchModel{input: input, sources: append([]string{""}, realSources...), gameName: gameName}
 	if len(realSources) == 0 {
 		s.state = searchFailed
-		s.err = errNoSourcesConfigured
+		s.err = noSourcesConfiguredErr(gameName)
 	}
 	return s
 }
@@ -125,7 +155,20 @@ func sourceLabel(source string) string {
 
 // hasNextPage reports whether another page of results is available for the
 // current search, mirroring the CLI picker's logic (see install.go).
+//
+// All-sources pages (Source == "") are a special case (#58 item 1):
+// TotalCount there is core.AggregateSearchResult.TotalCount, SUMMED across
+// sources that each paginate independently, so it cannot bound a single
+// merged page the way a single source's TotalCount can - 3 sources whose
+// entire 10-mod catalog fits on page 0 sum to a TotalCount of 30, which
+// against a PageSize of 10 falsely implies a page 2 exists. Exhausted (set
+// by coreProvider.Search from the aggregate result) is the only signal that
+// actually accounts for every contributing source, so it - not the
+// TotalCount math below - decides for aggregate pages.
 func (s searchModel) hasNextPage() bool {
+	if s.page.Source == "" {
+		return !s.page.Exhausted
+	}
 	if s.page.TotalCount > 0 {
 		return (s.page.Page+1)*s.page.PageSize < s.page.TotalCount
 	}
@@ -142,7 +185,7 @@ func (m Model) startSearch(query string, page int) (Model, tea.Cmd) {
 	// case is zero real sources, i.e. the sentinel-only (or empty) list.
 	if len(m.search.sources) <= 1 {
 		m.search.state = searchFailed
-		m.search.err = errNoSourcesConfigured
+		m.search.err = noSourcesConfiguredErr(m.search.gameName)
 		return m, nil
 	}
 

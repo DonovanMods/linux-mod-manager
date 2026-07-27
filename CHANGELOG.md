@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-07-27
+
+### Fixed
+
+- **Directory sources now follow symlinked mod directories.** A symlinked subdirectory used to be silently invisible to both the scanner and cache ingest (classified by raw dirent type, which never reports "directory" for a symlink); both now stat through the link. A symlink cycle is now caught and reported as a clear error instead of recursing forever, and a stat failure other than a dangling symlink propagates instead of silently dropping the entry from the scan.
+- Mod names ending in a real "V" are no longer over-trimmed — `ModV-1.0` now parses as name `ModV`, version `1.0` (previously the trailing "V" was eaten and the name became `Mod`); names like `MyMod-v1.0`, where the "v" genuinely belongs to the version, still parse as before
+- `ModInfo.xml` is now found case-insensitively, in both directory and archive mods
+- Dependency-resolution failures during install planning (a real fetch failure, not just a source lacking the capability) are now surfaced as warnings — on the CLI's stderr and in the TUI's install-confirm modal — instead of silently degrading to "no dependencies". **A plan carrying only these warnings (no actual dependencies or conflicts) now prompts for confirmation unless `--yes` is given**, where it previously proceeded silently
+- Local imports now cache files under their declared filename rather than the local path's own (often temporary) basename
+- A failed staging copy during install/import no longer leaves stale `.staging` debris behind in the mod cache
+- `lmm source list` reports each broken source definition once instead of twice (an init-time warning plus its own table row said the same thing twice); `--json` now emits `[]` for an empty result instead of `null`
+- All-sources search pagination now stops at genuine exhaustion instead of offering a reachable, empty next page from summed per-source totals, and the aggregate pager no longer shows a misleading total-page count
+- A game whose configured sources all lack search capability now says so plainly, on both the CLI and the TUI, instead of the generic "No mods found."; under `--json` the notice goes to stderr so stdout stays a single document
+- Demo (`--prototype`) search now matches this same honesty: canned all-sources pages carry the same exhaustion/attempted signals as a real search, and show a sample per-source warning
+- The TUI's and CLI's no-sources-configured wording now match exactly
+
 ## [1.18.0] - 2026-07-26
 
 ### Added
@@ -947,7 +963,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.1...HEAD
+[1.18.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.0...v1.18.1
 [1.18.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.1...v1.18.0
 [1.17.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.16.0...v1.17.0

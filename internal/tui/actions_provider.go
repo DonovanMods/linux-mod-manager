@@ -235,8 +235,14 @@ type InstallPlanView struct {
 	Conflicts             []string // "path (owned by <mod-id>)", one per conflicting file
 	MissingDependencies   []string // "sourceID:modID" refs that couldn't be resolved - warn, don't block
 	CycleWarning          bool     // a circular dependency was found among Dependencies; install order is best-effort
-	Reinstall             bool     // item is already installed - applying replaces it rather than installing fresh
-	SizeLabel             string   // "12.3 MiB", or "size unknown" when no selected file declares a size
+	// DependencyWarnings mirrors core.InstallPlan.DependencyWarnings (#52
+	// item 10): one message per GetDependencies failure that was NOT just
+	// "this source lacks the capability" - a real fetch failure the plan
+	// degraded past rather than failed on. Warn, don't block, same as
+	// MissingDependencies/CycleWarning.
+	DependencyWarnings []string
+	Reinstall          bool   // item is already installed - applying replaces it rather than installing fresh
+	SizeLabel          string // "12.3 MiB", or "size unknown" when no selected file declares a size
 }
 
 // UpdateItem is one available update, as reported by CheckUpdates and

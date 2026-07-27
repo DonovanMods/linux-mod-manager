@@ -69,6 +69,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 			Actions:  tui.NewCoreActions(svc, game, profileName),
 			Ctx:      ctx,
 			NoColor:  noColorOpt,
+			GameName: game.Name,
 		})
 		if err != nil {
 			return err

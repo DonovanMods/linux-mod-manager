@@ -68,10 +68,9 @@ func (d *Directory) Capabilities() source.Capabilities {
 
 // dirMod pairs a scanned mod with its filesystem location.
 type dirMod struct {
-	mod       domain.Mod
-	path      string // absolute path to the mod directory or archive
-	isArchive bool
-	size      int64 // archive size in bytes; 0 for directories
+	mod  domain.Mod
+	path string // absolute path to the mod directory or archive
+	size int64  // archive size in bytes; 0 for directories
 }
 
 // scan reads the source directory. Subdirectories are directory mods;
@@ -89,7 +88,20 @@ func (d *Directory) scan() ([]dirMod, error) {
 		}
 		entryPath := filepath.Join(d.path, entry.Name())
 
-		if entry.IsDir() {
+		// Classify via os.Stat (follows symlinks), not entry.IsDir(): the
+		// latter reports the raw dirent type (fs.ModeSymlink), which is
+		// always false for a symlink even when it points at a directory. A
+		// symlinked mod dir has no file extension either, so without this it
+		// falls through both branches below and is silently dropped.
+		info, err := os.Stat(entryPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // dangling symlink (or a race with concurrent deletion); skip like ReadDir-based classification would have
+			}
+			return nil, fmt.Errorf("source %q: stat %s: %w", d.id, entryPath, err)
+		}
+
+		if info.IsDir() {
 			mods = append(mods, d.scanDir(entry.Name(), entryPath))
 			continue
 		}
@@ -97,10 +109,6 @@ func (d *Directory) scan() ([]dirMod, error) {
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
 		if ext != ".zip" && ext != ".jar" {
 			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return nil, fmt.Errorf("source %q: stat %s: %w", d.id, entryPath, err)
 		}
 		base := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		mod := domain.Mod{ID: base, SourceID: d.id}
@@ -110,10 +118,9 @@ func (d *Directory) scan() ([]dirMod, error) {
 			mod.Name, mod.Version = nameAndVersionFrom(base)
 		}
 		mods = append(mods, dirMod{
-			mod:       mod,
-			path:      entryPath,
-			isArchive: true,
-			size:      info.Size(),
+			mod:  mod,
+			path: entryPath,
+			size: info.Size(),
 		})
 	}
 
@@ -156,7 +163,18 @@ func nameAndVersionFrom(base string) (string, string) {
 	name := base
 	if version != "" {
 		if idx := strings.LastIndex(base, version); idx > 0 {
-			name = strings.TrimRight(base[:idx], "-_ vV")
+			end := idx
+			// domain.ExtractVersionFromName's pattern allows an optional
+			// leading v/V immediately before the digits (e.g. "v1.0"). Only
+			// trim that letter when it's directly adjacent to where the
+			// version starts - i.e. it was actually consumed as the version's
+			// prefix. A real trailing V that's part of the mod's own name and
+			// separated by "-"/"_"/" " (e.g. "ModV-1.0", "ServerV2-1.0") must
+			// survive; only the separators are unconditionally trimmed.
+			if end > 0 && (base[end-1] == 'v' || base[end-1] == 'V') {
+				end--
+			}
+			name = strings.TrimRight(base[:end], "-_ ")
 		}
 	}
 	return name, version

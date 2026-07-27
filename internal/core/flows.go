@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
@@ -2036,8 +2037,10 @@ type InstallPlan struct {
 	// resolveInstallDependencies). Empty (with a nil error) whenever the
 	// source lacks the Dependencies capability, returns
 	// source.ErrNotSupported, or Mod is a local (domain.SourceLocal) mod -
-	// resolveDependencies swallows ANY GetDependencies error the same way,
-	// degrading to "no dependencies" rather than failing the plan.
+	// resolveInstallDependencies degrades to "no dependencies" rather than
+	// failing the plan either way, but (#52 item 10) only records a
+	// DependencyWarnings entry when the failure was something OTHER than
+	// source.ErrNotSupported - see DependencyWarnings.
 	Dependencies []domain.Mod
 
 	// MissingDependencies records dependency references resolveDependencies
@@ -2052,6 +2055,20 @@ type InstallPlan struct {
 	// reference was found while resolving Dependencies (install order is
 	// best-effort). Same rationale as MissingDependencies.
 	CycleDetected bool
+
+	// DependencyWarnings records one entry per GetDependencies call that
+	// failed with something OTHER than source.ErrNotSupported while
+	// resolving Dependencies (#52 item 10) - a real fetch failure (rate
+	// limit, network blip, malformed response), as opposed to "this source
+	// simply doesn't have the Dependencies capability" (ErrNotSupported),
+	// which stays silent exactly as before. Either way resolution degrades
+	// to "no dependencies found for that mod" and the plan still succeeds -
+	// this field exists purely so a caller can tell the user dependency
+	// resolution didn't run cleanly, the same way MissingDependencies/
+	// CycleDetected surface their own non-fatal degradations. Each entry is
+	// "<sourceID:modID>: <error>", already formatted for direct display
+	// (see resolveInstallDependencies).
+	DependencyWarnings []string
 
 	// Conflicts lists files installing Mod would overwrite from OTHER
 	// installed mods, exactly as installer.GetConflicts reports them - but
@@ -2163,7 +2180,7 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 		for _, im := range installedMods {
 			installedIDs[domain.ModKey(im.SourceID, im.ID)] = true
 		}
-		plan.Dependencies, plan.MissingDependencies, plan.CycleDetected = s.resolveInstallDependencies(ctx, sourceID, mod, installedIDs)
+		plan.Dependencies, plan.MissingDependencies, plan.CycleDetected, plan.DependencyWarnings = s.resolveInstallDependencies(ctx, sourceID, mod, installedIDs)
 	}
 
 	files, err := s.GetModFiles(ctx, sourceID, mod)
@@ -2225,7 +2242,14 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 // SourceID mismatch) is recorded in missing rather than failing the whole
 // resolution; a circular reference sets cycleDetected and is otherwise
 // skipped.
-func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID string, target *domain.Mod, installedIDs map[string]bool) (deps []domain.Mod, missing []domain.ModReference, cycleDetected bool) {
+//
+// GetDependencies failures (#52 item 10) split in two: source.ErrNotSupported
+// - "this source doesn't have the Dependencies capability at all" - degrades
+// to "no dependencies for this mod" SILENTLY, unchanged from before. Any
+// OTHER error degrades the same way (the plan still succeeds) but is also
+// appended to warnings, since it represents an actual failure the caller
+// couldn't otherwise tell apart from "this mod genuinely has none".
+func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID string, target *domain.Mod, installedIDs map[string]bool) (deps []domain.Mod, missing []domain.ModReference, cycleDetected bool, warnings []string) {
 	visited := make(map[string]bool)
 	stack := make(map[string]bool) // keys currently being visited (cycle detection)
 
@@ -2241,9 +2265,12 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID strin
 
 		modDeps, err := s.GetDependencies(ctx, sourceID, mod)
 		if err != nil {
-			// Degrade to "no dependencies for this mod" - matches
-			// resolveDependencies, which swallows ANY error here (a
-			// capability gap, source.ErrNotSupported, or anything else).
+			// Degrade to "no dependencies for this mod" either way - but
+			// only a REAL failure (not a plain capability gap) is worth
+			// telling the caller about.
+			if !errors.Is(err, source.ErrNotSupported) {
+				warnings = append(warnings, fmt.Sprintf("%s: %v", key, err))
+			}
 			return
 		}
 
@@ -2289,7 +2316,7 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID strin
 	}
 
 	collect(target)
-	return deps, missing, cycleDetected
+	return deps, missing, cycleDetected, warnings
 }
 
 // --- ApplyInstall (Phase 5b Task 2) ---

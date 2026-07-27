@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -240,4 +241,66 @@ directory:
 		require.True(t, errFound, "an id collision must still produce an error row: %+v", rows)
 		assert.Contains(t, errRow.Error, "already in use")
 	})
+}
+
+// TestSourceInfoRows_EmptyJSONEncode pins the JSON contract for `source list
+// --json`: a zero-length row slice must encode as `[]`, never `null` (#52
+// item 13). This is unreachable through the CLI today — registerSources
+// always registers the built-in sources before sourceListCmd builds its row
+// slice, so rows is never actually empty at runtime — so this exercises the
+// encoding contract directly, guarding against a future regression back to
+// `var rows []sourceInfo` (whose zero value is nil and encodes as `null`).
+func TestSourceInfoRows_EmptyJSONEncode(t *testing.T) {
+	rows := make([]sourceInfo, 0)
+	b, err := json.Marshal(rows)
+	require.NoError(t, err)
+	assert.Equal(t, "[]", string(b))
+
+	// Sanity check on the failure mode being guarded against: a nil slice of
+	// the same type really does encode as `null`.
+	var nilRows []sourceInfo
+	b, err = json.Marshal(nilRows)
+	require.NoError(t, err)
+	assert.Equal(t, "null", string(b))
+}
+
+// TestSourceListCmd_ReportsBrokenDefinitionOnce is the regression test for
+// #52 item 14: registerCustomSources used to warn a broken definition
+// straight to os.Stderr during service init, and `source list` then rendered
+// the very same error again as a table row — the same broken definition
+// reported twice per invocation. registerCustomSources writes to os.Stderr
+// directly (bypassing cmd.SetErr/cmd.SetOut), so this redirects the real
+// os.Stderr for the duration of the command run to observe what actually
+// reaches it, alongside the command's own captured stdout.
+func TestSourceListCmd_ReportsBrokenDefinitionOnce(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configDir, "sources"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "broken.yaml"), []byte(`
+id: broken-mods
+name: Broken Mods
+type: directory
+directory:
+  path: `+filepath.Join(t.TempDir(), "does-not-exist")+`
+`), 0644))
+
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	origStderr := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = origStderr })
+
+	stdout, cmdErr := runSourceCmd(t, "source", "list")
+
+	os.Stderr = origStderr
+	require.NoError(t, w.Close())
+	var stderrBuf bytes.Buffer
+	_, readErr := stderrBuf.ReadFrom(r)
+	require.NoError(t, readErr)
+
+	require.NoError(t, cmdErr)
+
+	combined := stdout + stderrBuf.String()
+	assert.Equal(t, 1, strings.Count(combined, "broken-mods"),
+		"broken-mods should be reported exactly once across stdout+stderr, got: %q", combined)
 }

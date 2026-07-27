@@ -188,25 +188,126 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 }
 
 // copyDir recursively copies a directory using streaming I/O to avoid loading
-// entire files into memory (important for large mod archives).
+// entire files into memory (important for large mod archives). It is the
+// cross-device-rename fallback in Import, so it must handle whatever an
+// extracted archive contains - including directory symlinks (some mod
+// packages vendor shared assets that way) - while treating that content as
+// untrusted (it came from a downloaded archive).
+//
+// It deliberately does not use filepath.Walk: Walk classifies entries with
+// Lstat, which never follows symlinks, so a symlinked subdirectory reports
+// IsDir()==false and falls through to a plain file copy. Reading a directory
+// fd as a byte stream then fails with EISDIR. copyDir instead os.Stat's each
+// entry (following symlinks) to classify it, and materializes symlinked
+// directories as real directories in the destination.
+//
+// The copy root (src) itself may be, or resolve through, a symlink - that's
+// the intended top-level symlinked-mod-dir feature (#52) - so it is resolved
+// once up front and exempted from the containment check below. Every NESTED
+// symlink (directory or file, at any depth), however, must resolve to a path
+// within that resolved root: an extracted archive is untrusted content, and
+// a nested symlink to e.g. /etc or $HOME would otherwise pull arbitrary
+// external content into the mod cache (path traversal). Escaping symlinks
+// fail the copy with an error naming the entry, rather than being silently
+// skipped - the mod is malformed or hostile, and the user should see why.
 func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	resolvedRoot, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return fmt.Errorf("resolving %s: %w", src, err)
+	}
+	return copyDirFollowing(src, dst, resolvedRoot, map[string]bool{})
+}
+
+// copyDirFollowing does the recursive work for copyDir. resolvedRoot is the
+// symlink-free real path of the copy root, fixed for the whole walk, against
+// which every nested symlink is containment-checked. visited holds the
+// resolved (symlink-free) real path of every directory currently on the
+// active recursion stack (root down to src) - not every directory ever seen.
+// It is added on entry and removed via defer on exit, so it only ever
+// contains true ancestors of the node being processed. That distinction
+// matters: two sibling symlinks/dirs that both resolve to the same real path
+// are legal (just duplicated content) and must not be flagged, but a symlink
+// that points back at a directory still being walked - an actual cycle -
+// would recurse forever without this guard.
+func copyDirFollowing(src, dst, resolvedRoot string, visited map[string]bool) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", src, err)
+	}
+
+	real, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return fmt.Errorf("resolving %s: %w", src, err)
+	}
+	if visited[real] {
+		return fmt.Errorf("copying %s: symlink cycle detected", src)
+	}
+	visited[real] = true
+	defer delete(visited, real)
+
+	if err := os.MkdirAll(dst, info.Mode()); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", src, err)
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		// Containment check happens before anything else touches this entry
+		// (both directories and files: copyFileStreaming's os.Open follows
+		// symlinks too, so a symlinked file is just as capable of escaping
+		// the root as a symlinked directory).
+		lst, err := os.Lstat(srcPath)
 		if err != nil {
+			return fmt.Errorf("stat %s: %w", srcPath, err)
+		}
+		if lst.Mode()&os.ModeSymlink != 0 {
+			resolvedTarget, err := filepath.EvalSymlinks(srcPath)
+			if err != nil {
+				return fmt.Errorf("resolving symlink %s: %w", srcPath, err)
+			}
+			if !pathWithinRoot(resolvedRoot, resolvedTarget) {
+				return fmt.Errorf("copying %s: symlink target %s escapes the mod directory %s; refusing to follow", srcPath, resolvedTarget, resolvedRoot)
+			}
+		}
+
+		entryInfo, err := os.Stat(srcPath) // follow symlinks for classification
+		if err != nil {
+			return fmt.Errorf("stat %s: %w", srcPath, err)
+		}
+
+		if entryInfo.IsDir() {
+			if err := copyDirFollowing(srcPath, dstPath, resolvedRoot, visited); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := copyFileStreaming(srcPath, dstPath); err != nil {
 			return err
 		}
+	}
 
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		dstPath := filepath.Join(dst, relPath)
+	return nil
+}
 
-		if info.IsDir() {
-			return os.MkdirAll(dstPath, info.Mode())
-		}
-
-		return copyFileStreaming(path, dstPath)
-	})
+// pathWithinRoot reports whether target is root itself or a descendant of
+// root. Both must already be resolved (symlink-free, filepath.Clean'd)
+// absolute paths. A plain strings.HasPrefix(target, root) would wrongly
+// match a sibling like "/root-evil" against root "/root"; requiring the
+// match be exact or followed by a path separator rules that out.
+func pathWithinRoot(root, target string) bool {
+	root = filepath.Clean(root)
+	target = filepath.Clean(target)
+	if target == root {
+		return true
+	}
+	return strings.HasPrefix(target, root+string(filepath.Separator))
 }
 
 // ScanResult contains the outcome of scanning a single mod file

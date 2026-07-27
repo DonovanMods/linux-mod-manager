@@ -85,6 +85,16 @@ func TestResolveArchiveFirstNestedMatchWinsInDeterministicOrder(t *testing.T) {
 	assert.Equal(t, "BiggerBackpack", info.Name, "the first one-deep match in archive order should win")
 }
 
+// TestResolveArchiveCaseInsensitiveEntryName pins that findModInfoEntry
+// matches ModInfo.xml regardless of case (issue #52 item 5), same as the
+// on-disk Detect path.
+func TestResolveArchiveCaseInsensitiveEntryName(t *testing.T) {
+	path := writeZip(t, [][2]string{{"MODINFO.XML", modInfoV2}})
+	info := ResolveArchive(path)
+	require.NotNil(t, info, "ResolveArchive must find MODINFO.XML despite case mismatch")
+	assert.Equal(t, "BiggerBackpack", info.Name)
+}
+
 func TestResolveArchiveTooDeepNesting(t *testing.T) {
 	path := writeZip(t, [][2]string{{"a/b/ModInfo.xml", modInfoV2}})
 	assert.Nil(t, ResolveArchive(path), "ModInfo.xml two directories deep must return nil")

@@ -147,6 +147,49 @@ type AggregateSearchResult struct {
 	Mods       []domain.Mod    // merged, ranked; each Mod carries its SourceID
 	TotalCount int             // sum of per-source totals (sources reporting 0/unknown contribute 0)
 	Warnings   []SourceWarning // per-source failures (design §5: warnings, not errors)
+	// Exhausted reports whether every source that successfully returned a
+	// result for THIS page has nothing left to page through (#58 item 1).
+	// TotalCount is summed across sources with INDEPENDENT per-source
+	// pagination cursors, so a caller cannot derive "is there a next page"
+	// from TotalCount and a single global PageSize the way single-source
+	// search can (see internal/tui/search.go's hasNextPage): 3 sources whose
+	// entire 10-mod catalog fits on page 0 sum to a TotalCount of 30, which
+	// against a pageSize of 10 falsely implies 3 pages exist, when actually
+	// every source already returned everything it has. Exhausted applies
+	// hasNextPage's own per-source heuristic (TotalCount-bounded when a
+	// source reports one, else "a short page means no more") to EACH
+	// contributing source and ANDs the results, so it is the accurate signal
+	// callers should gate a next-page offer on instead. True when there were
+	// zero successful sources too (nothing left to page through).
+	Exhausted bool
+	// AttemptedCount is how many of the game's configured sources actually
+	// had a search attempted against them - capability-less sources are
+	// skipped silently (see SearchAllSources's doc comment) and never
+	// counted here. Zero means NONE of the game's sources support searching
+	// at all, which is indistinguishable from a genuine zero-result search
+	// unless a caller checks this field - the honesty-notice fix (#58 item
+	// 3): CLI/TUI render a distinct "no source supports search" notice
+	// instead of a plain "no mods found" when this is 0.
+	AttemptedCount int
+}
+
+// sourceHasMore reports whether res (one source's response to the given
+// page/pageSize request) might have a page N+1 - the exact per-single-source
+// heuristic internal/tui/search.go's hasNextPage already applies (TotalCount
+// bounds it precisely when the source reports one; otherwise a full page
+// might mean more, a short one means none) - applied here per CONTRIBUTING
+// SOURCE so SearchAllSources can tell a truly-exhausted merge from one that
+// might still have more (see AggregateSearchResult.Exhausted's doc comment).
+// pageSize <= 0 (e.g. the CLI's "let the source apply its own default" case,
+// see cmd/lmm/search.go's searchPageSize) has no next-page concept at all.
+func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
+	if pageSize <= 0 {
+		return false
+	}
+	if res.TotalCount > 0 {
+		return (page+1)*pageSize < res.TotalCount
+	}
+	return len(res.Mods) == pageSize
 }
 
 // SearchAllSources searches every source configured for a game concurrently
@@ -204,6 +247,7 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 	_ = g.Wait() // goroutines always return nil; errors live in slots
 
 	succeeded := 0
+	allExhausted := true // vacuously true until a succeeding source proves otherwise
 	for i, sourceID := range sourceIDs {
 		if !attempted[i] {
 			continue
@@ -215,7 +259,11 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 		succeeded++
 		result.Mods = append(result.Mods, slots[i].res.Mods...)
 		result.TotalCount += slots[i].res.TotalCount
+		if sourceHasMore(slots[i].res, page, pageSize) {
+			allExhausted = false
+		}
 	}
+	result.Exhausted = allExhausted
 
 	rankAggregate(result.Mods, query)
 
@@ -225,6 +273,7 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 			attemptedCount++
 		}
 	}
+	result.AttemptedCount = attemptedCount
 	if attemptedCount > 0 && succeeded == 0 {
 		errs := make([]error, 0, len(result.Warnings))
 		for _, w := range result.Warnings {
@@ -361,23 +410,15 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 
 	// Extract to cache location
-	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
-	stagePath := cachePath + ".staging"
-	if err := os.RemoveAll(stagePath); err != nil {
-		return nil, fmt.Errorf("clearing staging cache: %w", err)
+	cachePath, stagePath, err := prepareStaging(gameCache, game, mod)
+	if err != nil {
+		return nil, err
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
-	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-		if err := copyDir(cachePath, stagePath); err != nil {
-			return nil, fmt.Errorf("staging existing cache: %w", err)
-		}
-	}
 	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(archivePath) {
 		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
-		// Or not an archive - just copy to cache
-		if err := os.MkdirAll(stagePath, 0755); err != nil {
-			return nil, fmt.Errorf("creating cache directory: %w", err)
-		}
+		// Or not an archive - just copy to cache. copyFileStreaming mkdirs
+		// stagePath itself (importer.go), so no MkdirAll needed here.
 		destPath := filepath.Join(stagePath, file.FileName)
 		if err := copyFileStreaming(archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
@@ -419,17 +460,11 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		return nil, fmt.Errorf("local mod path: %w", err)
 	}
 
-	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
-	stagePath := cachePath + ".staging"
-	if err := os.RemoveAll(stagePath); err != nil {
-		return nil, fmt.Errorf("clearing staging cache: %w", err)
+	cachePath, stagePath, err := prepareStaging(gameCache, game, mod)
+	if err != nil {
+		return nil, err
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
-	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-		if err := copyDir(cachePath, stagePath); err != nil {
-			return nil, fmt.Errorf("staging existing cache: %w", err)
-		}
-	}
 
 	switch {
 	case info.IsDir():
@@ -437,10 +472,17 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 			return nil, fmt.Errorf("copying mod directory: %w", err)
 		}
 	case game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(localPath):
-		if err := os.MkdirAll(stagePath, 0755); err != nil {
-			return nil, fmt.Errorf("creating cache directory: %w", err)
+		// file.FileName is the declared name for this mod file - use it so
+		// the cached file matches what the source/caller advertised (#52
+		// item 12); localPath's own basename is often just a temp file name
+		// and falls back only when the caller left FileName unset.
+		// copyFileStreaming mkdirs stagePath itself (importer.go), so no
+		// MkdirAll needed here.
+		destName := file.FileName
+		if destName == "" {
+			destName = filepath.Base(localPath)
 		}
-		if err := copyFileStreaming(localPath, filepath.Join(stagePath, filepath.Base(localPath))); err != nil {
+		if err := copyFileStreaming(localPath, filepath.Join(stagePath, destName)); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
 	default:
@@ -458,6 +500,50 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		return nil, err
 	}
 	return &DownloadModResult{FilesExtracted: len(files)}, nil
+}
+
+// prepareStaging computes the cache/staging paths for (game, mod) and readies
+// stagePath for a fresh write: any stale staging directory left behind by a
+// previous interrupted run is cleared, then - only if a cache entry already
+// exists for this exact (SourceID, ID, Version) - that existing cache is
+// copied into stagePath, so the copy-mode/extract-mode branches that follow
+// can add to (or replace part of) it in place before commitStagedCache
+// atomically swaps stagePath in. Extracted from the verbatim-duplicated
+// download/local-ingest staging setup (#52 item 11) - DownloadModToCache and
+// ingestLocalToCache differ only in how they populate stagePath afterward,
+// never in how they get there.
+//
+// Contract: on a nil error return, stagePath is clear to write into — it
+// EXISTS only when an existing cache entry was staged into it; otherwise
+// it does not exist yet and the first writer (copyDir/Extract/
+// copyFileStreaming, all of which create their own destinations) brings it
+// into being. Either way the CALLER owns its cleanup - callers MUST defer
+// os.RemoveAll(stagePath) themselves immediately after (a defer registered
+// inside this function would fire before the caller finishes using
+// stagePath). On a non-nil error return, no staging debris remains - a
+// mid-copy failure must leave stagePath exactly as absent as it was before
+// this call, matching the pre-extraction behavior where the caller's own
+// defer was armed BEFORE the copy step (see
+// TestPrepareStagingCleansPartialStagingOnCopyFailure).
+func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
+	cachePath = gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	stagePath = cachePath + ".staging"
+	if err := os.RemoveAll(stagePath); err != nil {
+		return "", "", fmt.Errorf("clearing staging cache: %w", err)
+	}
+	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		if err := copyDir(cachePath, stagePath); err != nil {
+			// Best-effort: restore the "no debris" guarantee even though
+			// copyDir itself already failed. A cleanup failure here isn't
+			// worth surfacing over the original error - it's the same
+			// filesystem that just failed on us, and the .staging path will
+			// simply be cleared again (os.RemoveAll above) on the next
+			// attempt for this exact (SourceID, ID, Version) either way.
+			_ = os.RemoveAll(stagePath)
+			return "", "", fmt.Errorf("staging existing cache: %w", err)
+		}
+	}
+	return cachePath, stagePath, nil
 }
 
 func commitStagedCache(cachePath, stagePath string) error {

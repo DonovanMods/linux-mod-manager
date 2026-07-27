@@ -5,19 +5,31 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ModInfoXML reads 7 Days to Die ModInfo.xml files. Two layouts exist:
 // V2 puts fields directly under <xml>; V1 nests them in <ModInfo>.
 type ModInfoXML struct{}
 
-// Detect implements Reader.
+// Detect implements Reader. Matching is case-insensitive (strings.EqualFold)
+// to mirror findModInfoEntry's archive-path handling: some mod packagers ship
+// lowercase modinfo.xml, and Linux filesystems are case-sensitive so an exact
+// os.Stat would miss it.
 func (ModInfoXML) Detect(modDir string) string {
-	path := filepath.Join(modDir, "ModInfo.xml")
-	if _, err := os.Stat(path); err != nil {
+	entries, err := os.ReadDir(modDir)
+	if err != nil {
 		return ""
 	}
-	return path
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.EqualFold(entry.Name(), modInfoFileName) {
+			return filepath.Join(modDir, entry.Name())
+		}
+	}
+	return ""
 }
 
 type modInfoFields struct {

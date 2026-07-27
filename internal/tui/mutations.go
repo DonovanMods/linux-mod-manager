@@ -880,6 +880,9 @@ func installDetailLines(view InstallPlanView) []string {
 	if view.CycleWarning {
 		lines = append(lines, "⚠ circular dependency detected")
 	}
+	for _, w := range view.DependencyWarnings {
+		lines = append(lines, fmt.Sprintf("⚠ %s", w))
+	}
 	return lines
 }
 

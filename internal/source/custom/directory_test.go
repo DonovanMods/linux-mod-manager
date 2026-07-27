@@ -94,6 +94,7 @@ func TestDirectorySearch(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 3, res.TotalCount)
 		require.Len(t, res.Mods, 3)
+		assert.Equal(t, 20, res.PageSize, "PageSize must default to 20 when the query leaves it unset")
 	})
 
 	t.Run("metadata takes priority over dirname", func(t *testing.T) {
@@ -263,6 +264,124 @@ func TestDirectoryArchiveMetadata(t *testing.T) {
 		require.Len(t, files, 1)
 		assert.Equal(t, int64(8), files[0].Size, `len("zipbytes")`)
 	})
+}
+
+// TestDirectorySearch_FollowsSymlinkedModDir is a regression test: scan()
+// classified entries via entry.IsDir(), which reflects the raw dirent type
+// (ModeSymlink) and is always false for a symlink even when it points at a
+// directory. A symlinked mod dir has no file extension either, so it fell
+// through both branches and was silently dropped from every scan.
+func TestDirectorySearch_FollowsSymlinkedModDir(t *testing.T) {
+	root := t.TempDir()
+
+	// The real directory lives outside root so scan() only ever sees it via
+	// the symlink - keeps the mod count assertion below unambiguous.
+	real := filepath.Join(t.TempDir(), "real-mod-dir")
+	require.NoError(t, os.MkdirAll(real, 0755))
+
+	require.NoError(t, os.Symlink(real, filepath.Join(root, "LinkedMod-1.0")))
+
+	def := SourceDefinition{
+		ID:        "linked",
+		Name:      "Linked",
+		Type:      TypeDirectory,
+		Directory: &DirectoryConfig{Path: root},
+	}
+	d, err := NewDirectory(def)
+	require.NoError(t, err)
+
+	res, err := d.Search(context.Background(), source.SearchQuery{})
+	require.NoError(t, err)
+	require.Len(t, res.Mods, 1, "symlinked mod directory must be scanned like any other")
+	assert.Equal(t, "LinkedMod-1.0", res.Mods[0].ID)
+	assert.Equal(t, "LinkedMod", res.Mods[0].Name)
+	assert.Equal(t, "1.0", res.Mods[0].Version)
+}
+
+// TestDirectoryScan_SkipsDanglingSymlink locks in the one case scan() is
+// allowed to skip silently: a symlink whose target no longer exists. Its
+// os.Stat fails with ENOENT, which is exactly what a plain os.ReadDir-based
+// classification would already have missed (the entry just wouldn't be
+// there) - so it is not a scan-fatal error.
+func TestDirectoryScan_SkipsDanglingSymlink(t *testing.T) {
+	root := t.TempDir()
+
+	require.NoError(t, os.Symlink(filepath.Join(root, "missing-target"), filepath.Join(root, "Dangling-1.0")))
+
+	def := SourceDefinition{
+		ID:        "dangling",
+		Name:      "Dangling",
+		Type:      TypeDirectory,
+		Directory: &DirectoryConfig{Path: root},
+	}
+	d, err := NewDirectory(def)
+	require.NoError(t, err)
+
+	res, err := d.Search(context.Background(), source.SearchQuery{})
+	require.NoError(t, err)
+	assert.Empty(t, res.Mods, "dangling symlink must be skipped silently, not surfaced as a mod or a scan error")
+}
+
+// TestDirectoryScan_NonENOENTStatErrorPropagates is a regression test: scan()
+// must not swallow stat errors that aren't "the entry doesn't exist" (the
+// never-swallow-errors rule). We force a non-ENOENT failure by symlinking to
+// a target buried inside a directory with its execute/search bit removed, so
+// resolving the symlink fails with EACCES rather than ENOENT.
+func TestDirectoryScan_NonENOENTStatErrorPropagates(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission checks, so this EACCES setup can't fail")
+	}
+
+	root := t.TempDir()
+
+	sealed := filepath.Join(root, "sealed")
+	require.NoError(t, os.MkdirAll(sealed, 0755))
+	target := filepath.Join(sealed, "target-mod")
+	require.NoError(t, os.MkdirAll(target, 0755))
+	require.NoError(t, os.Chmod(sealed, 0000))
+	t.Cleanup(func() { _ = os.Chmod(sealed, 0755) }) // restore before TempDir's own cleanup removes it
+
+	require.NoError(t, os.Symlink(target, filepath.Join(root, "BrokenPerm-1.0")))
+
+	def := SourceDefinition{
+		ID:        "broken-perm",
+		Name:      "Broken Perm",
+		Type:      TypeDirectory,
+		Directory: &DirectoryConfig{Path: root},
+	}
+	d, err := NewDirectory(def)
+	require.NoError(t, err)
+
+	_, err = d.Search(context.Background(), source.SearchQuery{})
+	require.Error(t, err, "a non-ENOENT stat error must propagate, not be silently skipped")
+	assert.Contains(t, err.Error(), "BrokenPerm-1.0")
+	assert.True(t, errors.Is(err, os.ErrPermission), "wrapped error should preserve the underlying permission error")
+}
+
+// TestNameAndVersionFrom covers the v/V trim boundary: separators (-_ ) must
+// always be trimmed, but a "v"/"V" should only be trimmed when the version
+// pattern actually consumed it as a prefix (immediately adjacent to the
+// version digits, e.g. "MyMod-v1.0"). A real trailing V that's part of the
+// mod's own name (e.g. "ModV", "ServerV2") must survive.
+func TestNameAndVersionFrom(t *testing.T) {
+	tests := []struct {
+		in          string
+		wantName    string
+		wantVersion string
+	}{
+		{"PlainMod-0.5", "PlainMod", "0.5"},
+		{"ModV-1.0", "ModV", "1.0"},
+		{"Modv-2.3", "Modv", "2.3"},
+		{"MyMod-v1.0", "MyMod", "1.0"},
+		{"ServerV2-1.0", "ServerV2", "1.0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			name, version := nameAndVersionFrom(tt.in)
+			assert.Equal(t, tt.wantName, name)
+			assert.Equal(t, tt.wantVersion, version)
+		})
+	}
 }
 
 func TestDirectoryCheckUpdates(t *testing.T) {

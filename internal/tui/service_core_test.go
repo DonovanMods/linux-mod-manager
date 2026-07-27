@@ -217,6 +217,11 @@ type netSource struct {
 	updates []domain.Update
 
 	getModErr, getModFilesErr, checkUpdatesErr error
+	// depsErr, if set for a mod ID, is returned as GetDependencies' error for
+	// that mod - used to test InstallPlanView.DependencyWarnings' mapping
+	// (#52 item 10), which needs a non-source.ErrNotSupported failure, not
+	// just an empty/nil deps list.
+	depsErr map[string]error
 }
 
 func newNetSource(t *testing.T, id string) *netSource {
@@ -226,6 +231,7 @@ func newNetSource(t *testing.T, id string) *netSource {
 		mods:      map[string]*domain.Mod{},
 		files:     map[string][]domain.DownloadableFile{},
 		deps:      map[string][]domain.ModReference{},
+		depsErr:   map[string]error{},
 		downloads: map[string][]byte{},
 	}
 	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -267,6 +273,9 @@ func (s *netSource) GetMod(_ context.Context, gameID, modID string) (*domain.Mod
 }
 
 func (s *netSource) GetDependencies(_ context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
+	if err, ok := s.depsErr[mod.ID]; ok {
+		return nil, err
+	}
 	return s.deps[mod.ID], nil
 }
 
@@ -1644,6 +1653,26 @@ func TestCoreProviderActions_PlanInstall_SizeUnknownWhenFileSizeUnreported(t *te
 	view, err := actions.PlanInstall(context.Background(), tui.ModItem{ID: "modI", Source: "src", Name: "Mod I"})
 	require.NoError(t, err)
 	assert.Equal(t, "size unknown", view.SizeLabel)
+}
+
+// TestCoreProviderActions_PlanInstall_MapsDependencyWarnings guards the TUI
+// seam added for #52 item 10: a GetDependencies failure that ISN'T
+// source.ErrNotSupported must surface in InstallPlanView.DependencyWarnings
+// (rather than only being available to the CLI), so the install-confirm
+// modal can render it via installDetailLines.
+func TestCoreProviderActions_PlanInstall_MapsDependencyWarnings(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modW", SourceID: "src", Name: "Mod W", Version: "1.0", GameID: game.ID})
+	netSrc.depsErr["modW"] = errors.New("boom: dependency service unavailable")
+
+	view, err := actions.PlanInstall(context.Background(), tui.ModItem{ID: "modW", Source: "src", Name: "Mod W"})
+	require.NoError(t, err, "a dependency-resolution failure must not fail the whole plan")
+	require.Len(t, view.DependencyWarnings, 1)
+	assert.Contains(t, view.DependencyWarnings[0], "modW")
+	assert.Contains(t, view.DependencyWarnings[0], "boom: dependency service unavailable")
 }
 
 // TestCoreProviderActions_PlanInstall_ReinstallMarksExistingRow guards

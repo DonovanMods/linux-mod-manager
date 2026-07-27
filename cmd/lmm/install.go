@@ -419,11 +419,12 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		plan.Dependencies = nil
 		plan.MissingDependencies = nil
 		plan.CycleDetected = false
+		plan.DependencyWarnings = nil
 	}
 
 	// If there are dependencies to install (or unresolvable ones to warn
 	// about), show the plan and confirm.
-	if len(plan.Dependencies) > 0 || len(plan.MissingDependencies) > 0 {
+	if len(plan.Dependencies) > 0 || len(plan.MissingDependencies) > 0 || len(plan.DependencyWarnings) > 0 {
 		showInstallPlan(plan)
 
 		if !installYes {
@@ -892,6 +893,13 @@ func showInstallPlan(plan *core.InstallPlan) {
 		for _, ref := range plan.MissingDependencies {
 			fmt.Printf("  - %s (may require manual install)\n", domain.ModKey(ref.SourceID, ref.ModID))
 		}
+	}
+
+	// #52 item 10: a GetDependencies failure that WASN'T just "this source
+	// lacks the capability" - matching the existing "Warning: %s" stderr
+	// style used elsewhere in this file (e.g. line ~522/558/620/649).
+	for _, w := range plan.DependencyWarnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 }
 

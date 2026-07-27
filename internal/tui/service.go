@@ -136,6 +136,21 @@ type SearchPage struct {
 	// formatted for display (e.g. "<sourceID>: <err>"). Empty for
 	// single-source searches.
 	Warnings []string
+	// Exhausted mirrors core.AggregateSearchResult.Exhausted (#58 item 1):
+	// only meaningful for all-sources searches (Source == ""), where
+	// TotalCount is summed across sources with independent pagination
+	// cursors and therefore cannot bound a single global PageSize the way a
+	// single source's TotalCount does - see hasNextPage's doc comment for
+	// how this replaces that unsafe math. Always false (its zero value) for
+	// single-source searches, which keep using the pre-existing
+	// TotalCount/PageSize math instead.
+	Exhausted bool
+	// AttemptedCount mirrors core.AggregateSearchResult.AttemptedCount (#58
+	// item 3): only meaningful for all-sources searches (Source == "").
+	// Zero real sources supporting search renders as a distinct "no source
+	// supports search" notice instead of the ordinary zero-results copy -
+	// see searchView's zero-results branch.
+	AttemptedCount int
 }
 
 // DataProvider is the narrow, read-only boundary between the TUI and app
@@ -202,6 +217,15 @@ type prototypeProvider struct {
 // this constructor twice, since each call seeds an independent in-memory
 // dataset - two calls would silently diverge instead of sharing state.
 func NewPrototypeProvider() DataProvider {
+	return newPrototypeProviderConcrete()
+}
+
+// newPrototypeProviderConcrete is NewPrototypeProvider's body, returning the
+// concrete type instead of the DataProvider interface - needed by
+// NewPrototypeModel (app.go) to read activeGame().Name for Options.GameName
+// (#58 item 5) without a defensive type-assertion back out of the interface
+// NewPrototypeProvider deliberately returns.
+func newPrototypeProviderConcrete() *prototypeProvider {
 	return &prototypeProvider{data: prototype.Load()}
 }
 
@@ -346,6 +370,14 @@ func (p *prototypeProvider) SourceInfos() []SourceInfo {
 	}
 }
 
+// prototypeAllSourcesWarning is a canned per-source failure (#58 item 4),
+// surfaced ONLY in all-sources mode (source == "") so --prototype demo mode
+// actually exercises searchWarningLine's rendering path - before this, no
+// prototype search ever populated Warnings at all, leaving that line of the
+// UI completely untested by the one path (--prototype) meant to demo every
+// search state.
+const prototypeAllSourcesWarning = "curseforge: connection refused"
+
 func (p *prototypeProvider) Search(_ context.Context, source, query string, _ int) (SearchPage, error) {
 	all := modItems(p.data.SearchResults)
 	matched := make([]ModItem, 0, len(all))
@@ -354,14 +386,38 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, _ in
 			matched = append(matched, item)
 		}
 	}
-	return SearchPage{
+	page := SearchPage{
 		Results:    matched,
 		Query:      query,
 		Source:     source,
 		Page:       0,
 		PageSize:   SearchPageSize,
 		TotalCount: len(matched),
-	}, nil
+	}
+	if source == "" {
+		page.Warnings = []string{prototypeAllSourcesWarning}
+		// Exhausted/AttemptedCount (#58 fix-round: whole-branch-review
+		// finding) must mirror what a genuinely-exhausted, genuinely-
+		// attempted real aggregate looks like, or --prototype's demo
+		// contradicts the very honest-search behavior this batch added:
+		//   - Exhausted is always true here: the canned SearchResults set
+		//     is a single, non-paginated fetch (there is no real "page 2" to
+		//     demo), so hasNextPage's aggregate branch (`!Exhausted`) must
+		//     see it as fully delivered, not left dangling with a
+		//     perpetual "n next" hint.
+		//   - AttemptedCount is the canned SEARCHABLE source count, derived
+		//     from SourceInfos() (not hardcoded) - all three of its entries
+		//     advertise "search" in their Capabilities string, matching
+		//     prototypeAllSourcesWarning's premise that one of them
+		//     (curseforge) was attempted and failed. Leaving this at its
+		//     zero value would make EVERY zero-match demo search
+		//     indistinguishable from "no source supports searching" (#58
+		//     item 3's exact dishonesty), even though the canned sources
+		//     plainly do support it.
+		page.Exhausted = true
+		page.AttemptedCount = len(p.SourceInfos())
+	}
+	return page, nil
 }
 
 // DeployedFiles returns 2-3 plausible canned rows derived from item's name

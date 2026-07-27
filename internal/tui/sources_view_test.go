@@ -150,6 +150,7 @@ func TestCoreProviderSourceInfos(t *testing.T) {
 	// Sorted by ID: "aaa-builtin" before "zzz-directory".
 	require.Equal(t, "aaa-builtin", infos[0].ID)
 	require.Equal(t, "built-in", infos[0].Type)
+	require.Equal(t, "yes", infos[0].Auth, "builtinStubSource has no IsAuthenticated method; authState's fallback for a capable source is \"yes\"")
 	require.Equal(t, "zzz-directory", infos[1].ID)
 	require.Equal(t, "directory", infos[1].Type)
 	require.Equal(t, "n/a", infos[1].Auth, "directory sources report no auth capability")
