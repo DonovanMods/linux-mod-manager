@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The TUI sizes search fetches to the window.** Each search asks every source for enough rows to fill the visible results pane by itself (minimum 10 — never fewer than before — capped at 50 per source, a limit verified against the live NexusMods API), instead of always 10. The size is fixed when the search is submitted, so paging with n/p stays arithmetically consistent; a terminal resize applies from the next search.
 
+## [1.18.3] - 2026-07-27
+
+### Fixed
+
+- **Test isolation (cmd/lmm)**: a package-level `TestMain` now points the `configDir`/`dataDir` globals at throwaway temp dirs before any test runs, so every command test is hermetic in any run order or `-run` subset (#115). Previously, tests that never assigned the globals (e.g. `TestInstallCmd_NoGame`, `TestListCmd_NoGame`) fell back to the user's real `~/.config/lmm` — a subset run resolved the real default game and stalled on the interactive source-picker prompt; the full suite passed only through accidental ordering. `TestPackageGlobals_HermeticDefaults` pins the guard.
+
 ## [1.18.2] - 2026-07-27
 
 ### Fixed
@@ -977,7 +983,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MIT License
 
 [Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.19.0...HEAD
-[1.19.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.2...v1.19.0
+[1.19.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.3...v1.19.0
+[1.18.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.2...v1.18.3
 [1.18.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.1...v1.18.2
 [1.18.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.0...v1.18.1
 [1.18.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.1...v1.18.0
