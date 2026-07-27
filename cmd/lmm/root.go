@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -200,26 +201,45 @@ func registerSources(svc *core.Service, cfgDir string) {
 	registerCustomSources(svc, cfgDir)
 }
 
+// customSourceWarnOut overrides where registerCustomSources sends its
+// per-definition warnings. Nil (the default) means "use the live os.Stderr",
+// resolved fresh on every write rather than captured once — so a test that
+// redirects the real os.Stderr still observes normal warnings. `source list`
+// points this at io.Discard for the duration of its own service init, since
+// it re-derives and renders the very same broken definitions as table rows;
+// without this seam every broken definition would be reported twice per
+// invocation (#52 item 14).
+var customSourceWarnOut io.Writer
+
+// customSourceWarnWriter resolves the writer registerCustomSources should
+// warn to: the override if one is set, otherwise the live os.Stderr.
+func customSourceWarnWriter() io.Writer {
+	if customSourceWarnOut != nil {
+		return customSourceWarnOut
+	}
+	return os.Stderr
+}
+
 // registerCustomSources loads user-defined source definitions and registers
-// the valid ones. Broken definitions warn on stderr and are skipped — a bad
-// file must never prevent lmm from starting.
+// the valid ones. Broken definitions warn (via customSourceWarnWriter, normally
+// os.Stderr) and are skipped — a bad file must never prevent lmm from starting.
 func registerCustomSources(svc *core.Service, cfgDir string) {
 	defs, loadErrs, err := config.LoadSourceDefinitions(cfgDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: loading custom sources: %v\n", err)
+		fmt.Fprintf(customSourceWarnWriter(), "warning: loading custom sources: %v\n", err)
 		return
 	}
 	for _, le := range loadErrs {
-		fmt.Fprintf(os.Stderr, "warning: skipping source definition %v\n", le)
+		fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source definition %v\n", le)
 	}
 	for _, def := range defs {
 		if _, err := svc.GetSource(def.ID); err == nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping source %q: id already in use\n", def.ID)
+			fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: id already in use\n", def.ID)
 			continue
 		}
 		src, err := custom.New(def)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping source %q: %v\n", def.ID, err)
+			fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: %v\n", def.ID, err)
 			continue
 		}
 		if a, ok := src.(interface{ SetAPIKey(string) }); ok {

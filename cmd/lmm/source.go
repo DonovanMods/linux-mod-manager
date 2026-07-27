@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -34,6 +35,15 @@ var sourceListCmd = &cobra.Command{
 	Short: "List all mod sources",
 	Long:  "List built-in and user-defined mod sources, including definitions that failed to load.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// registerCustomSources' init-time stderr warnings would double up on
+		// the error rows rendered below (#52 item 14): the same broken
+		// definition would otherwise be reported once on stderr and once as a
+		// row. Silence the warnings for the duration of this command's own
+		// service init; the rows below are the canonical report here.
+		prevWarnOut := customSourceWarnOut
+		customSourceWarnOut = io.Discard
+		defer func() { customSourceWarnOut = prevWarnOut }()
+
 		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
 			cfg, err := getServiceConfig()
 			if err != nil {
@@ -67,8 +77,12 @@ var sourceListCmd = &cobra.Command{
 				}
 			}
 
-			var rows []sourceInfo
-			for _, src := range svc.ListSources() {
+			// make(...,0,...), not `var rows []sourceInfo`: a nil slice encodes
+			// to JSON `null`, but `source list --json` should always emit an
+			// array — empty when there is nothing to report (#52 item 13).
+			srcs := svc.ListSources()
+			rows := make([]sourceInfo, 0, len(srcs)+len(errRows)+len(loadErrs))
+			for _, src := range srcs {
 				typ := "built-in"
 				if isCustomSource(src) {
 					if t, ok := customTypes[src.ID()]; ok {
