@@ -80,6 +80,17 @@ func noSourcesConfiguredErr(game *domain.Game) error {
 	return nil
 }
 
+// noSearchableSourcesNotice renders the honesty-notice text for an
+// all-sources search whose AttemptedCount came back 0 (#58 item 3): the
+// game DOES have configured sources (noSourcesConfiguredErr already guarded
+// the zero-sources case above), but NONE of them support searching at all -
+// silently rendering "No mods found." here would be indistinguishable from
+// a capable source genuinely finding nothing, leaving the user with no hint
+// that searching isn't possible here at all.
+func noSearchableSourcesNotice(game *domain.Game) string {
+	return fmt.Sprintf("none of %s's sources support searching; install by ID instead", game.Name)
+}
+
 // capabilityGapNotice turns an ErrNotSupported search failure into a clean
 // one-line notice (design §7) instead of a wrapped-error dump. ok is false
 // for every other error.
@@ -128,6 +139,12 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	var mods []domain.Mod
 	var warnings []core.SourceWarning
 	var totalResults int
+	// attemptedCount is only meaningful for the aggregate (searchSource == "")
+	// path below - it stays -1 ("not applicable") for a single named
+	// --source, which either resolves to exactly one attempted source or
+	// fails outright via resolveSource, with no "zero capable sources"
+	// case of its own to distinguish (#58 item 3).
+	attemptedCount := -1
 
 	if searchSource == "" {
 		// Guard: game must have at least one configured source
@@ -147,6 +164,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 		mods, warnings = agg.Mods, agg.Warnings
 		totalResults = len(mods)
+		attemptedCount = agg.AttemptedCount
 		for _, w := range warnings {
 			fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
 		}
@@ -178,7 +196,25 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	if len(mods) == 0 {
+		// #58 item 3: attemptedCount == 0 means NONE of the game's configured
+		// sources support searching at all - a different condition from a
+		// capable source legitimately finding nothing, which the plain "No
+		// mods found." below would otherwise claim just as confidently for
+		// both. honestNotice is "" for every other case (single-source
+		// search, or an aggregate search that genuinely attempted and came
+		// up empty), preserving the original message there.
+		honestNotice := ""
+		if attemptedCount == 0 {
+			honestNotice = noSearchableSourcesNotice(game)
+		}
+
 		if jsonOutput {
+			// One-document-on-stdout invariant (mirrors `update --json`'s own
+			// contract): stdout must stay a single parseable JSON document
+			// regardless of this notice, so it goes to stderr instead.
+			if honestNotice != "" {
+				fmt.Fprintln(os.Stderr, honestNotice)
+			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			out := searchJSONOutput{GameID: game.ID, Query: query, Mods: []searchModJSON{}, Warnings: warningStrs}
@@ -187,7 +223,12 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 			}
 			return nil
 		}
-		fmt.Println("No mods found.")
+
+		if honestNotice != "" {
+			fmt.Println(honestNotice)
+		} else {
+			fmt.Println("No mods found.")
+		}
 		return nil
 	}
 

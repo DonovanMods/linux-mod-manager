@@ -165,3 +165,91 @@ func TestSearchAllSourcesUnknownGame(t *testing.T) {
 	_, err := svc.SearchAllSources(context.Background(), "nope", "x", "", nil, 0, 10)
 	assert.Error(t, err)
 }
+
+// --- #58 item 1: aggregate pagination must stop offering pages once every
+// contributing source has exhausted its own results, rather than trusting
+// the merged TotalCount (summed across sources with INDEPENDENT per-source
+// pagination cursors) against a single global PageSize - see
+// AggregateSearchResult.Exhausted's doc comment.
+
+// TestSearchAllSourcesExhaustedWhenEveryCatalogFitsOnPageOne reproduces the
+// reported overshoot: 3 sources whose ENTIRE catalog (10 mods each,
+// TotalCount == pageSize) fits on page 0. Summed TotalCount (30) divided by
+// the single requested pageSize (10) suggests 3 pages exist, but every
+// source has already reported its whole catalog on page 0 - so Exhausted
+// must already be true here, even though this is the FIRST page and every
+// individual source's page came back "full" (len(Mods) == pageSize).
+func TestSearchAllSourcesExhaustedWhenEveryCatalogFitsOnPageOne(t *testing.T) {
+	newTenModSource := func(id string) *searchStubSource {
+		return &searchStubSource{id: id, result: source.SearchResult{Mods: mods(id, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9", "m10"), TotalCount: 10}}
+	}
+	a, b, c := newTenModSource("alpha"), newTenModSource("beta"), newTenModSource("gamma")
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": "", "beta": "", "gamma": ""}, a, b, c)
+
+	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 30, res.TotalCount, "summed across sources, per AggregateSearchResult.TotalCount's contract")
+	assert.True(t, res.Exhausted, "every source's own TotalCount says page 0 was its last page")
+}
+
+// TestSearchAllSourcesNotExhaustedWhenASourceHasMore is the counterpart: one
+// source still has more (its TotalCount exceeds what page 0 could return),
+// so the merge must NOT be marked exhausted.
+func TestSearchAllSourcesNotExhaustedWhenASourceHasMore(t *testing.T) {
+	exhausted := &searchStubSource{id: "alpha", result: source.SearchResult{Mods: mods("alpha", "m1"), TotalCount: 1}}
+	hasMore := &searchStubSource{id: "beta", result: source.SearchResult{
+		Mods:       mods("beta", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "b10"),
+		TotalCount: 25,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": "", "beta": ""}, exhausted, hasMore)
+
+	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	require.NoError(t, err)
+	assert.False(t, res.Exhausted, "beta has 25 total and only returned page 0's 10, so more remain")
+}
+
+// TestSearchAllSourcesExhaustedFallsBackToShortPageWhenTotalUnknown mirrors
+// the single-source hasNextPage fallback (internal/tui/search.go) for a
+// source that reports no TotalCount at all: a short (partial) page is the
+// only available "no more" signal.
+func TestSearchAllSourcesExhaustedFallsBackToShortPageWhenTotalUnknown(t *testing.T) {
+	shortPage := &searchStubSource{id: "alpha", result: source.SearchResult{Mods: mods("alpha", "m1"), TotalCount: 0}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, shortPage)
+
+	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	require.NoError(t, err)
+	assert.True(t, res.Exhausted, "a short page (1 < pageSize 10) with no reported total means no more")
+}
+
+// --- #58 item 3: AttemptedCount distinguishes "no source supports search"
+// from a genuine zero-result search - see AggregateSearchResult.
+// AttemptedCount's doc comment.
+
+// TestSearchAllSourcesAttemptedCountZeroWhenNoCapableSources covers a game
+// whose configured sources are all real and registered, but NONE support
+// searching (design §5 skips them silently) - the honesty-notice trigger
+// case (#58 item 3): callers must be able to tell this apart from a capable
+// source that legitimately found nothing.
+func TestSearchAllSourcesAttemptedCountZeroWhenNoCapableSources(t *testing.T) {
+	caps := source.Capabilities{Search: false, Updates: true}
+	idOnly := &capsStubSource{&searchStubSource{id: "id-only-api", caps: &caps, err: fmt.Errorf("should never be called")}}
+	svc, game := newAggregateTestService(t, map[string]string{"id-only-api": ""}, idOnly)
+
+	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	require.NoError(t, err, "zero capable sources is not itself a failure")
+	assert.Equal(t, 0, res.AttemptedCount)
+	assert.Empty(t, res.Mods)
+}
+
+// TestSearchAllSourcesAttemptedCountReflectsRealAttempts is the counterpart:
+// a genuinely-searched, genuinely-empty result must NOT look like the
+// zero-capable-sources case.
+func TestSearchAllSourcesAttemptedCountReflectsRealAttempts(t *testing.T) {
+	empty := &searchStubSource{id: "alpha", result: source.SearchResult{}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, empty)
+
+	res, err := svc.SearchAllSources(context.Background(), game.ID, "nothing-matches", "", nil, 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.AttemptedCount)
+	assert.Empty(t, res.Mods)
+}

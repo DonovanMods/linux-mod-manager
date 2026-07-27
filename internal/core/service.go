@@ -147,6 +147,49 @@ type AggregateSearchResult struct {
 	Mods       []domain.Mod    // merged, ranked; each Mod carries its SourceID
 	TotalCount int             // sum of per-source totals (sources reporting 0/unknown contribute 0)
 	Warnings   []SourceWarning // per-source failures (design §5: warnings, not errors)
+	// Exhausted reports whether every source that successfully returned a
+	// result for THIS page has nothing left to page through (#58 item 1).
+	// TotalCount is summed across sources with INDEPENDENT per-source
+	// pagination cursors, so a caller cannot derive "is there a next page"
+	// from TotalCount and a single global PageSize the way single-source
+	// search can (see internal/tui/search.go's hasNextPage): 3 sources whose
+	// entire 10-mod catalog fits on page 0 sum to a TotalCount of 30, which
+	// against a pageSize of 10 falsely implies 3 pages exist, when actually
+	// every source already returned everything it has. Exhausted applies
+	// hasNextPage's own per-source heuristic (TotalCount-bounded when a
+	// source reports one, else "a short page means no more") to EACH
+	// contributing source and ANDs the results, so it is the accurate signal
+	// callers should gate a next-page offer on instead. True when there were
+	// zero successful sources too (nothing left to page through).
+	Exhausted bool
+	// AttemptedCount is how many of the game's configured sources actually
+	// had a search attempted against them - capability-less sources are
+	// skipped silently (see SearchAllSources's doc comment) and never
+	// counted here. Zero means NONE of the game's sources support searching
+	// at all, which is indistinguishable from a genuine zero-result search
+	// unless a caller checks this field - the honesty-notice fix (#58 item
+	// 3): CLI/TUI render a distinct "no source supports search" notice
+	// instead of a plain "no mods found" when this is 0.
+	AttemptedCount int
+}
+
+// sourceHasMore reports whether res (one source's response to the given
+// page/pageSize request) might have a page N+1 - the exact per-single-source
+// heuristic internal/tui/search.go's hasNextPage already applies (TotalCount
+// bounds it precisely when the source reports one; otherwise a full page
+// might mean more, a short one means none) - applied here per CONTRIBUTING
+// SOURCE so SearchAllSources can tell a truly-exhausted merge from one that
+// might still have more (see AggregateSearchResult.Exhausted's doc comment).
+// pageSize <= 0 (e.g. the CLI's "let the source apply its own default" case,
+// see cmd/lmm/search.go's searchPageSize) has no next-page concept at all.
+func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
+	if pageSize <= 0 {
+		return false
+	}
+	if res.TotalCount > 0 {
+		return (page+1)*pageSize < res.TotalCount
+	}
+	return len(res.Mods) == pageSize
 }
 
 // SearchAllSources searches every source configured for a game concurrently
@@ -204,6 +247,7 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 	_ = g.Wait() // goroutines always return nil; errors live in slots
 
 	succeeded := 0
+	allExhausted := true // vacuously true until a succeeding source proves otherwise
 	for i, sourceID := range sourceIDs {
 		if !attempted[i] {
 			continue
@@ -215,7 +259,11 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 		succeeded++
 		result.Mods = append(result.Mods, slots[i].res.Mods...)
 		result.TotalCount += slots[i].res.TotalCount
+		if sourceHasMore(slots[i].res, page, pageSize) {
+			allExhausted = false
+		}
 	}
+	result.Exhausted = allExhausted
 
 	rankAggregate(result.Mods, query)
 
@@ -225,6 +273,7 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 			attemptedCount++
 		}
 	}
+	result.AttemptedCount = attemptedCount
 	if attemptedCount > 0 && succeeded == 0 {
 		errs := make([]error, 0, len(result.Warnings))
 		for _, w := range result.Warnings {

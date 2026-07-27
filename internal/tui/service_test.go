@@ -105,6 +105,25 @@ func TestPrototypeProviderSearchAllSources(t *testing.T) {
 	}
 }
 
+// TestPrototypeProviderSearchAllSourcesRendersWarning guards #58 item 4:
+// prototypeProvider.Search never populated Warnings before this fix, so
+// --prototype demo mode never exercised searchWarningLine's rendering path
+// at all. Single-source search must stay warning-free (Warnings is
+// documented as "only meaningful for all-sources searches").
+func TestPrototypeProviderSearchAllSourcesRendersWarning(t *testing.T) {
+	t.Parallel()
+
+	p := NewPrototypeProvider()
+
+	all, err := p.Search(context.Background(), "", "sky", 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, all.Warnings, "all-sources demo mode must exercise the warning line")
+
+	single, err := p.Search(context.Background(), "nexusmods", "sky", 0)
+	require.NoError(t, err)
+	require.Empty(t, single.Warnings, "single-source search has no warnings to show")
+}
+
 func TestPrototypeProviderProfiles(t *testing.T) {
 	t.Parallel()
 

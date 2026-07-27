@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -359,4 +360,108 @@ func TestDoSearch_NonPositiveLimit_FallsBackToSourceDefaultPageSize(t *testing.T
 		require.Equal(t, 1, spy.calls)
 		assert.Equal(t, 0, spy.gotPageSize, "limit %d must not be forwarded as the requested page size", limit)
 	}
+}
+
+// --- #58 item 3: honesty notice when no configured source supports search ---
+
+// noSearchCapSource is a real, registered ModSource with NO search
+// capability (design §5 skips it silently in the aggregate path) - it
+// exists to reproduce the "attempted == 0" case that used to be
+// indistinguishable from a genuine zero-result search.
+type noSearchCapSource struct{ id string }
+
+func (s *noSearchCapSource) ID() string      { return s.id }
+func (s *noSearchCapSource) Name() string    { return s.id }
+func (s *noSearchCapSource) AuthURL() string { return "" }
+func (s *noSearchCapSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, nil
+}
+func (s *noSearchCapSource) Capabilities() source.Capabilities {
+	return source.Capabilities{Search: false, Updates: true}
+}
+func (s *noSearchCapSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, errors.New("should never be called: Search capability is false")
+}
+func (s *noSearchCapSource) GetMod(context.Context, string, string) (*domain.Mod, error) {
+	return nil, nil
+}
+func (s *noSearchCapSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, nil
+}
+func (s *noSearchCapSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, nil
+}
+func (s *noSearchCapSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", nil
+}
+func (s *noSearchCapSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, nil
+}
+
+// newNoSearchCapService wires a real core.Service and game around a single
+// source that is configured but does not support searching.
+func newNoSearchCapService(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	src := &noSearchCapSource{id: "id-only-api"}
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID:        "testgame",
+		Name:      "Test Game",
+		ModPath:   t.TempDir(),
+		SourceIDs: map[string]string{src.id: ""},
+	}
+	require.NoError(t, svc.AddGame(game))
+	return svc, game
+}
+
+// TestDoSearch_NoSearchableSources_PrintsHonestNotice reproduces the
+// pre-fix bug: a game whose only configured source doesn't support search
+// (attempted == 0) rendered the SAME "No mods found." text as a genuine
+// zero-result search from a capable source, giving the user no hint that
+// searching isn't even possible here.
+func TestDoSearch_NoSearchableSources_PrintsHonestNotice(t *testing.T) {
+	svc, game := newNoSearchCapService(t)
+	withSearchFlags(t, "", 10)
+	origJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = origJSON })
+
+	out, err := captureStdoutErr(t, func() error {
+		return doSearch(context.Background(), svc, game, []string{"query"})
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, out, "No mods found.", "must not look like an ordinary empty search")
+	assert.Contains(t, out, "Test Game")
+	assert.Contains(t, out, "support searching")
+}
+
+// TestDoSearch_NoSearchableSources_JSON_NoticeGoesToStderr guards the
+// one-document-on-stdout invariant (mirroring the update --json contract):
+// --json's stdout must stay a single parseable JSON document, so the human
+// notice goes to stderr instead.
+func TestDoSearch_NoSearchableSources_JSON_NoticeGoesToStderr(t *testing.T) {
+	svc, game := newNoSearchCapService(t)
+	withSearchFlags(t, "", 10)
+	withJSONOutput(t)
+
+	stdout, err := captureStdoutErr(t, func() error {
+		return doSearch(context.Background(), svc, game, []string{"query"})
+	})
+	require.NoError(t, err)
+
+	var out searchJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(stdout), &out), "stdout must stay a single valid JSON document")
+	assert.Empty(t, out.Mods)
+
+	stderr, err := captureStderrErr(t, func() error {
+		return doSearch(context.Background(), svc, game, []string{"query"})
+	})
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "support searching")
 }

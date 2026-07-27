@@ -302,13 +302,15 @@ func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page 
 		}
 
 		return SearchPage{
-			Results:    p.modsToItems(agg.Mods, installedKeys),
-			Query:      query,
-			Source:     sourceID,
-			Page:       page,
-			PageSize:   SearchPageSize,
-			TotalCount: agg.TotalCount,
-			Warnings:   warnings,
+			Results:        p.modsToItems(agg.Mods, installedKeys),
+			Query:          query,
+			Source:         sourceID,
+			Page:           page,
+			PageSize:       SearchPageSize,
+			TotalCount:     agg.TotalCount,
+			Warnings:       warnings,
+			Exhausted:      agg.Exhausted,
+			AttemptedCount: agg.AttemptedCount,
 		}, nil
 	}
 
