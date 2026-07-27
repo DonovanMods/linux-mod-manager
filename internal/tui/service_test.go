@@ -93,6 +93,20 @@ func TestPrototypeProviderSearchFiltersCannedResults(t *testing.T) {
 	require.Equal(t, 0, none.TotalCount)
 }
 
+// TestPrototypeProviderSearchClampsNegativePage guards the defensive page
+// clamp (PR #114 review): no caller passes a negative page today, but a
+// negative start index would panic the canned-set slice rather than
+// degrade, and the method already normalizes pageSize defensively — page
+// gets the same treatment.
+func TestPrototypeProviderSearchClampsNegativePage(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	page, err := provider.Search(context.Background(), "nexusmods", "", -3, 0)
+	require.NoError(t, err, "a negative page must degrade, not panic")
+	require.Len(t, page.Results, len(prototype.Load().SearchResults), "clamped to page 0: full canned set")
+}
+
 func TestPrototypeProviderSearchAllSources(t *testing.T) {
 	t.Parallel()
 

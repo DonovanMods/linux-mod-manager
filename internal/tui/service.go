@@ -412,7 +412,11 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, page
 	// what PageSize claimed, which happened to look right only because
 	// SearchPageSize (10) exceeded len(SearchResults) (5). start/end are
 	// clamped to len(matched) so an out-of-range page (or a pageSize larger
-	// than what's left) never slices past the end.
+	// than what's left) never slices past the end; page is clamped to >= 0
+	// for the same defensive reason pageSize is normalized above - no
+	// caller passes a negative page today, but a negative start would panic
+	// the slice below rather than degrade.
+	page = max(page, 0)
 	start := min(page*pageSize, len(matched))
 	end := min(start+pageSize, len(matched))
 
