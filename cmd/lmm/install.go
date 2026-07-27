@@ -347,7 +347,25 @@ func looksOpaqueFileName(fileName string) bool {
 	return true
 }
 
+// installVersionGuard is an interim honesty fix per #93/#104 (EPIC #98's
+// decided option 2: reject clearly): installVersion previously parsed and
+// was silently ignored - lmm install --version 1.2.3 installed the latest
+// while claiming otherwise. Placed at runInstall's own entry, before
+// withGameService resolves a game or opens a service, so the flag is
+// rejected before any plan/network work happens. Remove this guard once #96
+// wires the real version->file resolver.
+func installVersionGuard() error {
+	if installVersion != "" {
+		return fmt.Errorf("--version is not yet supported: version-specific installs need the version→file resolver tracked by #96/#97 (EPIC #98); omit --version to install the latest")
+	}
+	return nil
+}
+
 func runInstall(cmd *cobra.Command, args []string) error {
+	if err := installVersionGuard(); err != nil {
+		return err
+	}
+
 	// Either query or --id is required
 	if len(args) == 0 && installModID == "" {
 		return fmt.Errorf("either a search query or --id is required")
