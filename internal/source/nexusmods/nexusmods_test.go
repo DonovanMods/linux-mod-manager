@@ -450,6 +450,59 @@ func TestNexusMods_GetDependencies(t *testing.T) {
 	assert.Equal(t, "nexusmods", deps[0].SourceID)
 }
 
+// TestNexusMods_Getters folds the trivial identity/auth-state getters into
+// one small test, per the task brief.
+func TestNexusMods_Getters(t *testing.T) {
+	nm := New(nil, "")
+	assert.Equal(t, "nexusmods", nm.ID())
+	assert.Equal(t, "Nexus Mods", nm.Name())
+	assert.Equal(t, "https://www.nexusmods.com/oauth/authorize", nm.AuthURL())
+	assert.False(t, nm.IsAuthenticated())
+
+	nm.SetAPIKey("new-key")
+	assert.True(t, nm.IsAuthenticated())
+}
+
+// TestNexusMods_ExchangeToken asserts the documented OAuth-refusal error;
+// NexusMods uses API-key auth instead, so this is a permanent stub.
+func TestNexusMods_ExchangeToken(t *testing.T) {
+	nm := New(nil, "")
+
+	_, err := nm.ExchangeToken(context.Background(), "code")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API key authentication")
+}
+
+func TestNexusMods_ValidateAPIKey_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/users/validate.json", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(t, w, map[string]interface{}{"user_id": 12345, "name": "TestUser"})
+	}))
+	defer server.Close()
+
+	nm := New(nil, "")
+	nm.client.SetBaseURL(server.URL)
+
+	err := nm.ValidateAPIKey(context.Background(), "test-key")
+	require.NoError(t, err)
+}
+
+func TestNexusMods_ValidateAPIKey_Failure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Invalid API Key"}`))
+	}))
+	defer server.Close()
+
+	nm := New(nil, "")
+	nm.client.SetBaseURL(server.URL)
+
+	err := nm.ValidateAPIKey(context.Background(), "bad-key")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid API key")
+}
+
 func TestNexusMods_GetDependencies_NoDeps(t *testing.T) {
 	// Mock GraphQL response with no dependencies
 	mockResponse := map[string]interface{}{

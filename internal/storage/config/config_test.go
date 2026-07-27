@@ -205,6 +205,109 @@ func TestLoad_HookTimeout(t *testing.T) {
 	})
 }
 
+func TestConfigSave_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := &config.Config{
+		DefaultLinkMethod: domain.LinkHardlink,
+		DefaultGame:       "skyrim-se",
+		Keybindings:       "standard",
+		CachePath:         "/custom/cache",
+		HookTimeout:       120,
+	}
+
+	require.NoError(t, cfg.Save(dir))
+
+	loaded, err := config.Load(dir)
+	require.NoError(t, err)
+
+	assert.Equal(t, domain.LinkHardlink, loaded.DefaultLinkMethod)
+	assert.Equal(t, "skyrim-se", loaded.DefaultGame)
+	assert.Equal(t, "standard", loaded.Keybindings)
+	assert.Equal(t, "/custom/cache", loaded.CachePath)
+	assert.Equal(t, 120, loaded.HookTimeout)
+}
+
+// TestConfigSave_DefaultFieldsRoundTrip pins that a zero-value Config still
+// round-trips: LinkMethodStr is always populated from String() (LinkSymlink's
+// zero value included), so an "empty" config saves and reloads with the
+// documented defaults, not with an absent/blank link method.
+func TestConfigSave_DefaultFieldsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := &config.Config{}
+	require.NoError(t, cfg.Save(dir))
+
+	loaded, err := config.Load(dir)
+	require.NoError(t, err)
+
+	assert.Equal(t, domain.LinkSymlink, loaded.DefaultLinkMethod)
+	assert.Empty(t, loaded.DefaultGame)
+	assert.Empty(t, loaded.Keybindings, "Save does not re-apply Load's default keybindings")
+}
+
+func TestConfigSave_WriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission checks, so this EACCES setup can't fail")
+	}
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "cfgdir")
+	require.NoError(t, os.MkdirAll(dir, 0755))
+	require.NoError(t, os.Chmod(dir, 0500)) // read+exec, no write
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+
+	cfg := &config.Config{}
+	err := cfg.Save(dir)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "writing config")
+}
+
+func TestDeleteGame(t *testing.T) {
+	dir := t.TempDir()
+
+	game := &domain.Game{
+		ID:          "test-game",
+		Name:        "Test Game",
+		InstallPath: "/games/test",
+		ModPath:     "/games/test/mods",
+	}
+	require.NoError(t, config.SaveGame(dir, game))
+
+	require.NoError(t, config.DeleteGame(dir, "test-game"))
+
+	games, err := config.LoadGames(dir)
+	require.NoError(t, err)
+	assert.NotContains(t, games, "test-game")
+}
+
+func TestDeleteGame_Missing(t *testing.T) {
+	dir := t.TempDir()
+
+	err := config.DeleteGame(dir, "does-not-exist")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrGameNotFound)
+}
+
+// TestDeleteGame_PersistsAfterReload guards against a delete that only
+// mutates the in-memory map without writing games.yaml back out.
+func TestDeleteGame_PersistsAfterReload(t *testing.T) {
+	dir := t.TempDir()
+
+	require.NoError(t, config.SaveGame(dir, &domain.Game{ID: "game-a", Name: "A"}))
+	require.NoError(t, config.SaveGame(dir, &domain.Game{ID: "game-b", Name: "B"}))
+
+	require.NoError(t, config.DeleteGame(dir, "game-a"))
+
+	// Reload from disk (not the in-process map) to prove the write happened.
+	games, err := config.LoadGames(dir)
+	require.NoError(t, err)
+	assert.NotContains(t, games, "game-a")
+	assert.Contains(t, games, "game-b")
+}
+
 func TestLoadGames_ExpandsTilde(t *testing.T) {
 	dir := t.TempDir()
 	gamesPath := filepath.Join(dir, "games.yaml")

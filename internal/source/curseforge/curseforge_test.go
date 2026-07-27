@@ -295,3 +295,104 @@ func TestCurseForge_ExchangeToken(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "API key authentication")
 }
+
+// TestCurseForge_AuthGetters folds the trivial auth-state getters into one
+// small test, per the task brief.
+func TestCurseForge_AuthGetters(t *testing.T) {
+	cf := New(nil, "")
+	assert.False(t, cf.IsAuthenticated())
+	assert.Equal(t, "https://console.curseforge.com/", cf.AuthURL())
+
+	cf.SetAPIKey("new-key")
+	assert.True(t, cf.IsAuthenticated())
+}
+
+// TestCurseForge_ResolveGameID covers resolveGameID's branches beyond the
+// numeric-ID fast path already exercised by TestCurseForge_Search: slug
+// resolution (with caching), display-name matching, "not found", and the
+// wrapped GetGames failure.
+func TestCurseForge_ResolveGameID(t *testing.T) {
+	t.Run("numeric ID short-circuits without an API call", func(t *testing.T) {
+		cf := New(nil, "")
+		id, err := cf.resolveGameID(context.Background(), "432")
+		require.NoError(t, err)
+		assert.Equal(t, 432, id)
+	})
+
+	t.Run("resolves slug via GetGames and caches it", func(t *testing.T) {
+		callCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"data": [{"id": 432, "name": "Minecraft", "slug": "minecraft"}],
+				"pagination": {"index": 0, "pageSize": 50, "resultCount": 1, "totalCount": 1}
+			}`))
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		id, err := cf.resolveGameID(context.Background(), "minecraft")
+		require.NoError(t, err)
+		assert.Equal(t, 432, id)
+		assert.Equal(t, 1, callCount)
+
+		id, err = cf.resolveGameID(context.Background(), "minecraft")
+		require.NoError(t, err)
+		assert.Equal(t, 432, id)
+		assert.Equal(t, 1, callCount, "second lookup for the same slug must hit the cache, not the API")
+	})
+
+	t.Run("matches by display name case-insensitively", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"data": [{"id": 5, "name": "World of Warcraft", "slug": "wow"}],
+				"pagination": {"index": 0, "pageSize": 50, "resultCount": 1, "totalCount": 1}
+			}`))
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		id, err := cf.resolveGameID(context.Background(), "World Of Warcraft")
+		require.NoError(t, err)
+		assert.Equal(t, 5, id)
+	})
+
+	t.Run("slug not found among games", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"data": [],
+				"pagination": {"index": 0, "pageSize": 50, "resultCount": 0, "totalCount": 0}
+			}`))
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		_, err := cf.resolveGameID(context.Background(), "nonexistent-slug")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "game not found")
+	})
+
+	t.Run("GetGames failure is wrapped", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"boom"}`))
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		_, err := cf.resolveGameID(context.Background(), "minecraft")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "fetching games to resolve slug")
+	})
+}

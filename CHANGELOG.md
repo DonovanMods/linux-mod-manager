@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.1] - 2026-07-27
+
+### Added
+
+- **CI test workflow** (`.github/workflows/test.yml`): gofmt check, `go vet`, and the full suite under the race detector on every push to main and every pull request — the repo previously had no CI test run at all. A matching `make test-race` target runs the same suite locally.
+
+### Internal
+
+- Coverage backfill across the layers furthest from their targets — all tests pin existing behavior, no production code changed: domain enum parsers/String methods (78→100%), linker deploy lifecycle incl. Undeploy/IsDeployed for all three strategies, CleanupEmptyDirs, and the deliberate deploy-over-existing-file overwrite semantics (40→77%), storage config Save/DeleteGame/ListProfiles/DeleteProfile (66→80%), db mutation setters (69→76%), cache Size (63→81%), steam VDF parsing/library discovery/DetectGames (41→81%), CurseForge and NexusMods client endpoints via mocked HTTP (63→84%, 68→74%), and `lmm conflicts` driven end-to-end through the real command path incl. `--json`
+- Fixed a latent test-order landmine: a cancelled context cached on the Cobra root-command singleton by one test poisoned every later bare `Execute()` call in the binary, failing context-sensitive tests under `-shuffle=on`
+
 ## [1.20.0] - 2026-07-27
 
 ### Added
@@ -1004,7 +1015,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.1...HEAD
+[1.20.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.0...v1.20.1
 [1.20.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.3...v1.19.0
 [1.18.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.2...v1.18.3

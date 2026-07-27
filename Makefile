@@ -1,4 +1,4 @@
-.PHONY: all build run install test test-verbose coverage fmt vet lint clean help man
+.PHONY: all build run install test test-race test-verbose coverage fmt vet lint clean help man
 
 # Build variables
 BINARY_NAME := lmm
@@ -36,6 +36,10 @@ install:
 ## test: Run tests (uses project GOCACHE for sandbox-friendly runs)
 test:
 	@GOCACHE=$(GOCACHE_LOCAL) go test ./...
+
+## test-race: Run tests with the race detector (matches CI)
+test-race:
+	@GOCACHE=$(GOCACHE_LOCAL) go test -race ./...
 
 ## test-verbose: Run tests with verbose output
 test-verbose:

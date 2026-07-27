@@ -144,6 +144,114 @@ func TestClient_IsAuthenticated(t *testing.T) {
 	}
 }
 
+func TestClient_GetLatestUpdated(t *testing.T) {
+	mockResponse := []ModData{
+		{ModID: 1, Name: "First Mod", Version: "1.0.0", Author: "Author1"},
+		{ModID: 2, Name: "Second Mod", Version: "2.0.0", Author: "Author2"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/games/starrupture/mods/latest_updated.json", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.SetBaseURL(server.URL)
+
+	mods, err := client.GetLatestUpdated(context.Background(), "starrupture")
+	require.NoError(t, err)
+	assert.Len(t, mods, 2)
+	assert.Equal(t, "First Mod", mods[0].Name)
+	assert.Equal(t, "Second Mod", mods[1].Name)
+}
+
+func TestClient_GetLatestUpdated_NonOK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"boom"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.SetBaseURL(server.URL)
+
+	_, err := client.GetLatestUpdated(context.Background(), "starrupture")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API error (status 500)")
+}
+
+func TestClient_GetLatestUpdated_MalformedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{not-json`))
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.SetBaseURL(server.URL)
+
+	_, err := client.GetLatestUpdated(context.Background(), "starrupture")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decoding response")
+}
+
+func TestClient_GetTrending(t *testing.T) {
+	mockResponse := []ModData{
+		{ModID: 3, Name: "Trending Mod", Version: "3.0.0", Author: "Author3"},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/games/starrupture/mods/trending.json", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(mockResponse); err != nil {
+			t.Errorf("encoding response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.SetBaseURL(server.URL)
+
+	mods, err := client.GetTrending(context.Background(), "starrupture")
+	require.NoError(t, err)
+	require.Len(t, mods, 1)
+	assert.Equal(t, "Trending Mod", mods[0].Name)
+}
+
+func TestClient_GetTrending_NonOK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"boom"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.SetBaseURL(server.URL)
+
+	_, err := client.GetTrending(context.Background(), "starrupture")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "API error (status 500)")
+}
+
+func TestClient_GetTrending_MalformedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{not-json`))
+	}))
+	defer server.Close()
+
+	client := NewClient(nil, "testapikey")
+	client.SetBaseURL(server.URL)
+
+	_, err := client.GetTrending(context.Background(), "starrupture")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "decoding response")
+}
+
 func TestClient_ValidateAPIKey_Success(t *testing.T) {
 	// Mock response for /v1/users/validate.json
 	mockResponse := map[string]interface{}{
