@@ -180,6 +180,12 @@ func TestRunRoot_PropagatesContextCancellation(t *testing.T) {
 	t.Cleanup(func() {
 		rootCmd.RemoveCommand(waitCmd)
 		rootCmd.SetArgs(nil)
+		// ExecuteContext caches its ctx on the singleton (cobra only
+		// defaults ctx when nil), so without this reset the cancelled
+		// context above poisons every later bare Execute() call in the
+		// test binary - surfaced as shuffle-order failures in tests
+		// that drive context-sensitive paths.
+		rootCmd.SetContext(context.Background())
 	})
 	rootCmd.SetArgs([]string{"internal-test-wait"})
 

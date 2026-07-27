@@ -63,7 +63,7 @@ func TestRunConflicts_ViaCommand_NoConflicts(t *testing.T) {
 	require.NoError(t, svc.Close())
 
 	rootCmd.SetArgs([]string{"conflicts", "--game", game.ID})
-	out := captureStdout(t, func() error { return rootCmd.Execute() })
+	out := captureStdout(t, func() error { return rootCmd.ExecuteContext(context.Background()) })
 
 	assert.Equal(t, "No conflicts found.\n", out)
 }
@@ -77,7 +77,7 @@ func TestRunConflicts_ViaCommand_RealConflict_Text(t *testing.T) {
 	require.NoError(t, svc.Close())
 
 	rootCmd.SetArgs([]string{"conflicts", "--game", game.ID})
-	out := captureStdout(t, func() error { return rootCmd.Execute() })
+	out := captureStdout(t, func() error { return rootCmd.ExecuteContext(context.Background()) })
 
 	assert.Contains(t, out, "Found 1 conflicting file(s):")
 	assert.Contains(t, out, "shared.esp")
@@ -96,7 +96,7 @@ func TestRunConflicts_ViaCommand_JSON(t *testing.T) {
 	require.NoError(t, svc.Close())
 
 	rootCmd.SetArgs([]string{"conflicts", "--game", game.ID, "--json"})
-	out := captureStdout(t, func() error { return rootCmd.Execute() })
+	out := captureStdout(t, func() error { return rootCmd.ExecuteContext(context.Background()) })
 
 	var decoded conflictsJSONOutput
 	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
