@@ -188,25 +188,77 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 }
 
 // copyDir recursively copies a directory using streaming I/O to avoid loading
-// entire files into memory (important for large mod archives).
+// entire files into memory (important for large mod archives). It is the
+// cross-device-rename fallback in Import, so it must handle whatever an
+// extracted archive contains - including directory symlinks (some mod
+// packages vendor shared assets that way).
+//
+// It deliberately does not use filepath.Walk: Walk classifies entries with
+// Lstat, which never follows symlinks, so a symlinked subdirectory reports
+// IsDir()==false and falls through to a plain file copy. Reading a directory
+// fd as a byte stream then fails with EISDIR. copyDir instead os.Stat's each
+// entry (following symlinks) to classify it, and materializes symlinked
+// directories as real directories in the destination.
 func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+	return copyDirFollowing(src, dst, map[string]bool{})
+}
+
+// copyDirFollowing does the recursive work for copyDir. visited holds the
+// resolved (symlink-free) real path of every directory currently on the
+// active recursion stack (root down to src) - not every directory ever seen.
+// It is added on entry and removed via defer on exit, so it only ever
+// contains true ancestors of the node being processed. That distinction
+// matters: two sibling symlinks/dirs that both resolve to the same real path
+// are legal (just duplicated content) and must not be flagged, but a symlink
+// that points back at a directory still being walked - an actual cycle -
+// would recurse forever without this guard.
+func copyDirFollowing(src, dst string, visited map[string]bool) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", src, err)
+	}
+
+	real, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return fmt.Errorf("resolving %s: %w", src, err)
+	}
+	if visited[real] {
+		return fmt.Errorf("copying %s: symlink cycle detected", src)
+	}
+	visited[real] = true
+	defer delete(visited, real)
+
+	if err := os.MkdirAll(dst, info.Mode()); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", src, err)
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		entryInfo, err := os.Stat(srcPath) // follow symlinks for classification
 		if err != nil {
+			return fmt.Errorf("stat %s: %w", srcPath, err)
+		}
+
+		if entryInfo.IsDir() {
+			if err := copyDirFollowing(srcPath, dstPath, visited); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := copyFileStreaming(srcPath, dstPath); err != nil {
 			return err
 		}
+	}
 
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		dstPath := filepath.Join(dst, relPath)
-
-		if info.IsDir() {
-			return os.MkdirAll(dstPath, info.Mode())
-		}
-
-		return copyFileStreaming(path, dstPath)
-	})
+	return nil
 }
 
 // ScanResult contains the outcome of scanning a single mod file
