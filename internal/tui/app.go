@@ -507,6 +507,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.search.gen++
 			m.search.state = searchIdle
+			// refilling/refreshing (#111 Tier 3 fix round 5 - task
+			// re-review audit): state going to searchIdle already blocks
+			// any NEW refill/refresh from dispatching, and the ONLY path
+			// back to searchReady is a fresh submit (startSearch ->
+			// beginNewSession, which resets both anyway) - but resetting
+			// here too keeps the invariant "state != searchReady implies
+			// neither flag is stuck true" holding everywhere a session gets
+			// invalidated out-of-band, not just at the two dispatch sites
+			// that already reset it as a side effect of their own gen bump.
+			m.search.refilling = false
+			m.search.refreshing = false
 			// Same invalidation for any in-flight DATA load (see
 			// Model.loadGen): it was dispatched against the OLD profile's
 			// binding, so its eventual rows/summary go stale the instant
@@ -666,11 +677,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.search.state = searchReady
-		m.search.page = msg.page
-		m.selected[ScreenSearch] = 0
+		switch msg.kind {
+		case searchResultSubmit:
+			m.search.applyRoundResult(msg.page, true, roundExhausted(msg.page))
+			m.search.fetchRound = 1
+			m.selected[ScreenSearch] = 0
+		case searchResultRefill:
+			m.search.refilling = false
+			newRows := len(msg.page.Results)
+			m.search.applyRoundResult(msg.page, false, newRows == 0 || roundExhausted(msg.page))
+			if newRows > 0 {
+				m.search.fetchRound++
+			}
+		case searchResultRefresh:
+			m.search.refreshing = false
+			m.search.applyRoundResult(msg.page, true, msg.page.Exhausted)
+			m.search.fetchRound = msg.rounds
+			if m.selected[ScreenSearch] >= len(m.search.buffer) {
+				m.selected[ScreenSearch] = max(len(m.search.buffer)-1, 0)
+			}
+		}
 		return m, nil
 	case searchFailedMsg:
 		if msg.gen != m.search.gen {
+			return m, nil
+		}
+		switch msg.kind {
+		case searchResultRefill:
+			// A refill failure must not destroy an already-useful buffer,
+			// NOR permanently give up (#111 Tier 3 fix round 4 - task
+			// review finding: this used to set providerExhausted
+			// unconditionally, making the footer falsely claim "all N
+			// shown" with no way to retry). providerExhausted means the
+			// PROVIDER said there's nothing left - a failed ATTEMPT is not
+			// that. fetchRound is untouched here (only ever advanced on a
+			// SUCCESSFUL searchResultRefill, see the case above), so the
+			// next low-water-triggering movement
+			// (afterSearchSelectionMove -> maybeRefillSearch) naturally
+			// retries the SAME round. That retry can only ever be fired by
+			// a real keypress - maybeRefillSearch is never called from a
+			// timer or loop, only from Up/Down/NextPage's handlers - so
+			// this can't spin into a tight automatic retry loop; a user
+			// holding Down will keep retrying on every press, which is the
+			// intended "just keep scrolling and it'll pick back up"
+			// behavior, not a bug.
+			m.search.refilling = false
+			m.setIdleStatus("couldn't load more — will retry", false)
+			return m, nil
+		case searchResultRefresh:
+			// A refresh failure must leave the PRE-refresh buffer and
+			// searchReady state exactly as they were (#111 Tier 3 fix
+			// round 4): refreshSearchAfterInstall's beginRefresh
+			// (search.go) never touches either up front - see its own doc
+			// comment - so there is nothing to roll back here; just clear
+			// refreshing (fix round 5) so a subsequent scroll can refill
+			// again, and surface a muted notice.
+			m.search.refreshing = false
+			m.setIdleStatus("couldn't refresh results", false)
 			return m, nil
 		}
 		// The sentinel source ("" == all sources) has no single source name to
@@ -755,7 +818,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Submit):
 			m.search.input.Blur()
-			return m.startSearch(m.search.input.Value(), 0)
+			return m.startSearch(m.search.input.Value())
 		default:
 			var cmd tea.Cmd
 			m.search.input, cmd = m.search.input.Update(msg)
@@ -780,13 +843,23 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Search), key.Matches(msg, m.keys.SearchScreen):
 		return m.gotoScreenFocused(ScreenSearch)
 	case key.Matches(msg, m.keys.NextPage):
-		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.hasNextPage() {
-			return m.startSearch(m.search.page.Query, m.search.page.Page+1)
+		// #111 Tier 3: n is now a "jump a paneful" selection accelerator,
+		// not a page turn - infinite scroll has no pages. Moving forward
+		// can walk into refill range, so it runs through
+		// afterSearchSelectionMove like Up/Down does.
+		if m.screen == ScreenSearch && m.search.state == searchReady {
+			m.moveSelection(m.search.fetchSize)
+			return m.afterSearchSelectionMove()
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.PrevPage):
-		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.page.Page > 0 {
-			return m.startSearch(m.search.page.Query, m.search.page.Page-1)
+		// p jumps backward by the same distance - deliberately WITHOUT
+		// calling afterSearchSelectionMove: every row a backward jump can
+		// land on is already in the buffer, so this must never dispatch a
+		// refill (see maybeRefillSearch's doc comment on the low-water
+		// check this skips entirely).
+		if m.screen == ScreenSearch && m.search.state == searchReady {
+			m.moveSelection(-m.search.fetchSize)
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.CycleSource):
@@ -804,6 +877,11 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.search.gen++
 			m.search.state = searchIdle
+			// #111 Tier 3 fix round 5 - see the profile-switch reset above
+			// (actionDoneMsg's switchedTo handling) for why these are reset
+			// here too, not just left to the next submit.
+			m.search.refilling = false
+			m.search.refreshing = false
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Profiles):
@@ -814,10 +892,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gotoScreen(ScreenConflicts)
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
-		return m, nil
+		return m.afterSearchSelectionMove()
 	case key.Matches(msg, m.keys.Down):
 		m.moveSelection(1)
-		return m, nil
+		return m.afterSearchSelectionMove()
 	case key.Matches(msg, m.keys.Select):
 		// Select ("enter") is context-dependent: it opens a dashboard menu
 		// entry everywhere except Profiles, where Task 7 repurposes it to
@@ -1602,46 +1680,50 @@ func (m Model) searchDetailPane(width, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-// searchFooterLine renders pagination status. The total-pages figure only
-// appears when the source reports a TotalCount; otherwise only the current
-// page is shown. In both cases, the "n next"/"p prev" hints only render when
-// the corresponding key would actually act, so a page-1 footer never shows a
-// dead "p prev" hint.
+// searchFooterLine renders the session's LOAD status (#111 Tier 3: infinite
+// scroll replaced per-page pagination - see searchModel.buffer's own doc
+// comment for why an aggregate "Page N/M" figure could never be made
+// honest). Three forms, chosen by what's actually knowable:
+//   - a single source that reports a TotalCount: "X of Y loaded" - Y is the
+//     source's own reported total (not derived from how many rounds have
+//     run), so this stays accurate before AND after providerExhausted
+//     flips, unlike the other two forms below.
+//   - otherwise (aggregate mode, or a single source with no reported
+//     total), once providerExhausted: "all X shown" - X is definitively
+//     everything there is.
+//   - otherwise, still fetching: "X loaded · more available" - honest about
+//     there being more without claiming to know how much (an aggregate
+//     TotalCount is SUMMED across sources with independent per-round
+//     cursors and cannot bound the eventual total the way a single
+//     source's can - see roundExhausted's doc comment).
 //
-// All-sources pages (Source == "") never render a "Page N/M" figure at all
-// (#58 item 1): M would have to come from TotalCount/PageSize, but
-// TotalCount there is SUMMED across sources that paginate independently (see
-// hasNextPage's doc comment) - a figure computed from it would promise a
-// page count the merge can't keep. The result COUNT is still trustworthy
-// (it's a plain sum of what was actually returned), so that part renders
-// unchanged; only the "/M" half is aggregate-unsafe.
+// X is len(page.Results) - the RENDERED view, not len(buffer) directly:
+// applyRoundResult always keeps the two in lockstep for every real fetch, so
+// this only matters for tests that hand-construct m.search.page without
+// separately populating buffer (a pre-existing, still-common convention -
+// see e.g. TestSearchViewRendersStates), which would otherwise report "0
+// loaded" against results that plainly render.
+//
+// A trailing "· fetching…" appears whenever a refill is actually in flight
+// (searchModel.refilling), regardless of which of the three forms above is
+// showing - the transient signal that walking further down might briefly
+// stall while a KeyMsg is bound.
 func (m Model) searchFooterLine() string {
-	page := m.search.page
-	current := page.Page + 1
+	s := m.search
+	loaded := len(s.page.Results)
 
-	footer := fmt.Sprintf("Page %d", current)
+	var footer string
 	switch {
-	case page.Source == "":
-		// Aggregate pages count the rows actually shown, never the summed
-		// per-source TotalCount: a source that doesn't report totals
-		// contributes 0 to the sum while its rows are real, so the sum
-		// under-reports (a 13-row merged page once rendered "(3 results)" —
-		// user smoke finding, PR #110). len(Results) is the only figure
-		// that is true by construction here; single-source pages below keep
-		// the genuine reported totals.
-		if len(page.Results) > 0 {
-			footer = fmt.Sprintf("Page %d (%d shown)", current, len(page.Results))
-		}
-	case page.TotalCount > 0 && page.PageSize > 0:
-		totalPages := (page.TotalCount + page.PageSize - 1) / page.PageSize
-		footer = fmt.Sprintf("Page %d/%d (%d results)", current, totalPages, page.TotalCount)
+	case s.page.Source != "" && s.page.TotalCount > 0:
+		footer = fmt.Sprintf("%d of %d loaded", loaded, s.page.TotalCount)
+	case s.providerExhausted:
+		footer = fmt.Sprintf("all %d shown", loaded)
+	default:
+		footer = fmt.Sprintf("%d loaded · more available", loaded)
 	}
 
-	if m.search.hasNextPage() {
-		footer += " · n next"
-	}
-	if page.Page > 0 {
-		footer += " · p prev"
+	if s.refilling {
+		footer += " · fetching…"
 	}
 	return footer
 }
@@ -2214,6 +2296,97 @@ func (m Model) contentChromeHeight() int {
 
 	const titleNavAndSpacerHeight = 4 // title, nav, and the spacer lines around content.
 	return titleNavAndSpacerHeight + footerHeight + statusHeight
+}
+
+// searchFetchSizeCap bounds Model.searchFetchSize's derived value from
+// above (#111 Tier 1): a very tall terminal's visible budget is not, by
+// itself, a reason to request 100+ results from a real source's API in one
+// call - 50 is a deliberate ~5x headroom over SearchPageSize's historical
+// fixed size, not "as many as fit on screen". Verified against the live
+// NexusMods API (2026-07-27, final-review follow-up): a count-50 search
+// request is honored verbatim - 50 rows returned, no server-side clamp, no
+// error - so a full page at this cap keeps the short-page exhaustion
+// heuristic truthful. A source that DID silently clamp below a requested
+// page size would read as exhausted with results still remaining; if a
+// future source behaves that way, cap per-source (a capability) rather
+// than raising this constant - see #109's Tier-2 note.
+// SearchPageSize (service.go)
+// is the corresponding floor - see its own doc comment for why the same
+// constant also doubles as every DataProvider.Search implementation's
+// pageSize <= 0 fallback.
+const searchFetchSizeCap = 50
+
+// searchFetchSize derives how many results ONE query session should fetch
+// (#111 Tier 1) from the terminal's actual visible budget, targeting the
+// WORST-CASE render of the results pane rather than its best case. A user
+// smoke finding on PR #114 (fetch 48, only 43 visible, "↓ 5 more") traced
+// to the opposite: the original derivation assumed the smallest possible
+// chrome (a bare 2-line header, no status line), then a warning line
+// and/or the action status line materializing at RENDER time shrank the
+// pane out from under an already-dispatched fetch - and the results pane's
+// own "↓ N more" scroll indicator (windowedRows/pickerWindow, clamp.go)
+// consumes a row of whatever budget IS available once that happens, so a
+// too-generous fetch reads as an even bigger, more visible shortfall than
+// the raw row deficit alone.
+//
+// Beyond the base header(2)+footer(1)+border(2) subtraction (unchanged -
+// see below), two additional rows are reserved for the WORST case:
+//   - statusReserve (1, unconditional): m.hasVisibleStatus() reflects only
+//     what's true AT THE MOMENT this runs, but an action can start and post
+//     a status line at any later point in the session, after this size was
+//     already dispatched - there's no way to rule that out, so it's always
+//     reserved regardless of the current value.
+//   - warningReserve (1, only when m.search.source() == "" at submit - the
+//     all-sources sentinel): searchView only ever appends a warning line to
+//     an ALL-SOURCES page (SearchPage.Warnings is empty for single-source
+//     searches - see its own doc comment), so a single-source session never
+//     needs this; an all-sources session can't know in advance whether the
+//     page it's about to fetch will warn, so it reserves defensively.
+//
+// This remains a LOWER bound in the other direction, not an exact fit: when
+// neither reservation actually materializes (no status line ever appears,
+// a single-source page, or an all-sources page that happens not to warn),
+// the pane under-fills by up to 2 rows - accepted, since the alternative
+// would require knowing the render-time-exact chrome before the very fetch
+// that determines part of it. windowedRows (clamp.go) is the actual safety
+// net that makes any shortfall harmless - it scroll-follows the selection
+// through whatever the buffer holds regardless of exactly how many rows
+// one round happened to return.
+//
+// Mirrors searchReadyView's own arithmetic; that function's
+// paneContentHeight local computes:
+//
+//	paneContentHeight := max(paneHeight - Panel.GetVerticalBorderSize(), 1)
+//	paneHeight         := max(availableContentHeight() - len(header) - 1, 1)
+//
+// i.e. availableContentHeight() minus len(header) minus the footer line
+// (1) minus the panel's own top+bottom border, before the two worst-case
+// reservations above. headerLineCount is hardcoded to 2 (searchHeaderLines'
+// title + query-input lines, the guaranteed base) - the warning line is
+// handled by warningReserve above, not by reading len(searchHeaderLines())
+// live (which is unknowable before the fetch that would produce it).
+//
+// #111 Tier 3 (infinite scroll): this value now serves DOUBLE duty beyond
+// sizing one provider round - it's also the distance
+// maybeRefillSearch's low-water check and the n/p accelerators
+// (afterSearchSelectionMove, search.go) jump the selection by. Called once
+// per query session, exclusively from startSearch (the Enter/submit path):
+// startSearch stores the result in m.search.fetchSize; every later round of
+// that session - refillSearch's fetches, refreshSearchAfterInstall's
+// rebuild - reuses it UNCHANGED, even across an intervening resize. A
+// resize only changes what the NEXT startSearch call fetches.
+func (m Model) searchFetchSize() int {
+	const (
+		headerLineCount = 2 // searchHeaderLines(): title + query input
+		footerLineCount = 1 // searchFooterLine(): single status line
+		statusReserve   = 1 // hasVisibleStatus can become true after submit
+		warningReserve  = 1 // all-sources sessions only - see doc comment
+	)
+	budget := m.availableContentHeight() - headerLineCount - footerLineCount - m.theme.Panel.GetVerticalBorderSize() - statusReserve
+	if m.search.source() == "" {
+		budget -= warningReserve
+	}
+	return min(max(budget, SearchPageSize), searchFetchSizeCap)
 }
 
 // countLabel renders n, or "?" when n is negative (unknown, e.g. no update

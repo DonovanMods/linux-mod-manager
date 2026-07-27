@@ -229,7 +229,7 @@ func TestGameSwitchCancelsInFlightSearchAndDiscardsLateResult(t *testing.T) {
 	loaded, _ := model.Update(model.Init()())
 	model = loaded.(Model)
 
-	model, searchCmd := model.startSearch("skyui", 0)
+	model, searchCmd := model.startSearch("skyui")
 	require.NotNil(t, searchCmd, "startSearch must dispatch a query given a real configured source")
 	gen1 := model.search.gen
 	require.NotNil(t, model.search.cancel)

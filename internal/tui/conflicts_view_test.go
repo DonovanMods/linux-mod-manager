@@ -69,7 +69,7 @@ func (f conflictsFakeProvider) Overview(context.Context) (Summary, []ModItem, er
 func (f conflictsFakeProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (f conflictsFakeProvider) Sources() []string                               { return nil }
 func (f conflictsFakeProvider) SourceInfos() []SourceInfo                       { return nil }
-func (f conflictsFakeProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+func (f conflictsFakeProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
 func (f conflictsFakeProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }
@@ -194,7 +194,7 @@ func (longConflictsProvider) Overview(context.Context) (Summary, []ModItem, erro
 func (longConflictsProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (longConflictsProvider) Sources() []string                               { return nil }
 func (longConflictsProvider) SourceInfos() []SourceInfo                       { return nil }
-func (longConflictsProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+func (longConflictsProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
 func (longConflictsProvider) DeployedFiles(string, string) ([]string, error) { return nil, nil }

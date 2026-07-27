@@ -36,6 +36,11 @@ type stubSource struct {
 	id     string
 	result source.SearchResult
 	err    error
+	// gotQuery records the LAST SearchQuery this source received (#111 Tier
+	// 1's pageSize-passthrough tests) - a plain capture field, mirroring
+	// blockingSource's own "just enough to prove the call happened" shape
+	// above, since no existing test needs more than the most recent call.
+	gotQuery source.SearchQuery
 }
 
 func (s *stubSource) ID() string {
@@ -49,7 +54,8 @@ func (s *stubSource) AuthURL() string { return "" }
 func (s *stubSource) ExchangeToken(context.Context, string) (*source.Token, error) {
 	return nil, errors.New("not implemented")
 }
-func (s *stubSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+func (s *stubSource) Search(_ context.Context, q source.SearchQuery) (source.SearchResult, error) {
+	s.gotQuery = q
 	return s.result, s.err
 }
 func (s *stubSource) GetMod(context.Context, string, string) (*domain.Mod, error) {
@@ -130,7 +136,7 @@ func TestCoreProviderProfileFieldRaceGuard(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, _ = provider.Search(context.Background(), "blocking", "query", 0)
+		_, _ = provider.Search(context.Background(), "blocking", "query", 0, 0)
 	}()
 
 	<-src.entered // Search is now blocked inside the "network call", about
@@ -175,7 +181,7 @@ func TestCoreProviderGameFieldRaceGuard(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, _ = provider.Search(context.Background(), "blocking", "query", 0)
+		_, _ = provider.Search(context.Background(), "blocking", "query", 0, 0)
 	}()
 
 	<-src.entered // Search is now blocked inside the "network call", about
@@ -480,7 +486,7 @@ func TestCoreProviderSearchMarksInstalled(t *testing.T) {
 		ProfileName: "default", Enabled: true,
 	}))
 
-	page, err := provider.Search(context.Background(), "stub", "sky", 0)
+	page, err := provider.Search(context.Background(), "stub", "sky", 0, 0)
 	require.NoError(t, err)
 	require.Equal(t, "sky", page.Query)
 	require.Equal(t, "stub", page.Source)
@@ -509,7 +515,7 @@ func TestCoreProviderSearchDoesNotCrossSourceMarkInstalled(t *testing.T) {
 		TotalCount: 1, Page: 0, PageSize: 10,
 	}})
 
-	page, err := provider.Search(context.Background(), "stub", "sky", 0)
+	page, err := provider.Search(context.Background(), "stub", "sky", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, page.Results, 1)
 	require.Equal(t, "available", page.Results[0].Status,
@@ -521,7 +527,7 @@ func TestCoreProviderSearchPropagatesAuthRequired(t *testing.T) {
 	game.SourceIDs = map[string]string{"stub": "testgame"}
 	svc.RegisterSource(&stubSource{err: fmt.Errorf("%w: key required", domain.ErrAuthRequired)})
 
-	_, err := provider.Search(context.Background(), "stub", "x", 0)
+	_, err := provider.Search(context.Background(), "stub", "x", 0, 0)
 	require.ErrorIs(t, err, domain.ErrAuthRequired)
 }
 
@@ -537,7 +543,7 @@ func TestCoreProviderSearchAllSources(t *testing.T) {
 		TotalCount: 1,
 	}})
 
-	page, err := provider.Search(context.Background(), "", "quer", 0)
+	page, err := provider.Search(context.Background(), "", "quer", 0, 0)
 	require.NoError(t, err)
 	// Results from both sources present, each row's Source set:
 	sources := map[string]bool{}
@@ -557,11 +563,57 @@ func TestCoreProviderSearchAllSourcesWarnings(t *testing.T) {
 	}})
 	svc.RegisterSource(&stubSource{id: failingSourceID, err: errors.New("connection refused")})
 
-	page, err := provider.Search(context.Background(), "", "quer", 0)
+	page, err := provider.Search(context.Background(), "", "quer", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, page.Warnings, 1)
 	assert.Contains(t, page.Warnings[0], failingSourceID)
 	assert.NotEmpty(t, page.Results, "good source's results survive the failure")
+}
+
+// TestCoreProviderSearchPassesPageSizeThrough guards #111 Tier 1's provider
+// passthrough for single-source search: the caller's pageSize argument must
+// reach the underlying source.SearchQuery.PageSize unchanged, not the old
+// hardcoded SearchPageSize constant.
+func TestCoreProviderSearchPassesPageSizeThrough(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"stub": "testgame"}
+	src := &stubSource{}
+	svc.RegisterSource(src)
+
+	_, err := provider.Search(context.Background(), "stub", "sky", 0, 7)
+	require.NoError(t, err)
+	require.Equal(t, 7, src.gotQuery.PageSize, "coreProvider must pass the caller's pageSize through to the source query")
+}
+
+// TestCoreProviderSearchAllSourcesPassesPageSizeThrough mirrors
+// TestCoreProviderSearchPassesPageSizeThrough for the all-sources path
+// (SearchAllSources), which coreProvider.Search routes to separately from
+// single-source SearchMods.
+func TestCoreProviderSearchAllSourcesPassesPageSizeThrough(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"alpha": "testgame"}
+	src := &stubSource{id: "alpha"}
+	svc.RegisterSource(src)
+
+	_, err := provider.Search(context.Background(), "", "sky", 0, 7)
+	require.NoError(t, err)
+	require.Equal(t, 7, src.gotQuery.PageSize, "coreProvider must pass the caller's pageSize through in all-sources mode too")
+}
+
+// TestCoreProviderSearchFallsBackToSearchPageSizeWhenPageSizeNotPositive
+// guards the defensive fallback documented on SearchPageSize/DataProvider.
+// Search: a pageSize <= 0 (a stray caller that doesn't derive a real size)
+// must still produce a normal search using SearchPageSize, not a
+// degenerate zero-sized request to the underlying source.
+func TestCoreProviderSearchFallsBackToSearchPageSizeWhenPageSizeNotPositive(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	game.SourceIDs = map[string]string{"stub": "testgame"}
+	src := &stubSource{}
+	svc.RegisterSource(src)
+
+	_, err := provider.Search(context.Background(), "stub", "sky", 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, tui.SearchPageSize, src.gotQuery.PageSize, "pageSize <= 0 must fall back to SearchPageSize")
 }
 
 // --- coreProvider: DeployedFiles ---

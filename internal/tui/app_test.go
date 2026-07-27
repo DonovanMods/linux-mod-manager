@@ -1082,7 +1082,7 @@ func (stubProvider) Overview(context.Context) (Summary, []ModItem, error) {
 func (stubProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (stubProvider) Sources() []string                               { return nil }
 func (stubProvider) SourceInfos() []SourceInfo                       { return nil }
-func (stubProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+func (stubProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
 func (stubProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
@@ -1249,6 +1249,13 @@ type recordingProvider struct {
 	SetGameErr      error
 	AltSourceInfos  []SourceInfo
 	AltSources      []string
+
+	// SearchPageSizes records the pageSize argument of every Search call, in
+	// order (#111 Tier 1's stickiness test) - lets a test prove a session's
+	// n/p requeries keep passing the size computed at submit, even across an
+	// intervening resize, without needing to inspect anything else about the
+	// call.
+	SearchPageSizes []int
 }
 
 func (r *recordingProvider) Overview(ctx context.Context) (Summary, []ModItem, error) {
@@ -1276,8 +1283,9 @@ func (r *recordingProvider) SourceInfos() []SourceInfo {
 	return r.delegate.SourceInfos()
 }
 
-func (r *recordingProvider) Search(ctx context.Context, source, query string, page int) (SearchPage, error) {
-	return r.delegate.Search(ctx, source, query, page)
+func (r *recordingProvider) Search(ctx context.Context, source, query string, page, pageSize int) (SearchPage, error) {
+	r.SearchPageSizes = append(r.SearchPageSizes, pageSize)
+	return r.delegate.Search(ctx, source, query, page, pageSize)
 }
 
 func (r *recordingProvider) DeployedFiles(sourceID, modID string) ([]string, error) {

@@ -193,11 +193,11 @@ func DefaultKeyMap() KeyMap {
 		),
 		NextPage: key.NewBinding(
 			key.WithKeys("n"),
-			key.WithHelp("n", "next page"),
+			key.WithHelp("n", "skip ahead"),
 		),
 		PrevPage: key.NewBinding(
 			key.WithKeys("p"),
-			key.WithHelp("p", "prev page"),
+			key.WithHelp("p", "skip back"),
 		),
 		CycleSource: key.NewBinding(
 			key.WithKeys("s"),

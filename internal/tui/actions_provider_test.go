@@ -399,7 +399,7 @@ func TestPrototypeProviderActions_ApplyInstall_TicksProgressAndInstallsVisibleIn
 	installed := requireModByID(t, mods, "campfire")
 	assert.Equal(t, "installed", installed.Status)
 
-	page, err := provider.Search(context.Background(), "nexusmods", "campfire", 0)
+	page, err := provider.Search(context.Background(), "nexusmods", "campfire", 0, 0)
 	require.NoError(t, err)
 	require.NotEmpty(t, page.Results)
 	assert.Equal(t, "installed", requireModByID(t, page.Results, "campfire").Status,

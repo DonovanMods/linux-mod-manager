@@ -932,7 +932,7 @@ func (f *fakeSwitchableProvider) Overview(context.Context) (Summary, []ModItem, 
 func (f *fakeSwitchableProvider) Sources() []string         { return nil }
 func (f *fakeSwitchableProvider) SourceInfos() []SourceInfo { return nil }
 
-func (f *fakeSwitchableProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+func (f *fakeSwitchableProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
 
@@ -1058,7 +1058,7 @@ func (p *searchCancelProvider) Overview(context.Context) (Summary, []ModItem, er
 func (p *searchCancelProvider) Sources() []string                               { return []string{"nexusmods"} }
 func (p *searchCancelProvider) SourceInfos() []SourceInfo                       { return nil }
 func (p *searchCancelProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
-func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _ int) (SearchPage, error) {
+func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _, _ int) (SearchPage, error) {
 	p.capturedCtx = ctx
 	return SearchPage{Results: []ModItem{{ID: "x", Name: "X"}}}, nil
 }
@@ -1090,7 +1090,7 @@ func TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult(t *testing.T) {
 	loaded, _ := model.Update(model.Init()())
 	model = loaded.(Model)
 
-	model, searchCmd := model.startSearch("skyui", 0)
+	model, searchCmd := model.startSearch("skyui")
 	require.NotNil(t, searchCmd, "startSearch must dispatch a query given a real configured source")
 	gen1 := model.search.gen
 	require.NotNil(t, model.search.cancel)
@@ -1750,7 +1750,7 @@ func TestPrototypeInstallEndToEndRefreshesSearchInstalledFlag(t *testing.T) {
 	loaded, _ := model.Update(model.Init()())
 	model = loaded.(Model)
 
-	model, cmd := model.startSearch("campfire", 0)
+	model, cmd := model.startSearch("campfire")
 	require.NotNil(t, cmd)
 	updated, _ := model.Update(cmd())
 	model = updated.(Model)
@@ -1814,7 +1814,7 @@ func TestPrototypeInstallPlanShowsConflictForFrostfall(t *testing.T) {
 	loaded, _ := model.Update(model.Init()())
 	model = loaded.(Model)
 
-	model, cmd := model.startSearch("frostfall", 0)
+	model, cmd := model.startSearch("frostfall")
 	require.NotNil(t, cmd)
 	updated, _ := model.Update(cmd())
 	model = updated.(Model)
@@ -1843,7 +1843,7 @@ func TestPrototypeInstallPlanReinstallForSkyUI(t *testing.T) {
 	loaded, _ := model.Update(model.Init()())
 	model = loaded.(Model)
 
-	model, cmd := model.startSearch("skyui", 0)
+	model, cmd := model.startSearch("skyui")
 	require.NotNil(t, cmd)
 	updated, _ := model.Update(cmd())
 	model = updated.(Model)

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-07-27
+
+### Changed
+
+- **TUI search results are now a single infinite-scrolling list — no pages.** Each search asks every source for enough rows to fill the visible results pane by itself (minimum 10 — never fewer than before — capped at 50 per source, a limit verified against the live NexusMods API); scrolling near the end quietly fetches more from every source, and keeps doing so until each is exhausted. The footer reports load status instead of a page number — "X of Y loaded" for a single source with a known total, otherwise "X loaded · more available" while more can still be fetched or "all X shown" once everything has been. `n`/`p` jump a paneful at a time instead of turning a page. The per-search fetch size is fixed at submit time; a terminal resize applies from the next search.
+
 ## [1.18.3] - 2026-07-27
 
 ### Fixed
@@ -976,7 +982,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.3...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.19.0...HEAD
+[1.19.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.3...v1.19.0
 [1.18.3]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.2...v1.18.3
 [1.18.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.1...v1.18.2
 [1.18.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.0...v1.18.1

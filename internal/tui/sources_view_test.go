@@ -183,7 +183,7 @@ func (longSourcesProvider) SourceInfos() []SourceInfo {
 		},
 	}
 }
-func (longSourcesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+func (longSourcesProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
 func (longSourcesProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
