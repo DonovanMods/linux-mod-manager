@@ -154,13 +154,13 @@ func TestNavMarksCurrentScreenWithoutColor(t *testing.T) {
 //
 // NOTE the nav line has been wider than an 80-column terminal's budget
 // since Task 3 added the sixth entry (View's own comment) — at 80 cols the
-// tail label truncates with or without any marker (the pre-marker golden
-// already showed "[5] Sources  […"), so "Conflicts readable at 80" is not
-// achievable by any marker form and is NOT what this asserts. What IS
-// guaranteed, and asserted here: (1) at the exact width where the unmarked
-// nav fits, the marked nav still fits — the additive prefix broke exactly
-// this; (2) at 80 cols the marked nav truncates at the same cut as the
-// unmarked form, leaving the same labels visible.
+// nav now COMPRESSES to tier 2 (see nav()'s tier comment) rather than
+// truncating, so "Conflicts readable at 80" is not something this test
+// needs to prove via truncation. What IS guaranteed, and asserted here:
+// (1) at the exact width where the unmarked (tier 1) nav fits, the marked
+// nav still fits — the additive prefix broke exactly this; (2) marker
+// zero-growth holds within a tier — marking a screen current never changes
+// that tier's line width, whichever screen is current.
 func TestNavMarkerAddsNoWidth(t *testing.T) {
 	t.Parallel()
 

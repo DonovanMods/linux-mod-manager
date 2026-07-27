@@ -123,10 +123,12 @@ func TestInstallCmd_GameNotFound(t *testing.T) {
 // interim fix (EPIC #98's decided option 2 - reject clearly): --version must
 // error out at runInstall's own entry, before withGameService ever resolves
 // a game or opens a service - proven here by leaving gameID unset (which
-// would otherwise fail with "no game specified", see TestInstallCmd_NoGame)
-// and configDir/dataDir untouched. Real version-specific installs are #96/
-// #97's job; this guard only stops the flag from silently lying to users in
-// the meantime.
+// would otherwise fail with "no game specified", see TestInstallCmd_NoGame).
+// configDir/dataDir are still set to fresh t.TempDir()s (isolation from
+// other tests, not part of the ordering proof); if runInstall reached
+// withGameService, the unset gameID would surface as that different error
+// instead. Real version-specific installs are #96/#97's job; this guard
+// only stops the flag from silently lying to users in the meantime.
 func TestInstallCmd_VersionFlag_RejectedBeforeGameResolution(t *testing.T) {
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
