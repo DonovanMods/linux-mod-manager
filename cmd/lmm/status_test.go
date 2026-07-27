@@ -92,7 +92,15 @@ func TestStatusCmd_AcceptsGameFlag(t *testing.T) {
 	rootCmd.SetOut(buf)
 	rootCmd.SetErr(buf)
 	rootCmd.SetArgs([]string{"status", "--game", "test-game"})
-	t.Cleanup(func() { rootCmd.SetArgs(nil) })
+	t.Cleanup(func() {
+		rootCmd.SetArgs(nil)
+		// nil restores the default os.Stdout/os.Stderr fallback (cobra's
+		// getOut/getErr only substitute outWriter/errWriter when non-nil) -
+		// rootCmd is a package singleton, so leaving the buffer wired up
+		// would swallow output from every test that runs after this one.
+		rootCmd.SetOut(nil)
+		rootCmd.SetErr(nil)
+	})
 
 	// Command succeeds (shows "No games configured"), but flag should be parsed
 	err := rootCmd.Execute()

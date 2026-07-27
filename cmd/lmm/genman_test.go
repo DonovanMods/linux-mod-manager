@@ -152,6 +152,33 @@ func readSynopsis(t *testing.T, path string) string {
 	return rest[:end]
 }
 
+// TestGenManTree_RemovesStalePages pins that genManTree cleans up orphaned
+// pages before generating: if a command is removed or renamed, its old .1
+// file would otherwise stay behind forever - `make man` wouldn't remove it,
+// the drift test would fail on the extra file, and nothing would tell a
+// developer what to do about it. Scoped strictly to *.1 files; anything
+// else already in the directory must survive untouched.
+func TestGenManTree_RemovesStalePages(t *testing.T) {
+	dir := t.TempDir()
+
+	stale := filepath.Join(dir, "lmm-no-such-command.1")
+	require.NoError(t, os.WriteFile(stale, []byte("stale page"), 0644))
+
+	keep := filepath.Join(dir, "README.md")
+	require.NoError(t, os.WriteFile(keep, []byte("not a man page"), 0644))
+
+	require.NoError(t, genManTree(dir))
+
+	_, err := os.Stat(stale)
+	assert.True(t, os.IsNotExist(err), "stale lmm-no-such-command.1 should have been removed")
+
+	_, err = os.Stat(keep)
+	assert.NoError(t, err, "non-.1 files must not be touched")
+
+	_, err = os.Stat(filepath.Join(dir, "lmm.1"))
+	assert.NoError(t, err, "real pages should still be generated")
+}
+
 func direntNames(entries []os.DirEntry) []string {
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {

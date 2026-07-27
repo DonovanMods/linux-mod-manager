@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -52,6 +53,16 @@ func genManTree(dir string) error {
 		return fmt.Errorf("creating man page directory: %w", err)
 	}
 
+	// Remove existing *.1 pages before generating, so a command that gets
+	// removed or renamed doesn't leave its old page behind forever: without
+	// this, the orphaned file survives every future `make man` run (nothing
+	// deletes what generation no longer writes), the drift test would fail
+	// on it, and there'd be nothing telling a developer what to do about
+	// it. Scoped strictly to *.1 - anything else in dir is left alone.
+	if err := removeStaleManPages(dir); err != nil {
+		return fmt.Errorf("removing stale man pages: %w", err)
+	}
+
 	// Cobra normally attaches the default "completion" subcommand tree
 	// lazily, the first time ExecuteC() runs. Force it here so the
 	// generated set is identical whether genManTree is reached via the
@@ -83,6 +94,22 @@ func genManTree(dir string) error {
 	}
 	if err := doc.GenManTree(rootCmd, header, dir); err != nil {
 		return fmt.Errorf("generating man pages: %w", err)
+	}
+	return nil
+}
+
+// removeStaleManPages deletes every *.1 file directly inside dir. dir is
+// expected to already exist (genManTree creates it via MkdirAll before
+// calling this).
+func removeStaleManPages(dir string) error {
+	matches, err := filepath.Glob(filepath.Join(dir, "*.1"))
+	if err != nil {
+		return err
+	}
+	for _, m := range matches {
+		if err := os.Remove(m); err != nil {
+			return err
+		}
 	}
 	return nil
 }
