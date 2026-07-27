@@ -1576,6 +1576,11 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	}
 	m.search.gen++
 	m.search.state = searchIdle
+	// #111 Tier 3 fix round 5 - see the profile-switch reset (app.go's
+	// actionDoneMsg switchedTo handling) for why these are reset here too,
+	// not just left to the next submit.
+	m.search.refilling = false
+	m.search.refreshing = false
 
 	// Invalidate any in-flight DATA load the same way (see Model.loadGen's
 	// doc comment, app.go): a load dispatched before this reset was reading

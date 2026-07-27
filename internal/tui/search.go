@@ -69,6 +69,24 @@ type searchModel struct {
 	// and searchFooterLine appends a transient "· fetching…" suffix while
 	// it's true.
 	refilling bool
+	// refreshing mirrors refilling for refreshSearchAfterInstall's rebuild
+	// (#111 Tier 3 fix round 5 - task re-review): true from beginRefresh
+	// until the rebuild's success or failure lands. Unlike a genuine new
+	// query (beginNewSession, which flips state to searchLoading and so
+	// blocks scrolling structurally), a refresh deliberately keeps state
+	// searchReady so the buffer stays live on screen throughout - which
+	// means, WITHOUT this flag, a scroll during an in-flight refresh could
+	// dispatch a refill sharing the exact same generation the refresh
+	// bumped once (refillSearch never bumps gen itself), so staleness alone
+	// couldn't tell the two apart: if the refill resolved first (appending
+	// to the buffer, advancing fetchRound) and the refresh's wholesale
+	// replace=true result landed after, the buffer would silently regress
+	// to its pre-refill state - the exact silent-data-loss class fix round
+	// 4 closed for refill-vs-refill, reopened here via a different pairing.
+	// maybeRefillSearch treats this exactly like refilling (see its own doc
+	// comment) - a refresh in flight blocks new refills the same way a
+	// refill in flight blocks a second refill.
+	refreshing bool
 	// warnings accumulates every UNIQUE per-source failure text across
 	// every round of the session (#111 Tier 3), deduped by exact string
 	// match (see mergeWarnings) - a source that failed on round 0 keeps
@@ -345,22 +363,44 @@ func (m Model) beginNewSession() (Model, context.Context, int) {
 	m.search.fetchRound = 0
 	m.search.providerExhausted = false
 	m.search.refilling = false
+	m.search.refreshing = false
 	m.search.warnings = nil
 	return m, ctx, m.search.gen
 }
 
 // beginRefresh cancels any in-flight search and bumps the generation
-// WITHOUT touching state, buffer, or any other accumulator (#111 Tier 3 fix
-// round 4) - refreshSearchAfterInstall's non-destructive sibling to
-// beginNewSession. Unlike a genuine new query, a refresh has a
-// PERFECTLY GOOD buffer already on screen: the whole point of task review's
-// finding is that a mid-rebuild error must leave that buffer (and
-// searchReady) exactly as they were, which is only possible if nothing gets
-// reset before the rebuild is known to have fully succeeded. The rebuild
-// Cmd (refreshSearchAfterInstall) accumulates into its own local buffer and
-// only reaches Update via a searchResultRefresh message on success -
-// applyRoundResult is what actually swaps it in, and ONLY on that success
-// path.
+// WITHOUT touching state, buffer, fetchRound, providerExhausted, or
+// warnings (#111 Tier 3 fix round 4) - refreshSearchAfterInstall's
+// non-destructive sibling to beginNewSession. Unlike a genuine new query, a
+// refresh has a PERFECTLY GOOD buffer already on screen: the whole point of
+// task review's finding is that a mid-rebuild error must leave that buffer
+// (and searchReady) exactly as they were, which is only possible if
+// nothing gets reset before the rebuild is known to have fully succeeded.
+// The rebuild Cmd (refreshSearchAfterInstall) accumulates into its own
+// local buffer and only reaches Update via a searchResultRefresh message on
+// success - applyRoundResult is what actually swaps it in, and ONLY on that
+// success path.
+//
+// refreshing IS set here (fix round 5 - task re-review): true for the
+// refresh's own duration, cleared by Update's searchResultRefresh
+// success/failure cases (app.go) - see that field's doc comment for the
+// silent-data-loss race this closes (a scroll-triggered refill dispatching
+// mid-refresh, sharing the same generation the refresh bumped once, could
+// land after the refresh's wholesale replace and silently regress the
+// buffer).
+//
+// refilling IS also cleared here, deliberately, even though this function
+// otherwise goes out of its way to touch nothing: a refresh starting mid-
+// refill supersedes it exactly like beginNewSession supersedes an
+// in-flight refill for a brand new query - the superseded refill's own
+// result is already guaranteed to be dropped by the gen bump above (it
+// captured the OLD generation at dispatch time - see refillSearch), but
+// WITHOUT this reset, the message carrying that drop never runs the code
+// that would otherwise clear refilling, leaving it stuck true - and every
+// FUTURE refill permanently blocked (maybeRefillSearch's own guard) - until
+// the next full submit. Clearing it here, unconditionally, is safe even
+// when no refill was actually in flight (resetting an already-false bool is
+// a no-op).
 func (m Model) beginRefresh() (Model, context.Context, int) {
 	if m.search.cancel != nil {
 		m.search.cancel()
@@ -368,6 +408,8 @@ func (m Model) beginRefresh() (Model, context.Context, int) {
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.search.cancel = cancel
 	m.search.gen++
+	m.search.refilling = false
+	m.search.refreshing = true
 	return m, ctx, m.search.gen
 }
 
@@ -421,7 +463,13 @@ func (m Model) maybeRefillSearch() (Model, tea.Cmd) {
 	// to a bare 0 and every selection at or past index 0 - i.e. always -
 	// would look refill-worthy, dispatching a spurious fetch on the very
 	// first Down press of an otherwise-static test fixture.
-	if s.fetchSize <= 0 || s.providerExhausted || s.refilling {
+	//
+	// refreshing is checked exactly like refilling (#111 Tier 3 fix round
+	// 5 - task re-review): a refresh in flight must block a new refill the
+	// same way a refill in flight blocks a second refill - see
+	// searchModel.refreshing's own doc comment for the buffer-regression
+	// race this closes.
+	if s.fetchSize <= 0 || s.providerExhausted || s.refilling || s.refreshing {
 		return m, nil
 	}
 	lowWater := len(s.buffer) - s.fetchSize

@@ -1292,3 +1292,99 @@ func TestRefillFailureDoesNotPermanentlyExhaustAndRetries(t *testing.T) {
 	require.Equal(t, []int{0, 1, 1}, provider.calls, "the retry re-requested round 1, not round 2")
 	require.Len(t, model.search.buffer, 20, "the retry's rows were appended")
 }
+
+// --- #111 Tier 3 fix round 5 (task re-review): refill/refresh mutual exclusion ---
+
+// TestScrollDuringInFlightRefreshDoesNotRefill guards the task re-review's
+// reproduced race: beginRefresh deliberately keeps state searchReady (the
+// buffer stays live on screen during a refresh, unlike a genuine new
+// submit), so a scroll-triggered refill could dispatch WHILE a refresh is
+// in flight - and since refillSearch never bumps gen, the two share one
+// generation, so staleness alone can't tell them apart. If the refill
+// resolved first (appending rows, advancing fetchRound) and the refresh's
+// wholesale replace=true result landed after, the buffer would silently
+// regress - the same silent-data-loss class fix round 4 closed for
+// refill-vs-refill, reopened here via a different pairing. The fix: a
+// refresh in flight (searchModel.refreshing) blocks maybeRefillSearch
+// exactly like a refill in flight already does.
+func TestScrollDuringInFlightRefreshDoesNotRefill(t *testing.T) {
+	t.Parallel()
+
+	provider := &aggregateRoundProvider{deep: 23, shallow: 3}
+	model := aggregateRoundScreenModel(t, provider)
+	model = submitSearch(t, model, "x") // round 0: buffer = 13, fetchRound = 1
+	require.Len(t, model.search.buffer, 13)
+
+	// Dispatch a refresh, but don't run its Cmd yet - it's "in flight".
+	model, refreshCmd := model.refreshSearchAfterInstall()
+	require.NotNil(t, refreshCmd)
+	require.True(t, model.search.refreshing)
+
+	// A scroll while that refresh is in flight must NOT dispatch a refill.
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	updated, refillCmd := model.Update(keyRunes("n"))
+	require.Nil(t, refillCmd, "scrolling during an in-flight refresh must issue no provider call")
+	model = updated.(Model)
+	require.False(t, model.search.refilling, "no refill was ever dispatched, so it must not look like one is")
+
+	// Once the refresh completes, a further movement refills normally again.
+	updated, _ = model.Update(refreshCmd())
+	model = updated.(Model)
+	require.False(t, model.search.refreshing)
+	require.Len(t, model.search.buffer, 13, "the refresh rebuilt round 0 - same 13 rows")
+
+	updated, refillCmd = model.Update(keyRunes("n"))
+	require.NotNil(t, refillCmd, "a movement after the refresh completes must refill normally")
+	model = updated.(Model)
+	require.True(t, model.search.refilling)
+}
+
+// TestRefreshSupersedesInFlightRefillWithoutStuckFlag pins the INVERSE
+// pairing the task re-review asked to trace: a refresh starting while a
+// refill is already in flight. The data-loss half is already safe by
+// construction - refillSearch never bumps gen, so beginRefresh's gen bump
+// guarantees the stale refill's eventual result is dropped by the ordinary
+// staleness check before it ever touches the buffer (pinned below). But
+// WITHOUT beginRefresh also clearing refilling, that drop would leave the
+// flag stuck true forever (the discarded message returns before reaching
+// the code that would otherwise clear it) - permanently blocking every
+// FUTURE refill until the next full submit. beginRefresh clears it
+// proactively for exactly this reason.
+func TestRefreshSupersedesInFlightRefillWithoutStuckFlag(t *testing.T) {
+	t.Parallel()
+
+	provider := &aggregateRoundProvider{deep: 23, shallow: 3}
+	model := aggregateRoundScreenModel(t, provider)
+	model = submitSearch(t, model, "x")
+	require.Len(t, model.search.buffer, 13)
+	genAfterSubmit := model.search.gen
+
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	updated, refillCmd := model.Update(keyRunes("n")) // dispatches a refill; NOT run yet
+	require.NotNil(t, refillCmd)
+	model = updated.(Model)
+	require.True(t, model.search.refilling)
+	require.Equal(t, genAfterSubmit, model.search.gen, "refillSearch itself never bumps gen")
+
+	// A refresh starts while that refill is still in flight.
+	model, refreshCmd := model.refreshSearchAfterInstall()
+	require.NotNil(t, refreshCmd)
+	require.NotEqual(t, genAfterSubmit, model.search.gen, "beginRefresh bumps gen")
+	require.False(t, model.search.refilling,
+		"starting a refresh must not leave a superseded refill's flag stuck true forever")
+
+	// The STALE refill's result, now carrying the OLD generation, must be
+	// dropped on arrival rather than silently applied.
+	preRefreshBuffer := append([]ModItem(nil), model.search.buffer...)
+	updated, _ = model.Update(refillCmd())
+	model = updated.(Model)
+	require.Equal(t, preRefreshBuffer, model.search.buffer, "the stale refill result must be dropped, not applied")
+	require.Equal(t, 1, model.search.fetchRound, "the dropped stale refill must not advance fetchRound either")
+
+	// The refresh itself still completes normally.
+	updated, _ = model.Update(refreshCmd())
+	model = updated.(Model)
+	require.Equal(t, searchReady, model.search.state)
+	require.Len(t, model.search.buffer, 13, "the refresh rebuilds exactly the round it knew about (round 0)")
+	require.False(t, model.search.refreshing)
+}

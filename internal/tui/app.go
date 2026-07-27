@@ -507,6 +507,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.search.gen++
 			m.search.state = searchIdle
+			// refilling/refreshing (#111 Tier 3 fix round 5 - task
+			// re-review audit): state going to searchIdle already blocks
+			// any NEW refill/refresh from dispatching, and the ONLY path
+			// back to searchReady is a fresh submit (startSearch ->
+			// beginNewSession, which resets both anyway) - but resetting
+			// here too keeps the invariant "state != searchReady implies
+			// neither flag is stuck true" holding everywhere a session gets
+			// invalidated out-of-band, not just at the two dispatch sites
+			// that already reset it as a side effect of their own gen bump.
+			m.search.refilling = false
+			m.search.refreshing = false
 			// Same invalidation for any in-flight DATA load (see
 			// Model.loadGen): it was dispatched against the OLD profile's
 			// binding, so its eventual rows/summary go stale the instant
@@ -679,6 +690,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.search.fetchRound++
 			}
 		case searchResultRefresh:
+			m.search.refreshing = false
 			m.search.applyRoundResult(msg.page, true, msg.page.Exhausted)
 			m.search.fetchRound = msg.rounds
 			if m.selected[ScreenSearch] >= len(m.search.buffer) {
@@ -717,8 +729,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// searchReady state exactly as they were (#111 Tier 3 fix
 			// round 4): refreshSearchAfterInstall's beginRefresh
 			// (search.go) never touches either up front - see its own doc
-			// comment - so there is nothing to roll back here; just
-			// surface a muted notice.
+			// comment - so there is nothing to roll back here; just clear
+			// refreshing (fix round 5) so a subsequent scroll can refill
+			// again, and surface a muted notice.
+			m.search.refreshing = false
 			m.setIdleStatus("couldn't refresh results", false)
 			return m, nil
 		}
@@ -863,6 +877,11 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.search.gen++
 			m.search.state = searchIdle
+			// #111 Tier 3 fix round 5 - see the profile-switch reset above
+			// (actionDoneMsg's switchedTo handling) for why these are reset
+			// here too, not just left to the next submit.
+			m.search.refilling = false
+			m.search.refreshing = false
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.Profiles):
