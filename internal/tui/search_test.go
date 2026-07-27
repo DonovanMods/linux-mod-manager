@@ -533,7 +533,7 @@ func (noSourcesProvider) Overview(context.Context) (Summary, []ModItem, error) {
 func (noSourcesProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (noSourcesProvider) Sources() []string                               { return nil }
 func (noSourcesProvider) SourceInfos() []SourceInfo                       { return nil }
-func (noSourcesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+func (noSourcesProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
 func (noSourcesProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
@@ -761,4 +761,113 @@ func TestSearchDetailPaneStylesInstalledStatus(t *testing.T) {
 	require.Contains(t, view, model.theme.WarningText.Render("installed"))
 	require.Equal(t, "«installed»", model.theme.WarningText.Render("installed"),
 		"marker sanity: the styled form must be distinguishable from the plain value")
+}
+
+// --- #111 Tier 1: window-sized search fetch ---
+
+// TestSearchFetchSizeDerivesFromPaneBudget pins the exact value
+// Model.searchFetchSize derives at 80x24, verified against searchReadyView's
+// REAL arithmetic (not the task brief's assumed numbers) via a throwaway
+// probe: availableContentHeight() is 17 at this size (24 - App's vertical
+// frame size (2) - contentChromeHeight() (5, with no help/status shown)),
+// and searchReadyView's own paneContentHeight subtracts len(header) (2),
+// the footer (1), and the panel's vertical border (2) from that - 17 - 5 =
+// 12.
+func TestSearchFetchSizeDerivesFromPaneBudget(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 80, 24)
+	require.Equal(t, 12, model.searchFetchSize(),
+		"80x24: availableContentHeight(17) - header(2) - footer(1) - panel border(2)")
+}
+
+// TestSearchFetchSizeFloorsOnShortTerminals guards the [SearchPageSize, cap]
+// clamp's floor: at 40x12, availableContentHeight() itself hits its own
+// floor (8), so the raw budget (8-5=3) would starve a search of nearly all
+// results without the clamp - SearchPageSize (10) is the floor exactly
+// because a search must always return a useful page, even on the smallest
+// supported terminal.
+func TestSearchFetchSizeFloorsOnShortTerminals(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 40, 12)
+	require.Equal(t, SearchPageSize, model.searchFetchSize())
+}
+
+// TestSearchFetchSizeCapsOnTallTerminals guards the clamp's cap: a very tall
+// terminal's raw budget (108 at 120x120) must not translate into a request
+// for 100+ results from a real source's API in one call.
+func TestSearchFetchSizeCapsOnTallTerminals(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 120, 120)
+	require.Equal(t, 50, model.searchFetchSize())
+}
+
+// TestSearchFetchSizeStickyAcrossResizeWithinSession is the stickiness half
+// of #111 Tier 1: a query session's fetch size is fixed at submit (page 0)
+// and must survive a resize until the NEXT fresh submit, even though the
+// pagination keys (n/p) and the post-install refresh all funnel through the
+// same startSearch. recordingProvider.SearchPageSizes captures the pageSize
+// argument of every Search call in order, so this can assert on the actual
+// wire value a provider received rather than on internal model state alone.
+func TestSearchFetchSizeStickyAcrossResizeWithinSession(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingProvider{delegate: NewPrototypeProvider()}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: rec})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	sized, _ := loaded.(Model).Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = sized.(Model)
+
+	model = updateWithRunes(t, model, "3") // jump to search, focused
+	for _, r := range "sky" {
+		model = updateWithRunes(t, model, string(r))
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+	require.Equal(t, searchReady, model.search.state)
+
+	require.Len(t, rec.SearchPageSizes, 1)
+	original := rec.SearchPageSizes[0]
+	require.Equal(t, 12, original, "80x24's derived fetch size")
+	require.Equal(t, original, model.search.fetchSize, "the session's sticky size must be stored on the model")
+
+	// Force a next-page hint regardless of the canned set's actual size, so
+	// 'n' below issues a real requery instead of a hasNextPage() no-op.
+	// Both fields are set since hasNextPage branches on Source =="" vs not
+	// (see its own doc comment) - Exhausted covers the all-sources default,
+	// TotalCount/PageSize cover a single-source page.
+	model.search.page.Exhausted = false
+	model.search.page.TotalCount = 999
+	model.search.page.PageSize = original
+
+	// Resize mid-session: the ALREADY-STARTED session must not pick this up.
+	resized, _ := model.Update(tea.WindowSizeMsg{Width: 200, Height: 60})
+	model = resized.(Model)
+	newSize := model.searchFetchSize()
+	require.NotEqual(t, original, newSize, "the test needs a resize that actually changes the derived size")
+
+	model = updateWithKeyType(t, model, tea.KeyEsc) // n is a screen-level key; only reaches pagination once blurred
+	updated, cmd = model.Update(keyRunes("n"))
+	require.NotNil(t, cmd, "next page issues a search command")
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+
+	require.Len(t, rec.SearchPageSizes, 2)
+	require.Equal(t, original, rec.SearchPageSizes[1], "the n-triggered requery must keep the ORIGINAL session's fetch size")
+
+	// A fresh submit (page 0) after the resize must pick up the NEW size.
+	model = updateWithRunes(t, model, "/") // refocus (query text is still "sky")
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+
+	require.Len(t, rec.SearchPageSizes, 3)
+	require.Equal(t, newSize, rec.SearchPageSizes[2], "a fresh submit after resize must use the NEW size")
 }

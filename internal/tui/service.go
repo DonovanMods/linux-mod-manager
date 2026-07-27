@@ -10,7 +10,15 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
 )
 
-// SearchPageSize mirrors the CLI picker's displayPageSize (cmd/lmm/install.go).
+// SearchPageSize is DataProvider.Search's defensive fallback page size, used
+// by every implementation whenever a caller passes pageSize <= 0 (a stray
+// direct call, or a test that doesn't care about sizing), and the floor of
+// m.searchFetchSize()'s derived clamp range (search.go) - a floor-height
+// terminal's search still returns this many results rather than shrinking
+// further. Originally mirrored the CLI picker's own fixed displayPageSize
+// (cmd/lmm/install.go) as the TUI's ONLY page size; #111 Tier 1 replaced
+// that fixed use with a per-session size derived from the visible pane (see
+// searchFetchSize), leaving this constant with the floor/fallback role only.
 const SearchPageSize = 10
 
 // Summary is the dashboard header data.
@@ -173,7 +181,12 @@ type DataProvider interface {
 	SourceInfos() []SourceInfo
 	// Search queries one source, or every one of the game's configured
 	// sources when source is "" (the documented all-sources sentinel).
-	Search(ctx context.Context, source, query string, page int) (SearchPage, error)
+	// pageSize is the number of results to fetch for this page (#111 Tier
+	// 1's window-sized fetch - see Model.searchFetchSize in search.go/app.go
+	// for how the TUI derives it); implementations fall back to
+	// SearchPageSize when pageSize <= 0, a defensive default for callers
+	// that don't derive a real one (see SearchPageSize's own doc comment).
+	Search(ctx context.Context, source, query string, page, pageSize int) (SearchPage, error)
 	// DeployedFiles lists the relative paths a specific installed mod has
 	// deployed into the game directory, sorted, for the read-only files
 	// overlay (Task 4). An empty slice with a nil error means the mod is
@@ -378,7 +391,14 @@ func (p *prototypeProvider) SourceInfos() []SourceInfo {
 // search state.
 const prototypeAllSourcesWarning = "curseforge: connection refused"
 
-func (p *prototypeProvider) Search(_ context.Context, source, query string, _ int) (SearchPage, error) {
+func (p *prototypeProvider) Search(_ context.Context, source, query string, page, pageSize int) (SearchPage, error) {
+	if pageSize <= 0 {
+		// Defensive fallback (see SearchPageSize's doc comment) - every real
+		// call path (startSearch) always derives a positive size, so this
+		// only fires for a stray direct call or a test that doesn't care.
+		pageSize = SearchPageSize
+	}
+
 	all := modItems(p.data.SearchResults)
 	matched := make([]ModItem, 0, len(all))
 	for _, item := range all {
@@ -386,25 +406,36 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, _ in
 			matched = append(matched, item)
 		}
 	}
-	page := SearchPage{
-		Results:    matched,
+
+	// Paginate the canned set by the given size (#111 Tier 1) - previously
+	// this always returned every match on a single "page 0" regardless of
+	// what PageSize claimed, which happened to look right only because
+	// SearchPageSize (10) exceeded len(SearchResults) (5). start/end are
+	// clamped to len(matched) so an out-of-range page (or a pageSize larger
+	// than what's left) never slices past the end.
+	start := min(page*pageSize, len(matched))
+	end := min(start+pageSize, len(matched))
+
+	result := SearchPage{
+		Results:    matched[start:end],
 		Query:      query,
 		Source:     source,
-		Page:       0,
-		PageSize:   SearchPageSize,
+		Page:       page,
+		PageSize:   pageSize,
 		TotalCount: len(matched),
 	}
 	if source == "" {
-		page.Warnings = []string{prototypeAllSourcesWarning}
+		result.Warnings = []string{prototypeAllSourcesWarning}
 		// Exhausted/AttemptedCount (#58 fix-round: whole-branch-review
 		// finding) must mirror what a genuinely-exhausted, genuinely-
 		// attempted real aggregate looks like, or --prototype's demo
 		// contradicts the very honest-search behavior this batch added:
-		//   - Exhausted is always true here: the canned SearchResults set
-		//     is a single, non-paginated fetch (there is no real "page 2" to
-		//     demo), so hasNextPage's aggregate branch (`!Exhausted`) must
-		//     see it as fully delivered, not left dangling with a
-		//     perpetual "n next" hint.
+		//   - Exhausted is true exactly when this page reached the end of
+		//     the canned set (end == len(matched)) - #111 Tier 1 made this
+		//     a real computation instead of an unconditional true, now that
+		//     the canned set can genuinely span more than one page when
+		//     pageSize is small; hasNextPage's aggregate branch (`!Exhausted`)
+		//     depends on this being honest, not just true-by-convention.
 		//   - AttemptedCount is the canned SEARCHABLE source count, derived
 		//     from SourceInfos() (not hardcoded) - all three of its entries
 		//     advertise "search" in their Capabilities string, matching
@@ -414,10 +445,10 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, _ in
 		//     indistinguishable from "no source supports searching" (#58
 		//     item 3's exact dishonesty), even though the canned sources
 		//     plainly do support it.
-		page.Exhausted = true
-		page.AttemptedCount = len(p.SourceInfos())
+		result.Exhausted = end == len(matched)
+		result.AttemptedCount = len(p.SourceInfos())
 	}
-	return page, nil
+	return result, nil
 }
 
 // DeployedFiles returns 2-3 plausible canned rows derived from item's name

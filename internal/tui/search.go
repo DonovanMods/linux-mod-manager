@@ -33,6 +33,17 @@ type searchModel struct {
 	authSource string
 	gen        int
 	cancel     context.CancelFunc
+	// fetchSize is the current query session's sticky page size (#111 Tier
+	// 1): startSearch computes it fresh from Model.searchFetchSize() only
+	// when starting a NEW session (page == 0), then reuses this stored value
+	// unchanged for every later fetch of that same session - n/p pagination,
+	// refreshSearchAfterInstall's requery - even if the terminal is resized
+	// in between. Zero (its natural zero value, before any search has ever
+	// run) is not a special case: DataProvider.Search implementations treat
+	// pageSize <= 0 as "use SearchPageSize" (see that constant's doc
+	// comment), so a stray fetch before the first submit degrades to the old
+	// fixed-size behavior rather than fetching nothing.
+	fetchSize int
 	// gameName is the active game's display name, threaded in at
 	// construction (see newSearchModel) so noSourcesConfiguredErr and the
 	// all-sources honesty notice (searchView's zero-results branch) can name
@@ -197,11 +208,21 @@ func (m Model) startSearch(query string, page int) (Model, tea.Cmd) {
 	m.search.gen++
 	m.search.state = searchLoading
 
+	// Sticky per-session fetch size (#111 Tier 1 - see searchModel.fetchSize's
+	// doc comment): page == 0 marks the start of a NEW query session, so this
+	// is the one point where the window's CURRENT size gets a say. Every
+	// later fetch in the same session reuses the value already stored,
+	// regardless of what the terminal does in between.
+	if page == 0 {
+		m.search.fetchSize = m.searchFetchSize()
+	}
+	fetchSize := m.search.fetchSize
+
 	gen := m.search.gen
 	provider := m.provider
 	source := m.search.source()
 	return m, func() tea.Msg {
-		result, err := provider.Search(ctx, source, query, page)
+		result, err := provider.Search(ctx, source, query, page, fetchSize)
 		if err != nil {
 			return searchFailedMsg{gen: gen, err: err, source: source}
 		}

@@ -932,7 +932,7 @@ func (f *fakeSwitchableProvider) Overview(context.Context) (Summary, []ModItem, 
 func (f *fakeSwitchableProvider) Sources() []string         { return nil }
 func (f *fakeSwitchableProvider) SourceInfos() []SourceInfo { return nil }
 
-func (f *fakeSwitchableProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+func (f *fakeSwitchableProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
 
@@ -1058,7 +1058,7 @@ func (p *searchCancelProvider) Overview(context.Context) (Summary, []ModItem, er
 func (p *searchCancelProvider) Sources() []string                               { return []string{"nexusmods"} }
 func (p *searchCancelProvider) SourceInfos() []SourceInfo                       { return nil }
 func (p *searchCancelProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
-func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _ int) (SearchPage, error) {
+func (p *searchCancelProvider) Search(ctx context.Context, _, _ string, _, _ int) (SearchPage, error) {
 	p.capturedCtx = ctx
 	return SearchPage{Results: []ModItem{{ID: "x", Name: "X"}}}, nil
 }

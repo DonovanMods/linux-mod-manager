@@ -2216,6 +2216,54 @@ func (m Model) contentChromeHeight() int {
 	return titleNavAndSpacerHeight + footerHeight + statusHeight
 }
 
+// searchFetchSizeCap bounds Model.searchFetchSize's derived value from
+// above (#111 Tier 1): a very tall terminal's visible budget is not, by
+// itself, a reason to request 100+ results from a real source's API in one
+// call - 50 is a deliberate ~5x headroom over SearchPageSize's historical
+// fixed size, not "as many as fit on screen". SearchPageSize (service.go)
+// is the corresponding floor - see its own doc comment for why the same
+// constant also doubles as every DataProvider.Search implementation's
+// pageSize <= 0 fallback.
+const searchFetchSizeCap = 50
+
+// searchFetchSize derives how many results ONE query session should fetch
+// (#111 Tier 1) from the terminal's actual visible budget, so a submitted
+// search fills - without overflowing - the results pane it will render
+// into. Mirrors searchReadyView's own arithmetic exactly; that function's
+// paneContentHeight local computes:
+//
+//	paneContentHeight := max(paneHeight - Panel.GetVerticalBorderSize(), 1)
+//	paneHeight         := max(availableContentHeight() - len(header) - 1, 1)
+//
+// i.e. availableContentHeight() minus len(header) minus the footer line
+// (1) minus the panel's own top+bottom border. This function reproduces
+// that same subtraction (unfloored, since the [SearchPageSize,
+// searchFetchSizeCap] clamp below does the floor/cap work instead of the
+// max(...,1) guards searchReadyView needs for rendering).
+//
+// headerLineCount is hardcoded to 2 (searchHeaderLines' title + query-input
+// lines) rather than read from len(searchHeaderLines()) live: searchView
+// may append a THIRD, per-search warning line to that header, but only
+// AFTER a search already returned a page - this size is computed BEFORE
+// that fetch even happens, so the warning line's eventual presence can't
+// factor in. Under-counting by one row in that case costs the results pane
+// one fetched-but-unshown row, never a layout overflow - searchResultsPane
+// windows to its own maxLines regardless of how many rows were fetched.
+//
+// Called once per query session, at submit (page 0) - see startSearch,
+// which stores the result in m.search.fetchSize and reuses it, UNCHANGED,
+// for every subsequent fetch of that same session (n/p pagination, the
+// post-install refresh), even across an intervening resize. A resize only
+// changes what the NEXT submitted query fetches.
+func (m Model) searchFetchSize() int {
+	const (
+		headerLineCount = 2 // searchHeaderLines(): title + query input
+		footerLineCount = 1 // searchFooterLine(): single status line
+	)
+	budget := m.availableContentHeight() - headerLineCount - footerLineCount - m.theme.Panel.GetVerticalBorderSize()
+	return min(max(budget, SearchPageSize), searchFetchSizeCap)
+}
+
 // countLabel renders n, or "?" when n is negative (unknown, e.g. no update
 // check has run yet).
 func countLabel(n int) string {

@@ -283,10 +283,16 @@ func sourceCapabilitySummary(c source.Capabilities) string {
 
 // Search queries the given source, or every one of the game's configured
 // sources when sourceID is "" (the all-sources sentinel), and marks results
-// already installed in the active profile.
-func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page int) (SearchPage, error) {
+// already installed in the active profile. pageSize <= 0 falls back to
+// SearchPageSize (defensive - see that constant's doc comment); every real
+// caller (startSearch) derives a positive size via Model.searchFetchSize.
+func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page, pageSize int) (SearchPage, error) {
+	if pageSize <= 0 {
+		pageSize = SearchPageSize
+	}
+
 	if sourceID == "" {
-		agg, err := p.svc.SearchAllSources(ctx, p.currentGame().ID, query, "", nil, page, SearchPageSize)
+		agg, err := p.svc.SearchAllSources(ctx, p.currentGame().ID, query, "", nil, page, pageSize)
 		if err != nil {
 			return SearchPage{}, fmt.Errorf("searching all sources for %q: %w", query, err)
 		}
@@ -306,7 +312,7 @@ func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page 
 			Query:          query,
 			Source:         sourceID,
 			Page:           page,
-			PageSize:       SearchPageSize,
+			PageSize:       pageSize,
 			TotalCount:     agg.TotalCount,
 			Warnings:       warnings,
 			Exhausted:      agg.Exhausted,
@@ -314,7 +320,7 @@ func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page 
 		}, nil
 	}
 
-	result, err := p.svc.SearchMods(ctx, sourceID, p.currentGame().ID, query, "", nil, page, SearchPageSize)
+	result, err := p.svc.SearchMods(ctx, sourceID, p.currentGame().ID, query, "", nil, page, pageSize)
 	if err != nil {
 		return SearchPage{}, fmt.Errorf("searching %s for %q: %w", sourceID, query, err)
 	}
@@ -329,7 +335,7 @@ func (p *coreProvider) Search(ctx context.Context, sourceID, query string, page 
 		Query:      query,
 		Source:     sourceID,
 		Page:       page,
-		PageSize:   SearchPageSize,
+		PageSize:   pageSize,
 		TotalCount: result.TotalCount,
 	}, nil
 }
