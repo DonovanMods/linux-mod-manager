@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,13 @@ func TestPrototypeProviderOverviewMirrorsFakeData(t *testing.T) {
 	require.Equal(t, data.Stats.Enabled, summary.Enabled)
 	require.Equal(t, data.Stats.Updates, summary.Updates)
 	require.Equal(t, data.Stats.Conflicts, summary.Conflicts)
+	// data and provider each ran their OWN prototype.Load() call, and
+	// Stats.LastDeploy is computed relative to time.Now() at that call (see
+	// its own doc comment) - the two independent calls land a few
+	// nanoseconds apart, so this compares within a generous tolerance rather
+	// than requiring bit-for-bit equality.
+	require.NotNil(t, summary.LastDeploy, "the primary game's canned Stats.LastDeploy must be reflected in Summary")
+	assert.WithinDuration(t, data.Stats.LastDeploy, *summary.LastDeploy, time.Second)
 	require.Len(t, mods, len(data.InstalledMods))
 	require.Equal(t, data.InstalledMods[0].Name, mods[0].Name)
 	require.Equal(t, data.InstalledMods[0].ID, mods[0].ID, "ModItem.ID must carry the canned mod's stable ID")

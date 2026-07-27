@@ -244,6 +244,68 @@ func TestDeleteProfileActiveRefusedOnStatusLine(t *testing.T) {
 	require.Empty(t, rec.DeleteProfileCalls)
 }
 
+// TestDeleteProfileActiveDoesNotStompRunningActionStatus covers Task 6's #68
+// status-stomp guard: deleteSelectedProfile's active-profile refusal used to
+// write m.action.status unconditionally, even while some OTHER action was
+// already running and had its own live status text on screen. Pressing 'd'
+// on the active row while running must leave that text untouched instead of
+// clobbering it with "cannot delete the active profile" - mirroring
+// resolvePolicyChoice's identical "don't stomp a running action's own
+// status" guard (policy_test.go's
+// TestPolicyChoiceDropDoesNotStompRunningActionStatus).
+func TestDeleteProfileActiveDoesNotStompRunningActionStatus(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenProfiles
+	model.selected[ScreenProfiles] = 0 // "survival", the canned active profile
+	require.True(t, model.profiles[0].Active)
+	model.action.running = true
+	model.action.status = "Deploying…"
+	model.action.statusIsError = false
+
+	updated, cmd := model.Update(keyRunes("d"))
+	model = updated.(Model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "Deploying…", model.action.status, "a running action's own live status must not be stomped")
+	require.False(t, model.action.statusIsError)
+	require.Empty(t, rec.DeleteProfileCalls)
+}
+
+// TestDeleteProfileActiveRefusalOutranksReorderHint covers the priority
+// inversion Copilot found in PR #107 round 4: setIdleStatus originally
+// guarded on hasVisibleStatus(), which is also true when only Task 4's
+// LOW-priority orderChanged fallback hint ("order changed — deploy…") is
+// showing - no action running, no explicit status - so the active-profile
+// refusal was silently swallowed whenever the user had an undeployed
+// reorder pending. The refusal must win: statusLine renders a non-empty
+// action.status BEFORE ever falling through to the orderChanged hint, so
+// writing it is both correct and naturally reversible (the hint returns as
+// soon as rule 8's next keypress clears the status again - orderChanged
+// itself is untouched).
+func TestDeleteProfileActiveRefusalOutranksReorderHint(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenProfiles
+	model.selected[ScreenProfiles] = 0 // "survival", the canned active profile
+	require.True(t, model.profiles[0].Active)
+	model.orderChanged = true // an undeployed reorder's fallback hint owns nothing
+
+	updated, cmd := model.Update(keyRunes("d"))
+	model = updated.(Model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "cannot delete the active profile", model.action.status,
+		"the refusal must not be swallowed by the low-priority reorder hint")
+	require.True(t, model.action.statusIsError)
+	require.True(t, model.orderChanged, "the reorder-pending flag itself must survive, so the hint returns once the status clears")
+	require.Empty(t, rec.DeleteProfileCalls)
+}
+
 // TestDeleteProfileConfirmFlow covers the standard confirm-modal path for a
 // non-active row: 'd' opens a modal naming the profile, 'y' confirms,
 // DeleteProfile is called with that name, and the resulting actionDoneMsg

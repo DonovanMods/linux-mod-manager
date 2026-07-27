@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/theme"
@@ -48,6 +50,17 @@ type Options struct {
 	// Ctx seeds Model.ctx; see that field for why the context is stored
 	// rather than threaded as a parameter.
 	Ctx context.Context
+	// NoColor mirrors the root --no-color flag and NO_COLOR env var (#91):
+	// when true, NewModel pins lipgloss's process-global color profile to
+	// termenv.Ascii before constructing the theme, so every style renders
+	// plain text. Empirically, lipgloss resolves a Style's color profile at
+	// Render() time by dereferencing the shared *Renderer the Style
+	// captured at construction (see Style.Render/Renderer.ColorProfile) -
+	// the pin therefore also takes effect for styles built earlier in the
+	// same process - but pinning before theme construction keeps the
+	// ordering obviously correct rather than relying on that render-time
+	// detail.
+	NoColor bool
 }
 
 // Model is the root Bubble Tea model for the lmm TUI.
@@ -61,6 +74,15 @@ type Model struct {
 	// Init/Update/View take no context parameter, so commands (e.g.
 	// startSearch) close over m.ctx to reach it from goroutines.
 	ctx context.Context
+
+	// now is the injectable clock seam for lastDeployLabel (#106a): every
+	// dashboard layout renders "Last deploy" by calling lastDeployLabel(m.
+	// now(), m.summary.LastDeploy) at View() time rather than caching a
+	// precomputed label at load time, so the relative age keeps advancing
+	// between refreshes without a fake extra refresh cycle. Defaults to
+	// time.Now in NewModel; tests override it with a fixed func to pin
+	// exact "Nh ago" text deterministically (see dashboard view tests).
+	now func() time.Time
 
 	state   loadState
 	loadErr error
@@ -196,6 +218,16 @@ func NewModel(options Options) (Model, error) {
 	if options.Provider == nil {
 		return Model{}, fmt.Errorf("TUI options: provider is required")
 	}
+	if options.NoColor {
+		// Pinning termenv.Ascii disables lipgloss's usual escape-sequence
+		// output process-wide, so both this Model's own styles AND anything
+		// else in the process that renders through lipgloss's default
+		// renderer go plain. Acceptable for the TUI binary (its only
+		// caller): the CLI's own colorGreen/Red/Yellow helpers (cmd/lmm/
+		// root.go) build ANSI escapes by hand rather than through lipgloss,
+		// so they are unaffected by this process-global state.
+		lipgloss.SetColorProfile(termenv.Ascii)
+	}
 	t, err := theme.ByName(options.Theme)
 	if err != nil {
 		return Model{}, err
@@ -212,6 +244,7 @@ func NewModel(options Options) (Model, error) {
 		provider: options.Provider,
 		actions:  options.Actions,
 		ctx:      options.Ctx,
+		now:      time.Now,
 		state:    stateLoading,
 		screen:   ScreenDashboard,
 		// Updates starts at its own "-1 unknown" sentinel (Summary's own
@@ -948,11 +981,22 @@ func (m Model) itemCount(screen Screen) int {
 func (m Model) nav() string {
 	items := make([]string, 0, len(screens))
 	for i, screen := range screens {
-		label := fmt.Sprintf("[%d] %s", i+1, screen)
+		var label string
 		if screen == m.screen {
-			label = m.theme.Selected.Render(label)
+			// •N• replaces the [N] cell so the current screen stays
+			// identifiable by more than color alone (#91 audit) -
+			// color-only distinction disappears entirely under
+			// NO_COLOR/--no-color/non-color terminals, where Selected and
+			// MutedText render byte-identical text. SAME WIDTH is load-
+			// bearing (PR #107 review): the first fix prefixed "• ", which
+			// grew the line and shifted View()'s hard truncation so the
+			// rightmost label degraded at 80 cols (the committed goldens
+			// caught it as a dangling "•…"). Swapping glyphs inside the
+			// existing three-cell number slot adds zero width, so marking
+			// a screen current can never change where the nav truncates.
+			label = m.theme.Selected.Render(fmt.Sprintf("•%d• %s", i+1, screen))
 		} else {
-			label = m.theme.MutedText.Render(label)
+			label = m.theme.MutedText.Render(fmt.Sprintf("[%d] %s", i+1, screen))
 		}
 		items = append(items, label)
 	}
@@ -1059,7 +1103,7 @@ func (m Model) partyDashboardView() string {
 		m.theme.PanelTitle.Render("QUEST LOG"),
 		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(countLabel(m.summary.Updates))),
 		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
-		"Last deploy: ?",
+		fmt.Sprintf("Last deploy: %s", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 	}, topBudget)
 
 	menuLines := m.clampLines(
@@ -1090,6 +1134,7 @@ func (m Model) terminalDashboardView() string {
 		fmt.Sprintf("> PROFILE  %s", m.summary.ProfileName),
 		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.summary.Installed, m.summary.Enabled),
 		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", m.theme.WarningText.Render(countLabel(m.summary.Updates)), m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
+		fmt.Sprintf("> DEPLOY   %s", strings.ToUpper(lastDeployLabel(m.now(), m.summary.LastDeploy))),
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
@@ -1119,6 +1164,7 @@ func (m Model) commanderDashboardView() string {
 		fmt.Sprintf("Game     %s", m.summary.GameName),
 		fmt.Sprintf("Enabled  %d", m.summary.Enabled),
 		fmt.Sprintf("Updates  %s", countLabel(m.summary.Updates)),
+		fmt.Sprintf("Deploy   %s", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 	}, contentBudget)
 	rightLines := m.clampLines(
 		append([]string{m.theme.PanelTitle.Render("OPERATIONS")}, m.dashboardMenuRows()...),
@@ -1148,6 +1194,7 @@ func (m Model) crtDashboardView() string {
 		fmt.Sprintf("▓ %-10s %s", "PROFILE", m.summary.ProfileName),
 		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.summary.Enabled, m.summary.Installed),
 		fmt.Sprintf("▓ %-10s %s updates, %s conflict", "SIGNAL", countLabel(m.summary.Updates), countLabel(m.summary.Conflicts)),
+		fmt.Sprintf("▓ %-10s %s", "DEPLOY", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 		"",
 	}
 	rows = append(rows, m.dashboardMenuRows()...)
@@ -1695,13 +1742,19 @@ type helpGroup struct {
 	entries []string
 }
 
+// helpRow formats a single help-panel row: left-aligned key (16 chars),
+// space, description.
+func helpRow(key, desc string) string {
+	return fmt.Sprintf("%-16s %s", key, desc)
+}
+
 // helpEntry formats one keybinding as a help-panel row, reusing the
 // binding's own key.WithHelp key/description from keys.go rather than
 // restating it - the single source of truth for "what does this key do"
 // stays in DefaultKeyMap.
 func helpEntry(kb key.Binding) string {
 	h := kb.Help()
-	return fmt.Sprintf("%-16s %s", h.Key, h.Desc)
+	return helpRow(h.Key, h.Desc)
 }
 
 // helpGroups builds the full, ordered set of help groups: "global" always
@@ -1719,7 +1772,7 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.Help),
 			helpEntry(m.keys.NextScreen),
 			helpEntry(m.keys.PrevScreen),
-			fmt.Sprintf("%-16s %s", "1-6", "jump to a screen"),
+			helpRow("1-6", "jump to a screen"),
 			helpEntry(m.keys.GameSwitch),
 		},
 	}
@@ -1732,7 +1785,7 @@ func (m Model) helpGroups() []helpGroup {
 			// (openSelectedMenuEntry), so the description is written out
 			// here rather than reusing keys.go's generic "open" - the same
 			// ad-hoc shape as the profiles group's "switch profile" below.
-			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "open menu entry"),
+			helpRow(m.keys.Select.Help().Key, "open menu entry"),
 			helpEntry(m.keys.Deploy),
 			helpEntry(m.keys.CheckUpdates),
 			helpEntry(m.keys.Purge),
@@ -1788,7 +1841,7 @@ func (m Model) helpGroups() []helpGroup {
 			// Select.Help() says elsewhere - so this one entry is written
 			// out rather than reusing helpEntry, matching the actual
 			// behavior on this screen.
-			fmt.Sprintf("%-16s %s", m.keys.Select.Help().Key, "switch profile"),
+			helpRow(m.keys.Select.Help().Key, "switch profile"),
 			helpEntry(m.keys.CreateProfile),
 			helpEntry(m.keys.DeleteProfile),
 			// ImportProfile is Task 9's import binding (see mutations.go's
@@ -1828,8 +1881,7 @@ func (m Model) helpGroups() []helpGroup {
 	if name, ok := screenGroupName[m.screen]; ok {
 		for i, g := range fixed {
 			if g.name == name {
-				promoted := append([]helpGroup{g}, fixed[:i]...)
-				fixed = append(promoted, fixed[i+1:]...)
+				fixed = append(append([]helpGroup{g}, fixed[:i]...), fixed[i+1:]...)
 				break
 			}
 		}
@@ -1929,9 +1981,13 @@ func (m Model) modRow(index, width int, mod ModItem) string {
 	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
 	const gaps = 4        // separating spaces between the 5 columns
 	const minName = 8
-	// Fixed, not proportional: the marker is the whole point of the column, so
-	// it must not be the first thing a narrow terminal truncates.
-	const flagsWidth = 3 // "pin"
+	// Fixed, not proportional: the flags are the whole point of the column, so
+	// they must not be the first thing a narrow terminal truncates. 5, not 3
+	// ("pin"), so the pin flag and the "updated this session" marker (Task 2,
+	// #77) can coexist without colliding: a pinned mod that was ALSO just
+	// updated (a manual apply overrides the policy for one run) renders
+	// "pin *" - see modFlags' doc comment for the exact layout.
+	const flagsWidth = 5
 
 	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth-gaps, minName)
 	statusWidth := min(11, max(avail/6, 1)) // "disabled"/"deployed" are 8 runes
@@ -1942,21 +1998,58 @@ func (m Model) modRow(index, width int, mod ModItem) string {
 	line := fmt.Sprintf("%-*s %-*s %-*s %-*s %*s",
 		nameWidth, truncate(mod.Name, nameWidth),
 		statusWidth, truncate(mod.Status, statusWidth),
-		flagsWidth, modFlags(mod),
+		flagsWidth, m.modFlags(mod),
 		authorWidth, truncate(mod.Author, authorWidth),
 		versionWidth, truncate(mod.Version, versionWidth))
 	return m.row(index, line)
 }
 
-// modFlags renders the per-mod flag column: "pin" for a mod held back from
-// update checks, empty otherwise. The wire string is "pin" (not the CLI's
-// "pinned") per ModItem.UpdatePolicy's documented values - see
-// service_core.go's policyToString for why the two interfaces differ.
-func modFlags(mod ModItem) string {
+// modFlags renders the per-mod flag column: "pin" (left-aligned in the
+// first 3 columns) for a mod held back from update checks, and "*" (the
+// last column) for a mod actually updated THIS session - not merely
+// checked. The wire string "pin" (not the CLI's "pinned") matches
+// ModItem.UpdatePolicy's documented values - see service_core.go's
+// policyToString for why the two interfaces differ. The fixed
+// "%-3s %s" shape always fills exactly flagsWidth (5) columns - "pin *",
+// "pin  ", "    *", or "     " - so pin and the marker can appear
+// independently, together, or not at all without ever shifting the
+// author/version columns that follow (mirrors the pin-only column's own
+// fixed-width reasoning above modRow).
+func (m Model) modFlags(mod ModItem) string {
+	pin := ""
 	if mod.UpdatePolicy == "pin" {
-		return "pin"
+		pin = "pin"
 	}
-	return ""
+	marker := " "
+	if m.wasUpdatedThisSession(mod) {
+		marker = "*"
+	}
+	return fmt.Sprintf("%-3s %s", pin, marker)
+}
+
+// wasUpdatedThisSession reports whether mod was actually brought current by
+// an update applied this session, per task-2-brief.md's decided design: mod
+// must match an entry in m.lastUpdates.Updates by Source+ID (the same key
+// viewSelectedModChangelog uses, mutations.go) AND mod's CURRENT Version
+// must already equal that entry's ToVersion. The version comparison is
+// load-bearing, not redundant: m.lastUpdates is set on EVERY CheckUpdates
+// call (resolveCheckUpdatesResult, mutations.go), including one whose
+// confirm modal was cancelled or whose apply failed partway through - such
+// a checked-but-unapplied entry still matches by Source+ID while the mod's
+// Version remains the OLD one, so without this comparison the marker would
+// falsely claim an update that never happened. Session lifetime rides
+// m.lastUpdates' own lifetime (cleared only on game switch,
+// resolveGameSwitch/mutations.go) - no new lifecycle code needed.
+func (m Model) wasUpdatedThisSession(mod ModItem) bool {
+	if m.lastUpdates == nil {
+		return false
+	}
+	for _, u := range m.lastUpdates.Updates {
+		if u.Source == mod.Source && u.ID == mod.ID {
+			return mod.Version == u.ToVersion
+		}
+	}
+	return false
 }
 
 func (m Model) panel(width int) lipgloss.Style {
@@ -2007,6 +2100,38 @@ func countLabel(n int) string {
 		return "?"
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// lastDeployLabel renders Summary.LastDeploy (#106a's dashboard "Last
+// deploy" row) for display: nil (never deployed) is "never"; otherwise a
+// coarse relative age - "just now" under a minute, then minutes, then
+// hours, then days - up to 6 days, past which a plain date reads better
+// than an ever-growing "N days ago". now is passed in explicitly (see
+// Model.now's doc comment) rather than read via time.Now() here, keeping
+// this a pure function that every case in TestLastDeployLabel can pin
+// exactly without a fake clock or sleep.
+func lastDeployLabel(now time.Time, t *time.Time) string {
+	if t == nil {
+		return "never"
+	}
+	age := now.Sub(*t)
+	switch {
+	case age < time.Minute:
+		return "just now"
+	case age < time.Hour:
+		return fmt.Sprintf("%dm ago", int(age/time.Minute))
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(age/time.Hour))
+	case age < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(age/(24*time.Hour)))
+	default:
+		// Local, not the stored zone: deployed_at is written by SQLite's
+		// CURRENT_TIMESTAMP (UTC), so formatting in the stored zone can
+		// show yesterday's/tomorrow's date for users away from UTC (a
+		// late-night deploy). Matches the CLI's formatLastDeploy, which
+		// also renders t.Local().
+		return t.Local().Format("2006-01-02")
+	}
 }
 
 // truncate returns s trimmed to at most width display columns, marking a cut

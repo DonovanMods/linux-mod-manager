@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // FileOwner represents the mod that owns a deployed file
@@ -35,6 +36,38 @@ func (d *DB) SaveDeployedFile(gameID, profileName, relativePath, sourceID, modID
 		return fmt.Errorf("saving deployed file: %w", err)
 	}
 	return nil
+}
+
+// GetLastDeployTime returns the most recent deployed_at recorded for
+// gameID/profileName across every tracked file (#106a's dashboard "Last
+// deploy" row), or nil if the profile has never had a file deployed. A
+// never-deployed profile is a normal state, not an error.
+//
+// Deliberately ORDER BY ... DESC LIMIT 1 rather than SELECT MAX(deployed_at):
+// the modernc.org/sqlite driver converts a TEXT column to time.Time on Scan
+// by consulting the column's DECLARED type (deployed_at is DATETIME, per
+// migrateV7) - but MAX(deployed_at) is a computed expression with no
+// declared type of its own, so the driver hands back the raw SQLite storage
+// string instead and Scan(&time.Time) fails ("unsupported Scan ... string
+// into type *time.Time"), verified empirically against this driver version.
+// Selecting the actual column keeps the declared-type conversion intact and
+// is equivalent to MAX for this query shape (both scoped to one game/profile,
+// ORDER BY DESC LIMIT 1 is exactly "the row with the largest deployed_at").
+func (d *DB) GetLastDeployTime(gameID, profileName string) (*time.Time, error) {
+	var deployedAt time.Time
+	err := d.QueryRow(`
+		SELECT deployed_at FROM deployed_files
+		WHERE game_id = ? AND profile_name = ?
+		ORDER BY deployed_at DESC
+		LIMIT 1
+	`, gameID, profileName).Scan(&deployedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("getting last deploy time: %w", err)
+	}
+	return &deployedAt, nil
 }
 
 // GetFileOwner returns the mod that owns a specific file path.

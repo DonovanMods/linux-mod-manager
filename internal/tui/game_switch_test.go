@@ -441,6 +441,7 @@ func TestPrototypeGameSwitchFlipsData(t *testing.T) {
 	model = updated.(Model)
 
 	require.Equal(t, "Fallout 4", model.summary.GameName)
+	require.Nil(t, model.summary.LastDeploy, "the alt game's minimal demo set has no canned LastDeploy (#106a)")
 	require.NotEmpty(t, model.mods)
 	names := make([]string, 0, len(model.mods))
 	for _, mod := range model.mods {

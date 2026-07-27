@@ -44,8 +44,13 @@ func init() {
 }
 
 func runTUI(cmd *cobra.Command, args []string) error {
+	// colorEnabled() honors both --no-color and NO_COLOR (root.go), so the
+	// TUI's own pin (Options.NoColor) stays in lockstep with the CLI's
+	// color helpers rather than re-deriving the same two checks here.
+	noColorOpt := !colorEnabled()
+
 	if tuiOptions.prototype {
-		model, err := tui.NewPrototypeModel(tui.Options{Theme: tuiOptions.theme, Ctx: cmd.Context()})
+		model, err := tui.NewPrototypeModel(tui.Options{Theme: tuiOptions.theme, Ctx: cmd.Context(), NoColor: noColorOpt})
 		if err != nil {
 			return err
 		}
@@ -63,6 +68,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 			Provider: tui.NewCoreProvider(svc, game, profileName),
 			Actions:  tui.NewCoreActions(svc, game, profileName),
 			Ctx:      ctx,
+			NoColor:  noColorOpt,
 		})
 		if err != nil {
 			return err

@@ -644,21 +644,41 @@ func singleLine(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", " "), "\n", " ")
 }
 
-// hasVisibleStatus reports whether statusLine() would render anything: the
-// latest in-flight progress tick while an action is running (see
-// ActionProgress), or the last action's outcome/error text otherwise.
-// contentChromeHeight (app.go) uses this to decide whether to reserve the
-// status row, keeping the height budget and the actual render in lockstep -
-// the same "" ⇒ nothing rendered contract statusLine has always had, now
-// extended to cover the progress line too.
-func (m Model) hasVisibleStatus() bool {
+// statusLineOwned reports whether the status line's content is genuinely
+// CLAIMED right now: a quit-drain in progress, a running action's live
+// progress tick, or an explicit outcome/error/status text. Deliberately
+// EXCLUDES Task 4's orderChanged fallback hint - that hint is what
+// statusLine renders when nothing owns the line, not an owner itself
+// (statusLine only ever reaches it after every owned case above has
+// returned), which is exactly the distinction setIdleStatus needs:
+// "something is on screen" (hasVisibleStatus, below - the height-budget
+// question) is a strictly broader notion than "something would be wrong to
+// overwrite" (this one - Copilot PR #107 round 4's priority inversion, where
+// conflating the two silently swallowed the delete-active-profile refusal,
+// the purge zero-mods message, and the policy busy-drop hint whenever an
+// undeployed reorder's fallback hint happened to be showing).
+func (m Model) statusLineOwned() bool {
 	if m.action.draining {
 		return true
 	}
 	if m.action.running && m.action.progress.Line != "" {
 		return true
 	}
-	if m.action.status != "" {
+	return m.action.status != ""
+}
+
+// hasVisibleStatus reports whether statusLine() would render anything: any
+// genuinely-owned content (statusLineOwned above), or the orderChanged
+// fallback hint. contentChromeHeight (app.go) uses this to decide whether
+// to reserve the status row, keeping the height budget and the actual
+// render in lockstep - the same "" ⇒ nothing rendered contract statusLine
+// has always had. This MUST stay the broad predicate (owned OR fallback):
+// the status row occupies a line either way, so the height math cares only
+// that SOMETHING renders, not whether it's overwritable - see
+// statusLineOwned's doc comment for the narrow sibling and why the two are
+// split.
+func (m Model) hasVisibleStatus() bool {
+	if m.statusLineOwned() {
 		return true
 	}
 	// Task 4's post-reorder deploy hint (see Model.orderChanged's own doc
@@ -667,6 +687,42 @@ func (m Model) hasVisibleStatus() bool {
 	// (Copilot PR #73 round 5: a running-but-not-yet-ticking deploy would
 	// otherwise render "order changed — deploy…" DURING the deploy itself).
 	return m.orderChanged && !m.action.running
+}
+
+// setIdleStatus sets the status line's text/error flag, but ONLY when
+// nothing genuinely owns it (statusLineOwned - NOT hasVisibleStatus, whose
+// broader "anything renders" notion also counts the low-priority
+// orderChanged fallback hint and would wrongly swallow these writes
+// whenever an undeployed reorder is pending; see statusLineOwned's doc
+// comment for the Copilot PR #107 round 4 finding this distinction fixes).
+// This is the guard shared by three call sites (#68): resolvePolicyChoice's
+// picker-drop hint, and purgeProfilePrompt/deleteSelectedProfile's
+// synchronous "nothing to do"/"refused" status writes (mutations.go) - none
+// of the three may stomp a RUNNING action's own live status/progress text
+// (statusLine gives that priority over a stored action.status - see its own
+// doc comment), which is exactly what statusLineOwned reports.
+// Writing OVER the orderChanged fallback needs no special handling in
+// either direction: statusLine renders a non-empty action.status before
+// ever falling through to the hint, so the written text simply wins the
+// render; and because orderChanged itself is untouched here, the hint
+// returns automatically once rule 8's next keypress (updateKey, app.go)
+// clears the status again - the fallback's lifecycle is unchanged.
+// Deliberately a no-op rather than queuing the write for later: the caller
+// has nothing more useful to say once the running action's own status
+// eventually clears the line (actionDoneMsg/actionFailedMsg overwrite
+// action.status unconditionally - app.go), so silently dropping the write
+// here is the least invasive option that still surfaces the message
+// whenever the line is actually free - including the case where an action
+// IS running but hasn't posted any status/progress of its own yet (e.g.
+// actionSetPolicy never sets an in-flight status text - see
+// resolvePolicyChoice's own doc comment), which statusLineOwned correctly
+// reports as "nothing owns the line" too.
+func (m *Model) setIdleStatus(status string, isError bool) {
+	if m.statusLineOwned() {
+		return
+	}
+	m.action.status = status
+	m.action.statusIsError = isError
 }
 
 // statusLine renders the action status line truncated to the terminal's

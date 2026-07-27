@@ -64,7 +64,10 @@ func (m Model) promptOverlay(o infoOverlay) Model {
 // (Task 7's changelog viewer) - the search input only ever focuses on
 // ScreenSearch (gotoScreenFocused) - so it can never be focused while the
 // overlay is up, meaning a plain "q" here always quits reliably, never
-// types into a field.
+// types into a field. That invariant is exactly why updatePickerKey
+// (picker.go) deliberately does NOT use isQuitKey: async-opened pickers can
+// appear over a focused search input, breaking the assumption isQuitKey
+// depends on here (#68).
 func (m Model) updateOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.isQuitKey(msg):

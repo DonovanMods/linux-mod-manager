@@ -327,4 +327,101 @@ func TestPolicyChoiceDroppedWhileConfirmModalPending(t *testing.T) {
 	require.False(t, model.action.running, "a dropped pick must never set running - nothing would ever clear it")
 	require.NotNil(t, model.action.pending, "the confirm modal must stay up, undisturbed")
 	require.Empty(t, rec.SetPolicyCalls)
+	require.Equal(t, "busy — choice ignored", model.action.status, "the pending-confirm drop must surface the same busy hint as the running-action drop")
+}
+
+// TestPolicyChoiceDropShowsHintWhenNothingOwnsLine covers Task 6's #68 fix:
+// resolvePolicyChoice's single-flight drop (see
+// TestPolicyChoiceSecondPickInFlightIsDropped/
+// TestPolicyChoiceDroppedWhileConfirmModalPending above) used to be
+// perfectly silent - the user had no sign their picker choice never took
+// effect. Now, whenever nothing more important already owns the status line
+// (hasVisibleStatus - actions.go - is false), the drop sets a muted "busy"
+// hint instead.
+func TestPolicyChoiceDropShowsHintWhenNothingOwnsLine(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	// Simulates the drop-guard's "already busy" branch: some OTHER action is
+	// running, with no status/progress of its own yet (hasVisibleStatus is
+	// false), matching resolvePolicyChoice's own actionSetPolicy shape (no
+	// in-flight status text is ever set for it - see resolvePolicyChoice's
+	// doc comment).
+	model.action.running = true
+
+	msg := policyChosenMsg{item: model.mods[0], policy: "pin"}
+	updated, cmd := model.Update(msg)
+	model = updated.(Model)
+
+	require.Nil(t, cmd, "the dropped pick must not dispatch anything")
+	require.Equal(t, "busy — choice ignored", model.action.status)
+	require.False(t, model.action.statusIsError)
+}
+
+// TestPolicyChoiceDropDoesNotStompRunningActionStatus covers the other half
+// of the same fix: the hint must never overwrite a running action's own
+// live status text. hasVisibleStatus (actions.go) already treats a non-empty
+// action.status as "owned" while running, so the drop-guard must leave it
+// untouched instead of clobbering it with the "busy" hint.
+func TestPolicyChoiceDropDoesNotStompRunningActionStatus(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	model.action.running = true
+	model.action.status = "Deploying…"
+	model.action.statusIsError = false
+
+	msg := policyChosenMsg{item: model.mods[0], policy: "pin"}
+	updated, cmd := model.Update(msg)
+	model = updated.(Model)
+
+	require.Nil(t, cmd, "the dropped pick must not dispatch anything")
+	require.Equal(t, "Deploying…", model.action.status, "a running action's own live status must not be stomped")
+	require.False(t, model.action.statusIsError)
+}
+
+// TestPolicyChoiceDropHintOutranksReorderHint covers the busy-drop hint's
+// slice of the priority inversion Copilot found in PR #107 round 4 (see
+// profile_mgmt_test.go's TestDeleteProfileActiveRefusalOutranksReorderHint
+// for the full story): a pick dropped because a confirm modal snuck into
+// the window (pending set, running false - the natural post-reorder flow is
+// exactly this, 'D' opening the deploy modal while orderChanged is still
+// pending) must still surface the hint even though the LOW-priority
+// orderChanged fallback would otherwise render on the line - the fallback
+// owns nothing, and statusLine gives an explicit status priority over it
+// anyway.
+func TestPolicyChoiceDropHintOutranksReorderHint(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	model.orderChanged = true // an undeployed reorder's fallback hint owns nothing
+
+	updated, _ := model.Update(keyRunes("P"))
+	model = updated.(Model)
+	updated, chooseCmd := model.Update(keyRunes("3"))
+	model = updated.(Model)
+	msg := chooseCmd()
+
+	// The deploy confirm modal opens in the window before the pick resolves.
+	updated, _ = model.Update(keyRunes("D"))
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+
+	updated, cmd := model.Update(msg)
+	model = updated.(Model)
+
+	require.Nil(t, cmd, "the dropped pick must not dispatch anything")
+	require.Equal(t, "busy — choice ignored", model.action.status,
+		"the hint must not be swallowed by the low-priority reorder hint")
+	require.False(t, model.action.statusIsError)
+	require.True(t, model.orderChanged, "the reorder-pending flag itself must survive")
 }

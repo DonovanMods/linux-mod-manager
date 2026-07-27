@@ -16,6 +16,16 @@ import (
 // requiredMsg below - so callers need not special-case it); "" means the
 // value is acceptable,
 // any other string is shown in-modal as the error and keeps the modal open.
+// nil (the zero value) means the same thing as always returning "" - no
+// caller-side check at all - rather than a panic: submitInputModal (#68)
+// used to call validate(value) unconditionally, so a pendingInput literal
+// that simply omitted this field (an easy one-field slip, not caught by the
+// compiler since the zero value of a func field IS nil) crashed on its very
+// first non-empty submit. Every current caller still sets this explicitly
+// (several to an "always valid" closure purely to opt out - see
+// exportProfilePrompt's own doc comment), but a latent panic one missed
+// field away is worse than the convention it was relying on, so the guard
+// is now load-bearing, not just documentation.
 // submit is invoked exactly once, when the value passes both checks - never
 // on cancel, and never while an error is showing.
 type pendingInput struct {
@@ -98,6 +108,13 @@ func (m Model) updateInputModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Select):
 		return m.submitInputModal(p)
 	default:
+		// #68: a stale errMsg (from a previous failed submit) used to keep
+		// showing here even after the user started editing the value it no
+		// longer describes. Any edit keystroke clears it immediately, before
+		// the input itself even sees the rune - the next Select re-derives a
+		// fresh errMsg (or none) from validate/requiredMsg against whatever's
+		// actually in the field now.
+		p.errMsg = ""
 		var cmd tea.Cmd
 		p.input, cmd = p.input.Update(msg)
 		return m, cmd
@@ -119,9 +136,14 @@ func (m Model) submitInputModal(p *pendingInput) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if errMsg := p.validate(value); errMsg != "" {
-		p.errMsg = errMsg
-		return m, nil
+	// #68: p.validate is nil-checked here, not just documented as optional -
+	// see pendingInput.validate's own doc comment for the panic this guards
+	// against.
+	if p.validate != nil {
+		if errMsg := p.validate(value); errMsg != "" {
+			p.errMsg = errMsg
+			return m, nil
+		}
 	}
 	m.inputModal = nil
 	return m, p.submit(value)
@@ -155,7 +177,14 @@ func (m Model) inputModalView() string {
 	if hint == "" {
 		hint = "enter create · esc cancel"
 	}
-	lines = append(lines, "", m.theme.MutedText.Render(hint))
+	// #68: unlike title/input/errMsg above, this line was never truncated -
+	// an overlong caller-supplied hint (importProfilePrompt/
+	// exportProfilePrompt set an arbitrary string here) word-wraps inside the
+	// fixed-Width panel instead of overflowing horizontally, silently growing
+	// the modal past its documented fixed-height budget. truncate() to the
+	// same panelContentWidth its siblings already use keeps this modal
+	// exactly as tall as every other modal, regardless of hint length.
+	lines = append(lines, "", truncate(m.theme.MutedText.Render(hint), panelContentWidth))
 
 	return m.panelWithHeight(width, height).Render(strings.Join(lines, "\n"))
 }

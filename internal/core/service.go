@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
@@ -700,6 +701,14 @@ func (s *Service) DeleteInstalledMod(sourceID, modID, gameID, profileName string
 // in the named profile.
 func (s *Service) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string) ([]string, error) {
 	return s.db.GetDeployedFilesForMod(gameID, profileName, sourceID, modID)
+}
+
+// GetLastDeployTime returns the timestamp of the most recent deploy for the
+// given game/profile (#106a's dashboard "Last deploy" row), or nil if it has
+// never been deployed - see db.DB.GetLastDeployTime's own doc comment for
+// why nil is not an error.
+func (s *Service) GetLastDeployTime(gameID, profileName string) (*time.Time, error) {
+	return s.db.GetLastDeployTime(gameID, profileName)
 }
 
 // GetFileOwner reports which mod currently owns a deployed file. The bool is

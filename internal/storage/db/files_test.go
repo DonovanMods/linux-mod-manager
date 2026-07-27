@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 
@@ -155,6 +156,78 @@ func TestCheckFileConflicts_Empty(t *testing.T) {
 	conflicts, err = database.CheckFileConflicts("skyrim-se", "default", []string{})
 	require.NoError(t, err)
 	assert.Empty(t, conflicts)
+}
+
+// --- GetLastDeployTime (#106a) ---
+
+// TestGetLastDeployTime_NeverDeployed pins the "never deployed" case: the
+// query orders by deployed_at DESC and takes LIMIT 1, so zero matching rows
+// means QueryRow returns sql.ErrNoRows, which the implementation maps to a
+// nil *time.Time with a nil error - never-deployed is a normal state (e.g. a
+// freshly added profile), not a storage error.
+func TestGetLastDeployTime_NeverDeployed(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	got, err := database.GetLastDeployTime("skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+// TestGetLastDeployTime_ReturnsMostRecent pins the MAX aggregation itself:
+// two deployed files with deliberately different deployed_at values (forced
+// via a direct UPDATE - SaveDeployedFile's own CURRENT_TIMESTAMP has only
+// second resolution, so two calls in the same test tick could otherwise land
+// on the same second and never distinguish "most recent" from "either one")
+// must report the LATER timestamp, not the first-inserted or an arbitrary row.
+func TestGetLastDeployTime_ReturnsMostRecent(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	require.NoError(t, database.SaveDeployedFile("skyrim-se", "default", "meshes/a.nif", "nexusmods", "123"))
+	require.NoError(t, database.SaveDeployedFile("skyrim-se", "default", "meshes/b.nif", "nexusmods", "123"))
+
+	older := time.Now().Add(-2 * time.Hour).UTC()
+	_, err = database.Exec(`UPDATE deployed_files SET deployed_at = ? WHERE relative_path = ?`, older, "meshes/a.nif")
+	require.NoError(t, err)
+	newer := time.Now().UTC()
+	_, err = database.Exec(`UPDATE deployed_files SET deployed_at = ? WHERE relative_path = ?`, newer, "meshes/b.nif")
+	require.NoError(t, err)
+
+	got, err := database.GetLastDeployTime("skyrim-se", "default")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.WithinDuration(t, newer, *got, time.Second)
+}
+
+// TestGetLastDeployTime_ScopesByGameAndProfile pins the WHERE game_id/
+// profile_name scoping: a deploy recorded under a different game, or a
+// different profile of the SAME game, must never leak into this profile's
+// last-deploy time.
+func TestGetLastDeployTime_ScopesByGameAndProfile(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	require.NoError(t, database.SaveDeployedFile("skyrim-se", "default", "meshes/a.nif", "nexusmods", "123"))
+	require.NoError(t, database.SaveDeployedFile("fallout4", "default", "meshes/b.nif", "nexusmods", "456"))
+	require.NoError(t, database.SaveDeployedFile("skyrim-se", "hardcore", "meshes/c.nif", "nexusmods", "789"))
+
+	got, err := database.GetLastDeployTime("skyrim-se", "default")
+	require.NoError(t, err)
+	require.NotNil(t, got, "skyrim-se/default has its own deployed file")
+
+	got, err = database.GetLastDeployTime("no-such-game", "default")
+	require.NoError(t, err)
+	assert.Nil(t, got, "an unrelated game/profile pair must not see another game's deploy")
 }
 
 func TestCheckFileConflicts_NoConflicts(t *testing.T) {

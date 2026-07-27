@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-07-26
+
+### Added
+
+- **The Installed Mods list now marks mods actually updated this session.** A `*` appears in the flags column next to any mod a confirmed update apply brought current — not merely checked — distinguishing "confirmed and applied" from "checked, still pending, or failed partway through." A pinned mod that was also updated this session (a manual apply overrides the policy for one run) shows both flags together as `pin *`
+- Every dashboard layout now shows a real **Last Deploy** row instead of a placeholder: never-deployed profiles read "never," a recent deploy reads as a relative age ("3h ago"), and anything a week or older falls back to an absolute date
+- `lmm status <game>` gains a `Last Deploy:` line in its text output, and `--json` gains a matching `last_deploy` field — omitted entirely (not `null`) when the profile has never been deployed, so existing consumers that don't expect the key see no change
+
+### Fixed
+
+- **The root `--no-color` flag (and the `NO_COLOR` environment variable) now reach the TUI.** Previously only the CLI's plain-text output honored them; launching the TUI ignored both and always rendered in color
+- The nav bar now marks the current screen with a `•` marker instead of relying on color alone to distinguish it — needed once `--no-color` could actually disable color in the TUI, but also a plain accessibility improvement on its own
+- A picker choice (e.g. the update-policy picker) made while another action is already running, or while a confirmation modal is pending, used to vanish with no feedback; it now leaves a muted "busy — choice ignored" status hint, as long as nothing more important already owns the status line
+- An input modal's error message (e.g. an invalid profile name) now clears the moment the user resumes typing, instead of lingering stale against newly-typed text until the next submit attempt
+- Two status-line writes — profile purge's "nothing to do" and profile delete's "refused" messages — could previously stomp a running action's own live status or progress text; both now defer to it instead of overwriting it
+
 ## [1.17.1] - 2026-07-26
 
 ### Fixed
@@ -931,7 +947,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.0...HEAD
+[1.18.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.1...v1.18.0
 [1.17.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.15.0...v1.16.0

@@ -1,5 +1,7 @@
 package prototype
 
+import "time"
+
 // Data is the fake, side-effect-free data set used for visual TUI iteration.
 type Data struct {
 	Game          Game
@@ -64,6 +66,14 @@ type Stats struct {
 	Enabled   int
 	Updates   int
 	Conflicts int
+	// LastDeploy feeds prototypeProvider.Overview's Summary.LastDeploy
+	// (#106a's dashboard "Last deploy" row) for the PRIMARY game only - see
+	// that method's doc comment for why the alt game leaves it at the zero
+	// value (treated as "never deployed", same as its Updates/Conflicts
+	// sentinels). Computed relative to Load()'s own call time rather than a
+	// fixed wall-clock constant, so the canned "N ago" demo value stays
+	// sensible no matter when --prototype mode is actually run.
+	LastDeploy time.Time
 }
 
 type Mod struct {
@@ -129,10 +139,11 @@ func Load() Data {
 		},
 		Profile: Profile{Name: "survival", Active: true, ModCount: 42},
 		Stats: Stats{
-			Installed: 42,
-			Enabled:   39,
-			Updates:   3,
-			Conflicts: 2,
+			Installed:  42,
+			Enabled:    39,
+			Updates:    3,
+			Conflicts:  2,
+			LastDeploy: time.Now().Add(-3 * time.Hour),
 		},
 		InstalledMods: []Mod{
 			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true, UpdatePolicy: "auto", AvailableVersion: "5.3", Changelog: "Fixed a crash when opening the inventory with a controller.\nAdded a compatibility patch for the newest SKSE build.\nMinor MCM menu polish."},

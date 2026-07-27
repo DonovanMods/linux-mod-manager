@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
@@ -128,4 +130,85 @@ func TestStatusCmd_JSONOutput(t *testing.T) {
 	require.NoError(t, err, "status JSON output must be valid JSON with 'games' key")
 	assert.NotNil(t, decoded.Games)
 	assert.Len(t, decoded.Games, 0)
+}
+
+// --- Last Deploy: CLI parity for #106(d) ---
+//
+// setupDoDeployTest (deploy_test.go) builds the *core.Service/*domain.Game
+// pair but never registers the game with the service's config-backed game
+// map (doDeploy takes the game directly, so it never needed to) - these
+// tests call showGameStatus(JSON) by gameID instead, which resolves through
+// service.GetGame, so each test below adds its own svc.AddGame(game) call.
+
+// TestShowGameStatus_NeverDeployed_ShowsNeverInText pins the "never
+// deployed" text rendering: a game whose profile has no deployed_files rows
+// renders "Last Deploy: never", not an empty string or a zero time.
+func TestShowGameStatus_NeverDeployed_ShowsNeverInText(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	require.NoError(t, svc.AddGame(game))
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp") // profile exists, never deployed
+
+	out := captureStdout(t, func() error {
+		return showGameStatus(svc, game.ID)
+	})
+
+	assert.Contains(t, out, "Last Deploy: never")
+}
+
+// TestShowGameStatus_AfterDeploy_ShowsTimestampInText pins that a real
+// deploy populates the Last Deploy line with an absolute local timestamp -
+// deliberately NOT the TUI's relative-age rendering (lastDeployLabel,
+// internal/tui/app.go), since the CLI's output is scriptable and an
+// absolute, stable format is preferable there (see formatLastDeploy's doc
+// comment in status.go).
+func TestShowGameStatus_AfterDeploy_ShowsTimestampInText(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	require.NoError(t, svc.AddGame(game))
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
+
+	out := captureStdout(t, func() error {
+		return showGameStatus(svc, game.ID)
+	})
+
+	assert.NotContains(t, out, "Last Deploy: never")
+	assert.Regexp(t, `Last Deploy: \d{4}-\d{2}-\d{2} \d{2}:\d{2}`, out)
+}
+
+// TestShowGameStatusJSON_NeverDeployed_OmitsLastDeploy pins the omitempty
+// contract (task-4-brief.md: additive JSON change, MINOR precedent under
+// lmm-repo-conventions) - a never-deployed game's JSON document has no
+// "last_deploy" key at all, so existing consumers parsing this shape see
+// byte-for-byte the same document as before this change.
+func TestShowGameStatusJSON_NeverDeployed_OmitsLastDeploy(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	require.NoError(t, svc.AddGame(game))
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	out := captureStdout(t, func() error {
+		return showGameStatusJSON(svc, game.ID)
+	})
+
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(out), &raw))
+	_, present := raw["last_deploy"]
+	assert.False(t, present, "never-deployed game must omit last_deploy entirely")
+}
+
+// TestShowGameStatusJSON_AfterDeploy_IncludesLastDeploy pins that a real
+// deploy surfaces a parseable last_deploy timestamp in the JSON document.
+func TestShowGameStatusJSON_AfterDeploy_IncludesLastDeploy(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	require.NoError(t, svc.AddGame(game))
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
+
+	out := captureStdout(t, func() error {
+		return showGameStatusJSON(svc, game.ID)
+	})
+
+	var decoded statusGameDetailJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+	require.NotNil(t, decoded.LastDeploy)
+	assert.WithinDuration(t, time.Now(), *decoded.LastDeploy, time.Minute)
 }

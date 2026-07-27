@@ -763,7 +763,7 @@ func (p *prototypeProvider) PurgeProfile(_ context.Context, progress func(Action
 	for i := range mods {
 		mod := &mods[i]
 		if progress != nil {
-			progress(ActionProgress{Line: fmt.Sprintf("✓ %s", mod.Name), Percent: -1})
+			progress(ActionProgress{Line: fmt.Sprintf("✓ %s (%d/%d)", mod.Name, i+1, len(mods)), Percent: -1})
 		}
 		if mod.Status != "disabled" {
 			p.adjustStats(0, -1)

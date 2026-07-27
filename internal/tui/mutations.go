@@ -43,6 +43,11 @@ func (m Model) gameProfileDetail(effect string) []string {
 	}
 }
 
+// policyModalTitle formats the title for policy picker and confirmation.
+func policyModalTitle(modName string) string {
+	return fmt.Sprintf("Update policy — %s", modName)
+}
+
 // toggleSelectedModEnable handles 'e' on Installed Mods: the direction
 // comes from the selected item's Status (task-7-brief.md's Keybindings
 // section) - "disabled" enables, anything else (coreProvider's "enabled"/
@@ -437,7 +442,7 @@ func (m Model) editSelectedModPolicy() (Model, tea.Cmd) {
 	}
 
 	picker := pendingPicker{
-		title:    fmt.Sprintf("Update policy — %s", item.Name),
+		title:    policyModalTitle(item.Name),
 		options:  options,
 		selected: selected,
 		choose: func(idx int) tea.Cmd {
@@ -469,16 +474,21 @@ func (m Model) editSelectedModPolicy() (Model, tea.Cmd) {
 // buildAction's refusal alone would leave this method setting
 // running=true below for an action that never actually started, sticking
 // the single-flight guard with nothing to ever clear it.
+//
+// #68: this drop used to be perfectly silent, leaving the user with no sign
+// their picker choice had no effect. setIdleStatus (actions.go) sets a muted
+// "busy" hint, but only when hasVisibleStatus reports the line is free -
+// preserving the one thing that actually matters here, a running action's
+// own live status/progress text, which must never be stomped by this hint.
 func (m Model) resolvePolicyChoice(msg policyChosenMsg) (Model, tea.Cmd) {
 	if m.action.running || m.action.pending != nil {
+		m.setIdleStatus("busy — choice ignored", false)
 		return m, nil
 	}
 	item := msg.item
 	policy := msg.policy
-	title := fmt.Sprintf("Update policy — %s", item.Name)
-	actions := m.actions
-	model, pa := m.buildAction(actionSetPolicy, title, nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
-		return actions.SetUpdatePolicy(ctx, item, policy)
+	model, pa := m.buildAction(actionSetPolicy, policyModalTitle(item.Name), nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.SetUpdatePolicy(ctx, item, policy)
 	})
 	model.action.running = true
 	return model, pa.confirm()
@@ -558,9 +568,8 @@ func (m Model) switchToProfileNamed(name string) (Model, tea.Cmd) {
 	m.action.status = "Planning switch…"
 	m.action.statusIsError = false
 
-	actions := m.actions
 	return m, func() tea.Msg {
-		view, err := actions.PlanProfileSwitch(ctx, name)
+		view, err := m.actions.PlanProfileSwitch(ctx, name)
 		if err != nil {
 			return planFailedMsg{gen: gen, err: err}
 		}
@@ -762,9 +771,8 @@ func (m Model) installSelectedSearchResult() (Model, tea.Cmd) {
 	m.action.status = "Planning install…"
 	m.action.statusIsError = false
 
-	actions := m.actions
 	return m, func() tea.Msg {
-		view, err := actions.PlanInstall(ctx, item)
+		view, err := m.actions.PlanInstall(ctx, item)
 		if err != nil {
 			return installPlanFailedMsg{gen: gen, err: err}
 		}
@@ -943,9 +951,8 @@ func (m Model) checkForUpdates() (Model, tea.Cmd) {
 	m.action.status = "Checking for updates…"
 	m.action.statusIsError = false
 
-	actions := m.actions
 	return m, func() tea.Msg {
-		view, err := actions.CheckUpdates(ctx)
+		view, err := m.actions.CheckUpdates(ctx)
 		if err != nil {
 			return checkUpdatesFailedMsg{gen: gen, err: err}
 		}
@@ -1231,10 +1238,8 @@ func (m Model) resolveProfileCreate(msg profileCreateSubmittedMsg) (Model, tea.C
 		return m, nil
 	}
 	name := msg.name
-	actions := m.actions
-	title := fmt.Sprintf("Create profile %q?", name)
-	model, pa := m.buildAction(actionCreateProfile, title, nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
-		return actions.CreateProfile(ctx, name)
+	model, pa := m.buildAction(actionCreateProfile, "", nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
+		return m.actions.CreateProfile(ctx, name)
 	})
 	model.action.running = true
 	return model, pa.confirm()
@@ -1251,6 +1256,13 @@ func (m Model) resolveProfileCreate(msg profileCreateSubmittedMsg) (Model, tea.C
 // DeleteProfile repeats the same guard defense-in-depth (see its doc
 // comment), but the TUI-level check is what keeps this a clean status-line
 // refusal instead of a modal the user could still confirm into an error.
+//
+// #68: this refusal is reachable even while a DIFFERENT action is already
+// running (m.action.running gates the status-clearing rule 8 in updateKey,
+// not this switch's key dispatch - see updateKey's own doc comment), so it
+// used to stomp that running action's own live status/progress text
+// unconditionally. setIdleStatus (actions.go) applies the same
+// hasVisibleStatus-gated guard resolvePolicyChoice's picker-drop hint uses.
 func (m Model) deleteSelectedProfile() (Model, tea.Cmd) {
 	if m.screen != ScreenProfiles || m.actions == nil {
 		return m, nil
@@ -1261,8 +1273,7 @@ func (m Model) deleteSelectedProfile() (Model, tea.Cmd) {
 	}
 	profile := m.profiles[idx]
 	if profile.Active {
-		m.action.status = singleLine(errCannotDeleteActiveProfile)
-		m.action.statusIsError = true
+		m.setIdleStatus(singleLine(errCannotDeleteActiveProfile), true)
 		return m, nil
 	}
 
@@ -1302,13 +1313,20 @@ func (m Model) deleteSelectedProfile() (Model, tea.Cmd) {
 // confirmation-modal "+N more" overflow cap (actionModalView,
 // actionModalMaxDetailLines) handles a long list without this needing to
 // truncate itself.
+//
+// #68: like deleteSelectedProfile's active-profile refusal, this
+// zero-mods short-circuit is reachable while a DIFFERENT action is already
+// running (m.action.running doesn't gate this switch's key dispatch in
+// updateKey - only rule 8's status-clearing does), so it used to stomp that
+// running action's own live status/progress text unconditionally.
+// setIdleStatus (actions.go) applies the same hasVisibleStatus-gated guard
+// resolvePolicyChoice's picker-drop hint uses.
 func (m Model) purgeProfilePrompt() (Model, tea.Cmd) {
 	if (m.screen != ScreenDashboard && m.screen != ScreenInstalledMods) || m.actions == nil {
 		return m, nil
 	}
 	if len(m.mods) == 0 {
-		m.action.status = "no mods installed"
-		m.action.statusIsError = false
+		m.setIdleStatus("no mods installed", false)
 		return m, nil
 	}
 

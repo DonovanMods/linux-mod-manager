@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,11 +22,179 @@ func TestNewPrototypeModelDefaultsToDashboard(t *testing.T) {
 	require.Equal(t, ScreenDashboard, model.CurrentScreen())
 }
 
+// TestLastDeployLabel (#106a) pins lastDeployLabel's contract: nil -> "never";
+// a coarse relative age for anything less than 7 days old (minutes/hours/
+// days, whichever is coarsest without rounding to zero); and a plain date
+// once "N days ago" stops being a useful unit. now is passed explicitly
+// (mirroring Model.now, see that field's doc comment) so this pure function
+// needs no wall-clock read of its own to test deterministically.
+func TestLastDeployLabel(t *testing.T) {
+	t.Parallel()
+
+	// Constructed in time.Local so the date-fallback expectations are exact
+	// on any machine: the label renders dates via t.Local() (deployed_at is
+	// stored in UTC by SQLite's CURRENT_TIMESTAMP, and formatting in the
+	// stored zone would show an off-by-one date away from UTC). The
+	// dedicated UTC case below pins that conversion explicitly.
+	now := time.Date(2026, time.July, 26, 12, 0, 0, 0, time.Local)
+
+	cases := []struct {
+		name string
+		t    *time.Time
+		want string
+	}{
+		{name: "nil is never deployed", t: nil, want: "never"},
+		{name: "under a minute", t: addTo(now, -30*time.Second), want: "just now"},
+		{name: "minutes", t: addTo(now, -5*time.Minute), want: "5m ago"},
+		{name: "hours", t: addTo(now, -3*time.Hour), want: "3h ago"},
+		{name: "just under a day rounds to hours", t: addTo(now, -23*time.Hour), want: "23h ago"},
+		{name: "days", t: addTo(now, -2*24*time.Hour), want: "2d ago"},
+		{name: "just under a week", t: addTo(now, -6*24*time.Hour-23*time.Hour), want: "6d ago"},
+		{name: "exactly a week falls back to a date", t: addTo(now, -7*24*time.Hour), want: "2026-07-19"},
+		{name: "a month ago falls back to a date", t: addTo(now, -30*24*time.Hour), want: "2026-06-26"},
+	}
+	// UTC-stored timestamps render as the user's LOCAL date: the expected
+	// string is derived via the same t.Local() conversion the label must
+	// perform, so this case fails if the label ever formats in the stored
+	// zone again — in any test-machine timezone.
+	utcStored := addTo(now, -10*24*time.Hour)
+	utcConverted := utcStored.UTC()
+	cases = append(cases, struct {
+		name string
+		t    *time.Time
+		want string
+	}{name: "utc-stored timestamp renders local date", t: &utcConverted, want: utcStored.Local().Format("2006-01-02")})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tc.want, lastDeployLabel(now, tc.t))
+		})
+	}
+}
+
+// addTo returns a *time.Time offset from base by d - a small helper so the
+// table above can write "-30*time.Second" style deltas without a temporary
+// variable per case.
+func addTo(base time.Time, d time.Duration) *time.Time {
+	t := base.Add(d)
+	return &t
+}
+
 func TestNewPrototypeModelRejectsInvalidTheme(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewPrototypeModel(Options{Theme: "bogus"})
 	require.Error(t, err)
+}
+
+// TestNavMarksCurrentScreenWithoutColor is the #91 audit's other finding:
+// nav() (app.go) distinguished the current screen from the rest ONLY by
+// theme.Selected's color versus theme.MutedText's — with color unavailable
+// (NO_COLOR, --no-color, or any non-color terminal) the two labels render
+// identically and the current screen becomes unrecoverable from the nav
+// line alone. The fix must add a plain-text distinguisher inside the
+// styled span, not rely on color — and (PR #107 review) that
+// distinguisher must be SAME-WIDTH (•N• replacing [N]), not additive: an
+// additive "• " prefix grew the nav line and shifted the hard-truncation
+// cut, degrading the tail label at narrow widths (see
+// TestNavMarkerAddsNoWidth for that regression's dedicated guard).
+//
+// Uses the search_test.go Transform-marker technique (see
+// TestSearchDetailPaneStylesInstalledStatus) on theme.Selected: this
+// non-TTY test environment degrades lipgloss to no color, so a bare
+// require.Contains on ANSI bytes would pass vacuously regardless of
+// whether nav()'s current-screen branch actually ran. Transform makes the
+// Selected-styled span observable (via «...») without depending on color,
+// which lets this test assert BOTH that the plain-text marker exists AND
+// that it lives inside the real Selected-rendered span for the current
+// screen (not just appended somewhere in the line).
+func TestNavMarksCurrentScreenWithoutColor(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	model.theme.Selected = model.theme.Selected.Transform(func(s string) string { return "«" + s + "»" })
+	model.screen = ScreenSearch
+
+	nav := model.nav()
+
+	currentLabel := fmt.Sprintf("•%d• %s", model.screenIndex()+1, model.screen)
+	styled := model.theme.Selected.Render(currentLabel)
+	require.Contains(t, nav, styled,
+		"marker sanity: the current screen's label must go through the real Selected style, marker included")
+
+	// The actual regression guard: the Selected-rendered span for the
+	// current screen must carry a plain-text distinguisher (independent of
+	// the Transform/color styling around it), the marker must REPLACE the
+	// bracket cell (same width) rather than sit alongside it, and no other
+	// screen's label may carry that same marker.
+	inner := strings.TrimSuffix(strings.TrimPrefix(styled, "«"), "»")
+	require.Contains(t, inner, "•3•", "current screen's number cell must render as •N•")
+	require.NotContains(t, nav, "[3]",
+		"the bracket cell is replaced by •N•, not kept alongside it — same width is the whole point")
+
+	for i, screen := range screens {
+		if screen == model.screen {
+			continue
+		}
+		otherLabel := fmt.Sprintf("[%d] %s", i+1, screen)
+		require.Contains(t, nav, model.theme.MutedText.Render(otherLabel),
+			"non-current screens keep the plain [N] form")
+	}
+	require.Equal(t, 2, strings.Count(nav, "•"),
+		"exactly one •N• cell: only the current screen carries the marker")
+}
+
+// TestNavMarkerAddsNoWidth pins the PR #107 review finding: the first #91
+// marker was an additive "• " prefix, which grew the nav line by two cells
+// and shifted View()'s hard truncation (see View's nav truncate comment)
+// so the rightmost label degraded at widths where the unmarked nav fit
+// exactly. The marker must be zero-growth: •N• is the same three cells as
+// [N], so marking a screen current never changes where (or whether) the
+// nav line truncates.
+//
+// NOTE the nav line has been wider than an 80-column terminal's budget
+// since Task 3 added the sixth entry (View's own comment) — at 80 cols the
+// tail label truncates with or without any marker (the pre-marker golden
+// already showed "[5] Sources  […"), so "Conflicts readable at 80" is not
+// achievable by any marker form and is NOT what this asserts. What IS
+// guaranteed, and asserted here: (1) at the exact width where the unmarked
+// nav fits, the marked nav still fits — the additive prefix broke exactly
+// this; (2) at 80 cols the marked nav truncates at the same cut as the
+// unmarked form, leaving the same labels visible.
+func TestNavMarkerAddsNoWidth(t *testing.T) {
+	t.Parallel()
+
+	// The unmarked nav line, built the same way nav() builds it: every
+	// screen in its plain [N] form. Derived rather than hardcoded so the
+	// test tracks future screen additions/renames.
+	labels := make([]string, 0, len(screens))
+	for i, screen := range screens {
+		labels = append(labels, fmt.Sprintf("[%d] %s", i+1, screen))
+	}
+	unmarked := strings.Join(labels, "  ")
+
+	// (1) Boundary width: terminal sized so availableWidth() == the
+	// unmarked nav's width exactly. The full View() pipeline (which owns
+	// the truncate call) must still show the LAST screen's marked label
+	// intact when it is current — under the additive prefix this was the
+	// first width to regress.
+	model := sizedPrototypeModel(t, "wizardry", lipgloss.Width(unmarked)+4, 24)
+	require.Equal(t, lipgloss.Width(unmarked), model.availableWidth(),
+		"width sanity: this terminal width must make the unmarked nav an exact fit")
+	model.screen = ScreenConflicts
+	require.Contains(t, model.View(), fmt.Sprintf("•%d• %s", len(screens), ScreenConflicts),
+		"zero-growth marker: the last label must survive intact at the exact-fit width")
+
+	// (2) Zero growth everywhere: whichever screen is current, the nav
+	// line's cell width is identical — the marker can never move the cut.
+	model.screen = ScreenDashboard
+	base := lipgloss.Width(model.nav())
+	for _, screen := range screens {
+		model.screen = screen
+		require.Equal(t, base, lipgloss.Width(model.nav()), screen.String())
+	}
+	require.Equal(t, lipgloss.Width(unmarked), base,
+		"marked nav must be exactly as wide as the unmarked form")
 }
 
 func TestNumberKeysNavigateScreens(t *testing.T) {
@@ -408,17 +577,22 @@ func TestCommanderDashboardRowsDoNotWrapAtNarrowWidths(t *testing.T) {
 	require.LessOrEqual(t, lipgloss.Height(model.screenView()), model.availableContentHeight())
 }
 
-// At the floor height (80x8: content budget 8, panel content budget 6) the
-// commander left panel's six lines fit exactly, so no clamping may occur: any
-// budget fudge (an earlier fix subtracted an extra 1) clamps them to four
-// plus "+2 more" and silently hides the Enabled/Updates lines (#42). Only the
-// left panel mentions "Updates" — the commander menu rows do not — so its
-// presence pins the whole panel rendering unclamped.
+// At 80x16 (content budget 9, panel content budget 7) the commander left
+// panel's seven lines - #106a added "Deploy" as the seventh - fit exactly,
+// so no clamping may occur: any budget fudge (an earlier fix subtracted an
+// extra 1) clamps them to shorter plus "+N more" and silently hides the
+// Enabled/Updates/Deploy lines (#42). Only the left panel mentions "Updates"
+// — the commander menu rows do not — so its presence pins the whole panel
+// rendering unclamped. Originally pinned at the 80x8 floor height when the
+// panel had six lines (see git history); #106a's new row no longer fits
+// unclamped at that floor, so this now uses the next size up (80x16) where
+// all seven lines fit exactly.
 func TestCommanderDashboardFloorHeightKeepsWholeLeftPanel(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "dos", 80, 8)
+	model := sizedPrototypeModel(t, "dos", 80, 16)
 	require.Contains(t, model.screenView(), "Updates")
+	require.Contains(t, model.screenView(), "Deploy")
 }
 
 // Long dynamic values (game/profile names interpolated into dashboard rows,
@@ -449,6 +623,57 @@ func TestDashboardLayoutsFitHeightBudgetWithLongDynamicValues(t *testing.T) {
 				require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
 			})
 		}
+	}
+}
+
+// TestDashboardLayoutsRenderLastDeploy (#106a) pins the wiring from
+// Summary.LastDeploy through to each dashboard layout's rendered text: every
+// theme (party/terminal/commander/crt - see layoutForTheme) must render
+// lastDeployLabel's EXACT text for a known now/LastDeploy pair, not just
+// some deploy-shaped placeholder. model.now is overridden directly (package-
+// internal seam, see Model.now's doc comment) so the label is pinned exactly
+// rather than asserting a loose "contains a number and 'ago'" pattern.
+func TestDashboardLayoutsRenderLastDeploy(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
+	deployedAt := now.Add(-3 * time.Hour)
+
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		t.Run(themeName, func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, themeName, 120, 24)
+			model.now = func() time.Time { return now }
+			model.summary.LastDeploy = &deployedAt
+
+			// Terminal (amber) upper-cases every dashboard row (see its own
+			// "> DEPLOY" row) to match its all-caps boot-sequence voice, so
+			// the assertion normalizes case rather than special-casing that
+			// one theme.
+			require.Contains(t, strings.ToUpper(model.screenView()), "3H AGO")
+		})
+	}
+}
+
+// TestDashboardLayoutsRenderNeverDeployed (#106a) is
+// TestDashboardLayoutsRenderLastDeploy's nil-value companion: every layout
+// must render lastDeployLabel's "never" for a nil LastDeploy (the
+// coreProvider-real "this profile has never been deployed" case - see
+// Summary.LastDeploy's doc comment), not silently fall back to a zero-time
+// date or blank row.
+func TestDashboardLayoutsRenderNeverDeployed(t *testing.T) {
+	t.Parallel()
+
+	for _, themeName := range []string{"wizardry", "amber", "dos", "green"} {
+		t.Run(themeName, func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, themeName, 120, 24)
+			model.summary.LastDeploy = nil
+
+			require.Contains(t, strings.ToUpper(model.screenView()), "NEVER")
+		})
 	}
 }
 
@@ -732,20 +957,52 @@ func TestEnterOutsideDashboardIsANoop(t *testing.T) {
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 }
 
-type failingProvider struct{ err error }
+// stubProvider is a no-op DataProvider implementing all 8 methods with their
+// zero value (empty Summary/nil slice/nil error throughout) - meant to be
+// embedded by a test fake that only needs to override the ONE method its
+// test actually exercises, instead of restating every other method just to
+// satisfy the interface (see failingProvider/emptyProvider/
+// sentinelUpdatesProvider below for the pattern this replaced). Do NOT
+// reach for this where a fake's explicitness IS the point - e.g.
+// recordingProvider (below) exists specifically for its per-field
+// configurability and call recording, and several fakes elsewhere in this
+// package (noSourcesProvider, fakeSwitchableProvider, searchCancelProvider,
+// conflictsFakeProvider, longSourcesProvider/longConflictsProvider) spell
+// out every method because each one's return value independently matters to
+// what its test documents - collapsing those onto this stub would trade a
+// self-describing fake for one where "why does this method return X" needs
+// a diff against stubProvider to answer.
+type stubProvider struct{}
+
+func (stubProvider) Overview(context.Context) (Summary, []ModItem, error) {
+	return Summary{}, nil, nil
+}
+func (stubProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
+func (stubProvider) Sources() []string                               { return nil }
+func (stubProvider) SourceInfos() []SourceInfo                       { return nil }
+func (stubProvider) Search(context.Context, string, string, int) (SearchPage, error) {
+	return SearchPage{}, nil
+}
+func (stubProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
+func (stubProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
+func (stubProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
+
+// failingProvider embeds stubProvider and overrides only Overview - the ONE
+// method that matters here: loadData (app.go) calls Overview first and
+// returns immediately on its error, before Profiles/Conflicts are ever
+// reached, so TestLoadFailureRendersErrorState below never exercises any
+// other method. (Sources() is still called unconditionally at NewModel time
+// by newSearchModel, but that happens before Init/loadData runs and this
+// test never touches the search screen, so stubProvider's nil default there
+// is harmless too.)
+type failingProvider struct {
+	stubProvider
+	err error
+}
 
 func (f failingProvider) Overview(context.Context) (Summary, []ModItem, error) {
 	return Summary{}, nil, f.err
 }
-func (f failingProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, f.err }
-func (f failingProvider) Sources() []string                               { return []string{"nexusmods"} }
-func (f failingProvider) SourceInfos() []SourceInfo                       { return nil }
-func (f failingProvider) Search(context.Context, string, string, int) (SearchPage, error) {
-	return SearchPage{}, f.err
-}
-func (f failingProvider) DeployedFiles(string, string) ([]string, error)    { return nil, f.err }
-func (f failingProvider) ListGames() ([]GameInfo, error)                    { return nil, f.err }
-func (f failingProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, f.err }
 
 func TestModelShowsLoadingBeforeDataArrives(t *testing.T) {
 	t.Parallel()
@@ -791,20 +1048,18 @@ func TestNewModelRequiresProvider(t *testing.T) {
 	require.ErrorContains(t, err, "provider")
 }
 
-type emptyProvider struct{}
+// emptyProvider embeds stubProvider and overrides only Sources - and that
+// override is load-bearing, not tidiness: newSearchModel (search.go) calls
+// provider.Sources() unconditionally at construction, and an empty result
+// flips the search screen straight to searchFailed ("no mod sources
+// configured"), which TestEmptyStatesRenderHonestCopy below never expects -
+// it drives screen 3 and asserts the ordinary idle-search hint. Every other
+// DataProvider method's zero-value response (no mods, no profiles, empty
+// search page) is exactly the honest-empty-state behavior this fake exists
+// to produce, so stubProvider's defaults serve those unchanged.
+type emptyProvider struct{ stubProvider }
 
-func (emptyProvider) Overview(context.Context) (Summary, []ModItem, error) {
-	return Summary{}, nil, nil
-}
-func (emptyProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
-func (emptyProvider) Sources() []string                               { return []string{"nexusmods"} }
-func (emptyProvider) SourceInfos() []SourceInfo                       { return nil }
-func (emptyProvider) Search(context.Context, string, string, int) (SearchPage, error) {
-	return SearchPage{}, nil
-}
-func (emptyProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
-func (emptyProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
-func (emptyProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
+func (emptyProvider) Sources() []string { return []string{"nexusmods"} }
 
 func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 	t.Parallel()
@@ -827,21 +1082,16 @@ func TestEmptyStatesRenderHonestCopy(t *testing.T) {
 
 // sentinelUpdatesProvider mirrors coreProvider.Overview's real shape: no
 // update check has ever run, so Updates/Conflicts report the -1 "unknown"
-// sentinel from the very first load.
-type sentinelUpdatesProvider struct{}
+// sentinel from the very first load. Embeds stubProvider and overrides only
+// Overview - TestFirstLoadHonorsProviderUpdatesSentinel below only ever
+// reads model.summary.Updates after Init(), never the search screen (unlike
+// emptyProvider above), so stubProvider's nil Sources() default - which
+// would otherwise flip search to searchFailed - never comes into play here.
+type sentinelUpdatesProvider struct{ stubProvider }
 
 func (sentinelUpdatesProvider) Overview(context.Context) (Summary, []ModItem, error) {
 	return Summary{Updates: -1, Conflicts: -1}, nil, nil
 }
-func (sentinelUpdatesProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
-func (sentinelUpdatesProvider) Sources() []string                               { return []string{"nexusmods"} }
-func (sentinelUpdatesProvider) SourceInfos() []SourceInfo                       { return nil }
-func (sentinelUpdatesProvider) Search(context.Context, string, string, int) (SearchPage, error) {
-	return SearchPage{}, nil
-}
-func (sentinelUpdatesProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
-func (sentinelUpdatesProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
-func (sentinelUpdatesProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
 
 // TestFirstLoadHonorsProviderUpdatesSentinel guards the dataLoadedMsg
 // preserve behavior (see mutations_test.go's
