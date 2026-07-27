@@ -2125,7 +2125,12 @@ func lastDeployLabel(now time.Time, t *time.Time) string {
 	case age < 7*24*time.Hour:
 		return fmt.Sprintf("%dd ago", int(age/(24*time.Hour)))
 	default:
-		return t.Format("2006-01-02")
+		// Local, not the stored zone: deployed_at is written by SQLite's
+		// CURRENT_TIMESTAMP (UTC), so formatting in the stored zone can
+		// show yesterday's/tomorrow's date for users away from UTC (a
+		// late-night deploy). Matches the CLI's formatLastDeploy, which
+		// also renders t.Local().
+		return t.Local().Format("2006-01-02")
 	}
 }
 

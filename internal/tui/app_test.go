@@ -31,7 +31,12 @@ func TestNewPrototypeModelDefaultsToDashboard(t *testing.T) {
 func TestLastDeployLabel(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
+	// Constructed in time.Local so the date-fallback expectations are exact
+	// on any machine: the label renders dates via t.Local() (deployed_at is
+	// stored in UTC by SQLite's CURRENT_TIMESTAMP, and formatting in the
+	// stored zone would show an off-by-one date away from UTC). The
+	// dedicated UTC case below pins that conversion explicitly.
+	now := time.Date(2026, time.July, 26, 12, 0, 0, 0, time.Local)
 
 	cases := []struct {
 		name string
@@ -48,6 +53,17 @@ func TestLastDeployLabel(t *testing.T) {
 		{name: "exactly a week falls back to a date", t: addTo(now, -7*24*time.Hour), want: "2026-07-19"},
 		{name: "a month ago falls back to a date", t: addTo(now, -30*24*time.Hour), want: "2026-06-26"},
 	}
+	// UTC-stored timestamps render as the user's LOCAL date: the expected
+	// string is derived via the same t.Local() conversion the label must
+	// perform, so this case fails if the label ever formats in the stored
+	// zone again — in any test-machine timezone.
+	utcStored := addTo(now, -10*24*time.Hour)
+	utcConverted := utcStored.UTC()
+	cases = append(cases, struct {
+		name string
+		t    *time.Time
+		want string
+	}{name: "utc-stored timestamp renders local date", t: &utcConverted, want: utcStored.Local().Format("2006-01-02")})
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
