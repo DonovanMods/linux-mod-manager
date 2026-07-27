@@ -87,12 +87,34 @@ var updateCmd = &cobra.Command{
 	Short: "Check for or apply mod updates",
 	Long: `Check for available updates or update specific mods.
 
-Without arguments, checks all installed mods for updates.
-With a mod ID, updates that specific mod.
+Without arguments, checks all installed mods for updates and prints a
+table (auto-update-policy mods are then applied automatically; pass --all
+to apply every available update). With a mod ID, checks and updates just
+that mod. If the same mod ID is installed from more than one source in
+the profile, use -s/--source to disambiguate (the error names the sources
+in conflict). -s/--source is resolved once up front either way, so on a
+game with more than one configured source it also avoids an interactive
+source prompt for the bulk check.
+
+If the update check itself fails partway through (e.g. a source outage),
+whatever was learned before the failure is still printed and the command
+exits non-zero rather than silently claiming success.
+
+--json prints exactly one JSON document to stdout, in one of two shapes:
+  - Bulk check (no mod ID): {game_id, profile, updates: [...], skipped:
+    {pinned, local}, error?}. error is present when the check itself
+    failed partway through; updates/skipped still reflect whatever was
+    learned first.
+  - Single mod (a mod ID given) or 'update rollback': {mod_id, name,
+    from_version, to_version, changelog, status, reason}. status is one
+    of "updated", "up_to_date", "skipped", "available" (--dry-run), or
+    "rolled_back"; reason is set only when status is "skipped" ("pinned"
+    or "local").
 
 Examples:
   lmm update --game skyrim-se                    # Check all mods for updates
   lmm update 12345 --game skyrim-se              # Update specific mod
+  lmm update 12345 --game skyrim-se --source nexusmods  # Disambiguate by source
   lmm update --game skyrim-se --all              # Apply all available updates
   lmm update --game skyrim-se --dry-run          # Show what would update`,
 	Args: cobra.MaximumNArgs(1),
@@ -104,10 +126,16 @@ var updateRollbackCmd = &cobra.Command{
 	Short: "Rollback a mod to its previous version",
 	Long: `Rollback a mod to the version before the last update.
 
-The previous version must still be available in the cache.
+The previous version must still be available in the cache. If the same
+mod ID is installed from more than one source in the profile, use
+-s/--source to disambiguate.
+
+--json prints the single-mod document (see 'lmm update --help') with
+status "rolled_back".
 
 Examples:
-  lmm update rollback 12345 --game skyrim-se`,
+  lmm update rollback 12345 --game skyrim-se
+  lmm update rollback 12345 --game skyrim-se --source nexusmods`,
 	Args: cobra.ExactArgs(1),
 	RunE: runUpdateRollback,
 }

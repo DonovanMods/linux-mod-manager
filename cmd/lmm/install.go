@@ -271,20 +271,33 @@ var (
 var installCmd = &cobra.Command{
 	Use:   "install <query>",
 	Short: "Install a mod",
-	Long: `Install a mod from the configured source.
+	Long: `Install a mod from a configured source.
 
-The mod will be searched for by name and added to the specified profile
-(or default profile if not specified).
+A search query finds the mod interactively; --id skips the search and
+fetches the mod directly by its source-specific ID. Combine --id with
+--file to also skip the interactive file-selection prompt, installing the
+exact file(s) you name (comma-separated for more than one).
+
+Use -s/--source to pick which configured source to search or fetch from.
+If omitted and the game has more than one configured source, you are
+prompted to choose (or, with -y, the first source alphabetically is used
+automatically).
+
+The mod is added to the specified profile, or the active profile if
+--profile is not given.
 
 Dependencies are automatically resolved and installed. Use --no-deps to skip.
 
-When selecting files, you can choose multiple files (e.g., main + optional patches)
-using comma-separated values or ranges: 1,3,5 or 1-3 or 1,3-5
+When selecting files interactively, you can choose multiple files (e.g.,
+main + optional patches) using comma-separated values or ranges: 1,3,5 or
+1-3 or 1,3-5. Archived/old-version files are hidden by default; pass
+--show-archived to list and select from them too.
 
 Examples:
   lmm install "ore stack" --game starrupture
   lmm install "skyui" --game skyrim-se --profile survival
   lmm install --id 12345 --game skyrim-se
+  lmm install --id 12345 --file 67890 --game skyrim-se   # skip search and file prompt
   lmm install "mod name" -g skyrim-se -y       # Auto-select and auto-confirm
   lmm install "mod name" -g skyrim-se --no-deps  # Skip dependencies`,
 	Args: cobra.MaximumNArgs(1),
@@ -294,7 +307,7 @@ Examples:
 func init() {
 	installCmd.Flags().StringVarP(&installSource, "source", "s", "", "mod source (default: first configured source alphabetically)")
 	installCmd.Flags().StringVarP(&installProfile, "profile", "p", "", "profile to install to (default: active profile)")
-	installCmd.Flags().StringVar(&installVersion, "version", "", "specific version to install (default: latest)")
+	installCmd.Flags().StringVar(&installVersion, "version", "", "not yet supported; use --file to pick a specific file instead (latest is installed otherwise)")
 	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")
 	installCmd.Flags().StringVar(&installFileID, "file", "", "file ID(s), comma-separated (skips file selection)")
 	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-select first/primary option (no prompts)")

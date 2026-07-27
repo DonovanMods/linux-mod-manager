@@ -31,9 +31,26 @@ load order, resolve file conflicts, edit update policies, view deployed
 files, purge a profile, switch games, and create/delete/export/import
 profiles - with every mutating action behind a confirmation prompt.
 
-Use --prototype for a demo mode backed by static fake data:
+Always operates on the game's active profile; there is no -p/--profile
+flag (switch profiles from inside the TUI instead).
 
-  lmm tui --prototype --theme amber`,
+Press ? at any time for in-app help listing every keybinding, 1-6 to jump
+directly to a screen (dashboard, installed mods, search, profiles,
+sources, conflicts), and tab/shift-tab (or h/l) to cycle screens. Search
+results scroll infinitely rather than paginating: n/p jump the selection
+forward/back by a paneful of rows (triggering a refill near the end of
+what's loaded), not to the next/previous page.
+
+Colored output respects both --no-color and the NO_COLOR environment
+variable, matching the CLI's own color handling.
+
+Use --prototype to run a demo mode backed by static fake data: no game
+config, database, or network access is touched, so it works anywhere.
+
+  lmm tui --prototype --theme amber
+
+--theme selects a color scheme: wizardry (default), amber, dos, or green
+(green-phosphor and phosphor are accepted as aliases for green).`,
 	RunE: runTUI,
 }
 

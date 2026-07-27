@@ -41,6 +41,23 @@ var verifyCmd = &cobra.Command{
 Without arguments, verifies all cached mods for the specified game.
 With a mod ID, verifies only that specific mod.
 
+Each file is reported with one of:
+  + NAME (FILE) - OK                    cached and checksum matches
+  X NAME (FILE) - MISSING               version not present in cache
+  ? NAME (FILE) - NO CHECKSUM           cached, but no checksum was ever stored
+  ! NAME - FILE COUNT MISMATCH          cache exists but is empty (per-mod, not per-file)
+  ? Unknown mod ID - SKIPPED            checksum row references a mod no longer installed
+
+Use --fix to re-download files that are MISSING or have NO CHECKSUM,
+storing a fresh checksum afterwards. FILE COUNT MISMATCH and SKIPPED
+are not repaired by --fix.
+
+--json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
+status}], issues, warnings}; status is one of "ok", "missing",
+"no_checksum", "file_count_mismatch", or "skipped". issues counts
+MISSING files (a successful --fix repair decrements it back out);
+warnings counts everything else that isn't OK.
+
 Examples:
   lmm verify --game skyrim-se           # Verify all mods
   lmm verify 12345 --game skyrim-se     # Verify specific mod
@@ -50,7 +67,7 @@ Examples:
 }
 
 func init() {
-	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "Re-download missing files and populate missing checksums by re-downloading")
+	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "re-download missing files and populate missing checksums by re-downloading")
 	verifyCmd.Flags().StringVarP(&verifyProfile, "profile", "p", "", "profile to verify (default: active profile)")
 
 	rootCmd.AddCommand(verifyCmd)

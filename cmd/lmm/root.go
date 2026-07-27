@@ -51,9 +51,26 @@ var rootCmd = &cobra.Command{
 	Use:   "lmm",
 	Short: "Linux Mod Manager - Terminal-based mod manager for Linux",
 	Long: `lmm is a terminal-based mod manager for Linux for searching, installing,
-updating, and managing game mods from various sources like NexusMods and CurseForge.
+updating, and managing game mods from sources like NexusMods and CurseForge,
+plus user-defined custom sources (directory scans, static manifests, or REST
+APIs — see 'lmm source --help').
 
-Use subcommands for operations. Run 'lmm --help' for available commands.`,
+Both a CLI (this command tree) and an interactive TUI ('lmm tui') are
+available; run 'lmm <command> --help' for details on any subcommand.
+
+EXIT CODES
+  0  success
+  1  error
+  2  cancelled by the user (e.g. declined a confirmation prompt)
+
+FILES
+  ~/.config/lmm/        Configuration: games.yaml, config.yaml, per-game
+                         profiles, and sources/*.yaml (custom source
+                         definitions). Override with --config.
+  ~/.local/share/lmm/    Data: lmm.db (mod metadata and auth tokens),
+                         cache/ (downloaded and extracted mod files), and
+                         downloads/ (staging area for in-flight downloads
+                         and archive extraction). Override with --data.`,
 	Version:       version,
 	SilenceUsage:  true, // Runtime errors should not print usage
 	SilenceErrors: true, // We handle error output in Execute()
@@ -66,7 +83,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&gameID, "game", "g", "", "game ID to operate on")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
-	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search, update, conflicts, verify)")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search, update, conflicts, verify, mod show, source list)")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output")
 }
 

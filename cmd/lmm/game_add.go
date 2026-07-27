@@ -21,11 +21,15 @@ var gameAddCmd = &cobra.Command{
 	Short: "Add a game interactively",
 	Long: `Interactively add a new game configuration.
 
-Supports adding games from:
-  - CurseForge (searchable game list)
-  - NexusMods (requires game slug)
+Prompts for a source to look the game up in, then its install path and
+mod path (defaulting to <install path>/mods), and saves the result to
+games.yaml along with an empty default profile.
 
-Example:
+Supports adding games from:
+  - CurseForge (searchable game list; requires 'lmm auth login curseforge' first)
+  - NexusMods (enter the game's slug, taken from its NexusMods URL)
+
+Examples:
   lmm game add
   # Select source, then search/enter game details`,
 	Args: cobra.NoArgs,

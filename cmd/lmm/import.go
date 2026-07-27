@@ -28,17 +28,34 @@ var importCmd = &cobra.Command{
 	Short: "Import mods from local files or scan mod_path",
 	Long: `Import mods from local files or scan for untracked mods.
 
-Without arguments, scans the game's mod_path for untracked mods and imports them.
-This is useful for importing mods that were installed manually (e.g., CurseForge mods
-that require manual download).
+Two distinct modes, chosen by whether an archive path is given:
 
-With an archive path, imports that specific mod file.
+Scan mode (no arguments): scans the game's mod_path for files not yet
+tracked by lmm, tries to match each one against CurseForge by name
+(skip with --skip-match), and imports whatever is left after
+confirmation. Useful for mods that were installed manually - e.g.
+CurseForge mods whose author has disabled API downloads. --dry-run and
+--skip-match only apply to this mode. Every mod imported this way is
+marked as requiring manual download (since lmm did not fetch it itself);
+re-link it to a source with 'lmm mod edit --source' to clear that once
+it can be checked for updates normally.
+
+Archive mode (an archive path given): imports that one specific mod file,
+deploying it and adding it to the profile. Pass --id (with --source, or
+it defaults to curseforge if configured) to fetch and attach source
+metadata as part of the import.
+
+Either way, a mod that ends up unmatched to any remote source is
+imported as local - it deploys and installs normally, but 'lmm update'
+has nothing to check it against and will never notify about it.
 
 Examples:
   lmm import --game hytale                    # Scan mod_path for untracked mods
   lmm import --game hytale --dry-run          # Preview what would be imported
+  lmm import --game hytale --skip-match       # Scan without CurseForge lookup
   lmm import ./my-mod.zip --game skyrim-se    # Import specific archive
-  lmm import ./mod-12345-1-0.7z --game skyrim-se --profile survival`,
+  lmm import ./mod-12345-1-0.7z --game skyrim-se --profile survival
+  lmm import ./mod.zip --game skyrim-se --id 12345 --source curseforge`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runImport,
 }

@@ -25,10 +25,19 @@ var supportedSources = []string{"nexusmods", "curseforge"}
 var authCmd = &cobra.Command{
 	Use:   "auth",
 	Short: "Manage authentication for mod sources",
-	Long: `Manage authentication credentials for mod sources like NexusMods and CurseForge.
+	Long: `Manage authentication credentials for mod sources.
 
-Use 'lmm auth login' to authenticate with a source.
-Use 'lmm auth logout' to remove stored credentials.
+NexusMods and CurseForge are validated live against the source's API when
+you log in. Any other registered source that declares auth support (a
+custom source with auth enabled in its definition - see 'lmm source
+--help') also accepts a stored API key, named positionally; it is simply
+stored and exercised on first use, since custom sources have no generic
+validation endpoint. The interactive picker ('lmm auth login'/'lmm auth
+logout' with no source argument) only offers the built-in sources - name
+a custom source explicitly to authenticate or log it out.
+
+Use 'lmm auth login [source]' to authenticate with a source.
+Use 'lmm auth logout [source]' to remove stored credentials.
 Use 'lmm auth status' to check authentication status.`,
 }
 
@@ -37,16 +46,21 @@ var authLoginCmd = &cobra.Command{
 	Short: "Authenticate with a mod source",
 	Long: `Authenticate with a mod source.
 
-If no source is specified, you will be prompted to select one.
+If no source is specified, you are prompted to choose between the
+built-in sources (NexusMods, CurseForge). Any other registered source
+that declares auth support (see 'lmm source --help') also works, named
+positionally; a custom source's key is stored and exercised on first
+use, since there is no generic way to validate it live.
 
-Supported sources:
+Built-in sources:
   - nexusmods
   - curseforge
 
 Examples:
-  lmm auth login              # Interactive source selection
-  lmm auth login nexusmods    # Authenticate with NexusMods
-  lmm auth login curseforge   # Authenticate with CurseForge
+  lmm auth login                # Interactive selection (built-ins only)
+  lmm auth login nexusmods      # Authenticate with NexusMods
+  lmm auth login curseforge     # Authenticate with CurseForge
+  lmm auth login my-custom-src  # Store a key for a registered custom source
 
 For NexusMods:
   1. Visit https://www.nexusmods.com/users/myaccount?tab=api
@@ -56,7 +70,11 @@ For NexusMods:
 For CurseForge:
   1. Visit https://console.curseforge.com/
   2. Create a project and generate an API key
-  3. Copy your API key`,
+  3. Copy your API key
+
+For a custom source, either enter the key at the prompt, or skip login
+entirely and set LMM_<ID>_API_KEY (ID uppercased, dashes replaced with
+underscores) - lmm reads that on every run.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runAuthLogin,
 }
@@ -66,9 +84,13 @@ var authLogoutCmd = &cobra.Command{
 	Short: "Remove stored credentials for a mod source",
 	Long: `Remove stored credentials for a mod source.
 
-If no source is specified, you will be prompted to select one.
+If no source is specified, you are prompted to choose between the
+built-in sources (NexusMods, CurseForge). Any source with a stored
+token can also be named positionally to remove it - including a custom
+source whose definition file was later deleted, which would otherwise
+leave its stored token unremovable through the interactive picker.
 
-Supported sources:
+Built-in sources:
   - nexusmods
   - curseforge`,
 	Args: cobra.MaximumNArgs(1),
