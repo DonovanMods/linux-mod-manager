@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.2] - 2026-07-27
+
+### Fixed
+
+- `lmm install --version` now fails with a clear "not yet supported" error (pointing at the version-resolver work) instead of silently installing the latest version
+- The TUI nav bar now compresses at narrow widths — number cells, with the current screen keeping its label, then numbers only below ~44 columns — instead of truncating the last screen entry into an ellipsis at 80 columns
+
 ## [1.18.1] - 2026-07-27
 
 ### Fixed
@@ -963,7 +970,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.2...HEAD
+[1.18.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.1...v1.18.2
 [1.18.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.0...v1.18.1
 [1.18.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.1...v1.18.0
 [1.17.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.0...v1.17.1

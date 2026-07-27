@@ -154,13 +154,13 @@ func TestNavMarksCurrentScreenWithoutColor(t *testing.T) {
 //
 // NOTE the nav line has been wider than an 80-column terminal's budget
 // since Task 3 added the sixth entry (View's own comment) — at 80 cols the
-// tail label truncates with or without any marker (the pre-marker golden
-// already showed "[5] Sources  […"), so "Conflicts readable at 80" is not
-// achievable by any marker form and is NOT what this asserts. What IS
-// guaranteed, and asserted here: (1) at the exact width where the unmarked
-// nav fits, the marked nav still fits — the additive prefix broke exactly
-// this; (2) at 80 cols the marked nav truncates at the same cut as the
-// unmarked form, leaving the same labels visible.
+// nav now COMPRESSES to tier 2 (see nav()'s tier comment) rather than
+// truncating, so "Conflicts readable at 80" is not something this test
+// needs to prove via truncation. What IS guaranteed, and asserted here:
+// (1) at the exact width where the unmarked (tier 1) nav fits, the marked
+// nav still fits — the additive prefix broke exactly this; (2) marker
+// zero-growth holds within a tier — marking a screen current never changes
+// that tier's line width, whichever screen is current.
 func TestNavMarkerAddsNoWidth(t *testing.T) {
 	t.Parallel()
 
@@ -195,6 +195,92 @@ func TestNavMarkerAddsNoWidth(t *testing.T) {
 	}
 	require.Equal(t, lipgloss.Width(unmarked), base,
 		"marked nav must be exactly as wide as the unmarked form")
+}
+
+// TestNavCompressesToFitAt80Columns is #108's RED case: the 6-screen full
+// nav (tier 1, ~87 cells - see nav()'s doc comment) never fits an 80-column
+// terminal's 76-cell availableWidth(), so before this fix nav() always
+// returned the full-width line and relied on View()'s hard truncate to cut
+// it down - which chopped the tail label (and, when the CURRENT screen was
+// last, its •N• marker) off entirely rather than degrading gracefully. This
+// asserts against m.nav() directly (not the truncated View() line) because
+// the fix's whole point is that nav() itself must already fit
+// availableWidth() - truncate() is a safety net, not the compression
+// mechanism. Tier 2 (current-label-only, worst case ~43 cells per the
+// design doc) fits comfortably under 76 for every screen, so this also
+// pins that the current screen's label text survives at this width.
+func TestNavCompressesToFitAt80Columns(t *testing.T) {
+	t.Parallel()
+
+	for i, screen := range screens {
+		i, screen := i, screen
+		t.Run(screen.String(), func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, "wizardry", 80, 24)
+			model.screen = screen
+
+			nav := model.nav()
+			width := model.availableWidth()
+
+			require.LessOrEqual(t, lipgloss.Width(nav), width,
+				"nav() itself must fit availableWidth() without relying on View()'s truncate safety net")
+			require.Contains(t, nav, fmt.Sprintf("•%d•", i+1),
+				"current screen's marker must survive at 80 columns")
+			require.Contains(t, nav, screen.String(),
+				"tier 2 (current-label-only) keeps the current screen's label text")
+		})
+	}
+}
+
+// TestNavStaysFullAt120Columns pins the no-regression side of #108: at a
+// comfortably wide terminal (120 cols -> 116-cell availableWidth(), well
+// over tier 1's ~87), nav() must still pick tier 1 and render every
+// screen's full label, not just the current one.
+func TestNavStaysFullAt120Columns(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 120, 36)
+	nav := model.nav()
+
+	require.LessOrEqual(t, lipgloss.Width(nav), model.availableWidth())
+	for _, screen := range screens {
+		require.Contains(t, nav, screen.String(),
+			"tier 1 (full) must keep every screen's label at wide widths, not just the current one")
+	}
+}
+
+// TestNavCompressesToNumbersOnlyAt40Columns is #108's pathological-width
+// case: availableWidth() floors at 40 cells (max(m.width-frame, 40)), and
+// tier 2's worst case - the current screen being "Installed Mods", the
+// longest label, at ~43 cells - exceeds that floor. nav() must fall all the
+// way to tier 3 (numbers-only, ~28 cells) rather than overflow: every
+// screen keeps its number cell, and the current screen's cell is still
+// •N•, but no label text (including the current screen's own) survives.
+func TestNavCompressesToNumbersOnlyAt40Columns(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 40, 12)
+	model.screen = ScreenInstalledMods // longest label: forces tier 2 over the 40-cell floor
+
+	nav := model.nav()
+	width := model.availableWidth()
+
+	require.LessOrEqual(t, lipgloss.Width(nav), width)
+	// Assert the actual rendered cell tokens, not bare digits — a bare "%d"
+	// Contains could be satisfied by an unrelated digit (an ANSI parameter
+	// byte, a count elsewhere in the line) and let a missing cell slip
+	// through.
+	for i := range screens {
+		cell := fmt.Sprintf("[%d]", i+1)
+		if screens[i] == model.screen {
+			cell = fmt.Sprintf("•%d•", i+1)
+		}
+		require.Contains(t, nav, cell, "every number cell must render as its [N]/•N• token")
+	}
+	require.Contains(t, nav, "•2•", "current screen keeps its marker in the numbers-only tier")
+	require.NotContains(t, nav, "Installed Mods",
+		"numbers-only tier drops all labels, including the current screen's")
 }
 
 func TestNumberKeysNavigateScreens(t *testing.T) {
@@ -931,19 +1017,35 @@ func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
 	require.True(t, opened.(Model).search.input.Focused(), "dashboard menu's explicit Search Archives entry must auto-focus")
 }
 
-func TestDashboardEnterOnOracleEntryStaysPut(t *testing.T) {
+// TestDashboardEnterOnOracleEntryOpensConflicts replaces the old
+// ...StaysPut test, which pinned Enter-on-Oracle as a NO-OP with the
+// comment "no screen exists for it yet". Phase 6b shipped ScreenConflicts
+// (v1.14.0) but neither the menu entry's target nor this test was updated,
+// so the stale pin silently protected a dead menu entry until a user smoke
+// test caught it (PR #113 round). Both dashboardMenu variants (default
+// "Consult Conflict Oracle" and amber's "ASK CONFLICT ORACLE") must
+// navigate.
+func TestDashboardEnterOnOracleEntryOpensConflicts(t *testing.T) {
 	t.Parallel()
 
-	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
-	require.NoError(t, err)
+	for _, themeName := range []string{"wizardry", "amber"} {
+		t.Run(themeName, func(t *testing.T) {
+			t.Parallel()
 
-	// Move to the last entry (Conflict Oracle) — no screen exists for it yet.
-	// 4 presses: Installed Mods -> Search -> Profiles -> Sources -> Oracle.
-	for range 4 {
-		model = updateWithRunes(t, model, "j")
+			model := sizedPrototypeModel(t, themeName, 100, 30)
+
+			// Move to the last entry (Conflict Oracle). 4 presses:
+			// Installed Mods -> Search -> Profiles -> Sources -> Oracle.
+			for range 4 {
+				model = updateWithRunes(t, model, "j")
+			}
+			opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			require.Equal(t, ScreenConflicts, opened.(Model).CurrentScreen(),
+				"the Oracle menu entry must open the Conflicts screen")
+			require.False(t, opened.(Model).search.input.Focused(),
+				"conflicts is not a search-intent entry — no input focus")
+		})
 	}
-	opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	require.Equal(t, ScreenDashboard, opened.(Model).CurrentScreen())
 }
 
 func TestEnterOutsideDashboardIsANoop(t *testing.T) {

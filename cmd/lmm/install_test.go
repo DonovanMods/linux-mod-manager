@@ -119,6 +119,39 @@ func TestInstallCmd_GameNotFound(t *testing.T) {
 	installModID = ""
 }
 
+// TestInstallCmd_VersionFlag_RejectedBeforeGameResolution guards the #93
+// interim fix (EPIC #98's decided option 2 - reject clearly): --version must
+// error out at runInstall's own entry, before withGameService ever resolves
+// a game or opens a service - proven here by leaving gameID unset (which
+// would otherwise fail with "no game specified", see TestInstallCmd_NoGame).
+// configDir/dataDir are still set to fresh t.TempDir()s (isolation from
+// other tests, not part of the ordering proof); if runInstall reached
+// withGameService, the unset gameID would surface as that different error
+// instead. Real version-specific installs are #96/#97's job; this guard
+// only stops the flag from silently lying to users in the meantime.
+func TestInstallCmd_VersionFlag_RejectedBeforeGameResolution(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameID = ""
+	installModID = ""
+
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(installCmd)
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"install", "test mod", "--version", "1.2.3"})
+
+	err := cmd.Execute()
+	installVersion = "" // reset package-level flag state for later tests
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--version")
+	assert.Contains(t, err.Error(), "not yet supported")
+	assert.NotContains(t, err.Error(), "no game specified")
+}
+
 // TestFormatSize tests the formatSize function
 func TestFormatSize(t *testing.T) {
 	tests := []struct {
