@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-07-27
+
+### Changed
+
+- **The TUI sizes search fetches to the window.** Each search asks every source for enough rows to fill the visible results pane by itself (minimum 10 — never fewer than before — capped at 50 per source, a limit verified against the live NexusMods API), instead of always 10. The size is fixed when the search is submitted, so paging with n/p stays arithmetically consistent; a terminal resize applies from the next search.
+
 ## [1.18.2] - 2026-07-27
 
 ### Fixed
@@ -970,7 +976,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.2...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.19.0...HEAD
+[1.19.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.2...v1.19.0
 [1.18.2]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.1...v1.18.2
 [1.18.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.0...v1.18.1
 [1.18.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.17.1...v1.18.0
