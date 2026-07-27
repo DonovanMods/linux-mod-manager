@@ -738,8 +738,8 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | -------------------------------------- | ---------------------------------------------------- |
 | `lmm search <query>`                   | Search all configured sources concurrently           |
 | `lmm search <query> --source ID`       | Search a single source instead of all configured ones |
-| `lmm search <query> --category ID`     | Filter by NexusMods category                         |
-| `lmm search <query> --tag TAG`         | Filter by tag (repeat for multiple)                  |
+| `lmm search <query> --category ID`     | Filter by category (NexusMods and CurseForge)        |
+| `lmm search <query> --tag TAG`         | Filter by tag (NexusMods only; repeat for multiple)  |
 | `lmm install <query>`                  | Search and install a mod                             |
 | `lmm install --id <mod-id>`            | Install by mod ID                                    |
 | `lmm install --id <mod-id> --file <file-id>` | Install a specific file, skipping file selection |
