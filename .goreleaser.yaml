@@ -31,6 +31,7 @@ archives:
       - README.md
       - LICENSE
       - CHANGELOG.md
+      - docs/man/man1/**
 
 checksum:
   name_template: checksums.txt

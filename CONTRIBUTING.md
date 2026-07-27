@@ -34,3 +34,4 @@ Thank you for your interest in contributing to lmm (Linux Mod Manager).
 
 - Update [CHANGELOG.md](CHANGELOG.md) for user-facing changes under `[Unreleased]`.
 - Update this file or [README.md](README.md) if you change build, test, or contribution steps.
+- Man pages in `docs/man/man1/` are generated from the CLI's own `--help` text, not hand-written. If you change any command's `Short`/`Long` text or flags, run `make man` to regenerate them and include the result in your commit — a drift test (`TestGenManTree_MatchesCommittedPages` in `cmd/lmm/genman_test.go`) fails CI otherwise.
