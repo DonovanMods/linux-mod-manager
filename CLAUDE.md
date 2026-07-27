@@ -17,7 +17,7 @@ Read these global guidance files before starting any development work:
 
 ## Project Overview
 
-**lmm** (Linux Mod Manager) is a terminal-based mod manager for Linux that provides both TUI and CLI interfaces for searching, installing, updating, and managing game mods from various sources. The MVP focuses on NexusMods integration with architecture designed for future sources (ESOUI, CurseForge, etc.).
+**lmm** (Linux Mod Manager) is a terminal-based mod manager for Linux that provides both TUI and CLI interfaces for searching, installing, updating, and managing game mods from various sources. NexusMods and CurseForge ship as built-in sources, and user-defined custom sources (directory, manifest, api) extend that further without writing code — see the README's Custom Sources section.
 
 ## Build Commands
 
@@ -53,7 +53,11 @@ internal/
 ├── source/               # ModSource interface + implementations
 │   ├── source.go         # Interface definition
 │   ├── registry.go       # Source registry
-│   └── nexusmods/        # NexusMods GraphQL client
+│   ├── nexusmods/        # NexusMods GraphQL client
+│   ├── curseforge/       # CurseForge API client
+│   ├── custom/           # User-defined sources (directory, manifest, api)
+│   ├── steam/            # Steam library scanning (for 'lmm game detect')
+│   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirects)
 ├── storage/
 │   ├── db/               # SQLite (mod metadata, auth tokens)
 │   ├── config/           # YAML parsing (games, profiles)
@@ -73,7 +77,7 @@ internal/
 
 **Key Interfaces**:
 
-- `ModSource`: Abstraction for mod repositories (NexusMods, CurseForge)
+- `ModSource`: Abstraction for mod repositories (NexusMods, CurseForge, and user-defined custom sources — directory, manifest, api)
 - `Linker`: Deploy strategies (symlink, hardlink, copy)
 
 ## Key Dependencies
@@ -89,9 +93,11 @@ internal/
 ## File Locations
 
 - **SQLite database**: `~/.local/share/lmm/lmm.db`
-- **Mod cache**: `~/.local/share/lmm/cache/<game-id>/<source-id>-<mod-id>/<version>/`
+- **Mod cache**: `~/.local/share/lmm/cache/<game-id>/<source-id>-<mod-id>/<version>/` (default; a per-game `cache_path` drops the `<game-id>` segment)
+- **Download staging**: `~/.local/share/lmm/downloads/`
 - **Config**: `~/.config/lmm/config.yaml`
 - **Games config**: `~/.config/lmm/games.yaml`
+- **Custom sources**: `~/.config/lmm/sources/*.yaml`
 - **Profiles**: `~/.config/lmm/games/<game-id>/profiles/<profile>.yaml`
 
 ## Testing Strategy
