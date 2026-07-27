@@ -871,3 +871,109 @@ func TestSearchFetchSizeStickyAcrossResizeWithinSession(t *testing.T) {
 	require.Len(t, rec.SearchPageSizes, 3)
 	require.Equal(t, newSize, rec.SearchPageSizes[2], "a fresh submit after resize must use the NEW size")
 }
+
+// TestSearchFetchSizeStickyAcrossResizeThenPrevPageToZero guards Copilot PR
+// #114 round 2's finding: PrevPage from page 1 lands back on page 0 WITHIN
+// the same session - that recurrence is not itself a "new session" signal,
+// so the page-0 refetch it triggers must keep the session's ORIGINAL fetch
+// size even if the terminal was resized between the 'n' and 'p' presses.
+// Only startSearch's explicit submit path may recompute.
+func TestSearchFetchSizeStickyAcrossResizeThenPrevPageToZero(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingProvider{delegate: NewPrototypeProvider()}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: rec})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	sized, _ := loaded.(Model).Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = sized.(Model)
+
+	model = updateWithRunes(t, model, "3")
+	for _, r := range "sky" {
+		model = updateWithRunes(t, model, string(r))
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+	require.Equal(t, searchReady, model.search.state)
+	require.Len(t, rec.SearchPageSizes, 1)
+	original := rec.SearchPageSizes[0]
+	require.Equal(t, 12, original, "80x24's derived fetch size")
+
+	// Force a next-page hint so 'n' below issues a real requery to page 1
+	// (same forcing technique as TestSearchFetchSizeStickyAcrossResizeWithinSession).
+	model.search.page.Exhausted = false
+	model.search.page.TotalCount = 999
+	model.search.page.PageSize = original
+
+	model = updateWithKeyType(t, model, tea.KeyEsc) // n/p are screen-level keys; only reach pagination once blurred
+	updated, cmd = model.Update(keyRunes("n"))
+	require.NotNil(t, cmd, "next page issues a search command")
+	model = updated.(Model)
+	result, _ = model.Update(cmd())
+	model = result.(Model)
+	require.Equal(t, 1, model.search.page.Page, "now viewing page 1")
+	require.Len(t, rec.SearchPageSizes, 2)
+	require.Equal(t, original, rec.SearchPageSizes[1], "the n-triggered requery to page 1 must keep the original size")
+
+	// Resize mid-session, THEN step back to page 0 via PrevPage.
+	resized, _ := model.Update(tea.WindowSizeMsg{Width: 200, Height: 60})
+	model = resized.(Model)
+	newSize := model.searchFetchSize()
+	require.NotEqual(t, original, newSize, "the test needs a resize that actually changes the derived size")
+
+	updated, cmd = model.Update(keyRunes("p"))
+	require.NotNil(t, cmd, "prev page issues a search command")
+	model = updated.(Model)
+	_, _ = model.Update(cmd())
+
+	require.Len(t, rec.SearchPageSizes, 3)
+	require.Equal(t, original, rec.SearchPageSizes[2],
+		"PrevPage back to page 0 must keep the ORIGINAL session's fetch size, not recompute just because page == 0")
+}
+
+// TestSearchFetchSizeStickyAcrossResizeThenPostInstallRefresh guards the
+// other half of Copilot PR #114 round 2's finding: refreshSearchAfterInstall
+// re-fetches whichever page is currently on screen - page 0 in this test -
+// as part of the SAME session, and must not treat that page-0 refetch as a
+// new session either.
+func TestSearchFetchSizeStickyAcrossResizeThenPostInstallRefresh(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingProvider{delegate: NewPrototypeProvider()}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: rec})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	sized, _ := loaded.(Model).Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = sized.(Model)
+
+	model = updateWithRunes(t, model, "3")
+	for _, r := range "sky" {
+		model = updateWithRunes(t, model, string(r))
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+	require.Equal(t, searchReady, model.search.state)
+	require.Len(t, rec.SearchPageSizes, 1)
+	original := rec.SearchPageSizes[0]
+	require.Equal(t, 12, original, "80x24's derived fetch size")
+	require.Equal(t, 0, model.search.page.Page, "still viewing page 0")
+
+	resized, _ := model.Update(tea.WindowSizeMsg{Width: 200, Height: 60})
+	model = resized.(Model)
+	newSize := model.searchFetchSize()
+	require.NotEqual(t, original, newSize, "the test needs a resize that actually changes the derived size")
+
+	model, cmd = model.refreshSearchAfterInstall()
+	require.NotNil(t, cmd, "refreshSearchAfterInstall must dispatch a requery from searchReady")
+	_, _ = model.Update(cmd())
+
+	require.Len(t, rec.SearchPageSizes, 2)
+	require.Equal(t, original, rec.SearchPageSizes[1],
+		"the post-install refresh must keep the ORIGINAL session's fetch size, not recompute just because it's re-fetching page 0")
+}

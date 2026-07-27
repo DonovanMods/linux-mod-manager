@@ -904,7 +904,12 @@ func (m Model) refreshSearchAfterInstall() (Model, tea.Cmd) {
 	if m.search.state != searchReady {
 		return m, nil
 	}
-	return m.startSearch(m.search.page.Query, m.search.page.Page)
+	// requerySearch, not startSearch: this re-fetches whichever page is
+	// currently on screen (often page 0) as part of the SAME session the
+	// user already started, so it must keep that session's sticky fetch
+	// size rather than recomputing from the window's current size (#111
+	// Tier 1 / Copilot PR #114 round 2 - see requerySearch's doc comment).
+	return m.requerySearch(m.search.page.Query, m.search.page.Page)
 }
 
 // --- Check/apply updates ('u' on Dashboard and Installed Mods) ---

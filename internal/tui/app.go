@@ -755,7 +755,7 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Submit):
 			m.search.input.Blur()
-			return m.startSearch(m.search.input.Value(), 0)
+			return m.startSearch(m.search.input.Value())
 		default:
 			var cmd tea.Cmd
 			m.search.input, cmd = m.search.input.Update(msg)
@@ -781,12 +781,12 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gotoScreenFocused(ScreenSearch)
 	case key.Matches(msg, m.keys.NextPage):
 		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.hasNextPage() {
-			return m.startSearch(m.search.page.Query, m.search.page.Page+1)
+			return m.requerySearch(m.search.page.Query, m.search.page.Page+1)
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.PrevPage):
 		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.page.Page > 0 {
-			return m.startSearch(m.search.page.Query, m.search.page.Page-1)
+			return m.requerySearch(m.search.page.Query, m.search.page.Page-1)
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.CycleSource):
@@ -2258,11 +2258,14 @@ const searchFetchSizeCap = 50
 // one fetched-but-unshown row, never a layout overflow - searchResultsPane
 // windows to its own maxLines regardless of how many rows were fetched.
 //
-// Called once per query session, at submit (page 0) - see startSearch,
-// which stores the result in m.search.fetchSize and reuses it, UNCHANGED,
-// for every subsequent fetch of that same session (n/p pagination, the
-// post-install refresh), even across an intervening resize. A resize only
-// changes what the NEXT submitted query fetches.
+// Called once per query session, exclusively from startSearch (the
+// Enter/submit path - NOT page == 0, which recurs mid-session via
+// PrevPage and refreshSearchAfterInstall and is therefore not a safe "new
+// session" signal - see requerySearch's doc comment in search.go). startSearch
+// stores the result in m.search.fetchSize; requerySearch reuses it,
+// UNCHANGED, for every subsequent fetch of that same session (n/p
+// pagination, the post-install refresh), even across an intervening
+// resize. A resize only changes what the NEXT startSearch call fetches.
 func (m Model) searchFetchSize() int {
 	const (
 		headerLineCount = 2 // searchHeaderLines(): title + query input

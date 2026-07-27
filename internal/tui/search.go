@@ -34,15 +34,24 @@ type searchModel struct {
 	gen        int
 	cancel     context.CancelFunc
 	// fetchSize is the current query session's sticky page size (#111 Tier
-	// 1): startSearch computes it fresh from Model.searchFetchSize() only
-	// when starting a NEW session (page == 0), then reuses this stored value
-	// unchanged for every later fetch of that same session - n/p pagination,
-	// refreshSearchAfterInstall's requery - even if the terminal is resized
-	// in between. Zero (its natural zero value, before any search has ever
-	// run) is not a special case: DataProvider.Search implementations treat
-	// pageSize <= 0 as "use SearchPageSize" (see that constant's doc
-	// comment), so a stray fetch before the first submit degrades to the old
-	// fixed-size behavior rather than fetching nothing.
+	// 1): the SESSION owns this value, not the page number - startSearch
+	// (the Enter/submit path, and ONLY that path) computes it fresh from
+	// Model.searchFetchSize() when a NEW session begins, then requerySearch
+	// reuses this stored value unchanged for every later fetch of that same
+	// session (n/p pagination, refreshSearchAfterInstall's requery),
+	// including a PrevPage back to page 0 - even if the terminal is resized
+	// in between. page == 0 is deliberately NOT the recompute signal: it
+	// recurs mid-session (PrevPage from page 1, or refreshSearchAfterInstall
+	// re-fetching whichever page is on screen), so keying recompute off it
+	// silently changed an in-flight session's fetch size on those paths
+	// (Copilot PR #114 round 2 finding) - exactly the pagination-arithmetic
+	// inconsistency stickiness exists to prevent (an earlier page fetched at
+	// the old size, page 0 refetched at a new one, boundaries shift/overlap).
+	// Zero (its natural zero value, before any search has ever run) is not a
+	// special case: DataProvider.Search implementations treat pageSize <= 0
+	// as "use SearchPageSize" (see that constant's doc comment), so a stray
+	// fetch before the first submit degrades to the old fixed-size behavior
+	// rather than fetching nothing.
 	fetchSize int
 	// gameName is the active game's display name, threaded in at
 	// construction (see newSearchModel) so noSourcesConfiguredErr and the
@@ -186,9 +195,36 @@ func (s searchModel) hasNextPage() bool {
 	return len(s.page.Results) == s.page.PageSize // full page ⇒ maybe more
 }
 
-// startSearch cancels any in-flight search, bumps the generation, and returns
-// the model plus a command executing the new query.
-func (m Model) startSearch(query string, page int) (Model, tea.Cmd) {
+// startSearch begins a NEW query session (the Enter/submit path - "3"/"/"
+// then Enter, the dashboard's Search Archives entry - and ONLY that path):
+// it derives THIS session's sticky fetch size from the window's CURRENT
+// size (see searchModel.fetchSize's doc comment) and dispatches page 0.
+// Every other fetch of this same session must go through requerySearch
+// below instead, which does NOT touch fetchSize - see its own doc comment
+// for why page == 0 alone is not a safe "new session" signal.
+func (m Model) startSearch(query string) (Model, tea.Cmd) {
+	m.search.fetchSize = m.searchFetchSize()
+	return m.dispatchSearch(query, 0)
+}
+
+// requerySearch continues the CURRENT query session at page - n/p pagination
+// (app.go's NextPage/PrevPage handlers) and refreshSearchAfterInstall's
+// post-install requery (mutations.go), both of which can legitimately land
+// back on page 0 (PrevPage from page 1; a refresh of whatever page is
+// currently on screen) without that being a new session. It reuses
+// m.search.fetchSize exactly as startSearch last set it, so a resize
+// between the original submit and this call never shifts the session's
+// pagination arithmetic.
+func (m Model) requerySearch(query string, page int) (Model, tea.Cmd) {
+	return m.dispatchSearch(query, page)
+}
+
+// dispatchSearch is startSearch/requerySearch's shared body: cancels any
+// in-flight search, bumps the generation, and issues the fetch at page
+// using whatever fetch size is already stored in m.search.fetchSize -
+// deriving that value is exclusively startSearch's job (see its doc
+// comment), never this method's.
+func (m Model) dispatchSearch(query string, page int) (Model, tea.Cmd) {
 	// Guard: no REAL sources configured for this game. The "" sentinel is
 	// now a valid search target (meaning "search every configured source"),
 	// so this can no longer key off source() == "": sources always contains
@@ -208,14 +244,6 @@ func (m Model) startSearch(query string, page int) (Model, tea.Cmd) {
 	m.search.gen++
 	m.search.state = searchLoading
 
-	// Sticky per-session fetch size (#111 Tier 1 - see searchModel.fetchSize's
-	// doc comment): page == 0 marks the start of a NEW query session, so this
-	// is the one point where the window's CURRENT size gets a say. Every
-	// later fetch in the same session reuses the value already stored,
-	// regardless of what the terminal does in between.
-	if page == 0 {
-		m.search.fetchSize = m.searchFetchSize()
-	}
 	fetchSize := m.search.fetchSize
 
 	gen := m.search.gen
