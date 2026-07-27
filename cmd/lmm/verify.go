@@ -43,7 +43,7 @@ With a mod ID, verifies only that specific mod.
 
 Each file is reported with one of:
 
-    + NAME (FILE) - OK                  cached and checksum matches
+    + NAME (FILE) - OK                  cache exists and a checksum is stored
     X NAME (FILE) - MISSING             version not present in cache
     ? NAME (FILE) - NO CHECKSUM         cached, but no checksum was ever stored
     ! NAME - FILE COUNT MISMATCH        cache exists but is empty (per-mod, not per-file)
@@ -62,7 +62,7 @@ warnings counts everything else that isn't OK.
 Examples:
   lmm verify --game skyrim-se           # Verify all mods
   lmm verify 12345 --game skyrim-se     # Verify specific mod
-  lmm verify --fix --game skyrim-se     # Re-download corrupted files`,
+  lmm verify --fix --game skyrim-se     # Re-download missing files, populate missing checksums`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runVerify,
 }

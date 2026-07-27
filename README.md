@@ -759,7 +759,7 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm update --dry-run`                 | Preview what would update                            |
 | `lmm update rollback <mod-id>`         | Rollback to previous version                         |
 | `lmm verify`                           | Verify cached mod files (see below)                  |
-| `lmm verify --fix`                     | Re-download missing or corrupted files               |
+| `lmm verify --fix`                     | Re-download missing files, populate missing checksums |
 | `lmm mod enable <mod-id>`              | Enable a disabled mod                                |
 | `lmm mod disable <mod-id>`             | Disable mod (keep in cache)                          |
 | `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                          |
