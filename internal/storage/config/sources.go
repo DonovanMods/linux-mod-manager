@@ -23,6 +23,12 @@ func (e SourceLoadError) Error() string {
 	return fmt.Sprintf("%s: %v", e.File, e.Err)
 }
 
+// Unwrap exposes the underlying cause so errors.Is/errors.As can match
+// through a SourceLoadError to whatever LoadSourceDefinitionFile returned.
+func (e SourceLoadError) Unwrap() error {
+	return e.Err
+}
+
 // LoadSourceDefinitions reads and validates every *.yaml/*.yml file in
 // <configDir>/sources. A missing directory yields no definitions and no error.
 // Per-file parse/validation failures (including duplicate IDs) are returned as

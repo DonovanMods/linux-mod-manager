@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -75,6 +79,89 @@ func TestInitService_TightensExistingDataDir(t *testing.T) {
 	info, err := os.Stat(dataDir)
 	require.NoError(t, err)
 	assert.Equal(t, fs.FileMode(0700), info.Mode().Perm(), "an existing permissive data dir should be tightened")
+}
+
+// writeSourceYAML writes a source definition file for registerCustomSources tests.
+func writeSourceYAML(t *testing.T, dir, name, content string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0644))
+}
+
+// TestRegisterCustomSources_SkipsInvalidDefinitions exercises all three
+// warn-and-skip branches in registerCustomSources (#52 item 7): a per-file
+// load error, an id already claimed by a previously-registered source, and a
+// definition that parses fine but fails construction. Warnings go straight to
+// os.Stderr (not redirectable in a package-level test), so this asserts the
+// registration outcome via svc.ListSources() instead of captured output.
+func TestRegisterCustomSources_SkipsInvalidDefinitions(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
+
+	// Pre-register a source under id "taken" so a definition claiming the
+	// same id hits the id-collision skip branch.
+	taken, err := custom.NewDirectory(custom.SourceDefinition{
+		ID:        "taken",
+		Name:      "Pre-registered",
+		Type:      custom.TypeDirectory,
+		Directory: &custom.DirectoryConfig{Path: t.TempDir()},
+	})
+	require.NoError(t, err)
+	svc.RegisterSource(taken)
+
+	cfgDir := t.TempDir()
+	srcDir := filepath.Join(cfgDir, "sources")
+
+	writeSourceYAML(t, srcDir, "good.yaml", fmt.Sprintf(`
+id: good-src
+name: Good Src
+type: directory
+directory:
+  path: %s
+`, t.TempDir()))
+	writeSourceYAML(t, srcDir, "broken.yaml", "id: [unclosed") // load error branch
+	writeSourceYAML(t, srcDir, "collide.yaml", fmt.Sprintf(`
+id: taken
+name: Collide Src
+type: directory
+directory:
+  path: %s
+`, t.TempDir())) // id-collision branch
+	writeSourceYAML(t, srcDir, "missing-path.yaml", `
+id: missing-path
+name: Missing Path
+type: directory
+directory:
+  path: /this/path/should/not/exist/lmm-test-fixture
+`) // construction-failure branch: Validate passes, NewDirectory's os.Stat fails
+
+	registerCustomSources(svc, cfgDir)
+
+	sources := svc.ListSources()
+	byID := make(map[string]source.ModSource, len(sources))
+	for _, s := range sources {
+		byID[s.ID()] = s
+	}
+
+	goodSrc, ok := byID["good-src"]
+	require.True(t, ok, "good.yaml should have registered its source")
+	assert.Equal(t, "Good Src", goodSrc.Name())
+
+	takenSrc, ok := byID["taken"]
+	require.True(t, ok, "the pre-registered id must still be present")
+	assert.Equal(t, "Pre-registered", takenSrc.Name(), "collide.yaml must not overwrite the pre-existing source")
+
+	_, ok = byID["missing-path"]
+	assert.False(t, ok, "a definition whose directory doesn't exist must fail construction and be skipped")
+
+	assert.Len(t, sources, 2, "only good-src and the pre-registered taken source should be registered")
 }
 
 // TestRunRoot_PropagatesContextCancellation pins the contract that the root command
