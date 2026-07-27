@@ -1629,8 +1629,19 @@ func (m Model) searchFooterLine() string {
 		// user smoke finding, PR #110). len(Results) is the only figure
 		// that is true by construction here; single-source pages below keep
 		// the genuine reported totals.
+		//
+		// Wording evolved once pages could scroll (#111 Tier 2, PR #114
+		// smoke round): "shown" was accurate back when a fetched page
+		// rendered in full, but searchFetchSize's worst-case reservations
+		// mean the results pane can now windowedRows-scroll a merged page
+		// (see that function's own doc comment on why an all-sources page
+		// isn't guaranteed to render every fetched row) - "shown" then reads
+		// as contradicting the "↓ N more" indicator sitting right below it.
+		// "on page" describes what the number actually counts (rows fetched
+		// for this page, still true by construction) without claiming
+		// they're all currently visible.
 		if len(page.Results) > 0 {
-			footer = fmt.Sprintf("Page %d (%d shown)", current, len(page.Results))
+			footer = fmt.Sprintf("Page %d (%d on page)", current, len(page.Results))
 		}
 	case page.TotalCount > 0 && page.PageSize > 0:
 		totalPages := (page.TotalCount + page.PageSize - 1) / page.PageSize
@@ -2235,32 +2246,54 @@ func (m Model) contentChromeHeight() int {
 const searchFetchSizeCap = 50
 
 // searchFetchSize derives how many results ONE query session should fetch
-// (#111 Tier 1) from the terminal's actual visible budget, so a submitted
-// search fills the results pane it will render into. "Fills" is a lower
-// bound, not an exact fit: the SearchPageSize floor (10) can exceed a
-// short terminal's pane budget, and the pane's scroll-follow windowing
-// absorbs any excess rows - the fetch size never constrains rendering,
-// only how much one request asks for. Mirrors searchReadyView's own
-// arithmetic; that function's
+// (#111 Tier 1) from the terminal's actual visible budget, targeting the
+// WORST-CASE render of the results pane rather than its best case. A user
+// smoke finding on PR #114 (fetch 48, only 43 visible, "↓ 5 more") traced
+// to the opposite: the original derivation assumed the smallest possible
+// chrome (a bare 2-line header, no status line), then a warning line
+// and/or the action status line materializing at RENDER time shrank the
+// pane out from under an already-dispatched fetch - and the results pane's
+// own "↓ N more" scroll indicator (windowedRows/pickerWindow, clamp.go)
+// consumes a row of whatever budget IS available once that happens, so a
+// too-generous fetch reads as an even bigger, more visible shortfall than
+// the raw row deficit alone.
+//
+// Beyond the base header(2)+footer(1)+border(2) subtraction (unchanged -
+// see below), two additional rows are reserved for the WORST case:
+//   - statusReserve (1, unconditional): m.hasVisibleStatus() reflects only
+//     what's true AT THE MOMENT this runs, but an action can start and post
+//     a status line at any later point in the session, after this size was
+//     already dispatched - there's no way to rule that out, so it's always
+//     reserved regardless of the current value.
+//   - warningReserve (1, only when m.search.source() == "" at submit - the
+//     all-sources sentinel): searchView only ever appends a warning line to
+//     an ALL-SOURCES page (SearchPage.Warnings is empty for single-source
+//     searches - see its own doc comment), so a single-source session never
+//     needs this; an all-sources session can't know in advance whether the
+//     page it's about to fetch will warn, so it reserves defensively.
+//
+// This remains a LOWER bound in the other direction, not an exact fit: when
+// neither reservation actually materializes (no status line ever appears,
+// a single-source page, or an all-sources page that happens not to warn),
+// the pane under-fills by up to 2 rows - accepted, since the alternative
+// would require knowing the render-time-exact chrome before the very fetch
+// that determines part of it. A merged ALL-SOURCES page can also still
+// scroll by design regardless of any of this (see hasNextPage's own doc
+// comment on why a summed TotalCount can't bound one page) - windowedRows
+// is what makes that safe to show, not this function.
+//
+// Mirrors searchReadyView's own arithmetic; that function's
 // paneContentHeight local computes:
 //
 //	paneContentHeight := max(paneHeight - Panel.GetVerticalBorderSize(), 1)
 //	paneHeight         := max(availableContentHeight() - len(header) - 1, 1)
 //
 // i.e. availableContentHeight() minus len(header) minus the footer line
-// (1) minus the panel's own top+bottom border. This function reproduces
-// that same subtraction (unfloored, since the [SearchPageSize,
-// searchFetchSizeCap] clamp below does the floor/cap work instead of the
-// max(...,1) guards searchReadyView needs for rendering).
-//
-// headerLineCount is hardcoded to 2 (searchHeaderLines' title + query-input
-// lines) rather than read from len(searchHeaderLines()) live: searchView
-// may append a THIRD, per-search warning line to that header, but only
-// AFTER a search already returned a page - this size is computed BEFORE
-// that fetch even happens, so the warning line's eventual presence can't
-// factor in. Under-counting by one row in that case costs the results pane
-// one fetched-but-unshown row, never a layout overflow - searchResultsPane
-// windows to its own maxLines regardless of how many rows were fetched.
+// (1) minus the panel's own top+bottom border, before the two worst-case
+// reservations above. headerLineCount is hardcoded to 2 (searchHeaderLines'
+// title + query-input lines, the guaranteed base) - the warning line is
+// handled by warningReserve above, not by reading len(searchHeaderLines())
+// live (which is unknowable before the fetch that would produce it).
 //
 // Called once per query session, exclusively from startSearch (the
 // Enter/submit path - NOT page == 0, which recurs mid-session via
@@ -2274,8 +2307,13 @@ func (m Model) searchFetchSize() int {
 	const (
 		headerLineCount = 2 // searchHeaderLines(): title + query input
 		footerLineCount = 1 // searchFooterLine(): single status line
+		statusReserve   = 1 // hasVisibleStatus can become true after submit
+		warningReserve  = 1 // all-sources sessions only - see doc comment
 	)
-	budget := m.availableContentHeight() - headerLineCount - footerLineCount - m.theme.Panel.GetVerticalBorderSize()
+	budget := m.availableContentHeight() - headerLineCount - footerLineCount - m.theme.Panel.GetVerticalBorderSize() - statusReserve
+	if m.search.source() == "" {
+		budget -= warningReserve
+	}
 	return min(max(budget, SearchPageSize), searchFetchSizeCap)
 }
 

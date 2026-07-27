@@ -282,6 +282,11 @@ func TestAggregateHasNextPageRespectsExhaustedNotSummedTotalCount(t *testing.T) 
 // "Page N/M" figure (see searchFooterLine's doc comment), so it must not
 // render one at all for an all-sources page, while still showing the result
 // count and correctly omitting "n next" once Exhausted.
+//
+// "on page" (not "shown" - #111 Tier 2, PR #114 smoke round): see
+// searchFooterLine's own doc comment for why the wording changed once
+// searchFetchSize's worst-case reservations meant a merged page could
+// legitimately scroll.
 func TestAggregateFooterOmitsMisleadingTotalPages(t *testing.T) {
 	t.Parallel()
 
@@ -294,7 +299,7 @@ func TestAggregateFooterOmitsMisleadingTotalPages(t *testing.T) {
 
 	footer := model.searchFooterLine()
 	require.NotContains(t, footer, "/", "aggregate TotalCount/PageSize must not render a misleading total-pages figure")
-	require.Contains(t, footer, "30 shown")
+	require.Contains(t, footer, "30 on page")
 	require.NotContains(t, footer, "n next", "exhausted aggregate must not offer a dead next page")
 }
 
@@ -305,6 +310,13 @@ func TestAggregateFooterOmitsMisleadingTotalPages(t *testing.T) {
 // 13 rows rendered "(3 results)". The aggregate footer must count the rows
 // actually on the page — the only figure that is true by construction —
 // never the summed totals.
+//
+// "on page" (not "shown" - #111 Tier 2, PR #114 smoke round): the wording
+// itself evolved after this fix originally shipped, once searchFetchSize's
+// worst-case reservations meant a merged page could legitimately scroll -
+// "shown" started contradicting the "↓ N more" indicator beneath it. The
+// COUNT this test guards (rows on the page, never the summed total) is
+// unchanged; see searchFooterLine's doc comment for the wording history.
 func TestAggregateFooterCountsShownRowsNotSummedTotals(t *testing.T) {
 	t.Parallel()
 
@@ -318,7 +330,7 @@ func TestAggregateFooterCountsShownRowsNotSummedTotals(t *testing.T) {
 	}
 
 	footer := model.searchFooterLine()
-	require.Contains(t, footer, "13 shown", "the footer must count the rows on the page")
+	require.Contains(t, footer, "13 on page", "the footer must count the rows on the page")
 	require.NotContains(t, footer, "3 result", "the under-reported summed total must not render")
 }
 
@@ -766,27 +778,54 @@ func TestSearchDetailPaneStylesInstalledStatus(t *testing.T) {
 // --- #111 Tier 1: window-sized search fetch ---
 
 // TestSearchFetchSizeDerivesFromPaneBudget pins the exact value
-// Model.searchFetchSize derives at 80x24, verified against searchReadyView's
-// REAL arithmetic (not the task brief's assumed numbers) via a throwaway
-// probe: availableContentHeight() is 17 at this size (24 - App's vertical
-// frame size (2) - contentChromeHeight() (5, with no help/status shown)),
-// and searchReadyView's own paneContentHeight subtracts len(header) (2),
-// the footer (1), and the panel's vertical border (2) from that - 17 - 5 =
-// 12.
+// Model.searchFetchSize derives at 80x24 for an ALL-SOURCES session (the
+// search screen's default sourceIdx targets the "" sentinel - see
+// newSearchModel), verified against searchReadyView's REAL arithmetic (not
+// assumed numbers) via a throwaway probe: availableContentHeight() is 17 at
+// this size (24 - App's vertical frame size (2) - contentChromeHeight() (5,
+// with no help/status shown)); searchReadyView's own paneContentHeight
+// subtracts len(header) (2), the footer (1), and the panel's vertical
+// border (2) from that (17-5=12); #111 Tier 2's worst-case reservations
+// (PR #114 smoke round) then subtract statusReserve (1, unconditional) and
+// warningReserve (1, all-sources only) on top - 12-1-1=10.
 func TestSearchFetchSizeDerivesFromPaneBudget(t *testing.T) {
 	t.Parallel()
 
 	model := sizedPrototypeModel(t, "wizardry", 80, 24)
-	require.Equal(t, 12, model.searchFetchSize(),
-		"80x24: availableContentHeight(17) - header(2) - footer(1) - panel border(2)")
+	require.Equal(t, 10, model.searchFetchSize(),
+		"80x24 all-sources: availableContentHeight(17) - header(2) - footer(1) - panel border(2) - status(1) - warning(1)")
+}
+
+// TestSearchFetchSizeReservesOneFewerRowForSingleSourceSessions guards
+// #111 Tier 2's split between the two worst-case reservations: a
+// single-source session can never render an all-sources warning line (see
+// searchFetchSize's own doc comment), so it only pays statusReserve, one
+// row MORE than an equivalent all-sources session at the same size (11 vs
+// 10 at 80x24 - see TestSearchFetchSizeDerivesFromPaneBudget for that
+// value's own derivation).
+func TestSearchFetchSizeReservesOneFewerRowForSingleSourceSessions(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 80, 24)
+	allSources := model.searchFetchSize()
+
+	model.search.sourceIdx = 1 // a real single source ("nexusmods"), not the "" all-sources sentinel
+	require.NotEqual(t, "", model.search.source(), "test sanity: sourceIdx 1 must be a real source")
+	single := model.searchFetchSize()
+
+	require.Equal(t, 10, allSources)
+	require.Equal(t, 11, single, "single-source sessions skip the warning-line reservation")
 }
 
 // TestSearchFetchSizeFloorsOnShortTerminals guards the [SearchPageSize, cap]
 // clamp's floor: at 40x12, availableContentHeight() itself hits its own
-// floor (8), so the raw budget (8-5=3) would starve a search of nearly all
-// results without the clamp - SearchPageSize (10) is the floor exactly
-// because a search must always return a useful page, even on the smallest
-// supported terminal.
+// floor (8), so the raw budget (8-5-1-1=1 all-sources, 8-5-1=2 single-
+// source) would starve a search of nearly all results without the clamp -
+// SearchPageSize (10) is the floor exactly because a search must always
+// return a useful page, even on the smallest supported terminal. Both
+// reservations already floor to the same value here, so this test doesn't
+// distinguish source flavors the way
+// TestSearchFetchSizeReservesOneFewerRowForSingleSourceSessions does.
 func TestSearchFetchSizeFloorsOnShortTerminals(t *testing.T) {
 	t.Parallel()
 
@@ -795,8 +834,9 @@ func TestSearchFetchSizeFloorsOnShortTerminals(t *testing.T) {
 }
 
 // TestSearchFetchSizeCapsOnTallTerminals guards the clamp's cap: a very tall
-// terminal's raw budget (108 at 120x120) must not translate into a request
-// for 100+ results from a real source's API in one call.
+// terminal's raw budget (108 unreserved at 120x120, still 106/107 after the
+// worst-case reservations) must not translate into a request for 100+
+// results from a real source's API in one call.
 func TestSearchFetchSizeCapsOnTallTerminals(t *testing.T) {
 	t.Parallel()
 
@@ -834,7 +874,7 @@ func TestSearchFetchSizeStickyAcrossResizeWithinSession(t *testing.T) {
 
 	require.Len(t, rec.SearchPageSizes, 1)
 	original := rec.SearchPageSizes[0]
-	require.Equal(t, 12, original, "80x24's derived fetch size")
+	require.Equal(t, 10, original, "80x24 all-sources derived fetch size")
 	require.Equal(t, original, model.search.fetchSize, "the session's sticky size must be stored on the model")
 
 	// Force a next-page hint regardless of the canned set's actual size, so
@@ -900,7 +940,7 @@ func TestSearchFetchSizeStickyAcrossResizeThenPrevPageToZero(t *testing.T) {
 	require.Equal(t, searchReady, model.search.state)
 	require.Len(t, rec.SearchPageSizes, 1)
 	original := rec.SearchPageSizes[0]
-	require.Equal(t, 12, original, "80x24's derived fetch size")
+	require.Equal(t, 10, original, "80x24 all-sources derived fetch size")
 
 	// Force a next-page hint so 'n' below issues a real requery to page 1
 	// (same forcing technique as TestSearchFetchSizeStickyAcrossResizeWithinSession).
@@ -961,7 +1001,7 @@ func TestSearchFetchSizeStickyAcrossResizeThenPostInstallRefresh(t *testing.T) {
 	require.Equal(t, searchReady, model.search.state)
 	require.Len(t, rec.SearchPageSizes, 1)
 	original := rec.SearchPageSizes[0]
-	require.Equal(t, 12, original, "80x24's derived fetch size")
+	require.Equal(t, 10, original, "80x24 all-sources derived fetch size")
 	require.Equal(t, 0, model.search.page.Page, "still viewing page 0")
 
 	resized, _ := model.Update(tea.WindowSizeMsg{Width: 200, Height: 60})
