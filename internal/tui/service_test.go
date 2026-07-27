@@ -124,6 +124,35 @@ func TestPrototypeProviderSearchAllSourcesRendersWarning(t *testing.T) {
 	require.Empty(t, single.Warnings, "single-source search has no warnings to show")
 }
 
+// TestPrototypeProviderSearchAllSourcesReportsExhaustedAndAttempted guards a
+// whole-branch-review finding on #58: the canned all-sources page is a
+// single, non-paginated fetch (there is no real "page 2" to demo), so it
+// must report itself Exhausted like a genuinely-exhausted real aggregate
+// would - otherwise --prototype's search screen shows a permanently dead
+// "n next" hint (pre-#58, the old TotalCount/PageSize math happened to
+// correctly end the canned set; #58's aggregate-aware hasNextPage broke
+// that by trusting Exhausted instead, which prototypeProvider never set).
+// AttemptedCount must likewise reflect the canned SEARCHABLE source count
+// (len(SourceInfos()), all three of which advertise "search" - see
+// SourceInfos' doc comment) rather than 0, or every zero-match demo search
+// would falsely render the no-searchable-sources honesty notice (#58 item
+// 3) instead of the ordinary "No archives matched" copy.
+func TestPrototypeProviderSearchAllSourcesReportsExhaustedAndAttempted(t *testing.T) {
+	t.Parallel()
+
+	p := NewPrototypeProvider()
+
+	all, err := p.Search(context.Background(), "", "sky", 0)
+	require.NoError(t, err)
+	require.True(t, all.Exhausted, "the canned set is a single-page fetch; there is no real next page to demo")
+	require.Equal(t, len(p.SourceInfos()), all.AttemptedCount, "must derive from the canned searchable-source count, not 0")
+
+	none, err := p.Search(context.Background(), "", "zzz-nothing-matches", 0)
+	require.NoError(t, err)
+	require.Empty(t, none.Results)
+	require.NotZero(t, none.AttemptedCount, "a genuine zero-match demo search must not look like zero searchable sources")
+}
+
 func TestPrototypeProviderProfiles(t *testing.T) {
 	t.Parallel()
 

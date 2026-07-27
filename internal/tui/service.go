@@ -396,6 +396,26 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, _ in
 	}
 	if source == "" {
 		page.Warnings = []string{prototypeAllSourcesWarning}
+		// Exhausted/AttemptedCount (#58 fix-round: whole-branch-review
+		// finding) must mirror what a genuinely-exhausted, genuinely-
+		// attempted real aggregate looks like, or --prototype's demo
+		// contradicts the very honest-search behavior this batch added:
+		//   - Exhausted is always true here: the canned SearchResults set
+		//     is a single, non-paginated fetch (there is no real "page 2" to
+		//     demo), so hasNextPage's aggregate branch (`!Exhausted`) must
+		//     see it as fully delivered, not left dangling with a
+		//     perpetual "n next" hint.
+		//   - AttemptedCount is the canned SEARCHABLE source count, derived
+		//     from SourceInfos() (not hardcoded) - all three of its entries
+		//     advertise "search" in their Capabilities string, matching
+		//     prototypeAllSourcesWarning's premise that one of them
+		//     (curseforge) was attempted and failed. Leaving this at its
+		//     zero value would make EVERY zero-match demo search
+		//     indistinguishable from "no source supports searching" (#58
+		//     item 3's exact dishonesty), even though the canned sources
+		//     plainly do support it.
+		page.Exhausted = true
+		page.AttemptedCount = len(p.SourceInfos())
 	}
 	return page, nil
 }

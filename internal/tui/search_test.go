@@ -331,6 +331,62 @@ func TestSingleSourceZeroResultsUnaffectedByHonestyNotice(t *testing.T) {
 	require.Contains(t, view, "No archives matched")
 }
 
+// TestPrototypeAllSourcesSearchHasNoDeadNextPageHint is an integration
+// counterpart to TestAggregateHasNextPageRespectsExhaustedNotSummedTotalCount
+// that drives the REAL --prototype Search path (searchScreenModel's default
+// sourceIdx 0 is the all-sources sentinel) instead of a hand-built
+// SearchPage - a whole-branch-review finding: prototypeProvider.Search never
+// set Exhausted, so hasNextPage's new `!Exhausted` aggregate branch defaulted
+// it to false, meaning EVERY --prototype all-sources search rendered a
+// permanently dead "n next" hint (pre-#58 the old TotalCount/PageSize math
+// happened to correctly end the canned, non-paginated set).
+func TestPrototypeAllSourcesSearchHasNoDeadNextPageHint(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t) // "3" already focused; default source is "" (all-sources)
+	for _, r := range "sky" {
+		model = updateWithRunes(t, model, string(r))
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+	require.Equal(t, searchReady, model.search.state)
+
+	require.False(t, model.search.hasNextPage(), "the canned set is a single-page fetch; there is no real next page to demo")
+	require.NotContains(t, model.View(), "n next", "must not offer a dead next-page hint")
+}
+
+// TestPrototypeAllSourcesZeroMatchRendersOrdinaryEmptyCopy is the
+// integration counterpart to
+// TestAggregateZeroResultsHonestNoticeWhenNoSourceSupportsSearch: a genuine
+// zero-match --prototype all-sources search (query that hits none of the
+// canned mods) must render the ORDINARY "No archives matched" copy, not the
+// no-searchable-sources honesty notice - prototypeProvider.Search never set
+// AttemptedCount, so it defaulted to 0, the exact "no source supports
+// search" signal, which is false in --prototype mode (all 3 canned sources
+// advertise search capability).
+func TestPrototypeAllSourcesZeroMatchRendersOrdinaryEmptyCopy(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t) // default source is "" (all-sources)
+	for _, r := range "zzz-nothing-matches" {
+		model = updateWithRunes(t, model, string(r))
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+	require.Equal(t, searchReady, model.search.state)
+	require.Empty(t, model.search.page.Results)
+
+	view := model.View()
+	require.Contains(t, view, "No archives matched", "a genuine zero-match demo search is not the same as zero searchable sources")
+	require.NotContains(t, view, "support searching")
+}
+
 func TestCtrlCQuitsWhileSearchInputFocused(t *testing.T) {
 	t.Parallel()
 	model := searchScreenModel(t) // "3" already focused the input
