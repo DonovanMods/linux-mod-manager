@@ -3,9 +3,12 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -68,6 +71,85 @@ func TestGenManTree_MatchesCommittedPages(t *testing.T) {
 		assert.Equal(t, string(wantBytes), string(gotBytes),
 			"docs/man/man1/%s is stale; run `make man` to regenerate", name)
 	}
+}
+
+// TestGenManTree_SynopsisPreservesAngleBracketArgs pins the fix for a
+// blackfriday/md2man quirk: Cobra's man doc generator renders each
+// command's Use line through Markdown before emitting roff, and a bare
+// "<mod-id>"-style positional-arg placeholder parses there as an
+// unrecognized inline HTML tag and is silently dropped - so
+// "lmm install <query> [flags]" rendered as "lmm install  [flags]" with
+// the argument gone, while square-bracket ("[flags]") placeholders were
+// unaffected. genManTree must escape "<"/">" in every command's Use before
+// generating (and restore it afterward, so --help is unaffected).
+func TestGenManTree_SynopsisPreservesAngleBracketArgs(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, genManTree(dir))
+
+	installSynopsis := readSynopsis(t, filepath.Join(dir, "lmm-install.1"))
+	assert.Contains(t, installSynopsis, "<query>",
+		"lmm-install.1 SYNOPSIS should keep the <query> placeholder")
+
+	uninstallSynopsis := readSynopsis(t, filepath.Join(dir, "lmm-uninstall.1"))
+	assert.Contains(t, uninstallSynopsis, "<mod-id>",
+		"lmm-uninstall.1 SYNOPSIS should keep the <mod-id> placeholder")
+}
+
+// TestGenManTree_AngleBracketArgsSurviveForEveryCommand is the exhaustive
+// form of the above: every command in the tree whose Use string contains an
+// angle-bracket placeholder must have that placeholder verbatim in its own
+// generated page's SYNOPSIS, not just install/uninstall. The 17-command
+// count pins how many pages were actually affected (#104 final review); if
+// the command tree changes, update the count deliberately rather than
+// silently.
+func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, genManTree(dir))
+
+	checked := 0
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.IsAvailableCommand() {
+			if args := angleBracketArgsRE.FindAllString(c.Use, -1); len(args) > 0 {
+				checked++
+				page := strings.ReplaceAll(c.CommandPath(), " ", "-") + ".1"
+				synopsis := readSynopsis(t, filepath.Join(dir, page))
+				for _, arg := range args {
+					assert.Contains(t, synopsis, arg,
+						"%s SYNOPSIS should keep the %s placeholder", page, arg)
+				}
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(rootCmd)
+
+	assert.Equal(t, 17, checked,
+		"expected exactly 17 commands with angle-bracket Use args; update this count if the command tree changed")
+}
+
+var angleBracketArgsRE = regexp.MustCompile(`<[^>]+>`)
+
+// readSynopsis extracts the roff SYNOPSIS section's body from a generated
+// man page for content assertions.
+func readSynopsis(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err, "reading %s", path)
+
+	const marker = ".SH SYNOPSIS"
+	content := string(data)
+	start := strings.Index(content, marker)
+	require.NotEqual(t, -1, start, "%s has no %s section", path, marker)
+
+	rest := content[start+len(marker):]
+	end := strings.Index(rest, ".SH ")
+	if end == -1 {
+		end = len(rest)
+	}
+	return rest[:end]
 }
 
 func direntNames(entries []os.DirEntry) []string {

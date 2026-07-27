@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -60,6 +61,19 @@ func genManTree(dir string) error {
 	// depends on incidental call order.
 	rootCmd.InitDefaultCompletionCmd()
 
+	// Cobra's man doc generator renders each command's Use line (e.g.
+	// "install <query>") through Markdown before emitting roff, and a bare
+	// "<query>" parses there as an unrecognized inline HTML tag, which gets
+	// silently dropped - "lmm install <query> [flags]" was rendering as
+	// "lmm install  [flags]" in SYNOPSIS, argument gone (17 of 49 pages
+	// affected; square-bracket placeholders like "[flags]" were unaffected).
+	// Escaping "<"/">" as their Markdown backslash-escapes survives that
+	// pass and round-trips to the literal character. Restore afterward so
+	// --help (which reads Use directly, unescaped) is never affected, and
+	// so this is safe to call repeatedly, e.g. from tests.
+	restore := escapeUseAngleBrackets(rootCmd)
+	defer restore()
+
 	header := &doc.GenManHeader{
 		Title:   "LMM",
 		Section: "1",
@@ -71,4 +85,39 @@ func genManTree(dir string) error {
 		return fmt.Errorf("generating man pages: %w", err)
 	}
 	return nil
+}
+
+// useAngleBracketEscaper rewrites "<" and ">" to their Markdown
+// backslash-escaped form so blackfriday (via go-md2man) treats them as
+// literal characters instead of attempting to parse inline HTML.
+var useAngleBracketEscaper = strings.NewReplacer("<", `\<`, ">", `\>`)
+
+// escapeUseAngleBrackets walks cmd and its descendants, escaping "<"/">" in
+// each command's Use string in place. Returns a restore func - callers
+// must defer it - that puts every changed Use string back exactly as it
+// was.
+func escapeUseAngleBrackets(cmd *cobra.Command) (restore func()) {
+	type saved struct {
+		cmd *cobra.Command
+		use string
+	}
+	var originals []saved
+
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if strings.ContainsAny(c.Use, "<>") {
+			originals = append(originals, saved{c, c.Use})
+			c.Use = useAngleBracketEscaper.Replace(c.Use)
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(cmd)
+
+	return func() {
+		for _, o := range originals {
+			o.cmd.Use = o.use
+		}
+	}
 }
