@@ -155,6 +155,17 @@ func TestNew_TightensExistingPermissions(t *testing.T) {
 	assert.Equal(t, fs.FileMode(0600), info.Mode().Perm(), "existing permissive database should be tightened on open")
 }
 
+// TestNew_BadPath pins the error path taken when the database file can't be
+// opened at all (parent directory doesn't exist): the modernc.org/sqlite
+// driver defers the actual open past sql.Open, so the failure surfaces from
+// the first Exec (the PRAGMA statement), not from db.New's call to sql.Open.
+func TestNew_BadPath(t *testing.T) {
+	_, err := db.New("/nonexistent-root-dir-xyz/sub/lmm.db")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting pragmas")
+}
+
 func TestInstalledMods_SaveAndGet(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)

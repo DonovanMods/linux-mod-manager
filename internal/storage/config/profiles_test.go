@@ -278,6 +278,65 @@ func TestExportProfile_WritesExplicitLinkMethod(t *testing.T) {
 	assert.Contains(t, string(data), "link_method: hardlink")
 }
 
+func TestListProfiles_MissingDir(t *testing.T) {
+	tempDir := t.TempDir()
+
+	profiles, err := ListProfiles(tempDir, "skyrim-se")
+
+	require.NoError(t, err)
+	assert.Empty(t, profiles)
+}
+
+func TestListProfiles_EmptyDir(t *testing.T) {
+	tempDir := t.TempDir()
+	profileDir := filepath.Join(tempDir, "games", "skyrim-se", "profiles")
+	require.NoError(t, os.MkdirAll(profileDir, 0755))
+
+	profiles, err := ListProfiles(tempDir, "skyrim-se")
+
+	require.NoError(t, err)
+	assert.Empty(t, profiles)
+}
+
+// TestListProfiles_IgnoresNonYAMLAndDirs pins that ListProfiles only reports
+// regular files with a ".yaml" suffix, stripped of the extension: non-YAML
+// files are skipped, and entries that are themselves directories are skipped
+// even if their name happens to end in ".yaml".
+func TestListProfiles_IgnoresNonYAMLAndDirs(t *testing.T) {
+	tempDir := t.TempDir()
+	profileDir := filepath.Join(tempDir, "games", "skyrim-se", "profiles")
+	require.NoError(t, os.MkdirAll(profileDir, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(profileDir, "default.yaml"), []byte("name: default\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(profileDir, "hardcore.yaml"), []byte("name: hardcore\n"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(profileDir, "notes.txt"), []byte("ignored"), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(profileDir, "subdir.yaml"), 0755))
+
+	profiles, err := ListProfiles(tempDir, "skyrim-se")
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"default", "hardcore"}, profiles)
+}
+
+func TestDeleteProfile(t *testing.T) {
+	configDir := t.TempDir()
+	require.NoError(t, SaveProfile(configDir, &domain.Profile{Name: "default", GameID: "skyrim-se"}))
+
+	err := DeleteProfile(configDir, "skyrim-se", "default")
+	require.NoError(t, err)
+
+	_, err = LoadProfile(configDir, "skyrim-se", "default")
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
+}
+
+func TestDeleteProfile_Missing(t *testing.T) {
+	configDir := t.TempDir()
+
+	err := DeleteProfile(configDir, "skyrim-se", "does-not-exist")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
+}
+
 func TestImportProfile_TracksLinkMethodExplicit(t *testing.T) {
 	imported, err := ImportProfile([]byte("name: default\ngame_id: skyrim-se\n"))
 	require.NoError(t, err)

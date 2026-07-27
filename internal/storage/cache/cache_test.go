@@ -98,6 +98,47 @@ func TestCache_Exists_ListFiles_GameScoped(t *testing.T) {
 	assert.Equal(t, "file.pak", files[0])
 }
 
+func TestCache_Size(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.New(dir)
+
+	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "file1.txt", []byte("12345")))       // 5 bytes
+	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "sub/file2.txt", []byte("1234567"))) // 7 bytes
+
+	size, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.EqualValues(t, 12, size)
+}
+
+func TestCache_Size_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.New(dir)
+
+	// The mod directory exists (created by Store then Delete leaves nothing,
+	// so create it directly) but contains no files.
+	modPath := c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, os.MkdirAll(modPath, 0755))
+
+	size, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, size)
+}
+
+// TestCache_Size_MissingDir pins that Size on a mod version that was never
+// cached is an error, not a silent 0: filepath.WalkDir fails to stat a
+// nonexistent root and Size wraps that failure rather than treating "not
+// cached" as "zero bytes".
+func TestCache_Size_MissingDir(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.New(dir)
+
+	size, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+
+	require.Error(t, err)
+	assert.Zero(t, size)
+	assert.Contains(t, err.Error(), "calculating cache size")
+}
+
 func TestCache_CloneMod(t *testing.T) {
 	srcDir := t.TempDir()
 	dstDir := t.TempDir()
