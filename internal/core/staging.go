@@ -7,7 +7,7 @@ import (
 )
 
 // stagingDirName is the data-dir subdirectory holding in-flight downloads and
-// archive extraction, per the layout in docs/PRD.md.
+// archive extraction, per the layout in docs/plans/archive/2026-01-22-PRD.md.
 const stagingDirName = "downloads"
 
 // stagingRoot returns where this service stages downloads and extraction, or ""

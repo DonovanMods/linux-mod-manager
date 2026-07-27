@@ -685,6 +685,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case searchResultRefill:
 			m.search.refilling = false
 			newRows := len(msg.page.Results)
+			// newRows == 0 is a churn backstop, not exhaustion detection
+			// (roundExhausted handles that): a provider that reports
+			// non-exhausted yet returns zero rows would otherwise be
+			// re-polled every time the low-water mark trips. Reachable
+			// only via provider inconsistency; genuine failures land in
+			// searchFailedMsg below, which stays retryable.
 			m.search.applyRoundResult(msg.page, false, newRows == 0 || roundExhausted(msg.page))
 			if newRows > 0 {
 				m.search.fetchRound++
