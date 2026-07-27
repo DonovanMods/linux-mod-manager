@@ -1315,6 +1315,24 @@ func TestInstallDetailLinesIncludesCycleWarning(t *testing.T) {
 	require.Contains(t, lines, "⚠ circular dependency detected")
 }
 
+// TestInstallDetailLinesIncludesDependencyWarnings guards #52 item 10's TUI
+// seam: a non-ErrNotSupported GetDependencies failure recorded in
+// InstallPlanView.DependencyWarnings must render as its own detail line, one
+// per entry (unlike MissingDependencies' single count-only summary line -
+// each dependency-resolution failure names a distinct source/mod/error, so
+// collapsing to a count would lose the information a user needs to act on
+// it).
+func TestInstallDetailLinesIncludesDependencyWarnings(t *testing.T) {
+	t.Parallel()
+
+	lines := installDetailLines(InstallPlanView{
+		Version: "1.0", SizeLabel: "1.2 MiB", Source: "nexusmods",
+		DependencyWarnings: []string{"src:modW: boom: dependency service unavailable"},
+	})
+
+	require.Contains(t, lines, "⚠ src:modW: boom: dependency service unavailable")
+}
+
 // TestInstallConfirmCallsApplyInstallWithSelectedItemThenRefreshes covers
 // the full happy path: plan -> modal -> confirm -> ApplyInstall(SELECTED
 // item) -> refresh.

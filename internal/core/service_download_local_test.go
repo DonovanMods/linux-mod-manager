@@ -58,6 +58,39 @@ func TestIngestLocalToCacheArchiveCopyMode(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestIngestLocalToCacheArchiveCopyModeUsesDeclaredFileName is a regression
+// test for #52 item 12: ingestLocalToCache's copy-mode branch names the
+// cached file filepath.Base(localPath) - the TEMP file's name - instead of
+// file.FileName, the caller's declared name. In practice these usually
+// match (the caller derives file.FileName from the same path), which is why
+// TestIngestLocalToCacheArchiveCopyMode above never caught it; this test
+// deliberately mismatches them, so the cached file name must come from the
+// declared file.FileName, not the source path's basename.
+func TestIngestLocalToCacheArchiveCopyModeUsesDeclaredFileName(t *testing.T) {
+	svc, gameCache := newLocalIngestService(t)
+
+	// The on-disk temp file is named differently from what the source
+	// declared as this file's name.
+	tempFile := filepath.Join(t.TempDir(), "tmp-download-xyz.bin")
+	require.NoError(t, os.WriteFile(tempFile, []byte("zipbytes"), 0644))
+
+	game := &domain.Game{ID: "hytale", DeployMode: domain.DeployCopy}
+	mod := &domain.Mod{ID: "coolmod-2.0", SourceID: "my-mods", Version: "2.0"}
+	file := &domain.DownloadableFile{ID: "main", FileName: "declared.zip"}
+
+	result, err := svc.ingestLocalToCache(gameCache, game, mod, file, tempFile)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.FilesExtracted)
+
+	declaredPath := gameCache.GetFilePath("hytale", "my-mods", "coolmod-2.0", "2.0", "declared.zip")
+	_, err = os.Stat(declaredPath)
+	assert.NoError(t, err, "cached file must be named after the declared file.FileName, not the temp path's basename")
+
+	staleBasenamePath := gameCache.GetFilePath("hytale", "my-mods", "coolmod-2.0", "2.0", "tmp-download-xyz.bin")
+	_, err = os.Stat(staleBasenamePath)
+	assert.True(t, os.IsNotExist(err), "cached file must NOT be named after localPath's basename when file.FileName is declared")
+}
+
 func TestIngestLocalToCacheMissingPath(t *testing.T) {
 	svc, gameCache := newLocalIngestService(t)
 

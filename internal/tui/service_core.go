@@ -1195,6 +1195,9 @@ func fileDisplayLabel(f domain.DownloadableFile) string {
 // Conflicts render as "path (owned by <mod-id>)" (InstallPlanView.Conflicts'
 // documented format); MissingDependencies render as domain.ModKey(sourceID,
 // modID), mirroring cmd/lmm/install.go's showInstallPlan warning line.
+// DependencyWarnings (#52 item 10) pass through verbatim - already
+// "<sourceID:modID>: <error>", formatted for direct display by
+// resolveInstallDependencies.
 func installPlanView(plan *core.InstallPlan) InstallPlanView {
 	view := InstallPlanView{
 		Name:         plan.Mod.Name,
@@ -1216,6 +1219,7 @@ func installPlanView(plan *core.InstallPlan) InstallPlanView {
 	for _, md := range plan.MissingDependencies {
 		view.MissingDependencies = append(view.MissingDependencies, domain.ModKey(md.SourceID, md.ModID))
 	}
+	view.DependencyWarnings = plan.DependencyWarnings
 	return view
 }
 

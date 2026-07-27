@@ -15,6 +15,7 @@ package core_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,6 +41,22 @@ type noDepsSource struct{ *mockSource }
 func (s *noDepsSource) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
 	return nil, fmt.Errorf("source %q: dependencies: %w", s.id, source.ErrNotSupported)
 }
+
+// failingDepsSource wraps mockSource but always fails GetDependencies with a
+// plain (non-source.ErrNotSupported) error, simulating a transient/real
+// failure - a rate limit, a network blip, a malformed API response - as
+// opposed to noDepsSource's "this source doesn't have the capability at
+// all". Item 10 (#52) distinguishes these two: ErrNotSupported stays a
+// silent degrade, everything else must be recorded in
+// InstallPlan.DependencyWarnings rather than swallowed identically.
+type failingDepsSource struct{ *mockSource }
+
+func (s *failingDepsSource) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
+	return nil, fmt.Errorf("source %q: dependencies: %w", s.id, errBoom)
+}
+
+// errBoom is a sentinel non-ErrNotSupported error for failingDepsSource.
+var errBoom = errors.New("boom: dependency service unavailable")
 
 // sizedFileSource wraps mockSource but returns a single downloadable file of
 // a caller-chosen size, so TotalDownloadBytes' summing (and its "-1 when
@@ -263,9 +280,13 @@ func TestService_PlanInstall_MissingAndCyclicDependenciesRecordedNotFatal(t *tes
 }
 
 // TestService_PlanInstall_SourceWithoutDependenciesCapabilityDegradesToEmpty
-// covers resolveDependencies' error-swallowing: ANY GetDependencies error
-// (source.ErrNotSupported included) degrades to "no dependencies", not a
-// failed plan.
+// covers resolveInstallDependencies' ErrNotSupported handling specifically
+// (#52 item 10 split this from "ANY error swallowed" - see
+// TestService_PlanInstall_DependencyResolutionErrorRecordedAsWarning for the
+// other-error branch): a source that doesn't have the Dependencies
+// capability at all degrades to "no dependencies" SILENTLY - no plan
+// failure, and no DependencyWarnings entry either, since ErrNotSupported
+// isn't something a user can act on.
 func TestService_PlanInstall_SourceWithoutDependenciesCapabilityDegradesToEmpty(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
@@ -279,6 +300,32 @@ func TestService_PlanInstall_SourceWithoutDependenciesCapabilityDegradesToEmpty(
 	assert.Empty(t, plan.Dependencies)
 	assert.Empty(t, plan.MissingDependencies)
 	assert.False(t, plan.CycleDetected)
+	assert.Empty(t, plan.DependencyWarnings, "ErrNotSupported must stay silent, not surface as a warning")
+}
+
+// TestService_PlanInstall_DependencyResolutionErrorRecordedAsWarning covers
+// the other half of item 10 (#52): a GetDependencies failure that is NOT
+// source.ErrNotSupported (a real, non-capability-gap failure) must still
+// degrade the plan to "no dependencies for this mod" - the plan still
+// succeeds - but unlike ErrNotSupported it is recorded into
+// InstallPlan.DependencyWarnings so a caller can tell the user dependency
+// resolution didn't actually run cleanly.
+func TestService_PlanInstall_DependencyResolutionErrorRecordedAsWarning(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	mock := &failingDepsSource{mockSource: newMockSource("src")}
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err, "a dependency-resolution failure must not fail the whole plan")
+	assert.Empty(t, plan.Dependencies)
+	assert.Empty(t, plan.MissingDependencies)
+	assert.False(t, plan.CycleDetected)
+	require.Len(t, plan.DependencyWarnings, 1)
+	assert.Contains(t, plan.DependencyWarnings[0], "root")
+	assert.Contains(t, plan.DependencyWarnings[0], errBoom.Error())
 }
 
 // TestService_PlanInstall_UnknownModReturnsErrModNotFound mirrors

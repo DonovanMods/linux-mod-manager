@@ -361,23 +361,15 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 
 	// Extract to cache location
-	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
-	stagePath := cachePath + ".staging"
-	if err := os.RemoveAll(stagePath); err != nil {
-		return nil, fmt.Errorf("clearing staging cache: %w", err)
+	cachePath, stagePath, err := prepareStaging(gameCache, game, mod)
+	if err != nil {
+		return nil, err
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
-	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-		if err := copyDir(cachePath, stagePath); err != nil {
-			return nil, fmt.Errorf("staging existing cache: %w", err)
-		}
-	}
 	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(archivePath) {
 		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
-		// Or not an archive - just copy to cache
-		if err := os.MkdirAll(stagePath, 0755); err != nil {
-			return nil, fmt.Errorf("creating cache directory: %w", err)
-		}
+		// Or not an archive - just copy to cache. copyFileStreaming mkdirs
+		// stagePath itself (importer.go), so no MkdirAll needed here.
 		destPath := filepath.Join(stagePath, file.FileName)
 		if err := copyFileStreaming(archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
@@ -419,17 +411,11 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		return nil, fmt.Errorf("local mod path: %w", err)
 	}
 
-	cachePath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
-	stagePath := cachePath + ".staging"
-	if err := os.RemoveAll(stagePath); err != nil {
-		return nil, fmt.Errorf("clearing staging cache: %w", err)
+	cachePath, stagePath, err := prepareStaging(gameCache, game, mod)
+	if err != nil {
+		return nil, err
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
-	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-		if err := copyDir(cachePath, stagePath); err != nil {
-			return nil, fmt.Errorf("staging existing cache: %w", err)
-		}
-	}
 
 	switch {
 	case info.IsDir():
@@ -437,10 +423,17 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 			return nil, fmt.Errorf("copying mod directory: %w", err)
 		}
 	case game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(localPath):
-		if err := os.MkdirAll(stagePath, 0755); err != nil {
-			return nil, fmt.Errorf("creating cache directory: %w", err)
+		// file.FileName is the declared name for this mod file - use it so
+		// the cached file matches what the source/caller advertised (#52
+		// item 12); localPath's own basename is often just a temp file name
+		// and falls back only when the caller left FileName unset.
+		// copyFileStreaming mkdirs stagePath itself (importer.go), so no
+		// MkdirAll needed here.
+		destName := file.FileName
+		if destName == "" {
+			destName = filepath.Base(localPath)
 		}
-		if err := copyFileStreaming(localPath, filepath.Join(stagePath, filepath.Base(localPath))); err != nil {
+		if err := copyFileStreaming(localPath, filepath.Join(stagePath, destName)); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
 	default:
@@ -458,6 +451,34 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		return nil, err
 	}
 	return &DownloadModResult{FilesExtracted: len(files)}, nil
+}
+
+// prepareStaging computes the cache/staging paths for (game, mod) and readies
+// stagePath for a fresh write: any stale staging directory left behind by a
+// previous interrupted run is cleared, then - only if a cache entry already
+// exists for this exact (SourceID, ID, Version) - that existing cache is
+// copied into stagePath, so the copy-mode/extract-mode branches that follow
+// can add to (or replace part of) it in place before commitStagedCache
+// atomically swaps stagePath in. Extracted from the verbatim-duplicated
+// download/local-ingest staging setup (#52 item 11) - DownloadModToCache and
+// ingestLocalToCache differ only in how they populate stagePath afterward,
+// never in how they get there.
+//
+// Callers MUST defer os.RemoveAll(stagePath) themselves immediately after a
+// nil error return - a defer registered inside this function would fire
+// before the caller finishes using stagePath.
+func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
+	cachePath = gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	stagePath = cachePath + ".staging"
+	if err := os.RemoveAll(stagePath); err != nil {
+		return "", "", fmt.Errorf("clearing staging cache: %w", err)
+	}
+	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+		if err := copyDir(cachePath, stagePath); err != nil {
+			return "", "", fmt.Errorf("staging existing cache: %w", err)
+		}
+	}
+	return cachePath, stagePath, nil
 }
 
 func commitStagedCache(cachePath, stagePath string) error {
