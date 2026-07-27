@@ -23,7 +23,8 @@ import (
 
 // TestInstallCmd_Structure tests the install command structure
 func TestInstallCmd_Structure(t *testing.T) {
-	assert.Equal(t, "install <query>", installCmd.Use)
+	// [query] (not <query>): the query is optional when --id is given.
+	assert.Equal(t, "install [query]", installCmd.Use)
 	assert.NotEmpty(t, installCmd.Short)
 	assert.NotEmpty(t, installCmd.Long)
 

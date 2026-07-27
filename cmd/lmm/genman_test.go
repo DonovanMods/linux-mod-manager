@@ -78,7 +78,7 @@ func TestGenManTree_MatchesCommittedPages(t *testing.T) {
 // command's Use line through Markdown before emitting roff, and a bare
 // "<mod-id>"-style positional-arg placeholder parses there as an
 // unrecognized inline HTML tag and is silently dropped - so
-// "lmm install <query> [flags]" rendered as "lmm install  [flags]" with
+// "lmm search <query> [flags]" rendered as "lmm search  [flags]" with
 // the argument gone, while square-bracket ("[flags]") placeholders were
 // unaffected. genManTree must escape "<"/">" in every command's Use before
 // generating (and restore it afterward, so --help is unaffected).
@@ -86,9 +86,9 @@ func TestGenManTree_SynopsisPreservesAngleBracketArgs(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, genManTree(dir))
 
-	installSynopsis := readSynopsis(t, filepath.Join(dir, "lmm-install.1"))
-	assert.Contains(t, installSynopsis, "<query>",
-		"lmm-install.1 SYNOPSIS should keep the <query> placeholder")
+	searchSynopsis := readSynopsis(t, filepath.Join(dir, "lmm-search.1"))
+	assert.Contains(t, searchSynopsis, "<query>",
+		"lmm-search.1 SYNOPSIS should keep the <query> placeholder")
 
 	uninstallSynopsis := readSynopsis(t, filepath.Join(dir, "lmm-uninstall.1"))
 	assert.Contains(t, uninstallSynopsis, "<mod-id>",
@@ -98,10 +98,10 @@ func TestGenManTree_SynopsisPreservesAngleBracketArgs(t *testing.T) {
 // TestGenManTree_AngleBracketArgsSurviveForEveryCommand is the exhaustive
 // form of the above: every command in the tree whose Use string contains an
 // angle-bracket placeholder must have that placeholder verbatim in its own
-// generated page's SYNOPSIS, not just install/uninstall. The 17-command
-// count pins how many pages were actually affected (#104 final review); if
-// the command tree changes, update the count deliberately rather than
-// silently.
+// generated page's SYNOPSIS, not just search/uninstall. The command count
+// pins how many pages were actually affected (17 at the #104 final review;
+// 16 since install's query became optional "[query]"); if the command tree
+// changes, update the count deliberately rather than silently.
 func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, genManTree(dir))
@@ -126,8 +126,8 @@ func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 	}
 	walk(rootCmd)
 
-	assert.Equal(t, 17, checked,
-		"expected exactly 17 commands with angle-bracket Use args; update this count if the command tree changed")
+	assert.Equal(t, 16, checked,
+		"expected exactly 16 commands with angle-bracket Use args; update this count if the command tree changed")
 }
 
 var angleBracketArgsRE = regexp.MustCompile(`<[^>]+>`)

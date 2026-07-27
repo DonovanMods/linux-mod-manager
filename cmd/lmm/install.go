@@ -269,7 +269,7 @@ var (
 )
 
 var installCmd = &cobra.Command{
-	Use:   "install <query>",
+	Use:   "install [query]",
 	Short: "Install a mod",
 	Long: `Install a mod from a configured source.
 

@@ -740,7 +740,7 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm search <query> --source ID`       | Search a single source instead of all configured ones |
 | `lmm search <query> --category ID`     | Filter by category (NexusMods and CurseForge)        |
 | `lmm search <query> --tag TAG`         | Filter by tag (NexusMods only; repeat for multiple)  |
-| `lmm install <query>`                  | Search and install a mod                             |
+| `lmm install [query]`                  | Search and install a mod (query optional with `--id`) |
 | `lmm install --id <mod-id>`            | Install by mod ID                                    |
 | `lmm install --id <mod-id> --file <file-id>` | Install a specific file, skipping file selection |
 | `lmm install --show-archived`          | Include archived/old files when selecting a file      |
