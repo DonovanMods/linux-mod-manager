@@ -2,7 +2,7 @@
 
 **Goal:** Close #52 (custom-sources deferred findings, 14 items — all verified still valid on v1.18.0) and #58's polish slice (5 valid items; 2 already resolved; the `--limit` fetch loop splits into its own issue).
 
-**Architecture:** No new subsystems. Small fixes + tests across internal/source/custom, internal/storage/config, internal/core, internal/tui (search), cmd/lmm. One new plan-surface field (`DependencyErrors`) and one new aggregate-search honesty field are the only contract changes; both additive.
+**Architecture:** No new subsystems. Small fixes + tests across internal/source/custom, internal/storage/config, internal/core, internal/tui (search), cmd/lmm. One new plan-surface field (`DependencyWarnings` — the plan drafted it as `DependencyErrors`; the implementation settled on the warnings name) and one new aggregate-search honesty field are the only contract changes; both additive.
 
 **Tech Stack:** Go, testify require, in-memory SQLite / t.TempDir per repo test conventions.
 

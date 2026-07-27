@@ -88,7 +88,10 @@ func noSourcesConfiguredErr(game *domain.Game) error {
 // a capable source genuinely finding nothing, leaving the user with no hint
 // that searching isn't possible here at all.
 func noSearchableSourcesNotice(game *domain.Game) string {
-	return fmt.Sprintf("none of %s's sources support searching; install by ID instead", game.Name)
+	// Sentence-cased with terminal punctuation to match the TUI's rendering
+	// of the same notice (searchView's zero-results branch) — this is a
+	// printed user-facing notice, not a lowercase Go error value.
+	return fmt.Sprintf("None of %s's sources support searching; install by ID instead.", game.Name)
 }
 
 // capabilityGapNotice turns an ErrNotSupported search failure into a clean

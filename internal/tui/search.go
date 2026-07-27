@@ -67,10 +67,20 @@ type searchFailedMsg struct {
 // that never threads a real name through newSearchModel) falls back to "this
 // game", preserving the pre-parity-fix message for those callers.
 func noSourcesConfiguredErr(gameName string) error {
+	return fmt.Errorf("no mod sources configured for %s; add sources with 'lmm game add' or edit games.yaml", displayGameName(gameName))
+}
+
+// displayGameName renders a game name for user-facing copy, falling back to
+// "this game" when the caller never threaded a real name through (a test
+// double, or any future Options.GameName-less construction). Shared by
+// noSourcesConfiguredErr and searchView's no-searchable-sources notice so
+// neither can render a malformed possessive like "None of 's sources..."
+// (#58 review follow-up).
+func displayGameName(gameName string) string {
 	if gameName == "" {
-		gameName = "this game"
+		return "this game"
 	}
-	return fmt.Errorf("no mod sources configured for %s; add sources with 'lmm game add' or edit games.yaml", gameName)
+	return gameName
 }
 
 // searchInputPromptAllowance reserves room for the query input's "> " prompt

@@ -1331,7 +1331,7 @@ func (m Model) searchView() string {
 			// alone.
 			msg := fmt.Sprintf("No archives matched %q on %s.", m.search.page.Query, sourceLabel(m.search.page.Source))
 			if m.search.page.Source == "" && m.search.page.AttemptedCount == 0 {
-				msg = fmt.Sprintf("None of %s's sources support searching; install by ID instead.", m.search.gameName)
+				msg = fmt.Sprintf("None of %s's sources support searching; install by ID instead.", displayGameName(m.search.gameName))
 			}
 			return m.searchSinglePanel(append(header, m.theme.MutedText.Render(msg)))
 		}

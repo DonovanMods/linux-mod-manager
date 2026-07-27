@@ -513,8 +513,11 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 // ingestLocalToCache differ only in how they populate stagePath afterward,
 // never in how they get there.
 //
-// Contract: on a nil error return, stagePath exists and is ready to write
-// into, and the CALLER now owns its cleanup - callers MUST defer
+// Contract: on a nil error return, stagePath is clear to write into — it
+// EXISTS only when an existing cache entry was staged into it; otherwise
+// it does not exist yet and the first writer (copyDir/Extract/
+// copyFileStreaming, all of which create their own destinations) brings it
+// into being. Either way the CALLER owns its cleanup - callers MUST defer
 // os.RemoveAll(stagePath) themselves immediately after (a defer registered
 // inside this function would fire before the caller finishes using
 // stagePath). On a non-nil error return, no staging debris remains - a

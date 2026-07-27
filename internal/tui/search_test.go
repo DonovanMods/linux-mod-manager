@@ -316,6 +316,25 @@ func TestAggregateZeroResultsHonestNoticeWhenNoSourceSupportsSearch(t *testing.T
 	require.Contains(t, view, "support searching", "must render the honest no-searchable-sources notice")
 }
 
+// TestHonestNoticeFallsBackToThisGameWithoutAGameName guards the notice's
+// displayGameName fallback: a model constructed without Options.GameName
+// (a test double, or any future name-less construction) must render
+// "None of this game's sources..." rather than the malformed possessive
+// "None of 's sources..." (#58 review follow-up; same fallback
+// noSourcesConfiguredErr has always had).
+func TestHonestNoticeFallsBackToThisGameWithoutAGameName(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.gameName = ""
+	model.search.state = searchReady
+	model.search.page = SearchPage{Query: "m", Source: "", AttemptedCount: 0}
+
+	view := model.View()
+	require.Contains(t, view, "None of this game's sources", "empty game name must fall back, not render a malformed possessive")
+	require.NotContains(t, view, "None of 's sources", "the malformed form must be impossible")
+}
+
 // TestSingleSourceZeroResultsUnaffectedByHonestyNotice guards that the fix
 // above is scoped to all-sources mode only: a single real source's ordinary
 // zero-result page must keep its existing copy regardless of AttemptedCount

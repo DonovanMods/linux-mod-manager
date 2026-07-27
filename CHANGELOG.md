@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Directory sources now follow symlinked mod directories.** A symlinked subdirectory used to be silently invisible to both the scanner and cache ingest (classified by raw dirent type, which never reports "directory" for a symlink); both now stat through the link. A symlink cycle is now caught and reported as a clear error instead of recursing forever, and a stat failure other than a dangling symlink propagates instead of silently dropping the entry from the scan
-- Mod names ending in a real "V" are no longer over-trimmed — `ModV-1.0` now parses as `Mod`, not `Mod` with the version-adjacent "V" eaten regardless of whether it was actually part of the version
+- **Directory sources now follow symlinked mod directories.** A symlinked subdirectory used to be silently invisible to both the scanner and cache ingest (classified by raw dirent type, which never reports "directory" for a symlink); both now stat through the link. A symlink cycle is now caught and reported as a clear error instead of recursing forever, and a stat failure other than a dangling symlink propagates instead of silently dropping the entry from the scan.
+- Mod names ending in a real "V" are no longer over-trimmed — `ModV-1.0` now parses as name `ModV`, version `1.0` (previously the trailing "V" was eaten and the name became `Mod`); names like `MyMod-v1.0`, where the "v" genuinely belongs to the version, still parse as before
 - `ModInfo.xml` is now found case-insensitively, in both directory and archive mods
 - Dependency-resolution failures during install planning (a real fetch failure, not just a source lacking the capability) are now surfaced as warnings — on the CLI's stderr and in the TUI's install-confirm modal — instead of silently degrading to "no dependencies". **A plan carrying only these warnings (no actual dependencies or conflicts) now prompts for confirmation unless `--yes` is given**, where it previously proceeded silently
 - Local imports now cache files under their declared filename rather than the local path's own (often temporary) basename
