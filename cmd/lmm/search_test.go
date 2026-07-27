@@ -450,18 +450,21 @@ func TestDoSearch_NoSearchableSources_JSON_NoticeGoesToStderr(t *testing.T) {
 	withSearchFlags(t, "", 10)
 	withJSONOutput(t)
 
+	// Both streams captured around ONE invocation: the same run must satisfy
+	// both halves of the contract (a second run would also leak its stdout
+	// JSON past the stderr-only capture into the test output).
+	var stderr string
+	var innerErr error
 	stdout, err := captureStdoutErr(t, func() error {
-		return doSearch(context.Background(), svc, game, []string{"query"})
+		stderr, innerErr = captureStderrErr(t, func() error {
+			return doSearch(context.Background(), svc, game, []string{"query"})
+		})
+		return innerErr
 	})
 	require.NoError(t, err)
 
 	var out searchJSONOutput
 	require.NoError(t, json.Unmarshal([]byte(stdout), &out), "stdout must stay a single valid JSON document")
 	assert.Empty(t, out.Mods)
-
-	stderr, err := captureStderrErr(t, func() error {
-		return doSearch(context.Background(), svc, game, []string{"query"})
-	})
-	require.NoError(t, err)
 	assert.Contains(t, stderr, "support searching")
 }
