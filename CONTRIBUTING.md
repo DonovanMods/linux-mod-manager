@@ -15,7 +15,7 @@ Thank you for your interest in contributing to lmm (Linux Mod Manager).
 
 1. **Issues**: Development work is tracked via GitHub Issues. Check open issues before starting.
 2. **Tests**: Prefer test-first development. Use table-driven tests and in-memory SQLite / temp dirs where appropriate.
-3. **Architecture**: See [CLAUDE.md](CLAUDE.md) and [docs/PRD.md](docs/PRD.md) for architecture and domain overview.
+3. **Architecture**: See [CLAUDE.md](CLAUDE.md) and [README.md](README.md) for architecture and domain overview. (The original PRD is archived at [docs/plans/archive/2026-01-22-PRD.md](docs/plans/archive/2026-01-22-PRD.md) for historical reference.)
 
 ## Submitting changes
 
