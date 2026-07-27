@@ -24,33 +24,76 @@ const (
 // input, the currently selected source, and the state of the most recent
 // (or in-flight) search.
 type searchModel struct {
-	input      textinput.Model
-	sources    []string
-	sourceIdx  int
-	state      searchState
+	input     textinput.Model
+	sources   []string
+	sourceIdx int
+	state     searchState
+	// page is the RENDERED view of the current session: page.Results is
+	// always the full buffer (#111 Tier 3's infinite scroll - see buffer's
+	// own doc comment), and page.{Query,Source,TotalCount,AttemptedCount,
+	// Warnings,Exhausted} carry the session-level facts every consumer
+	// (searchHeaderLines, searchWarningLine, searchView's zero-results
+	// notice, searchFooterLine) already reads - refreshed from each
+	// completed round by applyRoundResult, which is the ONLY place that
+	// writes this field once a session is under way.
 	page       SearchPage
 	err        error
 	authSource string
 	gen        int
 	cancel     context.CancelFunc
-	// fetchSize is the current query session's sticky page size (#111 Tier
-	// 1): the SESSION owns this value, not the page number - startSearch
-	// (the Enter/submit path, and ONLY that path) computes it fresh from
-	// Model.searchFetchSize() when a NEW session begins, then requerySearch
-	// reuses this stored value unchanged for every later fetch of that same
-	// session (n/p pagination, refreshSearchAfterInstall's requery),
-	// including a PrevPage back to page 0 - even if the terminal is resized
-	// in between. page == 0 is deliberately NOT the recompute signal: it
-	// recurs mid-session (PrevPage from page 1, or refreshSearchAfterInstall
-	// re-fetching whichever page is on screen), so keying recompute off it
-	// silently changed an in-flight session's fetch size on those paths
-	// (Copilot PR #114 round 2 finding) - exactly the pagination-arithmetic
-	// inconsistency stickiness exists to prevent (an earlier page fetched at
-	// the old size, page 0 refetched at a new one, boundaries shift/overlap).
-	// Zero (its natural zero value, before any search has ever run) is not a
-	// special case: DataProvider.Search implementations treat pageSize <= 0
-	// as "use SearchPageSize" (see that constant's doc comment), so a stray
-	// fetch before the first submit degrades to the old fixed-size behavior
+	// buffer accumulates every ModItem fetched across every provider round
+	// of the CURRENT session, in arrival order (#111 Tier 3: infinite
+	// scroll replaced display pagination - see task-1-report.md's "Fix
+	// round 3" for why: an aggregate DISPLAY page used to equal one fetch
+	// round, but a round's union size varies with how many sources still
+	// have data left, so no fixed per-page arithmetic could describe it
+	// honestly). page.Results is always this buffer in full - j/k (and the
+	// n/p accelerators) scroll through it via the existing windowedRows
+	// machinery (clamp.go), exactly like every other long list in the TUI.
+	buffer []ModItem
+	// fetchRound is the NEXT provider round to request (0-based) - startSearch
+	// resets it to 0 before dispatching round 0; refillSearch requests
+	// fetchRound and, on a NON-EMPTY result, advances it.
+	fetchRound int
+	// providerExhausted reports whether the provider has said there is
+	// nothing left to fetch for this session (see roundExhausted) -
+	// maybeRefillSearch's gate against dispatching a refill that could
+	// never return anything, and searchFooterLine's "all N shown" vs.
+	// "more available" wording.
+	providerExhausted bool
+	// refilling is true from the moment refillSearch dispatches a round
+	// until that round's result (or failure) lands - #111 Tier 3's
+	// duplicate-trigger guard: maybeRefillSearch refuses to dispatch a
+	// SECOND round while one is already in flight (two Down presses before
+	// the first refill resolves must not issue two overlapping requests),
+	// and searchFooterLine appends a transient "· fetching…" suffix while
+	// it's true.
+	refilling bool
+	// warnings accumulates every UNIQUE per-source failure text across
+	// every round of the session (#111 Tier 3), deduped by exact string
+	// match (see mergeWarnings) - a source that failed on round 0 keeps
+	// its warning visible even after scrolling well past round 0's rows,
+	// instead of the warning line silently vanishing the moment a later
+	// round's (warning-free) response overwrote it.
+	warnings []string
+	// fetchSize is the current query session's sticky per-round quantum
+	// (#111 Tier 1/3): startSearch (the Enter/submit path, and ONLY that
+	// path) derives it fresh from Model.searchFetchSize() when a NEW
+	// session begins, then every later round of that session - refills
+	// triggered by scrolling, refreshSearchAfterInstall's rebuild - reuses
+	// this stored value unchanged, even across an intervening resize.
+	// Serves double duty under infinite scroll: it's both the pageSize
+	// argument every provider.Search call for this session uses AND the
+	// "one paneful" distance maybeRefillSearch's low-water check and the
+	// n/p accelerators (afterSearchSelectionMove) jump by - the SAME
+	// worst-case-chrome derivation that used to size one display page now
+	// sizes one scroll increment, which is exactly why a low-water
+	// trigger set to "one fetchSize before the buffer's end" reliably
+	// refills before the user can ever scroll past loaded data. Zero (its
+	// natural zero value, before any search has ever run) is not a special
+	// case: DataProvider.Search implementations treat pageSize <= 0 as "use
+	// SearchPageSize" (see that constant's doc comment), so a stray fetch
+	// before the first submit degrades to the old fixed-size behavior
 	// rather than fetching nothing.
 	fetchSize int
 	// gameName is the active game's display name, threaded in at
@@ -61,18 +104,52 @@ type searchModel struct {
 	gameName string
 }
 
-// searchResultMsg carries a completed search page, tagged with the
-// generation of the query that produced it so stale results can be
-// discarded.
+// searchResultKind distinguishes what a completed searchResultMsg/
+// searchFailedMsg should do to the session's buffer (#111 Tier 3):
+//   - searchResultSubmit: a NEW session's round 0 (startSearch) - replaces
+//     the buffer wholesale, resets the selection to the top, and (on
+//     failure) is the only kind that ever routes to searchFailed/
+//     searchAuthRequired, since it's the only kind with nothing useful
+//     already on screen to preserve.
+//   - searchResultRefill: one more round appended because the user scrolled
+//     within one fetchSize of the buffer's end (see maybeRefillSearch) -
+//     appends to the buffer; a FAILURE here is swallowed (see
+//     searchFailedMsg's Update case) rather than blanking an
+//     already-useful screen over a transient hiccup on data the user
+//     hasn't even scrolled to yet.
+//   - searchResultRefresh: refreshSearchAfterInstall's rebuilt buffer
+//     (every round 0..fetchRound-1 refetched and merged by its Cmd before
+//     this message is even constructed - see that function's doc comment)
+//   - replaces the buffer wholesale like submit, but clamps rather than
+//     resets the selection.
+type searchResultKind int
+
+const (
+	searchResultSubmit searchResultKind = iota
+	searchResultRefill
+	searchResultRefresh
+)
+
+// searchResultMsg carries a completed provider round for the current query
+// session, tagged with the generation of the query that produced it so
+// stale results (a superseded submit, a refill that outlived its session)
+// can be discarded. rounds is only meaningful for searchResultRefresh: how
+// many rounds page.Results represents, so Update can restore fetchRound
+// after beginNewSession's reset (see refreshSearchAfterInstall).
 type searchResultMsg struct {
-	gen  int
-	page SearchPage
+	gen    int
+	kind   searchResultKind
+	page   SearchPage
+	rounds int
 }
 
-// searchFailedMsg carries a failed search, tagged with the generation of the
-// query that produced it so stale failures can be discarded.
+// searchFailedMsg carries a failed provider round, tagged the same way
+// searchResultMsg is (gen for staleness, kind for what Update should do -
+// see searchResultKind's doc comment on why a refill failure is handled
+// differently from a submit/refresh failure).
 type searchFailedMsg struct {
 	gen    int
+	kind   searchResultKind
 	err    error
 	source string
 }
@@ -173,61 +250,110 @@ func sourceLabel(source string) string {
 	return source
 }
 
-// hasNextPage reports whether another page of results is available for the
-// current search, mirroring the CLI picker's logic (see install.go).
-//
-// All-sources pages (Source == "") are a special case (#58 item 1):
-// TotalCount there is core.AggregateSearchResult.TotalCount, SUMMED across
-// sources that each paginate independently, so it cannot bound a single
-// merged page the way a single source's TotalCount can - 3 sources whose
-// entire 10-mod catalog fits on page 0 sum to a TotalCount of 30, which
-// against a PageSize of 10 falsely implies a page 2 exists. Exhausted (set
-// by coreProvider.Search from the aggregate result) is the only signal that
-// actually accounts for every contributing source, so it - not the
-// TotalCount math below - decides for aggregate pages.
-func (s searchModel) hasNextPage() bool {
-	if s.page.Source == "" {
-		return !s.page.Exhausted
+// roundExhausted reports whether round - one provider.Search response for a
+// single fetch round - is the FINAL round available, mirroring the CLI
+// picker's per-fetch "maybe more" logic (install.go). Aggregate rounds
+// trust the provider's own Exhausted (core.AggregateSearchResult.Exhausted
+// already accounts for every contributing source's independent
+// cursor - see AggregateSearchResult's doc comment for why a summed
+// TotalCount can't be trusted the same way); single-source rounds fall back
+// to TotalCount-or-short-page math.
+func roundExhausted(round SearchPage) bool {
+	if round.Source == "" {
+		return round.Exhausted
 	}
-	if s.page.TotalCount > 0 {
-		return (s.page.Page+1)*s.page.PageSize < s.page.TotalCount
+	if round.TotalCount > 0 {
+		return (round.Page+1)*round.PageSize >= round.TotalCount
 	}
-	return len(s.page.Results) == s.page.PageSize // full page ⇒ maybe more
+	return len(round.Results) < round.PageSize
+}
+
+// mergeWarnings appends entries from newWarnings not already present in
+// existing, preserving existing's order and every entry's FIRST occurrence
+// (#111 Tier 3): a session's warnings accumulate across provider rounds - a
+// source that failed on round 0 keeps its warning visible even once the
+// user has scrolled well past round 0's rows - deduped by exact text. The
+// coreProvider wire format ("<sourceID>: <err>") already uniquely
+// identifies the source, so an exact-string dedupe is "unique per source"
+// in practice without parsing the prefix back out.
+func mergeWarnings(existing, newWarnings []string) []string {
+	seen := make(map[string]bool, len(existing))
+	for _, w := range existing {
+		seen[w] = true
+	}
+	merged := existing
+	for _, w := range newWarnings {
+		if seen[w] {
+			continue
+		}
+		seen[w] = true
+		merged = append(merged, w)
+	}
+	return merged
+}
+
+// applyRoundResult merges one already-fetched round into the session buffer
+// and warnings (#111 Tier 3): replace=true resets the buffer to round's
+// Results wholesale (submit, refresh); replace=false appends (refill).
+// exhausted is the caller's already-computed providerExhausted verdict -
+// roundExhausted(round) for a single round, or the LAST looped round's own
+// verdict for a multi-round refresh (see refreshSearchAfterInstall) -
+// rather than recomputed here, since a refresh's merged round.Results spans
+// EVERY refetched round and would give roundExhausted's short-page/
+// TotalCount heuristics the wrong Page/Results-length to compare against.
+// Returns how many rows round.Results contributed, for callers that only
+// advance fetchRound on a non-empty round (see Update's searchResultRefill
+// case).
+func (s *searchModel) applyRoundResult(round SearchPage, replace bool, exhausted bool) int {
+	if replace {
+		s.buffer = append([]ModItem(nil), round.Results...)
+	} else {
+		s.buffer = append(s.buffer, round.Results...)
+	}
+	s.warnings = mergeWarnings(s.warnings, round.Warnings)
+	s.providerExhausted = exhausted
+	s.page.Query = round.Query
+	s.page.Source = round.Source
+	s.page.TotalCount = round.TotalCount
+	s.page.AttemptedCount = round.AttemptedCount
+	s.page.Warnings = s.warnings
+	s.page.Exhausted = s.providerExhausted
+	s.page.Results = s.buffer
+	return len(round.Results)
+}
+
+// beginNewSession cancels any in-flight search, bumps the generation, and
+// resets every per-session accumulator (#111 Tier 3's buffer/fetchRound/
+// providerExhausted/warnings/refilling) to start fresh - shared by
+// startSearch (a genuine new query) and refreshSearchAfterInstall (which
+// keeps the query/source but must still invalidate whatever's in flight and
+// rebuild from scratch, mutations.go). Returns the derived ctx and
+// generation the caller's dispatch closure needs.
+func (m Model) beginNewSession() (Model, context.Context, int) {
+	if m.search.cancel != nil {
+		m.search.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.search.cancel = cancel
+	m.search.gen++
+	m.search.state = searchLoading
+	m.search.buffer = nil
+	m.search.fetchRound = 0
+	m.search.providerExhausted = false
+	m.search.refilling = false
+	m.search.warnings = nil
+	return m, ctx, m.search.gen
 }
 
 // startSearch begins a NEW query session (the Enter/submit path - "3"/"/"
 // then Enter, the dashboard's Search Archives entry - and ONLY that path):
 // it derives THIS session's sticky fetch size from the window's CURRENT
-// size (see searchModel.fetchSize's doc comment) and dispatches page 0.
-// Every other fetch of this same session must go through requerySearch
-// below instead, which does NOT touch fetchSize - see its own doc comment
-// for why page == 0 alone is not a safe "new session" signal.
+// size (see searchModel.fetchSize's doc comment), resets every
+// accumulator via beginNewSession, and dispatches round 0.
 func (m Model) startSearch(query string) (Model, tea.Cmd) {
-	m.search.fetchSize = m.searchFetchSize()
-	return m.dispatchSearch(query, 0)
-}
-
-// requerySearch continues the CURRENT query session at page - n/p pagination
-// (app.go's NextPage/PrevPage handlers) and refreshSearchAfterInstall's
-// post-install requery (mutations.go), both of which can legitimately land
-// back on page 0 (PrevPage from page 1; a refresh of whatever page is
-// currently on screen) without that being a new session. It reuses
-// m.search.fetchSize exactly as startSearch last set it, so a resize
-// between the original submit and this call never shifts the session's
-// pagination arithmetic.
-func (m Model) requerySearch(query string, page int) (Model, tea.Cmd) {
-	return m.dispatchSearch(query, page)
-}
-
-// dispatchSearch is startSearch/requerySearch's shared body: cancels any
-// in-flight search, bumps the generation, and issues the fetch at page
-// using whatever fetch size is already stored in m.search.fetchSize -
-// deriving that value is exclusively startSearch's job (see its doc
-// comment), never this method's.
-func (m Model) dispatchSearch(query string, page int) (Model, tea.Cmd) {
 	// Guard: no REAL sources configured for this game. The "" sentinel is
-	// now a valid search target (meaning "search every configured source"),
-	// so this can no longer key off source() == "": sources always contains
+	// a valid search target (meaning "search every configured source"), so
+	// this can no longer key off source() == "": sources always contains
 	// at least the sentinel once newSearchModel has run. The actual invalid
 	// case is zero real sources, i.e. the sentinel-only (or empty) list.
 	if len(m.search.sources) <= 1 {
@@ -236,24 +362,88 @@ func (m Model) dispatchSearch(query string, page int) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.search.cancel != nil {
-		m.search.cancel()
-	}
-	ctx, cancel := context.WithCancel(m.ctx)
-	m.search.cancel = cancel
-	m.search.gen++
-	m.search.state = searchLoading
+	m.search.fetchSize = m.searchFetchSize()
+	m, ctx, gen := m.beginNewSession()
 
-	fetchSize := m.search.fetchSize
-
-	gen := m.search.gen
 	provider := m.provider
 	source := m.search.source()
+	fetchSize := m.search.fetchSize
 	return m, func() tea.Msg {
-		result, err := provider.Search(ctx, source, query, page, fetchSize)
+		result, err := provider.Search(ctx, source, query, 0, fetchSize)
 		if err != nil {
-			return searchFailedMsg{gen: gen, err: err, source: source}
+			return searchFailedMsg{gen: gen, kind: searchResultSubmit, err: err, source: source}
 		}
-		return searchResultMsg{gen: gen, page: result}
+		return searchResultMsg{gen: gen, kind: searchResultSubmit, page: result}
+	}
+}
+
+// maybeRefillSearch issues ONE more provider round (#111 Tier 3's infinite
+// scroll) when the selection has walked within one fetchSize of the
+// buffer's end, the provider hasn't already said it's exhausted, and no
+// refill is already in flight for this session (see searchModel.refilling's
+// doc comment - two Down presses before the first refill resolves must not
+// issue two overlapping requests). Called from afterSearchSelectionMove
+// after any selection-moving key on the search screen EXCEPT PrevPage,
+// which never checks this at all (see its own handler in app.go) so
+// scrolling backward can never trigger a fetch.
+func (m Model) maybeRefillSearch() (Model, tea.Cmd) {
+	s := m.search
+	// fetchSize <= 0 means this session never actually went through
+	// startSearch (its natural zero value - see fetchSize's own doc
+	// comment), most commonly a test that pokes searchReady/page directly
+	// without a real submit. Without this guard, lowWater below evaluates
+	// to a bare 0 and every selection at or past index 0 - i.e. always -
+	// would look refill-worthy, dispatching a spurious fetch on the very
+	// first Down press of an otherwise-static test fixture.
+	if s.fetchSize <= 0 || s.providerExhausted || s.refilling {
+		return m, nil
+	}
+	lowWater := len(s.buffer) - s.fetchSize
+	if m.selected[ScreenSearch] < lowWater {
+		return m, nil
+	}
+	return m.refillSearch()
+}
+
+// afterSearchSelectionMove is the hook every selection-moving key on the
+// search screen (Up/Down, and NextPage's accelerator) runs through after
+// moving m.selected[ScreenSearch], deciding whether that move needs a
+// refill (see maybeRefillSearch). A no-op off the search screen or before a
+// session has completed its first round (mirrors every other search
+// dispatch's own searchReady guard).
+func (m Model) afterSearchSelectionMove() (Model, tea.Cmd) {
+	if m.screen != ScreenSearch || m.search.state != searchReady {
+		return m, nil
+	}
+	return m.maybeRefillSearch()
+}
+
+// refillSearch dispatches ONE more provider round (#111 Tier 3's infinite
+// scroll). Unlike startSearch/refreshSearchAfterInstall, this does NOT
+// cancel the in-flight session, bump its generation, or set state to
+// searchLoading: the buffer already on screen stays fully interactive and
+// visible while the refill runs in the background (searchModel.refilling,
+// set here and cleared in Update's searchResultMsg/searchFailedMsg cases,
+// is what the footer's transient "· fetching…" suffix and
+// maybeRefillSearch's own dedup check key off of instead). It also does not
+// derive a per-refill cancellable context - a refill superseded by a brand
+// new submit (which DOES cancel/bump gen) simply has its eventual result
+// discarded by the ordinary stale-gen check, the same wasted-but-harmless
+// tradeoff many other async paths in this package already accept.
+func (m Model) refillSearch() (Model, tea.Cmd) {
+	m.search.refilling = true
+	gen := m.search.gen
+	provider := m.provider
+	source := m.search.page.Source
+	query := m.search.page.Query
+	round := m.search.fetchRound
+	fetchSize := m.search.fetchSize
+	ctx := m.ctx
+	return m, func() tea.Msg {
+		result, err := provider.Search(ctx, source, query, round, fetchSize)
+		if err != nil {
+			return searchFailedMsg{gen: gen, kind: searchResultRefill, err: err, source: source}
+		}
+		return searchResultMsg{gen: gen, kind: searchResultRefill, page: result}
 	}
 }

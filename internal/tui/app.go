@@ -666,11 +666,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.search.state = searchReady
-		m.search.page = msg.page
-		m.selected[ScreenSearch] = 0
+		switch msg.kind {
+		case searchResultSubmit:
+			m.search.applyRoundResult(msg.page, true, roundExhausted(msg.page))
+			m.search.fetchRound = 1
+			m.selected[ScreenSearch] = 0
+		case searchResultRefill:
+			m.search.refilling = false
+			newRows := len(msg.page.Results)
+			m.search.applyRoundResult(msg.page, false, newRows == 0 || roundExhausted(msg.page))
+			if newRows > 0 {
+				m.search.fetchRound++
+			}
+		case searchResultRefresh:
+			m.search.applyRoundResult(msg.page, true, msg.page.Exhausted)
+			m.search.fetchRound = msg.rounds
+			if m.selected[ScreenSearch] >= len(m.search.buffer) {
+				m.selected[ScreenSearch] = max(len(m.search.buffer)-1, 0)
+			}
+		}
 		return m, nil
 	case searchFailedMsg:
 		if msg.gen != m.search.gen {
+			return m, nil
+		}
+		if msg.kind == searchResultRefill {
+			// A refill failure must not destroy an already-useful buffer
+			// (#111 Tier 3): silently stop trying further rounds instead of
+			// routing to searchFailed/searchAuthRequired, which would wipe
+			// the visible results over what might be a transient hiccup on
+			// data the user hasn't even scrolled to yet.
+			m.search.refilling = false
+			m.search.providerExhausted = true
 			return m, nil
 		}
 		// The sentinel source ("" == all sources) has no single source name to
@@ -780,13 +807,23 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Search), key.Matches(msg, m.keys.SearchScreen):
 		return m.gotoScreenFocused(ScreenSearch)
 	case key.Matches(msg, m.keys.NextPage):
-		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.hasNextPage() {
-			return m.requerySearch(m.search.page.Query, m.search.page.Page+1)
+		// #111 Tier 3: n is now a "jump a paneful" selection accelerator,
+		// not a page turn - infinite scroll has no pages. Moving forward
+		// can walk into refill range, so it runs through
+		// afterSearchSelectionMove like Up/Down does.
+		if m.screen == ScreenSearch && m.search.state == searchReady {
+			m.moveSelection(m.search.fetchSize)
+			return m.afterSearchSelectionMove()
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.PrevPage):
-		if m.screen == ScreenSearch && m.search.state == searchReady && m.search.page.Page > 0 {
-			return m.requerySearch(m.search.page.Query, m.search.page.Page-1)
+		// p jumps backward by the same distance - deliberately WITHOUT
+		// calling afterSearchSelectionMove: every row a backward jump can
+		// land on is already in the buffer, so this must never dispatch a
+		// refill (see maybeRefillSearch's doc comment on the low-water
+		// check this skips entirely).
+		if m.screen == ScreenSearch && m.search.state == searchReady {
+			m.moveSelection(-m.search.fetchSize)
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.CycleSource):
@@ -814,10 +851,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gotoScreen(ScreenConflicts)
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
-		return m, nil
+		return m.afterSearchSelectionMove()
 	case key.Matches(msg, m.keys.Down):
 		m.moveSelection(1)
-		return m, nil
+		return m.afterSearchSelectionMove()
 	case key.Matches(msg, m.keys.Select):
 		// Select ("enter") is context-dependent: it opens a dashboard menu
 		// entry everywhere except Profiles, where Task 7 repurposes it to
@@ -1602,57 +1639,50 @@ func (m Model) searchDetailPane(width, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-// searchFooterLine renders pagination status. The total-pages figure only
-// appears when the source reports a TotalCount; otherwise only the current
-// page is shown. In both cases, the "n next"/"p prev" hints only render when
-// the corresponding key would actually act, so a page-1 footer never shows a
-// dead "p prev" hint.
+// searchFooterLine renders the session's LOAD status (#111 Tier 3: infinite
+// scroll replaced per-page pagination - see searchModel.buffer's own doc
+// comment for why an aggregate "Page N/M" figure could never be made
+// honest). Three forms, chosen by what's actually knowable:
+//   - a single source that reports a TotalCount: "X of Y loaded" - Y is the
+//     source's own reported total (not derived from how many rounds have
+//     run), so this stays accurate before AND after providerExhausted
+//     flips, unlike the other two forms below.
+//   - otherwise (aggregate mode, or a single source with no reported
+//     total), once providerExhausted: "all X shown" - X is definitively
+//     everything there is.
+//   - otherwise, still fetching: "X loaded · more available" - honest about
+//     there being more without claiming to know how much (an aggregate
+//     TotalCount is SUMMED across sources with independent per-round
+//     cursors and cannot bound the eventual total the way a single
+//     source's can - see roundExhausted's doc comment).
 //
-// All-sources pages (Source == "") never render a "Page N/M" figure at all
-// (#58 item 1): M would have to come from TotalCount/PageSize, but
-// TotalCount there is SUMMED across sources that paginate independently (see
-// hasNextPage's doc comment) - a figure computed from it would promise a
-// page count the merge can't keep. The result COUNT is still trustworthy
-// (it's a plain sum of what was actually returned), so that part renders
-// unchanged; only the "/M" half is aggregate-unsafe.
+// X is len(page.Results) - the RENDERED view, not len(buffer) directly:
+// applyRoundResult always keeps the two in lockstep for every real fetch, so
+// this only matters for tests that hand-construct m.search.page without
+// separately populating buffer (a pre-existing, still-common convention -
+// see e.g. TestSearchViewRendersStates), which would otherwise report "0
+// loaded" against results that plainly render.
+//
+// A trailing "· fetching…" appears whenever a refill is actually in flight
+// (searchModel.refilling), regardless of which of the three forms above is
+// showing - the transient signal that walking further down might briefly
+// stall while a KeyMsg is bound.
 func (m Model) searchFooterLine() string {
-	page := m.search.page
-	current := page.Page + 1
+	s := m.search
+	loaded := len(s.page.Results)
 
-	footer := fmt.Sprintf("Page %d", current)
+	var footer string
 	switch {
-	case page.Source == "":
-		// Aggregate pages count the rows actually shown, never the summed
-		// per-source TotalCount: a source that doesn't report totals
-		// contributes 0 to the sum while its rows are real, so the sum
-		// under-reports (a 13-row merged page once rendered "(3 results)" —
-		// user smoke finding, PR #110). len(Results) is the only figure
-		// that is true by construction here; single-source pages below keep
-		// the genuine reported totals.
-		//
-		// Wording evolved once pages could scroll (#111 Tier 2, PR #114
-		// smoke round): "shown" was accurate back when a fetched page
-		// rendered in full, but searchFetchSize's worst-case reservations
-		// mean the results pane can now windowedRows-scroll a merged page
-		// (see that function's own doc comment on why an all-sources page
-		// isn't guaranteed to render every fetched row) - "shown" then reads
-		// as contradicting the "↓ N more" indicator sitting right below it.
-		// "on page" describes what the number actually counts (rows fetched
-		// for this page, still true by construction) without claiming
-		// they're all currently visible.
-		if len(page.Results) > 0 {
-			footer = fmt.Sprintf("Page %d (%d on page)", current, len(page.Results))
-		}
-	case page.TotalCount > 0 && page.PageSize > 0:
-		totalPages := (page.TotalCount + page.PageSize - 1) / page.PageSize
-		footer = fmt.Sprintf("Page %d/%d (%d results)", current, totalPages, page.TotalCount)
+	case s.page.Source != "" && s.page.TotalCount > 0:
+		footer = fmt.Sprintf("%d of %d loaded", loaded, s.page.TotalCount)
+	case s.providerExhausted:
+		footer = fmt.Sprintf("all %d shown", loaded)
+	default:
+		footer = fmt.Sprintf("%d loaded · more available", loaded)
 	}
 
-	if m.search.hasNextPage() {
-		footer += " · n next"
-	}
-	if page.Page > 0 {
-		footer += " · p prev"
+	if s.refilling {
+		footer += " · fetching…"
 	}
 	return footer
 }
@@ -2277,10 +2307,10 @@ const searchFetchSizeCap = 50
 // a single-source page, or an all-sources page that happens not to warn),
 // the pane under-fills by up to 2 rows - accepted, since the alternative
 // would require knowing the render-time-exact chrome before the very fetch
-// that determines part of it. A merged ALL-SOURCES page can also still
-// scroll by design regardless of any of this (see hasNextPage's own doc
-// comment on why a summed TotalCount can't bound one page) - windowedRows
-// is what makes that safe to show, not this function.
+// that determines part of it. windowedRows (clamp.go) is the actual safety
+// net that makes any shortfall harmless - it scroll-follows the selection
+// through whatever the buffer holds regardless of exactly how many rows
+// one round happened to return.
 //
 // Mirrors searchReadyView's own arithmetic; that function's
 // paneContentHeight local computes:
@@ -2295,14 +2325,15 @@ const searchFetchSizeCap = 50
 // handled by warningReserve above, not by reading len(searchHeaderLines())
 // live (which is unknowable before the fetch that would produce it).
 //
-// Called once per query session, exclusively from startSearch (the
-// Enter/submit path - NOT page == 0, which recurs mid-session via
-// PrevPage and refreshSearchAfterInstall and is therefore not a safe "new
-// session" signal - see requerySearch's doc comment in search.go). startSearch
-// stores the result in m.search.fetchSize; requerySearch reuses it,
-// UNCHANGED, for every subsequent fetch of that same session (n/p
-// pagination, the post-install refresh), even across an intervening
-// resize. A resize only changes what the NEXT startSearch call fetches.
+// #111 Tier 3 (infinite scroll): this value now serves DOUBLE duty beyond
+// sizing one provider round - it's also the distance
+// maybeRefillSearch's low-water check and the n/p accelerators
+// (afterSearchSelectionMove, search.go) jump the selection by. Called once
+// per query session, exclusively from startSearch (the Enter/submit path):
+// startSearch stores the result in m.search.fetchSize; every later round of
+// that session - refillSearch's fetches, refreshSearchAfterInstall's
+// rebuild - reuses it UNCHANGED, even across an intervening resize. A
+// resize only changes what the NEXT startSearch call fetches.
 func (m Model) searchFetchSize() int {
 	const (
 		headerLineCount = 2 // searchHeaderLines(): title + query input

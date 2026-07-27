@@ -886,13 +886,33 @@ func installDetailLines(view InstallPlanView) []string {
 	return lines
 }
 
-// refreshSearchAfterInstall re-issues the CURRENT search query after a
-// successful install, so the just-installed result's "installed" marker
-// updates immediately instead of waiting for the user to search again by
-// hand (task-5-brief.md: "verify the refresh path covers the search
-// results' installed-flag, and fix within internal/tui if not" - the
-// generic post-action refresh, m.loadData, only re-fetches Overview/
-// Profiles, never the search page, since no other mutation needs it to).
+// refreshSearchAfterInstall re-issues the CURRENT search session's already-
+// fetched rounds after a successful install, so the just-installed result's
+// "installed" marker updates immediately instead of waiting for the user to
+// search again by hand (task-5-brief.md: "verify the refresh path covers
+// the search results' installed-flag, and fix within internal/tui if not" -
+// the generic post-action refresh, m.loadData, only re-fetches Overview/
+// Profiles, never the search buffer, since no other mutation needs it to).
+//
+// #111 Tier 3 (infinite scroll): a session's visible history can now span
+// MULTIPLE provider rounds (searchModel.buffer's doc comment), so
+// refreshing only the most-recently-fetched round would leave every
+// EARLIER round's installed-markers stale the moment the user has scrolled
+// past round 0. This refetches EVERY round the session has already fetched
+// (0..fetchRound-1), sequentially, inside ONE tea.Cmd, and rebuilds the
+// buffer wholesale from the merged result via beginNewSession +
+// searchResultRefresh (search.go/app.go) - which clamps the selection to
+// the rebuilt buffer's new length rather than resetting it to the top, and
+// restores fetchRound (carried on the message as rounds, since
+// beginNewSession itself resets it to 0) so a SUBSEQUENT scroll-triggered
+// refill correctly requests the round AFTER what this refresh already
+// covered, not round 0 again. Ordering within the rebuilt buffer may shift
+// slightly if the underlying catalog changed between the original fetch and
+// now (a source's own internal ordering is not guaranteed stable across
+// independent calls) - accepted, since staying wrong (a stale "available"
+// marker on a mod the user just installed) is worse than a harmless
+// reorder.
+//
 // A no-op (nil cmd, m unchanged) when there's no completed search to
 // refresh (searchIdle/searchLoading/searchFailed/searchAuthRequired) -
 // installSelectedSearchResult can only ever have been reached FROM
@@ -904,12 +924,36 @@ func (m Model) refreshSearchAfterInstall() (Model, tea.Cmd) {
 	if m.search.state != searchReady {
 		return m, nil
 	}
-	// requerySearch, not startSearch: this re-fetches whichever page is
-	// currently on screen (often page 0) as part of the SAME session the
-	// user already started, so it must keep that session's sticky fetch
-	// size rather than recomputing from the window's current size (#111
-	// Tier 1 / Copilot PR #114 round 2 - see requerySearch's doc comment).
-	return m.requerySearch(m.search.page.Query, m.search.page.Page)
+
+	query := m.search.page.Query
+	source := m.search.page.Source
+	rounds := m.search.fetchRound
+
+	m, ctx, gen := m.beginNewSession()
+	provider := m.provider
+	fetchSize := m.search.fetchSize
+
+	return m, func() tea.Msg {
+		merged := SearchPage{Query: query, Source: source, PageSize: fetchSize}
+		var buffer []ModItem
+		var warnings []string
+		exhausted := false
+		for round := 0; round < rounds; round++ {
+			result, err := provider.Search(ctx, source, query, round, fetchSize)
+			if err != nil {
+				return searchFailedMsg{gen: gen, kind: searchResultRefresh, err: err, source: source}
+			}
+			buffer = append(buffer, result.Results...)
+			warnings = mergeWarnings(warnings, result.Warnings)
+			merged.TotalCount = result.TotalCount
+			merged.AttemptedCount = result.AttemptedCount
+			exhausted = roundExhausted(result)
+		}
+		merged.Results = buffer
+		merged.Warnings = warnings
+		merged.Exhausted = exhausted
+		return searchResultMsg{gen: gen, kind: searchResultRefresh, page: merged, rounds: rounds}
+	}
 }
 
 // --- Check/apply updates ('u' on Dashboard and Installed Mods) ---

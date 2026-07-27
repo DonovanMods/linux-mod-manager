@@ -238,100 +238,84 @@ func TestLongQueryDoesNotBreakSearchHeightInvariant(t *testing.T) {
 	}
 }
 
-func TestPaginationKeysRequeryWithinBounds(t *testing.T) {
+// TestNextPageAcceleratorJumpsSelectionByFetchSize guards #111 Tier 3's n/p
+// repurposing: n is now a selection accelerator (a paneful jump), not a
+// page turn - there are no pages under infinite scroll.
+func TestNextPageAcceleratorJumpsSelectionByFetchSize(t *testing.T) {
 	t.Parallel()
 
 	model := searchScreenModel(t)
-	model = updateWithKeyType(t, model, tea.KeyEsc) // n/p are screen-level keys; only reach pagination once blurred
+	model = updateWithKeyType(t, model, tea.KeyEsc) // n/p are screen-level keys; only reach them once blurred
 	model.search.state = searchReady
-	model.search.page = SearchPage{Query: "q", Source: "nexusmods", Page: 0, PageSize: 10, TotalCount: 25}
+	model.search.fetchSize = 5
+	model.search.buffer = make([]ModItem, 20)
+	model.search.providerExhausted = true // no refill to worry about here
+	model.search.page = SearchPage{Query: "q", Source: "nexusmods", Results: model.search.buffer}
 
-	updated, cmd := model.Update(keyRunes("n"))
-	require.NotNil(t, cmd, "next page issues a search command")
-	_ = updated
-
-	model.search.page.Page = 0
-	_, cmd = model.Update(keyRunes("p"))
-	require.Nil(t, cmd, "prev on page 0 is a no-op")
+	updated, _ := model.Update(keyRunes("n"))
+	require.Equal(t, 5, updated.(Model).selected[ScreenSearch], "n jumps the selection by fetchSize")
 }
 
-// TestAggregateHasNextPageRespectsExhaustedNotSummedTotalCount guards #58
-// item 1: an all-sources page (Source == "") reports a summed TotalCount
-// that does NOT bound a single page the way single-source search's does
-// (see hasNextPage's doc comment) - only Exhausted may be trusted. 3 sources
-// x 10-mod catalogs (TotalCount 30, PageSize 10) used to make hasNextPage
-// claim a page 2 that queries would return empty; Exhausted (now populated
-// by coreProvider.Search from core.AggregateSearchResult) is the fix.
-func TestAggregateHasNextPageRespectsExhaustedNotSummedTotalCount(t *testing.T) {
+// TestAggregateExhaustedTrustedOverSummedTotalCount guards #58 item 1's
+// concern under #111 Tier 3's buffered accounting: an all-sources session's
+// TotalCount is SUMMED across sources with independent per-round cursors
+// and does not bound how much is actually left - only providerExhausted
+// (populated from core.AggregateSearchResult.Exhausted) may be trusted, so
+// the footer must report "all N shown" once it's true even though a naive
+// TotalCount-vs-loaded comparison would still suggest more.
+func TestAggregateExhaustedTrustedOverSummedTotalCount(t *testing.T) {
 	t.Parallel()
 
 	model := searchScreenModel(t)
 	model.search.state = searchReady
-	model.search.page = SearchPage{
-		Query: "m", Source: "", Page: 0, PageSize: 10, TotalCount: 30, Exhausted: true,
-		Results: make([]ModItem, 30),
-	}
-	require.False(t, model.search.hasNextPage(), "every source already exhausted, despite TotalCount/PageSize suggesting 3 pages")
+	model.search.buffer = make([]ModItem, 30)
+	model.search.fetchSize = 10
+	model.search.providerExhausted = true
+	model.search.page = SearchPage{Query: "m", Source: "", TotalCount: 30, Results: model.search.buffer}
 
-	model.search.page.Exhausted = false
-	require.True(t, model.search.hasNextPage(), "a source might still have more")
+	require.Contains(t, model.searchFooterLine(), "all 30 shown")
 }
 
-// TestAggregateFooterOmitsMisleadingTotalPages guards the footer half of the
-// same fix: aggregate TotalCount/PageSize cannot produce a trustworthy
-// "Page N/M" figure (see searchFooterLine's doc comment), so it must not
-// render one at all for an all-sources page, while still showing the result
-// count and correctly omitting "n next" once Exhausted.
-//
-// "on page" (not "shown" - #111 Tier 2, PR #114 smoke round): see
-// searchFooterLine's own doc comment for why the wording changed once
-// searchFetchSize's worst-case reservations meant a merged page could
-// legitimately scroll.
-func TestAggregateFooterOmitsMisleadingTotalPages(t *testing.T) {
+// TestAggregateFooterNeverRendersTotalPages guards the footer half of #58
+// item 1 under #111 Tier 3's infinite scroll: an all-sources session has no
+// "Page N/M" concept at all anymore (there are no pages), and once
+// providerExhausted the footer must say "all N shown" using the REAL
+// buffer length, never a figure derived from the summed (and possibly
+// under-reporting) TotalCount.
+func TestAggregateFooterNeverRendersTotalPages(t *testing.T) {
 	t.Parallel()
 
 	model := searchScreenModel(t)
 	model.search.state = searchReady
-	model.search.page = SearchPage{
-		Query: "m", Source: "", Page: 0, PageSize: 10, TotalCount: 30, Exhausted: true,
-		Results: make([]ModItem, 30),
-	}
+	model.search.buffer = make([]ModItem, 30)
+	model.search.providerExhausted = true
+	model.search.page = SearchPage{Query: "m", Source: "", TotalCount: 30, Results: model.search.buffer}
 
 	footer := model.searchFooterLine()
-	require.NotContains(t, footer, "/", "aggregate TotalCount/PageSize must not render a misleading total-pages figure")
-	require.Contains(t, footer, "30 on page")
-	require.NotContains(t, footer, "n next", "exhausted aggregate must not offer a dead next page")
+	require.NotContains(t, footer, "/", "aggregate sessions never render a total-pages figure")
+	require.Equal(t, "all 30 shown", footer)
 }
 
-// TestAggregateFooterCountsShownRowsNotSummedTotals guards the count half of
-// the aggregate footer (user smoke finding, PR #110): the summed TotalCount
-// under-reports whenever any contributing source doesn't report totals (its
-// contribution to the sum is 0 while its rows are real), so a merged page of
-// 13 rows rendered "(3 results)". The aggregate footer must count the rows
-// actually on the page — the only figure that is true by construction —
-// never the summed totals.
-//
-// "on page" (not "shown" - #111 Tier 2, PR #114 smoke round): the wording
-// itself evolved after this fix originally shipped, once searchFetchSize's
-// worst-case reservations meant a merged page could legitimately scroll -
-// "shown" started contradicting the "↓ N more" indicator beneath it. The
-// COUNT this test guards (rows on the page, never the summed total) is
-// unchanged; see searchFooterLine's doc comment for the wording history.
-func TestAggregateFooterCountsShownRowsNotSummedTotals(t *testing.T) {
+// TestAggregateFooterCountsBufferedRowsNotSummedTotals guards the count half
+// of the aggregate footer (user smoke finding, PR #110): the summed
+// TotalCount under-reports whenever any contributing source doesn't report
+// totals (its contribution to the sum is 0 while its rows are real), so a
+// 13-row buffer once rendered "(3 results)". The aggregate footer must
+// count len(buffer) - the only figure that is true by construction - never
+// the summed totals.
+func TestAggregateFooterCountsBufferedRowsNotSummedTotals(t *testing.T) {
 	t.Parallel()
 
 	model := searchScreenModel(t)
 	model.search.state = searchReady
-	model.search.page = SearchPage{
-		// One source reported TotalCount 3; another contributed 10 rows but
-		// reports no totals (contributes 0 to the sum) — 13 real rows.
-		Query: "m", Source: "", Page: 0, PageSize: 10, TotalCount: 3, Exhausted: false,
-		Results: make([]ModItem, 13),
-	}
+	// One source reported TotalCount 3; another contributed 10 rows but
+	// reports no totals (contributes 0 to the sum) — 13 real rows.
+	model.search.buffer = make([]ModItem, 13)
+	model.search.providerExhausted = false
+	model.search.page = SearchPage{Query: "m", Source: "", TotalCount: 3, Results: model.search.buffer}
 
-	footer := model.searchFooterLine()
-	require.Contains(t, footer, "13 on page", "the footer must count the rows on the page")
-	require.NotContains(t, footer, "3 result", "the under-reported summed total must not render")
+	require.Equal(t, "13 loaded · more available", model.searchFooterLine(),
+		"the footer must count the buffered rows, never the under-reported summed total")
 }
 
 // TestAggregateZeroResultsHonestNoticeWhenNoSourceSupportsSearch guards #58
@@ -387,14 +371,13 @@ func TestSingleSourceZeroResultsUnaffectedByHonestyNotice(t *testing.T) {
 }
 
 // TestPrototypeAllSourcesSearchHasNoDeadNextPageHint is an integration
-// counterpart to TestAggregateHasNextPageRespectsExhaustedNotSummedTotalCount
-// that drives the REAL --prototype Search path (searchScreenModel's default
-// sourceIdx 0 is the all-sources sentinel) instead of a hand-built
-// SearchPage - a whole-branch-review finding: prototypeProvider.Search never
-// set Exhausted, so hasNextPage's new `!Exhausted` aggregate branch defaulted
-// it to false, meaning EVERY --prototype all-sources search rendered a
-// permanently dead "n next" hint (pre-#58 the old TotalCount/PageSize math
-// happened to correctly end the canned, non-paginated set).
+// counterpart to TestAggregateExhaustedTrustedOverSummedTotalCount that
+// drives the REAL --prototype Search path (searchScreenModel's default
+// sourceIdx 0 is the all-sources sentinel) instead of hand-built session
+// state - a whole-branch-review finding, still relevant under #111 Tier 3:
+// prototypeProvider.Search must set Exhausted honestly on its one-round
+// canned set, or every --prototype all-sources search would render a dead
+// "more available" hint that scrolling into never actually refills.
 func TestPrototypeAllSourcesSearchHasNoDeadNextPageHint(t *testing.T) {
 	t.Parallel()
 
@@ -409,8 +392,8 @@ func TestPrototypeAllSourcesSearchHasNoDeadNextPageHint(t *testing.T) {
 	model = result.(Model)
 	require.Equal(t, searchReady, model.search.state)
 
-	require.False(t, model.search.hasNextPage(), "the canned set is a single-page fetch; there is no real next page to demo")
-	require.NotContains(t, model.View(), "n next", "must not offer a dead next-page hint")
+	require.True(t, model.search.providerExhausted, "the canned set is a single-round fetch; there is nothing left to demo scrolling into")
+	require.NotContains(t, model.View(), "more available", "must not offer a dead more-available hint")
 }
 
 // TestPrototypeAllSourcesZeroMatchRendersOrdinaryEmptyCopy is the
@@ -477,7 +460,7 @@ func TestSearchViewRendersStates(t *testing.T) {
 	view = model.View()
 	require.Contains(t, view, "SkyUI")
 	require.Contains(t, view, "installed")
-	require.Contains(t, view, "Page 1/2")
+	require.Contains(t, view, "2 of 12 loaded")
 	require.Contains(t, view, "UI overhaul.", "detail panel shows the selected result's summary")
 
 	model.search.page.Results = append(model.search.page.Results,
@@ -845,12 +828,12 @@ func TestSearchFetchSizeCapsOnTallTerminals(t *testing.T) {
 }
 
 // TestSearchFetchSizeStickyAcrossResizeWithinSession is the stickiness half
-// of #111 Tier 1: a query session's fetch size is fixed at submit (page 0)
-// and must survive a resize until the NEXT fresh submit, even though the
-// pagination keys (n/p) and the post-install refresh all funnel through the
-// same startSearch. recordingProvider.SearchPageSizes captures the pageSize
-// argument of every Search call in order, so this can assert on the actual
-// wire value a provider received rather than on internal model state alone.
+// of #111 Tier 1/3: a query session's fetch size is fixed at submit and
+// must survive a resize until the NEXT fresh submit, even though scroll-
+// triggered refills reuse it too. recordingProvider.SearchPageSizes
+// captures the pageSize argument of every Search call in order, so this can
+// assert on the actual wire value a provider received rather than on
+// internal model state alone.
 func TestSearchFetchSizeStickyAcrossResizeWithinSession(t *testing.T) {
 	t.Parallel()
 
@@ -877,14 +860,11 @@ func TestSearchFetchSizeStickyAcrossResizeWithinSession(t *testing.T) {
 	require.Equal(t, 10, original, "80x24 all-sources derived fetch size")
 	require.Equal(t, original, model.search.fetchSize, "the session's sticky size must be stored on the model")
 
-	// Force a next-page hint regardless of the canned set's actual size, so
-	// 'n' below issues a real requery instead of a hasNextPage() no-op.
-	// Both fields are set since hasNextPage branches on Source =="" vs not
-	// (see its own doc comment) - Exhausted covers the all-sources default,
-	// TotalCount/PageSize cover a single-source page.
-	model.search.page.Exhausted = false
-	model.search.page.TotalCount = 999
-	model.search.page.PageSize = original
+	// Force the buffer to look refill-worthy regardless of the canned set's
+	// actual size (1 match for "sky").
+	model.search.buffer = make([]ModItem, original)
+	model.search.page.Results = model.search.buffer
+	model.search.providerExhausted = false
 
 	// Resize mid-session: the ALREADY-STARTED session must not pick this up.
 	resized, _ := model.Update(tea.WindowSizeMsg{Width: 200, Height: 60})
@@ -892,16 +872,16 @@ func TestSearchFetchSizeStickyAcrossResizeWithinSession(t *testing.T) {
 	newSize := model.searchFetchSize()
 	require.NotEqual(t, original, newSize, "the test needs a resize that actually changes the derived size")
 
-	model = updateWithKeyType(t, model, tea.KeyEsc) // n is a screen-level key; only reaches pagination once blurred
+	model = updateWithKeyType(t, model, tea.KeyEsc) // n is a screen-level key; only reaches it once blurred
 	updated, cmd = model.Update(keyRunes("n"))
-	require.NotNil(t, cmd, "next page issues a search command")
+	require.NotNil(t, cmd, "scrolling into refill range issues a search command")
 	model = updated.(Model)
 	_, _ = model.Update(cmd())
 
 	require.Len(t, rec.SearchPageSizes, 2)
-	require.Equal(t, original, rec.SearchPageSizes[1], "the n-triggered requery must keep the ORIGINAL session's fetch size")
+	require.Equal(t, original, rec.SearchPageSizes[1], "the refill must keep the ORIGINAL session's fetch size")
 
-	// A fresh submit (page 0) after the resize must pick up the NEW size.
+	// A fresh submit after the resize must pick up the NEW size.
 	model = updateWithRunes(t, model, "/") // refocus (query text is still "sky")
 	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	require.NotNil(t, cmd)
@@ -912,13 +892,14 @@ func TestSearchFetchSizeStickyAcrossResizeWithinSession(t *testing.T) {
 	require.Equal(t, newSize, rec.SearchPageSizes[2], "a fresh submit after resize must use the NEW size")
 }
 
-// TestSearchFetchSizeStickyAcrossResizeThenPrevPageToZero guards Copilot PR
-// #114 round 2's finding: PrevPage from page 1 lands back on page 0 WITHIN
-// the same session - that recurrence is not itself a "new session" signal,
-// so the page-0 refetch it triggers must keep the session's ORIGINAL fetch
-// size even if the terminal was resized between the 'n' and 'p' presses.
-// Only startSearch's explicit submit path may recompute.
-func TestSearchFetchSizeStickyAcrossResizeThenPrevPageToZero(t *testing.T) {
+// TestPrevPageNeverCallsProviderEvenAfterResize guards #111 Tier 3's
+// strengthened contract - Copilot PR #114 round 2's finding was that
+// PrevPage (page-era) could silently recompute mid-session; under infinite
+// scroll that entire class of bug is impossible by construction, since p
+// only ever moves the selection backward through what's ALREADY buffered
+// and never checks maybeRefillSearch at all (see PrevPage's own handler in
+// app.go).
+func TestPrevPageNeverCallsProviderEvenAfterResize(t *testing.T) {
 	t.Parallel()
 
 	rec := &recordingProvider{delegate: NewPrototypeProvider()}
@@ -934,51 +915,32 @@ func TestSearchFetchSizeStickyAcrossResizeThenPrevPageToZero(t *testing.T) {
 	}
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
-	require.NotNil(t, cmd)
 	result, _ := model.Update(cmd())
 	model = result.(Model)
 	require.Equal(t, searchReady, model.search.state)
 	require.Len(t, rec.SearchPageSizes, 1)
-	original := rec.SearchPageSizes[0]
-	require.Equal(t, 10, original, "80x24 all-sources derived fetch size")
 
-	// Force a next-page hint so 'n' below issues a real requery to page 1
-	// (same forcing technique as TestSearchFetchSizeStickyAcrossResizeWithinSession).
-	model.search.page.Exhausted = false
-	model.search.page.TotalCount = 999
-	model.search.page.PageSize = original
+	model.search.buffer = make([]ModItem, 20)
+	model.search.page.Results = model.search.buffer
+	model.selected[ScreenSearch] = 15
 
-	model = updateWithKeyType(t, model, tea.KeyEsc) // n/p are screen-level keys; only reach pagination once blurred
-	updated, cmd = model.Update(keyRunes("n"))
-	require.NotNil(t, cmd, "next page issues a search command")
-	model = updated.(Model)
-	result, _ = model.Update(cmd())
-	model = result.(Model)
-	require.Equal(t, 1, model.search.page.Page, "now viewing page 1")
-	require.Len(t, rec.SearchPageSizes, 2)
-	require.Equal(t, original, rec.SearchPageSizes[1], "the n-triggered requery to page 1 must keep the original size")
-
-	// Resize mid-session, THEN step back to page 0 via PrevPage.
 	resized, _ := model.Update(tea.WindowSizeMsg{Width: 200, Height: 60})
 	model = resized.(Model)
-	newSize := model.searchFetchSize()
-	require.NotEqual(t, original, newSize, "the test needs a resize that actually changes the derived size")
 
+	model = updateWithKeyType(t, model, tea.KeyEsc) // p is a screen-level key; only reaches it once blurred
 	updated, cmd = model.Update(keyRunes("p"))
-	require.NotNil(t, cmd, "prev page issues a search command")
+	require.Nil(t, cmd, "p must never dispatch a provider call")
 	model = updated.(Model)
-	_, _ = model.Update(cmd())
 
-	require.Len(t, rec.SearchPageSizes, 3)
-	require.Equal(t, original, rec.SearchPageSizes[2],
-		"PrevPage back to page 0 must keep the ORIGINAL session's fetch size, not recompute just because page == 0")
+	require.Less(t, model.selected[ScreenSearch], 15, "p still moves the selection backward")
+	require.Len(t, rec.SearchPageSizes, 1, "no additional provider call after p")
 }
 
 // TestSearchFetchSizeStickyAcrossResizeThenPostInstallRefresh guards the
-// other half of Copilot PR #114 round 2's finding: refreshSearchAfterInstall
-// re-fetches whichever page is currently on screen - page 0 in this test -
-// as part of the SAME session, and must not treat that page-0 refetch as a
-// new session either.
+// other half of Copilot PR #114 round 2's finding under #111 Tier 3's
+// rebuild-the-buffer refresh mechanics: refreshSearchAfterInstall refetches
+// the session's already-covered rounds, and must keep the session's
+// ORIGINAL fetch size rather than recomputing after a resize.
 func TestSearchFetchSizeStickyAcrossResizeThenPostInstallRefresh(t *testing.T) {
 	t.Parallel()
 
@@ -1002,7 +964,6 @@ func TestSearchFetchSizeStickyAcrossResizeThenPostInstallRefresh(t *testing.T) {
 	require.Len(t, rec.SearchPageSizes, 1)
 	original := rec.SearchPageSizes[0]
 	require.Equal(t, 10, original, "80x24 all-sources derived fetch size")
-	require.Equal(t, 0, model.search.page.Page, "still viewing page 0")
 
 	resized, _ := model.Update(tea.WindowSizeMsg{Width: 200, Height: 60})
 	model = resized.(Model)
@@ -1010,10 +971,207 @@ func TestSearchFetchSizeStickyAcrossResizeThenPostInstallRefresh(t *testing.T) {
 	require.NotEqual(t, original, newSize, "the test needs a resize that actually changes the derived size")
 
 	model, cmd = model.refreshSearchAfterInstall()
-	require.NotNil(t, cmd, "refreshSearchAfterInstall must dispatch a requery from searchReady")
+	require.NotNil(t, cmd, "refreshSearchAfterInstall must dispatch a rebuild from searchReady")
 	_, _ = model.Update(cmd())
 
 	require.Len(t, rec.SearchPageSizes, 2)
 	require.Equal(t, original, rec.SearchPageSizes[1],
-		"the post-install refresh must keep the ORIGINAL session's fetch size, not recompute just because it's re-fetching page 0")
+		"the post-install refresh must keep the ORIGINAL session's fetch size, not recompute after a resize")
+}
+
+// --- #111 Tier 3: infinite scroll (design supersedes buffered display
+// pagination - see task-1-report.md's "Fix round 3" for the root cause: an
+// aggregate DISPLAY page used to equal one fetch round, but a round's union
+// size varies with how many sources still have data left, so no per-page
+// arithmetic could describe it honestly) ---
+
+// aggregateRoundProvider fakes an all-sources aggregate whose per-round
+// union reproduces the user's exact PR #114 scenario, merging the way
+// core.Service.SearchAllSources really merges: page N requests page N from
+// EACH source independently and concatenates (see that function's own doc
+// comment) - deep has enough rows to span multiple rounds, shallow has only
+// a few, so round 0's union is bigger than one fetchSize-sized chunk and
+// later rounds shrink once shallow runs dry.
+type aggregateRoundProvider struct {
+	stubProvider
+	deep, shallow int
+	// calls records every Search call's pageSize, in order - every call in
+	// these tests happens synchronously (the returned tea.Cmd is invoked
+	// inline), never from a real goroutine, so a plain slice is race-safe.
+	calls []int
+}
+
+func (p *aggregateRoundProvider) Sources() []string { return []string{"deep", "shallow"} }
+
+func (p *aggregateRoundProvider) Search(_ context.Context, source, query string, page, pageSize int) (SearchPage, error) {
+	p.calls = append(p.calls, pageSize)
+	slice := func(total int) ([]ModItem, bool) {
+		start := min(page*pageSize, total)
+		end := min(start+pageSize, total)
+		items := make([]ModItem, 0, end-start)
+		for i := start; i < end; i++ {
+			items = append(items, ModItem{ID: fmt.Sprintf("m%d-%d", total, i), Name: fmt.Sprintf("Mod %d", i)})
+		}
+		return items, (page+1)*pageSize < total
+	}
+	deepItems, deepMore := slice(p.deep)
+	shallowItems, shallowMore := slice(p.shallow)
+	return SearchPage{
+		Results: append(deepItems, shallowItems...),
+		Query:   query, Source: source, Page: page, PageSize: pageSize,
+		TotalCount: p.deep + p.shallow, Exhausted: !deepMore && !shallowMore, AttemptedCount: 2,
+	}, nil
+}
+
+// aggregateRoundScreenModel builds a Model over provider, sized 80x24 (the
+// all-sources fetchSize there is 10 - see TestSearchFetchSizeDerivesFromPaneBudget)
+// and focused on the search screen - the shared starting point every
+// anchor test below needs.
+func aggregateRoundScreenModel(t *testing.T, provider DataProvider) Model {
+	t.Helper()
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	sized, _ := loaded.(Model).Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return updateWithRunes(t, sized.(Model), "3")
+}
+
+// submitSearch drives a fresh submit through the real Update loop (typing
+// query, then Enter while focused, then running the resulting Cmd) and
+// returns the resulting Model.
+func submitSearch(t *testing.T, model Model, query string) Model {
+	t.Helper()
+	for _, r := range query {
+		model = updateWithRunes(t, model, string(r))
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	result, _ := model.Update(cmd())
+	return result.(Model)
+}
+
+// TestInfiniteScrollBuffersAcrossRoundsAndRefillsOnLowWater is the anchor
+// test for #111 Tier 3: the user's exact PR #114 scenario (deep=2*B+3
+// rows, shallow=3 rows, B=10) - j/k-style scrolling (via n's accelerator)
+// walks the ENTIRE merged buffer with no page boundary anywhere, refilling
+// exactly once per low-water crossing, and stopping dead once the provider
+// says there's nothing left, no matter how far the user keeps scrolling.
+func TestInfiniteScrollBuffersAcrossRoundsAndRefillsOnLowWater(t *testing.T) {
+	t.Parallel()
+
+	provider := &aggregateRoundProvider{deep: 23, shallow: 3}
+	model := aggregateRoundScreenModel(t, provider)
+	model = submitSearch(t, model, "x")
+	require.Equal(t, searchReady, model.search.state)
+	require.Len(t, provider.calls, 1, "round 0 (the submit)")
+	require.Len(t, model.search.buffer, 13, "round 0's union: 10 deep + 3 shallow")
+	require.False(t, model.search.providerExhausted)
+
+	model = updateWithKeyType(t, model, tea.KeyEsc) // unfocus so n reaches the outer switch
+
+	// n jumps the selection a paneful (10) - within one fetchSize of the
+	// 13-row buffer's end, so it must refill exactly once.
+	updated, cmd := model.Update(keyRunes("n"))
+	require.NotNil(t, cmd, "scrolling within one fetchSize of the buffer's end must refill")
+	model = updated.(Model)
+	result, _ := model.Update(cmd())
+	model = result.(Model)
+	require.Len(t, provider.calls, 2, "round 1")
+	require.Len(t, model.search.buffer, 23, "13 + 10 more deep rows; shallow already exhausted")
+	require.False(t, model.search.providerExhausted, "deep still has 3 rows left")
+
+	updated, cmd = model.Update(keyRunes("n"))
+	require.NotNil(t, cmd, "still within refill range of the now-23-row buffer")
+	model = updated.(Model)
+	result, _ = model.Update(cmd())
+	model = result.(Model)
+	require.Len(t, provider.calls, 3, "round 2 - the last one")
+	require.Len(t, model.search.buffer, 26, "23 + 3 remaining deep rows")
+	require.True(t, model.search.providerExhausted)
+	require.Equal(t, "all 26 shown", model.searchFooterLine())
+
+	// Exhaustion must stop further calls no matter how far the user scrolls.
+	updated, cmd = model.Update(keyRunes("n"))
+	require.Nil(t, cmd, "exhausted - no more provider calls, ever")
+	model = updated.(Model)
+	require.Len(t, provider.calls, 3, "still exactly 3 calls")
+
+	// p walks back through the buffer WITHOUT ever calling the provider.
+	_, cmd = model.Update(keyRunes("p"))
+	require.Nil(t, cmd, "p never dispatches a provider call")
+	require.Len(t, provider.calls, 3)
+}
+
+// TestRefillDedupesConcurrentTriggers guards #111 Tier 3's duplicate-
+// trigger guard: a SECOND low-water trigger before the first refill's Cmd
+// has even run must not dispatch a second provider call, and the footer
+// must show the transient "· fetching…" suffix while one is in flight.
+func TestRefillDedupesConcurrentTriggers(t *testing.T) {
+	t.Parallel()
+
+	provider := &aggregateRoundProvider{deep: 23, shallow: 3}
+	model := aggregateRoundScreenModel(t, provider)
+	model = submitSearch(t, model, "x")
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+
+	updated, cmd1 := model.Update(keyRunes("n")) // dispatches (builds) round 1's cmd
+	require.NotNil(t, cmd1)
+	model = updated.(Model)
+	require.True(t, model.search.refilling)
+	require.Contains(t, model.searchFooterLine(), "· fetching…")
+	require.Len(t, provider.calls, 1, "cmd1 is built but not yet RUN - only the submit has actually called Search")
+
+	updated, cmd2 := model.Update(keyRunes("n"))
+	require.Nil(t, cmd2, "a refill already in flight must suppress a second dispatch")
+	model = updated.(Model)
+	require.Len(t, provider.calls, 1, "the suppressed trigger issued no call")
+
+	result, _ := model.Update(cmd1())
+	model = result.(Model)
+	require.Len(t, provider.calls, 2, "cmd1 finally ran")
+	require.False(t, model.search.refilling)
+	require.NotContains(t, model.searchFooterLine(), "fetching")
+}
+
+// TestSearchFooterSingleSourceForms guards the single-source footer forms
+// (#111 Tier 3): a reported TotalCount always renders "X of Y loaded";
+// without one, single-source falls back to the same loaded/more-available/
+// all-shown forms aggregate mode uses.
+func TestSearchFooterSingleSourceForms(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.state = searchReady
+	model.search.buffer = make([]ModItem, 4)
+	model.search.page = SearchPage{Query: "q", Source: "nexusmods", TotalCount: 47, Results: model.search.buffer}
+	require.Equal(t, "4 of 47 loaded", model.searchFooterLine())
+
+	model.search.page.TotalCount = 0
+	model.search.providerExhausted = false
+	require.Equal(t, "4 loaded · more available", model.searchFooterLine())
+
+	model.search.providerExhausted = true
+	require.Equal(t, "all 4 shown", model.searchFooterLine())
+}
+
+// TestStaleGenRefillResultDropped guards #111 Tier 3's staleness contract
+// for the new refill kind specifically: a refill dispatched for an OLD
+// session (before a new submit bumped gen) must be discarded on arrival,
+// exactly like a stale submit/refresh result already was - mirrors
+// TestStaleSearchResultsAreDiscarded's pattern.
+func TestStaleGenRefillResultDropped(t *testing.T) {
+	t.Parallel()
+
+	model := searchScreenModel(t)
+	model.search.gen = 5
+	model.search.buffer = []ModItem{{ID: "keep"}}
+	model.search.page.Results = model.search.buffer
+
+	updated, _ := model.Update(searchResultMsg{
+		gen: 4, kind: searchResultRefill,
+		page: SearchPage{Results: []ModItem{{ID: "stale"}}},
+	})
+	m := updated.(Model)
+	require.Equal(t, []ModItem{{ID: "keep"}}, m.search.buffer, "a stale-gen refill must not touch the current session's buffer")
 }
