@@ -2236,8 +2236,12 @@ const searchFetchSizeCap = 50
 
 // searchFetchSize derives how many results ONE query session should fetch
 // (#111 Tier 1) from the terminal's actual visible budget, so a submitted
-// search fills - without overflowing - the results pane it will render
-// into. Mirrors searchReadyView's own arithmetic exactly; that function's
+// search fills the results pane it will render into. "Fills" is a lower
+// bound, not an exact fit: the SearchPageSize floor (10) can exceed a
+// short terminal's pane budget, and the pane's scroll-follow windowing
+// absorbs any excess rows - the fetch size never constrains rendering,
+// only how much one request asks for. Mirrors searchReadyView's own
+// arithmetic; that function's
 // paneContentHeight local computes:
 //
 //	paneContentHeight := max(paneHeight - Panel.GetVerticalBorderSize(), 1)
