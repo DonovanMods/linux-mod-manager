@@ -990,27 +990,87 @@ func (m Model) itemCount(screen Screen) int {
 	}
 }
 
+// nav renders the top nav bar, picking the narrowest tier that still fits
+// availableWidth() (measured with lipgloss.Width, ANSI-aware):
+//
+//  1. full: every screen as "[N] Label" ("•N• Label" for the current one).
+//  2. current-label-only: non-current screens collapse to just their "[N]"
+//     cell; the current screen keeps its full "•N• Label".
+//  3. numbers-only: every screen collapses to its number cell.
+//
+// This exists because #108's sixth screen entry ("[6] Conflicts") pushed
+// the full nav to ~87 cells, past an 80-column terminal's ~76-cell
+// availableWidth() - before this fix nav() always returned the full-width
+// line and left View()'s hard truncate (see its own doc comment; still the
+// final safety net below) to cut it down, which chopped the tail label -
+// and, when the current screen was last, its marker too - off entirely
+// rather than degrading gracefully. Measuring and stepping down tiers
+// means the common case (a mid-size terminal) still shows every label,
+// and only pathologically narrow terminals fall all the way to bare
+// numbers; panel titles still identify the current screen even then.
+//
+// Every tier keeps the •N• marker (#91 audit): nav() distinguished the
+// current screen from the rest by color alone, which disappears under
+// NO_COLOR/--no-color/non-color terminals where Selected and MutedText
+// render byte-identical text. •N• replaces (never joins) the [N] cell -
+// SAME WIDTH is load-bearing (PR #107 review): the first fix prefixed
+// "• ", which grew the line and shifted the hard truncation so the
+// rightmost label degraded at 80 cols (the committed goldens caught it as
+// a dangling "•…"). Because the marker only swaps glyphs inside the
+// existing three-cell number slot, it adds zero width in every tier - so
+// which screen is current can never change a tier's measured width, and
+// therefore never changes which tier gets picked.
 func (m Model) nav() string {
+	width := m.availableWidth()
+	for _, tier := range []func() string{m.navFull, m.navCurrentLabelOnly, m.navNumbersOnly} {
+		if candidate := tier(); lipgloss.Width(candidate) <= width {
+			return candidate
+		}
+	}
+	// Even tier 3 doesn't fit (availableWidth() floors at 40, tier 3 is
+	// ~28 cells, so this shouldn't happen in practice) - fall back to the
+	// narrowest tier and let View()'s hard truncate handle it.
+	return m.navNumbersOnly()
+}
+
+// navFull renders every screen's number cell and label - tier 1, see nav()'s
+// doc comment for the tier design and the •N• marker's same-width rationale.
+func (m Model) navFull() string {
 	items := make([]string, 0, len(screens))
 	for i, screen := range screens {
-		var label string
 		if screen == m.screen {
-			// •N• replaces the [N] cell so the current screen stays
-			// identifiable by more than color alone (#91 audit) -
-			// color-only distinction disappears entirely under
-			// NO_COLOR/--no-color/non-color terminals, where Selected and
-			// MutedText render byte-identical text. SAME WIDTH is load-
-			// bearing (PR #107 review): the first fix prefixed "• ", which
-			// grew the line and shifted View()'s hard truncation so the
-			// rightmost label degraded at 80 cols (the committed goldens
-			// caught it as a dangling "•…"). Swapping glyphs inside the
-			// existing three-cell number slot adds zero width, so marking
-			// a screen current can never change where the nav truncates.
-			label = m.theme.Selected.Render(fmt.Sprintf("•%d• %s", i+1, screen))
+			items = append(items, m.theme.Selected.Render(fmt.Sprintf("•%d• %s", i+1, screen)))
 		} else {
-			label = m.theme.MutedText.Render(fmt.Sprintf("[%d] %s", i+1, screen))
+			items = append(items, m.theme.MutedText.Render(fmt.Sprintf("[%d] %s", i+1, screen)))
 		}
-		items = append(items, label)
+	}
+	return strings.Join(items, "  ")
+}
+
+// navCurrentLabelOnly renders every screen's number cell, but only the
+// current screen's label - tier 2, see nav()'s doc comment.
+func (m Model) navCurrentLabelOnly() string {
+	items := make([]string, 0, len(screens))
+	for i, screen := range screens {
+		if screen == m.screen {
+			items = append(items, m.theme.Selected.Render(fmt.Sprintf("•%d• %s", i+1, screen)))
+		} else {
+			items = append(items, m.theme.MutedText.Render(fmt.Sprintf("[%d]", i+1)))
+		}
+	}
+	return strings.Join(items, "  ")
+}
+
+// navNumbersOnly renders every screen as a bare number cell, current
+// included - tier 3, see nav()'s doc comment.
+func (m Model) navNumbersOnly() string {
+	items := make([]string, 0, len(screens))
+	for i, screen := range screens {
+		if screen == m.screen {
+			items = append(items, m.theme.Selected.Render(fmt.Sprintf("•%d•", i+1)))
+		} else {
+			items = append(items, m.theme.MutedText.Render(fmt.Sprintf("[%d]", i+1)))
+		}
 	}
 	return strings.Join(items, "  ")
 }

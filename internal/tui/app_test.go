@@ -197,6 +197,84 @@ func TestNavMarkerAddsNoWidth(t *testing.T) {
 		"marked nav must be exactly as wide as the unmarked form")
 }
 
+// TestNavCompressesToFitAt80Columns is #108's RED case: the 6-screen full
+// nav (tier 1, ~87 cells - see nav()'s doc comment) never fits an 80-column
+// terminal's 76-cell availableWidth(), so before this fix nav() always
+// returned the full-width line and relied on View()'s hard truncate to cut
+// it down - which chopped the tail label (and, when the CURRENT screen was
+// last, its •N• marker) off entirely rather than degrading gracefully. This
+// asserts against m.nav() directly (not the truncated View() line) because
+// the fix's whole point is that nav() itself must already fit
+// availableWidth() - truncate() is a safety net, not the compression
+// mechanism. Tier 2 (current-label-only, worst case ~43 cells per the
+// design doc) fits comfortably under 76 for every screen, so this also
+// pins that the current screen's label text survives at this width.
+func TestNavCompressesToFitAt80Columns(t *testing.T) {
+	t.Parallel()
+
+	for i, screen := range screens {
+		i, screen := i, screen
+		t.Run(screen.String(), func(t *testing.T) {
+			t.Parallel()
+
+			model := sizedPrototypeModel(t, "wizardry", 80, 24)
+			model.screen = screen
+
+			nav := model.nav()
+			width := model.availableWidth()
+
+			require.LessOrEqual(t, lipgloss.Width(nav), width,
+				"nav() itself must fit availableWidth() without relying on View()'s truncate safety net")
+			require.Contains(t, nav, fmt.Sprintf("•%d•", i+1),
+				"current screen's marker must survive at 80 columns")
+			require.Contains(t, nav, screen.String(),
+				"tier 2 (current-label-only) keeps the current screen's label text")
+		})
+	}
+}
+
+// TestNavStaysFullAt120Columns pins the no-regression side of #108: at a
+// comfortably wide terminal (120 cols -> 116-cell availableWidth(), well
+// over tier 1's ~87), nav() must still pick tier 1 and render every
+// screen's full label, not just the current one.
+func TestNavStaysFullAt120Columns(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 120, 36)
+	nav := model.nav()
+
+	require.LessOrEqual(t, lipgloss.Width(nav), model.availableWidth())
+	for _, screen := range screens {
+		require.Contains(t, nav, screen.String(),
+			"tier 1 (full) must keep every screen's label at wide widths, not just the current one")
+	}
+}
+
+// TestNavCompressesToNumbersOnlyAt40Columns is #108's pathological-width
+// case: availableWidth() floors at 40 cells (max(m.width-frame, 40)), and
+// tier 2's worst case - the current screen being "Installed Mods", the
+// longest label, at ~43 cells - exceeds that floor. nav() must fall all the
+// way to tier 3 (numbers-only, ~28 cells) rather than overflow: every
+// screen keeps its number cell, and the current screen's cell is still
+// •N•, but no label text (including the current screen's own) survives.
+func TestNavCompressesToNumbersOnlyAt40Columns(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 40, 12)
+	model.screen = ScreenInstalledMods // longest label: forces tier 2 over the 40-cell floor
+
+	nav := model.nav()
+	width := model.availableWidth()
+
+	require.LessOrEqual(t, lipgloss.Width(nav), width)
+	for i := range screens {
+		require.Contains(t, nav, fmt.Sprintf("%d", i+1), "every number cell must be present")
+	}
+	require.Contains(t, nav, "•2•", "current screen keeps its marker in the numbers-only tier")
+	require.NotContains(t, nav, "Installed Mods",
+		"numbers-only tier drops all labels, including the current screen's")
+}
+
 func TestNumberKeysNavigateScreens(t *testing.T) {
 	t.Parallel()
 
