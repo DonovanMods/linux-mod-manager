@@ -156,8 +156,9 @@ func readSynopsis(t *testing.T, path string) string {
 // pages before generating: if a command is removed or renamed, its old .1
 // file would otherwise stay behind forever - `make man` wouldn't remove it,
 // the drift test would fail on the extra file, and nothing would tell a
-// developer what to do about it. Scoped strictly to *.1 files; anything
-// else already in the directory must survive untouched.
+// developer what to do about it. Scoped strictly to lmm.1/lmm-*.1: gen-man
+// accepts an arbitrary dir, so other packages' pages in a shared man path
+// (and anything that isn't a man page) must survive untouched.
 func TestGenManTree_RemovesStalePages(t *testing.T) {
 	dir := t.TempDir()
 
@@ -167,6 +168,9 @@ func TestGenManTree_RemovesStalePages(t *testing.T) {
 	keep := filepath.Join(dir, "README.md")
 	require.NoError(t, os.WriteFile(keep, []byte("not a man page"), 0644))
 
+	foreign := filepath.Join(dir, "othertool.1")
+	require.NoError(t, os.WriteFile(foreign, []byte("someone else's page"), 0644))
+
 	require.NoError(t, genManTree(dir))
 
 	_, err := os.Stat(stale)
@@ -174,6 +178,9 @@ func TestGenManTree_RemovesStalePages(t *testing.T) {
 
 	_, err = os.Stat(keep)
 	assert.NoError(t, err, "non-.1 files must not be touched")
+
+	_, err = os.Stat(foreign)
+	assert.NoError(t, err, "other packages' .1 pages must not be touched")
 
 	_, err = os.Stat(filepath.Join(dir, "lmm.1"))
 	assert.NoError(t, err, "real pages should still be generated")

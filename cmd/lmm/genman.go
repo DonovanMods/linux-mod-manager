@@ -98,13 +98,20 @@ func genManTree(dir string) error {
 	return nil
 }
 
-// removeStaleManPages deletes every *.1 file directly inside dir. dir is
+// removeStaleManPages deletes this project's pages (lmm.1 and lmm-*.1)
+// directly inside dir. Scoped to the lmm prefix rather than *.1 because
+// `gen-man [dir]` accepts an arbitrary directory - pointed at a shared man
+// path, a bare *.1 sweep would delete other packages' pages. dir is
 // expected to already exist (genManTree creates it via MkdirAll before
 // calling this).
 func removeStaleManPages(dir string) error {
-	matches, err := filepath.Glob(filepath.Join(dir, "*.1"))
+	matches, err := filepath.Glob(filepath.Join(dir, "lmm-*.1"))
 	if err != nil {
 		return err
+	}
+	root := filepath.Join(dir, "lmm.1")
+	if _, statErr := os.Stat(root); statErr == nil {
+		matches = append(matches, root)
 	}
 	for _, m := range matches {
 		if err := os.Remove(m); err != nil {
