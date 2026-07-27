@@ -79,6 +79,33 @@ func TestPurgeKeyNoModsDoesNotStompRunningActionStatus(t *testing.T) {
 	require.Zero(t, rec.PurgeCalls)
 }
 
+// TestPurgeKeyNoModsMessageOutranksReorderHint covers the same priority
+// inversion Copilot found in PR #107 round 4 for deleteSelectedProfile
+// (see profile_mgmt_test.go's
+// TestDeleteProfileActiveRefusalOutranksReorderHint): with only the
+// LOW-priority orderChanged fallback hint on the line - no action running,
+// no explicit status - the zero-mods message must still be written, not
+// silently swallowed.
+func TestPurgeKeyNoModsMessageOutranksReorderHint(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.mods = nil
+	model.orderChanged = true // an undeployed reorder's fallback hint owns nothing
+
+	updated, cmd := model.Update(keyRunes("X"))
+	model = updated.(Model)
+
+	require.Nil(t, cmd)
+	require.Equal(t, "no mods installed", model.action.status,
+		"the message must not be swallowed by the low-priority reorder hint")
+	require.False(t, model.action.statusIsError)
+	require.True(t, model.orderChanged, "the reorder-pending flag itself must survive, so the hint returns once the status clears")
+	require.Zero(t, rec.PurgeCalls)
+}
+
 // TestPurgeConfirmStreamsProgressAndReportsOutcome drives the full pump
 // pipeline (mirroring TestInstallProgressStreamsIntoStatusLine/
 // TestActionProgressStreamsWhileRunningThenActionDoneClearsIt in
