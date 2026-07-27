@@ -22,9 +22,11 @@ type Summary struct {
 	Updates     int // -1 = unknown (no update check has run)
 	Conflicts   int // -1 = unknown
 	// LastDeploy is the timestamp of the active profile's most recent deploy
-	// (#106a's dashboard "Last deploy" row), or nil when unknown. Unlike
-	// Updates/Conflicts' "-1 = unknown" int sentinel, nil is the natural
-	// "no value" for a *time.Time and needs no separate sentinel constant.
+	// (#106a's dashboard "Last deploy" row), or nil when the profile has
+	// never been deployed (a truly-unknown value surfaces as an error from
+	// the provider, never as nil here). Unlike Updates/Conflicts' "-1 =
+	// unknown" int sentinel, nil is the natural "no value" for a *time.Time
+	// and needs no separate sentinel constant.
 	// coreProvider.Overview populates this from core.Service.
 	// GetLastDeployTime, where nil specifically means "this profile has
 	// never been deployed" (a normal state, not an error - see that method's
