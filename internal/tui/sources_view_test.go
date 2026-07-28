@@ -487,3 +487,28 @@ func TestSourcesViewFitsPanelWidthNarrowTerminal(t *testing.T) {
 		require.LessOrEqual(t, lipgloss.Width(line), model.availableWidth(), "no rendered line exceeds terminal width")
 	}
 }
+
+// TestSourcesViewShowsToggleHint pins the inline scope-toggle hint (smoke
+// finding on PR #124): like the search screen's "(s cycles)", the Sources
+// title must name the 'a' key so the toggle is discoverable without opening
+// help — "(a shows all)" in the scoped default, "(a shows game)" once
+// toggled.
+func TestSourcesViewShowsToggleHint(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model = updateWithRunes(t, model, "5")
+	require.Equal(t, ScreenSources, model.CurrentScreen())
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	require.Contains(t, model.screenView(), "(a shows all)",
+		"scoped default must hint the toggle to the full registry")
+
+	model = updateWithRunes(t, model, "a")
+	view := model.screenView()
+	require.Contains(t, view, "(a shows game)",
+		"all-sources view must hint the toggle back to the game scope")
+	require.NotContains(t, view, "(a shows all)")
+}

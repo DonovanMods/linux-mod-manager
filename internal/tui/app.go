@@ -1821,6 +1821,11 @@ func (m Model) sourcesView() string {
 	panelContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 
 	title := "SOURCE REGISTRY — " + displayGameName(m.summary.GameName)
+	// Toggle hint in the search screen's "(s cycles)" style: muted, inline,
+	// naming the key. Fixed-size and appended AFTER truncating the title to
+	// the remaining width, so a long game name can't push the line past the
+	// panel width and re-wrap into an extra row (height-budget lesson, #42).
+	hint := "  (a shows all)"
 	// "  " matches m.row()'s 2-column selection-marker prefix ("> "/"  ") so
 	// the header lines up with the data columns below it instead of starting
 	// two columns to their left. The IN USE column exists only in the
@@ -1830,11 +1835,14 @@ func (m Model) sourcesView() string {
 	headerLine := "  " + fmt.Sprintf("%-20s %-12s %-6s %s", "ID", "TYPE", "AUTH", "CAPABILITIES")
 	if m.sourcesShowAll {
 		title = "SOURCE REGISTRY — ALL SOURCES"
+		hint = "  (a shows game)"
 		headerLine = "  " + fmt.Sprintf("%-20s %-12s %-6s %-7s %s", "ID", "TYPE", "AUTH", "IN USE", "CAPABILITIES")
 	}
 	headerLine = truncate(headerLine, panelContentWidth)
+	titleLine := m.theme.PanelTitle.Render(truncate(title, max(panelContentWidth-len(hint), 1))) +
+		m.theme.MutedText.Render(hint)
 	rows := []string{
-		m.theme.PanelTitle.Render(title),
+		titleLine,
 		m.theme.MutedText.Render(headerLine),
 	}
 	listBudget := max(contentBudget-len(rows), 0)
