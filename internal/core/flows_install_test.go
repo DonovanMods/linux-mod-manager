@@ -548,6 +548,23 @@ func (s *multiFileDownloadSource) GetModFiles(ctx context.Context, mod *domain.M
 	return s.files, nil
 }
 
+// oldFileSource serves two files: the primary/latest (v1.5) and an archived
+// older file (v1.0) - mockSource's default GetModFiles (a single, Version-
+// less file) is overridden so a test can exercise installing the non-primary
+// file explicitly, mirroring the CLI --file path (cmd/lmm/install.go:
+// 497-513 overwrites plan.Files with a caller-picked file after PlanInstall)
+// - see TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey (#94).
+type oldFileSource struct {
+	*mockSourceWithDownloads
+}
+
+func (s *oldFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{ID: "1", Name: "Main File", FileName: mod.ID + ".zip", Version: "1.5", IsPrimary: true},
+		{ID: "2", Name: "Old File", FileName: mod.ID + "-old.zip", Version: "1.0"},
+	}, nil
+}
+
 // registerDownloadableMod registers mod with mock and stages a one-file zip
 // archive (containing relativePath -> content) as that mod's download,
 // keyed by mod.ID (matching perModFileSource's GetModFiles).
@@ -1174,6 +1191,80 @@ func TestService_ApplyInstall_EditedPlanFilesHonored(t *testing.T) {
 	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"main", "optional"}, installed.FileIDs)
+}
+
+// TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey is the #94
+// regression test: installing an explicitly-picked non-primary (older) file
+// must record THAT FILE's version - not the mod's own (newer) Version - in
+// the DB row and the cache directory key, so a subsequent CheckUpdates still
+// offers the real update instead of the old file silently masquerading as
+// current. Mirrors the CLI --file path (cmd/lmm/install.go:497-513), which
+// overwrites plan.Files with the caller-picked file after PlanInstall.
+func TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &oldFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"}
+	mock.AddMod(mod.GameID, mod)
+
+	oldZip := createTestZip(t, t.TempDir(), map[string]string{"mod1.esp": "old-payload"})
+	oldContent, err := os.ReadFile(oldZip)
+	require.NoError(t, err)
+	mock.AddDownload("2", oldContent)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Files, 1, "PlanInstall's own default picks just the primary file")
+	assert.Equal(t, "1", plan.Files[0].ID)
+
+	// Caller (CLI's --file override) picks the archived old file instead.
+	plan.Files = []domain.DownloadableFile{
+		{ID: "2", Name: "Old File", FileName: "mod1-old.zip", Version: "1.0"},
+	}
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Mod One"}, result.Installed)
+
+	got, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", got.Version, "DB row must record the selected file's version, not the mod's latest")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "cache must be keyed by the installed file's version")
+	assert.False(t, gameCache.Exists("g1", "src", "mod1", "1.5"), "cache must NOT be keyed by the mod's latest version when an older file was installed")
+
+	// The user-visible symptom: installing an older file must not suppress
+	// its own update notification. domain.IsNewerVersion backs CheckUpdates'
+	// comparison for sources that use it directly.
+	assert.True(t, domain.IsNewerVersion(got.Version, "1.5"))
+
+	// Confirm at the CheckUpdates level too, via a source mock whose
+	// CheckUpdates is actually wired up (mockSource's always returns nil).
+	registry := source.NewRegistry()
+	updateSrc := &updateMockSource{
+		id: "src",
+		currentMod: &domain.Mod{
+			ID:       "mod1",
+			SourceID: "src",
+			Name:     "Mod One",
+			Version:  "1.5",
+			GameID:   "g1",
+		},
+	}
+	registry.Register(updateSrc)
+	updater := core.NewUpdater(registry)
+
+	updates, err := updater.CheckUpdates(context.Background(), game, []domain.InstalledMod{*got})
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	assert.Equal(t, "1.5", updates[0].NewVersion)
 }
 
 // TestService_ApplyInstall_ContextCancellation proves ApplyInstall checks

@@ -2888,6 +2888,16 @@ type fileChecksum struct {
 // as a whole, matching doInstall's own early returns.
 func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, plan *InstallPlan, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress)) (*DeployProgress, error) {
 	mod := plan.Mod // local, addressable copy - distinct from plan.Mod
+
+	// #94: record what is actually being installed. plan.Files is the final
+	// selection (the CLI --file/picker path overwrites it after PlanInstall),
+	// and mod.Version keys the cache, the DB row, and the profile ref below.
+	selectedFiles := make([]*domain.DownloadableFile, len(plan.Files))
+	for i := range plan.Files {
+		selectedFiles[i] = &plan.Files[i]
+	}
+	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selectedFiles)
+
 	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
 
 	hookCtx := opts.HookContext
