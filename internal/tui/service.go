@@ -421,7 +421,12 @@ func (p *prototypeProvider) SourceInfos(all bool) []SourceInfo {
 // actually exercises searchWarningLine's rendering path - before this, no
 // prototype search ever populated Warnings at all, leaving that line of the
 // UI completely untested by the one path (--prototype) meant to demo every
-// search state.
+// search state. KNOWN COSMETIC INCOHERENCE: it names curseforge, which the
+// demo's game-scoped source set doesn't include (a real aggregate search
+// could never warn about an unattempted source) - the string exists purely
+// to exercise searchWarningLine's rendering, and widening the demo's
+// configured set just to make it coherent would ripple through Sources()'s
+// lockstep contract for no demo value.
 const prototypeAllSourcesWarning = "curseforge: connection refused"
 
 func (p *prototypeProvider) Search(_ context.Context, source, query string, page, pageSize int) (SearchPage, error) {

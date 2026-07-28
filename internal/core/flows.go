@@ -265,7 +265,8 @@ type DeployOptions struct {
 	// ModID/SourceID restrict the deploy to a single mod (`lmm deploy
 	// <mod-id>`). Both empty (the default) deploys every mod in profile
 	// order, subject to All. SourceID selects which source's copy of ModID
-	// to deploy - the CLI's --source flag, default "nexusmods".
+	// to deploy - the CLI's --source flag, resolved dynamically since
+	// v1.22.0 (sole configured source, or an interactive prompt).
 	ModID    string
 	SourceID string
 
