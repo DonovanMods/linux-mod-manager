@@ -348,3 +348,67 @@ func readGamesYAML(t *testing.T) (string, error) {
 	data, err := os.ReadFile(filepath.Join(configDir, "games.yaml"))
 	return string(data), err
 }
+
+// TestDoGameAdd_CatalogPath_EmptySlugFallsBackToIdentifier pins the local
+// game-ID derivation for a catalog entry with no Slug (GameEntry doesn't
+// guarantee it; CurseForge happens to set it): the ID falls back to
+// catalogIdentifier's value instead of saving a games.yaml entry keyed "".
+func TestDoGameAdd_CatalogPath_EmptySlugFallsBackToIdentifier(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "acme-cat", name: "Acme Catalog"},
+		entries: []source.GameEntry{
+			{ID: "Game 99", Name: "Slugless Quest", Slug: ""},
+		},
+	})
+
+	input := strings.Join([]string{
+		"1",                   // select acme-cat
+		"quest",               // search query
+		"1",                   // select the sole match
+		"/opt/games/slugless", // install path
+		"",                    // accept default mod path
+	}, "\n") + "\n"
+
+	cmd, buf := newGameAddCmd()
+	reader := bufio.NewReader(strings.NewReader(input))
+
+	err := doGameAdd(context.Background(), cmd, reader, svc)
+	require.NoError(t, err, "output so far:\n%s", buf.String())
+
+	games, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	// "Game 99" -> lowercased, spaces dashed: "game-99".
+	game, ok := games["game-99"]
+	require.True(t, ok, "expected the ID-derived key %q; got %v", "game-99", games)
+	assert.Equal(t, map[string]string{"acme-cat": "Game 99"}, game.SourceIDs)
+	_, empty := games[""]
+	assert.False(t, empty, "an empty-string game key must never be written")
+}
+
+// TestDoGameAdd_CatalogPath_NoUsableIdentifierErrors pins the guard for a
+// catalog entry populating neither ID nor Slug: a clear error naming the
+// source, never a games.yaml entry keyed "".
+func TestDoGameAdd_CatalogPath_NoUsableIdentifierErrors(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "acme-cat", name: "Acme Catalog"},
+		entries: []source.GameEntry{
+			{ID: "", Name: "Broken Entry", Slug: ""},
+		},
+	})
+
+	input := "1\nbroken\n1\n"
+	cmd, buf := newGameAddCmd()
+	reader := bufio.NewReader(strings.NewReader(input))
+
+	err := doGameAdd(context.Background(), cmd, reader, svc)
+	require.Error(t, err, "output so far:\n%s", buf.String())
+	assert.Contains(t, err.Error(), "no usable identifier")
+	assert.Contains(t, err.Error(), "acme-cat")
+
+	games, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	_, empty := games[""]
+	assert.False(t, empty, "an empty-string game key must never be written")
+}

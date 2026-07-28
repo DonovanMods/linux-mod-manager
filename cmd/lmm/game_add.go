@@ -150,7 +150,18 @@ func runGameAddCatalog(ctx context.Context, cmd *cobra.Command, reader *bufio.Re
 	selected := matches[selIdx-1]
 
 	cmd.Printf("\nConfiguring %s...\n", selected.Name)
+	// The local game ID prefers the entry's Slug but must never be empty:
+	// GameEntry doesn't guarantee Slug (CurseForge sets it; the interface
+	// doesn't), and an empty ID would save a games.yaml entry keyed ""
+	// that later lookups can't address. Fall back to the catalog
+	// identifier; a source populating neither field is unusable here.
 	gameSlug := strings.ToLower(strings.ReplaceAll(selected.Slug, " ", "-"))
+	if gameSlug == "" {
+		gameSlug = strings.ToLower(strings.ReplaceAll(catalogIdentifier(selected), " ", "-"))
+	}
+	if gameSlug == "" {
+		return fmt.Errorf("source %s returned a catalog entry with no usable identifier for %q", sourceID, selected.Name)
+	}
 
 	installPath, modPath, err := promptForPaths(cmd, reader)
 	if err != nil {
@@ -167,9 +178,9 @@ func runGameAddCatalog(ctx context.Context, cmd *cobra.Command, reader *bufio.Re
 // internal/source/curseforge/curseforge.go), matching exactly what today's
 // CurseForge path in this file saved via strconv.Itoa(selected.ID) - falling
 // back to entry.Slug for a source whose catalog only populates Slug. A
-// source populating neither is a GameCatalog implementation bug; the empty
-// string is saved as-is rather than papered over, so the resulting broken
-// config is visible and diagnosable instead of silently swallowed.
+// source populating neither is a GameCatalog implementation bug; the caller
+// (runGameAddCatalog) guards against it before saving, erroring rather than
+// writing a games.yaml entry keyed "".
 func catalogIdentifier(e source.GameEntry) string {
 	if e.ID != "" {
 		return e.ID
