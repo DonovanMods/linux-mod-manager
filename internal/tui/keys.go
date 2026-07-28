@@ -122,6 +122,16 @@ type KeyMap struct {
 	// distinguishes a Profiles/whole-profile action" convention, distinct from
 	// any lowercase binding.
 	ExportProfile key.Binding
+	// ToggleAllSources is Task 4's Sources-screen scope toggle (#75, see
+	// mutations.go's toggleSourcesAll): fires ONLY on ScreenSources,
+	// flipping between the game-scoped default list and the full registry
+	// (with the InUse marker) - the choice IS the new state, dispatching
+	// immediately like Policy/GameSwitch above, no confirm modal. Lowercase
+	// "a" - unlike the ExportProfile-style capital-letter "whole resource"
+	// convention, this isn't a mutation at all (read-only view state), so it
+	// follows the plain-lowercase pattern ToggleEnable/CycleSource use for
+	// other single-screen, non-destructive toggles.
+	ToggleAllSources key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -278,6 +288,10 @@ func DefaultKeyMap() KeyMap {
 		ExportProfile: key.NewBinding(
 			key.WithKeys("E"),
 			key.WithHelp("E", "export profile"),
+		),
+		ToggleAllSources: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "toggle all sources"),
 		),
 	}
 }

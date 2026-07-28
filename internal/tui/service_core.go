@@ -204,13 +204,37 @@ func (p *coreProvider) Sources() []string {
 	return sources
 }
 
-// SourceInfos returns every source registered with the underlying service,
-// sorted by ID. Sorting is required, not cosmetic: registry iteration order
-// is Go map order, which is intentionally randomized, and an unsorted list
-// would jitter row order between renders (mirrors cmd/lmm/auth.go's
-// ListSources-sorting note).
-func (p *coreProvider) SourceInfos() []SourceInfo {
-	srcs := p.svc.ListSources()
+// SourceInfos returns the Sources screen's rows, sorted by ID (Task 4,
+// #75): with all == false, only the active game's configured+registered
+// sources (core.Service.SourcesForGame - the same intersection Sources()
+// above computes by hand, but with full display columns and already sorted,
+// so no separate sort.Slice call is needed for that branch); with all ==
+// true, every registered source (svc.ListSources(), whose map-order
+// iteration DOES need the explicit sort below - mirrors cmd/lmm/auth.go's
+// ListSources-sorting note), each marked InUse when it belongs to the
+// active game.
+func (p *coreProvider) SourceInfos(all bool) []SourceInfo {
+	game := p.currentGame()
+
+	var srcs []source.ModSource
+	var inUseIDs map[string]bool
+	if all {
+		srcs = p.svc.ListSources()
+		// SourcesForGame only errors on an unknown game, which can't happen
+		// here: game came from currentGame(), itself always a *domain.Game
+		// the service already resolved (see NewCoreProvider's doc comment).
+		// A failure would mean no source counts as in-use rather than a
+		// crash - the safer degradation for a read-only display column.
+		if scoped, err := p.svc.SourcesForGame(game.ID); err == nil {
+			inUseIDs = make(map[string]bool, len(scoped))
+			for _, s := range scoped {
+				inUseIDs[s.ID()] = true
+			}
+		}
+	} else if scoped, err := p.svc.SourcesForGame(game.ID); err == nil {
+		srcs = scoped
+	}
+
 	infos := make([]SourceInfo, 0, len(srcs))
 	for _, src := range srcs {
 		infos = append(infos, SourceInfo{
@@ -219,9 +243,12 @@ func (p *coreProvider) SourceInfos() []SourceInfo {
 			Type:         source.TypeLabelOf(src),
 			Auth:         sourceAuthState(src),
 			Capabilities: sourceCapabilitySummary(source.CapabilitiesOf(src)),
+			InUse:        inUseIDs[src.ID()],
 		})
 	}
-	sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
+	if all {
+		sort.Slice(infos, func(i, j int) bool { return infos[i].ID < infos[j].ID })
+	}
 	return infos
 }
 

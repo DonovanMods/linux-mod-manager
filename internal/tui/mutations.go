@@ -1553,9 +1553,9 @@ func (m Model) openGameSwitcher() (Model, tea.Cmd) {
 //     different data is exactly the class of bug clampSelections exists to
 //     prevent elsewhere, but the OLD list is about to be replaced wholesale
 //     here, not just resized, so this resets rather than clamps)
-//   - sources/search.sources re-seed from the NEW game's SourceInfos()/
-//     Sources() - a different game can have an entirely different set of
-//     configured/registered sources
+//   - sources/search.sources re-seed from the NEW game's SourceInfos(false)/
+//     Sources() (sourcesShowAll also resets to false) - a different game can
+//     have an entirely different set of configured/registered sources
 //
 // state = stateLoading + returning m.loadData re-fetches Overview/Profiles
 // for the new game, mirroring Init()'s own first-load shape exactly.
@@ -1627,7 +1627,12 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	// new one.
 	m.orderChanged = false
 
-	m.sources = m.provider.SourceInfos()
+	// Task 4/#75: a game switch reverts the Sources screen to its scoped
+	// default view too, same as every other piece of data-derived state
+	// reset above - the OLD game's "show all" choice describes a registry
+	// view that no longer applies.
+	m.sourcesShowAll = false
+	m.sources = m.provider.SourceInfos(false)
 	m.search.sources = append([]string{""}, m.provider.Sources()...)
 	m.search.sourceIdx = 0
 
@@ -1950,5 +1955,38 @@ func (m Model) resolveExportSubmitted(msg exportPathSubmittedMsg) (Model, tea.Cm
 	}
 	m.action.status = formatOutcomeStatus(outcome)
 	m.action.statusIsError = false
+	return m, nil
+}
+
+// --- Sources scope toggle ('a' on Sources, Task 4/#75) ---
+
+// toggleSourcesAll flips the Sources screen between the game-scoped default
+// list and the full registry, re-fetching m.sources from the provider in
+// lockstep with m.sourcesShowAll (Model.sourcesShowAll's own doc comment)
+// so the two can never disagree about what's on screen. A no-op on any
+// other screen, mirroring ToggleEnable/Files/Policy's own screen-guarded
+// shape (mutations.go's established convention for a single-screen key).
+//
+// Unlike every mutation above, this performs no I/O and touches no
+// ActionProvider - SourceInfos is the same synchronous, side-effect-free
+// read NewModel's own seeding comment (app.go) already documents - so there
+// is no action.running/pending guard, no confirmation, and no status-line
+// outcome: the view itself IS the confirmation, exactly like CycleSource's
+// own instant, guard-free toggle on the Search screen.
+//
+// The selection resets to 0 rather than being clamped: the two views can
+// have entirely different lengths and different sources at the same index
+// (mirrors resolveGameSwitch's own "the OLD list is about to be replaced
+// wholesale, not just resized" reasoning for why THAT reset uses 0 instead
+// of clampSelections too), so preserving a numeric position across the
+// toggle would highlight an unrelated row rather than the one the user was
+// just looking at.
+func (m Model) toggleSourcesAll() (Model, tea.Cmd) {
+	if m.screen != ScreenSources {
+		return m, nil
+	}
+	m.sourcesShowAll = !m.sourcesShowAll
+	m.sources = m.provider.SourceInfos(m.sourcesShowAll)
+	m.selected[ScreenSources] = 0
 	return m, nil
 }

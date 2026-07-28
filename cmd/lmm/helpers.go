@@ -83,7 +83,10 @@ func readPromptLineFrom(r io.Reader) (string, error) {
 // If sourceFlag is empty and only one source is configured, uses that.
 // If multiple sources are configured and autoSelect is false, prompts for selection.
 // If autoSelect is true (e.g., -y flag), uses the first configured source (alphabetically).
-func resolveSource(game *domain.Game, sourceFlag string, autoSelect bool) (string, error) {
+// svc is used only to render display names in the interactive-prompt path
+// (see resolverFromService); every real call site already has one in scope
+// (all route through withService/withGameService).
+func resolveSource(svc *core.Service, game *domain.Game, sourceFlag string, autoSelect bool) (string, error) {
 	if sourceFlag != "" {
 		// Validate the specified source is configured for this game
 		if _, ok := game.SourceIDs[sourceFlag]; !ok {
@@ -112,14 +115,43 @@ func resolveSource(game *domain.Game, sourceFlag string, autoSelect bool) (strin
 	}
 
 	// Interactive mode: prompt for selection
-	return promptForGameSource(game.Name, sources)
+	return promptForGameSource(game.Name, sources, resolverFromService(svc))
 }
 
-// promptForGameSource prompts the user to select from multiple configured sources.
-func promptForGameSource(gameName string, sources []string) (string, error) {
+// resolverFromService builds a promptForGameSource-shaped resolver backed by
+// svc's registry: a source's Name() when it's still registered, the bare ID
+// otherwise (covers a SourceIDs entry whose source was since removed,
+// matching the design's "unregistered source" rule). A nil svc (defensive -
+// every real resolveSource caller has one in scope) yields a nil resolver,
+// so promptForGameSource's own bare-ID fallback applies.
+func resolverFromService(svc *core.Service) func(string) string {
+	if svc == nil {
+		return nil
+	}
+	return func(sourceID string) string {
+		if src, err := svc.GetSource(sourceID); err == nil {
+			return src.Name()
+		}
+		return sourceID
+	}
+}
+
+// promptForGameSource prompts the user to select from multiple configured
+// sources, rendering each as "Name (id)" via resolve. A nil resolve (or one
+// that returns "" for a given ID) falls back to the bare ID.
+func promptForGameSource(gameName string, sources []string, resolve func(string) string) (string, error) {
+	if resolve == nil {
+		resolve = func(id string) string { return "" }
+	}
 	fmt.Printf("%s has multiple mod sources configured. Select one:\n", gameName)
-	for i, source := range sources {
-		fmt.Printf("  [%d] %s\n", i+1, getSourceDisplayName(source))
+	for i, src := range sources {
+		// Bare ID when there's no distinct display name - "id (id)" is
+		// noise, and the doc contract promises the bare-ID fallback.
+		if name := resolve(src); name != "" && name != src {
+			fmt.Printf("  [%d] %s (%s)\n", i+1, name, src)
+		} else {
+			fmt.Printf("  [%d] %s\n", i+1, src)
+		}
 	}
 	fmt.Printf("Enter choice (1-%d): ", len(sources))
 

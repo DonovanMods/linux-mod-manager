@@ -68,7 +68,7 @@ func (f conflictsFakeProvider) Overview(context.Context) (Summary, []ModItem, er
 }
 func (f conflictsFakeProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (f conflictsFakeProvider) Sources() []string                               { return nil }
-func (f conflictsFakeProvider) SourceInfos() []SourceInfo                       { return nil }
+func (f conflictsFakeProvider) SourceInfos(bool) []SourceInfo                   { return nil }
 func (f conflictsFakeProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
@@ -193,7 +193,7 @@ func (longConflictsProvider) Overview(context.Context) (Summary, []ModItem, erro
 }
 func (longConflictsProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (longConflictsProvider) Sources() []string                               { return nil }
-func (longConflictsProvider) SourceInfos() []SourceInfo                       { return nil }
+func (longConflictsProvider) SourceInfos(bool) []SourceInfo                   { return nil }
 func (longConflictsProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }

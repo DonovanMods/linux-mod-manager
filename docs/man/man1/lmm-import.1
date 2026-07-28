@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.21.0" "User Commands"
+.TH "LMM" "1" "Jul 2026" "lmm 1.22.0" "User Commands"
 
 .SH NAME
 lmm-import - Import mods from local files or scan mod_path
@@ -17,10 +17,10 @@ Two distinct modes, chosen by whether an archive path is given:
 
 .PP
 Scan mode (no arguments): scans the game's mod_path for files not yet
-tracked by lmm, tries to match each one against CurseForge by name
-(skip with --skip-match), and imports whatever is left after
-confirmation. Useful for mods that were installed manually - e.g.
-CurseForge mods whose author has disabled API downloads. --dry-run and
+tracked by lmm, tries to match each one by name against the game's
+configured sources (skip with --skip-match), and imports whatever is
+left after confirmation. Useful for mods that were installed manually -
+e.g. mods whose author has disabled API downloads. --dry-run and
 --skip-match only apply to this mode. Every mod imported this way is
 marked as requiring manual download (since lmm did not fetch it itself);
 re-link it to a source with 'lmm mod edit --source' to clear that once
@@ -29,8 +29,9 @@ it can be checked for updates normally.
 .PP
 Archive mode (an archive path given): imports that one specific mod file,
 deploying it and adding it to the profile. Pass --id (with --source, or
-it defaults to curseforge if configured) to fetch and attach source
-metadata as part of the import.
+it resolves automatically when the game has exactly one configured
+source, or prompts interactively when it has several) to fetch and
+attach source metadata as part of the import.
 
 .PP
 Either way, a mod that ends up unmatched to any remote source is
@@ -41,7 +42,7 @@ has nothing to check it against and will never notify about it.
 Examples:
   lmm import --game hytale                    # Scan mod_path for untracked mods
   lmm import --game hytale --dry-run          # Preview what would be imported
-  lmm import --game hytale --skip-match       # Scan without CurseForge lookup
+  lmm import --game hytale --skip-match       # Scan without source lookup
   lmm import ./my-mod.zip --game skyrim-se    # Import specific archive
   lmm import ./mod-12345-1-0.7z --game skyrim-se --profile survival
   lmm import ./mod.zip --game skyrim-se --id 12345 --source curseforge
@@ -61,7 +62,7 @@ Examples:
 
 .PP
 \fB--id\fP=""
-	mod ID for linking to source (defaults to curseforge)
+	mod ID for linking to source (source resolves automatically; see --source)
 
 .PP
 \fB-p\fP, \fB--profile\fP=""
@@ -69,7 +70,7 @@ Examples:
 
 .PP
 \fB--skip-match\fP[=false]
-	skip CurseForge lookup for untracked mods
+	skip source lookup for untracked mods
 
 .PP
 \fB-s\fP, \fB--source\fP=""

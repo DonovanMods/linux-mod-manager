@@ -3,14 +3,16 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -21,13 +23,17 @@ var gameAddCmd = &cobra.Command{
 	Short: "Add a game interactively",
 	Long: `Interactively add a new game configuration.
 
-Prompts for a source to look the game up in, then its install path and
-mod path (defaulting to the install path plus "/mods"), and saves the
-result to games.yaml along with an empty default profile.
+Prompts for a mod source (every registered source, built-in or custom,
+sorted by ID), then its install path and mod path (defaulting to the
+install path plus "/mods"), and saves the result to games.yaml along with
+an empty default profile.
 
-Supports adding games from:
-  - CurseForge (searchable game list; requires 'lmm auth login curseforge' first)
-  - NexusMods (enter the game's slug, taken from its NexusMods URL)
+Sources with a searchable game catalog (CurseForge today; any future
+source that implements one) offer interactive search. All other
+registered sources (NexusMods today; any custom source without a catalog)
+prompt for the game's identifier with that source directly - for
+NexusMods, the slug from its URL (e.g.
+https://www.nexusmods.com/skyrimspecialedition -> skyrimspecialedition).
 
 Examples:
   lmm game add
@@ -41,45 +47,53 @@ func init() {
 }
 
 func runGameAdd(cmd *cobra.Command, args []string) error {
-	reader := bufio.NewReader(os.Stdin)
-
-	// Step 1: Select source
-	cmd.Println("Select a mod source:")
-	cmd.Println("  [1] CurseForge (searchable)")
-	cmd.Println("  [2] NexusMods (enter game slug)")
-	cmd.Print("Enter choice (1-2): ")
-
-	sourceChoice, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("reading input: %w", err)
-	}
-	sourceChoice = strings.TrimSpace(sourceChoice)
-
-	switch sourceChoice {
-	case "1":
-		return runGameAddCurseForge(cmd, reader)
-	case "2":
-		return runGameAddNexusMods(cmd, reader)
-	default:
-		return fmt.Errorf("invalid choice: %s", sourceChoice)
-	}
-}
-
-func runGameAddCurseForge(cmd *cobra.Command, reader *bufio.Reader) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		return doGameAddCurseForge(ctx, cmd, reader, service)
+		reader := bufio.NewReader(os.Stdin)
+		return doGameAdd(ctx, cmd, reader, service)
 	})
 }
 
-func doGameAddCurseForge(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service) error {
-	apiKey := getSourceAPIKey(service, "curseforge", "CURSEFORGE_API_KEY")
-	if apiKey == "" {
-		return fmt.Errorf("CurseForge authentication required. Run: lmm auth login curseforge")
+// doGameAdd builds the source menu from every registered source
+// (service.ListSources(), sorted by ID - the registry itself carries no
+// ordering guarantee), prompts for a selection, then dispatches to the
+// catalog-search flow for sources implementing source.GameCatalog
+// (CurseForge today; any future source for free) or the manual-identifier
+// flow for everyone else (NexusMods today). Single-source-per-add: no
+// multi-select, matching today's behavior (YAGNI).
+func doGameAdd(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service) error {
+	sources := service.ListSources()
+	if len(sources) == 0 {
+		return fmt.Errorf("no mod sources are registered")
 	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].ID() < sources[j].ID() })
 
-	client := curseforge.NewClient(nil, apiKey)
+	cmd.Println("Select a mod source:")
+	for i, src := range sources {
+		cmd.Printf("  [%d] %s (%s)\n", i+1, src.Name(), src.ID())
+	}
+	cmd.Printf("Enter choice (1-%d): ", len(sources))
 
-	// Search for game
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("reading input: %w", err)
+	}
+	choice, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || choice < 1 || choice > len(sources) {
+		return fmt.Errorf("invalid choice: %s", strings.TrimSpace(line))
+	}
+	selected := sources[choice-1]
+
+	if catalog, ok := selected.(source.GameCatalog); ok {
+		return runGameAddCatalog(ctx, cmd, reader, catalog, selected.ID(), selected.Name())
+	}
+	return runGameAddManual(cmd, reader, selected.ID(), selected.Name())
+}
+
+// runGameAddCatalog drives the interactive catalog-search flow - today's
+// CurseForge path, generalized to any source.GameCatalog: search the
+// source's game catalog, filter by substring match on name or slug
+// (case-insensitive), let the user pick one, then collect paths and save.
+func runGameAddCatalog(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, catalog source.GameCatalog, sourceID, sourceName string) error {
 	cmd.Print("\nSearch for a game: ")
 	query, err := reader.ReadString('\n')
 	if err != nil {
@@ -90,19 +104,27 @@ func doGameAddCurseForge(ctx context.Context, cmd *cobra.Command, reader *bufio.
 		return fmt.Errorf("search query cannot be empty")
 	}
 
-	cmd.Println("Searching CurseForge...")
-	games, err := client.GetGames(ctx)
+	cmd.Printf("Searching %s...\n", sourceName)
+	entries, err := catalog.ListGames(ctx)
 	if err != nil {
-		return fmt.Errorf("fetching games from CurseForge: %w", err)
+		// Matches the convention at search.go/install.go/update.go's sibling
+		// sites: a source signals a missing/invalid key by wrapping
+		// domain.ErrAuthRequired (e.g. CurseForge's ListGames -> GetGames ->
+		// the shared httpclient's 401/403 mapping), and the caller rewrites
+		// it into the friendly "run lmm auth login <id>" prompt instead of
+		// surfacing the raw API error.
+		if errors.Is(err, domain.ErrAuthRequired) {
+			return authPromptError(sourceID)
+		}
+		return fmt.Errorf("fetching games from %s: %w", sourceName, err)
 	}
 
-	// Filter games by query (case-insensitive)
 	queryLower := strings.ToLower(query)
-	var matches []curseforge.Game
-	for _, g := range games {
-		if strings.Contains(strings.ToLower(g.Name), queryLower) ||
-			strings.Contains(strings.ToLower(g.Slug), queryLower) {
-			matches = append(matches, g)
+	var matches []source.GameEntry
+	for _, e := range entries {
+		if strings.Contains(strings.ToLower(e.Name), queryLower) ||
+			strings.Contains(strings.ToLower(e.Slug), queryLower) {
+			matches = append(matches, e)
 		}
 	}
 
@@ -111,13 +133,11 @@ func doGameAddCurseForge(ctx context.Context, cmd *cobra.Command, reader *bufio.
 		return nil
 	}
 
-	// Display results
 	cmd.Printf("Found %d game(s):\n", len(matches))
-	for i, g := range matches {
-		cmd.Printf("  [%d] %s (curseforge id: %d)\n", i+1, g.Name, g.ID)
+	for i, e := range matches {
+		cmd.Printf("  [%d] %s (%s id: %s)\n", i+1, e.Name, sourceID, catalogIdentifier(e))
 	}
 
-	// Select game
 	cmd.Print("Select a game (number): ")
 	selection, err := reader.ReadString('\n')
 	if err != nil {
@@ -129,25 +149,51 @@ func doGameAddCurseForge(ctx context.Context, cmd *cobra.Command, reader *bufio.
 	}
 	selected := matches[selIdx-1]
 
-	// Configure game
 	cmd.Printf("\nConfiguring %s...\n", selected.Name)
+	// The local game ID prefers the entry's Slug but must never be empty:
+	// GameEntry doesn't guarantee Slug (CurseForge sets it; the interface
+	// doesn't), and an empty ID would save a games.yaml entry keyed ""
+	// that later lookups can't address. Fall back to the catalog
+	// identifier; a source populating neither field is unusable here.
 	gameSlug := strings.ToLower(strings.ReplaceAll(selected.Slug, " ", "-"))
+	if gameSlug == "" {
+		gameSlug = strings.ToLower(strings.ReplaceAll(catalogIdentifier(selected), " ", "-"))
+	}
+	if gameSlug == "" {
+		return fmt.Errorf("source %s returned a catalog entry with no usable identifier for %q", sourceID, selected.Name)
+	}
 
 	installPath, modPath, err := promptForPaths(cmd, reader)
 	if err != nil {
 		return err
 	}
 
-	// Save game config
 	return saveGameConfig(cmd, gameSlug, selected.Name, installPath, modPath,
-		map[string]string{"curseforge": strconv.Itoa(selected.ID)})
+		map[string]string{sourceID: catalogIdentifier(selected)})
 }
 
-func runGameAddNexusMods(cmd *cobra.Command, reader *bufio.Reader) error {
-	cmd.Println("\nNexusMods game slugs can be found in the URL.")
-	cmd.Println("Example: https://www.nexusmods.com/skyrimspecialedition -> skyrimspecialedition")
+// catalogIdentifier returns the value saved to games.yaml's SourceIDs map
+// for a catalog entry: entry.ID when the source populates it - CurseForge's
+// ListGames sets it to the numeric game ID as a string (see
+// internal/source/curseforge/curseforge.go), matching exactly what today's
+// CurseForge path in this file saved via strconv.Itoa(selected.ID) - falling
+// back to entry.Slug for a source whose catalog only populates Slug. A
+// source populating neither is a GameCatalog implementation bug; the caller
+// (runGameAddCatalog) guards against it before saving, erroring rather than
+// writing a games.yaml entry keyed "".
+func catalogIdentifier(e source.GameEntry) string {
+	if e.ID != "" {
+		return e.ID
+	}
+	return e.Slug
+}
 
-	// Get game name
+// runGameAddManual drives the manual-identifier flow - today's NexusMods
+// slug path, generalized: prompt for a display name and the game's
+// identifier with sourceName directly, then collect paths and save.
+func runGameAddManual(cmd *cobra.Command, reader *bufio.Reader, sourceID, sourceName string) error {
+	cmd.Printf("\n%s has no searchable game catalog; enter this game's identifier with %s directly.\n", sourceName, sourceName)
+
 	cmd.Print("\nGame name (display): ")
 	gameName, err := reader.ReadString('\n')
 	if err != nil {
@@ -158,30 +204,26 @@ func runGameAddNexusMods(cmd *cobra.Command, reader *bufio.Reader) error {
 		return fmt.Errorf("game name is required")
 	}
 
-	// Get NexusMods slug
-	cmd.Print("NexusMods slug (from URL): ")
-	nexusSlug, err := reader.ReadString('\n')
+	cmd.Printf("%s identifier: ", sourceName)
+	identifier, err := reader.ReadString('\n')
 	if err != nil {
 		return fmt.Errorf("reading input: %w", err)
 	}
-	nexusSlug = strings.TrimSpace(nexusSlug)
-	if nexusSlug == "" {
-		return fmt.Errorf("NexusMods slug is required")
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return fmt.Errorf("%s identifier is required", sourceName)
 	}
 
-	// Generate local game ID from slug
-	gameSlug := strings.ToLower(strings.ReplaceAll(nexusSlug, " ", "-"))
+	gameSlug := strings.ToLower(strings.ReplaceAll(identifier, " ", "-"))
 
-	// Configure paths
 	cmd.Printf("\nConfiguring %s...\n", gameName)
 	installPath, modPath, err := promptForPaths(cmd, reader)
 	if err != nil {
 		return err
 	}
 
-	// Save game config
 	return saveGameConfig(cmd, gameSlug, gameName, installPath, modPath,
-		map[string]string{"nexusmods": nexusSlug})
+		map[string]string{sourceID: identifier})
 }
 
 func promptForPaths(cmd *cobra.Command, reader *bufio.Reader) (installPath, modPath string, err error) {
@@ -240,7 +282,7 @@ func saveGameConfig(cmd *cobra.Command, gameSlug, gameName, installPath, modPath
 		return fmt.Errorf("creating default profile: %w", err)
 	}
 
-	cmd.Printf("\n\u2713 Added %s (id: %s)\n", gameName, gameSlug)
+	cmd.Printf("\n✓ Added %s (id: %s)\n", gameName, gameSlug)
 	for source, id := range sourceIDs {
 		cmd.Printf("  %s: %s\n", source, id)
 	}

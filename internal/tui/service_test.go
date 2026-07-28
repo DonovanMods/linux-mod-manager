@@ -150,7 +150,9 @@ func TestPrototypeProviderSearchAllSourcesRendersWarning(t *testing.T) {
 // Tier 3 - broke that by trusting Exhausted instead, which
 // prototypeProvider never set).
 // AttemptedCount must likewise reflect the canned SEARCHABLE source count
-// (len(SourceInfos()), all three of which advertise "search" - see
+// (len(SourceInfos(false)) - the GAME-SCOPED subset, matching
+// core.Service.SearchAllSources's real contract, which only ever attempts
+// the active game's configured sources, never the full registry - see
 // SourceInfos' doc comment) rather than 0, or every zero-match demo search
 // would falsely render the no-searchable-sources honesty notice (#58 item
 // 3) instead of the ordinary "No archives matched" copy.
@@ -162,7 +164,7 @@ func TestPrototypeProviderSearchAllSourcesReportsExhaustedAndAttempted(t *testin
 	all, err := p.Search(context.Background(), "", "sky", 0, 0)
 	require.NoError(t, err)
 	require.True(t, all.Exhausted, "the canned set is a single-page fetch; there is no real next page to demo")
-	require.Equal(t, len(p.SourceInfos()), all.AttemptedCount, "must derive from the canned searchable-source count, not 0")
+	require.Equal(t, len(p.SourceInfos(false)), all.AttemptedCount, "must derive from the game-scoped canned searchable-source count, not 0")
 
 	none, err := p.Search(context.Background(), "", "zzz-nothing-matches", 0, 0)
 	require.NoError(t, err)

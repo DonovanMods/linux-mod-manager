@@ -152,7 +152,7 @@ func validateModSetUpdatePolicyFlags() error {
 
 func doModSetUpdate(service *core.Service, game *domain.Game, modID string) error {
 	var err error
-	modSource, err = resolveSource(game, modSource, false)
+	modSource, err = resolveSource(service, game, modSource, false)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func runModEnable(cmd *cobra.Command, args []string) error {
 func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Resolve source: use flag if set, otherwise first configured source
 	var err error
-	modSource, err = resolveSource(game, modSource, false)
+	modSource, err = resolveSource(service, game, modSource, false)
 	if err != nil {
 		return err
 	}
@@ -258,7 +258,7 @@ func runModDisable(cmd *cobra.Command, args []string) error {
 func doModDisable(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Resolve source: use flag if set, otherwise first configured source
 	var err error
-	modSource, err = resolveSource(game, modSource, false)
+	modSource, err = resolveSource(service, game, modSource, false)
 	if err != nil {
 		return err
 	}
@@ -331,7 +331,7 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 		return err
 	}
 
-	modSource, err = resolveSource(game, modSource, false)
+	modSource, err = resolveSource(svc, game, modSource, false)
 	if err != nil {
 		return err
 	}
@@ -372,7 +372,7 @@ func runModShow(cmd *cobra.Command, args []string) error {
 
 func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
 	var err error
-	modSource, err = resolveSource(game, modSource, false)
+	modSource, err = resolveSource(svc, game, modSource, false)
 	if err != nil {
 		return err
 	}

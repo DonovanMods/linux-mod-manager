@@ -1081,7 +1081,7 @@ func (stubProvider) Overview(context.Context) (Summary, []ModItem, error) {
 }
 func (stubProvider) Profiles(context.Context) ([]ProfileItem, error) { return nil, nil }
 func (stubProvider) Sources() []string                               { return nil }
-func (stubProvider) SourceInfos() []SourceInfo                       { return nil }
+func (stubProvider) SourceInfos(bool) []SourceInfo                   { return nil }
 func (stubProvider) Search(context.Context, string, string, int, int) (SearchPage, error) {
 	return SearchPage{}, nil
 }
@@ -1276,11 +1276,11 @@ func (r *recordingProvider) Sources() []string {
 	return r.delegate.Sources()
 }
 
-func (r *recordingProvider) SourceInfos() []SourceInfo {
+func (r *recordingProvider) SourceInfos(all bool) []SourceInfo {
 	if len(r.SetGameCalls) > 0 && r.AltSourceInfos != nil {
 		return r.AltSourceInfos
 	}
-	return r.delegate.SourceInfos()
+	return r.delegate.SourceInfos(all)
 }
 
 func (r *recordingProvider) Search(ctx context.Context, source, query string, page, pageSize int) (SearchPage, error) {

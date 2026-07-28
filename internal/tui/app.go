@@ -114,6 +114,14 @@ type Model struct {
 	mods     []ModItem
 	profiles []ProfileItem
 	sources  []SourceInfo
+	// sourcesShowAll is the Sources screen's 'a'-toggled view state (Task 4,
+	// #75): false (the zero value, and default on every fresh load/game
+	// switch) is the game-scoped default view; true is the full-registry
+	// view with the InUse marker. m.sources itself always holds whichever
+	// view is CURRENTLY selected - toggleSourcesAll (mutations.go) flips
+	// this and re-fetches m.sources from the provider in lockstep, so the
+	// two never disagree about what's on screen.
+	sourcesShowAll bool
 	// conflicts backs the Conflicts screen (Task 3) - fetched alongside
 	// mods/profiles in the same loadData refresh cycle (see dataLoadedMsg),
 	// not gated behind an explicit user action the way Updates/CheckUpdates
@@ -267,8 +275,10 @@ func NewModel(options Options) (Model, error) {
 		// sources is seeded synchronously (like search's source list above)
 		// rather than through loadData/dataLoadedMsg: SourceInfos is a
 		// read-only view of already-registered sources, not an I/O call that
-		// can fail, so it needs no async load state or error path.
-		sources: options.Provider.SourceInfos(),
+		// can fail, so it needs no async load state or error path. false
+		// (sourcesShowAll's own zero value) - the game-scoped default view
+		// (Task 4, #75).
+		sources: options.Provider.SourceInfos(false),
 		selected: map[Screen]int{
 			ScreenDashboard:     0,
 			ScreenInstalledMods: 0,
@@ -933,6 +943,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.importProfilePrompt()
 	case key.Matches(msg, m.keys.ExportProfile):
 		return m.exportProfilePrompt()
+	case key.Matches(msg, m.keys.ToggleAllSources):
+		return m.toggleSourcesAll()
 	case key.Matches(msg, m.keys.Purge):
 		return m.purgeProfilePrompt()
 	case key.Matches(msg, m.keys.GameSwitch):
@@ -1783,13 +1795,18 @@ func (m Model) profileRow(index, width int, profile ProfileItem) string {
 	return m.row(index, line)
 }
 
-// sourcesView renders the read-only source registry: every source
-// registered with the DataProvider (built-in and user-defined), one row
-// each, in the single-pane list style profilesView uses. Unlike
-// `lmm source list`, there is no error/status column — see SourceInfo's doc
-// comment for why definition-load failures never reach this screen. The list
-// has windowed height (never exceeds budget) and scroll-follow-selection
-// (selected row stays visible when navigation walks past the fold, #42).
+// sourcesView renders the read-only source registry (Task 4, #75): by
+// default, only the active game's configured+registered sources
+// (m.sourcesShowAll == false); toggled with 'a' to every source registered
+// with the DataProvider (built-in and user-defined), each marked IN USE
+// when it belongs to the active game. One row each, in the single-pane list
+// style profilesView uses. Unlike `lmm source list`, there is no
+// error/status column — see SourceInfo's doc comment for why
+// definition-load failures never reach this screen. The panel title names
+// the current scope ("SOURCE REGISTRY — <game>" vs "— ALL SOURCES") so a
+// toggle is visible even before reading any row. The list has windowed
+// height (never exceeds budget) and scroll-follow-selection (selected row
+// stays visible when navigation walks past the fold, #42).
 func (m Model) sourcesView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
@@ -1803,18 +1820,44 @@ func (m Model) sourcesView() string {
 	// zero-results warning.
 	panelContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 
+	title := "SOURCE REGISTRY — " + displayGameName(m.summary.GameName)
+	// Toggle hint in the search screen's "(s cycles)" style: muted, inline,
+	// naming the key. Fixed-size and appended AFTER truncating the title to
+	// the remaining width, so a long game name can't push the line past the
+	// panel width and re-wrap into an extra row (height-budget lesson, #42).
+	hint := "  (a shows all)"
 	// "  " matches m.row()'s 2-column selection-marker prefix ("> "/"  ") so
 	// the header lines up with the data columns below it instead of starting
-	// two columns to their left.
+	// two columns to their left. The IN USE column exists only in the
+	// all-sources view — the scoped default's rows are all trivially in
+	// use, so the column would be redundant there (mirrors cmd/lmm/
+	// source.go's --all-only "IN USE" column).
 	headerLine := "  " + fmt.Sprintf("%-20s %-12s %-6s %s", "ID", "TYPE", "AUTH", "CAPABILITIES")
+	if m.sourcesShowAll {
+		title = "SOURCE REGISTRY — ALL SOURCES"
+		hint = "  (a shows game)"
+		headerLine = "  " + fmt.Sprintf("%-20s %-12s %-6s %-7s %s", "ID", "TYPE", "AUTH", "IN USE", "CAPABILITIES")
+	}
 	headerLine = truncate(headerLine, panelContentWidth)
+	titleLine := m.theme.PanelTitle.Render(truncate(title, max(panelContentWidth-len(hint), 1))) +
+		m.theme.MutedText.Render(hint)
 	rows := []string{
-		m.theme.PanelTitle.Render("SOURCE REGISTRY"),
+		titleLine,
 		m.theme.MutedText.Render(headerLine),
 	}
 	listBudget := max(contentBudget-len(rows), 0)
 	rows = append(rows, m.windowedRows(len(m.sources), m.selected[ScreenSources], listBudget, func(i int) string {
-		line := fmt.Sprintf("%-20s %-12s %-6s %s", m.sources[i].ID, m.sources[i].Type, m.sources[i].Auth, m.sources[i].Capabilities)
+		src := m.sources[i]
+		var line string
+		if m.sourcesShowAll {
+			inUse := "no"
+			if src.InUse {
+				inUse = "yes"
+			}
+			line = fmt.Sprintf("%-20s %-12s %-6s %-7s %s", src.ID, src.Type, src.Auth, inUse, src.Capabilities)
+		} else {
+			line = fmt.Sprintf("%-20s %-12s %-6s %s", src.ID, src.Type, src.Auth, src.Capabilities)
+		}
 		return m.row(i, line)
 	})...)
 	// Truncate each row to the panel's content width AFTER m.row()'s per-row
@@ -1970,9 +2013,9 @@ func helpEntry(kb key.Binding) string {
 
 // helpGroups builds the full, ordered set of help groups: "global" always
 // first, then every screen group that has entries, in a fixed order
-// (dashboard, installed mods, search, profiles - sources has no bindings
-// beyond plain navigation, so it's omitted entirely), with the CURRENT
-// screen's group promoted to immediately follow global. Each screen's list
+// (dashboard, installed mods, search, profiles, conflicts, sources), with
+// the CURRENT screen's group promoted to immediately follow global. Each
+// screen's list
 // mirrors updateKey's dispatch guards in mutations.go (e.g. Files/Policy/
 // Purge all gate on ScreenInstalledMods too, alongside Deploy/CheckUpdates).
 func (m Model) helpGroups() []helpGroup {
@@ -2081,13 +2124,24 @@ func (m Model) helpGroups() []helpGroup {
 		},
 	}
 
-	fixed := []helpGroup{dashboard, installedMods, search, profiles, conflicts}
+	// sources is Task 4's Sources-screen group (#75): just the scope toggle
+	// - Up/Down are left to the footer's generic hint like every screen
+	// other than conflicts above.
+	sources := helpGroup{
+		name: "sources",
+		entries: []string{
+			helpEntry(m.keys.ToggleAllSources),
+		},
+	}
+
+	fixed := []helpGroup{dashboard, installedMods, search, profiles, conflicts, sources}
 	screenGroupName := map[Screen]string{
 		ScreenDashboard:     dashboard.name,
 		ScreenInstalledMods: installedMods.name,
 		ScreenSearch:        search.name,
 		ScreenProfiles:      profiles.name,
 		ScreenConflicts:     conflicts.name,
+		ScreenSources:       sources.name,
 	}
 	if name, ok := screenGroupName[m.screen]; ok {
 		for i, g := range fixed {

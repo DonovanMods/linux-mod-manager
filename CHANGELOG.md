@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-07-28
+
+### Changed
+
+- **The last built-in special cases are gone** (#76, PR 2 of 2 — completes the source-registry design):
+  - `lmm deploy -s` no longer defaults to `nexusmods` — like search/update, a game's sole configured source is used automatically and several prompt for a choice
+  - `lmm import` scan-matching consults **every** configured source that can search (ID-sorted; `curseforge` still sorts first for typical setups) instead of CurseForge only, and reports which source matched; `--id` without `--source` resolves the same way instead of preferring CurseForge
+  - `lmm game add` builds its menu from the registered sources instead of a fixed two-item list — sources with a game catalog (CurseForge) get the interactive search flow, everything else (NexusMods, custom sources) gets manual identifier entry; custom sources are now usable at game-creation time. An unauthenticated catalog source fails fast with the standard "authentication required" hint
+  - The multi-source game prompt renders registry display names (`Nexus Mods (nexusmods)`)
+- **Source listings are scoped to the active game** (#75): `lmm source list` shows the game's configured sources by default; `--all` shows the full registry with an `IN USE` column. With no game configured the full list is unchanged, and broken-definition rows stay visible in every view. The TUI Sources screen scopes the same way — `a` toggles between the game's sources and the full registry, and the panel title says which you're looking at
+- `lmm auth status` now distinguishes a stored token whose source no longer declares auth from one whose source isn't registered at all
+
+### Added
+
+- `lmm source list --all --json` rows carry `"in_use": true` for the active game's sources (additive)
+
+### Internal
+
+- `Service.SourcesForGame` — the one game-to-registered-sources intersection, now backing aggregate search, import matching, and both listing surfaces
+
 ## [1.21.0] - 2026-07-28
 
 ### Changed
@@ -1028,7 +1048,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.21.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.0...HEAD
+[1.22.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.1...v1.21.0
 [1.20.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.0...v1.20.1
 [1.20.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.19.0...v1.20.0

@@ -147,3 +147,41 @@ func TestDoAuthStatusListsOrphanedTokens(t *testing.T) {
 	assert.NotContains(t, out, "leftover-secret-key")
 	assert.NotContains(t, out, "nexusmods: stored token with no matching source")
 }
+
+// TestDoAuthStatusDistinguishesAuthRemovedFromUnregistered pins the carry-in
+// fix: a stored token whose source is STILL registered but no longer
+// declares auth (e.g. a custom source's manifest dropped its `auth:` block)
+// must be labeled differently from a token whose source isn't registered at
+// all (TestDoAuthStatusListsOrphanedTokens above) - the two have different
+// remedies (re-declare auth vs. the token is simply stale) and must not
+// share wording.
+func TestDoAuthStatusDistinguishesAuthRemovedFromUnregistered(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	// Registered, but declares no auth capability at all (a directory
+	// source never does) - simulates a source whose auth was removed from
+	// its declaration while a token from an earlier `auth login` lingers.
+	dir, err := custom.NewDirectory(custom.SourceDefinition{
+		ID: "local-mods", Name: "Local", Type: custom.TypeDirectory,
+		Directory: &custom.DirectoryConfig{Path: t.TempDir()},
+	})
+	require.NoError(t, err)
+	svc.RegisterSource(dir)
+
+	require.NoError(t, svc.SaveSourceToken("local-mods", "stale-auth-key-123456"))
+	// Truly-unregistered case must still render its own distinct wording.
+	require.NoError(t, svc.SaveSourceToken("ghost-repo", "leftover-secret-key"))
+
+	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+
+	assert.Contains(t, out, "local-mods: stored token for source without auth declared (key:")
+	assert.Contains(t, out, "stale token? remove with: lmm auth logout local-mods")
+	assert.NotContains(t, out, "local-mods: stored token with no matching source")
+
+	assert.Contains(t, out, "ghost-repo: stored token with no matching source (key:")
+	assert.NotContains(t, out, "ghost-repo: stored token for source without auth declared")
+}

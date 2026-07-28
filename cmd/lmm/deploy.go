@@ -29,9 +29,10 @@ Use this when changing deployment methods (symlink, hardlink, copy)
 or if mod files need to be refreshed.
 
 Without a mod ID, deploys all enabled mods in the current profile.
-With a mod ID, deploys only that specific mod; -s/--source (default:
-nexusmods) then identifies which source that mod ID belongs to. -s is
-ignored when deploying the whole profile.
+With a mod ID, deploys only that specific mod; -s/--source then identifies
+which source that mod ID belongs to - it resolves automatically when the
+game has exactly one configured source, or prompts interactively when it
+has several. -s is ignored when deploying the whole profile.
 
 Use --purge to remove all deployed mods before deploying. This ensures
 a clean slate, useful when mods have gotten out of sync.
@@ -51,7 +52,7 @@ Examples:
 }
 
 func init() {
-	deployCmd.Flags().StringVarP(&deploySource, "source", "s", "nexusmods", "mod source")
+	deployCmd.Flags().StringVarP(&deploySource, "source", "s", "", "mod source for deploying a single mod ID (default: auto-detect when the game has one configured source, prompt when it has several)")
 	deployCmd.Flags().StringVarP(&deployProfile, "profile", "p", "", "profile (default: active profile)")
 	deployCmd.Flags().StringVarP(&deployMethod, "method", "m", "", "link method: symlink, hardlink, or copy (default: game's configured method)")
 	deployCmd.Flags().BoolVar(&deployPurge, "purge", false, "purge all deployed mods before deploying")
@@ -103,6 +104,11 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		Force:       deployForce,
 	}
 	if len(args) > 0 {
+		resolvedSource, err := resolveSource(service, game, deploySource, false)
+		if err != nil {
+			return err
+		}
+		deploySource = resolvedSource
 		opts.ModID = args[0]
 		opts.SourceID = deploySource
 	}
