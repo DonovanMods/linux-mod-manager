@@ -674,7 +674,7 @@ func TestSwitchPlanNeedsDownloadsOpensModalAndAppliesOnConfirm(t *testing.T) {
 // coreProvider/coreActions pair (as opposed to recordingActions, which only
 // replays canned outcomes and so can't exercise the Fix wave 2 fix itself).
 // Mirrors service_core_test.go's stubSource/netSource (package tui_test,
-// unreachable from this package tui test file - see customSourceType's doc
+// unreachable from this package tui test file - see sourceAuthState's doc
 // comment in service_core.go for why cross-package test doubles aren't
 // shared) and sources_view_test.go's builtinStubSource (package tui, same
 // file split, narrower stub).

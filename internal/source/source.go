@@ -104,6 +104,19 @@ type GameCatalog interface {
 // built-in). Absent: "unknown".
 type TypeLabeler interface{ TypeLabel() string }
 
+// TypeLabelOf returns src's self-reported kind ("directory"/"manifest"/
+// "api" for custom sources, "built-in" for NexusMods/CurseForge), falling
+// back to "unknown" when src implements no TypeLabeler. Mirrors
+// CapabilitiesOf's optional-interface pattern; the fallback is unreachable
+// in production (every real source implements TypeLabeler), reachable only
+// by bare test doubles.
+func TypeLabelOf(src ModSource) string {
+	if tl, ok := src.(TypeLabeler); ok {
+		return tl.TypeLabel()
+	}
+	return "unknown"
+}
+
 // CapabilitiesOf returns src's capabilities. Sources that do not implement
 // CapabilityReporter are assumed fully capable — a default kept for test
 // doubles; production sources should implement CapabilityReporter

@@ -97,7 +97,7 @@ Examples:
 				rows = append(rows, sourceInfo{
 					ID:           src.ID(),
 					Name:         src.Name(),
-					Type:         sourceTypeLabel(src),
+					Type:         source.TypeLabelOf(src),
 					Auth:         authState(src),
 					Capabilities: capabilitySummary(source.CapabilitiesOf(src)),
 				})
@@ -201,25 +201,14 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 	return nil
 }
 
-// sourceTypeLabel reports src's kind for `source list`'s TYPE column, via
-// source.TypeLabeler (Task 1 of #76): "directory"/"manifest"/"api" for
-// custom sources, "built-in" for NexusMods/CurseForge — each source reports
-// its own label, so there is no concrete-type switch here to keep in sync as
-// new source types ship. A source implementing no TypeLabeler falls back to
-// "unknown": unreachable in production (every real source implements it),
-// reachable only by a bare test double.
-func sourceTypeLabel(src source.ModSource) string {
-	if tl, ok := src.(source.TypeLabeler); ok {
-		return tl.TypeLabel()
-	}
-	return "unknown"
-}
-
 // isCustomSource reports whether src is a user-defined source (as opposed to
-// a built-in like NexusMods/CurseForge), derived from sourceTypeLabel: any
-// source whose self-reported type is not "built-in".
+// a built-in like NexusMods/CurseForge): any source whose self-reported type
+// is not "built-in". Sound at its only call site (the definitions reclassify
+// loop) because LoadSourceDefinitions guarantees ID uniqueness within a load,
+// so a registered source matching a definition's ID is either a built-in or
+// that definition's own constructed source — never an unrelated third party.
 func isCustomSource(src source.ModSource) bool {
-	return sourceTypeLabel(src) != "built-in"
+	return source.TypeLabelOf(src) != "built-in"
 }
 
 // authState reports a source's authentication status for display.

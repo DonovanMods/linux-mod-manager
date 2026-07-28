@@ -91,7 +91,7 @@ func TestSourcesViewRenders(t *testing.T) {
 // IsAuthenticated, or TypeLabeler method, exercising coreProvider.SourceInfos'
 // defaults: full capabilities (CapabilitiesOf's built-in fallback), Auth
 // "yes" (authState's fallback for a capable source with no IsAuthenticated
-// probe), and Type "unknown" (Task 4's sourceTypeLabel fallback for a source
+// probe), and Type "unknown" (source.TypeLabelOf's fallback for a source
 // implementing no TypeLabeler). The name predates Task 4: this double used to
 // fall through the old concrete-type switch (customSourceType) to its
 // "built-in" default - exactly the mislabeling Task 4 replaced with an
@@ -158,7 +158,7 @@ func TestCoreProviderSourceInfos(t *testing.T) {
 
 	// Sorted by ID: "aaa-builtin" before "zzz-directory".
 	require.Equal(t, "aaa-builtin", infos[0].ID)
-	require.Equal(t, "unknown", infos[0].Type, "builtinStubSource implements no TypeLabeler; sourceTypeLabel's fallback is \"unknown\", not the old switch's \"built-in\" default")
+	require.Equal(t, "unknown", infos[0].Type, "builtinStubSource implements no TypeLabeler; source.TypeLabelOf's fallback is \"unknown\", not the old switch's \"built-in\" default")
 	require.Equal(t, "yes", infos[0].Auth, "builtinStubSource has no IsAuthenticated method; authState's fallback for a capable source is \"yes\"")
 	require.Equal(t, "zzz-directory", infos[1].ID)
 	require.Equal(t, "directory", infos[1].Type)
