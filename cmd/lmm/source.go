@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
@@ -32,16 +33,34 @@ type sourceInfo struct {
 	Type         string `json:"type"` // "built-in", "directory", "manifest", "api", or "error"
 	Auth         string `json:"auth"` // "yes", "no", "n/a"
 	Capabilities string `json:"capabilities"`
-	Error        string `json:"error,omitempty"`
+	// InUse marks a row as one of the active game's configured sources.
+	// Only ever set (and only ever rendered as a column, in both --json and
+	// the text table) in the --all-with-game-resolvable combination (design
+	// §5) - additive per the repo's JSON-contract-additions-are-MINOR
+	// precedent: omitempty means a scoped or no-game-context response never
+	// gains an "in_use" key at all, exactly the pre-Task-4 shape those
+	// callers already depend on.
+	InUse bool   `json:"in_use,omitempty"`
+	Error string `json:"error,omitempty"`
 }
+
+var sourceAll bool
 
 var sourceListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all mod sources",
 	Long: `List built-in and user-defined mod sources, including definitions that failed to load.
 
+With a resolvable game (-g, or a default set via 'lmm game set-default'),
+the list scopes to that game's configured sources by default. --all shows
+every registered source instead, marking the active game's sources in an
+IN USE column. With no game resolvable, --all has no effect: the full
+registry is shown either way, exactly as when no game exists at all.
+Definitions that failed to load are always shown, in every view.
+
 Examples:
   lmm source list
+  lmm source list --all
   lmm source list --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// registerCustomSources' init-time stderr warnings would double up on
@@ -88,10 +107,49 @@ Examples:
 				}
 			}
 
+			// Resolve a game context WITHOUT erroring when absent (design §5:
+			// "the command must keep working with zero games configured").
+			// requireGame's own error (no -g, no default) is deliberately
+			// swallowed here — that's the "no game" case, not a real failure —
+			// but an explicit, invalid -g still surfaces via GetGame below,
+			// same as every other command's game resolution.
+			var gameCtx *domain.Game
+			if requireErr := requireGame(cmd); requireErr == nil {
+				gameCtx, err = svc.GetGame(gameID)
+				if err != nil {
+					return err
+				}
+			}
+
+			// srcs is the base row set: every registered source (built-in +
+			// custom) by default, or - with a resolvable game and no --all -
+			// just that game's configured+registered subset (SourcesForGame).
+			// inUseIDs stays nil except in the --all-with-game combination,
+			// which is the one case that needs to mark a subset of the FULL
+			// list rather than simply restricting to it.
+			srcs := svc.ListSources()
+			var inUseIDs map[string]bool
+			switch {
+			case gameCtx != nil && !sourceAll:
+				srcs, err = svc.SourcesForGame(gameCtx.ID)
+				if err != nil {
+					return err
+				}
+			case gameCtx != nil:
+				scoped, err := svc.SourcesForGame(gameCtx.ID)
+				if err != nil {
+					return err
+				}
+				inUseIDs = make(map[string]bool, len(scoped))
+				for _, s := range scoped {
+					inUseIDs[s.ID()] = true
+				}
+			}
+			showInUseColumn := inUseIDs != nil
+
 			// make(...,0,...), not `var rows []sourceInfo`: a nil slice encodes
 			// to JSON `null`, but `source list --json` should always emit an
 			// array — empty when there is nothing to report (#52 item 13).
-			srcs := svc.ListSources()
 			rows := make([]sourceInfo, 0, len(srcs)+len(errRows)+len(loadErrs))
 			for _, src := range srcs {
 				rows = append(rows, sourceInfo{
@@ -100,8 +158,13 @@ Examples:
 					Type:         source.TypeLabelOf(src),
 					Auth:         authState(src),
 					Capabilities: capabilitySummary(source.CapabilitiesOf(src)),
+					InUse:        inUseIDs[src.ID()],
 				})
 			}
+			// Broken-definition error rows stay visible in every view (design
+			// §5): they never registered, so they have no game association to
+			// scope by, and hiding them would bury exactly the diagnostics a
+			// user debugging their YAML needs.
 			rows = append(rows, errRows...)
 			for _, le := range loadErrs {
 				rows = append(rows, sourceInfo{
@@ -116,9 +179,26 @@ Examples:
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tNAME\tTYPE\tAUTH\tCAPABILITIES\tERROR")
+			header := "ID\tNAME\tTYPE\tAUTH\tCAPABILITIES"
+			if showInUseColumn {
+				header += "\tIN USE"
+			}
+			fmt.Fprintln(w, header+"\tERROR")
 			for _, r := range rows {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Name, r.Type, r.Auth, r.Capabilities, r.Error)
+				line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s", r.ID, r.Name, r.Type, r.Auth, r.Capabilities)
+				if showInUseColumn {
+					// Error rows have no game association (see the append
+					// above) — leave the column blank rather than claim "no".
+					inUse := ""
+					if r.Type != "error" {
+						inUse = "no"
+						if r.InUse {
+							inUse = "yes"
+						}
+					}
+					line += "\t" + inUse
+				}
+				fmt.Fprintln(w, line+"\t"+r.Error)
 			}
 			return w.Flush()
 		})
@@ -254,6 +334,8 @@ func capabilitySummary(c source.Capabilities) string {
 func init() {
 	sourceValidateCmd.Flags().BoolVar(&sourceProbe, "probe", false, "perform a live smoke test after validation")
 	sourceValidateCmd.Flags().StringVar(&sourceProbeID, "id", "", "mod id to probe with (api definitions without a search endpoint)")
+
+	sourceListCmd.Flags().BoolVar(&sourceAll, "all", false, "show the full registry (with an IN USE column) instead of scoping to the active game")
 
 	sourceCmd.AddCommand(sourceListCmd)
 	sourceCmd.AddCommand(sourceValidateCmd)

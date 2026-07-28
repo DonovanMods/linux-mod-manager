@@ -97,6 +97,13 @@ type SourceInfo struct {
 	Type         string // "built-in", "directory", "manifest", or "api"
 	Auth         string // "yes", "no", or "n/a" (source has no auth capability)
 	Capabilities string // compact list, e.g. "search,updates"
+	// InUse marks a row as one of the active game's configured sources.
+	// Meaningful only when SourceInfos(true) (the full-registry view) was
+	// requested - SourceInfos(false)'s game-scoped rows are all trivially
+	// "in use" by construction, so this is left at its zero value (false)
+	// there, mirroring cmd/lmm/source.go's sourceInfo.InUse (design §5's
+	// CLI/TUI "same in-use marker" parity).
+	InUse bool
 }
 
 // ProfileItem is one renderable profile row.
@@ -175,10 +182,15 @@ type DataProvider interface {
 	// across all of them when --source is omitted (see doSearch in
 	// cmd/lmm/search.go).
 	Sources() []string
-	// SourceInfos lists every source registered with the service (built-in
-	// and user-defined), sorted by ID, for the read-only Sources screen. See
+	// SourceInfos lists sources registered with the service for the
+	// read-only Sources screen, sorted by ID: with all == false (the
+	// screen's default view - Task 4, #75), only the active game's
+	// configured+registered sources (mirroring Sources(), but with full
+	// display columns); with all == true, EVERY registered source
+	// (built-in and user-defined), each marked SourceInfo.InUse when it
+	// belongs to the active game - the 'a' toggle's full-registry view. See
 	// SourceInfo's doc comment for how this differs from Sources.
-	SourceInfos() []SourceInfo
+	SourceInfos(all bool) []SourceInfo
 	// Search queries one source, or every one of the game's configured
 	// sources when source is "" (the documented all-sources sentinel).
 	// pageSize is the number of results to fetch for this page (#111 Tier
@@ -375,12 +387,33 @@ func (p *prototypeProvider) Sources() []string {
 	return []string{"nexusmods"}
 }
 
-func (p *prototypeProvider) SourceInfos() []SourceInfo {
-	return []SourceInfo{
+// prototypeSourceInUse names the canned sources that count as "configured
+// for the active game" - kept in lockstep with Sources()'s own canned
+// single-entry set (both are hardcoded regardless of altActive - see
+// Sources()'s own doc comment for why the alt game isn't distinguished
+// here either) so SourceInfos(false)'s scoped subset and SourceInfos(true)'s
+// InUse marks agree with what Sources() already claims is configured.
+var prototypeSourceInUse = map[string]bool{"nexusmods": true}
+
+func (p *prototypeProvider) SourceInfos(all bool) []SourceInfo {
+	full := []SourceInfo{
 		{ID: "curseforge", Name: "CurseForge", Type: "built-in", Auth: "n/a", Capabilities: "search,updates"},
 		{ID: "local-mods", Name: "Local Mods", Type: "directory", Auth: "n/a", Capabilities: "search,updates"},
 		{ID: "nexusmods", Name: "Nexus Mods", Type: "built-in", Auth: "yes", Capabilities: "search,deps,updates,auth"},
 	}
+	if !all {
+		scoped := make([]SourceInfo, 0, len(prototypeSourceInUse))
+		for _, si := range full {
+			if prototypeSourceInUse[si.ID] {
+				scoped = append(scoped, si)
+			}
+		}
+		return scoped
+	}
+	for i := range full {
+		full[i].InUse = prototypeSourceInUse[full[i].ID]
+	}
+	return full
 }
 
 // prototypeAllSourcesWarning is a canned per-source failure (#58 item 4),
@@ -443,16 +476,18 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, page
 		//     shown" wording (app.go) - depend on this being honest, not just
 		//     true-by-convention.
 		//   - AttemptedCount is the canned SEARCHABLE source count, derived
-		//     from SourceInfos() (not hardcoded) - all three of its entries
-		//     advertise "search" in their Capabilities string, matching
-		//     prototypeAllSourcesWarning's premise that one of them
-		//     (curseforge) was attempted and failed. Leaving this at its
-		//     zero value would make EVERY zero-match demo search
-		//     indistinguishable from "no source supports searching" (#58
-		//     item 3's exact dishonesty), even though the canned sources
-		//     plainly do support it.
+		//     from SourceInfos(true) - the FULL registry, not the
+		//     game-scoped default Task 4 added - since all-sources search
+		//     attempts every registered source regardless of scoping, and
+		//     all three entries advertise "search" in their Capabilities
+		//     string, matching prototypeAllSourcesWarning's premise that
+		//     one of them (curseforge) was attempted and failed. Leaving
+		//     this at its zero value would make EVERY zero-match demo
+		//     search indistinguishable from "no source supports searching"
+		//     (#58 item 3's exact dishonesty), even though the canned
+		//     sources plainly do support it.
 		result.Exhausted = end == len(matched)
-		result.AttemptedCount = len(p.SourceInfos())
+		result.AttemptedCount = len(p.SourceInfos(true))
 	}
 	return result, nil
 }

@@ -12,10 +12,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
 func TestSourceCmd_Structure(t *testing.T) {
@@ -181,6 +183,11 @@ manifest:
 func TestSourceListCmd_ErrorRows(t *testing.T) {
 	runList := func(t *testing.T) []sourceInfo {
 		t.Helper()
+		// Task 4 made sourceListCmd read the package-level gameID (game
+		// scoping) - this test doesn't care about game context at all, so
+		// pin it to "no game" rather than depend on whatever an unrelated,
+		// earlier-run test in this package happened to leave behind.
+		gameID = ""
 		cmd := &cobra.Command{Use: "test"}
 		cmd.AddCommand(sourceCmd)
 		t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
@@ -280,6 +287,7 @@ func TestSourceInfoRows_EmptyJSONEncode(t *testing.T) {
 // os.Stderr for the duration of the command run to observe what actually
 // reaches it, alongside the command's own captured stdout.
 func TestSourceListCmd_ReportsBrokenDefinitionOnce(t *testing.T) {
+	gameID = "" // see TestSourceListCmd_ErrorRows' runList comment
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(configDir, "sources"), 0755))
@@ -378,6 +386,7 @@ func TestSourceTypeLabel_AllRealTypesPlusBareMock(t *testing.T) {
 // return a TypeLabeler — so that fallback stays covered at the unit level
 // above only.
 func TestSourceListCmd_TypeColumnFromTypeLabeler(t *testing.T) {
+	gameID = "" // see TestSourceListCmd_ErrorRows' runList comment
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(configDir, "sources"), 0755))
@@ -435,4 +444,218 @@ api:
 	assert.Equal(t, "api", byID["my-api"])
 	assert.Equal(t, "built-in", byID["nexusmods"])
 	assert.Equal(t, "built-in", byID["curseforge"])
+}
+
+// --- Task 4: game-scoped `source list` (closes #75) ---
+
+// resetSourceListGameFlags restores the package-level game/--all flag vars
+// `source list`'s scoping reads, mirroring resetSourceProbeFlags' role for
+// --probe/--id. gameID is rootCmd's own persistent flag var (root.go), not
+// local to this file, so tests touching it must restore it like every other
+// gameID-mutating test in this package does.
+func resetSourceListGameFlags(t *testing.T) {
+	t.Helper()
+	gameID = ""
+	sourceAll = false
+}
+
+// setupSourceListGameTest writes one custom directory-source definition
+// (registered as "my-directory") alongside a games.yaml declaring gameID
+// "test-game" whose SourceIDs map is exactly {inGame...} - a subset of the
+// full registry (built-ins nexusmods/curseforge plus my-directory) so scoped
+// vs. full-registry views actually differ. Returns nothing; callers read
+// configDir/dataDir directly, matching this file's other setup helpers'
+// style (e.g. TestSourceListCmd_TypeColumnFromTypeLabeler inlines the same
+// shape without a helper - this one is shared by 4+ tests below, unlike
+// that one-off).
+func setupSourceListGameTest(t *testing.T, inGame ...string) {
+	t.Helper()
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configDir, "sources"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "dir.yaml"), []byte(`
+id: my-directory
+name: My Directory
+type: directory
+directory:
+  path: `+t.TempDir()+`
+`), 0644))
+
+	sourceIDs := make(map[string]string, len(inGame))
+	for _, id := range inGame {
+		sourceIDs[id] = ""
+	}
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID:        "test-game",
+		Name:      "Test Game",
+		ModPath:   t.TempDir(),
+		SourceIDs: sourceIDs,
+	}))
+}
+
+// TestSourceListCmd_ScopedByDefaultWhenGameResolvable pins design §5's
+// default behavior: with a resolvable game (via -g here), plain `source
+// list` shows only that game's configured+registered sources - my-directory
+// and nexusmods, NOT curseforge (never added to SourceIDs) - and carries no
+// "in_use" key at all (only the --all-with-game combo adds it, per the JSON
+// contract).
+func TestSourceListCmd_ScopedByDefaultWhenGameResolvable(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "my-directory", "nexusmods")
+	gameID = "test-game"
+
+	rows := runSourceListJSON(t)
+
+	ids := rowIDs(rows)
+	assert.ElementsMatch(t, []string{"my-directory", "nexusmods"}, ids,
+		"scoped view must include exactly the game's registered sources: %+v", rows)
+	for _, r := range rows {
+		assert.False(t, r.InUse, "scoped rows must never carry in_use — only --all-with-game does: %+v", r)
+	}
+}
+
+// TestSourceListCmd_AllFlagShowsFullRegistryWithInUseColumn pins the --all
+// contract: every registered source appears (built-ins + custom), and rows
+// belonging to the active game's SourceIDs are marked InUse — curseforge,
+// never added to this game, must NOT be marked.
+func TestSourceListCmd_AllFlagShowsFullRegistryWithInUseColumn(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "my-directory", "nexusmods")
+	gameID = "test-game"
+	sourceAll = true
+
+	rows := runSourceListJSON(t)
+
+	byID := make(map[string]sourceInfo, len(rows))
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	require.Contains(t, byID, "my-directory")
+	require.Contains(t, byID, "nexusmods")
+	require.Contains(t, byID, "curseforge")
+	assert.True(t, byID["my-directory"].InUse)
+	assert.True(t, byID["nexusmods"].InUse)
+	assert.False(t, byID["curseforge"].InUse, "curseforge is not in test-game's SourceIDs")
+
+	// The text-table rendering must show the same distinction via an IN USE
+	// column present only in this (--all + game context) combination.
+	// gameID is rootCmd's persistent flag var; runSourceCmd's throwaway root
+	// doesn't register it as a flag (see that helper's own comment on why
+	// this file always sets the global directly instead of passing -g), so
+	// it's already set above rather than passed via args.
+	out, err := runSourceCmd(t, "source", "list", "--all")
+	require.NoError(t, err)
+	assert.Contains(t, out, "IN USE")
+}
+
+// TestSourceListCmd_NoGameKeepsFullListShapeEvenWithAllFlag pins design §5's
+// "the command must keep working with zero games configured" guarantee:
+// with no game resolvable (no -g, no default game), --all must not error
+// or invent an IN USE column it has nothing to compute — same full-list
+// shape as no --all at all.
+func TestSourceListCmd_NoGameKeepsFullListShapeEvenWithAllFlag(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t) // games.yaml declares no games at all in SourceIDs terms
+	// gameID left "" and no default game configured — requireGame errors,
+	// which must be swallowed here per the design's "resolve WITHOUT
+	// erroring when absent" contract.
+
+	rows := runSourceListJSON(t)
+	ids := rowIDs(rows)
+	assert.Contains(t, ids, "curseforge", "no game context => full registry, unchanged shape")
+	assert.Contains(t, ids, "nexusmods")
+	assert.Contains(t, ids, "my-directory")
+	for _, r := range rows {
+		assert.False(t, r.InUse)
+	}
+
+	out, err := runSourceCmd(t, "source", "list", "--all")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "IN USE", "no game context means no IN USE column, --all or not")
+}
+
+// TestSourceListCmd_ScopedViewStillReportsBrokenDefinitions pins design §5's
+// "broken-definition error rows remain visible in both views" rule for the
+// SCOPED (game-resolvable, no --all) case specifically — TestSourceListCmd_
+// ErrorRows above already covers the ungamed path.
+func TestSourceListCmd_ScopedViewStillReportsBrokenDefinitions(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "nexusmods")
+	gameID = "test-game"
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "broken.yaml"), []byte(`
+id: broken-mods
+name: Broken Mods
+type: directory
+directory:
+  path: `+filepath.Join(t.TempDir(), "does-not-exist")+`
+`), 0644))
+
+	rows := runSourceListJSON(t)
+	found := false
+	for _, r := range rows {
+		if r.ID == "broken-mods" && r.Type == "error" {
+			found = true
+			assert.NotEmpty(t, r.Error)
+		}
+	}
+	assert.True(t, found, "a broken definition must stay visible even in the scoped default view: %+v", rows)
+}
+
+// TestSourceListCmd_ScopedUsesConfigDefaultGame proves the scoping check
+// reads the SAME default-game resolution requireGame uses elsewhere (design
+// §5: "-g or default game"), not just the explicit flag.
+func TestSourceListCmd_ScopedUsesConfigDefaultGame(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "my-directory")
+	require.NoError(t, (&config.Config{DefaultGame: "test-game"}).Save(configDir))
+
+	rows := runSourceListJSON(t)
+	ids := rowIDs(rows)
+	assert.Equal(t, []string{"my-directory"}, ids, "must scope via the config default game when -g is absent: %+v", rows)
+}
+
+// runSourceListJSON runs `source list --json` (sourceAll/gameID already set
+// by the caller) and decodes the row slice - the shared tail every test
+// above uses instead of hand-rolling runList (TestSourceListCmd_ErrorRows'
+// own private copy predates --all and only ever ran ungamed).
+func runSourceListJSON(t *testing.T) []sourceInfo {
+	t.Helper()
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(sourceCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	args := []string{"source", "list"}
+	if sourceAll {
+		args = append(args, "--all")
+	}
+	cmd.SetArgs(args)
+
+	// Reset synchronously (defer, not t.Cleanup) rather than leave jsonOutput
+	// true until the whole test ends — TestSourceListCmd_AllFlagShows...
+	// calls this helper and then runSourceCmd (text-table output) in the
+	// SAME test, and a t.Cleanup-deferred reset wouldn't fire between them.
+	prevJSON := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = prevJSON }()
+
+	require.NoError(t, cmd.Execute())
+
+	var rows []sourceInfo
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+	return rows
+}
+
+func rowIDs(rows []sourceInfo) []string {
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	return ids
 }

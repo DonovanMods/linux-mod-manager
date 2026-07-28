@@ -13,12 +13,25 @@ lmm-source-list - List all mod sources
 List built-in and user-defined mod sources, including definitions that failed to load.
 
 .PP
+With a resolvable game (-g, or a default set via 'lmm game set-default'),
+the list scopes to that game's configured sources by default. --all shows
+every registered source instead, marking the active game's sources in an
+IN USE column. With no game resolvable, --all has no effect: the full
+registry is shown either way, exactly as when no game exists at all.
+Definitions that failed to load are always shown, in every view.
+
+.PP
 Examples:
   lmm source list
+  lmm source list --all
   lmm source list --json
 
 
 .SH OPTIONS
+\fB--all\fP[=false]
+	show the full registry (with an IN USE column) instead of scoping to the active game
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for list
 

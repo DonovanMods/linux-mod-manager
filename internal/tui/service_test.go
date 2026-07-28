@@ -150,10 +150,12 @@ func TestPrototypeProviderSearchAllSourcesRendersWarning(t *testing.T) {
 // Tier 3 - broke that by trusting Exhausted instead, which
 // prototypeProvider never set).
 // AttemptedCount must likewise reflect the canned SEARCHABLE source count
-// (len(SourceInfos()), all three of which advertise "search" - see
-// SourceInfos' doc comment) rather than 0, or every zero-match demo search
-// would falsely render the no-searchable-sources honesty notice (#58 item
-// 3) instead of the ordinary "No archives matched" copy.
+// (len(SourceInfos(true)) - the full registry, since all-sources search
+// attempts every registered source regardless of Task 4's scoping, and all
+// three advertise "search" - see SourceInfos' doc comment) rather than 0, or
+// every zero-match demo search would falsely render the
+// no-searchable-sources honesty notice (#58 item 3) instead of the ordinary
+// "No archives matched" copy.
 func TestPrototypeProviderSearchAllSourcesReportsExhaustedAndAttempted(t *testing.T) {
 	t.Parallel()
 
@@ -162,7 +164,7 @@ func TestPrototypeProviderSearchAllSourcesReportsExhaustedAndAttempted(t *testin
 	all, err := p.Search(context.Background(), "", "sky", 0, 0)
 	require.NoError(t, err)
 	require.True(t, all.Exhausted, "the canned set is a single-page fetch; there is no real next page to demo")
-	require.Equal(t, len(p.SourceInfos()), all.AttemptedCount, "must derive from the canned searchable-source count, not 0")
+	require.Equal(t, len(p.SourceInfos(true)), all.AttemptedCount, "must derive from the canned searchable-source count, not 0")
 
 	none, err := p.Search(context.Background(), "", "zzz-nothing-matches", 0, 0)
 	require.NoError(t, err)
