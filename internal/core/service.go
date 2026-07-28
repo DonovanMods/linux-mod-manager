@@ -144,7 +144,9 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 	game, ok := s.games[gameID]
 	if !ok {
-		return nil, fmt.Errorf("game not found: %s", gameID)
+		// Wrap the sentinel like GetGame does, so callers can errors.Is;
+		// the visible text stays "game not found: <id>".
+		return nil, fmt.Errorf("%w: %s", domain.ErrGameNotFound, gameID)
 	}
 
 	srcs := make([]source.ModSource, 0, len(game.SourceIDs))

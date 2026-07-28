@@ -3,6 +3,7 @@ package core_test
 import (
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,8 @@ func TestSourcesForGameUnknownGameErrors(t *testing.T) {
 
 	_, err := svc.SourcesForGame("nope")
 	assert.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrGameNotFound,
+		"must wrap the sentinel like GetGame so callers can errors.Is")
 }
 
 // TestSourcesForGameSkipsUnregisteredKey mirrors SearchAllSources's existing
