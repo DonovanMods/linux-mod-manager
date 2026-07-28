@@ -16,11 +16,11 @@ Manage authentication credentials for mod sources.
 NexusMods and CurseForge are validated live against the source's API when
 you log in. Any other registered source that declares auth support (a
 custom source with auth enabled in its definition - see 'lmm source
---help') also accepts a stored API key, named positionally; it is simply
-stored and exercised on first use, since custom sources have no generic
-validation endpoint. The interactive picker ('lmm auth login'/'lmm auth
-logout' with no source argument) only offers the built-in sources - name
-a custom source explicitly to authenticate or log it out.
+--help') also accepts a stored API key; it is simply stored and exercised
+on first use, since custom sources have no generic validation endpoint.
+The interactive picker ('lmm auth login'/'lmm auth logout' with no source
+argument) lists every registered source that declares auth support,
+built-in or custom, sorted by ID.
 
 .PP
 Use 'lmm auth login [source]' to authenticate with a source.

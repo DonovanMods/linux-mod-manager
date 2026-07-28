@@ -234,13 +234,19 @@ func registerSources(svc *core.Service, cfgDir string) {
 // source accepts one → RegisterSource.
 func registerSource(svc *core.Service, src source.ModSource) {
 	id := src.ID()
+	// Custom sources are constructed (custom.New) by the caller before this
+	// runs; a definition that both collides with an existing ID AND fails to
+	// construct reports its construction error instead, since it never
+	// reaches this check — construct-then-check means construction wins.
 	if _, err := svc.GetSource(id); err == nil {
 		fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: id already in use\n", id)
 		return
 	}
-	if key := getSourceAPIKey(svc, id, envKeyFor(src)); key != "" {
-		if a, ok := src.(interface{ SetAPIKey(string) }); ok {
-			a.SetAPIKey(key)
+	// Gate the token lookup on the source actually being able to use a key:
+	// skips a pointless per-source SQLite read for auth-incapable sources.
+	if setter, ok := src.(interface{ SetAPIKey(string) }); ok {
+		if key := getSourceAPIKey(svc, id, envKeyFor(src)); key != "" {
+			setter.SetAPIKey(key)
 		}
 	}
 	svc.RegisterSource(src)

@@ -12,15 +12,10 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
-
-// supportedSources lists all sources that support authentication
-var supportedSources = []string{"nexusmods", "curseforge"}
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
@@ -30,11 +25,11 @@ var authCmd = &cobra.Command{
 NexusMods and CurseForge are validated live against the source's API when
 you log in. Any other registered source that declares auth support (a
 custom source with auth enabled in its definition - see 'lmm source
---help') also accepts a stored API key, named positionally; it is simply
-stored and exercised on first use, since custom sources have no generic
-validation endpoint. The interactive picker ('lmm auth login'/'lmm auth
-logout' with no source argument) only offers the built-in sources - name
-a custom source explicitly to authenticate or log it out.
+--help') also accepts a stored API key; it is simply stored and exercised
+on first use, since custom sources have no generic validation endpoint.
+The interactive picker ('lmm auth login'/'lmm auth logout' with no source
+argument) lists every registered source that declares auth support,
+built-in or custom, sorted by ID.
 
 Use 'lmm auth login [source]' to authenticate with a source.
 Use 'lmm auth logout [source]' to remove stored credentials.
@@ -46,18 +41,18 @@ var authLoginCmd = &cobra.Command{
 	Short: "Authenticate with a mod source",
 	Long: `Authenticate with a mod source.
 
-If no source is specified, you are prompted to choose between the
-built-in sources (NexusMods, CurseForge). Any other registered source
-that declares auth support (see 'lmm source --help') also works, named
-positionally; a custom source's key is stored and exercised on first
-use, since there is no generic way to validate it live.
+If no source is specified, you are prompted to choose from every
+registered source that declares auth support - the built-ins (NexusMods,
+CurseForge) plus any auth-capable custom source (see 'lmm source
+--help'), sorted by ID. A custom source's key is stored and exercised on
+first use, since there is no generic way to validate it live.
 
 Built-in sources:
   - nexusmods
   - curseforge
 
 Examples:
-  lmm auth login                # Interactive selection (built-ins only)
+  lmm auth login                # Interactive selection (all auth-capable sources)
   lmm auth login nexusmods      # Authenticate with NexusMods
   lmm auth login curseforge     # Authenticate with CurseForge
   lmm auth login my-custom-src  # Store a key for a registered custom source
@@ -85,11 +80,13 @@ var authLogoutCmd = &cobra.Command{
 	Short: "Remove stored credentials for a mod source",
 	Long: `Remove stored credentials for a mod source.
 
-If no source is specified, you are prompted to choose between the
-built-in sources (NexusMods, CurseForge). Any source with a stored
-token can also be named positionally to remove it - including a custom
-source whose definition file was later deleted, which would otherwise
-leave its stored token unremovable through the interactive picker.
+If no source is specified, you are prompted to choose from every
+registered source that declares auth support - the built-ins (NexusMods,
+CurseForge) plus any auth-capable custom source, sorted by ID. Any
+source with a stored token can also be named positionally to remove it -
+including a custom source whose definition file was later deleted, which
+would otherwise leave its stored token unremovable through the
+interactive picker.
 
 Built-in sources:
   - nexusmods
@@ -111,13 +108,51 @@ func init() {
 	rootCmd.AddCommand(authCmd)
 }
 
-// promptForSource displays an interactive menu to select a source
-func promptForSource() (string, error) {
-	fmt.Println("Select a source to authenticate with:")
-	for i, source := range supportedSources {
-		fmt.Printf("  [%d] %s\n", i+1, getSourceDisplayName(source))
+// authCapableSources returns every registered source whose
+// CapabilitiesOf(src).Auth is true, sorted by ID. Built-ins are always
+// registered (registerSources in root.go runs unconditionally), so they
+// always appear here alongside any auth-capable custom source - the
+// interactive picker, `auth status`, and the "unsupported source" error
+// hint all derive their source list from this single registry query,
+// eliminating the old built-in-vs-custom special casing.
+func authCapableSources(service *core.Service) []source.ModSource {
+	all := service.ListSources()
+	capable := make([]source.ModSource, 0, len(all))
+	for _, src := range all {
+		if source.CapabilitiesOf(src).Auth {
+			capable = append(capable, src)
+		}
 	}
-	fmt.Print("Enter choice (1-" + strconv.Itoa(len(supportedSources)) + "): ")
+	sort.Slice(capable, func(i, j int) bool { return capable[i].ID() < capable[j].ID() })
+	return capable
+}
+
+// authCapableSourceIDs returns the comma-joined, sorted IDs of every
+// registered auth-capable source, for the "unsupported source" error's hint
+// text.
+func authCapableSourceIDs(service *core.Service) string {
+	sources := authCapableSources(service)
+	ids := make([]string, len(sources))
+	for i, src := range sources {
+		ids[i] = src.ID()
+	}
+	return strings.Join(ids, ", ")
+}
+
+// promptForSource displays an interactive menu listing every registered
+// auth-capable source (built-in and custom alike, sorted by ID - see
+// authCapableSources) and reads the user's numbered choice.
+func promptForSource(service *core.Service) (string, error) {
+	sources := authCapableSources(service)
+	if len(sources) == 0 {
+		return "", fmt.Errorf("no auth-capable sources are registered")
+	}
+
+	fmt.Println("Select a source to authenticate with:")
+	for i, src := range sources {
+		fmt.Printf("  [%d] %s\n", i+1, src.Name())
+	}
+	fmt.Print("Enter choice (1-" + strconv.Itoa(len(sources)) + "): ")
 
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
@@ -126,11 +161,11 @@ func promptForSource() (string, error) {
 	}
 
 	choice, err := strconv.Atoi(strings.TrimSpace(input))
-	if err != nil || choice < 1 || choice > len(supportedSources) {
-		return "", fmt.Errorf("invalid choice: please enter a number between 1 and %d", len(supportedSources))
+	if err != nil || choice < 1 || choice > len(sources) {
+		return "", fmt.Errorf("invalid choice: please enter a number between 1 and %d", len(sources))
 	}
 
-	return supportedSources[choice-1], nil
+	return sources[choice-1].ID(), nil
 }
 
 func runAuthLogin(cmd *cobra.Command, args []string) error {
@@ -139,75 +174,90 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-
-		printAuthInstructions(sourceID)
-
-		apiKey, err := readAPIKey()
-		if err != nil {
-			return fmt.Errorf("reading API key: %w", err)
-		}
-		if apiKey == "" {
-			return fmt.Errorf("API key cannot be empty")
-		}
-
-		if isSupportedSource(sourceID) {
-			fmt.Print("Validating... ")
-			if err := validateAPIKey(ctx, sourceID, apiKey); err != nil {
-				fmt.Println("failed")
-				return fmt.Errorf("invalid API key: %w", err)
-			}
-			fmt.Println("done")
-		}
-
-		if err := service.SaveSourceToken(sourceID, apiKey); err != nil {
-			return fmt.Errorf("saving token: %w", err)
-		}
-		printLoginResult(os.Stdout, sourceID)
-		printAuthLoginSuccess(os.Stdout, sourceID)
-		return nil
+		return doAuthLogin(ctx, service, sourceID)
 	})
 }
 
-// printLoginResult reports the outcome of storing credentials for sourceID.
-// Built-in sources (nexusmods, curseforge) were actively validated via a real
-// API call just above ("Validating... done"), so nothing more is needed here.
-// Custom sources have no generic validation endpoint (validateAPIKey is a
-// no-op for them) — printing the same "Validating... done" sequence would be
-// a fabricated result, so they get an honest message instead: the key is
-// simply stored and will be exercised on first use.
-func printLoginResult(w io.Writer, sourceID string) {
-	if isSupportedSource(sourceID) {
+// doAuthLogin performs the login flow for an already-resolved sourceID:
+// prints its auth instructions, reads an API key from stdin, validates it
+// live when the source implements source.KeyValidator (then reports
+// "Successfully authenticated"), otherwise stores it unvalidated (then
+// reports it was stored and will be validated on first use). Split out from
+// runAuthLogin so the validator-vs-stored message split is testable against
+// a mock source without driving the full interactive prompt.
+func doAuthLogin(ctx context.Context, service *core.Service, sourceID string) error {
+	src, err := service.GetSource(sourceID)
+	if err != nil {
+		return fmt.Errorf("looking up source %s: %w", sourceID, err)
+	}
+
+	printAuthInstructions(src)
+
+	apiKey, err := readAPIKey()
+	if err != nil {
+		return fmt.Errorf("reading API key: %w", err)
+	}
+	if apiKey == "" {
+		return fmt.Errorf("API key cannot be empty")
+	}
+
+	validator, hasValidator := src.(source.KeyValidator)
+	if hasValidator {
+		fmt.Print("Validating... ")
+		if err := validator.ValidateKey(ctx, apiKey); err != nil {
+			fmt.Println("failed")
+			return fmt.Errorf("invalid API key: %w", err)
+		}
+		fmt.Println("done")
+	}
+
+	if err := service.SaveSourceToken(sourceID, apiKey); err != nil {
+		return fmt.Errorf("saving token: %w", err)
+	}
+	printLoginResult(os.Stdout, hasValidator)
+	printAuthLoginSuccess(os.Stdout, src, hasValidator)
+	return nil
+}
+
+// printLoginResult reports the outcome of storing credentials, for the case
+// where no live validator ran. hasValidator sources were actively checked
+// via a real API call just above ("Validating... done"), so nothing more is
+// needed here. Sources without a validator get an honest message instead -
+// printing that same "Validating... done" sequence would fabricate a result
+// that never happened.
+func printLoginResult(w io.Writer, hasValidator bool) {
+	if hasValidator {
 		return
 	}
 	fmt.Fprintln(w, "Stored (validated on first use).")
 }
 
 // printAuthLoginSuccess prints the final confirmation line for a completed
-// login. Built-in sources were actively validated via a real API call
-// earlier in the flow ("Validating... done"), so "Successfully
-// authenticated" is accurate. Custom sources have no generic validation
-// endpoint — printing that same claim would fabricate a result that never
-// happened, so they get an honest "stored" message instead.
-func printAuthLoginSuccess(w io.Writer, sourceID string) {
-	if isSupportedSource(sourceID) {
-		fmt.Fprintf(w, "Successfully authenticated with %s!\n", getSourceDisplayName(sourceID))
+// login. Sources with a live validator were actively checked via a real API
+// call earlier in the flow, so "Successfully authenticated" is accurate.
+// Sources without one have no generic validation endpoint - printing that
+// same claim would fabricate a result that never happened, so they get an
+// honest "stored" message instead, keyed by ID rather than a display name.
+func printAuthLoginSuccess(w io.Writer, src source.ModSource, hasValidator bool) {
+	if hasValidator {
+		fmt.Fprintf(w, "Successfully authenticated with %s!\n", src.Name())
 		return
 	}
-	fmt.Fprintf(w, "API key stored for %s.\n", sourceID)
+	fmt.Fprintf(w, "API key stored for %s.\n", src.ID())
 }
 
-// selectAuthSource resolves the source from args or prompts the user. The
-// service is used to recognize registered custom sources that declare auth
-// support; the interactive prompt path only ever offers built-ins.
+// selectAuthSource resolves the source from args or prompts interactively.
+// Both paths draw from the same registry query (authCapableSources): every
+// registered source with Capabilities().Auth.
 func selectAuthSource(service *core.Service, args []string) (string, error) {
 	if len(args) > 0 {
 		sourceID := args[0]
 		if !isAuthCapableSource(service, sourceID) {
-			return "", fmt.Errorf("unsupported source: %s (supported: %s, or a registered custom source with auth declared)", sourceID, strings.Join(supportedSources, ", "))
+			return "", fmt.Errorf("unsupported source: %s (supported: %s, or a registered custom source with auth declared)", sourceID, authCapableSourceIDs(service))
 		}
 		return sourceID, nil
 	}
-	sourceID, err := promptForSource()
+	sourceID, err := promptForSource(service)
 	if err != nil {
 		return "", err
 	}
@@ -237,18 +287,27 @@ func resolveLogoutSource(service *core.Service, args []string) (string, error) {
 	return "", fmt.Errorf("no stored credentials for %q and it is not a registered auth-capable source", sourceID)
 }
 
-// isAuthCapableSource reports whether sourceID can hold an API key: either a
-// built-in from supportedSources, or a registered custom source whose
-// definition declares auth.
+// isAuthCapableSource reports whether sourceID is a registered source whose
+// definition declares auth (built-in or custom - both are found the same
+// way, since built-ins are registered unconditionally with explicit
+// Capabilities()).
 func isAuthCapableSource(service *core.Service, sourceID string) bool {
-	if isSupportedSource(sourceID) {
-		return true
-	}
 	src, err := service.GetSource(sourceID)
 	if err != nil {
 		return false
 	}
 	return source.CapabilitiesOf(src).Auth
+}
+
+// authDisplayName returns sourceID's registered source's Name() when it is
+// still registered, otherwise the raw ID. Needed because resolveLogoutSource
+// allows removing a token for a source that is no longer registered (its
+// definition file was deleted), in which case there is no Name() to consult.
+func authDisplayName(service *core.Service, sourceID string) string {
+	if src, err := service.GetSource(sourceID); err == nil {
+		return src.Name()
+	}
+	return sourceID
 }
 
 func runAuthLogout(cmd *cobra.Command, args []string) error {
@@ -260,7 +319,7 @@ func runAuthLogout(cmd *cobra.Command, args []string) error {
 		if err := service.DeleteSourceToken(sourceID); err != nil {
 			return fmt.Errorf("removing token: %w", err)
 		}
-		fmt.Printf("Removed %s credentials.\n", getSourceDisplayName(sourceID))
+		fmt.Printf("Removed %s credentials.\n", authDisplayName(service, sourceID))
 		return nil
 	})
 }
@@ -271,59 +330,18 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doAuthStatus reports authentication status for every registered
+// auth-capable source (built-in and custom, uniformly - sorted by ID via
+// authCapableSources), then a final pass surfacing stored tokens that match
+// no registered source (e.g. a custom source's definition file was deleted
+// after `lmm auth login`).
 func doAuthStatus(service *core.Service) error {
-	for _, sourceID := range supportedSources {
-		// Check stored token first
-		token, err := service.GetSourceToken(sourceID)
-		if err != nil {
-			return fmt.Errorf("checking %s: %w", sourceID, err)
-		}
+	sources := authCapableSources(service)
+	registered := make(map[string]bool, len(sources))
 
-		if token != nil {
-			masked := maskAPIKey(token.APIKey)
-			fmt.Printf("%s: authenticated (key: %s)\n", getSourceDisplayName(sourceID), masked)
-			continue
-		}
-
-		// Check environment variable. sourceID here is always a built-in
-		// (from supportedSources), which registerSources registers
-		// unconditionally, so GetSource succeeding is the expected path;
-		// envKeyForSourceID's derived fallback covers the defensive case.
-		envKey := envKeyForSourceID(sourceID)
-		if src, err := service.GetSource(sourceID); err == nil {
-			envKey = envKeyFor(src)
-		}
-		if envKey != "" {
-			if apiKey := os.Getenv(envKey); apiKey != "" {
-				masked := maskAPIKey(apiKey)
-				fmt.Printf("%s: authenticated via %s (key: %s)\n", getSourceDisplayName(sourceID), envKey, masked)
-				continue
-			}
-		}
-
-		fmt.Printf("%s: not authenticated\n", getSourceDisplayName(sourceID))
-	}
-
-	// Custom sources that declare auth get the same treatment as built-ins.
-	// Sorted by ID: registry/ListSources order is map iteration, which Go
-	// randomizes, and this output must be deterministic.
-	customSources := service.ListSources()
-	sort.Slice(customSources, func(i, j int) bool { return customSources[i].ID() < customSources[j].ID() })
-
-	registered := make(map[string]bool, len(supportedSources)+len(customSources))
-	for _, id := range supportedSources {
-		registered[id] = true
-	}
-
-	for _, src := range customSources {
+	for _, src := range sources {
 		id := src.ID()
 		registered[id] = true
-		if isSupportedSource(id) {
-			continue // already reported above
-		}
-		if !source.CapabilitiesOf(src).Auth {
-			continue // directory sources, auth-less manifests: nothing to report
-		}
 
 		token, err := service.GetSourceToken(id)
 		if err != nil {
@@ -333,11 +351,13 @@ func doAuthStatus(service *core.Service) error {
 			fmt.Printf("%s: authenticated (key: %s)\n", id, maskAPIKey(token.APIKey))
 			continue
 		}
-		envKey := envKeyForSourceID(id)
+
+		envKey := envKeyFor(src)
 		if apiKey := os.Getenv(envKey); apiKey != "" {
 			fmt.Printf("%s: authenticated via %s (key: %s)\n", id, envKey, maskAPIKey(apiKey))
 			continue
 		}
+
 		fmt.Printf("%s: not authenticated (run: lmm auth login %s)\n", id, id)
 	}
 
@@ -360,17 +380,31 @@ func doAuthStatus(service *core.Service) error {
 	return nil
 }
 
-// isSupportedSource checks if a source ID is in the supported list
-func isSupportedSource(sourceID string) bool {
-	for _, s := range supportedSources {
-		if s == sourceID {
-			return true
-		}
+// printAuthInstructions prints setup steps for obtaining src's API key: its
+// own AuthInstructionsProvider text when implemented (built-ins preserve
+// their exact wording), otherwise generic instructions naming the
+// environment variable envKeyFor resolves for src.
+func printAuthInstructions(src source.ModSource) {
+	if p, ok := src.(source.AuthInstructionsProvider); ok {
+		fmt.Print(p.AuthInstructions())
+	} else {
+		fmt.Printf("Enter the API key for %s.\n", src.ID())
+		fmt.Printf("(Alternatively, set the %s environment variable.)\n", envKeyFor(src))
 	}
-	return false
+	fmt.Println()
 }
 
-// getSourceDisplayName returns the display name for a source
+// getSourceDisplayName returns the display name for a source ID: "NexusMods"
+// or "CurseForge" for the two built-ins, else the ID unchanged.
+//
+// Retained here (unused by auth.go's own flows, which now derive display
+// names from the registered source's Name() via authCapableSources) because
+// helpers.go's promptForGameSource — the "this game has multiple configured
+// sources, pick one" prompt shared by search/install/update/mod, entirely
+// unrelated to auth — still calls it. That prompt's own normalization is
+// out of scope for this task (PR 2 territory per the source-registry design
+// doc); deleting this function would break the build for code this task
+// does not touch.
 func getSourceDisplayName(sourceID string) string {
 	switch sourceID {
 	case "nexusmods":
@@ -379,48 +413,6 @@ func getSourceDisplayName(sourceID string) string {
 		return "CurseForge"
 	default:
 		return sourceID
-	}
-}
-
-// printAuthInstructions prints source-specific auth instructions
-func printAuthInstructions(sourceID string) {
-	switch sourceID {
-	case "nexusmods":
-		fmt.Println("To authenticate with NexusMods:")
-		fmt.Println("1. Visit https://www.nexusmods.com/users/myaccount?tab=api")
-		fmt.Println("2. Click \"Request an API Key\" if you don't have one")
-		fmt.Println("3. Copy your Personal API Key")
-	case "curseforge":
-		fmt.Println("To authenticate with CurseForge:")
-		fmt.Println("1. Visit https://console.curseforge.com/")
-		fmt.Println("2. Create a project and generate an API key")
-		fmt.Println("3. Copy your API key")
-	default:
-		fmt.Printf("Enter the API key for %s.\n", sourceID)
-		fmt.Printf("(Alternatively, set the %s environment variable.)\n", envKeyForSourceID(sourceID))
-	}
-	fmt.Println()
-}
-
-// validateAPIKey validates an API key for the given source
-func validateAPIKey(ctx context.Context, sourceID, apiKey string) error {
-	switch sourceID {
-	case "nexusmods":
-		client := nexusmods.NewClient(nil, "")
-		return client.ValidateAPIKey(ctx, apiKey)
-	case "curseforge":
-		// Validate by making a test API call to GetGames
-		client := curseforge.NewClient(nil, apiKey)
-		_, err := client.GetGames(ctx)
-		if err != nil {
-			return fmt.Errorf("API validation failed: %w", err)
-		}
-		return nil
-	default:
-		// Custom sources have no generic validation endpoint. By the time we
-		// get here the source has already passed isAuthCapableSource, so the
-		// key is simply stored and exercised on first fetch.
-		return nil
 	}
 }
 

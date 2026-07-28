@@ -13,11 +13,11 @@ lmm-auth-login - Authenticate with a mod source
 Authenticate with a mod source.
 
 .PP
-If no source is specified, you are prompted to choose between the
-built-in sources (NexusMods, CurseForge). Any other registered source
-that declares auth support (see 'lmm source --help') also works, named
-positionally; a custom source's key is stored and exercised on first
-use, since there is no generic way to validate it live.
+If no source is specified, you are prompted to choose from every
+registered source that declares auth support - the built-ins (NexusMods,
+CurseForge) plus any auth-capable custom source (see 'lmm source
+--help'), sorted by ID. A custom source's key is stored and exercised on
+first use, since there is no generic way to validate it live.
 
 .PP
 Built-in sources:
@@ -26,7 +26,7 @@ Built-in sources:
 
 .PP
 Examples:
-  lmm auth login                # Interactive selection (built-ins only)
+  lmm auth login                # Interactive selection (all auth-capable sources)
   lmm auth login nexusmods      # Authenticate with NexusMods
   lmm auth login curseforge     # Authenticate with CurseForge
   lmm auth login my-custom-src  # Store a key for a registered custom source
