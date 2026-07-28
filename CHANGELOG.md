@@ -1060,7 +1060,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.0...HEAD
 [1.23.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.1...v1.21.0
