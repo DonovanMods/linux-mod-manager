@@ -26,6 +26,16 @@ func withService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.Serv
 	}
 	defer closeService(svc)
 
+	// Point sourceNameResolver at this service's registry for the duration
+	// of the call, then restore whatever was there before (nested
+	// withService calls don't happen in practice, but tests invoke it
+	// repeatedly in the same process). See sourceNameResolver's doc comment
+	// for why this indirection exists instead of threading a *core.Service
+	// through resolveSource itself.
+	prevResolver := sourceNameResolver
+	sourceNameResolver = resolverFromService(svc)
+	defer func() { sourceNameResolver = prevResolver }()
+
 	return fn(cmd.Context(), svc)
 }
 
@@ -112,14 +122,49 @@ func resolveSource(game *domain.Game, sourceFlag string, autoSelect bool) (strin
 	}
 
 	// Interactive mode: prompt for selection
-	return promptForGameSource(game.Name, sources)
+	return promptForGameSource(game.Name, sources, sourceNameResolver)
 }
 
-// promptForGameSource prompts the user to select from multiple configured sources.
-func promptForGameSource(gameName string, sources []string) (string, error) {
+// sourceNameResolver renders a source ID's display name for
+// promptForGameSource's "Name (id)" menu lines - the same format
+// auth.go's promptForSource/doAuthStatus use. withService points it at the
+// active service's registry for the duration of each command (see
+// withService), so resolveSource - which resolves purely from *domain.Game
+// and carries no *core.Service of its own - can still render registry
+// names without its own signature changing. Threading a resolver through
+// resolveSource's own parameters would ripple into every one of its
+// callers (search/install/update/mod/deploy/import), including deploy.go
+// and import.go, both out of scope for this task. The default (and any ID
+// the active resolver doesn't know) falls back to the bare source ID,
+// matching the design's "unregistered source" rule.
+var sourceNameResolver = func(sourceID string) string { return sourceID }
+
+// resolverFromService builds a sourceNameResolver-shaped func backed by
+// svc's registry: a source's Name() when it's still registered, the bare ID
+// otherwise (covers a SourceIDs entry whose source was since removed).
+func resolverFromService(svc *core.Service) func(string) string {
+	return func(sourceID string) string {
+		if src, err := svc.GetSource(sourceID); err == nil {
+			return src.Name()
+		}
+		return sourceID
+	}
+}
+
+// promptForGameSource prompts the user to select from multiple configured
+// sources, rendering each as "Name (id)" via resolve. A nil resolve (or one
+// that returns "" for a given ID) falls back to the bare ID.
+func promptForGameSource(gameName string, sources []string, resolve func(string) string) (string, error) {
+	if resolve == nil {
+		resolve = func(id string) string { return "" }
+	}
 	fmt.Printf("%s has multiple mod sources configured. Select one:\n", gameName)
-	for i, source := range sources {
-		fmt.Printf("  [%d] %s\n", i+1, getSourceDisplayName(source))
+	for i, src := range sources {
+		name := resolve(src)
+		if name == "" {
+			name = src
+		}
+		fmt.Printf("  [%d] %s (%s)\n", i+1, name, src)
 	}
 	fmt.Printf("Enter choice (1-%d): ", len(sources))
 

@@ -396,29 +396,6 @@ func printAuthInstructions(src source.ModSource) {
 	fmt.Println()
 }
 
-// getSourceDisplayName returns the display name for a source ID: the two
-// built-ins' Name() values (kept in lockstep — "Nexus Mods"/"CurseForge"),
-// else the ID unchanged.
-//
-// Retained here (unused by auth.go's own flows, which now derive display
-// names from the registered source's Name() via authCapableSources) because
-// helpers.go's promptForGameSource — the "this game has multiple configured
-// sources, pick one" prompt shared by search/install/update/mod, entirely
-// unrelated to auth — still calls it. That prompt's own normalization is
-// out of scope for this task (PR 2 territory per the source-registry design
-// doc); deleting this function would break the build for code this task
-// does not touch.
-func getSourceDisplayName(sourceID string) string {
-	switch sourceID {
-	case "nexusmods":
-		return "Nexus Mods"
-	case "curseforge":
-		return "CurseForge"
-	default:
-		return sourceID
-	}
-}
-
 // envKeyForSourceID derives the env var that can supply a custom source's API
 // key: LMM_<ID>_API_KEY with the ID uppercased and dashes as underscores.
 func envKeyForSourceID(sourceID string) string {

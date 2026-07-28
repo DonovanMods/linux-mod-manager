@@ -13,14 +13,18 @@ lmm-game-add - Add a game interactively
 Interactively add a new game configuration.
 
 .PP
-Prompts for a source to look the game up in, then its install path and
-mod path (defaulting to the install path plus "/mods"), and saves the
-result to games.yaml along with an empty default profile.
+Prompts for a mod source (every registered source, built-in or custom,
+sorted by ID), then its install path and mod path (defaulting to the
+install path plus "/mods"), and saves the result to games.yaml along with
+an empty default profile.
 
 .PP
-Supports adding games from:
-  - CurseForge (searchable game list; requires 'lmm auth login curseforge' first)
-  - NexusMods (enter the game's slug, taken from its NexusMods URL)
+Sources with a searchable game catalog (CurseForge today; any future
+source that implements one) offer interactive search. All other
+registered sources (NexusMods today; any custom source without a catalog)
+prompt for the game's identifier with that source directly - for
+NexusMods, the slug from its URL (e.g.
+https://www.nexusmods.com/skyrimspecialedition -> skyrimspecialedition).
 
 .PP
 Examples:
