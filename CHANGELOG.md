@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `lmm verify` now also checks each installed mod's recorded version against what its stored file ID(s) actually report upstream, surfacing `version_mismatch` (issue, fixable) and `version_unverifiable` (warning, not fixable — reinstall instead) statuses alongside the existing file checks
-- `lmm verify --fix` repairs a `version_mismatch` by re-keying the cache entry to the source-reported version, correcting the DB row and active profile record, and re-linking symlink deployments (a blocked rename, when a cache entry already exists under the target version, is left alone and reported via a new additive `note` field rather than clobbered)
+- `lmm verify --fix` repairs a `version_mismatch` by re-keying the cache entry to the source-reported version, correcting the DB row and active profile record, and re-linking symlink deployments (a blocked rename, when a cache entry already exists under the target version, is left alone and reported via a new additive `note` field rather than clobbered); since the mod cache is shared across profiles, a successful rename also corrects any other profile's stale record for the same mod (DB, profile record, and re-linking if deployed), surfaced as its own output line per profile in text mode or folded into the `note` field in `--json`
 - `--json` verify output gains the optional `note` field, set only on a `--fix` repair whose cache rename was skipped
 
 ## [1.22.0] - 2026-07-28

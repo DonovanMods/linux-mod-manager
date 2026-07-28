@@ -64,18 +64,24 @@ under the effective version, the rename is skipped - the existing
 deployment is left pointing at the still-intact recorded-version cache
 dir rather than being re-linked into the unverified pre-existing one -
 and a note is printed (also included as "note" in --json output), but
-the DB and profile are still corrected. VERSION UNVERIFIABLE is never
-fixable automatically since there is no matching upstream file to compare
-against - reinstall the mod instead.
+the DB and profile are still corrected. Since the mod cache is shared
+across profiles, a successful rename also corrects any OTHER profile
+whose record still holds the same stale version (DB, profile record, and
+re-linking a symlink deployment the same way) - printed as its own
+"Repaired (profile ...)" line per profile in text mode, or folded into
+the "note" field as "also repaired in profile(s): ..." in --json.
+VERSION UNVERIFIABLE is never fixable automatically since there is no
+matching upstream file to compare against - reinstall the mod instead.
 
 .PP
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
 "version_unverifiable"; note is omitted except on a --fix VERSION
-MISMATCH repair whose cache rename was skipped. issues counts MISSING
-files and VERSION MISMATCH rows (a successful --fix repair of either
-decrements it back out); warnings counts everything else that isn't OK.
+MISMATCH repair whose cache rename was skipped, or which also repaired
+the same mod in other profiles. issues counts MISSING files and VERSION
+MISMATCH rows (a successful --fix repair of either decrements it back
+out); warnings counts everything else that isn't OK.
 
 .PP
 Examples:

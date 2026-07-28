@@ -493,3 +493,284 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag(t 
 	require.NoError(t, err)
 	assert.False(t, mod2.Deployed, "Deployed must still read false on the second run - nothing re-marks it deployed on its own")
 }
+
+// TestDoVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged guards
+// the "os.Rename itself fails" branch of repairModVersion (as opposed to
+// scenario (c) above, where the rename is deliberately skipped because the
+// destination already exists) - a genuine filesystem error mid-rename. This
+// is the ordering invariant the whole repair sequence depends on: no DB
+// write may happen unless the cache rename actually succeeded, or the DB
+// and cache would disagree in a NEW way. Forces the failure by chmod-ing
+// the cache mod-key's parent directory (which holds the "1.5" dir and
+// would receive the renamed "1.0" one) read-only - os.Rename needs write
+// permission on the containing directory to unlink/relink an entry, even
+// though the directory is still readable/listable (execute bit intact).
+func TestDoVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	gameCache := svc.GetGameCache(game)
+	oldPath := gameCache.ModPath(game.ID, "test-src", "mod1", "1.5")
+	parentDir := filepath.Dir(oldPath)
+
+	require.NoError(t, os.Chmod(parentDir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(parentDir, 0o755) }) // restore before TempDir's own cleanup removes it
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 1, result.Issues, "a failed rename must not repair the row - the issue must still be counted")
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.5", mod.Version, "DB row must still hold the OLD version - no write happens when the rename itself fails")
+
+	assert.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "old cache dir must be untouched under the old key")
+	assert.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "no new cache dir must have been created under the effective key")
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Equal(t, "version_mismatch", f.Status, "JSON row must stay version_mismatch when the rename fails")
+		}
+	}
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+}
+
+// --- doVerify --fix repairs sibling-profile rows sharing the same cache dir
+// (final-fix-wave Finding 1) ---
+//
+// The mod cache is shared across profiles (cache.ModPath has no profile
+// segment - internal/storage/cache/cache.go:29) but installed_mods rows are
+// per-profile. When repairModVersion renames the shared cache dir for one
+// profile's row, a sibling profile holding the same mod at the same wrong
+// recorded version is left pointing at the now-missing dir until it, too,
+// is verified. setupDoVerifyFixSiblingTest builds on setupDoVerifyFixTest's
+// "default"-profile mismatch (recorded "1.5", effective "1.0") and adds:
+//   - "second": the SAME wrong recorded version ("1.5") - the sibling this
+//     fix must also correct.
+//   - "third": a DIFFERENT recorded version ("2.0") - a different state
+//     that must be left untouched (its own verify run's problem).
+func setupDoVerifyFixSiblingTest(t *testing.T) (*cobra.Command, *core.Service, *domain.Game) {
+	t.Helper()
+
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	pm := getProfileManager(svc)
+
+	_, err := pm.Create(game.ID, "second")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "second", domain.ModReference{
+		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"},
+	}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
+		ProfileName: "second",
+		Enabled:     true,
+		FileIDs:     []string{"2"},
+	}))
+
+	_, err = pm.Create(game.ID, "third")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "third", domain.ModReference{
+		SourceID: "test-src", ModID: "mod1", Version: "2.0", FileIDs: []string{"2"},
+	}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: game.ID},
+		ProfileName: "third",
+		Enabled:     true,
+		FileIDs:     []string{"2"},
+	}))
+
+	return cmd, svc, game
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord
+// is the required end-to-end case: fixing the mismatch via the "default"
+// profile must also correct "second" (same stale recorded version) in both
+// the DB and its profile YAML ref, while leaving "third" (a different
+// recorded version) completely alone.
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 0, result.Issues)
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", secondMod.Version, "sibling DB row must be corrected to the effective version")
+
+	pm := getProfileManager(svc)
+	secondProfile, err := pm.Get(game.ID, "second")
+	require.NoError(t, err)
+	found := false
+	for _, ref := range secondProfile.Mods {
+		if ref.SourceID == "test-src" && ref.ModID == "mod1" {
+			found = true
+			assert.Equal(t, "1.0", ref.Version, "sibling profile YAML ref must be corrected")
+		}
+	}
+	assert.True(t, found, "expected a mod1 ref in the second profile: %+v", secondProfile.Mods)
+
+	thirdMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "third")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", thirdMod.Version, "sibling with a different recorded version must not be touched")
+
+	thirdProfile, err := pm.Get(game.ID, "third")
+	require.NoError(t, err)
+	for _, ref := range thirdProfile.Mods {
+		if ref.SourceID == "test-src" && ref.ModID == "mod1" {
+			assert.Equal(t, "2.0", ref.Version, "sibling profile with a different recorded version must not be touched")
+		}
+	}
+
+	noteFound := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			noteFound = true
+			assert.Contains(t, f.Note, "second", "note must mention the repaired sibling profile")
+			assert.NotContains(t, f.Note, "third", "note must not mention the untouched, differently-versioned sibling")
+		}
+	}
+	assert.True(t, noteFound, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_PrintsRepairedLine covers
+// the text-mode side: a dedicated "Repaired (profile ...)" line per
+// repaired sibling, distinct from the primary row's own "Repaired: ..."
+// line.
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_PrintsRepairedLine(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	assert.Contains(t, out, "Repaired")
+	assert.Contains(t, out, "second", "text output must mention the repaired sibling profile by name")
+}
+
+// TestDoVerify_Fix_VersionMismatch_RenameBlocked_SiblingsUntouched guards
+// the "keep blocked-rename semantics unchanged" requirement: when the cache
+// rename itself is blocked (destination already exists), no physical
+// rename happened, so sibling rows must be left exactly as they were - they
+// aren't orphaned by anything, so there's nothing to fix.
+func TestDoVerify_Fix_VersionMismatch_RenameBlocked_SiblingsUntouched(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("pre-existing 1.0 content")))
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "Note")
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.Equal(t, "1.5", secondMod.Version, "sibling must be untouched when the cache rename itself was blocked")
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks guards
+// the deployed-sibling variant: a sibling row marked Deployed via symlink
+// has its links re-created through the installer exactly like the primary
+// row's would be, once the shared cache dir has actually moved.
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	secondMod.Deployed = true
+	secondMod.LinkMethod = domain.LinkSymlink
+	require.NoError(t, svc.SaveInstalledMod(secondMod))
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 0, result.Issues)
+
+	deployedPath := filepath.Join(game.ModPath, "mod1.esp")
+	info, err := os.Lstat(deployedPath)
+	require.NoError(t, err, "sibling's deployed symlink must have been (re-)created")
+	assert.True(t, info.Mode()&os.ModeSymlink != 0, "sibling deployment must be a symlink")
+
+	content, err := os.ReadFile(deployedPath)
+	require.NoError(t, err, "sibling symlink must resolve, not dangle")
+	assert.Equal(t, "plugin content", string(content))
+
+	afterMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.True(t, afterMod.Deployed, "Deployed remains true after a successful sibling re-link")
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_ClearsDeployedFlag
+// mirrors TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag
+// for a sibling row: when the sibling's own re-link fails, its Deployed
+// flag must be cleared - same honesty guarantee as the primary path - while
+// the version correction (DB + profile) from the earlier steps still
+// stands, for both the sibling AND the primary.
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_ClearsDeployedFlag(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	secondMod.Deployed = true
+	secondMod.LinkMethod = domain.LinkSymlink
+	require.NoError(t, svc.SaveInstalledMod(secondMod))
+
+	require.NoError(t, os.Chmod(game.ModPath, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	_ = captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	afterMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", afterMod.Version, "the sibling's version correction must stand even though its re-link failed")
+	assert.False(t, afterMod.Deployed, "sibling Deployed must be cleared when its re-link fails")
+
+	primaryMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", primaryMod.Version, "the primary row must still be repaired despite the sibling's re-link failure")
+}

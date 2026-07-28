@@ -31,7 +31,7 @@ type verifyFileJSON struct {
 	ModName string `json:"mod_name"`
 	FileID  string `json:"file_id"`
 	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable
-	Note    string `json:"note,omitempty"` // optional detail; currently only set by a --fix VERSION MISMATCH repair whose cache rename was skipped because the effective-version cache dir already existed
+	Note    string `json:"note,omitempty"` // optional detail; set by a --fix VERSION MISMATCH repair whose cache rename was skipped because the effective-version cache dir already existed, and/or which also repaired the same mod's stale record in other profiles sharing the cache
 }
 
 var verifyCmd = &cobra.Command{
@@ -81,17 +81,23 @@ under the effective version, the rename is skipped - the existing
 deployment is left pointing at the still-intact recorded-version cache
 dir rather than being re-linked into the unverified pre-existing one -
 and a note is printed (also included as "note" in --json output), but
-the DB and profile are still corrected. VERSION UNVERIFIABLE is never
-fixable automatically since there is no matching upstream file to compare
-against - reinstall the mod instead.
+the DB and profile are still corrected. Since the mod cache is shared
+across profiles, a successful rename also corrects any OTHER profile
+whose record still holds the same stale version (DB, profile record, and
+re-linking a symlink deployment the same way) - printed as its own
+"Repaired (profile ...)" line per profile in text mode, or folded into
+the "note" field as "also repaired in profile(s): ..." in --json.
+VERSION UNVERIFIABLE is never fixable automatically since there is no
+matching upstream file to compare against - reinstall the mod instead.
 
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
 "version_unverifiable"; note is omitted except on a --fix VERSION
-MISMATCH repair whose cache rename was skipped. issues counts MISSING
-files and VERSION MISMATCH rows (a successful --fix repair of either
-decrements it back out); warnings counts everything else that isn't OK.
+MISMATCH repair whose cache rename was skipped, or which also repaired
+the same mod in other profiles. issues counts MISSING files and VERSION
+MISMATCH rows (a successful --fix repair of either decrements it back
+out); warnings counts everything else that isn't OK.
 
 Examples:
   lmm verify --game skyrim-se           # Verify all mods
@@ -157,6 +163,10 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 
 	gameCache := svc.GetGameCache(game)
 	var issues, warnings int
+	// checked mixes two counters: per-FILE increments from the main loop
+	// below and per-MOD skip/ok increments from the version-record pre-pass
+	// above it - both feed the same "no files found" zero-check, so neither
+	// needed its own variable.
 	var checked int
 	var jsonFiles []verifyFileJSON
 
@@ -429,6 +439,17 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 //     now dangling - re-run the installer to refresh them. Hardlink/copy
 //     deployments are untouched by the cache rename, so they're left
 //     alone regardless.
+//  5. Sibling profiles: only when step 1 actually renamed the cache dir
+//     (the shared-cache-dir orphaning this step exists to fix can only
+//     happen then - a blocked or skipped rename leaves every profile's
+//     view of the cache untouched). Every OTHER profile's installed_mods
+//     row for the same (SourceID, ModID, GameID) whose Version still
+//     equals the OLD recorded version is corrected the same way (DB +
+//     profile YAML), and re-linked if Deployed via symlink - see
+//     repairSiblingProfiles. Runs unconditionally once step 1 has renamed
+//     the cache, even if step 4 above (the PRIMARY row's own re-link)
+//     failed - the primary's re-link outcome has no bearing on whether
+//     siblings were orphaned by the same rename.
 //
 // mod is mutated in place (Version set to effective) only once the DB save
 // that carries it has actually succeeded, so a failure partway through
@@ -443,15 +464,19 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 // surfaces (status displays, a future `lmm deploy`, which redeploys every
 // enabled mod regardless of its recorded Deployed value) aren't misled.
 func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, effective string) (note string, err error) {
+	recorded := mod.Version
 	gameCache := svc.GetGameCache(game)
-	oldPath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	oldPath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, recorded)
 	newPath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, effective)
 
+	var renamed bool
 	if _, statErr := os.Stat(oldPath); statErr == nil {
 		if _, statErr := os.Stat(newPath); statErr == nil {
-			note = fmt.Sprintf("cache entry for %s already exists; left %s in place", effective, mod.Version)
+			note = fmt.Sprintf("cache entry for %s already exists; left %s in place", effective, recorded)
 		} else if renameErr := os.Rename(oldPath, newPath); renameErr != nil {
 			return "", fmt.Errorf("renaming cache entry: %w", renameErr)
+		} else {
+			renamed = true
 		}
 	}
 
@@ -476,17 +501,113 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 	// at the still-intact recorded-version cache dir - nothing dangles, so
 	// re-linking would only repoint a working deployment into the
 	// unvetted pre-existing effective-version dir for no reason.
+	var relinkErr error
 	if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink {
 		if err := svc.GetInstaller(game).Install(cmd.Context(), game, &mod.Mod, profile); err != nil {
 			mod.Deployed = false
 			if saveErr := svc.SaveInstalledMod(mod); saveErr != nil {
-				return note, fmt.Errorf("relinking deployed files: %w (also failed to clear deployed flag: %v)", err, saveErr)
+				relinkErr = fmt.Errorf("relinking deployed files: %w (also failed to clear deployed flag: %v)", err, saveErr)
+			} else {
+				relinkErr = fmt.Errorf("relinking deployed files: %w", err)
 			}
-			return note, fmt.Errorf("relinking deployed files: %w", err)
 		}
 	}
 
+	// Sibling repair runs regardless of the primary re-link's own outcome
+	// (above) - a sibling row's orphaning is caused by the cache rename,
+	// not by anything that happens to the primary row's deployment.
+	if renamed {
+		if siblingNote := repairSiblingProfiles(cmd, svc, game, profile, mod, recorded, effective); siblingNote != "" {
+			if note == "" {
+				note = siblingNote
+			} else {
+				note = note + "; " + siblingNote
+			}
+		}
+	}
+
+	if relinkErr != nil {
+		return note, relinkErr
+	}
+
 	return note, nil
+}
+
+// repairSiblingProfiles corrects every OTHER profile's installed_mods row
+// for the same (SourceID, ModID, GameID) that still records the OLD
+// (pre-repair) version, after repairModVersion has renamed the shared
+// cache dir out from under them - cache.ModPath has no profile segment
+// (internal/storage/cache/cache.go:29), so a rename done for one profile's
+// row silently orphans any sibling profile still pointing at the old
+// version, until that sibling is itself verified. Only called when a
+// rename actually happened; a blocked/skipped rename never orphans
+// anything, so siblings are left alone in that case.
+//
+// Sibling rows whose Version differs from recorded are a different state
+// entirely (not something this repair caused) and are left untouched, per
+// the same DB-load-mutate-save pattern the primary path uses (never
+// UpdateModVersion, which would poison PreviousVersion/rollback). A
+// sibling Deployed via symlink has its links re-created through the
+// installer exactly like the primary row's would be; on a per-sibling
+// re-link failure, that row's Deployed flag alone is cleared (matching the
+// primary row's own re-link-failure handling) and processing continues
+// with the remaining siblings rather than aborting the whole pass.
+//
+// Returns a human-readable summary of which profiles were repaired (empty
+// if none), for the caller to fold into repairModVersion's own note - the
+// --json contract's vehicle for surfacing this, per the primary row's
+// existing "note" field.
+func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.Game, currentProfile string, mod *domain.InstalledMod, recorded, effective string) string {
+	pm := getProfileManager(svc)
+	profiles, err := pm.List(game.ID)
+	if err != nil {
+		return ""
+	}
+
+	var repaired []string
+	for _, p := range profiles {
+		if p.Name == currentProfile {
+			continue
+		}
+
+		sibling, err := svc.GetInstalledMod(mod.SourceID, mod.ID, game.ID, p.Name)
+		if err != nil || sibling.Version != recorded {
+			continue
+		}
+
+		updated := *sibling
+		updated.Version = effective
+		if err := svc.SaveInstalledMod(&updated); err != nil {
+			continue
+		}
+		*sibling = updated
+
+		if err := pm.UpsertMod(game.ID, p.Name, domain.ModReference{
+			SourceID: sibling.SourceID,
+			ModID:    sibling.ID,
+			Version:  effective,
+			FileIDs:  sibling.FileIDs,
+		}); err != nil {
+			continue
+		}
+
+		if sibling.Deployed && sibling.LinkMethod == domain.LinkSymlink {
+			if err := svc.GetInstaller(game).Install(cmd.Context(), game, &sibling.Mod, p.Name); err != nil {
+				sibling.Deployed = false
+				_ = svc.SaveInstalledMod(sibling) //nolint:errcheck // best-effort: the version correction above already stands regardless
+			}
+		}
+
+		repaired = append(repaired, p.Name)
+		if !jsonOutput {
+			fmt.Printf("  %s\n", colorGreen(fmt.Sprintf("Repaired (profile %s): %s → %s", p.Name, recorded, effective)))
+		}
+	}
+
+	if len(repaired) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("also repaired in profile(s): %s", strings.Join(repaired, ", "))
 }
 
 // redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
