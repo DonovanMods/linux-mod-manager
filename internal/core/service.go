@@ -135,6 +135,30 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 	})
 }
 
+// SourcesForGame resolves gameID and returns the subset of its configured
+// sources (game.SourceIDs keys) that are currently registered, sorted by
+// ID(). A SourceIDs key with no matching registration is silently skipped -
+// this function has no per-item error channel, only resolved ModSource
+// values come back - matching SearchAllSources's existing tolerance for the
+// same situation. An unknown game is the only error case.
+func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
+	game, ok := s.games[gameID]
+	if !ok {
+		return nil, fmt.Errorf("game not found: %s", gameID)
+	}
+
+	srcs := make([]source.ModSource, 0, len(game.SourceIDs))
+	for id := range game.SourceIDs {
+		src, err := s.registry.Get(id)
+		if err != nil {
+			continue // unregistered: silently skipped
+		}
+		srcs = append(srcs, src)
+	}
+	sort.Slice(srcs, func(i, j int) bool { return srcs[i].ID() < srcs[j].ID() })
+	return srcs, nil
+}
+
 // SourceWarning reports a per-source failure during an aggregate operation.
 type SourceWarning struct {
 	SourceID string
@@ -203,6 +227,19 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 		return AggregateSearchResult{}, fmt.Errorf("game not found: %s", gameID)
 	}
 
+	// SourcesForGame gives the registered subset in one call; a SourceIDs key
+	// missing from it is unregistered, which here (unlike SourcesForGame's
+	// own silent-skip contract) must surface as a per-source Warning, so the
+	// miss case below still calls registry.Get directly for that error.
+	registered, err := s.SourcesForGame(gameID)
+	if err != nil {
+		return AggregateSearchResult{}, err
+	}
+	registeredByID := make(map[string]source.ModSource, len(registered))
+	for _, src := range registered {
+		registeredByID[src.ID()] = src
+	}
+
 	sourceIDs := make([]string, 0, len(game.SourceIDs))
 	for id := range game.SourceIDs {
 		sourceIDs = append(sourceIDs, id)
@@ -219,8 +256,9 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 
 	g, gctx := errgroup.WithContext(ctx)
 	for i, sourceID := range sourceIDs {
-		src, err := s.registry.Get(sourceID)
-		if err != nil {
+		src, ok := registeredByID[sourceID]
+		if !ok {
+			_, err := s.registry.Get(sourceID) // reproduce the exact not-found error
 			slots[i].err = err
 			attempted[i] = true
 			continue
