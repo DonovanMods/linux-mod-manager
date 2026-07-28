@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -133,7 +134,12 @@ Examples:
 			// inUseIDs stays nil except in the --all-with-game combination,
 			// which is the one case that needs to mark a subset of the FULL
 			// list rather than simply restricting to it.
+			// ListSources is registry-map order (nondeterministic, and a
+			// pre-existing quirk of this command); sort so the full-registry
+			// views are stable and consistent with SourcesForGame's sorted
+			// scoped view.
 			srcs := svc.ListSources()
+			sort.Slice(srcs, func(i, j int) bool { return srcs[i].ID() < srcs[j].ID() })
 			var inUseIDs map[string]bool
 			switch {
 			case gameCtx != nil && !sourceAll:
