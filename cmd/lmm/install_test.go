@@ -1051,3 +1051,25 @@ func TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError(t *testin
 	_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
 	assert.Error(t, dbErr)
 }
+
+// TestBatchInstallMods_StampsSelectedFileVersion guards issue #94 for
+// batchInstallMods (the multi-select/dependency-resolved install save
+// site): when the selected primary file carries its own version distinct
+// from the mod's latest version, the persisted InstalledMod row must record
+// the file's version - the version of the bytes actually deployed - not the
+// mod-level "latest" version, so subsequent update checks compare against
+// what's really on disk.
+func TestBatchInstallMods_StampsSelectedFileVersion(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"}
+	src.AddMod(mod, []domain.DownloadableFile{
+		{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.1"},
+	})
+	src.AddDownload("main", []byte("plugin content"))
+
+	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+
+	installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the mod's latest version")
+}

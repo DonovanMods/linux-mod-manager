@@ -1039,6 +1039,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 
 		selectedFile := selectPrimaryFile(files)
 		fmt.Printf("  File: %s\n", displayFileLabel(*selectedFile))
+		mod.Version = domain.EffectiveInstalledVersion(mod.Version, []*domain.DownloadableFile{selectedFile}) // #94
 
 		// Download
 		progressFn := func(p core.DownloadProgress) {
