@@ -66,6 +66,9 @@ func (d *Directory) Capabilities() source.Capabilities {
 	return source.Capabilities{Search: true, Updates: true}
 }
 
+// TypeLabel implements source.TypeLabeler.
+func (d *Directory) TypeLabel() string { return "directory" }
+
 // dirMod pairs a scanned mod with its filesystem location.
 type dirMod struct {
 	mod  domain.Mod

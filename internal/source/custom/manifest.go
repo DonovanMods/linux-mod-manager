@@ -253,6 +253,9 @@ func (m *Manifest) Capabilities() source.Capabilities {
 	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: m.auth != nil}
 }
 
+// TypeLabel implements source.TypeLabeler.
+func (m *Manifest) TypeLabel() string { return "manifest" }
+
 // toMod converts a manifest entry to a domain.Mod. GameID is stamped by
 // searchMods / the callers, not here.
 func (m *Manifest) toMod(mm manifestMod) domain.Mod {

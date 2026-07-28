@@ -85,6 +85,13 @@ func TestDirectoryIdentityAndCapabilities(t *testing.T) {
 	assert.True(t, errors.Is(err, source.ErrNotSupported))
 }
 
+func TestDirectory_TypeLabel(t *testing.T) {
+	var _ source.TypeLabeler = (*Directory)(nil)
+
+	d := newTestDirectory(t)
+	assert.Equal(t, "directory", d.TypeLabel())
+}
+
 func TestDirectorySearch(t *testing.T) {
 	d := newTestDirectory(t)
 	ctx := context.Background()

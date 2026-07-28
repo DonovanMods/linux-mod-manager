@@ -259,6 +259,13 @@ func TestManifestIdentityAndCapabilities(t *testing.T) {
 	assert.True(t, authed.Capabilities().Auth)
 }
 
+func TestManifest_TypeLabel(t *testing.T) {
+	var _ source.TypeLabeler = (*Manifest)(nil)
+
+	m := newLocalManifest(t)
+	assert.Equal(t, "manifest", m.TypeLabel())
+}
+
 func TestManifestSearch(t *testing.T) {
 	m := newLocalManifest(t)
 	ctx := context.Background()

@@ -57,6 +57,14 @@ func TestAPIIdentityAndCapabilities(t *testing.T) {
 	assert.Equal(t, source.Capabilities{Search: false, Dependencies: false, Updates: false, Auth: false}, limited.Capabilities())
 }
 
+func TestAPI_TypeLabel(t *testing.T) {
+	var _ source.TypeLabeler = (*API)(nil)
+
+	a, err := NewAPI(apiDef("https://x.test"))
+	require.NoError(t, err)
+	assert.Equal(t, "api", a.TypeLabel())
+}
+
 func TestBuildEndpointURL(t *testing.T) {
 	// Empty values are substituted (e.g. game= for empty game_id), but absent keys
 	// are left as {placeholder} literals.

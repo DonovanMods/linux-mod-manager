@@ -76,8 +76,38 @@ type CapabilityReporter interface {
 	Capabilities() Capabilities
 }
 
-// CapabilitiesOf returns src's capabilities, assuming full capability for
-// sources that do not implement CapabilityReporter (all built-in sources).
+// EnvKeyProvider names the environment variable consulted for this source's
+// API key. Absent: the derived LMM_<ID>_API_KEY convention applies.
+type EnvKeyProvider interface{ EnvKey() string }
+
+// KeyValidator performs a live API-key check at auth-login time.
+// Absent: keys are stored and validated on first use.
+type KeyValidator interface {
+	ValidateKey(ctx context.Context, key string) error
+}
+
+// AuthInstructionsProvider supplies human setup steps for obtaining a key.
+// Absent: generic instructions naming the env var.
+type AuthInstructionsProvider interface{ AuthInstructions() string }
+
+// GameEntry is one game known to a source's catalog, for interactive
+// game-creation flows.
+type GameEntry struct{ ID, Name, Slug string }
+
+// GameCatalog lists the games a source knows about, for interactive
+// game-creation flows. Absent: manual identifier entry.
+type GameCatalog interface {
+	ListGames(ctx context.Context) ([]GameEntry, error)
+}
+
+// TypeLabeler names the source's kind for listings (directory/manifest/api/
+// built-in). Absent: "unknown".
+type TypeLabeler interface{ TypeLabel() string }
+
+// CapabilitiesOf returns src's capabilities. Sources that do not implement
+// CapabilityReporter are assumed fully capable — a default kept for test
+// doubles; production sources should implement CapabilityReporter
+// explicitly rather than rely on this fallback.
 func CapabilitiesOf(src ModSource) Capabilities {
 	if cr, ok := src.(CapabilityReporter); ok {
 		return cr.Capabilities()
