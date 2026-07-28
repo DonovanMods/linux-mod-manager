@@ -211,7 +211,7 @@ func TestAuthLoginCmd_UnsupportedSourceMentionsCustomSources(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nexusmods")
 	assert.Contains(t, err.Error(), "curseforge")
-	assert.Contains(t, err.Error(), "registered custom source with auth declared")
+	assert.Contains(t, err.Error(), "declares auth")
 }
 
 // TestAuthLogoutCmd_NoStoredCredentials tests logout for a source ID that
@@ -540,9 +540,9 @@ func TestPromptForSource_ListsAuthCapableRegistered(t *testing.T) {
 	require.NoError(t, promptErr)
 	// Sorted by ID: acme-mods, curseforge, nexusmods -> [1]=acme-mods, [2]=curseforge, [3]=nexusmods.
 	assert.Equal(t, "curseforge", gotID)
-	assert.Contains(t, out, "[1] Acme Mods")
-	assert.Contains(t, out, "[2] CurseForge")
-	assert.Contains(t, out, "[3] Nexus Mods")
+	assert.Contains(t, out, "[1] Acme Mods (acme-mods)")
+	assert.Contains(t, out, "[2] CurseForge (curseforge)")
+	assert.Contains(t, out, "[3] Nexus Mods (nexusmods)")
 }
 
 // TestAuthLogin_ValidatorPath pins the login flow for a source implementing

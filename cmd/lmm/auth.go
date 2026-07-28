@@ -149,8 +149,10 @@ func promptForSource(service *core.Service) (string, error) {
 	}
 
 	fmt.Println("Select a source to authenticate with:")
+	// Name (id) like auth status: names aren't uniqueness-validated across
+	// definitions, and the id is what `lmm auth login <id>` takes.
 	for i, src := range sources {
-		fmt.Printf("  [%d] %s\n", i+1, src.Name())
+		fmt.Printf("  [%d] %s (%s)\n", i+1, src.Name(), src.ID())
 	}
 	fmt.Print("Enter choice (1-" + strconv.Itoa(len(sources)) + "): ")
 
@@ -253,7 +255,7 @@ func selectAuthSource(service *core.Service, args []string) (string, error) {
 	if len(args) > 0 {
 		sourceID := args[0]
 		if !isAuthCapableSource(service, sourceID) {
-			return "", fmt.Errorf("unsupported source: %s (supported: %s, or a registered custom source with auth declared)", sourceID, authCapableSourceIDs(service))
+			return "", fmt.Errorf("unsupported source: %s (auth-capable sources: %s; a custom source appears here once its definition declares auth)", sourceID, authCapableSourceIDs(service))
 		}
 		return sourceID, nil
 	}
