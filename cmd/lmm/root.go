@@ -244,7 +244,9 @@ func registerSource(svc *core.Service, src source.ModSource) {
 	}
 	// Gate the token lookup on the source actually being able to use a key:
 	// skips a pointless per-source SQLite read for auth-incapable sources.
-	if setter, ok := src.(interface{ SetAPIKey(string) }); ok {
+	// Both halves matter: custom API/manifest sources implement SetAPIKey
+	// even when their definition declares no auth (the key would be unused).
+	if setter, ok := src.(interface{ SetAPIKey(string) }); ok && source.CapabilitiesOf(src).Auth {
 		if key := getSourceAPIKey(svc, id, envKeyFor(src)); key != "" {
 			setter.SetAPIKey(key)
 		}
