@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -194,6 +195,108 @@ func TestTryMatchSources_NoConfiguredSources_CleanNoMatch(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Nil(t, matched)
+}
+
+// --- tryMatchSources error semantics (PR #124 Copilot round 1, finding 2) ---
+//
+// A per-source search error used to survive the whole loop unconditionally:
+// if source A errored and source B then responded cleanly with zero
+// results, the stale error from A still came back to the caller, which
+// contradicts tryMatchSources' own doc comment ("a clean no-match, not an
+// error") - a real "no match" is not a failure just because an earlier
+// source happened to fail first. The fix: an error is only reported when
+// EVERY searchable source failed; any source that responds at all (even
+// with zero results) proves the round was not a wash.
+
+// TestTryMatchSources_FirstErrorsSecondEmpty_CleanNoMatchNotError is the
+// exact scenario Copilot flagged: source A errors, source B searches
+// successfully but finds nothing. The overall result must be a clean
+// no-match (nil, nil), not A's stale error.
+func TestTryMatchSources_FirstErrorsSecondEmpty_CleanNoMatchNotError(t *testing.T) {
+	svc, game := setupTryMatchSourcesTest(t)
+	failing := newFakeMatchSource("acme-fail")
+	failing.searchErr = errors.New("boom")
+	empty := newFakeMatchSource("beta-empty") // no searchMods set: succeeds with zero results
+	svc.RegisterSource(failing)
+	svc.RegisterSource(empty)
+	game.SourceIDs = map[string]string{"acme-fail": "g1", "beta-empty": "g1"}
+
+	matched, err := tryMatchSources(context.Background(), svc, game, "Anything")
+
+	require.NoError(t, err, "a later source's clean empty result must clear an earlier source's error")
+	assert.Nil(t, matched)
+}
+
+// TestTryMatchSources_AllSourcesError_ReturnsError guards the other half:
+// when every searchable source fails, the round genuinely produced nothing
+// usable and an error must still surface (not silently swallowed into a
+// no-match).
+func TestTryMatchSources_AllSourcesError_ReturnsError(t *testing.T) {
+	svc, game := setupTryMatchSourcesTest(t)
+	a := newFakeMatchSource("source-a")
+	a.searchErr = errors.New("boom a")
+	b := newFakeMatchSource("source-b")
+	b.searchErr = errors.New("boom b")
+	svc.RegisterSource(a)
+	svc.RegisterSource(b)
+	game.SourceIDs = map[string]string{"source-a": "g1", "source-b": "g1"}
+
+	matched, err := tryMatchSources(context.Background(), svc, game, "Anything")
+
+	require.Error(t, err)
+	assert.Nil(t, matched)
+}
+
+// TestTryMatchSources_FirstEmptySecondMatches_ReturnsMatch guards that a
+// clean empty result from an earlier source doesn't prevent a later
+// source's real match from being found and returned.
+func TestTryMatchSources_FirstEmptySecondMatches_ReturnsMatch(t *testing.T) {
+	svc, game := setupTryMatchSourcesTest(t)
+	empty := newFakeMatchSource("acme-empty")
+	matchSrc := newFakeMatchSource("beta-match")
+	matchSrc.searchMods = []domain.Mod{{ID: "5", SourceID: "beta-match", Name: "Found It"}}
+	svc.RegisterSource(empty)
+	svc.RegisterSource(matchSrc)
+	game.SourceIDs = map[string]string{"acme-empty": "g1", "beta-match": "g1"}
+
+	matched, err := tryMatchSources(context.Background(), svc, game, "Anything")
+
+	require.NoError(t, err)
+	require.NotNil(t, matched)
+	assert.Equal(t, "beta-match", matched.SourceID)
+}
+
+// --- scan summary sourceTag (PR #124 Copilot round 1, finding 1) ---
+//
+// internal/core/importer.go's ScanModPath initializes every detected,
+// unmatched ScanResult's MatchedSource to domain.SourceLocal ("local"), not
+// "" (see importer.go:397/429) - a fact this cmd's generalization away from
+// the old `== "curseforge"` check missed: `!= ""` is true for "local" too,
+// so an unmatched mod's summary line got a spurious "local #<id>" tag where
+// the pre-generalization code (which only ever matched the literal string
+// "curseforge") rendered a plain "local" untagged.
+
+// TestRunImportScan_SummaryTag_NoMatch_ShowsPlainLocalNotLocalHash pins the
+// no-match summary rendering directly against ScanModPath's real default
+// (domain.SourceLocal), with --skip-match set so the assertion is isolated
+// from tryMatchSources entirely.
+func TestRunImportScan_SummaryTag_NoMatch_ShowsPlainLocalNotLocalHash(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	game.DeployMode = domain.DeployCopy
+	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "MyMod-1-0.zip"), []byte("data"), 0644))
+
+	importSkipMatch = true
+	importDryRun = true
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	out, err := captureStdoutErr(t, func() error {
+		return runImportScan(cmd, game, svc, "default")
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "(local, v", "an unmatched mod must show a plain \"local\" tag")
+	assert.NotContains(t, out, "local #", "an unmatched mod must not be tagged with a fake source ID like \"local #<id>\"")
 }
 
 // --- import --id default resolution (Task 3 of #76's PR2 plan) ---

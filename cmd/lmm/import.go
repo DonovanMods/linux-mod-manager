@@ -502,7 +502,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	for _, r := range untracked {
 		if r.Mod != nil {
 			sourceTag := "local"
-			if r.MatchedSource != "" {
+			if r.MatchedSource != "" && r.MatchedSource != domain.SourceLocal {
 				sourceTag = fmt.Sprintf("%s #%s", r.MatchedSource, r.Mod.ID)
 			}
 			fmt.Printf("  - %s (%s, v%s)\n", r.Mod.Name, sourceTag, r.Mod.Version)
@@ -575,10 +575,18 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 // rule tryMatchCurseForge used, unchanged (tighter scoring tracked in #27).
 // Generalizes the old CurseForge-only lookup so any configured,
 // search-capable source can supply scan-import matches. A per-source search
-// failure does not abort the scan - remaining sources are still tried - but
-// is returned to the caller (for its verbose "lookup failed" notice) if it
-// is the last thing that happened before giving up unmatched. No
-// search-capable sources configured is a clean no-match, not an error.
+// failure does not abort the scan - remaining sources are still tried.
+//
+// Error semantics (PR #124 review round 1): a single source failing does
+// not make the overall round a failure - any source that responds at all,
+// even with zero results, proves a real search happened and "no match" is
+// the honest outcome (nil, nil), not a stale error from an unrelated
+// source that happened to fail first. An error is returned to the caller
+// (for its verbose "lookup failed" notice) only when EVERY searchable
+// source failed - lastErr then reports the most recent one. No
+// search-capable sources configured is likewise a clean no-match, not an
+// error (the loop never runs, so anySucceeded stays false but so does
+// lastErr).
 func tryMatchSources(ctx context.Context, service *core.Service, game *domain.Game, modName string) (*domain.Mod, error) {
 	sources, err := service.SourcesForGame(game.ID)
 	if err != nil {
@@ -586,6 +594,7 @@ func tryMatchSources(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	var lastErr error
+	anySucceeded := false
 	for _, src := range sources {
 		if !source.CapabilitiesOf(src).Search {
 			continue
@@ -596,12 +605,16 @@ func tryMatchSources(ctx context.Context, service *core.Service, game *domain.Ga
 			lastErr = err
 			continue
 		}
+		anySucceeded = true
 		if len(searchResult.Mods) > 0 {
 			// Return the first (best) match. Tighter scoring tracked in #27.
 			return &searchResult.Mods[0], nil
 		}
 	}
 
+	if anySucceeded {
+		return nil, nil
+	}
 	return nil, lastErr
 }
 
