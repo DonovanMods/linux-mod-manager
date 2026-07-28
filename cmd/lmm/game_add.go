@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -106,6 +107,15 @@ func runGameAddCatalog(ctx context.Context, cmd *cobra.Command, reader *bufio.Re
 	cmd.Printf("Searching %s...\n", sourceName)
 	entries, err := catalog.ListGames(ctx)
 	if err != nil {
+		// Matches the convention at search.go/install.go/update.go's sibling
+		// sites: a source signals a missing/invalid key by wrapping
+		// domain.ErrAuthRequired (e.g. CurseForge's ListGames -> GetGames ->
+		// the shared httpclient's 401/403 mapping), and the caller rewrites
+		// it into the friendly "run lmm auth login <id>" prompt instead of
+		// surfacing the raw API error.
+		if errors.Is(err, domain.ErrAuthRequired) {
+			return authPromptError(sourceID)
+		}
 		return fmt.Errorf("fetching games from %s: %w", sourceName, err)
 	}
 

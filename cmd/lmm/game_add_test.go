@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -194,6 +195,34 @@ func TestDoGameAdd_CatalogPath_NoMatches(t *testing.T) {
 	err := doGameAdd(context.Background(), cmd, reader, svc)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), `No games found matching "nonexistent"`)
+}
+
+// TestDoGameAdd_CatalogPath_AuthRequiredSurfacesFriendlyPrompt pins the
+// restored auth UX: the codebase convention (helpers.go's authPromptError,
+// applied at 5 sibling sites - search.go, install.go x3, update.go x2) is
+// for a source to return a domain.ErrAuthRequired-wrapped error, and the
+// caller to errors.Is + rewrap into "run lmm auth login <id>" instead of
+// surfacing the raw API error. runGameAddCatalog must do the same for
+// ListGames, rather than the generic "fetching games from %s: %w" wrap
+// swallowing the sentinel.
+func TestDoGameAdd_CatalogPath_AuthRequiredSurfacesFriendlyPrompt(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "acme-cat", name: "Acme Catalog"},
+		listErr:           fmt.Errorf("listing games: %w", domain.ErrAuthRequired),
+	})
+
+	input := "1\nquest\n"
+	cmd, buf := newGameAddCmd()
+	reader := bufio.NewReader(strings.NewReader(input))
+
+	err := doGameAdd(context.Background(), cmd, reader, svc)
+	require.Error(t, err, "output so far:\n%s", buf.String())
+	// authPromptError's own message doesn't wrap domain.ErrAuthRequired
+	// further (it's the terminal, user-facing rewrap - matching every
+	// sibling call site, none of which assert errors.Is on its result
+	// either); the pin here is the message match itself.
+	assert.Equal(t, authPromptError("acme-cat").Error(), err.Error())
 }
 
 // TestDoGameAdd_ManualPath_DrivesCatalogLessSource pins the manual-identifier

@@ -518,3 +518,26 @@ func TestCurseForge_ListGames(t *testing.T) {
 		{ID: "4471", Name: "World of Warcraft", Slug: "wow"},
 	}, games)
 }
+
+// TestCurseForge_ListGames_PropagatesAuthRequired pins that ListGames's
+// "listing games: %w" wrap (curseforge.go) preserves the domain.ErrAuthRequired
+// sentinel all the way from the HTTP layer's 403 mapping
+// (client.go's mapError) through GetGames's own "getting games: %w" wrap.
+// cmd/lmm callers (game add's catalog-search flow among them) rely on
+// errors.Is(err, domain.ErrAuthRequired) surviving this whole chain so they
+// can rewrap it into a friendly "run lmm auth login curseforge" message
+// instead of a raw API error.
+func TestCurseForge_ListGames_PropagatesAuthRequired(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error": "API key required"}`))
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "")
+	cf.client.SetBaseURL(server.URL)
+
+	_, err := cf.ListGames(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrAuthRequired)
+}
