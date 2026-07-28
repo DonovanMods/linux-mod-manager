@@ -1928,6 +1928,8 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				emit(fallbackEvt)
 			}
 
+			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
+
 			var downloadedFileIDs []string
 			downloadFailed := false
 			for _, file := range filesToDownload {
@@ -3831,6 +3833,8 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 			fbEvt.Phase = ImportFallbackUsed
 			emit(fbEvt)
 		}
+
+		mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
 		var downloadedFileIDs []string
 		downloadFailed := false
