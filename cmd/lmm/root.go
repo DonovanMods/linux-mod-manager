@@ -12,6 +12,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
@@ -206,18 +207,54 @@ func initService() (*core.Service, error) {
 	return svc, nil
 }
 
-// registerSources registers all available mod sources with the service.
-// Built-ins first, then user-defined sources from <configDir>/sources/.
-func registerSources(svc *core.Service, cfgDir string) {
-	// NexusMods
-	nexusKey := getSourceAPIKey(svc, "nexusmods", "NEXUSMODS_API_KEY")
-	svc.RegisterSource(nexusmods.New(nil, nexusKey))
+// builtinSourceFactories constructs each built-in source keyless — the
+// unified pipeline resolves and applies API keys post-construction via
+// registerSource's SetAPIKey seam, the same path custom sources use.
+var builtinSourceFactories = []func() source.ModSource{
+	func() source.ModSource { return nexusmods.New(nil, "") },
+	func() source.ModSource { return curseforge.New(nil, "") },
+}
 
-	// CurseForge
-	curseKey := getSourceAPIKey(svc, "curseforge", "CURSEFORGE_API_KEY")
-	svc.RegisterSource(curseforge.New(nil, curseKey))
+// registerSources registers all available mod sources with the service
+// through one ordered pipeline: built-ins first (so the collision rule's
+// "first wins" preserves their identity against a same-id custom
+// definition), then user-defined sources from <configDir>/sources/.
+func registerSources(svc *core.Service, cfgDir string) {
+	for _, factory := range builtinSourceFactories {
+		registerSource(svc, factory())
+	}
 
 	registerCustomSources(svc, cfgDir)
+}
+
+// registerSource runs src through the shared registration steps used for
+// both built-in and custom sources: collision check (first registration
+// wins, warning on customSourceWarnWriter) → API-key resolution (env var via
+// envKeyFor, falling back to the stored DB token) → SetAPIKey when the
+// source accepts one → RegisterSource.
+func registerSource(svc *core.Service, src source.ModSource) {
+	id := src.ID()
+	if _, err := svc.GetSource(id); err == nil {
+		fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: id already in use\n", id)
+		return
+	}
+	if key := getSourceAPIKey(svc, id, envKeyFor(src)); key != "" {
+		if a, ok := src.(interface{ SetAPIKey(string) }); ok {
+			a.SetAPIKey(key)
+		}
+	}
+	svc.RegisterSource(src)
+}
+
+// envKeyFor returns the environment variable name consulted for src's API
+// key: src's own EnvKeyProvider when implemented (preserves legacy names
+// like NEXUSMODS_API_KEY), otherwise the derived LMM_<ID>_API_KEY
+// convention.
+func envKeyFor(src source.ModSource) string {
+	if p, ok := src.(source.EnvKeyProvider); ok {
+		return p.EnvKey()
+	}
+	return envKeyForSourceID(src.ID())
 }
 
 // customSourceWarnOut overrides where registerCustomSources sends its
@@ -252,21 +289,12 @@ func registerCustomSources(svc *core.Service, cfgDir string) {
 		fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source definition %v\n", le)
 	}
 	for _, def := range defs {
-		if _, err := svc.GetSource(def.ID); err == nil {
-			fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: id already in use\n", def.ID)
-			continue
-		}
 		src, err := custom.New(def)
 		if err != nil {
 			fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: %v\n", def.ID, err)
 			continue
 		}
-		if a, ok := src.(interface{ SetAPIKey(string) }); ok {
-			if key := getSourceAPIKey(svc, def.ID, envKeyForSourceID(def.ID)); key != "" {
-				a.SetAPIKey(key)
-			}
-		}
-		svc.RegisterSource(src)
+		registerSource(svc, src)
 	}
 }
 

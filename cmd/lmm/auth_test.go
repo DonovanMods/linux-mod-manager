@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
+	customsrc "github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,36 +66,21 @@ func TestMaskAPIKey(t *testing.T) {
 	}
 }
 
-// TestGetEnvKeyForSource tests the environment variable name lookup
-func TestGetEnvKeyForSource(t *testing.T) {
-	tests := []struct {
-		name     string
-		sourceID string
-		expected string
-	}{
-		{
-			name:     "nexusmods",
-			sourceID: "nexusmods",
-			expected: "NEXUSMODS_API_KEY",
-		},
-		{
-			name:     "curseforge",
-			sourceID: "curseforge",
-			expected: "CURSEFORGE_API_KEY",
-		},
-		{
-			name:     "custom source falls back to the derived LMM_*_API_KEY name",
-			sourceID: "unknown-source",
-			expected: "LMM_UNKNOWN_SOURCE_API_KEY",
-		},
-	}
+// TestEnvKeyFor tests envKeyFor's two paths: a source's own EnvKeyProvider
+// (built-ins preserve their legacy env var names) and the derived
+// LMM_<ID>_API_KEY fallback for sources that don't implement it.
+func TestEnvKeyFor(t *testing.T) {
+	assert.Equal(t, "NEXUSMODS_API_KEY", envKeyFor(nexusmods.New(nil, "")))
+	assert.Equal(t, "CURSEFORGE_API_KEY", envKeyFor(curseforge.New(nil, "")))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := getEnvKeyForSource(tt.sourceID)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	dirSrc, err := customsrc.NewDirectory(customsrc.SourceDefinition{
+		ID:        "unknown-source",
+		Name:      "Unknown Source",
+		Type:      customsrc.TypeDirectory,
+		Directory: &customsrc.DirectoryConfig{Path: t.TempDir()},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "LMM_UNKNOWN_SOURCE_API_KEY", envKeyFor(dirSrc))
 }
 
 // TestAuthCmd_Structure tests the auth command structure

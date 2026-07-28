@@ -285,8 +285,14 @@ func doAuthStatus(service *core.Service) error {
 			continue
 		}
 
-		// Check environment variable
-		envKey := getEnvKeyForSource(sourceID)
+		// Check environment variable. sourceID here is always a built-in
+		// (from supportedSources), which registerSources registers
+		// unconditionally, so GetSource succeeding is the expected path;
+		// envKeyForSourceID's derived fallback covers the defensive case.
+		envKey := envKeyForSourceID(sourceID)
+		if src, err := service.GetSource(sourceID); err == nil {
+			envKey = envKeyFor(src)
+		}
 		if envKey != "" {
 			if apiKey := os.Getenv(envKey); apiKey != "" {
 				masked := maskAPIKey(apiKey)
@@ -415,18 +421,6 @@ func validateAPIKey(ctx context.Context, sourceID, apiKey string) error {
 		// get here the source has already passed isAuthCapableSource, so the
 		// key is simply stored and exercised on first fetch.
 		return nil
-	}
-}
-
-// getEnvKeyForSource returns the environment variable name for a source's API key
-func getEnvKeyForSource(sourceID string) string {
-	switch sourceID {
-	case "nexusmods":
-		return "NEXUSMODS_API_KEY"
-	case "curseforge":
-		return "CURSEFORGE_API_KEY"
-	default:
-		return envKeyForSourceID(sourceID)
 	}
 }
 
