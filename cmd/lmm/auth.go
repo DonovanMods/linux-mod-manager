@@ -348,17 +348,17 @@ func doAuthStatus(service *core.Service) error {
 			return fmt.Errorf("checking %s: %w", id, err)
 		}
 		if token != nil {
-			fmt.Printf("%s: authenticated (key: %s)\n", id, maskAPIKey(token.APIKey))
+			fmt.Printf("%s (%s): authenticated (key: %s)\n", src.Name(), id, maskAPIKey(token.APIKey))
 			continue
 		}
 
 		envKey := envKeyFor(src)
 		if apiKey := os.Getenv(envKey); apiKey != "" {
-			fmt.Printf("%s: authenticated via %s (key: %s)\n", id, envKey, maskAPIKey(apiKey))
+			fmt.Printf("%s (%s): authenticated via %s (key: %s)\n", src.Name(), id, envKey, maskAPIKey(apiKey))
 			continue
 		}
 
-		fmt.Printf("%s: not authenticated (run: lmm auth login %s)\n", id, id)
+		fmt.Printf("%s (%s): not authenticated (run: lmm auth login %s)\n", src.Name(), id, id)
 	}
 
 	// Stored tokens whose source matches nothing registered (built-in or

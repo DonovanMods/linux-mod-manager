@@ -72,9 +72,12 @@ func TestDoAuthStatusIncludesCustomSources(t *testing.T) {
 
 	out := captureStdout(t, func() error { return doAuthStatus(svc) })
 
-	assert.Contains(t, out, "my-repo: authenticated via LMM_MY_REPO_API_KEY")
+	// "(<id>): ..." — doAuthStatus renders "<Name> (<id>): ..." for every
+	// auth-capable source, built-in or custom (see
+	// TestAuthStatus_RendersDisplayNameAlongsideID for the literal-line pin).
+	assert.Contains(t, out, "My Repo (my-repo): authenticated via LMM_MY_REPO_API_KEY")
 	assert.NotContains(t, out, "supersecretkey")
-	assert.Contains(t, out, "keyless-repo: not authenticated")
+	assert.Contains(t, out, "Keyless (keyless-repo): not authenticated")
 	assert.NotContains(t, out, "local-mods")
 }
 
@@ -102,7 +105,11 @@ func TestDoAuthStatusListsCustomSourcesInSortedOrder(t *testing.T) {
 
 	out := captureStdout(t, func() error { return doAuthStatus(svc) })
 
-	alpha, mid, zeta := strings.Index(out, "alpha-repo:"), strings.Index(out, "mid-repo:"), strings.Index(out, "zeta-repo:")
+	// Each source's Name equals its ID above, so the rendered "<Name>
+	// (<id>): ..." line contains "(<id>):" once per source.
+	alpha := strings.Index(out, "(alpha-repo):")
+	mid := strings.Index(out, "(mid-repo):")
+	zeta := strings.Index(out, "(zeta-repo):")
 	require.True(t, alpha >= 0 && mid >= 0 && zeta >= 0, "all three sources must be reported")
 	assert.Less(t, alpha, mid, "custom sources must be reported in ID order")
 	assert.Less(t, mid, zeta, "custom sources must be reported in ID order")

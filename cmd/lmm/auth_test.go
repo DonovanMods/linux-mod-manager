@@ -614,6 +614,9 @@ func TestAuthLogin_StoredPath(t *testing.T) {
 // separate custom-source tier. Stock setup (both built-ins registered) plus
 // one custom auth source must all be listed exactly once, sorted by ID —
 // never double-listed by both tiers the way the old two-pass logic risked.
+// Probes match "(<id>):" (the id parenthesized after the display name, per
+// doAuthStatus's "%s (%s): ..." format) rather than a bare "<id>:" prefix,
+// so this doesn't pass vacuously against a regressed bare-ID rendering.
 func TestAuthStatus_UniformIteration(t *testing.T) {
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
@@ -630,7 +633,35 @@ func TestAuthStatus_UniformIteration(t *testing.T) {
 
 	out := captureStdout(t, func() error { return doAuthStatus(svc) })
 
-	for _, want := range []string{"nexusmods:", "curseforge:", "acme-mods:"} {
+	for _, want := range []string{"(nexusmods):", "(curseforge):", "(acme-mods):"} {
 		assert.Equal(t, 1, strings.Count(out, want), "%q must be listed exactly once, got:\n%s", want, out)
 	}
+}
+
+// TestAuthStatus_RendersDisplayNameAlongsideID pins the exact rendered line
+// for a stock built-in in both the "authenticated via env" and "not
+// authenticated" states: "<Name> (<id>): ...". Uses exact full-line
+// matching (not substring containment) — a prior version of doAuthStatus's
+// tier merge silently regressed built-ins to bare-ID formatting (losing the
+// display name Name() is supposed to supply, per the design's Name()
+// principle and this file's own promptForSource/printAuthLoginSuccess),
+// and substring-only assertions elsewhere didn't catch it.
+func TestAuthStatus_RendersDisplayNameAlongsideID(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	t.Setenv("NEXUSMODS_API_KEY", "test-nexus-key-1234567890")
+	t.Setenv("CURSEFORGE_API_KEY", "")
+
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	svc.RegisterSource(curseforge.New(nil, ""))
+
+	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	assert.Contains(t, lines, "Nexus Mods (nexusmods): authenticated via NEXUSMODS_API_KEY (key: tes...890)")
+	assert.Contains(t, lines, "CurseForge (curseforge): not authenticated (run: lmm auth login curseforge)")
 }
