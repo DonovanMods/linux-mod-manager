@@ -677,3 +677,121 @@ mods:
 	between2 := out[failIdx:deployedIdx]
 	assert.Contains(t, between2, "\n\n\n", "two blank lines must separate the ✗ line from the summary line (one from the ✗ handler's trailing blank, one from the summary line's own leading blank)")
 }
+
+// --- deploy -s dynamic source resolution (Task 2 of #76's PR2 plan) ---
+//
+// deploy's -s/--source flag used to default to the literal "nexusmods"; it
+// now defaults to "" and resolves exactly like search/update/mod's -s via
+// resolveSource (helpers.go): a sole configured source auto-selects, several
+// prompt interactively (deploy has no -y, so autoSelect is always false),
+// and an explicit -s is validated against the game's configured sources but
+// never prompts. Only the mod-id form (len(args) > 0) resolves a source at
+// all - deploying the whole profile ignores -s entirely, unchanged.
+
+// TestDeployCmd_SourceFlagDefaultIsEmpty pins the flag default change: "-s"
+// must no longer default to "nexusmods" now that deploy resolves sources
+// dynamically like every other CLI command with a -s flag.
+func TestDeployCmd_SourceFlagDefaultIsEmpty(t *testing.T) {
+	sourceFlag := deployCmd.Flags().Lookup("source")
+	require.NotNil(t, sourceFlag)
+	assert.Equal(t, "", sourceFlag.DefValue, "deploy -s must default to \"\" and resolve dynamically, not the literal \"nexusmods\"")
+}
+
+// TestDoDeploy_ModIDForm_SoleConfiguredSource_AutoResolves guards the
+// resolveSource auto-select path: a game with exactly one configured source
+// deploys the given mod ID without any -s flag and without prompting.
+func TestDoDeploy_ModIDForm_SoleConfiguredSource_AutoResolves(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.SourceIDs = map[string]string{"src": "g1"}
+	deploySource = ""
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	out := captureStdout(t, func() error {
+		return doDeploy(context.Background(), svc, game, []string{"1"})
+	})
+
+	assert.Contains(t, out, "✓ Test Mod")
+}
+
+// TestDoDeploy_ModIDForm_MultipleConfiguredSources_PromptsForSelection
+// guards the resolveSource interactive-prompt path: several configured
+// sources and no -s prompts for a selection (deploy has no -y to
+// auto-select, unlike install). getConfiguredSources sorts alphabetically
+// ("other" < "src"), so choice "2" picks "src", the source the seeded mod
+// actually lives under.
+func TestDoDeploy_ModIDForm_MultipleConfiguredSources_PromptsForSelection(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.SourceIDs = map[string]string{"src": "g1", "other": "g1"}
+	deploySource = ""
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	var out string
+	var err error
+	withStdin(t, "2\n", func() {
+		out, err = captureStdoutErr(t, func() error {
+			return doDeploy(context.Background(), svc, game, []string{"1"})
+		})
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "multiple mod sources configured")
+	assert.Contains(t, out, "✓ Test Mod")
+}
+
+// TestDoDeploy_ModIDForm_ExplicitSource_BypassesPromptAndUsesGivenValue
+// guards that an explicit -s is unchanged by this normalization: several
+// sources are configured, but passing -s directly must resolve without ever
+// touching stdin. Stdin is deliberately pre-closed (not merely unset) so
+// that if resolveSource erroneously prompted, ReadString would return an
+// error instead of silently succeeding - proof, not just absence of a hang.
+func TestDoDeploy_ModIDForm_ExplicitSource_BypassesPromptAndUsesGivenValue(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.SourceIDs = map[string]string{"src": "g1", "other": "g1"}
+	deploySource = "src"
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	oldStdin := os.Stdin
+	r, w, perr := os.Pipe()
+	require.NoError(t, perr)
+	require.NoError(t, w.Close())
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = oldStdin; _ = r.Close() })
+
+	out := captureStdout(t, func() error {
+		return doDeploy(context.Background(), svc, game, []string{"1"})
+	})
+
+	assert.Contains(t, out, "✓ Test Mod")
+}
+
+// TestDoDeploy_ModIDForm_ExplicitSourceNotConfigured_ReturnsError guards
+// resolveSource's validation error surfacing through doDeploy for an
+// explicit -s that isn't one of the game's configured sources.
+func TestDoDeploy_ModIDForm_ExplicitSourceNotConfigured_ReturnsError(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.SourceIDs = map[string]string{"src": "g1"}
+	deploySource = "nonexistent"
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	err := doDeploy(context.Background(), svc, game, []string{"1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not configured")
+}
+
+// TestDoDeploy_ProfileForm_IgnoresSourceEntirely guards the other half of
+// the normalization: deploying the whole profile (no mod ID) never resolves
+// or validates -s at all, even when it names a source the game hasn't
+// configured - matching the Long text's "-s is ignored when deploying the
+// whole profile".
+func TestDoDeploy_ProfileForm_IgnoresSourceEntirely(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.SourceIDs = nil // no sources configured at all
+	deploySource = "nonexistent"
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+	out := captureStdout(t, func() error {
+		return doDeploy(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "✓ Test Mod")
+}

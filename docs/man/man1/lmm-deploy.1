@@ -18,9 +18,10 @@ or if mod files need to be refreshed.
 
 .PP
 Without a mod ID, deploys all enabled mods in the current profile.
-With a mod ID, deploys only that specific mod; -s/--source (default:
-nexusmods) then identifies which source that mod ID belongs to. -s is
-ignored when deploying the whole profile.
+With a mod ID, deploys only that specific mod; -s/--source then identifies
+which source that mod ID belongs to - it resolves automatically when the
+game has exactly one configured source, or prompts interactively when it
+has several. -s is ignored when deploying the whole profile.
 
 .PP
 Use --purge to remove all deployed mods before deploying. This ensures
@@ -65,8 +66,8 @@ Examples:
 	purge all deployed mods before deploying
 
 .PP
-\fB-s\fP, \fB--source\fP="nexusmods"
-	mod source
+\fB-s\fP, \fB--source\fP=""
+	mod source for deploying a single mod ID (default: auto-detect when the game has one configured source, prompt when it has several)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

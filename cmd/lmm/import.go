@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 
 	"github.com/spf13/cobra"
 )
@@ -31,10 +32,10 @@ var importCmd = &cobra.Command{
 Two distinct modes, chosen by whether an archive path is given:
 
 Scan mode (no arguments): scans the game's mod_path for files not yet
-tracked by lmm, tries to match each one against CurseForge by name
-(skip with --skip-match), and imports whatever is left after
-confirmation. Useful for mods that were installed manually - e.g.
-CurseForge mods whose author has disabled API downloads. --dry-run and
+tracked by lmm, tries to match each one by name against the game's
+configured sources (skip with --skip-match), and imports whatever is
+left after confirmation. Useful for mods that were installed manually -
+e.g. mods whose author has disabled API downloads. --dry-run and
 --skip-match only apply to this mode. Every mod imported this way is
 marked as requiring manual download (since lmm did not fetch it itself);
 re-link it to a source with 'lmm mod edit --source' to clear that once
@@ -42,8 +43,9 @@ it can be checked for updates normally.
 
 Archive mode (an archive path given): imports that one specific mod file,
 deploying it and adding it to the profile. Pass --id (with --source, or
-it defaults to curseforge if configured) to fetch and attach source
-metadata as part of the import.
+it resolves automatically when the game has exactly one configured
+source, or prompts interactively when it has several) to fetch and
+attach source metadata as part of the import.
 
 Either way, a mod that ends up unmatched to any remote source is
 imported as local - it deploys and installs normally, but 'lmm update'
@@ -52,7 +54,7 @@ has nothing to check it against and will never notify about it.
 Examples:
   lmm import --game hytale                    # Scan mod_path for untracked mods
   lmm import --game hytale --dry-run          # Preview what would be imported
-  lmm import --game hytale --skip-match       # Scan without CurseForge lookup
+  lmm import --game hytale --skip-match       # Scan without source lookup
   lmm import ./my-mod.zip --game skyrim-se    # Import specific archive
   lmm import ./mod-12345-1-0.7z --game skyrim-se --profile survival
   lmm import ./mod.zip --game skyrim-se --id 12345 --source curseforge`,
@@ -63,10 +65,10 @@ Examples:
 func init() {
 	importCmd.Flags().StringVarP(&importProfile, "profile", "p", "", "profile to import to (default: active profile)")
 	importCmd.Flags().StringVarP(&importSource, "source", "s", "", "source for update tracking (default: auto-detect or local)")
-	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking to source (defaults to curseforge)")
+	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking to source (source resolves automatically; see --source)")
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "import without conflict prompts")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes")
-	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip CurseForge lookup for untracked mods")
+	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip source lookup for untracked mods")
 
 	rootCmd.AddCommand(importCmd)
 }
@@ -96,19 +98,14 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		return fmt.Errorf("archive not found: %s", archivePath)
 	}
 
-	// If --id is provided without --source, default to first configured source
+	// If --id is provided without --source, resolve dynamically: a sole
+	// configured source auto-selects, several prompt interactively - the
+	// same resolveSource semantics deploy/search/update/mod already use.
 	if importModID != "" && importSource == "" {
-		// Prefer curseforge if configured, otherwise use first available
-		if _, ok := game.SourceIDs["curseforge"]; ok {
-			importSource = "curseforge"
-		} else {
-			for sid := range game.SourceIDs {
-				importSource = sid
-				break
-			}
-		}
-		if importSource == "" {
-			return fmt.Errorf("no mod sources configured for game %s; cannot look up --id", game.ID)
+		var err error
+		importSource, err = resolveSource(game, importSource, false)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -467,16 +464,15 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 		return nil
 	}
 
-	// Try to match untracked mods to CurseForge
+	// Try to match untracked mods against the game's configured sources
 	if !importSkipMatch {
-		fmt.Println("Looking up mods on CurseForge...")
+		fmt.Println("Looking up mods on configured sources...")
 		for i := range untracked {
 			if untracked[i].Mod == nil {
 				continue
 			}
 
-			// Try to find on CurseForge
-			matched, err := tryMatchCurseForge(ctx, service, game, untracked[i].Mod.Name)
+			matched, err := tryMatchSources(ctx, service, game, untracked[i].Mod.Name)
 			if err != nil {
 				if verbose {
 					fmt.Printf("  %s: lookup failed: %v\n", untracked[i].FileName, err)
@@ -492,8 +488,8 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 				untracked[i].Mod.SourceURL = matched.SourceURL
 				untracked[i].Mod.PictureURL = matched.PictureURL
 				untracked[i].Mod.GameID = matched.GameID
-				untracked[i].MatchedSource = "curseforge"
-				fmt.Printf("  ✓ %s -> %s (CurseForge #%s)\n", untracked[i].FileName, matched.Name, matched.ID)
+				untracked[i].MatchedSource = matched.SourceID
+				fmt.Printf("  ✓ %s -> %s (%s #%s)\n", untracked[i].FileName, matched.Name, matched.SourceID, matched.ID)
 			} else {
 				fmt.Printf("  ○ %s -> local (no match)\n", untracked[i].FileName)
 			}
@@ -506,8 +502,8 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	for _, r := range untracked {
 		if r.Mod != nil {
 			sourceTag := "local"
-			if r.MatchedSource == "curseforge" {
-				sourceTag = fmt.Sprintf("curseforge #%s", r.Mod.ID)
+			if r.MatchedSource != "" {
+				sourceTag = fmt.Sprintf("%s #%s", r.MatchedSource, r.Mod.ID)
 			}
 			fmt.Printf("  - %s (%s, v%s)\n", r.Mod.Name, sourceTag, r.Mod.Version)
 		} else {
@@ -571,27 +567,42 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	return nil
 }
 
-// tryMatchCurseForge searches CurseForge for a mod by name
-func tryMatchCurseForge(ctx context.Context, service *core.Service, game *domain.Game, modName string) (*domain.Mod, error) {
-	// Get the curseforge game ID
-	cfGameID, ok := game.SourceIDs["curseforge"]
-	if !ok {
-		return nil, fmt.Errorf("game has no curseforge source configured")
-	}
-
-	// Search by mod name
-	searchResult, err := service.SearchMods(ctx, "curseforge", cfGameID, modName, "", nil, 0, 0)
+// tryMatchSources searches every source configured for game that declares
+// search capability, in SourcesForGame's ID-sorted order (design §4.2:
+// "curseforge" before "nexusmods" alphabetically, so typical two-built-in
+// setups keep today's outcome), and returns the first source whose search
+// turns up a result - the same "first non-empty result wins" acceptance
+// rule tryMatchCurseForge used, unchanged (tighter scoring tracked in #27).
+// Generalizes the old CurseForge-only lookup so any configured,
+// search-capable source can supply scan-import matches. A per-source search
+// failure does not abort the scan - remaining sources are still tried - but
+// is returned to the caller (for its verbose "lookup failed" notice) if it
+// is the last thing that happened before giving up unmatched. No
+// search-capable sources configured is a clean no-match, not an error.
+func tryMatchSources(ctx context.Context, service *core.Service, game *domain.Game, modName string) (*domain.Mod, error) {
+	sources, err := service.SourcesForGame(game.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	mods := searchResult.Mods
-	if len(mods) == 0 {
-		return nil, nil
+	var lastErr error
+	for _, src := range sources {
+		if !source.CapabilitiesOf(src).Search {
+			continue
+		}
+
+		searchResult, err := service.SearchMods(ctx, src.ID(), game.ID, modName, "", nil, 0, 0)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(searchResult.Mods) > 0 {
+			// Return the first (best) match. Tighter scoring tracked in #27.
+			return &searchResult.Mods[0], nil
+		}
 	}
 
-	// Return the first (best) match. Tighter scoring tracked in #27.
-	return &mods[0], nil
+	return nil, lastErr
 }
 
 // importExistingMod registers an already-deployed mod in lmm
