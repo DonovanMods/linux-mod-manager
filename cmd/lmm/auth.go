@@ -394,8 +394,9 @@ func printAuthInstructions(src source.ModSource) {
 	fmt.Println()
 }
 
-// getSourceDisplayName returns the display name for a source ID: "NexusMods"
-// or "CurseForge" for the two built-ins, else the ID unchanged.
+// getSourceDisplayName returns the display name for a source ID: the two
+// built-ins' Name() values (kept in lockstep — "Nexus Mods"/"CurseForge"),
+// else the ID unchanged.
 //
 // Retained here (unused by auth.go's own flows, which now derive display
 // names from the registered source's Name() via authCapableSources) because
@@ -408,7 +409,7 @@ func printAuthInstructions(src source.ModSource) {
 func getSourceDisplayName(sourceID string) string {
 	switch sourceID {
 	case "nexusmods":
-		return "NexusMods"
+		return "Nexus Mods"
 	case "curseforge":
 		return "CurseForge"
 	default:

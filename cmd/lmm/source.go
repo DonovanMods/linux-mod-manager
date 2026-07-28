@@ -202,13 +202,20 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 }
 
 // isCustomSource reports whether src is a user-defined source (as opposed to
-// a built-in like NexusMods/CurseForge): any source whose self-reported type
-// is not "built-in". Sound at its only call site (the definitions reclassify
-// loop) because LoadSourceDefinitions guarantees ID uniqueness within a load,
-// so a registered source matching a definition's ID is either a built-in or
+// a built-in like NexusMods/CurseForge): a self-reported type of exactly
+// "directory", "manifest", or "api". "built-in" and the "unknown" fallback
+// both answer false — conservative on the unknown side so the definitions
+// reclassify loop (the only call site) reports a collision/error row rather
+// than assuming an unlabeled source is the definition's own. Unreachable in
+// practice: LoadSourceDefinitions guarantees ID uniqueness within a load, so
+// a registered source matching a definition's ID is either a built-in or
 // that definition's own constructed source — never an unrelated third party.
 func isCustomSource(src source.ModSource) bool {
-	return source.TypeLabelOf(src) != "built-in"
+	switch source.TypeLabelOf(src) {
+	case "directory", "manifest", "api":
+		return true
+	}
+	return false
 }
 
 // authState reports a source's authentication status for display.
