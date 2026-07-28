@@ -383,7 +383,7 @@ func doAuthStatus(service *core.Service) error {
 			continue
 		}
 		if _, err := service.GetSource(tok.SourceID); err == nil {
-			fmt.Printf("%s: stored token for source without auth declared (key: %s) — remove auth? run: lmm auth logout %s\n",
+			fmt.Printf("%s: stored token for source without auth declared (key: %s) — stale token? remove with: lmm auth logout %s\n",
 				tok.SourceID, maskAPIKey(tok.APIKey), tok.SourceID)
 			continue
 		}

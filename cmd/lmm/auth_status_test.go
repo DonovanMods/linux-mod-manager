@@ -179,7 +179,7 @@ func TestDoAuthStatusDistinguishesAuthRemovedFromUnregistered(t *testing.T) {
 	out := captureStdout(t, func() error { return doAuthStatus(svc) })
 
 	assert.Contains(t, out, "local-mods: stored token for source without auth declared (key:")
-	assert.Contains(t, out, "remove auth? run: lmm auth logout local-mods")
+	assert.Contains(t, out, "stale token? remove with: lmm auth logout local-mods")
 	assert.NotContains(t, out, "local-mods: stored token with no matching source")
 
 	assert.Contains(t, out, "ghost-repo: stored token with no matching source (key:")
