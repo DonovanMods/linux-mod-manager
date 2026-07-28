@@ -1003,6 +1003,12 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		// Run install.before_each hook
 		hookCtx.ModID = mod.ID
 		hookCtx.ModName = mod.Name
+		// Deliberately the mod-level version, not the #94 effective-file
+		// stamp: this hook fires before file selection below, unlike
+		// applyInstallPrimary (internal/core/flows.go) where the stamp is
+		// computed before its own hook fires. Not a bug to "fix" in either
+		// direction - each hook sees whatever version is actually known at
+		// its point in the flow.
 		hookCtx.ModVersion = mod.Version
 		if err := runInstallHook(ctx, hookRunner, resolvedHooks, &hookCtx, "install.before_each", resolvedHooks.GetInstallBeforeEach()); err != nil {
 			fmt.Printf("  Skipped: install.before_each hook failed: %v\n", err)
