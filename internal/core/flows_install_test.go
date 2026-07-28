@@ -565,6 +565,25 @@ func (s *oldFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]dom
 	}, nil
 }
 
+// versionOverrideFileSource is oldFileSource's BATCH-path counterpart: like
+// perModFileSource, its single served file's ID is the mod's own ID (so
+// distinct mods - e.g. a dependency and its primary - each get an
+// unambiguous download key and can be installed together via
+// applyInstallBatchMod), but the file's Version is looked up per mod.ID in
+// fileVersions rather than left blank, so a test can diverge it from the
+// mod's own Version field - see
+// TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion (#94).
+type versionOverrideFileSource struct {
+	*mockSourceWithDownloads
+	fileVersions map[string]string // mod.ID -> served file's Version
+}
+
+func (s *versionOverrideFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{ID: mod.ID, Name: mod.Name, FileName: mod.ID + ".zip", Version: s.fileVersions[mod.ID], IsPrimary: true},
+	}, nil
+}
+
 // registerDownloadableMod registers mod with mock and stages a one-file zip
 // archive (containing relativePath -> content) as that mod's download,
 // keyed by mod.ID (matching perModFileSource's GetModFiles).
@@ -1317,6 +1336,61 @@ exit 0`)
 	require.NoError(t, err)
 	assert.Equal(t, "install.before_each:mod1:1.0\n", string(logContent),
 		"install.before_each must see the effective (selected-file) version, not the mod-level 1.5")
+}
+
+// TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion is the #94
+// regression test for the BATCH path (applyInstallBatchMod), which installs
+// dependencies AND the primary identically and - unlike applyInstallPrimary
+// - always re-resolves its own file from the source rather than consulting
+// plan.Files. A dependency mod's source reports a mod-level Version ("2.0")
+// that differs from its actually-served primary file's Version ("2.0.1");
+// the DB row and cache dir must carry the file's version, matching
+// TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey's PRIMARY
+// path assertion but exercised via a dependency install instead.
+func TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &versionOverrideFileSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		fileVersions:            map[string]string{"dep1": "2.0.1", "root": "1.0"},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "2.0", GameID: "g1"}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+
+	depZip := createTestZip(t, t.TempDir(), map[string]string{"dep1.esp": "dep-payload"})
+	depContent, err := os.ReadFile(depZip)
+	require.NoError(t, err)
+	mock.AddDownload("dep1", depContent)
+	mock.AddMod(dep1.GameID, dep1)
+
+	rootZip := createTestZip(t, t.TempDir(), map[string]string{"root.esp": "root-payload"})
+	rootContent, err := os.ReadFile(rootZip)
+	require.NoError(t, err)
+	mock.AddDownload("root", rootContent)
+	mock.AddMod(root.GameID, root)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+
+	got, err := svc.GetInstalledMod("src", "dep1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0.1", got.Version, "the dependency's DB row must record the selected file's version, not the mod's mod-level 2.0")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists("g1", "src", "dep1", "2.0.1"), "cache must be keyed by the installed file's version")
+	assert.False(t, gameCache.Exists("g1", "src", "dep1", "2.0"), "cache must NOT be keyed by the mod's mod-level version when the file's own version differs")
 }
 
 // TestService_ApplyInstall_ContextCancellation proves ApplyInstall checks

@@ -2760,6 +2760,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		return nil
 	}
 	file := selected[0]
+	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selected) // #94
 
 	fileEvt := base
 	fileEvt.Phase, fileEvt.File = InstallDepFileSelected, file
