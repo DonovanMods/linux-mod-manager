@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,7 +15,9 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 )
 
 // TestSourcesScreenRegistered proves ScreenSources is wired into the
@@ -84,10 +87,16 @@ func TestSourcesViewRenders(t *testing.T) {
 	}
 }
 
-// builtinStubSource is a minimal source.ModSource with no CapabilityReporter
-// or IsAuthenticated method, exercising coreProvider.SourceInfos' defaults:
-// full capabilities (CapabilitiesOf's built-in fallback) and Auth "yes"
-// (authState's fallback for a capable source with no IsAuthenticated probe).
+// builtinStubSource is a minimal source.ModSource with no CapabilityReporter,
+// IsAuthenticated, or TypeLabeler method, exercising coreProvider.SourceInfos'
+// defaults: full capabilities (CapabilitiesOf's built-in fallback), Auth
+// "yes" (authState's fallback for a capable source with no IsAuthenticated
+// probe), and Type "unknown" (Task 4's sourceTypeLabel fallback for a source
+// implementing no TypeLabeler). The name predates Task 4: this double used to
+// fall through the old concrete-type switch (customSourceType) to its
+// "built-in" default - exactly the mislabeling Task 4 replaced with an
+// explicit "unknown" for exactly this case. Kept as-is (not renamed) since
+// another file's comment references it by this name.
 type builtinStubSource struct{ id string }
 
 func (s *builtinStubSource) ID() string      { return s.id }
@@ -149,11 +158,81 @@ func TestCoreProviderSourceInfos(t *testing.T) {
 
 	// Sorted by ID: "aaa-builtin" before "zzz-directory".
 	require.Equal(t, "aaa-builtin", infos[0].ID)
-	require.Equal(t, "built-in", infos[0].Type)
+	require.Equal(t, "unknown", infos[0].Type, "builtinStubSource implements no TypeLabeler; sourceTypeLabel's fallback is \"unknown\", not the old switch's \"built-in\" default")
 	require.Equal(t, "yes", infos[0].Auth, "builtinStubSource has no IsAuthenticated method; authState's fallback for a capable source is \"yes\"")
 	require.Equal(t, "zzz-directory", infos[1].ID)
 	require.Equal(t, "directory", infos[1].Type)
 	require.Equal(t, "n/a", infos[1].Auth, "directory sources report no auth capability")
+}
+
+// TestCoreProviderSourceInfos_TypeLabelerTable is Task 4's RED-first pin for
+// coreProvider.SourceInfos' Type field: one instance of every real
+// source.ModSource type (both custom.* concrete types and both built-ins)
+// must report its own TypeLabel() rather than being classified by a
+// hand-synced concrete-type switch (the deleted customSourceType), plus a
+// bare double with no TypeLabeler (builtinStubSource) falls back to
+// "unknown" — mirrors cmd/lmm/source_test.go's
+// TestSourceTypeLabel_AllRealTypesPlusBareMock for the TUI's own consumer.
+func TestCoreProviderSourceInfos_TypeLabelerTable(t *testing.T) {
+	t.Parallel()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	dir, err := custom.NewDirectory(custom.SourceDefinition{
+		ID:        "z-directory",
+		Name:      "Dir",
+		Type:      custom.TypeDirectory,
+		Directory: &custom.DirectoryConfig{Path: t.TempDir()},
+	})
+	require.NoError(t, err)
+	man, err := custom.NewManifest(custom.SourceDefinition{
+		ID:       "y-manifest",
+		Name:     "Man",
+		Type:     custom.TypeManifest,
+		Manifest: &custom.ManifestConfig{URL: filepath.Join(t.TempDir(), "manifest.yaml")},
+	})
+	require.NoError(t, err)
+	api, err := custom.NewAPI(custom.SourceDefinition{
+		ID:   "x-api",
+		Name: "API",
+		Type: custom.TypeAPI,
+		API:  &custom.APIConfig{BaseURL: "https://api.x.test"},
+	})
+	require.NoError(t, err)
+
+	svc.RegisterSource(dir)
+	svc.RegisterSource(man)
+	svc.RegisterSource(api)
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	svc.RegisterSource(curseforge.New(nil, ""))
+	svc.RegisterSource(&builtinStubSource{id: "w-bare"})
+
+	game := &domain.Game{ID: "test-game", Name: "Test Game", InstallPath: t.TempDir(), ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+
+	provider := NewCoreProvider(svc, game, "default")
+	infos := provider.SourceInfos()
+
+	byID := make(map[string]string, len(infos))
+	for _, i := range infos {
+		byID[i.ID] = i.Type
+	}
+	assert.Equal(t, "directory", byID["z-directory"])
+	assert.Equal(t, "manifest", byID["y-manifest"])
+	assert.Equal(t, "api", byID["x-api"])
+	assert.Equal(t, "built-in", byID["nexusmods"])
+	assert.Equal(t, "built-in", byID["curseforge"])
+	assert.Equal(t, "unknown", byID["w-bare"])
 }
 
 // longSourcesProvider returns sources with long IDs and capabilities to test

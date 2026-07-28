@@ -14,7 +14,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
@@ -217,7 +216,7 @@ func (p *coreProvider) SourceInfos() []SourceInfo {
 		infos = append(infos, SourceInfo{
 			ID:           src.ID(),
 			Name:         src.Name(),
-			Type:         customSourceType(src),
+			Type:         sourceTypeLabel(src),
 			Auth:         sourceAuthState(src),
 			Capabilities: sourceCapabilitySummary(source.CapabilitiesOf(src)),
 		})
@@ -226,22 +225,19 @@ func (p *coreProvider) SourceInfos() []SourceInfo {
 	return infos
 }
 
-// customSourceType classifies a registered source for display. It mirrors
-// cmd/lmm/source.go's isCustomSource switch; that helper isn't reused
-// directly since cmd/lmm is a `package main` and not importable here, so the
-// classification is kept in sync by hand — extend this switch alongside
-// isCustomSource if a new custom source type ships.
-func customSourceType(src source.ModSource) string {
-	switch src.(type) {
-	case *custom.Directory:
-		return "directory"
-	case *custom.Manifest:
-		return "manifest"
-	case *custom.API:
-		return "api"
-	default:
-		return "built-in"
+// sourceTypeLabel classifies a registered source for display, via
+// source.TypeLabeler (Task 1 of #76): "directory"/"manifest"/"api" for
+// custom sources, "built-in" for NexusMods/CurseForge — each source reports
+// its own label now, so this is no longer a hand-synced concrete-type switch
+// (it used to mirror cmd/lmm/source.go's isCustomSource switch by hand; that
+// duplication is gone along with both switches). A source implementing no
+// TypeLabeler falls back to "unknown": unreachable in production (every real
+// source implements it), reachable only by a bare test double.
+func sourceTypeLabel(src source.ModSource) string {
+	if tl, ok := src.(source.TypeLabeler); ok {
+		return tl.TypeLabel()
 	}
+	return "unknown"
 }
 
 // sourceAuthState reports a source's authentication status for display.

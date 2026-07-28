@@ -67,13 +67,15 @@ Examples:
 			// (registerCustomSources may have skipped it on ID collision or
 			// construction failure) so the list reflects reality rather than just
 			// "a definition with this ID exists".
-			customTypes := make(map[string]string, len(defs)) // id -> def.Type, for defs that registered as custom
 			var errRows []sourceInfo
 			for _, d := range defs {
 				registered, err := svc.GetSource(d.ID)
 				switch {
 				case err == nil && isCustomSource(registered):
-					customTypes[d.ID] = d.Type
+					// Registered successfully as this definition's own custom
+					// source; its row (built below from svc.ListSources()) will
+					// carry the correct TypeLabel() on its own — nothing to
+					// record here.
 				case err == nil:
 					// Something else (a built-in, or another def) already held this ID.
 					errRows = append(errRows, sourceInfo{ID: d.ID, Type: "error", Error: "id already in use"})
@@ -92,16 +94,10 @@ Examples:
 			srcs := svc.ListSources()
 			rows := make([]sourceInfo, 0, len(srcs)+len(errRows)+len(loadErrs))
 			for _, src := range srcs {
-				typ := "built-in"
-				if isCustomSource(src) {
-					if t, ok := customTypes[src.ID()]; ok {
-						typ = t
-					}
-				}
 				rows = append(rows, sourceInfo{
 					ID:           src.ID(),
 					Name:         src.Name(),
-					Type:         typ,
+					Type:         sourceTypeLabel(src),
 					Auth:         authState(src),
 					Capabilities: capabilitySummary(source.CapabilitiesOf(src)),
 				})
@@ -205,16 +201,25 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 	return nil
 }
 
-// isCustomSource reports whether src was constructed from a user-defined
-// source definition (as opposed to a built-in like NexusMods/CurseForge).
-// Extend this switch if a new custom source type ships.
-func isCustomSource(src source.ModSource) bool {
-	switch src.(type) {
-	case *custom.Directory, *custom.Manifest, *custom.API:
-		return true
-	default:
-		return false
+// sourceTypeLabel reports src's kind for `source list`'s TYPE column, via
+// source.TypeLabeler (Task 1 of #76): "directory"/"manifest"/"api" for
+// custom sources, "built-in" for NexusMods/CurseForge — each source reports
+// its own label, so there is no concrete-type switch here to keep in sync as
+// new source types ship. A source implementing no TypeLabeler falls back to
+// "unknown": unreachable in production (every real source implements it),
+// reachable only by a bare test double.
+func sourceTypeLabel(src source.ModSource) string {
+	if tl, ok := src.(source.TypeLabeler); ok {
+		return tl.TypeLabel()
 	}
+	return "unknown"
+}
+
+// isCustomSource reports whether src is a user-defined source (as opposed to
+// a built-in like NexusMods/CurseForge), derived from sourceTypeLabel: any
+// source whose self-reported type is not "built-in".
+func isCustomSource(src source.ModSource) bool {
+	return sourceTypeLabel(src) != "built-in"
 }
 
 // authState reports a source's authentication status for display.
