@@ -60,12 +60,20 @@ func TestRegisterSources_DerivedEnvKeyForCustom(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	cfgDir := t.TempDir()
+	// The definition declares auth: the key pipeline is gated on
+	// Capabilities().Auth (a key set on an auth-less source would be
+	// stored but never attached to a request), and this test pins the
+	// env-var NAME derivation, which needs the key to actually apply.
 	writeSourceYAML(t, filepath.Join(cfgDir, "sources"), "custom.yaml", `
 id: my-custom
 name: My Custom
 type: manifest
 manifest:
   url: https://example.invalid/mods.yaml
+  auth:
+    api_key:
+      in: header
+      name: X-API-Key
 `)
 	t.Setenv("LMM_MY_CUSTOM_API_KEY", "custom-env-key")
 
