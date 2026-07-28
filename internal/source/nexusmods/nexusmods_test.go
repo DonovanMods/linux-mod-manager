@@ -597,3 +597,29 @@ func TestNexusMods_ValidateKey_Unauthorized(t *testing.T) {
 	err := nm.ValidateKey(context.Background(), "bad-key")
 	assert.Error(t, err)
 }
+
+// TestNexusMods_ValidateKey_WrongKeyAgainstAuthenticatedReceiver pins that
+// ValidateKey checks the candidate key, never falling back to a key already
+// stored on the receiver. A receiver constructed with a valid stored key
+// ("good-key") must still fail when asked to validate a different candidate.
+func TestNexusMods_ValidateKey_WrongKeyAgainstAuthenticatedReceiver(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("apikey") != "good-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(t, w, map[string]any{"user_id": 1})
+	}))
+	defer server.Close()
+
+	nm := New(server.Client(), "good-key")
+	nm.client.SetBaseURL(server.URL)
+
+	err := nm.ValidateKey(context.Background(), "bad-key")
+	assert.Error(t, err, "ValidateKey must use the candidate key, not the receiver's stored key")
+
+	// Bonus: prove the server logic actually discriminates on the header.
+	err = nm.ValidateKey(context.Background(), "good-key")
+	assert.NoError(t, err)
+}
