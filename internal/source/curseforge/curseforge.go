@@ -63,6 +63,59 @@ func (c *CurseForge) ExchangeToken(ctx context.Context, code string) (*source.To
 	return nil, fmt.Errorf("CurseForge uses API key authentication, not OAuth")
 }
 
+// EnvKey implements source.EnvKeyProvider: the legacy environment variable
+// name, preserved exactly.
+func (c *CurseForge) EnvKey() string {
+	return "CURSEFORGE_API_KEY"
+}
+
+// ValidateKey implements source.KeyValidator by probing the CurseForge API
+// with key via GetGames, discarding the result. Uses a client scoped to this
+// call (same underlying HTTP client and base URL as c.client) so validation
+// is independent of any key already configured on this source.
+func (c *CurseForge) ValidateKey(ctx context.Context, key string) error {
+	client := NewClient(c.client.httpClient, key)
+	client.SetBaseURL(c.client.rest.BaseURL())
+	if _, err := client.GetGames(ctx); err != nil {
+		return fmt.Errorf("API validation failed: %w", err)
+	}
+	return nil
+}
+
+// AuthInstructions implements source.AuthInstructionsProvider.
+func (c *CurseForge) AuthInstructions() string {
+	return "To authenticate with CurseForge:\n" +
+		"1. Visit https://console.curseforge.com/\n" +
+		"2. Create a project and generate an API key\n" +
+		"3. Copy your API key\n"
+}
+
+// ListGames implements source.GameCatalog by wrapping the CurseForge games
+// listing, mapping the numeric game ID to its string form.
+func (c *CurseForge) ListGames(ctx context.Context) ([]source.GameEntry, error) {
+	games, err := c.client.GetGames(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing games: %w", err)
+	}
+
+	entries := make([]source.GameEntry, len(games))
+	for i, g := range games {
+		entries[i] = source.GameEntry{ID: strconv.Itoa(g.ID), Name: g.Name, Slug: g.Slug}
+	}
+	return entries, nil
+}
+
+// TypeLabel implements source.TypeLabeler.
+func (c *CurseForge) TypeLabel() string {
+	return "built-in"
+}
+
+// Capabilities implements source.CapabilityReporter. CurseForge supports all
+// ModSource operations.
+func (c *CurseForge) Capabilities() source.Capabilities {
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}
+}
+
 // resolveGameID converts a game identifier (numeric ID or slug) to a numeric ID.
 // Results are cached to avoid repeated API calls.
 func (c *CurseForge) resolveGameID(ctx context.Context, gameIDOrSlug string) (int, error) {

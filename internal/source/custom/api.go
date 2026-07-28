@@ -97,6 +97,9 @@ func (a *API) Capabilities() source.Capabilities {
 	}
 }
 
+// TypeLabel implements source.TypeLabeler.
+func (a *API) TypeLabel() string { return "api" }
+
 // DownloadHeaders implements source.DownloadHeaderProvider: header-mode keys
 // go only to downloads on the API's own origin (design §9).
 func (a *API) DownloadHeaders(fileURL string) map[string]string {

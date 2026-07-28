@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-07-28
+
+### Changed
+
+- **Built-in sources (NexusMods, CurseForge) now register and describe themselves through the same path custom sources use** (#76, PR 1 of 2). Every fact the CLI used to hard-code about them — display names, API-key env vars, auth setup instructions, live key validation, type labels, capabilities — now comes from the source itself via small optional interfaces; the hard-coded auth/instructions/validation/type-label/capability switches are gone (the remaining identity-aware sites — the multi-source game prompt's display names, deploy's default source, import matching, and `game add`'s menu — are PR 2's normalization scope). Zero configuration changes: legacy env vars (`NEXUSMODS_API_KEY`, `CURSEFORGE_API_KEY`), stored tokens, and `games.yaml` behave exactly as before.
+- The interactive `lmm auth login`/`logout` picker now offers **every** registered source that declares auth — including custom sources — instead of only the two built-ins (previously custom sources had to be named explicitly)
+- `lmm auth status` lines now render the display name alongside the ID, e.g. `Nexus Mods (nexusmods): not authenticated (run: lmm auth login nexusmods)`, uniformly for built-in and custom sources. Auth display names generally now come from each source's own `Name()` — NexusMods renders as "Nexus Mods" (previously "NexusMods") in login/logout/picker text
+
+### Internal
+
+- New `internal/source` metadata interfaces (`EnvKeyProvider`, `KeyValidator`, `AuthInstructionsProvider`, `GameCatalog`, `TypeLabeler` + `TypeLabelOf`) with conformance tests across all five source types; built-ins now declare capabilities explicitly instead of relying on the all-true default
+- One registration pipeline in `cmd/lmm/root.go`; the hand-synced CLI/TUI type-label switches are gone
+
 ## [1.20.1] - 2026-07-27
 
 ### Added
@@ -1015,7 +1028,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.21.0...HEAD
+[1.21.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.1...v1.21.0
 [1.20.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.0...v1.20.1
 [1.20.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.18.3...v1.19.0

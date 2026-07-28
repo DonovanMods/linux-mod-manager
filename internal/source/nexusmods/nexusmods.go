@@ -55,6 +55,38 @@ func (n *NexusMods) ValidateAPIKey(ctx context.Context, key string) error {
 	return n.client.ValidateAPIKey(ctx, key)
 }
 
+// EnvKey implements source.EnvKeyProvider: the legacy environment variable
+// name, preserved exactly.
+func (n *NexusMods) EnvKey() string {
+	return "NEXUSMODS_API_KEY"
+}
+
+// ValidateKey implements source.KeyValidator by checking key against the
+// NexusMods validate endpoint, independent of any key already configured on
+// this source.
+func (n *NexusMods) ValidateKey(ctx context.Context, key string) error {
+	return n.client.ValidateAPIKey(ctx, key)
+}
+
+// AuthInstructions implements source.AuthInstructionsProvider.
+func (n *NexusMods) AuthInstructions() string {
+	return "To authenticate with NexusMods:\n" +
+		"1. Visit https://www.nexusmods.com/users/myaccount?tab=api\n" +
+		"2. Click \"Request an API Key\" if you don't have one\n" +
+		"3. Copy your Personal API Key\n"
+}
+
+// TypeLabel implements source.TypeLabeler.
+func (n *NexusMods) TypeLabel() string {
+	return "built-in"
+}
+
+// Capabilities implements source.CapabilityReporter. NexusMods supports all
+// ModSource operations.
+func (n *NexusMods) Capabilities() source.Capabilities {
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}
+}
+
 // ExchangeToken exchanges an OAuth code for tokens.
 // NexusMods uses API key authentication instead of OAuth.
 // Use SetAPIKey() or the NEXUSMODS_API_KEY environment variable.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,9 +72,12 @@ func TestDoAuthStatusIncludesCustomSources(t *testing.T) {
 
 	out := captureStdout(t, func() error { return doAuthStatus(svc) })
 
-	assert.Contains(t, out, "my-repo: authenticated via LMM_MY_REPO_API_KEY")
+	// "(<id>): ..." — doAuthStatus renders "<Name> (<id>): ..." for every
+	// auth-capable source, built-in or custom (see
+	// TestAuthStatus_RendersDisplayNameAlongsideID for the literal-line pin).
+	assert.Contains(t, out, "My Repo (my-repo): authenticated via LMM_MY_REPO_API_KEY")
 	assert.NotContains(t, out, "supersecretkey")
-	assert.Contains(t, out, "keyless-repo: not authenticated")
+	assert.Contains(t, out, "Keyless (keyless-repo): not authenticated")
 	assert.NotContains(t, out, "local-mods")
 }
 
@@ -101,7 +105,11 @@ func TestDoAuthStatusListsCustomSourcesInSortedOrder(t *testing.T) {
 
 	out := captureStdout(t, func() error { return doAuthStatus(svc) })
 
-	alpha, mid, zeta := strings.Index(out, "alpha-repo:"), strings.Index(out, "mid-repo:"), strings.Index(out, "zeta-repo:")
+	// Each source's Name equals its ID above, so the rendered "<Name>
+	// (<id>): ..." line contains "(<id>):" once per source.
+	alpha := strings.Index(out, "(alpha-repo):")
+	mid := strings.Index(out, "(mid-repo):")
+	zeta := strings.Index(out, "(zeta-repo):")
 	require.True(t, alpha >= 0 && mid >= 0 && zeta >= 0, "all three sources must be reported")
 	assert.Less(t, alpha, mid, "custom sources must be reported in ID order")
 	assert.Less(t, mid, zeta, "custom sources must be reported in ID order")
@@ -111,12 +119,20 @@ func TestDoAuthStatusListsCustomSourcesInSortedOrder(t *testing.T) {
 // source that is no longer registered (built-in or custom) is otherwise
 // invisible — it must get a final stanza pointing at how to remove it.
 // Registered sources with stored tokens must NOT be reported as orphaned.
+//
+// Registers nexusmods explicitly: post-Task-3, doAuthStatus's "registered"
+// set comes purely from authCapableSources' registry query, with no more
+// hardcoded built-in-ID special case — a *core.Service built directly here
+// (bypassing root.go's registerSources, which registers built-ins in
+// production) must register nexusmods itself for "still-registered
+// built-in" to mean anything.
 func TestDoAuthStatusListsOrphanedTokens(t *testing.T) {
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(nexusmods.New(nil, ""))
 
 	// A token for a source ID that matches nothing registered (built-in or
 	// custom) — e.g. its definition file was deleted after login.

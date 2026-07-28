@@ -14,7 +14,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
@@ -217,7 +216,7 @@ func (p *coreProvider) SourceInfos() []SourceInfo {
 		infos = append(infos, SourceInfo{
 			ID:           src.ID(),
 			Name:         src.Name(),
-			Type:         customSourceType(src),
+			Type:         source.TypeLabelOf(src),
 			Auth:         sourceAuthState(src),
 			Capabilities: sourceCapabilitySummary(source.CapabilitiesOf(src)),
 		})
@@ -226,27 +225,13 @@ func (p *coreProvider) SourceInfos() []SourceInfo {
 	return infos
 }
 
-// customSourceType classifies a registered source for display. It mirrors
-// cmd/lmm/source.go's isCustomSource switch; that helper isn't reused
-// directly since cmd/lmm is a `package main` and not importable here, so the
-// classification is kept in sync by hand — extend this switch alongside
-// isCustomSource if a new custom source type ships.
-func customSourceType(src source.ModSource) string {
-	switch src.(type) {
-	case *custom.Directory:
-		return "directory"
-	case *custom.Manifest:
-		return "manifest"
-	case *custom.API:
-		return "api"
-	default:
-		return "built-in"
-	}
-}
-
 // sourceAuthState reports a source's authentication status for display.
-// Mirrors cmd/lmm/source.go's authState (see customSourceType's comment on
-// why it's duplicated rather than imported).
+// Mirrors cmd/lmm/source.go's authState. CANONICAL NOTE on this file's
+// duplicated display helpers: cmd/lmm is package main, which internal/tui
+// cannot import, so small CLI display helpers are mirrored here by hand
+// rather than shared; other comments in this file reference this note.
+// (Type labels themselves are no longer duplicated - both packages call
+// source.TypeLabelOf.)
 func sourceAuthState(src source.ModSource) string {
 	if !source.CapabilitiesOf(src).Auth {
 		return "n/a"
@@ -262,7 +247,7 @@ func sourceAuthState(src source.ModSource) string {
 
 // sourceCapabilitySummary renders capabilities as a compact list, e.g.
 // "search,updates". Mirrors cmd/lmm/source.go's capabilitySummary (see
-// customSourceType's comment on why it's duplicated rather than imported).
+// sourceAuthState's comment on why it's duplicated rather than imported).
 func sourceCapabilitySummary(c source.Capabilities) string {
 	out := ""
 	add := func(enabled bool, name string) {
@@ -584,7 +569,7 @@ func installedModStatus(mod domain.InstalledMod) string {
 // documented "notify"/"auto"/"pin" wire strings - the inverse of
 // parseUpdatePolicy below. Deliberately NOT shared with cmd/lmm/update.go's
 // own policyToString (whose "pinned" spelling differs and which internal/tui
-// cannot import - see customSourceType's doc comment for why CLI-only
+// cannot import - see sourceAuthState's doc comment for why CLI-only
 // helpers are duplicated rather than shared): the TUI's ActionProvider
 // contract fixes "pin" as the wire string (see SetUpdatePolicy's doc
 // comment), so this must NOT reuse the CLI's "pinned".
@@ -1189,7 +1174,7 @@ func mapUpdateNetworkError(action, sourceID string, err error) error {
 // fileDisplayLabel renders a domain.DownloadableFile as a short display
 // string for InstallPlanView.Files: its declared Name, falling back to
 // FileName - simpler than cmd/lmm/install.go's own displayFileLabel (which
-// internal/tui cannot import - see customSourceType's doc comment for why
+// internal/tui cannot import - see sourceAuthState's doc comment for why
 // CLI-only helpers are duplicated rather than shared), but sufficient for
 // the TUI's one-line-per-file plan display.
 func fileDisplayLabel(f domain.DownloadableFile) string {

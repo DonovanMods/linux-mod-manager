@@ -67,13 +67,15 @@ Examples:
 			// (registerCustomSources may have skipped it on ID collision or
 			// construction failure) so the list reflects reality rather than just
 			// "a definition with this ID exists".
-			customTypes := make(map[string]string, len(defs)) // id -> def.Type, for defs that registered as custom
 			var errRows []sourceInfo
 			for _, d := range defs {
 				registered, err := svc.GetSource(d.ID)
 				switch {
 				case err == nil && isCustomSource(registered):
-					customTypes[d.ID] = d.Type
+					// Registered successfully as this definition's own custom
+					// source; its row (built below from svc.ListSources()) will
+					// carry the correct TypeLabel() on its own — nothing to
+					// record here.
 				case err == nil:
 					// Something else (a built-in, or another def) already held this ID.
 					errRows = append(errRows, sourceInfo{ID: d.ID, Type: "error", Error: "id already in use"})
@@ -92,16 +94,10 @@ Examples:
 			srcs := svc.ListSources()
 			rows := make([]sourceInfo, 0, len(srcs)+len(errRows)+len(loadErrs))
 			for _, src := range srcs {
-				typ := "built-in"
-				if isCustomSource(src) {
-					if t, ok := customTypes[src.ID()]; ok {
-						typ = t
-					}
-				}
 				rows = append(rows, sourceInfo{
 					ID:           src.ID(),
 					Name:         src.Name(),
-					Type:         typ,
+					Type:         source.TypeLabelOf(src),
 					Auth:         authState(src),
 					Capabilities: capabilitySummary(source.CapabilitiesOf(src)),
 				})
@@ -205,16 +201,21 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 	return nil
 }
 
-// isCustomSource reports whether src was constructed from a user-defined
-// source definition (as opposed to a built-in like NexusMods/CurseForge).
-// Extend this switch if a new custom source type ships.
+// isCustomSource reports whether src is a user-defined source (as opposed to
+// a built-in like NexusMods/CurseForge): a self-reported type of exactly
+// "directory", "manifest", or "api". "built-in" and the "unknown" fallback
+// both answer false — conservative on the unknown side so the definitions
+// reclassify loop (the only call site) reports a collision/error row rather
+// than assuming an unlabeled source is the definition's own. Unreachable in
+// practice: LoadSourceDefinitions guarantees ID uniqueness within a load, so
+// a registered source matching a definition's ID is either a built-in or
+// that definition's own constructed source — never an unrelated third party.
 func isCustomSource(src source.ModSource) bool {
-	switch src.(type) {
-	case *custom.Directory, *custom.Manifest, *custom.API:
+	switch source.TypeLabelOf(src) {
+	case "directory", "manifest", "api":
 		return true
-	default:
-		return false
 	}
+	return false
 }
 
 // authState reports a source's authentication status for display.

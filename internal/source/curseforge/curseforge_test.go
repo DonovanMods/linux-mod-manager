@@ -17,6 +17,17 @@ func TestCurseForge_ImplementsModSource(t *testing.T) {
 	var _ source.ModSource = (*CurseForge)(nil)
 }
 
+// Compile-time conformance pins: CurseForge implements the optional metadata
+// interfaces the source-registry design (#76) expects of a built-in.
+var (
+	_ source.EnvKeyProvider           = (*CurseForge)(nil)
+	_ source.KeyValidator             = (*CurseForge)(nil)
+	_ source.AuthInstructionsProvider = (*CurseForge)(nil)
+	_ source.GameCatalog              = (*CurseForge)(nil)
+	_ source.TypeLabeler              = (*CurseForge)(nil)
+	_ source.CapabilityReporter       = (*CurseForge)(nil)
+)
+
 func TestCurseForge_ID(t *testing.T) {
 	cf := New(nil, "")
 	assert.Equal(t, "curseforge", cf.ID())
@@ -395,4 +406,115 @@ func TestCurseForge_ResolveGameID(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "fetching games to resolve slug")
 	})
+}
+
+func TestCurseForge_EnvKey(t *testing.T) {
+	cf := New(nil, "")
+	assert.Equal(t, "CURSEFORGE_API_KEY", cf.EnvKey())
+}
+
+func TestCurseForge_TypeLabel(t *testing.T) {
+	cf := New(nil, "")
+	assert.Equal(t, "built-in", cf.TypeLabel())
+}
+
+func TestCurseForge_Capabilities(t *testing.T) {
+	cf := New(nil, "")
+	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}, cf.Capabilities())
+}
+
+func TestCurseForge_AuthInstructions(t *testing.T) {
+	cf := New(nil, "")
+	want := "To authenticate with CurseForge:\n" +
+		"1. Visit https://console.curseforge.com/\n" +
+		"2. Create a project and generate an API key\n" +
+		"3. Copy your API key\n"
+	assert.Equal(t, want, cf.AuthInstructions())
+}
+
+func TestCurseForge_ValidateKey_OK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "good-key", r.Header.Get("x-api-key"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"data": [{"id": 432, "name": "Minecraft", "slug": "minecraft"}],
+			"pagination": {"index": 0, "pageSize": 50, "resultCount": 1, "totalCount": 1}
+		}`))
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "")
+	cf.client.SetBaseURL(server.URL)
+
+	err := cf.ValidateKey(context.Background(), "good-key")
+	assert.NoError(t, err)
+}
+
+func TestCurseForge_ValidateKey_Unauthorized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "")
+	cf.client.SetBaseURL(server.URL)
+
+	err := cf.ValidateKey(context.Background(), "bad-key")
+	assert.Error(t, err)
+}
+
+// TestCurseForge_ValidateKey_WrongKeyAgainstAuthenticatedReceiver pins that
+// ValidateKey checks the candidate key, never falling back to a key already
+// stored on the receiver. A receiver constructed with a valid stored key
+// ("good-key") must still fail when asked to validate a different candidate.
+func TestCurseForge_ValidateKey_WrongKeyAgainstAuthenticatedReceiver(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "good-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"data": [{"id": 432, "name": "Minecraft", "slug": "minecraft"}],
+			"pagination": {"index": 0, "pageSize": 50, "resultCount": 1, "totalCount": 1}
+		}`))
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "good-key")
+	cf.client.SetBaseURL(server.URL)
+
+	err := cf.ValidateKey(context.Background(), "bad-key")
+	assert.Error(t, err, "ValidateKey must use the candidate key, not the receiver's stored key")
+
+	// Bonus: prove the server logic actually discriminates on the header.
+	err = cf.ValidateKey(context.Background(), "good-key")
+	assert.NoError(t, err)
+}
+
+func TestCurseForge_ListGames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"id": 432, "name": "Minecraft", "slug": "minecraft"},
+				{"id": 4471, "name": "World of Warcraft", "slug": "wow"}
+			],
+			"pagination": {"index": 0, "pageSize": 50, "resultCount": 2, "totalCount": 2}
+		}`))
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	games, err := cf.ListGames(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []source.GameEntry{
+		{ID: "432", Name: "Minecraft", Slug: "minecraft"},
+		{ID: "4471", Name: "World of Warcraft", Slug: "wow"},
+	}, games)
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io/fs"
@@ -15,6 +16,108 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// authChecker matches the IsAuthenticated() method every source that accepts
+// SetAPIKey also exposes (nexusmods.NexusMods, curseforge.CurseForge, and
+// the custom types) — used here to prove a resolved key actually reached the
+// constructed source via the registration pipeline's SetAPIKey seam.
+type authChecker interface{ IsAuthenticated() bool }
+
+// TestRegisterSources_KeyResolutionPrecedence pins that a built-in, now
+// constructed keyless (nexusmods.New(nil, "")) and key-resolved
+// post-construction by the unified pipeline, still ends up authenticated
+// when both an env var and a stored DB token are present — the env-var
+// path getSourceAPIKey already prefers must still be reached, not silently
+// dropped now that resolution happens after construction instead of before.
+func TestRegisterSources_KeyResolutionPrecedence(t *testing.T) {
+	t.Setenv("NEXUSMODS_API_KEY", "env-key-value")
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	require.NoError(t, svc.SaveSourceToken("nexusmods", "stored-db-key"))
+
+	registerSources(svc, t.TempDir())
+
+	src, err := svc.GetSource("nexusmods")
+	require.NoError(t, err)
+	auth, ok := src.(authChecker)
+	require.True(t, ok, "nexusmods must expose IsAuthenticated")
+	assert.True(t, auth.IsAuthenticated(), "env var must be applied via SetAPIKey even though a DB token also exists")
+}
+
+// TestRegisterSources_DerivedEnvKeyForCustom pins that a custom source with
+// no EnvKeyProvider still resolves its key via the derived LMM_<ID>_API_KEY
+// convention (envKeyFor's fallback to envKeyForSourceID) through the unified
+// pipeline's registerCustomSources path.
+func TestRegisterSources_DerivedEnvKeyForCustom(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	cfgDir := t.TempDir()
+	// The definition declares auth: the key pipeline is gated on
+	// Capabilities().Auth (a key set on an auth-less source would be
+	// stored but never attached to a request), and this test pins the
+	// env-var NAME derivation, which needs the key to actually apply.
+	writeSourceYAML(t, filepath.Join(cfgDir, "sources"), "custom.yaml", `
+id: my-custom
+name: My Custom
+type: manifest
+manifest:
+  url: https://example.invalid/mods.yaml
+  auth:
+    api_key:
+      in: header
+      name: X-API-Key
+`)
+	t.Setenv("LMM_MY_CUSTOM_API_KEY", "custom-env-key")
+
+	registerSources(svc, cfgDir)
+
+	src, err := svc.GetSource("my-custom")
+	require.NoError(t, err)
+	auth, ok := src.(authChecker)
+	require.True(t, ok, "custom manifest source must expose IsAuthenticated")
+	assert.True(t, auth.IsAuthenticated(), "derived LMM_<ID>_API_KEY env var must resolve through envKeyFor's fallback path")
+}
+
+// TestRegisterSources_FirstWinsCollision pins that built-ins register first
+// in the unified pipeline, so a custom definition claiming id "nexusmods"
+// still loses the collision (existing rule) and the warning still fires,
+// even though built-ins are now constructed via the same factory+registerSource
+// path as customs instead of being special-cased ahead of registerCustomSources.
+func TestRegisterSources_FirstWinsCollision(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	cfgDir := t.TempDir()
+	writeSourceYAML(t, filepath.Join(cfgDir, "sources"), "nexusmods.yaml", fmt.Sprintf(`
+id: nexusmods
+name: Shadow NexusMods
+type: directory
+directory:
+  path: %s
+`, t.TempDir()))
+
+	var warnBuf bytes.Buffer
+	customSourceWarnOut = &warnBuf
+	t.Cleanup(func() { customSourceWarnOut = nil })
+
+	registerSources(svc, cfgDir)
+
+	src, err := svc.GetSource("nexusmods")
+	require.NoError(t, err)
+	assert.Equal(t, "Nexus Mods", src.Name(), "built-in nexusmods must win; the custom definition should be skipped")
+	assert.Contains(t, warnBuf.String(), `warning: skipping source "nexusmods": id already in use`)
+}
 
 func TestInitService_RegistersSources(t *testing.T) {
 	// Use temp directories to avoid polluting real config

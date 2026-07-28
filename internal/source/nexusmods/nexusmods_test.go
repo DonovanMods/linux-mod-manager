@@ -9,9 +9,20 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+// Compile-time conformance pins: NexusMods implements the optional metadata
+// interfaces the source-registry design (#76) expects of a built-in.
+var (
+	_ source.EnvKeyProvider           = (*NexusMods)(nil)
+	_ source.KeyValidator             = (*NexusMods)(nil)
+	_ source.AuthInstructionsProvider = (*NexusMods)(nil)
+	_ source.TypeLabeler              = (*NexusMods)(nil)
+	_ source.CapabilityReporter       = (*NexusMods)(nil)
 )
 
 func writeJSON(t *testing.T, w http.ResponseWriter, v interface{}) {
@@ -532,4 +543,83 @@ func TestNexusMods_GetDependencies_NoDeps(t *testing.T) {
 	deps, err := nm.GetDependencies(context.Background(), mod)
 	require.NoError(t, err)
 	assert.Empty(t, deps)
+}
+
+func TestNexusMods_EnvKey(t *testing.T) {
+	nm := New(nil, "")
+	assert.Equal(t, "NEXUSMODS_API_KEY", nm.EnvKey())
+}
+
+func TestNexusMods_TypeLabel(t *testing.T) {
+	nm := New(nil, "")
+	assert.Equal(t, "built-in", nm.TypeLabel())
+}
+
+func TestNexusMods_Capabilities(t *testing.T) {
+	nm := New(nil, "")
+	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}, nm.Capabilities())
+}
+
+func TestNexusMods_AuthInstructions(t *testing.T) {
+	nm := New(nil, "")
+	want := "To authenticate with NexusMods:\n" +
+		"1. Visit https://www.nexusmods.com/users/myaccount?tab=api\n" +
+		"2. Click \"Request an API Key\" if you don't have one\n" +
+		"3. Copy your Personal API Key\n"
+	assert.Equal(t, want, nm.AuthInstructions())
+}
+
+func TestNexusMods_ValidateKey_OK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/users/validate.json", r.URL.Path)
+		assert.Equal(t, "good-key", r.Header.Get("apikey"))
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(t, w, map[string]any{"user_id": 1})
+	}))
+	defer server.Close()
+
+	nm := New(server.Client(), "")
+	nm.client.SetBaseURL(server.URL)
+
+	err := nm.ValidateKey(context.Background(), "good-key")
+	assert.NoError(t, err)
+}
+
+func TestNexusMods_ValidateKey_Unauthorized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	nm := New(server.Client(), "")
+	nm.client.SetBaseURL(server.URL)
+
+	err := nm.ValidateKey(context.Background(), "bad-key")
+	assert.Error(t, err)
+}
+
+// TestNexusMods_ValidateKey_WrongKeyAgainstAuthenticatedReceiver pins that
+// ValidateKey checks the candidate key, never falling back to a key already
+// stored on the receiver. A receiver constructed with a valid stored key
+// ("good-key") must still fail when asked to validate a different candidate.
+func TestNexusMods_ValidateKey_WrongKeyAgainstAuthenticatedReceiver(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("apikey") != "good-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(t, w, map[string]any{"user_id": 1})
+	}))
+	defer server.Close()
+
+	nm := New(server.Client(), "good-key")
+	nm.client.SetBaseURL(server.URL)
+
+	err := nm.ValidateKey(context.Background(), "bad-key")
+	assert.Error(t, err, "ValidateKey must use the candidate key, not the receiver's stored key")
+
+	// Bonus: prove the server logic actually discriminates on the header.
+	err = nm.ValidateKey(context.Background(), "good-key")
+	assert.NoError(t, err)
 }

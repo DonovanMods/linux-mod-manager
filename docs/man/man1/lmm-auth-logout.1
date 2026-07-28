@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.20.1" "User Commands"
+.TH "LMM" "1" "Jul 2026" "lmm 1.21.0" "User Commands"
 
 .SH NAME
 lmm-auth-logout - Remove stored credentials for a mod source
@@ -13,11 +13,13 @@ lmm-auth-logout - Remove stored credentials for a mod source
 Remove stored credentials for a mod source.
 
 .PP
-If no source is specified, you are prompted to choose between the
-built-in sources (NexusMods, CurseForge). Any source with a stored
-token can also be named positionally to remove it - including a custom
-source whose definition file was later deleted, which would otherwise
-leave its stored token unremovable through the interactive picker.
+If no source is specified, you are prompted to choose from every
+registered source that declares auth support - the built-ins (NexusMods,
+CurseForge) plus any auth-capable custom source, sorted by ID. Any
+source with a stored token can also be named positionally to remove it -
+including a custom source whose definition file was later deleted, which
+would otherwise leave its stored token unremovable through the
+interactive picker.
 
 .PP
 Built-in sources:

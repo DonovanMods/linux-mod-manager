@@ -11,6 +11,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 )
 
 func TestSourceCmd_Structure(t *testing.T) {
@@ -305,4 +310,129 @@ directory:
 	combined := stdout + stderrBuf.String()
 	assert.Equal(t, 1, strings.Count(combined, "broken-mods"),
 		"broken-mods should be reported exactly once across stdout+stderr, got: %q", combined)
+}
+
+// TestSourceTypeLabel_AllRealTypesPlusBareMock is Task 4's RED-first pin for
+// `source list`'s TYPE column: one instance of every real source type
+// (custom.Directory/Manifest/API and both built-ins) must report its own
+// TypeLabel() rather than being classified by a hand-maintained concrete-type
+// switch (the old isCustomSource), plus a bare source.ModSource double that
+// implements no source.TypeLabeler — unreachable by any real source (all five
+// implement it as of Task 1), but exercised here to pin the "unknown"
+// fallback explicitly, since the OLD negative-switch would have mislabeled
+// it "built-in" (anything not a recognized custom concrete type fell through
+// to that default).
+func TestSourceTypeLabel_AllRealTypesPlusBareMock(t *testing.T) {
+	dir, err := custom.NewDirectory(custom.SourceDefinition{
+		ID:        "d",
+		Name:      "D",
+		Type:      custom.TypeDirectory,
+		Directory: &custom.DirectoryConfig{Path: t.TempDir()},
+	})
+	require.NoError(t, err)
+
+	man, err := custom.NewManifest(custom.SourceDefinition{
+		ID:       "m",
+		Name:     "M",
+		Type:     custom.TypeManifest,
+		Manifest: &custom.ManifestConfig{URL: filepath.Join(t.TempDir(), "manifest.yaml")},
+	})
+	require.NoError(t, err)
+
+	api, err := custom.NewAPI(custom.SourceDefinition{
+		ID:   "a",
+		Name: "A",
+		Type: custom.TypeAPI,
+		API:  &custom.APIConfig{BaseURL: "https://api.x.test"},
+	})
+	require.NoError(t, err)
+
+	bare := &mockAuthSource{id: "bare", name: "Bare"}
+
+	tests := []struct {
+		name string
+		src  source.ModSource
+		want string
+	}{
+		{"directory", dir, "directory"},
+		{"manifest", man, "manifest"},
+		{"api", api, "api"},
+		{"nexusmods built-in", nexusmods.New(nil, ""), "built-in"},
+		{"curseforge built-in", curseforge.New(nil, ""), "built-in"},
+		{"bare mock, no TypeLabeler", bare, "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, source.TypeLabelOf(tt.src))
+		})
+	}
+}
+
+// TestSourceListCmd_TypeColumnFromTypeLabeler is the end-to-end companion to
+// TestSourceTypeLabel_AllRealTypesPlusBareMock: `source list` against a real
+// config dir with one definition of each custom type must show the exact
+// same TypeLabel()-derived values in its TYPE column, alongside both
+// built-ins (always registered). A bare mock can't be exercised here — the
+// real registration pipeline only ever constructs sources via
+// registerSources' built-in factories or custom.New, both of which always
+// return a TypeLabeler — so that fallback stays covered at the unit level
+// above only.
+func TestSourceListCmd_TypeColumnFromTypeLabeler(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(configDir, "sources"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "dir.yaml"), []byte(`
+id: my-directory
+name: My Directory
+type: directory
+directory:
+  path: `+t.TempDir()+`
+`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "manifest.yaml"), []byte(`
+id: my-manifest
+name: My Manifest
+type: manifest
+manifest:
+  url: `+filepath.Join(t.TempDir(), "manifest.yaml")+`
+`), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "api.yaml"), []byte(`
+id: my-api
+name: My API
+type: api
+api:
+  base_url: https://api.x.test
+  endpoints:
+    get_mod:
+      path: /mods/{mod_id}
+  mappings:
+    mod:
+      id: id
+      name: name
+`), 0644))
+
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(sourceCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"source", "list"})
+
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = false })
+
+	require.NoError(t, cmd.Execute())
+
+	var rows []sourceInfo
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+
+	byID := make(map[string]string, len(rows))
+	for _, r := range rows {
+		byID[r.ID] = r.Type
+	}
+	assert.Equal(t, "directory", byID["my-directory"])
+	assert.Equal(t, "manifest", byID["my-manifest"])
+	assert.Equal(t, "api", byID["my-api"])
+	assert.Equal(t, "built-in", byID["nexusmods"])
+	assert.Equal(t, "built-in", byID["curseforge"])
 }
