@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-07-28
+
+### Fixed
+
+- Installed mods now record the version of the file that was actually selected and downloaded, not the mod's overall "latest" version, across every install path (primary install, batch/dependency installs, profile switch, import, and the CLI's batch-install and profile-apply flows) — the mod cache is keyed to match, so a file pinned to an older release no longer gets stamped or cached under a newer version it isn't (#94)
+
+### Added
+
+- `lmm verify` now also checks each installed mod's recorded version against what its stored file ID(s) actually report upstream, surfacing `version_mismatch` (issue, fixable) and `version_unverifiable` (warning, not fixable — reinstall instead) statuses alongside the existing file checks
+- `lmm verify --fix` repairs a `version_mismatch` by re-keying the cache entry to the source-reported version, correcting the DB row and active profile record, and re-linking symlink deployments (a blocked rename, when a cache entry already exists under the target version, is left alone and reported via a new additive `note` field rather than clobbered)
+- `--json` verify output gains the optional `note` field, set only on a `--fix` repair whose cache rename was skipped
+
 ## [1.22.0] - 2026-07-28
 
 ### Changed
@@ -1049,6 +1061,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MIT License
 
 [Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.0...HEAD
+[1.23.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.1...v1.21.0
 [1.20.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.0...v1.20.1
