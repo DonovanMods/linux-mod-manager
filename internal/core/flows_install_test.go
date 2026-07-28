@@ -1267,6 +1267,58 @@ func TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey(t *testing.T
 	assert.Equal(t, "1.5", updates[0].NewVersion)
 }
 
+// TestApplyInstall_ExplicitOldFile_BeforeEachHookSeesEffectiveVersion pins
+// the other observable consequence of the #94 stamp: applyInstallPrimary
+// sets hookCtx.ModVersion (flows.go, right after the stamp) from the SAME
+// now-effective mod.Version, so install.before_each - and therefore the
+// LMM_MOD_VERSION env var a hook script sees (hooks.go's Run) - reports the
+// file actually being installed ("1.0"), not the mod's own latest version
+// ("1.5"). Mirrors TestService_ApplyUpdate_HookOrder's callLog pattern
+// (flows_update_test.go) for capturing hook context via a real script.
+func TestApplyInstall_ExplicitOldFile_BeforeEachHookSeesEffectiveVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &oldFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"}
+	mock.AddMod(mod.GameID, mod)
+
+	oldZip := createTestZip(t, t.TempDir(), map[string]string{"mod1.esp": "old-payload"})
+	oldContent, err := os.ReadFile(oldZip)
+	require.NoError(t, err)
+	mock.AddDownload("2", oldContent)
+
+	callLog := filepath.Join(scriptsDir, "calls.log")
+	beforeEach := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "install.before_each:$LMM_MOD_ID:$LMM_MOD_VERSION" >> `+callLog+`
+exit 0`)
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: beforeEach}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	// Caller (CLI's --file override) picks the archived old file instead.
+	plan.Files = []domain.DownloadableFile{
+		{ID: "2", Name: "Old File", FileName: "mod1-old.zip", Version: "1.0"},
+	}
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Mod One"}, result.Installed)
+
+	logContent, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	assert.Equal(t, "install.before_each:mod1:1.0\n", string(logContent),
+		"install.before_each must see the effective (selected-file) version, not the mod-level 1.5")
+}
+
 // TestService_ApplyInstall_ContextCancellation proves ApplyInstall checks
 // ctx at least once before doing any work, so an already-cancelled context
 // leaves nothing installed - the seam Phase 5b's cancel-then-drain task will
