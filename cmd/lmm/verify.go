@@ -30,7 +30,7 @@ type verifyFileJSON struct {
 	ModID   string `json:"mod_id"`
 	ModName string `json:"mod_name"`
 	FileID  string `json:"file_id"`
-	Status  string `json:"status"` // ok, missing, no_checksum, file_count_mismatch, skipped
+	Status  string `json:"status"` // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable
 }
 
 var verifyCmd = &cobra.Command{
@@ -53,10 +53,33 @@ Use --fix to re-download files that are MISSING or have NO CHECKSUM,
 storing a fresh checksum afterwards. FILE COUNT MISMATCH and SKIPPED
 are not repaired by --fix.
 
+verify also contacts each installed mod's source to check its recorded
+version against what the stored file ID(s) actually are upstream (issue
+#94: older installs could record the mod's "latest" version instead of
+the version of the file that was actually downloaded and deployed):
+
+    X NAME - VERSION MISMATCH (recorded X, source reports Y)
+                                         recorded version doesn't match
+                                         what the installed file ID(s)
+                                         report upstream
+    ? NAME - VERSION UNVERIFIABLE       none of the recorded file ID(s)
+                                         are listed by the source anymore
+                                         (reinstall to refresh)
+
+Mods installed from a local source, mods requiring manual download, and
+mods with no recorded file IDs are skipped silently - there is nothing
+to check against. If the source can't be reached, the mod is reported
+as skipped with a warning instead of failing the whole run.
+
+VERSION MISMATCH is not yet repaired by --fix (a future release adds
+that); VERSION UNVERIFIABLE is never fixable automatically since there is
+no matching upstream file to compare against - reinstall the mod instead.
+
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status}], issues, warnings}; status is one of "ok", "missing",
-"no_checksum", "file_count_mismatch", or "skipped". issues counts
-MISSING files (a successful --fix repair decrements it back out);
+"no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
+"version_unverifiable". issues counts MISSING files and VERSION MISMATCH
+rows (a successful --fix repair of MISSING decrements it back out);
 warnings counts everything else that isn't OK.
 
 Examples:
@@ -165,6 +188,78 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 				warnings++
 			}
 		}
+	}
+
+	// Per-mod version-record check: the recorded Version vs what the stored
+	// file ID(s) actually report upstream (issue #94's detection half -
+	// installs before this fix could stamp the mod's "latest" version
+	// instead of the version of the file that was really downloaded and
+	// deployed; Task A7 adds the --fix repair for VERSION MISMATCH rows).
+	// One entry per installed mod, FileID left empty (there's no single
+	// file at fault - the row's version metadata as a whole is what's
+	// wrong).
+	ctx := cmd.Context()
+	installedMods, err := svc.GetInstalledMods(game.ID, profile)
+	if err != nil {
+		return fmt.Errorf("getting installed mods: %w", err)
+	}
+	for i := range installedMods {
+		mod := &installedMods[i]
+		if modFilter != "" && mod.ID != modFilter {
+			continue
+		}
+		// Nothing to check against: local imports and manual downloads have
+		// no source to query, and a mod with no recorded file IDs predates
+		// even the buggy stamping this check exists to catch.
+		if mod.SourceID == domain.SourceLocal || mod.ManualDownload || len(mod.FileIDs) == 0 {
+			continue
+		}
+
+		sourceFiles, err := svc.GetModFiles(ctx, mod.SourceID, &mod.Mod)
+		if err != nil {
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: "", Status: "skipped"})
+			} else {
+				fmt.Printf("%s %s - could not check version (source unreachable)\n", colorYellow("?"), mod.Name)
+			}
+			warnings++
+			continue
+		}
+
+		var matched []*domain.DownloadableFile
+		for _, id := range mod.FileIDs {
+			for j := range sourceFiles {
+				if sourceFiles[j].ID == id {
+					matched = append(matched, &sourceFiles[j])
+					break
+				}
+			}
+		}
+
+		if len(matched) == 0 {
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: "", Status: "version_unverifiable"})
+			} else {
+				fmt.Printf("%s %s - VERSION UNVERIFIABLE (recorded file ID(s) no longer found upstream; reinstall to refresh the recorded version)\n", colorYellow("?"), mod.Name)
+			}
+			warnings++
+			continue
+		}
+
+		effective := domain.EffectiveInstalledVersion(mod.Version, matched)
+		if effective != mod.Version {
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: "", Status: "version_mismatch"})
+			} else {
+				fmt.Printf("%s %s - VERSION MISMATCH (recorded %s, source reports %s)\n", colorRed("X"), mod.Name, mod.Version, effective)
+			}
+			issues++
+			continue
+		}
+
+		// Recorded version matches what the source reports - OK, but not
+		// printed per-line (same quiet-ok convention as the file loop below).
+		checked++
 	}
 
 	for _, f := range files {
