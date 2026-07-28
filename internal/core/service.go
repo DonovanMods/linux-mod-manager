@@ -258,7 +258,10 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 	for i, sourceID := range sourceIDs {
 		src, ok := registeredByID[sourceID]
 		if !ok {
-			_, err := s.registry.Get(sourceID) // reproduce the exact not-found error
+			// Reproduce the exact not-found error. Sound while Get stays a
+			// pure map read and registration stays startup-only (single call
+			// site in cmd/lmm root); revisit if the registry ever hot-reloads.
+			_, err := s.registry.Get(sourceID)
 			slots[i].err = err
 			attempted[i] = true
 			continue

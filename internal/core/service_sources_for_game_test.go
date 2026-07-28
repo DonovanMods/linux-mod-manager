@@ -55,6 +55,9 @@ func TestSourcesForGameEmptySourceIDsReturnsEmptySlice(t *testing.T) {
 	srcs, err := svc.SourcesForGame(game.ID)
 	require.NoError(t, err)
 	assert.Empty(t, srcs)
+	// Non-nil matters: a nil slice marshals to JSON null, an empty one to []
+	// (the same trap source list --json fixed in v1.18.1); pin it.
+	assert.NotNil(t, srcs)
 }
 
 // compile-time sanity: the helper's sources implement source.ModSource.
