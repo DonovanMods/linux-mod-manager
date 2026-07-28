@@ -351,3 +351,145 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_StillFixesDB(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", mod.Version, "DB row must still be corrected even when the cache rename is blocked")
 }
+
+// TestDoVerify_Fix_VersionMismatch_RenameBlocked_JSONExposesNote guards the
+// --json half of the rename-blocked case: the text-mode "Note: ..." line
+// has no JSON equivalent unless the row itself carries it, so a --json
+// caller flipping a row from version_mismatch to ok has no way to tell a
+// clean repair from one where the cache rename was skipped. The repaired
+// row's "note" field must carry that detail.
+func TestDoVerify_Fix_VersionMismatch_RenameBlocked_JSONExposesNote(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("pre-existing 1.0 content")))
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+
+	// FileID is empty specifically on the version-record pre-pass's own
+	// entry (the one this repair flips from version_mismatch to ok) - the
+	// later per-file loop emits its own separate "ok" entry for mod1 with
+	// FileID "2" that never carried a note, so filtering on FileID avoids
+	// asserting Note against the wrong entry.
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Equal(t, "ok", f.Status)
+			assert.NotEmpty(t, f.Note, "the blocked-rename note must be visible in JSON, not just text output")
+		}
+	}
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+}
+
+// TestDoVerify_Fix_VersionMismatch_RenameBlocked_Deployed_LeavesWorkingSymlinkAlone
+// guards the other half of the rename-blocked case: when the mod is
+// Deployed via symlink and the rename is blocked, the CURRENT symlink
+// still points at the intact recorded-version cache dir - it was never
+// touched by a rename. Re-linking in this case would repoint a working
+// deployment into the pre-existing effective-version dir, which is
+// unvetted (it's realistically a stray or partial copy, the very reason
+// the rename was blocked in the first place). --fix must leave it alone.
+func TestDoVerify_Fix_VersionMismatch_RenameBlocked_Deployed_LeavesWorkingSymlinkAlone(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, true)
+
+	deployedPath := filepath.Join(game.ModPath, "mod1.esp")
+	preTarget, err := os.Readlink(deployedPath)
+	require.NoError(t, err)
+	require.Contains(t, preTarget, filepath.Join("test-src-mod1", "1.5"), "pre-state: deployed symlink points at the recorded-version cache dir")
+
+	gameCache := svc.GetGameCache(game)
+	// Pre-create the new-version cache dir with different content than the
+	// old dir, so a wrongful re-link would be observable via content, not
+	// just path.
+	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("unvetted 1.0 content")))
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "Note")
+
+	postTarget, err := os.Readlink(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, preTarget, postTarget, "the deployment must still point at the original (intact) recorded-version cache dir, not be re-linked into the unvetted pre-existing one")
+
+	content, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "plugin content", string(content), "the working deployment's content must be untouched")
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", mod.Version, "DB is still corrected even though the deployment was left alone")
+	assert.True(t, mod.Deployed, "Deployed must remain true - the existing deployment is still valid")
+}
+
+// TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag
+// guards Important-1 from code review: once the cache re-key (step 1) and
+// DB save (step 2) succeed, mod.Version == effective - a LATER
+// `verify --fix` run can no longer detect a version_mismatch to retry,
+// even if the re-link (step 4) then fails and leaves the game-dir symlink
+// dangling. Leaving Deployed stuck at true in that case would have the DB
+// silently claim a working deployment that doesn't exist, with no way for
+// verify to ever flag it again. --fix must clear Deployed instead, so the
+// DB stays honest even though the specific version_mismatch signal that
+// triggered the repair is gone for good.
+func TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixTest(t, true)
+
+	// Force the re-link's installer.Install to fail: strip write
+	// permission from the game dir (which already holds the pre-fix
+	// symlink), so linker.Deploy's os.Remove(dst)/os.Symlink can't
+	// replace the stale entry.
+	require.NoError(t, os.Chmod(game.ModPath, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "Repair failed", "the re-link failure must be surfaced, not silently swallowed")
+
+	// Steps 1-3 (cache rename, DB save, profile upsert) already completed
+	// before the re-link failed, so the version correction stands.
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", mod.Version, "the version correction from steps 1-3 must stand even though step 4 failed")
+
+	// The state must not self-erase from detection: Deployed is cleared
+	// rather than left claiming a deployment that's actually dangling.
+	assert.False(t, mod.Deployed, "Deployed must be cleared when the re-link fails")
+
+	// A second run confirms the row is inert (not re-reported, not
+	// re-counted) rather than stuck retrying forever or erroring - the
+	// version_mismatch signal is genuinely gone; Deployed=false is the
+	// only remaining honest trace that the deployment still needs
+	// attention (e.g. via a subsequent `lmm deploy`, which redeploys every
+	// enabled mod regardless of its recorded Deployed value).
+	out2 := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.NotContains(t, out2, "VERSION MISMATCH", "the version is already corrected - a second run must not re-report it")
+
+	mod2, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod2.Deployed, "Deployed must still read false on the second run - nothing re-marks it deployed on its own")
+}

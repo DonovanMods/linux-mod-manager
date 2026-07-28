@@ -30,7 +30,8 @@ type verifyFileJSON struct {
 	ModID   string `json:"mod_id"`
 	ModName string `json:"mod_name"`
 	FileID  string `json:"file_id"`
-	Status  string `json:"status"` // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable
+	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable
+	Note    string `json:"note,omitempty"` // optional detail; currently only set by a --fix VERSION MISMATCH repair whose cache rename was skipped because the effective-version cache dir already existed
 }
 
 var verifyCmd = &cobra.Command{
@@ -76,22 +77,26 @@ from the recorded version to the effective (source-reported) one, the DB
 row and the active profile's record are corrected to match, and any
 symlink deployment is re-linked (its target lived inside the just-renamed
 cache dir and would otherwise dangle). If a cache entry already exists
-under the effective version, the rename is skipped and a note is printed,
-but the DB and profile are still corrected. VERSION UNVERIFIABLE is never
+under the effective version, the rename is skipped - the existing
+deployment is left pointing at the still-intact recorded-version cache
+dir rather than being re-linked into the unverified pre-existing one -
+and a note is printed (also included as "note" in --json output), but
+the DB and profile are still corrected. VERSION UNVERIFIABLE is never
 fixable automatically since there is no matching upstream file to compare
 against - reinstall the mod instead.
 
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
-status}], issues, warnings}; status is one of "ok", "missing",
+status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
-"version_unverifiable". issues counts MISSING files and VERSION MISMATCH
-rows (a successful --fix repair of either decrements it back out);
-warnings counts everything else that isn't OK.
+"version_unverifiable"; note is omitted except on a --fix VERSION
+MISMATCH repair whose cache rename was skipped. issues counts MISSING
+files and VERSION MISMATCH rows (a successful --fix repair of either
+decrements it back out); warnings counts everything else that isn't OK.
 
 Examples:
   lmm verify --game skyrim-se           # Verify all mods
   lmm verify 12345 --game skyrim-se     # Verify specific mod
-  lmm verify --fix --game skyrim-se     # Re-download missing files, populate missing checksums`,
+  lmm verify --fix --game skyrim-se     # Re-download missing files, populate checksums, repair version records`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runVerify,
 }
@@ -270,6 +275,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 				} else {
 					if jsonOutput {
 						jsonFiles[len(jsonFiles)-1].Status = "ok"
+						jsonFiles[len(jsonFiles)-1].Note = note
 					} else {
 						fmt.Printf("  %s\n", colorGreen(fmt.Sprintf("Repaired: %s → %s", recorded, effective)))
 						if note != "" {
@@ -388,7 +394,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	if issues > 0 || warnings > 0 {
 		fmt.Printf("%d issue(s), %d warning(s) found.\n", issues, warnings)
 		if (issues > 0 || warnings > 0) && !verifyFix {
-			fmt.Println("Run with --fix to re-download missing files and populate missing checksums.")
+			fmt.Println("Run with --fix to re-download missing files, populate missing checksums, and repair version-record mismatches.")
 		}
 	} else {
 		fmt.Println(colorGreen("All files verified OK."))
@@ -405,22 +411,37 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 //  1. Cache re-key: if the cache dir for the recorded version exists and
 //     the one for effective does not, rename it. If the effective-version
 //     dir already exists, leave the cache alone and return a note instead
-//     of clobbering it via os.Rename. If the rename itself fails, return
-//     immediately with no DB write - the row stays version_mismatch and
-//     the DB/cache never disagree in a new way.
+//     of clobbering it via os.Rename - the existing deployment (if any)
+//     still points at the intact recorded-version dir, so step 4 below is
+//     skipped in this case rather than re-linking into the unvetted
+//     pre-existing one. If the rename itself fails, return immediately
+//     with no DB write - the row stays version_mismatch and the DB/cache
+//     never disagree in a new way.
 //  2. DB: mutate mod.Version and save the full row (deliberately not
 //     UpdateModVersion, which would shift the wrong value into
 //     PreviousVersion and poison rollback).
 //  3. Profile: upsert the corrected version into the active profile's YAML
 //     record.
-//  4. Re-link: if the mod is Deployed via a symlink, the game-dir symlinks
-//     point INTO the cache dir renamed in step 1 and are now dangling -
-//     re-run the installer to refresh them. Hardlink/copy deployments are
-//     untouched by the cache rename, so they're left alone.
+//  4. Re-link: skipped when step 1 left the cache alone (note != "" - the
+//     current symlinks already point at valid content, so there's nothing
+//     to fix). Otherwise, if the mod is Deployed via a symlink, the
+//     game-dir symlinks point INTO the cache dir renamed in step 1 and are
+//     now dangling - re-run the installer to refresh them. Hardlink/copy
+//     deployments are untouched by the cache rename, so they're left
+//     alone regardless.
 //
 // mod is mutated in place (Version set to effective) only once the DB save
 // that carries it has actually succeeded, so a failure partway through
-// never leaves the in-memory row claiming a fix that didn't happen.
+// never leaves the in-memory row claiming a fix that didn't happen. If
+// step 4 itself fails (e.g. a read-only game dir), the DB/profile version
+// correction from steps 2-3 is NOT rolled back - retrying it would just
+// repeat the same rename-already-done state - but Deployed is cleared and
+// saved before returning the error: effective == mod.Version by then, so
+// a later `verify --fix` no longer sees a version_mismatch to retry, and
+// leaving Deployed true would falsely claim a working deployment that
+// isn't there. Clearing it at least keeps that one field honest so other
+// surfaces (status displays, a future `lmm deploy`, which redeploys every
+// enabled mod regardless of its recorded Deployed value) aren't misled.
 func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, effective string) (note string, err error) {
 	gameCache := svc.GetGameCache(game)
 	oldPath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -451,8 +472,16 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 		return note, fmt.Errorf("updating profile record: %w", err)
 	}
 
-	if mod.Deployed && mod.LinkMethod == domain.LinkSymlink {
+	// A blocked rename (note != "") leaves the existing deployment pointed
+	// at the still-intact recorded-version cache dir - nothing dangles, so
+	// re-linking would only repoint a working deployment into the
+	// unvetted pre-existing effective-version dir for no reason.
+	if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink {
 		if err := svc.GetInstaller(game).Install(cmd.Context(), game, &mod.Mod, profile); err != nil {
+			mod.Deployed = false
+			if saveErr := svc.SaveInstalledMod(mod); saveErr != nil {
+				return note, fmt.Errorf("relinking deployed files: %w (also failed to clear deployed flag: %v)", err, saveErr)
+			}
 			return note, fmt.Errorf("relinking deployed files: %w", err)
 		}
 	}
