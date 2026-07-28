@@ -145,11 +145,13 @@ func promptForGameSource(gameName string, sources []string, resolve func(string)
 	}
 	fmt.Printf("%s has multiple mod sources configured. Select one:\n", gameName)
 	for i, src := range sources {
-		name := resolve(src)
-		if name == "" {
-			name = src
+		// Bare ID when there's no distinct display name - "id (id)" is
+		// noise, and the doc contract promises the bare-ID fallback.
+		if name := resolve(src); name != "" && name != src {
+			fmt.Printf("  [%d] %s (%s)\n", i+1, name, src)
+		} else {
+			fmt.Printf("  [%d] %s\n", i+1, src)
 		}
-		fmt.Printf("  [%d] %s (%s)\n", i+1, name, src)
 	}
 	fmt.Printf("Enter choice (1-%d): ", len(sources))
 

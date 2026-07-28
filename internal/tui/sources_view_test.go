@@ -67,9 +67,10 @@ func TestSourceInfosPrototype(t *testing.T) {
 // contract for the canned demo data: SourceInfos(false) (the Sources
 // screen's default) must be a strict, non-empty subset of SourceInfos(true)
 // (the 'a'-toggled full registry) - never a disjoint or larger set - and its
-// rows must agree exactly (all fields) with their SourceInfos(true)
-// counterpart, matching Model.sourcesShowAll's "the two never disagree"
-// contract.
+// rows must agree on every display field with their SourceInfos(true)
+// counterpart (InUse is deliberately excluded: it is only meaningful in the
+// all-sources view, where the scoped row's counterpart must carry it),
+// matching Model.sourcesShowAll's "the two never disagree" contract.
 func TestSourceInfosPrototype_ScopedIsSubsetOfAll(t *testing.T) {
 	t.Parallel()
 
@@ -88,8 +89,10 @@ func TestSourceInfosPrototype_ScopedIsSubsetOfAll(t *testing.T) {
 		full, ok := byID[si.ID]
 		require.True(t, ok, "every scoped row must also appear in the full registry: %+v", si)
 		assert.True(t, full.InUse, "a scoped row's SourceInfos(true) counterpart must be marked InUse: %+v", full)
-		assert.Equal(t, full.Name, si.Name)
-		assert.Equal(t, full.Type, si.Type)
+		// Full-struct equality modulo the intentionally-different InUse bit,
+		// so Auth/Capabilities can't silently drift between the two views.
+		full.InUse = si.InUse
+		assert.Equal(t, full, si)
 	}
 }
 

@@ -54,7 +54,8 @@ func TestPromptForGameSource_NilResolverFallsBackToBareID(t *testing.T) {
 
 	require.NoError(t, promptErr)
 	assert.Equal(t, "acme", gotID)
-	assert.Contains(t, out, "[1] acme (acme)")
+	assert.Contains(t, out, "[1] acme\n", "bare ID, no (id) suffix")
+	assert.NotContains(t, out, "(acme)")
 }
 
 // TestPromptForGameSource_UnknownIDResolverFallsBackToBareID pins the same
@@ -73,7 +74,8 @@ func TestPromptForGameSource_UnknownIDResolverFallsBackToBareID(t *testing.T) {
 	})
 
 	assert.Equal(t, "ghost-src", gotID)
-	assert.Contains(t, out, "[1] ghost-src (ghost-src)")
+	assert.Contains(t, out, "[1] ghost-src\n", "bare ID, no (id) suffix")
+	assert.NotContains(t, out, "(ghost-src)")
 }
 
 // TestResolveSource_MultiSource_PromptRendersRegistryNames proves the
@@ -141,8 +143,9 @@ func TestResolveSource_MultiSource_PromptFallsBackToBareID(t *testing.T) {
 
 	require.NoError(t, resolveErr)
 	assert.Equal(t, "unregistered-a", gotID)
-	assert.Contains(t, out, "[1] unregistered-a (unregistered-a)")
-	assert.Contains(t, out, "[2] unregistered-b (unregistered-b)")
+	assert.Contains(t, out, "[1] unregistered-a\n", "bare ID, no (id) suffix")
+	assert.Contains(t, out, "[2] unregistered-b\n", "bare ID, no (id) suffix")
+	assert.NotContains(t, out, "(unregistered-a)")
 }
 
 // TestResolveSource_MultiSource_NilServiceFallsBackToBareID pins
@@ -168,8 +171,9 @@ func TestResolveSource_MultiSource_NilServiceFallsBackToBareID(t *testing.T) {
 
 	require.NoError(t, resolveErr)
 	assert.Equal(t, "acme", gotID)
-	assert.Contains(t, out, "[1] acme (acme)")
-	assert.Contains(t, out, "[2] beta (beta)")
+	assert.Contains(t, out, "[1] acme\n", "bare ID, no (id) suffix")
+	assert.NotContains(t, out, "(acme)")
+	assert.Contains(t, out, "[2] beta\n", "Name==ID renders bare, not beta (beta)")
 }
 
 func TestReadPromptLineFrom_TrimsAndLowercases(t *testing.T) {
