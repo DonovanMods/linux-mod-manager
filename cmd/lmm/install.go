@@ -397,7 +397,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// interactive prompt when several are configured, or the first
 	// alphabetically under --yes.
 	var err error
-	installSource, err = resolveSource(game, installSource, installYes)
+	installSource, err = resolveSource(service, game, installSource, installYes)
 	if err != nil {
 		return err
 	}

@@ -164,7 +164,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	// Resolve source: use flag if set, otherwise first configured source
 	var err error
-	updateSource, err = resolveSource(game, updateSource, false)
+	updateSource, err = resolveSource(service, game, updateSource, false)
 	if err != nil {
 		return err
 	}
@@ -608,7 +608,7 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Resolve source: use flag if set, otherwise first configured source
 	var err error
-	updateSource, err = resolveSource(game, updateSource, false)
+	updateSource, err = resolveSource(service, game, updateSource, false)
 	if err != nil {
 		return err
 	}

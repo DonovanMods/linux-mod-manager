@@ -199,8 +199,9 @@ func TestTryMatchSources_NoConfiguredSources_CleanNoMatch(t *testing.T) {
 // --- import --id default resolution (Task 3 of #76's PR2 plan) ---
 //
 // import --id's "prefer curseforge, else first available" block becomes a
-// plain resolveSource(game, importSource, false) call - the same dynamic
-// sole-source-auto/multi-source-prompt semantics as deploy/search/update/mod.
+// plain resolveSource(service, game, importSource, false) call - the same
+// dynamic sole-source-auto/multi-source-prompt semantics as
+// deploy/search/update/mod.
 
 // setupDoImportTest builds a *core.Service plus a game for exercising
 // doImport's archive-mode path directly, mirroring setupDoDeployTest/

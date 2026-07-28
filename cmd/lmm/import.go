@@ -103,7 +103,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	// same resolveSource semantics deploy/search/update/mod already use.
 	if importModID != "" && importSource == "" {
 		var err error
-		importSource, err = resolveSource(game, importSource, false)
+		importSource, err = resolveSource(service, game, importSource, false)
 		if err != nil {
 			return err
 		}

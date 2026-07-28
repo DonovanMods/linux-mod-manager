@@ -181,7 +181,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
 		}
 	} else {
-		sourceToUse, err := resolveSource(game, searchSource, false)
+		sourceToUse, err := resolveSource(service, game, searchSource, false)
 		if err != nil {
 			return err
 		}

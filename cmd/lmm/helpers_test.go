@@ -9,6 +9,8 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -75,16 +77,17 @@ func TestPromptForGameSource_UnknownIDResolverFallsBackToBareID(t *testing.T) {
 }
 
 // TestResolveSource_MultiSource_PromptRendersRegistryNames proves the
-// end-to-end wiring: resolveSource itself keeps its exact signature (no
-// *core.Service parameter - a change would ripple into every caller,
-// including deploy.go/import.go which are out of scope for this task), yet
-// its interactive multi-source prompt still renders registry display names.
-// withService (this file) is the single choke point every resolveSource
-// caller (search/install/update/mod/deploy/import) already routes through,
-// so it - not resolveSource - is where the registry resolver is wired in.
+// end-to-end wiring: resolveSource takes the *core.Service directly (no
+// package-level resolver seam) and its interactive multi-source prompt
+// renders registry display names sourced from it.
 func TestResolveSource_MultiSource_PromptRendersRegistryNames(t *testing.T) {
-	configDir = t.TempDir()
-	dataDir = t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	svc.RegisterSource(curseforge.New(nil, ""))
 
 	game := &domain.Game{
 		ID:        "g1",
@@ -94,15 +97,9 @@ func TestResolveSource_MultiSource_PromptRendersRegistryNames(t *testing.T) {
 
 	var gotID string
 	var resolveErr error
-	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
-
 	out := captureStdout(t, func() error {
 		withStdin(t, "2\n", func() {
-			_ = withService(cmd, func(ctx context.Context, svc *core.Service) error {
-				gotID, resolveErr = resolveSource(game, "", false)
-				return nil
-			})
+			gotID, resolveErr = resolveSource(svc, game, "", false)
 		})
 		return nil
 	})
@@ -115,13 +112,18 @@ func TestResolveSource_MultiSource_PromptRendersRegistryNames(t *testing.T) {
 	assert.Contains(t, out, "[2] Nexus Mods (nexusmods)")
 }
 
-// TestResolveSource_MultiSource_PromptFallsBackWithoutWithService guards
-// that resolveSource called outside withService (e.g. directly in a test,
-// as several cmd/lmm tests do by calling do* functions with a pre-built
-// svc) never renders a stale resolver left over from an earlier test - the
-// bare-ID fallback always applies for sources the current resolver doesn't
-// know.
-func TestResolveSource_MultiSource_PromptFallsBackWithoutWithService(t *testing.T) {
+// TestResolveSource_MultiSource_PromptFallsBackToBareID pins the
+// "unregistered source: bare ID fallback" rule end-to-end: a real
+// *core.Service with nothing registered under these IDs (e.g. a custom
+// source's definition was removed after the game was configured) still
+// renders sensibly instead of erroring or showing an empty name.
+func TestResolveSource_MultiSource_PromptFallsBackToBareID(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
 	game := &domain.Game{
 		ID:        "g2",
 		Name:      "Test Game 2",
@@ -132,7 +134,7 @@ func TestResolveSource_MultiSource_PromptFallsBackWithoutWithService(t *testing.
 	var resolveErr error
 	out := captureStdout(t, func() error {
 		withStdin(t, "1\n", func() {
-			gotID, resolveErr = resolveSource(game, "", false)
+			gotID, resolveErr = resolveSource(svc, game, "", false)
 		})
 		return nil
 	})
@@ -141,6 +143,33 @@ func TestResolveSource_MultiSource_PromptFallsBackWithoutWithService(t *testing.
 	assert.Equal(t, "unregistered-a", gotID)
 	assert.Contains(t, out, "[1] unregistered-a (unregistered-a)")
 	assert.Contains(t, out, "[2] unregistered-b (unregistered-b)")
+}
+
+// TestResolveSource_MultiSource_NilServiceFallsBackToBareID pins
+// resolverFromService's defensive nil-svc branch: resolveSource never
+// panics when called without a service (not a real production path - every
+// call site routes through withService/withGameService - but a cheap
+// guard), falling back to bare IDs.
+func TestResolveSource_MultiSource_NilServiceFallsBackToBareID(t *testing.T) {
+	game := &domain.Game{
+		ID:        "g3",
+		Name:      "Test Game 3",
+		SourceIDs: map[string]string{"acme": "x", "beta": "y"},
+	}
+
+	var gotID string
+	var resolveErr error
+	out := captureStdout(t, func() error {
+		withStdin(t, "1\n", func() {
+			gotID, resolveErr = resolveSource(nil, game, "", false)
+		})
+		return nil
+	})
+
+	require.NoError(t, resolveErr)
+	assert.Equal(t, "acme", gotID)
+	assert.Contains(t, out, "[1] acme (acme)")
+	assert.Contains(t, out, "[2] beta (beta)")
 }
 
 func TestReadPromptLineFrom_TrimsAndLowercases(t *testing.T) {

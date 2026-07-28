@@ -104,7 +104,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		Force:       deployForce,
 	}
 	if len(args) > 0 {
-		resolvedSource, err := resolveSource(game, deploySource, false)
+		resolvedSource, err := resolveSource(service, game, deploySource, false)
 		if err != nil {
 			return err
 		}
