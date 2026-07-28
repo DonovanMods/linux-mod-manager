@@ -315,7 +315,7 @@ type ScanResult struct {
 	FilePath       string      // Original path in mod_path
 	FileName       string      // Base filename
 	Mod            *domain.Mod // Detected/created mod info
-	MatchedSource  string      // "curseforge", "nexusmods", or "local"
+	MatchedSource  string      // a configured source's ID (any registered source, not just curseforge/nexusmods), or "local"
 	AlreadyTracked bool        // True if already in lmm database
 	Error          error       // Any error during processing
 }

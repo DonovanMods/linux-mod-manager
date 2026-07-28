@@ -184,11 +184,13 @@ circular. Confirming streams download/extract/deploy progress into the
 status line; a successful install re-runs the current search so the
 result's "installed" marker updates right away.
 
-The **Sources** screen (key `5`) lists every source registered with lmm —
-built-in and custom — with the same ID/TYPE/AUTH/CAPABILITIES columns as
-`lmm source list`. It only shows sources that actually registered: a custom
-source whose definition file failed to load (bad YAML, ID collision, etc.)
-has no row here — check `lmm source list` for those.
+The **Sources** screen (key `5`) lists the active game's configured
+sources by default, with the same ID/TYPE/AUTH/CAPABILITIES columns as
+`lmm source list`; press `a` to toggle to every source registered with lmm
+— built-in and custom — marking which ones the active game uses. It only
+shows sources that actually registered: a custom source whose definition
+file failed to load (bad YAML, ID collision, etc.) has no row here — check
+`lmm source list` for those.
 
 On **Installed Mods**, `e` toggles the selected mod's enable/disable state
 (the direction follows its current status: disabled mods enable, everything
@@ -625,7 +627,7 @@ manifest:
 
 ### Source Management Commands
 
-List all sources (built-in and custom):
+List sources (built-in and custom). With a resolvable game (`-g`, or a default set via `lmm game set-default`), the list scopes to that game's configured sources by default:
 
 ```bash
 lmm source list
@@ -636,11 +638,27 @@ Output:
 ```
 ID            NAME                    TYPE       AUTH  CAPABILITIES              ERROR
 nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth
-curseforge    CurseForge              built-in   yes   search,deps,updates,auth
 donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates
-my-repo       My Mod Repo             manifest   no    search,deps,updates,auth
-esoui         ESOUI                   api        no    search,updates,auth
 ```
+
+Pass `--all` to see every registered source regardless of what the active game has configured, with an `IN USE` column marking which ones the active game maps:
+
+```bash
+lmm source list --all
+```
+
+Output:
+
+```
+ID            NAME                    TYPE       AUTH  CAPABILITIES              IN USE  ERROR
+nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth  yes
+curseforge    CurseForge              built-in   yes   search,deps,updates,auth  no
+donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates            yes
+my-repo       My Mod Repo             manifest   no    search,deps,updates,auth  no
+esoui         ESOUI                   api        no    search,updates,auth       no
+```
+
+With no game resolvable (no `-g`, no default game set), `--all` has no effect: the full registry is shown either way, with no `IN USE` column, exactly as when no game exists at all. Definitions that failed to load are always shown, in every view, as an `error` row. `--json` follows the same scoping; the `"in_use"` key is only ever present in the `--all`-with-game-resolvable combination.
 
 Validate a source definition file before use:
 
@@ -811,8 +829,8 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 `lmm import` has two distinct modes, chosen by whether an archive path is given:
 
-- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one against CurseForge by name (skip with `--skip-match`), and imports whatever is left after confirmation. Useful for mods that were installed manually — e.g. CurseForge mods whose author has disabled API downloads. `--dry-run` and `--skip-match` only apply to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
-- **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to CurseForge if configured) to fetch and attach source metadata as part of the import.
+- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured — stopping at the first source that returns a result; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--dry-run` and `--skip-match` only apply to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
+- **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to the game's sole configured source, prompting interactively when several are configured) to fetch and attach source metadata as part of the import.
 
 Either way, a mod that ends up unmatched to any remote source is imported as local — it deploys and installs normally, but `lmm update` has nothing to check it against and will never notify about it.
 

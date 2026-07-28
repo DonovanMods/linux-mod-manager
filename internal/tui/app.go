@@ -2005,9 +2005,9 @@ func helpEntry(kb key.Binding) string {
 
 // helpGroups builds the full, ordered set of help groups: "global" always
 // first, then every screen group that has entries, in a fixed order
-// (dashboard, installed mods, search, profiles - sources has no bindings
-// beyond plain navigation, so it's omitted entirely), with the CURRENT
-// screen's group promoted to immediately follow global. Each screen's list
+// (dashboard, installed mods, search, profiles, conflicts, sources), with
+// the CURRENT screen's group promoted to immediately follow global. Each
+// screen's list
 // mirrors updateKey's dispatch guards in mutations.go (e.g. Files/Policy/
 // Purge all gate on ScreenInstalledMods too, alongside Deploy/CheckUpdates).
 func (m Model) helpGroups() []helpGroup {

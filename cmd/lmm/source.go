@@ -109,10 +109,16 @@ Examples:
 
 			// Resolve a game context WITHOUT erroring when absent (design §5:
 			// "the command must keep working with zero games configured").
-			// requireGame's own error (no -g, no default) is deliberately
-			// swallowed here — that's the "no game" case, not a real failure —
-			// but an explicit, invalid -g still surfaces via GetGame below,
-			// same as every other command's game resolution.
+			// requireGame's own error is deliberately swallowed here — and
+			// that error covers TWO distinct causes it doesn't distinguish
+			// itself: the ordinary "no -g, no default game set" case, AND a
+			// failure loading config.yaml while it looks up the default game
+			// (requireGame's config.Load err falls through to the same "no
+			// game specified" message rather than surfacing separately). Both
+			// degrade identically here, to the full-registry view — do not
+			// "fix" this into an error for the config-load case; an explicit,
+			// invalid -g still surfaces via GetGame below, same as every
+			// other command's game resolution.
 			var gameCtx *domain.Game
 			if requireErr := requireGame(cmd); requireErr == nil {
 				gameCtx, err = svc.GetGame(gameID)
@@ -248,7 +254,13 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 		return fmt.Errorf("probe: constructing source: %w", err)
 	}
 	if a, ok := src.(interface{ SetAPIKey(string) }); ok {
-		if key := getSourceAPIKey(svc, def.ID, envKeyForSourceID(def.ID)); key != "" {
+		// envKeyFor(src) rather than envKeyForSourceID(def.ID) directly: today
+		// no custom type implements EnvKeyProvider, so both resolve to the
+		// same derived LMM_<ID>_API_KEY name and behavior is unchanged - but
+		// routing through envKeyFor keeps this call from silently diverging
+		// from every other env-key lookup in the codebase if a custom source
+		// ever does implement EnvKeyProvider.
+		if key := getSourceAPIKey(svc, def.ID, envKeyFor(src)); key != "" {
 			a.SetAPIKey(key)
 		}
 	}

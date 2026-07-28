@@ -23,13 +23,22 @@ import (
 // constructed source via the registration pipeline's SetAPIKey seam.
 type authChecker interface{ IsAuthenticated() bool }
 
-// TestRegisterSources_KeyResolutionPrecedence pins that a built-in, now
-// constructed keyless (nexusmods.New(nil, "")) and key-resolved
-// post-construction by the unified pipeline, still ends up authenticated
-// when both an env var and a stored DB token are present — the env-var
-// path getSourceAPIKey already prefers must still be reached, not silently
-// dropped now that resolution happens after construction instead of before.
-func TestRegisterSources_KeyResolutionPrecedence(t *testing.T) {
+// TestRegisterSources_BuiltinStillAuthenticatesWithEnvAndToken pins that a
+// built-in, now constructed keyless (nexusmods.New(nil, "")) and
+// key-resolved post-construction by the unified pipeline, still ends up
+// authenticated when both an env var and a stored DB token are present —
+// the key pipeline must still be reached, not silently dropped now that
+// resolution happens after construction instead of before.
+//
+// NOTE: IsAuthenticated() only reports "some key was applied," not WHICH
+// one — this test alone would still pass even if getSourceAPIKey's
+// env-over-token precedence were inverted (verified live: with the
+// precedence swapped, this test kept passing while
+// TestRegisterSource_KeyResolutionPrecedence below correctly failed — see
+// that test's doc comment). It stays as the integration-level pin that the
+// real built-in pipeline still authenticates at all; precedence itself is
+// now pinned by TestRegisterSource_KeyResolutionPrecedence.
+func TestRegisterSources_BuiltinStillAuthenticatesWithEnvAndToken(t *testing.T) {
 	t.Setenv("NEXUSMODS_API_KEY", "env-key-value")
 
 	svc, err := core.NewService(core.ServiceConfig{
@@ -46,6 +55,70 @@ func TestRegisterSources_KeyResolutionPrecedence(t *testing.T) {
 	auth, ok := src.(authChecker)
 	require.True(t, ok, "nexusmods must expose IsAuthenticated")
 	assert.True(t, auth.IsAuthenticated(), "env var must be applied via SetAPIKey even though a DB token also exists")
+}
+
+// recordingKeySource is a mockAuthSource that also implements
+// source.EnvKeyProvider with a caller-chosen env var name, so
+// TestRegisterSource_KeyResolutionPrecedence can control exactly which env
+// var getSourceAPIKey consults instead of relying on the derived
+// LMM_<ID>_API_KEY convention. mockAuthSource.apiKey (set via SetAPIKey)
+// records whichever key registerSource actually applied.
+type recordingKeySource struct {
+	mockAuthSource
+	envKey string
+}
+
+func (r *recordingKeySource) EnvKey() string { return r.envKey }
+
+// TestRegisterSource_KeyResolutionPrecedence pins registerSource's
+// env-over-stored-token precedence directly at the unit that implements it,
+// with distinct, observable env and token values recorded via SetAPIKey.
+// registerSources (the full pipeline) only exercises this through the real
+// built-in/custom sources, none of which expose the applied key for
+// assertion — routing through registerSource with a recording mock is the
+// least invasive seam that can actually distinguish "env applied" from
+// "token applied" rather than just "something was applied"
+// (see TestRegisterSources_BuiltinStillAuthenticatesWithEnvAndToken's note).
+func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
+	const envVar = "LMM_PRECEDENCE_TEST_API_KEY"
+
+	newService := func(t *testing.T) *core.Service {
+		t.Helper()
+		svc, err := core.NewService(core.ServiceConfig{
+			ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, svc.Close()) })
+		return svc
+	}
+
+	t.Run("env value wins when both env and a stored token are present", func(t *testing.T) {
+		svc := newService(t)
+		require.NoError(t, svc.SaveSourceToken("precedence-src", "token-value"))
+		t.Setenv(envVar, "env-value")
+
+		mock := &recordingKeySource{
+			mockAuthSource: mockAuthSource{id: "precedence-src", name: "Precedence Src"},
+			envKey:         envVar,
+		}
+		registerSource(svc, mock)
+
+		assert.Equal(t, "env-value", mock.apiKey, "env var must take precedence over a stored DB token")
+	})
+
+	t.Run("stored token applies when no env value is present", func(t *testing.T) {
+		svc := newService(t)
+		require.NoError(t, svc.SaveSourceToken("precedence-src", "token-value"))
+		t.Setenv(envVar, "")
+
+		mock := &recordingKeySource{
+			mockAuthSource: mockAuthSource{id: "precedence-src", name: "Precedence Src"},
+			envKey:         envVar,
+		}
+		registerSource(svc, mock)
+
+		assert.Equal(t, "token-value", mock.apiKey, "stored token must apply when no env var is set")
+	})
 }
 
 // TestRegisterSources_DerivedEnvKeyForCustom pins that a custom source with

@@ -334,9 +334,13 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 
 // doAuthStatus reports authentication status for every registered
 // auth-capable source (built-in and custom, uniformly - sorted by ID via
-// authCapableSources), then a final pass surfacing stored tokens that match
-// no registered source (e.g. a custom source's definition file was deleted
-// after `lmm auth login`).
+// authCapableSources), then a final pass surfacing stored tokens that don't
+// belong to any auth-capable source. That pass distinguishes two causes:
+// the source is still registered but no longer declares auth (e.g. a custom
+// source's manifest dropped its `auth:` block) versus the source isn't
+// registered at all (e.g. its definition file was deleted after `lmm auth
+// login`) - the former is fixable by re-declaring auth, the latter only by
+// removing the stale token, so each gets its own wording.
 func doAuthStatus(service *core.Service) error {
 	sources := authCapableSources(service)
 	registered := make(map[string]bool, len(sources))
@@ -363,16 +367,24 @@ func doAuthStatus(service *core.Service) error {
 		fmt.Printf("%s (%s): not authenticated (run: lmm auth login %s)\n", src.Name(), id, id)
 	}
 
-	// Stored tokens whose source matches nothing registered (built-in or
-	// custom) are otherwise invisible — e.g. a custom source's definition
-	// file was deleted after `lmm auth login`. Surface them so the user
-	// knows the credential still exists and how to remove it.
+	// Stored tokens not covered by the auth-capable loop above are otherwise
+	// invisible. Two distinct causes land here: the source is still
+	// registered but its declaration dropped auth (service.GetSource
+	// succeeds), or nothing registered matches the ID at all (GetSource
+	// fails, e.g. the custom source's definition file was deleted after
+	// `lmm auth login`). Surface each with wording that points at the right
+	// fix rather than lumping both under one "no matching source" message.
 	tokens, err := service.ListSourceTokens()
 	if err != nil {
 		return fmt.Errorf("listing stored tokens: %w", err)
 	}
 	for _, tok := range tokens {
 		if registered[tok.SourceID] {
+			continue
+		}
+		if _, err := service.GetSource(tok.SourceID); err == nil {
+			fmt.Printf("%s: stored token for source without auth declared (key: %s) — remove auth? run: lmm auth logout %s\n",
+				tok.SourceID, maskAPIKey(tok.APIKey), tok.SourceID)
 			continue
 		}
 		fmt.Printf("%s: stored token with no matching source (key: %s) — remove with: lmm auth logout %s\n",

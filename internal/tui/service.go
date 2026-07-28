@@ -476,18 +476,21 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, page
 		//     shown" wording (app.go) - depend on this being honest, not just
 		//     true-by-convention.
 		//   - AttemptedCount is the canned SEARCHABLE source count, derived
-		//     from SourceInfos(true) - the FULL registry, not the
-		//     game-scoped default Task 4 added - since all-sources search
-		//     attempts every registered source regardless of scoping, and
-		//     all three entries advertise "search" in their Capabilities
-		//     string, matching prototypeAllSourcesWarning's premise that
-		//     one of them (curseforge) was attempted and failed. Leaving
-		//     this at its zero value would make EVERY zero-match demo
-		//     search indistinguishable from "no source supports searching"
-		//     (#58 item 3's exact dishonesty), even though the canned
-		//     sources plainly do support it.
+		//     from SourceInfos(false) - the GAME-SCOPED subset, matching
+		//     core.Service.SearchAllSources's real contract
+		//     (service.go:189-197 and its SourcesForGame-based
+		//     implementation): a real aggregate search only attempts the
+		//     ACTIVE GAME's configured sources, never the full registry, so
+		//     deriving this from SourceInfos(true) (a prior version of this
+		//     comment claimed "regardless of scoping", which predates Task
+		//     1's SourcesForGame refactor and was never true of the real
+		//     path) would overstate the demo's honesty. Leaving this at its
+		//     zero value would make EVERY zero-match demo search
+		//     indistinguishable from "no source supports searching" (#58
+		//     item 3's exact dishonesty), even though the canned game's
+		//     configured source plainly does support it.
 		result.Exhausted = end == len(matched)
-		result.AttemptedCount = len(p.SourceInfos(true))
+		result.AttemptedCount = len(p.SourceInfos(false))
 	}
 	return result, nil
 }
