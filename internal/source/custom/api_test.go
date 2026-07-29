@@ -41,7 +41,7 @@ func TestNewAPIExplicitPageStartZero(t *testing.T) {
 func TestAPIIdentityAndCapabilities(t *testing.T) {
 	a, err := NewAPI(apiDef("https://x.test"))
 	require.NoError(t, err)
-	assert.Equal(t, source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: false}, a.Capabilities())
+	assert.Equal(t, source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: false, Versions: true}, a.Capabilities())
 	assert.Empty(t, a.AuthURL())
 
 	_, err = a.ExchangeToken(context.Background(), "code")
@@ -54,7 +54,25 @@ func TestAPIIdentityAndCapabilities(t *testing.T) {
 	def.API.Endpoints.GetMod = nil
 	limited, err := NewAPI(def)
 	require.NoError(t, err)
-	assert.Equal(t, source.Capabilities{Search: false, Dependencies: false, Updates: false, Auth: false}, limited.Capabilities())
+	assert.Equal(t, source.Capabilities{Search: false, Dependencies: false, Updates: false, Auth: false, Versions: true}, limited.Capabilities())
+}
+
+// TestAPICapabilities_VersionsFollowsModFilesEndpoint pins that Versions
+// tracks whether the definition declares a mod_files endpoint (#96):
+// without it, GetModFiles has nothing to call, so per-file Version strings
+// are never available to resolve against.
+func TestAPICapabilities_VersionsFollowsModFilesEndpoint(t *testing.T) {
+	withFiles := validAPIDef()
+	withFiles.API.Endpoints.ModFiles = &EndpointConfig{Path: "/mods/{mod_id}/files", List: "files"}
+	src, err := NewAPI(withFiles)
+	require.NoError(t, err)
+	assert.True(t, src.Capabilities().Versions)
+
+	without := validAPIDef()
+	without.API.Endpoints.ModFiles = nil
+	src2, err := NewAPI(without)
+	require.NoError(t, err)
+	assert.False(t, src2.Capabilities().Versions)
 }
 
 func TestAPI_TypeLabel(t *testing.T) {

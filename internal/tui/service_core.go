@@ -290,6 +290,7 @@ func sourceCapabilitySummary(c source.Capabilities) string {
 	add(c.Dependencies, "deps")
 	add(c.Updates, "updates")
 	add(c.Auth, "auth")
+	add(c.Versions, "versions")
 	return out
 }
 

@@ -54,7 +54,7 @@ func TestTypeLabels(t *testing.T) {
 // Capabilities() explicitly (all true) rather than relying on the
 // CapabilitiesOf default.
 func TestBuiltinCapabilitiesExplicit(t *testing.T) {
-	all := source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}
+	all := source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}
 
 	nm, ok := source.ModSource(nexusmods.New(nil, "")).(source.CapabilityReporter)
 	require.True(t, ok, "NexusMods must implement CapabilityReporter")

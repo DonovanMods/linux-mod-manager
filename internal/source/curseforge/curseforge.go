@@ -113,7 +113,7 @@ func (c *CurseForge) TypeLabel() string {
 // Capabilities implements source.CapabilityReporter. CurseForge supports all
 // ModSource operations.
 func (c *CurseForge) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}
 }
 
 // resolveGameID converts a game identifier (numeric ID or slug) to a numeric ID.

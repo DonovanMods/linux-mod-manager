@@ -94,6 +94,7 @@ func (a *API) Capabilities() source.Capabilities {
 		Dependencies: false,
 		Updates:      a.endpoints.GetMod != nil,
 		Auth:         a.auth != nil,
+		Versions:     a.endpoints.ModFiles != nil,
 	}
 }
 

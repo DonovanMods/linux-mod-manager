@@ -42,7 +42,7 @@ func (partialSource) Capabilities() Capabilities {
 func TestCapabilitiesOf(t *testing.T) {
 	t.Run("defaults to fully capable", func(t *testing.T) {
 		caps := CapabilitiesOf(fullSource{})
-		assert.Equal(t, Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}, caps)
+		assert.Equal(t, Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}, caps)
 	})
 
 	t.Run("uses CapabilityReporter when implemented", func(t *testing.T) {

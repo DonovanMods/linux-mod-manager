@@ -67,6 +67,9 @@ type Capabilities struct {
 	Dependencies bool
 	Updates      bool
 	Auth         bool
+	// Versions: GetModFiles carries per-file Version strings usable for
+	// exact version->file resolution (#96)
+	Versions bool
 }
 
 // CapabilityReporter is implemented by sources that support only a subset of
@@ -125,7 +128,7 @@ func CapabilitiesOf(src ModSource) Capabilities {
 	if cr, ok := src.(CapabilityReporter); ok {
 		return cr.Capabilities()
 	}
-	return Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}
+	return Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}
 }
 
 // DownloadHeaderProvider is implemented by sources whose file downloads need

@@ -557,7 +557,7 @@ func TestNexusMods_TypeLabel(t *testing.T) {
 
 func TestNexusMods_Capabilities(t *testing.T) {
 	nm := New(nil, "")
-	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}, nm.Capabilities())
+	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}, nm.Capabilities())
 }
 
 func TestNexusMods_AuthInstructions(t *testing.T) {
