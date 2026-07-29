@@ -1155,6 +1155,61 @@ func TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloa
 	assert.Contains(t, failEvt.Detail, "download failed:")
 }
 
+// TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError guards
+// #95: when a mod's stored file IDs (mod.FileIDs) no longer match any file
+// the source currently offers, redeployFromSource must fail that mod
+// (result.Skipped + DeploySkipped, via selectDeployFiles's allowFallback=
+// false) with a clear, actionable error - never silently substitute the
+// primary file (the old DeployFallbackUsed phase, removed entirely in the
+// renderer-cleanup task B2). Mirrors
+// TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloadFailedEvent's
+// negative-assertion idiom.
+func TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	// Deliberately no AddDownload call needed - selectDeployFiles must fail
+	// before any download is attempted.
+
+	mockMod := &domain.Mod{ID: "1", SourceID: "src", Name: "Stale File Mod", Version: "1.0", GameID: "g1"}
+	mock.AddMod("g1", mockMod)
+	// mockSource.GetModFiles always returns a single file with ID "1" -
+	// "stale-id" never matches it.
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          *mockMod,
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"stale-id"},
+	}))
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	var events []core.DeployProgress
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err, "a per-mod stored-file-gone failure must not fail the whole deploy")
+	require.NotNil(t, result)
+
+	assert.Equal(t, 0, result.Deployed, "the mod must not be deployed via fallback substitution")
+	require.Len(t, result.Skipped, 1)
+	assert.Contains(t, result.Skipped[0], "no longer available upstream")
+	assert.Contains(t, result.Skipped[0], "stale-id")
+
+	var sawSkipped bool
+	for i := range events {
+		if events[i].Phase == core.DeploySkipped {
+			sawSkipped = true
+		}
+	}
+	assert.True(t, sawSkipped, "expected a DeploySkipped event")
+}
+
 // TestService_DeployProfile_HookOrder proves install.before_all ->
 // install.before_each -> (deploy) -> install.after_each -> install.after_all
 // ordering, mirroring TestService_UninstallMod_HookOrder.
@@ -2684,11 +2739,14 @@ func TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBl
 	assert.Contains(t, events[failIdx].Detail, "download failed")
 }
 
-// TestService_ApplyProfileSwitch_InstallLoop_FallbackUsedWhenStoredFileIDsNotFound
-// guards SwitchFallbackUsed: when a ToInstall ref's FileIDs don't match any
-// file the source currently offers, ApplyProfileSwitch falls back to the
-// primary file and reports it.
-func TestService_ApplyProfileSwitch_InstallLoop_FallbackUsedWhenStoredFileIDsNotFound(t *testing.T) {
+// TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod
+// guards #95: when a ToInstall ref's FileIDs don't match any file the source
+// currently offers, ApplyProfileSwitch must fail that mod (SwitchInstallError,
+// via selectDeployFiles's allowFallback=false) rather than silently
+// substituting the primary file (the old SwitchFallbackUsed phase, removed
+// entirely in the renderer-cleanup task B2) - and the install loop must
+// continue past it to the next mod.
+func TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
@@ -2703,17 +2761,23 @@ func TestService_ApplyProfileSwitch_InstallLoop_FallbackUsedWhenStoredFileIDsNot
 	defer mock.Close()
 	svc.RegisterSource(mock)
 	tmpDir := t.TempDir()
-	zipPath := createTestZip(t, tmpDir, map[string]string{"mod1.esp": "payload"})
+	zipPath := createTestZip(t, tmpDir, map[string]string{"mod2.esp": "payload"})
 	zipContent, err := os.ReadFile(zipPath)
 	require.NoError(t, err)
 	mock.AddDownload("1", zipContent) // mockSource.GetModFiles always returns file ID "1"
 	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	mock.AddMod("g1", &domain.Mod{ID: "mod2", SourceID: "src", Name: "Mod Two", Version: "1.0", GameID: "g1"})
 
 	plan := &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
-		// "stale-id" does not match the mock source's file ID ("1"), forcing
-		// the primary-file fallback.
-		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0", FileIDs: []string{"stale-id"}}},
+		ToInstall: []domain.ModReference{
+			// "stale-id" does not match the mock source's file ID ("1") - mod1
+			// must fail, not silently fall back to the primary file.
+			{SourceID: "src", ModID: "mod1", Version: "1.0", FileIDs: []string{"stale-id"}},
+			// mod2 has no stored FileIDs, so it installs normally - proving
+			// mod1's failure doesn't stop the loop.
+			{SourceID: "src", ModID: "mod2", Version: "1.0"},
+		},
 	}
 
 	var events []core.DeployProgress
@@ -2722,15 +2786,22 @@ func TestService_ApplyProfileSwitch_InstallLoop_FallbackUsedWhenStoredFileIDsNot
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, 1, result.Installed)
+	assert.Equal(t, 1, result.Installed, "only mod2 should install; mod1 fails")
 
-	var sawFallback bool
-	for _, e := range events {
-		if e.Phase == core.SwitchFallbackUsed {
-			sawFallback = true
+	var failEvt *core.DeployProgress
+	for i := range events {
+		if events[i].Phase == core.SwitchInstallError && events[i].ModName == "Mod One" {
+			failEvt = &events[i]
 		}
 	}
-	assert.True(t, sawFallback, "expected a SwitchFallbackUsed event")
+	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
+	assert.Contains(t, failEvt.Detail, "no longer available upstream")
+	assert.Contains(t, failEvt.Detail, "stale-id")
+
+	_, err = svc.GetInstalledMod("src", "mod1", "g1", "target")
+	assert.Error(t, err, "mod1 must not be installed via fallback substitution")
+	_, err = svc.GetInstalledMod("src", "mod2", "g1", "target")
+	assert.NoError(t, err, "mod2 must still install, proving the loop continues")
 }
 
 // TestService_ApplyProfileSwitch_InstallLoop_RecordsFileVersion is the #94

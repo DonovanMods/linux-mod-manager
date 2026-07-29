@@ -1081,19 +1081,21 @@ func deployProgressAdapter(progress func(ActionProgress), compose func(core.Depl
 // set this deliberately narrows).
 //
 // Fix wave 2 (review finding, item 2) added SwitchInstallError/
-// SwitchDownloadFailed/SwitchFallbackUsed: the CLI (cmd/lmm/profile.go)
-// prints "    Error: %s" for the first two and an unconditional (NOT
-// --verbose-gated) "    Warning: stored file IDs not found, using primary"
-// for the third, so all three are user-visible live output there - dropping
-// them here via the default case left the TUI with no live sign of a
-// failing/fallback-using install while the switch was still running (the
-// completed outcome's Warnings, see coreProvider.ApplyProfileSwitch, is the
-// only other place a failure surfaces, and used to be silently empty too).
-// SourceID/ModID identify the mod for all three - see DeployProgress.
-// SourceID's own doc comment: it's set for every ApplyProfileSwitch
-// install-loop event from SwitchInstallingMod onward, including these,
-// unlike ModName, which SwitchInstallError may fire before its mod is even
-// fetched (fetch-failure is one of its listed reasons).
+// SwitchDownloadFailed: the CLI (cmd/lmm/profile.go) prints "    Error: %s"
+// for both, so they are user-visible live output there - dropping them here
+// via the default case left the TUI with no live sign of a failing install
+// while the switch was still running (the completed outcome's Warnings, see
+// coreProvider.ApplyProfileSwitch, is the only other place a failure
+// surfaces, and used to be silently empty too).
+// SourceID/ModID identify the mod for both - see DeployProgress. SourceID's
+// own doc comment: it's set for every ApplyProfileSwitch install-loop event
+// from SwitchInstallingMod onward, including these, unlike ModName, which
+// SwitchInstallError may fire before its mod is even fetched (fetch-failure
+// is one of its listed reasons).
+//
+// #95 removed SwitchFallbackUsed (renderer-cleanup task B2): the emit site
+// (ApplyProfileSwitch's install loop) now hard-fails via SwitchInstallError
+// instead of falling back, so there is no longer a fallback line to render.
 func switchProgressLine(p core.DeployProgress) (ActionProgress, bool) {
 	switch p.Phase {
 	case core.SwitchDownloading:
@@ -1104,8 +1106,6 @@ func switchProgressLine(p core.DeployProgress) (ActionProgress, bool) {
 		return ActionProgress{Line: fmt.Sprintf("Switching: %s (%d/%d)", p.ModName, p.Index, p.Total), Percent: -1}, true
 	case core.SwitchInstallError, core.SwitchDownloadFailed:
 		return ActionProgress{Line: fmt.Sprintf("Switching: %s:%s failed - %s", p.SourceID, p.ModID, p.Detail), Percent: -1}, true
-	case core.SwitchFallbackUsed:
-		return ActionProgress{Line: fmt.Sprintf("Switching: %s:%s - stored file IDs not found, using primary", p.SourceID, p.ModID), Percent: -1}, true
 	default:
 		return ActionProgress{}, false
 	}
@@ -1640,8 +1640,6 @@ func importProgressLine(p core.DeployProgress) (ActionProgress, bool) {
 		return ActionProgress{Line: fmt.Sprintf("Importing: downloading and installing %d mod(s)…", p.Total), Percent: -1}, true
 	case core.ImportModInstalling:
 		return ActionProgress{Line: fmt.Sprintf("Importing: installing %s:%s (%d/%d)", p.SourceID, p.ModID, p.Index, p.Total), Percent: -1}, true
-	case core.ImportFallbackUsed:
-		return ActionProgress{Line: fmt.Sprintf("Importing: %s:%s - stored file IDs not found, using primary", p.SourceID, p.ModID), Percent: -1}, true
 	case core.ImportDownloading:
 		return ActionProgress{Line: fmt.Sprintf("Importing: downloading %s:%s %.0f%%", p.SourceID, p.ModID, p.Percent), Percent: p.Percent}, true
 	case core.ImportModFailed:

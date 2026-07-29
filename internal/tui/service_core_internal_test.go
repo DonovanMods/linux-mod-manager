@@ -39,20 +39,6 @@ func TestSwitchProgressLine_RendersInstallErrorAndDownloadFailedPhases(t *testin
 	assert.Contains(t, line.Line, "download failed: connection reset")
 }
 
-// TestSwitchProgressLine_RendersFallbackUsed guards the finding's item 2
-// SwitchFallbackUsed trace: cmd/lmm/profile.go prints
-// "    Warning: stored file IDs not found, using primary" for this phase
-// UNCONDITIONALLY (not --verbose-gated, unlike most of the CLI's Switch*
-// diagnostics) - it IS user-visible there, so switchProgressLine must mirror
-// it as a transient line too, not silently drop it via the default case.
-func TestSwitchProgressLine_RendersFallbackUsed(t *testing.T) {
-	fallback := core.DeployProgress{Phase: core.SwitchFallbackUsed, SourceID: "src", ModID: "modZ"}
-	line, ok := switchProgressLine(fallback)
-	assert.True(t, ok, "SwitchFallbackUsed must compose a visible progress line, mirroring the CLI's unconditional warning")
-	assert.Contains(t, line.Line, "src")
-	assert.Contains(t, line.Line, "modZ")
-}
-
 // TestSwitchProgressLine_UnhandledPhaseStillDrops pins the "deliberately
 // narrows" contract switchProgressLine's own doc comment describes: a phase
 // with nothing useful to show a status line (e.g. SwitchDisableNote, an

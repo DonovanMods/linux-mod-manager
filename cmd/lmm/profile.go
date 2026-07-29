@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -361,8 +362,6 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
 		case core.SwitchInstallError:
 			fmt.Printf("    Error: %s\n", p.Detail)
-		case core.SwitchFallbackUsed:
-			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 		case core.SwitchDownloading:
 			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
 		case core.SwitchDownloadFailed:
@@ -500,8 +499,6 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Println("\nDownloading and installing mods...")
 		case core.ImportModInstalling:
 			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
-		case core.ImportFallbackUsed:
-			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 		case core.ImportDownloading:
 			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
 		case core.ImportModFailed:
@@ -1052,13 +1049,10 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				// New install: use FileIDs from profile
 				fileIDsToUse = ref.FileIDs
 			}
-			filesToDownload, usedFallback, err := selectFilesToDownload(files, fileIDsToUse)
+			filesToDownload, err := selectFilesToDownload(files, fileIDsToUse)
 			if err != nil {
 				fmt.Printf("    Error: %v\n", err)
 				continue
-			}
-			if usedFallback && len(fileIDsToUse) > 0 {
-				fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 			}
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
@@ -1146,30 +1140,43 @@ func selectPrimaryFile(files []domain.DownloadableFile) *domain.DownloadableFile
 // errNoDownloadableFiles is returned when selectFilesToDownload is called with no files.
 var errNoDownloadableFiles = fmt.Errorf("no downloadable files")
 
+// errStoredFilesUnavailable mirrors internal/core/flows.go's sentinel of the
+// same name (selectDeployFiles' would-be-fallback rejection, #95): this
+// package can't import internal/core's unexported sentinel, so it's
+// duplicated here for the same documented reason selectFilesToDownload
+// itself duplicates selectDeployFiles - see the cross-reference comment on
+// selectFilesToDownload below and on selectDeployFiles in flows.go.
+var errStoredFilesUnavailable = errors.New("stored file(s) no longer available upstream")
+
 // selectFilesToDownload picks files to download based on stored FileIDs (for re-downloads)
-// or primary file (for fresh installs). Returns files to download, whether a fallback was used,
-// and an error if files is empty (avoids returning a slice containing nil).
-func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, bool, error) {
+// or primary file (for fresh installs). Mirrors internal/core/flows.go's
+// selectDeployFiles with allowFallback=false (doProfileApply's only caller
+// is deploy-class, so no allowFallback parameter is needed here): when
+// storedFileIDs is non-empty but none of it matches what the source
+// currently offers, silently substituting the primary file would install a
+// file the caller never asked for - exactly the silent-fallback bug #95
+// tracks - so this returns errStoredFilesUnavailable instead, wrapped with
+// the missing IDs and a remediation hint (byte-identical wording to
+// selectDeployFiles' wrap, so callers/tests can't tell which package
+// produced it). Returns an error if files is empty (avoids returning a
+// slice containing nil).
+func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, error) {
 	if len(files) == 0 {
-		return nil, false, errNoDownloadableFiles
+		return nil, errNoDownloadableFiles
 	}
 	if len(storedFileIDs) > 0 {
 		// Try to use stored file IDs
 		found := findFilesByIDs(files, storedFileIDs)
 		if len(found) > 0 {
-			return found, false, nil
+			return found, nil
 		}
-		// Fallback to primary
-		p := selectPrimaryFile(files)
-		if p == nil {
-			return nil, false, errNoDownloadableFiles
-		}
-		return []*domain.DownloadableFile{p}, true, nil
+		// No fallback (#95): a would-be primary-file substitution is an error.
+		return nil, fmt.Errorf("%w (file ID(s): %s) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "))
 	}
 	// Fresh install: use primary file
 	p := selectPrimaryFile(files)
 	if p == nil {
-		return nil, false, errNoDownloadableFiles
+		return nil, errNoDownloadableFiles
 	}
-	return []*domain.DownloadableFile{p}, false, nil
+	return []*domain.DownloadableFile{p}, nil
 }

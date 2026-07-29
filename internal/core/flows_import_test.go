@@ -320,6 +320,63 @@ func TestApplyImportPartialFailure(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution guards #95:
+// when a fresh-install ref's own FileIDs don't match any file the source
+// currently offers, ApplyImport must fail that mod (ImportModFailed +
+// Failed++, via selectDeployFiles's allowFallback=false) rather than
+// silently substituting the primary file (the old ImportFallbackUsed phase,
+// removed entirely in the renderer-cleanup task B2) - and the loop must
+// continue past it, mirroring TestApplyImportPartialFailure.
+func TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	zipPath := createTestZip(t, t.TempDir(), map[string]string{"good.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent)
+	mock.AddMod("g1", &domain.Mod{ID: "bad-mod", SourceID: "src", Name: "Bad Mod", Version: "1.0", GameID: "g1"})
+	mock.AddMod("g1", &domain.Mod{ID: "good-mod", SourceID: "src", Name: "Good Mod", Version: "1.0", GameID: "g1"})
+
+	profile := &domain.Profile{
+		Name: "target", GameID: "g1",
+		Mods: []domain.ModReference{
+			// "stale-id" doesn't match the mock source's file ID ("1") - must
+			// fail, not silently fall back to the primary file.
+			{SourceID: "src", ModID: "bad-mod", Version: "1.0", FileIDs: []string{"stale-id"}},
+			{SourceID: "src", ModID: "good-mod", Version: "1.0"},
+		},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.Missing, 2)
+
+	var failedEvt core.DeployProgress
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(p core.DeployProgress) {
+		if p.Phase == core.ImportModFailed {
+			failedEvt = p
+		}
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+	assert.Equal(t, 1, result.Failed)
+	assert.Contains(t, failedEvt.Detail, "no longer available upstream")
+	assert.Contains(t, failedEvt.Detail, "stale-id")
+
+	_, err = svc.GetInstalledMod("src", "good-mod", "g1", "target")
+	assert.NoError(t, err, "the loop must continue past the bad ref and still install the good one")
+	_, err = svc.GetInstalledMod("src", "bad-mod", "g1", "target")
+	assert.Error(t, err, "bad-mod must not be installed via fallback substitution")
+}
+
 // TestApplyImportRedownloadUsesStoredFileIDs pins doProfileImport's :541-552
 // rule: a NeedsRedownload mod must re-fetch using the DB row's OWN FileIDs,
 // never the profile YAML's ref.FileIDs (which may be empty or stale) - the
