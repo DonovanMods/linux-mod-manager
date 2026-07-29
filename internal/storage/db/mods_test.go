@@ -40,8 +40,8 @@ func installTestMod(t *testing.T, database *db.DB) {
 // own error return (already checked above it) - there's no realistic way to
 // make it error with the standard driver without a custom sql.Driver mock,
 // which isn't otherwise justified here. Verified by inspection: each site
-// wraps and returns the error ("checking rows affected: %w") instead of
-// discarding it via `_`.
+// wraps and returns the error with operation context instead of discarding
+// it via `_`.
 
 func TestUpdateModPolicy(t *testing.T) {
 	database, err := db.New(":memory:")

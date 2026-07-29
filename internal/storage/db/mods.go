@@ -178,7 +178,7 @@ func (d *DB) DeleteInstalledMod(sourceID, modID, gameID, profileName string) err
 	if err != nil {
 		// A driver error here must not be read as "0 rows affected" -
 		// that would misreport a real DB failure as domain.ErrModNotFound.
-		return fmt.Errorf("checking rows affected: %w", err)
+		return fmt.Errorf("deleting installed mod: checking rows affected: %w", err)
 	}
 	if rows == 0 {
 		return domain.ErrModNotFound
@@ -201,7 +201,7 @@ func (d *DB) UpdateModPolicy(sourceID, modID, gameID, profileName string, policy
 	if err != nil {
 		// A driver error here must not be read as "0 rows affected" -
 		// that would misreport a real DB failure as domain.ErrModNotFound.
-		return fmt.Errorf("checking rows affected: %w", err)
+		return fmt.Errorf("updating mod policy: checking rows affected: %w", err)
 	}
 	if rows == 0 {
 		return domain.ErrModNotFound
@@ -224,7 +224,7 @@ func (d *DB) SetModEnabled(sourceID, modID, gameID, profileName string, enabled 
 	if err != nil {
 		// A driver error here must not be read as "0 rows affected" -
 		// that would misreport a real DB failure as domain.ErrModNotFound.
-		return fmt.Errorf("checking rows affected: %w", err)
+		return fmt.Errorf("setting mod enabled: checking rows affected: %w", err)
 	}
 	if rows == 0 {
 		return domain.ErrModNotFound
@@ -247,7 +247,7 @@ func (d *DB) SetModDeployed(sourceID, modID, gameID, profileName string, deploye
 	if err != nil {
 		// A driver error here must not be read as "0 rows affected" -
 		// that would misreport a real DB failure as domain.ErrModNotFound.
-		return fmt.Errorf("checking rows affected: %w", err)
+		return fmt.Errorf("setting mod deployed: checking rows affected: %w", err)
 	}
 	if rows == 0 {
 		return domain.ErrModNotFound
@@ -372,7 +372,7 @@ func (d *DB) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion s
 	if err != nil {
 		// A driver error here must not be read as "0 rows affected" -
 		// that would misreport a real DB failure as domain.ErrModNotFound.
-		return fmt.Errorf("checking rows affected: %w", err)
+		return fmt.Errorf("updating mod version: checking rows affected: %w", err)
 	}
 	if rows == 0 {
 		return domain.ErrModNotFound
@@ -395,7 +395,7 @@ func (d *DB) SetModLinkMethod(sourceID, modID, gameID, profileName string, linkM
 	if err != nil {
 		// A driver error here must not be read as "0 rows affected" -
 		// that would misreport a real DB failure as domain.ErrModNotFound.
-		return fmt.Errorf("checking rows affected: %w", err)
+		return fmt.Errorf("setting mod link method: checking rows affected: %w", err)
 	}
 	if rows == 0 {
 		return domain.ErrModNotFound
