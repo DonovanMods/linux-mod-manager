@@ -122,3 +122,51 @@ func TestServiceResolveModVersion(t *testing.T) {
 	_, err = svc.ResolveModVersion(context.Background(), "src", mod, "9.9")
 	assert.ErrorIs(t, err, core.ErrVersionNotFound)
 }
+
+// TestService_AvailableModVersions covers the TUI version picker's data
+// source: distinct per-file versions in first-seen order, and the
+// ErrNotSupported degrade when the source's file list carries no version
+// info at all (#97).
+func TestService_AvailableModVersions(t *testing.T) {
+	svc := newFlowsTestService(t)
+	mock := &multiVersionSource{newMockSource("src")}
+	svc.RegisterSource(mock)
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", GameID: "testgame", Name: "Mod One", Version: "1.5"}
+
+	versions, err := svc.AvailableModVersions(context.Background(), "src", mod)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"1.5", "1.0"}, versions)
+}
+
+func TestService_AvailableModVersions_NoVersionInfo(t *testing.T) {
+	svc := newFlowsTestService(t)
+	mock := newMockSource("src") // GetModFiles returns a version-less file
+	svc.RegisterSource(mock)
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", GameID: "testgame", Name: "Mod One"}
+
+	_, err := svc.AvailableModVersions(context.Background(), "src", mod)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, source.ErrNotSupported)
+}
+
+// TestService_SourceCapabilities covers the static lock-gating accessor:
+// it reports whatever the registered source's CapabilityReporter declares,
+// reached by sourceID alone (#97).
+func TestService_SourceCapabilities(t *testing.T) {
+	svc := newFlowsTestService(t)
+	caps := source.Capabilities{Search: true, Versions: true}
+	mock := &capsStubSource{&searchStubSource{id: "src", caps: &caps}}
+	svc.RegisterSource(mock)
+
+	got, err := svc.SourceCapabilities("src")
+	require.NoError(t, err)
+	assert.Equal(t, caps, got)
+}
+
+// TestService_SourceCapabilities_UnknownSource covers the not-found path.
+func TestService_SourceCapabilities_UnknownSource(t *testing.T) {
+	svc := newFlowsTestService(t)
+
+	_, err := svc.SourceCapabilities("nope")
+	require.Error(t, err)
+}

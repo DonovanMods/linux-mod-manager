@@ -3359,6 +3359,10 @@ type UpdateApplyResult struct {
 	Notes    []string
 }
 
+// ErrModLocked reports an update apply refused because the profile ref is
+// locked (#97). Callers branch with errors.Is.
+var ErrModLocked = errors.New("mod is locked")
+
 // ApplyUpdate applies upd to the installed mod it references
 // (upd.InstalledMod), following cmd/lmm/update.go's pre-extraction
 // applyUpdate ordering exactly: GetMod (the new version) -> GetModFiles ->
@@ -3413,6 +3417,19 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	mod := upd.InstalledMod // local, addressable copy - distinct from upd.InstalledMod
 	newVersion := upd.NewVersion
 	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
+
+	// #97: a locked ref refuses update-apply entirely - the lock's whole
+	// contract. Checked before any network or hook side effect.
+	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+		for _, ref := range prof.Mods {
+			if ref.SourceID == mod.SourceID && ref.ModID == mod.ID && ref.Locked {
+				return result, fmt.Errorf("%w: %s is locked at v%s - move the lock with 'lmm mod lock %s <version>' or unlock with 'lmm mod unlock %s'", ErrModLocked, mod.Name, ref.Version, mod.ID, mod.ID)
+			}
+		}
+	}
+	// (A missing/unreadable profile falls through - matches
+	// PlanProfileSwitch's ignore-errors precedent for profile loads: a lock
+	// cannot exist in an unloadable profile.)
 
 	newMod, err := s.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
 	if err != nil {
