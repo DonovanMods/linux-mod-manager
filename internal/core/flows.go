@@ -301,11 +301,6 @@ const (
 	// DeployRedownloading: ModName's cache entry is missing; DeployProfile
 	// is re-fetching it from source.
 	DeployRedownloading
-	// DeployFallbackUsed: ModName's stored file IDs were not found on the
-	// source; falling back to the primary file.
-	// Dead as of #95 - removed in the renderer-cleanup task (B2); the emit
-	// site (redeployFromSource) now hard-fails instead of falling back.
-	DeployFallbackUsed
 	// DeployDownloading: a file for ModName is downloading. Percent is the
 	// 0-100 completion (only reported once the source declares a total
 	// size, matching the pre-extraction CLI's progress callback gating).
@@ -447,14 +442,6 @@ const (
 	// skipped-count summary for profile switch, so there is nothing to
 	// accumulate beyond the live event.
 	SwitchInstallError
-	// SwitchFallbackUsed fires when a to-be-installed mod's stored file IDs
-	// were not found on the source and the primary file was used instead,
-	// mirroring doProfileSwitch's unconditional (NOT --verbose-gated)
-	// "    Warning: stored file IDs not found, using primary".
-	// Dead as of #95 - removed in the renderer-cleanup task (B2); the emit
-	// site (ApplyProfileSwitch's install loop) now hard-fails via
-	// SwitchInstallError instead of falling back.
-	SwitchFallbackUsed
 	// SwitchDownloading mirrors DeployDownloading for the install loop's
 	// download progress (Percent set, gated the same way: only once the
 	// source declares a total size).
@@ -783,16 +770,6 @@ const (
 	// count across the whole combined list, matching ApplyProfileSwitch's
 	// SwitchInstallingMod.
 	ImportModInstalling
-	// ImportFallbackUsed fires when a to-be-installed mod's stored file IDs
-	// (the redownload rule's DB-stored ones, or the imported profile's own
-	// ref.FileIDs for a fresh install) were not found on the source and the
-	// primary file was used instead - mirroring doProfileImport's
-	// unconditional (NOT --verbose-gated) "    Warning: stored file IDs not
-	// found, using primary".
-	// Dead as of #95 - removed in the renderer-cleanup task (B2); the emit
-	// site (ApplyImport's install loop) now hard-fails via ImportModFailed
-	// instead of falling back.
-	ImportFallbackUsed
 	// ImportDownloading mirrors the per-mod download-progress readout ("\r
 	// Downloading: %.1f%%") - Percent only, gated on a known total size,
 	// matching every other flow's own gating.

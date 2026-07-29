@@ -1160,8 +1160,8 @@ func TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloa
 // the source currently offers, redeployFromSource must fail that mod
 // (result.Skipped + DeploySkipped, via selectDeployFiles's allowFallback=
 // false) with a clear, actionable error - never silently substitute the
-// primary file (the old DeployFallbackUsed behavior, which is now
-// unreachable from this call site). Mirrors
+// primary file (the old DeployFallbackUsed phase, removed entirely in the
+// renderer-cleanup task B2). Mirrors
 // TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloadFailedEvent's
 // negative-assertion idiom.
 func TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError(t *testing.T) {
@@ -1203,8 +1203,6 @@ func TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError(t *testi
 
 	var sawSkipped bool
 	for i := range events {
-		assert.NotEqual(t, core.DeployFallbackUsed, events[i].Phase,
-			"DeployFallbackUsed must never fire again - #95 removed the silent fallback at this call site")
 		if events[i].Phase == core.DeploySkipped {
 			sawSkipped = true
 		}
@@ -2745,9 +2743,9 @@ func TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBl
 // guards #95: when a ToInstall ref's FileIDs don't match any file the source
 // currently offers, ApplyProfileSwitch must fail that mod (SwitchInstallError,
 // via selectDeployFiles's allowFallback=false) rather than silently
-// substituting the primary file (the old SwitchFallbackUsed behavior, now
-// unreachable from this call site) - and the install loop must continue past
-// it to the next mod.
+// substituting the primary file (the old SwitchFallbackUsed phase, removed
+// entirely in the renderer-cleanup task B2) - and the install loop must
+// continue past it to the next mod.
 func TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
@@ -2792,8 +2790,6 @@ func TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod(t *te
 
 	var failEvt *core.DeployProgress
 	for i := range events {
-		assert.NotEqual(t, core.SwitchFallbackUsed, events[i].Phase,
-			"SwitchFallbackUsed must never fire again - #95 removed the silent fallback at this call site")
 		if events[i].Phase == core.SwitchInstallError && events[i].ModName == "Mod One" {
 			failEvt = &events[i]
 		}

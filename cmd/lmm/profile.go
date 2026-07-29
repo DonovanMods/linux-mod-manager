@@ -361,8 +361,6 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
 		case core.SwitchInstallError:
 			fmt.Printf("    Error: %s\n", p.Detail)
-		case core.SwitchFallbackUsed:
-			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 		case core.SwitchDownloading:
 			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
 		case core.SwitchDownloadFailed:
@@ -500,8 +498,6 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Println("\nDownloading and installing mods...")
 		case core.ImportModInstalling:
 			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
-		case core.ImportFallbackUsed:
-			fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 		case core.ImportDownloading:
 			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
 		case core.ImportModFailed:

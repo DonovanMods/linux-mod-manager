@@ -324,8 +324,8 @@ func TestApplyImportPartialFailure(t *testing.T) {
 // when a fresh-install ref's own FileIDs don't match any file the source
 // currently offers, ApplyImport must fail that mod (ImportModFailed +
 // Failed++, via selectDeployFiles's allowFallback=false) rather than
-// silently substituting the primary file (the old ImportFallbackUsed
-// behavior, now unreachable from this call site) - and the loop must
+// silently substituting the primary file (the old ImportFallbackUsed phase,
+// removed entirely in the renderer-cleanup task B2) - and the loop must
 // continue past it, mirroring TestApplyImportPartialFailure.
 func TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T) {
 	svc := newFlowsTestService(t)
@@ -359,13 +359,9 @@ func TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T)
 	require.Len(t, plan.Missing, 2)
 
 	var failedEvt core.DeployProgress
-	var sawFallback bool
 	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(p core.DeployProgress) {
 		if p.Phase == core.ImportModFailed {
 			failedEvt = p
-		}
-		if p.Phase == core.ImportFallbackUsed {
-			sawFallback = true
 		}
 	})
 	require.NoError(t, err)
@@ -374,7 +370,6 @@ func TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T)
 	assert.Equal(t, 1, result.Failed)
 	assert.Contains(t, failedEvt.Detail, "no longer available upstream")
 	assert.Contains(t, failedEvt.Detail, "stale-id")
-	assert.False(t, sawFallback, "ImportFallbackUsed must never fire again - #95 removed the silent fallback at this call site")
 
 	_, err = svc.GetInstalledMod("src", "good-mod", "g1", "target")
 	assert.NoError(t, err, "the loop must continue past the bad ref and still install the good one")
