@@ -453,6 +453,13 @@ func TestApplyImportRedownloadUsesStoredFileIDs(t *testing.T) {
 // mirroring flows_test.go's TestService_ApplyProfileSwitch_InstallLoop_
 // RecordsFileVersion for this flow. versionedFileSource is defined in
 // flows_test.go (same core_test package).
+//
+// The imported profile's ref.Version is deliberately "" (a legacy/unpinned
+// ref), not "1.5" - see TestService_ApplyProfileSwitch_InstallLoop_
+// RecordsFileVersion's doc comment for why: #96 made a non-empty ref.Version
+// authoritative for FileIDs found upstream, and "1.5" here was only ever
+// mock.AddMod's mod-level label, unrelated to what ref.Version should mean
+// as a version pin.
 func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -481,7 +488,7 @@ func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
 		FileIDs:      []string{"1"},
 	}))
 
-	profile := &domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.5"}}}
+	profile := &domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: ""}}}
 	data, err := config.ExportProfile(profile)
 	require.NoError(t, err)
 
@@ -499,6 +506,104 @@ func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "cache must be keyed by the installed file's version")
+}
+
+// TestApplyImport_StoredIDsGone_HealsToRecordedVersion is #96's ApplyImport
+// healing guard, mirroring flows_test.go's
+// TestApplyProfileSwitch_StoredIDsGone_HealsToRecordedVersion for this flow:
+// mod1 is Missing (no DB row), and the imported profile's own ref carries
+// FileIDs ["999"] that don't match anything upstream, but its Version
+// ("1.0") still resolves to the source's archived file "9". Pre-#96 this
+// hard-failed with #95's errStoredFilesUnavailable; #96 heals it by
+// re-resolving to the SAME version instead of erroring or silently taking
+// the source's current primary (1.5/"10"). twoVersionSource/
+// newTwoVersionSource are defined in flows_test.go (same core_test
+// package).
+func TestApplyImport_StoredIDsGone_HealsToRecordedVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	profile := &domain.Profile{
+		Name: "target", GameID: "g1",
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0", FileIDs: []string{"999"}}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.Missing, 1)
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed, "must heal to the recorded version, not hard-fail")
+	assert.Equal(t, 0, result.Failed)
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "target")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version)
+	assert.Equal(t, []string{"9"}, installed.FileIDs)
+
+	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1-old.esp"))
+	assert.NoError(t, statErr, "the recorded 1.0 file's payload should be deployed, not the source's current primary")
+}
+
+// TestApplyImport_VersionlessSource_KeepsLegacyBehavior pins the #130
+// vacuous-version rule as it interacts with #96, mirroring flows_test.go's
+// TestApplyProfileSwitch_VersionlessSource_KeepsLegacyBehavior for this
+// flow: when the source's files carry no Version info at all,
+// selectVersionedDeployFiles must fall straight through to the pre-#96
+// selectDeployFiles - including its un-extended errStoredFilesUnavailable
+// wording (no "version" mention) - even though the imported ref itself
+// carries a (meaningless, in this context) Version.
+func TestApplyImport_VersionlessSource_KeepsLegacyBehavior(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	// mockSourceWithDownloads' embedded mockSource.GetModFiles always returns
+	// a single versionless file with ID "1" - anyFileHasVersion(files) is
+	// false, so version resolution must not engage at all.
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	// Deliberately no AddDownload("1", ...) - selectDeployFiles must fail
+	// before any download is attempted.
+
+	profile := &domain.Profile{
+		Name: "target", GameID: "g1",
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0", FileIDs: []string{"999"}}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.Missing, 1)
+
+	var failedEvt core.DeployProgress
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(p core.DeployProgress) {
+		if p.Phase == core.ImportModFailed {
+			failedEvt = p
+		}
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 0, result.Installed, "a versionless source's stale FileIDs must still hard-fail exactly as before #96")
+	assert.Equal(t, 1, result.Failed)
+
+	assert.Contains(t, failedEvt.Detail, "no longer available upstream")
+	assert.Contains(t, failedEvt.Detail, "999")
+	assert.NotContains(t, failedEvt.Detail, "not available", "a versionless file list must produce the un-extended #95 wording, not the #96 extension")
+
+	_, err = svc.GetInstalledMod("src", "mod1", "g1", "target")
+	assert.Error(t, err)
 }
 
 // TestApplyImportCtxCancelled covers the loop's cancellation check: it must

@@ -1049,7 +1049,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				// New install: use FileIDs from profile
 				fileIDsToUse = ref.FileIDs
 			}
-			filesToDownload, err := selectFilesToDownload(files, fileIDsToUse)
+			filesToDownload, err := selectFilesToDownload(files, fileIDsToUse, ref.Version)
 			if err != nil {
 				fmt.Printf("    Error: %v\n", err)
 				continue
@@ -1148,19 +1148,119 @@ var errNoDownloadableFiles = fmt.Errorf("no downloadable files")
 // selectFilesToDownload below and on selectDeployFiles in flows.go.
 var errStoredFilesUnavailable = errors.New("stored file(s) no longer available upstream")
 
-// selectFilesToDownload picks files to download based on stored FileIDs (for re-downloads)
-// or primary file (for fresh installs). Mirrors internal/core/flows.go's
-// selectDeployFiles with allowFallback=false (doProfileApply's only caller
-// is deploy-class, so no allowFallback parameter is needed here): when
-// storedFileIDs is non-empty but none of it matches what the source
-// currently offers, silently substituting the primary file would install a
-// file the caller never asked for - exactly the silent-fallback bug #95
-// tracks - so this returns errStoredFilesUnavailable instead, wrapped with
-// the missing IDs and a remediation hint (byte-identical wording to
-// selectDeployFiles' wrap, so callers/tests can't tell which package
-// produced it). Returns an error if files is empty (avoids returning a
-// slice containing nil).
-func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, error) {
+// errVersionUnavailable mirrors internal/core/resolve.go's ErrVersionNotFound
+// (#96): this package can't import internal/core's exported sentinel without
+// creating an import cycle risk shared with the rest of this file's
+// duplicated helpers, so it's mirrored here by hand - see the CANONICAL NOTE
+// at internal/tui/service_core.go:254-261 for the convention this follows.
+var errVersionUnavailable = errors.New("version not found")
+
+// availableVersions mirrors internal/core/resolve.go's unexported helper of
+// the same name: the distinct non-empty versions in files, in first-seen
+// order - display material for errVersionUnavailable.
+func availableVersions(files []domain.DownloadableFile) []string {
+	seen := make(map[string]bool, len(files))
+	var out []string
+	for _, f := range files {
+		if f.Version == "" || seen[f.Version] {
+			continue
+		}
+		seen[f.Version] = true
+		out = append(out, f.Version)
+	}
+	return out
+}
+
+// anyFileHasVersion mirrors internal/core/resolve.go's unexported helper of
+// the same name: reports whether at least one file carries version info -
+// the gate between version-aware and legacy (FileIDs-only) behavior.
+func anyFileHasVersion(files []domain.DownloadableFile) bool {
+	for _, f := range files {
+		if f.Version != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// selectFilesToDownload picks files to download based on the recorded
+// version (#96), stored FileIDs (for re-downloads), or primary file (for
+// fresh installs). Mirrors internal/core/flows.go's selectVersionedDeployFiles
+// with allowFallback=false (doProfileApply's only caller is deploy-class, so
+// no allowFallback parameter is needed here) exactly - same precedence,
+// byte-identical error wording, so callers/tests can't tell which package
+// produced a given error. See the CANONICAL NOTE at
+// internal/tui/service_core.go:254-261 for why this is a hand-duplicated
+// twin rather than a shared helper (cmd/lmm is package main).
+//
+// version == "" (legacy refs) and version-less file lists (the #130 vacuous
+// rule) fall through to the pre-#96 behavior unchanged: storedFileIDs found
+// upstream win, storedFileIDs missing hard-fail via errStoredFilesUnavailable
+// (#95 - no fallback, since silently substituting the primary file would
+// install a file the caller never asked for), and no storedFileIDs at all
+// falls back to the primary file. Otherwise: stored IDs win only while their
+// effective version agrees with the record; drift and gone-IDs heal by
+// exact-match resolution to the SAME version (never latest); unresolvable
+// targets are hard per-mod errors naming the version. Returns an error if
+// files is empty (avoids returning a slice containing nil).
+func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string, version string) ([]*domain.DownloadableFile, error) {
+	if version == "" || !anyFileHasVersion(files) {
+		return selectFilesToDownloadLegacy(files, storedFileIDs)
+	}
+	if len(files) == 0 {
+		return nil, errNoDownloadableFiles
+	}
+	if len(storedFileIDs) > 0 {
+		if found := findFilesByIDs(files, storedFileIDs); len(found) > 0 {
+			if domain.EffectiveInstalledVersion(version, found) == version {
+				return found, nil
+			}
+		}
+	}
+	var matches []*domain.DownloadableFile
+	for i := range files {
+		if files[i].Version == version {
+			matches = append(matches, &files[i])
+		}
+	}
+	if len(matches) == 0 {
+		if len(storedFileIDs) > 0 {
+			return nil, fmt.Errorf("%w (file ID(s): %s; version %q not available) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "), version)
+		}
+		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", errVersionUnavailable, version, strings.Join(availableVersions(files), ", "))
+	}
+	if len(storedFileIDs) > 0 {
+		idSet := make(map[string]bool, len(storedFileIDs))
+		for _, id := range storedFileIDs {
+			idSet[id] = true
+		}
+		var stored []*domain.DownloadableFile
+		for _, m := range matches {
+			if idSet[m.ID] {
+				stored = append(stored, m)
+			}
+		}
+		if len(stored) > 0 {
+			return stored, nil
+		}
+	}
+	for _, m := range matches {
+		if m.IsPrimary {
+			return []*domain.DownloadableFile{m}, nil
+		}
+	}
+	return []*domain.DownloadableFile{matches[0]}, nil
+}
+
+// selectFilesToDownloadLegacy is selectFilesToDownload's pre-#96 behavior,
+// mirroring internal/core/flows.go's selectDeployFiles with
+// allowFallback=false: when storedFileIDs is non-empty but none of it
+// matches what the source currently offers, silently substituting the
+// primary file would install a file the caller never asked for - exactly
+// the silent-fallback bug #95 tracks - so this returns
+// errStoredFilesUnavailable instead, wrapped with the missing IDs and a
+// remediation hint.
+func selectFilesToDownloadLegacy(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, error) {
 	if len(files) == 0 {
 		return nil, errNoDownloadableFiles
 	}

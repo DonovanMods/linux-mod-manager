@@ -983,6 +983,63 @@ func installFileCategoryPriority(category string) int {
 	}
 }
 
+// selectVersionedDeployFiles is selectDeployFiles with the recorded version
+// made authoritative (#96). version == "" (legacy refs) and version-less
+// file lists (the #130 vacuous rule) fall through to selectDeployFiles
+// unchanged. Otherwise: stored IDs win only while their effective version
+// agrees with the record; drift and gone-IDs heal by exact-match resolution
+// to the SAME version (never latest - #95's rule extended); unresolvable
+// targets are hard per-mod errors naming the version. Mirrors
+// cmd/lmm/profile.go's selectFilesToDownload.
+func selectVersionedDeployFiles(files []domain.DownloadableFile, version string, storedFileIDs []string, allowFallback bool) ([]*domain.DownloadableFile, bool, error) {
+	if version == "" || !anyFileHasVersion(files) {
+		return selectDeployFiles(files, storedFileIDs, allowFallback)
+	}
+	if len(files) == 0 {
+		return nil, false, errNoDeployFiles
+	}
+	if len(storedFileIDs) > 0 {
+		if found, _, err := selectDeployFiles(files, storedFileIDs, false); err == nil {
+			if domain.EffectiveInstalledVersion(version, found) == version {
+				return found, false, nil
+			}
+		}
+	}
+	var matches []*domain.DownloadableFile
+	for i := range files {
+		if files[i].Version == version {
+			matches = append(matches, &files[i])
+		}
+	}
+	if len(matches) == 0 {
+		if len(storedFileIDs) > 0 {
+			return nil, false, fmt.Errorf("%w (file ID(s): %s; version %q not available) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "), version)
+		}
+		return nil, false, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
+	}
+	if len(storedFileIDs) > 0 {
+		idSet := make(map[string]bool, len(storedFileIDs))
+		for _, id := range storedFileIDs {
+			idSet[id] = true
+		}
+		var stored []*domain.DownloadableFile
+		for _, m := range matches {
+			if idSet[m.ID] {
+				stored = append(stored, m)
+			}
+		}
+		if len(stored) > 0 {
+			return stored, false, nil
+		}
+	}
+	for _, m := range matches {
+		if m.IsPrimary {
+			return []*domain.DownloadableFile{m}, false, nil
+		}
+	}
+	return []*domain.DownloadableFile{matches[0]}, false, nil
+}
+
 // selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
 // the files matching storedFileIDs if any are found, else - only when
 // allowFallback is true - the primary file (first file with IsPrimary, or
@@ -1326,10 +1383,21 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		return skip("no files available")
 	}
 
-	filesToDownload, _, err := selectDeployFiles(files, mod.FileIDs, false)
+	filesToDownload, _, err := selectVersionedDeployFiles(files, mod.Version, mod.FileIDs, false)
 	if err != nil {
 		return skip(err.Error())
 	}
+
+	// fetchedMod (not the InstalledMod's own mod.Mod - see this function's
+	// doc comment) is what actually gets downloaded and cached below, so its
+	// Version must be stamped to match the resolved file's effective version
+	// (#94's convention, applied here for #96): otherwise a healed/pinned
+	// version (mod.Version) that differs from the source's mod-level
+	// Version - exactly the drift case this function now resolves - caches
+	// under the WRONG version, and the installer.Install call that follows
+	// (using the InstalledMod's own, unmodified mod.Version) fails with "mod
+	// not in cache" even though the download just succeeded.
+	fetchedMod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload)
 
 	for _, file := range filesToDownload {
 		progressFn := func(p DownloadProgress) {
@@ -1920,7 +1988,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 
-			filesToDownload, _, err := selectDeployFiles(files, ref.FileIDs, false)
+			filesToDownload, _, err := selectVersionedDeployFiles(files, ref.Version, ref.FileIDs, false)
 			if err != nil {
 				fail(err.Error())
 				continue
@@ -3821,7 +3889,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		} else if len(ref.FileIDs) > 0 {
 			fileIDsToUse = ref.FileIDs
 		}
-		filesToDownload, _, err := selectDeployFiles(files, fileIDsToUse, false)
+		filesToDownload, _, err := selectVersionedDeployFiles(files, ref.Version, fileIDsToUse, false)
 		if err != nil {
 			fail(err.Error())
 			continue

@@ -479,6 +479,40 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 	assert.Less(t, insC, insA, "install-eligible mods must print in profile.Mods order")
 }
 
+// TestSelectFilesToDownload_VersionAuthoritative is the #96 direct unit test
+// for selectFilesToDownload's version parameter: same precedence as
+// internal/core's selectVersionedDeployFiles (drift heals to the recorded
+// version, gone IDs heal to the recorded version, an unresolvable target
+// hard-fails naming the version, and an empty version preserves the exact
+// pre-#96 behavior).
+func TestSelectFilesToDownload_VersionAuthoritative(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Version: "1.0", Category: "ARCHIVED"},
+	}
+
+	// Drift: stored ID exists upstream but is the wrong version - version wins.
+	got, err := selectFilesToDownload(files, []string{"10"}, "1.0")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "9", got[0].ID)
+
+	// Gone IDs heal to the recorded version.
+	got, err = selectFilesToDownload(files, []string{"999"}, "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, "9", got[0].ID)
+
+	// Unresolvable: extended #95 wording.
+	_, err = selectFilesToDownload(files, []string{"999"}, "0.5")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `version "0.5" not available`)
+
+	// Legacy: empty version behaves exactly as before.
+	got, err = selectFilesToDownload(files, nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, "10", got[0].ID)
+}
+
 // TestDoProfileApply_StampsSelectedFileVersion guards issue #94 for
 // doProfileApply's "install missing mods" save site: when a mod referenced
 // by the profile (but not yet installed) has a primary file whose version
@@ -488,6 +522,15 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 // fakeInstallSource (defined in install_test.go, same package) rather than
 // setupDoProfileSwitchTest's sourceless default, since this path needs a
 // real GetMod/GetModFiles/download round-trip.
+//
+// The profile ref's Version is deliberately "" (a legacy/unpinned ref), not
+// "1.0": #96 made a non-empty ref.Version an authoritative exact-match pin
+// for selectFilesToDownload (mirroring internal/core's
+// selectVersionedDeployFiles), and "1.0" here was only ever the mod-level
+// label coincidentally reused for the ref before #96 existed - the
+// mod-vs-file version discrepancy this test actually guards is entirely
+// between src.AddMod's Version and the served file's Version, independent
+// of ref.Version.
 func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 
@@ -503,7 +546,7 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 	src.AddDownload("main", []byte("plugin content"))
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: ""}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -525,6 +568,14 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 // SkipsModWithClearError from task B1). A second mod with valid FileIDs
 // proves the toInstall loop continues past the failure rather than
 // aborting.
+//
+// The served files carry no Version (unlike TestSelectFilesToDownload_
+// VersionAuthoritative's fixture) so anyFileHasVersion is false and this
+// exercises selectFilesToDownloadLegacy - #96 deliberately changes this
+// exact scenario for a VERSIONED source (gone FileIDs now heal to a
+// version-matched file rather than hard-failing); the un-extended #95
+// no-substitution contract this test guards only still applies vacuously,
+// per decision 1/4.
 func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 
@@ -540,13 +591,13 @@ func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing
 	// upstream-gone message this test asserts on.
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Stale Mod", Version: "1.0", GameID: game.ID},
 		[]domain.DownloadableFile{
-			{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+			{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN"},
 		})
 
 	// mod2: stored FileIDs match what the source lists - must install normally.
 	src.AddMod(&domain.Mod{ID: "mod2", SourceID: "test-src", Name: "Good Mod", Version: "1.0", GameID: game.ID},
 		[]domain.DownloadableFile{
-			{ID: "main2", Name: "Main File", FileName: "mod2.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+			{ID: "main2", Name: "Main File", FileName: "mod2.esp", IsPrimary: true, Category: "MAIN"},
 		})
 	src.AddDownload("main2", []byte("plugin content"))
 
