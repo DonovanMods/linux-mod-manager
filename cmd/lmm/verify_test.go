@@ -228,6 +228,43 @@ func TestDoVerify_VersionCheck_EmptySourceMapping_KeepsLMMGameID(t *testing.T) {
 	assert.Equal(t, game.ID, src.receivedGameFileIDs[0], "an empty per-source mapping must keep the LMM game ID, not blank it out")
 }
 
+// TestDoVerify_FileCountPrePass_ListFilesFails_SurfacedAsWarning guards
+// audit Finding 5 (Minor): the file-count-mismatch pre-pass silently
+// `continue`d past a gameCache.ListFiles error, indistinguishable from
+// "cache exists and has content" - suppressing what should have been its
+// own report instead of just skipping the FILE COUNT MISMATCH check.
+// Forces a real filesystem error (not "file count is zero") by stripping
+// all permissions from the cached mod-version directory, so
+// filepath.WalkDir (which ListFiles uses) can't read it - while
+// gameCache.Exists (a plain os.Stat, needing only traversal permission on
+// ancestors) still reports the dir as present, reaching the ListFiles call
+// at all. Uses a matching recorded/source version so there's no VERSION
+// MISMATCH noise - isolating the file-count pre-pass as the only thing
+// under test.
+func TestDoVerify_FileCountPrePass_ListFilesFails_SurfacedAsWarning(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.0", []string{"2"}, []domain.DownloadableFile{
+		{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+	})
+
+	gameCache := svc.GetGameCache(game)
+	modDir := gameCache.ModPath(game.ID, "test-src", "mod1", "1.0")
+	require.NoError(t, os.Chmod(modDir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(modDir, 0o755) }) // restore before TempDir's own cleanup removes it
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "could not check cached file count", "a real ListFiles error must be surfaced, not silently swallowed")
+	assert.Contains(t, out, "1 warning(s)", "the surfaced error must actually count as a warning, not just print")
+}
+
 // --- doVerify --fix repairs version_mismatch rows (issue #94, Task A7) ---
 //
 // setupDoVerifyFixTest builds on setupDoVerifyVersionTest with a "1.5"
@@ -248,12 +285,16 @@ func setupDoVerifyFixTest(t *testing.T, deployed bool) (*cobra.Command, *core.Se
 	})
 
 	if deployed {
+		// Targeted setters, not a full svc.SaveInstalledMod(mod) - the
+		// latter's full-row upsert would wipe the checksum
+		// setupDoVerifyVersionTest just seeded (the exact audit Finding 1
+		// bug pattern, here as a test-setup artifact rather than
+		// production code - fixed the same way).
+		require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "default", true))
+		require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "default", domain.LinkSymlink))
+
 		mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
 		require.NoError(t, err)
-		mod.Deployed = true
-		mod.LinkMethod = domain.LinkSymlink
-		require.NoError(t, svc.SaveInstalledMod(mod))
-
 		require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &mod.Mod, "default"))
 	}
 
@@ -556,6 +597,16 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag(t 
 	})
 	assert.NotContains(t, out2, "VERSION MISMATCH", "the version is already corrected - a second run must not re-report it")
 
+	// Audit Finding 8: a second run must be genuinely CLEAN, not merely
+	// free of a re-reported VERSION MISMATCH. Before Finding 1's fix, the
+	// version-record repair's SaveInstalledMod calls silently wiped the
+	// mod's stored checksum, so THIS EXACT second run used to hit NO
+	// CHECKSUM and then a failing redownload attempt (this fixture never
+	// registers download content) - a real regression the original,
+	// narrower "NotContains VERSION MISMATCH" assertion didn't catch. This
+	// is the net that would have caught Finding 1.
+	assert.Contains(t, out2, "All files verified OK.", "the second run must be clean - not hit NO CHECKSUM or any other new issue")
+
 	mod2, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.False(t, mod2.Deployed, "Deployed must still read false on the second run - nothing re-marks it deployed on its own")
@@ -609,9 +660,173 @@ func TestDoVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged(t *testi
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Equal(t, "version_mismatch", f.Status, "JSON row must stay version_mismatch when the rename fails")
+			// Audit Finding 7: the reason the repair itself failed must
+			// reach --json, not just the text-mode "Repair failed: %v"
+			// line - a --json caller had zero visibility into why
+			// before this.
+			assert.NotEmpty(t, f.Note, "the repair failure reason must be visible in the JSON note, not text-only")
 		}
 	}
 	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+}
+
+// --- full-file audit (epic98), findings F1-F8 ---
+
+// TestDoVerify_Fix_VersionMismatch_PreservesFileChecksum guards audit
+// Finding 1 (Critical): every repair-path save used to be a full
+// svc.SaveInstalledMod, whose DB-layer upsert always replaces
+// installed_mod_files (DELETE + a checksum-less re-INSERT) even when
+// FileIDs is completely unchanged - silently wiping every stored checksum
+// for the mod's files on every successful version-record repair. The next
+// `verify` would then report NO CHECKSUM for the just-repaired mod, and
+// the next --fix would mass-redownload via redownloadModFile instead of
+// leaving the already-correct cached bytes alone.
+func TestDoVerify_Fix_VersionMismatch_PreservesFileChecksum(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	// Sanity: the fixture seeds a real checksum before the repair runs.
+	before, err := svc.GetFilesWithChecksums(game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+	require.Equal(t, "deadbeef", before[0].Checksum)
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	require.Contains(t, out, "Repaired", "sanity: the repair must have actually run")
+
+	after, err := svc.GetFilesWithChecksums(game.ID, "default")
+	require.NoError(t, err)
+	found := false
+	for _, f := range after {
+		if f.ModID == "mod1" && f.FileID == "2" {
+			found = true
+			assert.Equal(t, "deadbeef", f.Checksum, "a successful version-record repair must NOT wipe the stored checksum")
+		}
+	}
+	assert.True(t, found, "expected mod1's file '2' to still be tracked after the repair: %+v", after)
+
+	// Audit Finding 8: a second run must be genuinely CLEAN - this is the
+	// repair-success half of the "net that would have caught Finding 1"
+	// (the RelinkFails test above covers the failure half). Before
+	// Finding 1's fix, the checksum wipe this test guards against would
+	// have made this exact second run hit NO CHECKSUM and a failing
+	// redownload attempt, not a clean pass.
+	out2 := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out2, "All files verified OK.", "the second run must be clean, with no new issues or warnings introduced by the repair")
+}
+
+// TestDoVerify_Fix_VersionMismatch_RetryAfterPartialFailure_StillRepairsSiblings
+// guards audit Finding 2 (Important): the sibling pass was gated purely on
+// `renamed` (a rename performed THIS run), so a retry after an earlier
+// run's partial failure - one where the cache rename already succeeded but
+// a later step (DB save, profile upsert) then failed - would see oldPath
+// already gone and skip siblings entirely, even though the shared cache
+// dir has, in fact, already moved out from under them. Simulates exactly
+// that retry state: the cache already lives under the effective version
+// (as if a prior run's rename succeeded), while BOTH the primary and
+// sibling DB rows still record the old version (as if that prior run then
+// failed before completing).
+func TestDoVerify_Fix_VersionMismatch_RetryAfterPartialFailure_StillRepairsSiblings(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	gameCache := svc.GetGameCache(game)
+	oldPath := gameCache.ModPath(game.ID, "test-src", "mod1", "1.5")
+	newPath := gameCache.ModPath(game.ID, "test-src", "mod1", "1.0")
+	require.NoError(t, os.Rename(oldPath, newPath), "simulating a prior run's already-completed cache rename")
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	_ = captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", secondMod.Version, "the sibling must still be repaired on retry, even though no rename happened THIS run - the cache already lives at the effective version")
+}
+
+// TestDoVerify_Fix_VersionMismatch_UpsertModFailsBeforeDBWrite_ConvergesOnRetry
+// guards audit Finding 3 (Important): the ORIGINAL step order was cache
+// rename -> DB save -> profile upsert. If the DB save succeeded but the
+// profile upsert then failed, the DB already showed the effective version -
+// so the NEXT verify run would see no mismatch at all (recorded == source)
+// and would never re-detect or retry the now-permanently-stale profile
+// YAML. Swapping the order (profile upsert BEFORE the DB write) makes the
+// DB write the last, defining "done" signal: if upsert fails, the DB is
+// untouched, so a retry still sees version_mismatch and can converge.
+// Forces the upsert to fail by chmod-ing "default.yaml" read-only, then
+// runs --fix TWICE under the same failure condition and asserts the
+// SECOND run still reports version_mismatch (not silently "fixed").
+func TestDoVerify_Fix_VersionMismatch_UpsertModFailsBeforeDBWrite_ConvergesOnRetry(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	defaultProfilePath := filepath.Join(configDir, "games", game.ID, "profiles", "default.yaml")
+	require.NoError(t, os.Chmod(defaultProfilePath, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(defaultProfilePath, 0o644) }) // restore before TempDir's own cleanup removes it
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out1 := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out1, "Repair failed", "run 1 must fail visibly, not silently")
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.5", mod.Version, "the DB must NOT have been written when the profile upsert (which now runs first) fails")
+
+	out2 := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out2, "VERSION MISMATCH", "run 2 must still detect the mismatch - the DB was never corrupted into a false 'already fixed' state")
+}
+
+// TestDoVerify_Fix_VersionMismatch_OldPathStatErrorBlocksRepair guards
+// audit Finding 4 (Minor): the original code treated ANY os.Stat(oldPath)
+// error identically to "the old cache dir doesn't exist" (a normal,
+// nothing-to-rename state), including a genuine stat failure (permission
+// denied, I/O error) that isn't really telling us the dir is absent at
+// all. Forces a real stat error - not fs.ErrNotExist - by stripping ALL
+// permissions (0o000, no execute either) from the cache mod-key's parent
+// directory, so os.Stat can't even traverse into it to check.
+func TestDoVerify_Fix_VersionMismatch_OldPathStatErrorBlocksRepair(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	gameCache := svc.GetGameCache(game)
+	oldPath := gameCache.ModPath(game.ID, "test-src", "mod1", "1.5")
+	parentDir := filepath.Dir(oldPath)
+
+	require.NoError(t, os.Chmod(parentDir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(parentDir, 0o755) }) // restore before TempDir's own cleanup removes it
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	_ = captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.5", mod.Version, "a genuine stat failure on the old cache path must block the repair entirely - no DB write, same as an os.Rename failure")
 }
 
 // --- doVerify --fix repairs sibling-profile rows sharing the same cache dir
@@ -799,6 +1014,54 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_SiblingsUntouched(t *testing
 	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", secondMod.Version, "sibling must be untouched when the cache rename itself was blocked")
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRepaired
+// guards audit Finding 6 (Minor): repairSiblingProfiles matched a sibling
+// purely on Version equality, ignoring FileIDs entirely. Two profiles can
+// legitimately record the SAME wrong version for DIFFERENT files (e.g. one
+// profile picked a different optional file at install time) - blindly
+// stamping the sibling with the PRIMARY's effective version would be
+// wrong for that sibling's own files, causing churn (an unnecessary
+// rename plus a full redownload the next time that profile is verified).
+// A sibling whose FileIDs differ from the primary's must be left alone
+// (not auto-repaired) with a warning pointing at the right fix instead.
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRepaired(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "differs")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "differs", domain.ModReference{
+		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"3"},
+	}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
+		ProfileName: "differs",
+		Enabled:     true,
+		FileIDs:     []string{"3"}, // same recorded version as "second", but a DIFFERENT file selection
+	}))
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "differs", "a warning must identify the profile whose file selection differs")
+	assert.Contains(t, out, "file selection", "the warning must explain why this sibling wasn't auto-repaired")
+
+	differsMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "differs")
+	require.NoError(t, err)
+	assert.Equal(t, "1.5", differsMod.Version, "a sibling with different FileIDs must NOT be auto-repaired, even though its recorded version matches")
+
+	// "second" (same version, SAME FileIDs as primary) must still be
+	// auto-repaired normally - this finding only withholds repair from
+	// siblings whose file selection actually differs.
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", secondMod.Version, "a sibling with matching FileIDs must still be auto-repaired")
 }
 
 // TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks guards
@@ -1161,4 +1424,98 @@ func TestDoVerify_VersionUnverifiable_WithModFilter_ChecksumRowsAlwaysExist(t *t
 
 	assert.Contains(t, out, "VERSION UNVERIFIABLE", "sanity: the scenario Claim 1 hypothesizes must actually be reached")
 	assert.NotContains(t, out, "No files found for mod", "checksum rows for mod1 exist (same installed_mod_files table backs both FileIDs and the checksum listing) - the main loop's checked++ must have fired")
+}
+
+// setupDoVerifyRedownloadTest builds a minimal fixture for the MISSING/NO
+// CHECKSUM --fix repair paths: a real fakeInstallSource-backed service and
+// an installed mod1/file "2", WITHOUT registering any download content for
+// "2" via src.AddDownload - so any redownloadModFile attempt genuinely
+// fails (the fake source's HTTP handler 404s), letting these tests force a
+// real repair failure without permission tricks.
+func setupDoVerifyRedownloadTest(t *testing.T) (*cobra.Command, *core.Service, *domain.Game, *fakeInstallSource) {
+	t.Helper()
+
+	svc, game, src := setupDoInstallTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: game.ID},
+		[]domain.DownloadableFile{{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"}})
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: game.ID},
+		ProfileName: "default",
+		Enabled:     true,
+		FileIDs:     []string{"2"},
+	}))
+
+	verifyProfile = "default"
+	t.Cleanup(func() { verifyProfile = "" })
+	verifyFix = true
+	t.Cleanup(func() { verifyFix = false })
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	return cmd, svc, game, src
+}
+
+// TestDoVerify_Fix_Missing_JSONNotesRedownloadFailure guards audit Finding
+// 7 (Minor): a MISSING file's --fix redownload failure was reported ONLY
+// in text mode ("Re-download failed: %v") - a --json caller saw the row
+// stay Status "missing" with no indication of why the repair attempt
+// itself failed. No cache entry is ever Store()d for "1.0", so the file
+// is reported MISSING, and the fixture's missing download content makes
+// the redownload attempt fail for real.
+func TestDoVerify_Fix_Missing_JSONNotesRedownloadFailure(t *testing.T) {
+	cmd, svc, game, _ := setupDoVerifyRedownloadTest(t)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "2" {
+			found = true
+			assert.Equal(t, "missing", f.Status)
+			assert.NotEmpty(t, f.Note, "the redownload failure reason must reach the JSON note, not just the text-mode line")
+		}
+	}
+	assert.True(t, found, "expected a mod1 file entry in JSON files: %+v", result.Files)
+}
+
+// TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure is the NO
+// CHECKSUM half of audit Finding 7: same missing-download fixture, but
+// with the cache entry actually present (so the file reads as NO
+// CHECKSUM, not MISSING) and no checksum ever saved - the
+// redownload-to-populate-checksum attempt fails the same way.
+func TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure(t *testing.T) {
+	cmd, svc, game, _ := setupDoVerifyRedownloadTest(t)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("plugin content")))
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "2" {
+			found = true
+			assert.Equal(t, "no_checksum", f.Status)
+			assert.NotEmpty(t, f.Note, "the redownload failure reason must reach the JSON note, not just the text-mode line")
+		}
+	}
+	assert.True(t, found, "expected a mod1 file entry in JSON files: %+v", result.Files)
 }
