@@ -34,6 +34,10 @@ func decodeFileIDs(raw *string) ([]string, error) {
 
 // SaveInstalledMod inserts or updates an installed mod record.
 // The mod upsert and file ID replacement are performed atomically within a transaction.
+// On update of an existing record, the existing update_policy is preserved:
+// callers always pass the default policy, so honoring it here would silently
+// reset a user-set --pin/--auto policy on reinstall. Policy changes go through
+// UpdateModPolicy. A first-time insert still uses the policy passed in.
 func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 	tx, err := d.Begin()
 	if err != nil {
@@ -57,7 +61,6 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 			name = excluded.name,
 			version = excluded.version,
 			author = excluded.author,
-			update_policy = excluded.update_policy,
 			enabled = excluded.enabled,
 			deployed = excluded.deployed,
 			previous_version = excluded.previous_version,
