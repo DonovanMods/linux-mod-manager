@@ -237,7 +237,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			continue
 		}
 
-		sourceFiles, err := svc.GetModFiles(ctx, mod.SourceID, &mod.Mod)
+		sourceFiles, err := svc.GetModFiles(ctx, mod.SourceID, sourceMappedMod(game, &mod.Mod))
 		if err != nil {
 			if jsonOutput {
 				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: "", Status: "skipped"})
@@ -474,6 +474,28 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 // isn't there. Clearing it at least keeps that one field honest so other
 // surfaces (status displays, a future `lmm deploy`, which redeploys every
 // enabled mod regardless of its recorded Deployed value) aren't misled.
+// sourceMappedMod returns a copy of mod with GameID translated through the
+// game's per-source ID mapping (game.SourceIDs) - the same rule
+// Service.GetMod already applies (internal/core/service.go) before calling
+// into a source. Installed rows persist the LMM game ID (see
+// setupDoVerifyVersionTest and every InstalledMod fixture: GameID:
+// game.ID), but Service.GetModFiles does NOT translate it itself - unlike
+// GetMod, it forwards straight to the source. Sources like NexusMods
+// address games by their own domain (e.g. "skyrimspecialedition"), so any
+// direct svc.GetModFiles call driven off an installed row's mod.Mod (as
+// opposed to one already sourced from the source itself, e.g. a fresh
+// search result) needs this translation first or it silently queries the
+// wrong game. An empty mapping value means "this source applies to any
+// game" (e.g. directory sources: `donovan-mods: ""`) and must not blank
+// out the LMM ID - matches Service.GetMod's `ok && id != ""` guard exactly.
+func sourceMappedMod(game *domain.Game, mod *domain.Mod) *domain.Mod {
+	mapped := *mod
+	if id, ok := game.SourceIDs[mod.SourceID]; ok && id != "" {
+		mapped.GameID = id
+	}
+	return &mapped
+}
+
 func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, effective string) (note string, err error) {
 	recorded := mod.Version
 	gameCache := svc.GetGameCache(game)

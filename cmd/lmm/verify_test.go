@@ -51,8 +51,11 @@ func TestVerifyCommand_AcceptsOptionalModID(t *testing.T) {
 // doVerify report clean ("ok") and don't add noise to issues/warnings -
 // isolating the new version-record pre-pass as the only thing under test.
 // sourceFiles is what the fake source's GetModFiles returns for mod1 (the
-// upstream truth the check compares FileIDs against).
-func setupDoVerifyVersionTest(t *testing.T, recordedVersion string, fileIDs []string, sourceFiles []domain.DownloadableFile) (*cobra.Command, *core.Service, *domain.Game) {
+// upstream truth the check compares FileIDs against). Also returns the
+// fakeInstallSource itself so callers that need to inspect what it actually
+// received (e.g. receivedGameFileIDs, for the per-source GameID-mapping
+// check) can do so - most callers ignore it.
+func setupDoVerifyVersionTest(t *testing.T, recordedVersion string, fileIDs []string, sourceFiles []domain.DownloadableFile) (*cobra.Command, *core.Service, *domain.Game, *fakeInstallSource) {
 	t.Helper()
 
 	svc, game, src := setupDoInstallTest(t)
@@ -78,7 +81,7 @@ func setupDoVerifyVersionTest(t *testing.T, recordedVersion string, fileIDs []st
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	return cmd, svc, game
+	return cmd, svc, game, src
 }
 
 // TestDoVerify_VersionMismatch_ReportedAsIssue guards issue #94's detection
@@ -89,7 +92,7 @@ func setupDoVerifyVersionTest(t *testing.T, recordedVersion string, fileIDs []st
 // both text and --json output. Task A7 adds the --fix repair; this task is
 // detection only.
 func TestDoVerify_VersionMismatch_ReportedAsIssue(t *testing.T) {
-	cmd, svc, game := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+	cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
 		{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
 	})
 
@@ -131,7 +134,7 @@ func TestDoVerify_VersionMismatch_ReportedAsIssue(t *testing.T) {
 // issue - there is nothing to definitively repair) rather than silently
 // treating it as OK or crashing.
 func TestDoVerify_VersionUnverifiable_ReportedAsWarning(t *testing.T) {
-	cmd, svc, game := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+	cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
 		{ID: "3", Name: "Some Other File", FileName: "mod1-other.esp", IsPrimary: true, Category: "MAIN", Version: "2.0"},
 	})
 
@@ -162,6 +165,69 @@ func TestDoVerify_VersionUnverifiable_ReportedAsWarning(t *testing.T) {
 	assert.True(t, found, "expected a version_unverifiable entry in JSON files: %+v", result.Files)
 }
 
+// TestDoVerify_VersionCheck_MapsGameIDPerSourceMapping guards PR #128
+// Copilot round-3's suppressed finding: the version-record pre-pass calls
+// svc.GetModFiles(ctx, mod.SourceID, &mod.Mod) where mod.GameID is the LMM
+// game ID (installed rows persist normalized IDs - see
+// setupDoVerifyVersionTest, which stamps GameID: game.ID). But
+// Service.GetModFiles (internal/core/service.go) forwards straight to the
+// source with NO game-ID translation, unlike Service.GetMod, which maps
+// through game.SourceIDs[sourceID] first. Sources like NexusMods address
+// games by their own domain (e.g. "skyrimspecialedition"), so whenever a
+// game's mapping differs from its LMM ID, the version check would silently
+// call the source with the wrong ID.
+//
+// setupDoInstallTest's fixture happens to map game.SourceIDs["test-src"]
+// to "g1" - the SAME as game.ID - which is exactly why none of the
+// existing detection tests caught this: the bug is invisible when the
+// mapped and unmapped IDs happen to coincide. This test deliberately
+// overrides the mapping to a different value so the wrong ID becomes
+// observable, using the same gameIDCapturingSource-style pattern as
+// internal/core/updater_test.go's TestCheckUpdatesTranslatesGameIDPerSourceMapping
+// (fakeInstallSource.receivedGameFileIDs here, since the two test doubles
+// live in different packages).
+func TestDoVerify_VersionCheck_MapsGameIDPerSourceMapping(t *testing.T) {
+	cmd, svc, game, src := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+		{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+	})
+	game.SourceIDs["test-src"] = "mapped-domain"
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	_ = captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	require.Len(t, src.receivedGameFileIDs, 1, "GetModFiles must have been called exactly once for mod1's version check")
+	assert.Equal(t, "mapped-domain", src.receivedGameFileIDs[0], "the version-record check must translate GameID through game.SourceIDs, same rule as Service.GetMod")
+}
+
+// TestDoVerify_VersionCheck_EmptySourceMapping_KeepsLMMGameID covers the
+// other half of the mapping rule: an empty (but present) mapping value
+// means "this source applies to any game" (e.g. directory sources:
+// `donovan-mods: ""`) and must NOT blank out the LMM game ID - it must be
+// passed through unchanged, exactly like Service.GetMod's `ok && id != ""`
+// guard.
+func TestDoVerify_VersionCheck_EmptySourceMapping_KeepsLMMGameID(t *testing.T) {
+	cmd, svc, game, src := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+		{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+	})
+	game.SourceIDs["test-src"] = ""
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	_ = captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	require.Len(t, src.receivedGameFileIDs, 1)
+	assert.Equal(t, game.ID, src.receivedGameFileIDs[0], "an empty per-source mapping must keep the LMM game ID, not blank it out")
+}
+
 // --- doVerify --fix repairs version_mismatch rows (issue #94, Task A7) ---
 //
 // setupDoVerifyFixTest builds on setupDoVerifyVersionTest with a "1.5"
@@ -177,7 +243,7 @@ func TestDoVerify_VersionUnverifiable_ReportedAsWarning(t *testing.T) {
 func setupDoVerifyFixTest(t *testing.T, deployed bool) (*cobra.Command, *core.Service, *domain.Game) {
 	t.Helper()
 
-	cmd, svc, game := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+	cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
 		{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
 	})
 
@@ -1063,7 +1129,7 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 // and nothing else installed) and asserts the misleading message does
 // NOT appear.
 func TestDoVerify_VersionUnverifiable_WithModFilter_ChecksumRowsAlwaysExist(t *testing.T) {
-	cmd, svc, game := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+	cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
 		{ID: "3", Name: "Some Other File", FileName: "mod1-other.esp", IsPrimary: true, Category: "MAIN", Version: "2.0"},
 	})
 

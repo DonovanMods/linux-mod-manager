@@ -381,6 +381,12 @@ type fakeInstallSource struct {
 	files     map[string][]domain.DownloadableFile
 	downloads map[string][]byte // fileID -> raw content
 	srv       *httptest.Server
+
+	// receivedGameFileIDs records the mod.GameID GetModFiles was actually
+	// called with, in call order - mirrors internal/core/updater_test.go's
+	// gameIDCapturingSource pattern, for tests asserting a caller applied
+	// (or didn't apply) the game's per-source ID mapping before calling in.
+	receivedGameFileIDs []string
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -426,6 +432,7 @@ func (s *fakeInstallSource) GetDependencies(ctx context.Context, mod *domain.Mod
 	return s.mods[mod.ID].Dependencies, nil
 }
 func (s *fakeInstallSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	s.receivedGameFileIDs = append(s.receivedGameFileIDs, mod.GameID)
 	return s.files[mod.ID], nil
 }
 func (s *fakeInstallSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
