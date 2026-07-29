@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-07-28
+
+### Fixed
+
+- Database writes (delete/policy/enable/deploy/version/link-method updates on installed mods) no longer misreport a driver failure while checking affected rows as "mod not found" — the error is now returned wrapped with its operation's context instead of being read as zero rows affected (extends the `SetModVersion` fix from PR #128 to the remaining six sites in `internal/storage/db/mods.go`, and aligns that site's error wording with the sweep)
+
 ## [1.23.0] - 2026-07-28
 
 ### Fixed
@@ -1060,7 +1066,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.1...HEAD
+[1.23.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.0...v1.23.1
 [1.23.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.1...v1.21.0
