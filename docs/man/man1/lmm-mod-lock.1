@@ -2,44 +2,40 @@
 .TH "LMM" "1" "Jul 2026" "lmm 1.25.0" "User Commands"
 
 .SH NAME
-lmm-mod-set-update - Set update policy for a mod
+lmm-mod-lock - Lock a mod at its current or a specific version
 
 
 .SH SYNOPSIS
-\fBlmm mod set-update <mod-id> [flags]\fP
+\fBlmm mod lock <mod-id> [version] [flags]\fP
 
 
 .SH DESCRIPTION
-Set the update policy for an installed mod.
+Lock an installed mod so 'lmm update' refuses to change it.
 
 .PP
-Policies:
-  --auto    Automatically apply updates when checking
-  --notify  Show available updates, require manual approval (default)
-  --pin     Mute update checks for this mod (to hold an exact version, use 'lmm mod lock')
+Locking is a metadata write, not a deploy: if the locked version differs
+from what is currently installed, run 'lmm profile apply' (or 'lmm deploy')
+afterward to converge the game directory.
+
+.PP
+With no version argument, locks the mod at its currently recorded version.
+With a version argument, the version is resolved and validated against the
+source before the lock is written.
+
+.PP
+Requires a source that can resolve versions. A version-less source cannot
+be locked to a specific version this way - run 'lmm mod set-update' with
+--pin to mute its update checks instead.
 
 .PP
 Examples:
-  lmm mod set-update 12345 --game skyrim-se --auto
-  lmm mod set-update 12345 --game skyrim-se --pin
-  lmm mod set-update 12345 --game skyrim-se --notify
+  lmm mod lock 12345 --game skyrim-se
+  lmm mod lock 12345 1.2.3 --game skyrim-se
 
 
 .SH OPTIONS
-\fB--auto\fP[=false]
-	enable auto-update
-
-.PP
 \fB-h\fP, \fB--help\fP[=false]
-	help for set-update
-
-.PP
-\fB--notify\fP[=false]
-	notify only (default)
-
-.PP
-\fB--pin\fP[=false]
-	mute update checks for this mod (to hold an exact version, use 'lmm mod lock')
+	help for lock
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

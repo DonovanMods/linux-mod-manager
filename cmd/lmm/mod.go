@@ -35,7 +35,7 @@ var modSetUpdateCmd = &cobra.Command{
 Policies:
   --auto    Automatically apply updates when checking
   --notify  Show available updates, require manual approval (default)
-  --pin     Never update this mod automatically
+  --pin     Mute update checks for this mod (to hold an exact version, use 'lmm mod lock')
 
 Examples:
   lmm mod set-update 12345 --game skyrim-se --auto
@@ -43,6 +43,45 @@ Examples:
   lmm mod set-update 12345 --game skyrim-se --notify`,
 	Args: cobra.ExactArgs(1),
 	RunE: runModSetUpdate,
+}
+
+var modLockCmd = &cobra.Command{
+	Use:   "lock <mod-id> [version]",
+	Short: "Lock a mod at its current or a specific version",
+	Long: `Lock an installed mod so 'lmm update' refuses to change it.
+
+Locking is a metadata write, not a deploy: if the locked version differs
+from what is currently installed, run 'lmm profile apply' (or 'lmm deploy')
+afterward to converge the game directory.
+
+With no version argument, locks the mod at its currently recorded version.
+With a version argument, the version is resolved and validated against the
+source before the lock is written.
+
+Requires a source that can resolve versions. A version-less source cannot
+be locked to a specific version this way - run 'lmm mod set-update' with
+--pin to mute its update checks instead.
+
+Examples:
+  lmm mod lock 12345 --game skyrim-se
+  lmm mod lock 12345 1.2.3 --game skyrim-se`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: runModLock,
+}
+
+var modUnlockCmd = &cobra.Command{
+	Use:   "unlock <mod-id>",
+	Short: "Unlock a mod, restoring normal update behavior",
+	Long: `Clear a mod's lock marker.
+
+The mod's recorded version is left untouched - only the lock itself is
+cleared. 'lmm update' will consider the mod again, subject to its update
+policy (see 'lmm mod set-update').
+
+Examples:
+  lmm mod unlock 12345 --game skyrim-se`,
+	Args: cobra.ExactArgs(1),
+	RunE: runModUnlock,
 }
 
 var modEnableCmd = &cobra.Command{
@@ -110,9 +149,11 @@ func init() {
 
 	modSetUpdateCmd.Flags().BoolVar(&modSetAuto, "auto", false, "enable auto-update")
 	modSetUpdateCmd.Flags().BoolVar(&modSetNotify, "notify", false, "notify only (default)")
-	modSetUpdateCmd.Flags().BoolVar(&modSetPin, "pin", false, "pin to current version")
+	modSetUpdateCmd.Flags().BoolVar(&modSetPin, "pin", false, "mute update checks for this mod (to hold an exact version, use 'lmm mod lock')")
 
 	modCmd.AddCommand(modSetUpdateCmd)
+	modCmd.AddCommand(modLockCmd)
+	modCmd.AddCommand(modUnlockCmd)
 	modCmd.AddCommand(modEnableCmd)
 	modCmd.AddCommand(modDisableCmd)
 	modCmd.AddCommand(modFilesCmd)
@@ -194,6 +235,129 @@ func doModSetUpdate(service *core.Service, game *domain.Game, modID string) erro
 	}
 	fmt.Println()
 
+	return nil
+}
+
+func runModLock(cmd *cobra.Command, args []string) error {
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		version := ""
+		if len(args) > 1 {
+			version = args[1]
+		}
+		return doModLock(ctx, service, game, args[0], version)
+	})
+}
+
+// doModLock locks modID's profile ref at version (or, when version is
+// empty, at whatever version is currently recorded). Task 2's sequencing
+// constraint: SetModLock persists any version string verbatim with no
+// upstream validation of its own, so a version argument MUST be resolved
+// against the source via ResolveModVersion (#96) before SetModLock is ever
+// called - ResolveModVersion's own errors (ErrVersionNotFound listing
+// available versions, ErrNotSupported for a dynamic version-less source) are
+// surfaced verbatim.
+func doModLock(ctx context.Context, service *core.Service, game *domain.Game, modID, version string) error {
+	var err error
+	modSource, err = resolveSource(service, game, modSource, false)
+	if err != nil {
+		return err
+	}
+
+	profileName, err := resolveProfile(service, game.ID, modProfile)
+	if err != nil {
+		return err
+	}
+
+	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	if err != nil {
+		return fmt.Errorf("mod not found: %s", modID)
+	}
+
+	// Static capability gate: a source that cannot carry per-file version
+	// info has nothing for ResolveModVersion to resolve against, and
+	// SetModLock's own "any string goes" persistence makes that a silent
+	// footgun rather than a clean rejection - so this is checked before any
+	// upstream call.
+	caps, err := service.SourceCapabilities(modSource)
+	if err != nil {
+		return err
+	}
+	if !caps.Versions {
+		return fmt.Errorf("source %q cannot resolve versions; to freeze this mod use 'lmm mod set-update %s --pin'", modSource, modID)
+	}
+
+	pm := service.NewProfileManager()
+
+	// target is the version displayed and written to the lock: the
+	// resolved version argument, or - when none was given - whatever the
+	// profile ref is currently recorded at (SetModLock leaves Version
+	// untouched in that case).
+	target := version
+	if version != "" {
+		if _, err := service.ResolveModVersion(ctx, modSource, &mod.Mod, version); err != nil {
+			return err
+		}
+	} else {
+		profile, err := pm.Get(game.ID, profileName)
+		if err != nil {
+			return fmt.Errorf("loading profile: %w", err)
+		}
+		for _, ref := range profile.Mods {
+			if ref.SourceID == modSource && ref.ModID == modID {
+				target = ref.Version
+				break
+			}
+		}
+	}
+
+	if err := pm.SetModLock(game.ID, profileName, modSource, modID, version); err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ %s locked at v%s\n", mod.Name, target)
+	// Locking is a metadata write, not a deploy (design decision): when the
+	// target differs from what is actually installed, the game directory
+	// won't match the lock until convergence, so say so.
+	if target != mod.Version {
+		fmt.Printf("Installed version is v%s — run 'lmm profile apply' (or 'lmm deploy') to converge.\n", mod.Version)
+	}
+
+	return nil
+}
+
+func runModUnlock(cmd *cobra.Command, args []string) error {
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doModUnlock(service, game, args[0])
+	})
+}
+
+// doModUnlock clears modID's lock marker. Version is left exactly as-is -
+// core.ProfileManager.ClearModLock already guarantees this; unlocking is
+// policy-neutral (#97 decision), so the update policy reported here is
+// whatever it already was.
+func doModUnlock(service *core.Service, game *domain.Game, modID string) error {
+	var err error
+	modSource, err = resolveSource(service, game, modSource, false)
+	if err != nil {
+		return err
+	}
+
+	profileName, err := resolveProfile(service, game.ID, modProfile)
+	if err != nil {
+		return err
+	}
+
+	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	if err != nil {
+		return fmt.Errorf("mod not found: %s", modID)
+	}
+
+	pm := service.NewProfileManager()
+	if err := pm.ClearModLock(game.ID, profileName, modSource, modID); err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ %s unlocked (update policy: %s)\n", mod.Name, policyToString(mod.UpdatePolicy))
 	return nil
 }
 

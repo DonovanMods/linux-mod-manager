@@ -100,8 +100,9 @@ func TestGenManTree_SynopsisPreservesAngleBracketArgs(t *testing.T) {
 // angle-bracket placeholder must have that placeholder verbatim in its own
 // generated page's SYNOPSIS, not just search/uninstall. The command count
 // pins how many pages were actually affected (17 at the #104 final review;
-// 16 since install's query became optional "[query]"); if the command tree
-// changes, update the count deliberately rather than silently.
+// 16 since install's query became optional "[query]"; 18 since #97 added
+// `mod lock <mod-id> [version]` and `mod unlock <mod-id>`); if the command
+// tree changes, update the count deliberately rather than silently.
 func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, genManTree(dir))
@@ -126,8 +127,8 @@ func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 	}
 	walk(rootCmd)
 
-	assert.Equal(t, 16, checked,
-		"expected exactly 16 commands with angle-bracket Use args; update this count if the command tree changed")
+	assert.Equal(t, 18, checked,
+		"expected exactly 18 commands with angle-bracket Use args; update this count if the command tree changed")
 }
 
 var angleBracketArgsRE = regexp.MustCompile(`<[^>]+>`)

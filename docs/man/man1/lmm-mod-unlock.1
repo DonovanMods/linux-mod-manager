@@ -2,28 +2,29 @@
 .TH "LMM" "1" "Jul 2026" "lmm 1.25.0" "User Commands"
 
 .SH NAME
-lmm-mod - Manage mod settings
+lmm-mod-unlock - Unlock a mod, restoring normal update behavior
 
 
 .SH SYNOPSIS
-\fBlmm mod [flags]\fP
+\fBlmm mod unlock <mod-id> [flags]\fP
 
 
 .SH DESCRIPTION
-Commands for managing individual mod settings.
+Clear a mod's lock marker.
+
+.PP
+The mod's recorded version is left untouched - only the lock itself is
+cleared. 'lmm update' will consider the mod again, subject to its update
+policy (see 'lmm mod set-update').
+
+.PP
+Examples:
+  lmm mod unlock 12345 --game skyrim-se
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
-	help for mod
-
-.PP
-\fB-p\fP, \fB--profile\fP=""
-	profile (default: active profile)
-
-.PP
-\fB-s\fP, \fB--source\fP=""
-	mod source (default: the sole configured source; prompts when several are configured)
+	help for unlock
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -51,12 +52,20 @@ Commands for managing individual mod settings.
 	disable all hooks
 
 .PP
+\fB-p\fP, \fB--profile\fP=""
+	profile (default: active profile)
+
+.PP
+\fB-s\fP, \fB--source\fP=""
+	mod source (default: the sole configured source; prompts when several are configured)
+
+.PP
 \fB-v\fP, \fB--verbose\fP[=false]
 	verbose output
 
 
 .SH SEE ALSO
-\fBlmm(1)\fP, \fBlmm-mod-disable(1)\fP, \fBlmm-mod-edit(1)\fP, \fBlmm-mod-enable(1)\fP, \fBlmm-mod-files(1)\fP, \fBlmm-mod-lock(1)\fP, \fBlmm-mod-set-update(1)\fP, \fBlmm-mod-show(1)\fP, \fBlmm-mod-unlock(1)\fP
+\fBlmm-mod(1)\fP
 
 
 .SH HISTORY
