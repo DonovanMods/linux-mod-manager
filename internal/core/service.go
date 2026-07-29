@@ -377,6 +377,17 @@ func (s *Service) GetModFiles(ctx context.Context, sourceID string, mod *domain.
 	return src.GetModFiles(ctx, mod)
 }
 
+// ResolveModVersion fetches mod's raw file list from sourceID and resolves
+// version against it via ResolveVersionFiles (#96). The list is deliberately
+// unfiltered - archived files are exactly what a version pin usually names.
+func (s *Service) ResolveModVersion(ctx context.Context, sourceID string, mod *domain.Mod, version string) ([]domain.DownloadableFile, error) {
+	files, err := s.GetModFiles(ctx, sourceID, mod)
+	if err != nil {
+		return nil, fmt.Errorf("listing files for version resolution: %w", err)
+	}
+	return ResolveVersionFiles(sourceID, files, version)
+}
+
 // GetDownloadURL gets the download URL for a specific mod file
 func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *domain.Mod, fileID string) (string, error) {
 	src, err := s.registry.Get(sourceID)

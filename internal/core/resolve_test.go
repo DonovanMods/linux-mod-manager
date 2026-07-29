@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -95,4 +96,29 @@ func TestResolveVersionFiles_NotFoundListsAvailableVersions(t *testing.T) {
 	assert.True(t, errors.Is(err, core.ErrVersionNotFound))
 	assert.Contains(t, err.Error(), `version "2.0"`)
 	assert.Contains(t, err.Error(), "available: 1.5, 1.0")
+}
+
+// multiVersionSource embeds mockSource and returns multiple versioned files
+type multiVersionSource struct{ *mockSource }
+
+func (s *multiVersionSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: mod.ID + ".zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old", FileName: mod.ID + "-old.zip", Version: "1.0", Category: "ARCHIVED"},
+	}, nil
+}
+
+func TestServiceResolveModVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	mock := &multiVersionSource{newMockSource("src")}
+	svc.RegisterSource(mock)
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", GameID: "testgame", Name: "Mod One", Version: "1.5"}
+
+	files, err := svc.ResolveModVersion(context.Background(), "src", mod, "1.0")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "9", files[0].ID)
+
+	_, err = svc.ResolveModVersion(context.Background(), "src", mod, "9.9")
+	assert.ErrorIs(t, err, core.ErrVersionNotFound)
 }
