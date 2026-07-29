@@ -869,7 +869,7 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 // redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
 func redownloadModFile(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, fileID string) error {
 	ctx := cmd.Context()
-	files, err := svc.GetModFiles(ctx, mod.SourceID, &mod.Mod)
+	files, err := svc.GetModFiles(ctx, mod.SourceID, sourceMappedMod(game, &mod.Mod))
 	if err != nil {
 		return fmt.Errorf("getting mod files: %w", err)
 	}

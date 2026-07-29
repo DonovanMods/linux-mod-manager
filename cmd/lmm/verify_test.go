@@ -1572,6 +1572,39 @@ func TestDoVerify_Fix_Missing_JSONNotesRedownloadFailure(t *testing.T) {
 	assert.True(t, found, "expected a mod1 file entry in JSON files: %+v", result.Files)
 }
 
+// TestDoVerify_Fix_Redownload_MapsGameIDPerSourceMapping guards the
+// follow-up d1c0e0f explicitly flagged as out of scope: redownloadModFile
+// (the MISSING/NO CHECKSUM --fix repair) had the identical unmapped
+// svc.GetModFiles(ctx, mod.SourceID, &mod.Mod) call the version-record
+// pre-pass was fixed for - mod.GameID is the LMM game ID (installed rows
+// persist normalized IDs), but Service.GetModFiles forwards straight to
+// the source with no game-ID translation, so on any game whose per-source
+// mapping differs from its LMM ID (e.g. "skyrim-se" vs NexusMods'
+// "skyrimspecialedition"), the redownload lookup queried the wrong game.
+// Same capture pattern as TestDoVerify_VersionCheck_MapsGameIDPerSourceMapping:
+// override the fixture's mapping (which otherwise coincides with game.ID,
+// hiding the bug) and assert via fakeInstallSource.receivedGameFileIDs.
+// The fixture's missing cache entry drives the MISSING branch; the NO
+// CHECKSUM branch routes through the same redownloadModFile call, so one
+// scenario pins both.
+func TestDoVerify_Fix_Redownload_MapsGameIDPerSourceMapping(t *testing.T) {
+	cmd, svc, game, src := setupDoVerifyRedownloadTest(t)
+	game.SourceIDs["test-src"] = "mapped-domain"
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	_ = captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	// Call 1 is the version-record pre-pass (already mapped, d1c0e0f);
+	// call 2 is redownloadModFile's own lookup for the MISSING repair.
+	require.Len(t, src.receivedGameFileIDs, 2, "expected GetModFiles twice: version pre-pass + redownload lookup")
+	assert.Equal(t, "mapped-domain", src.receivedGameFileIDs[1], "redownloadModFile must translate GameID through game.SourceIDs, same rule as Service.GetMod and the version-record pre-pass")
+}
+
 // TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure is the NO
 // CHECKSUM half of audit Finding 7: same missing-download fixture, but
 // with the cache entry actually present (so the file reads as NO
