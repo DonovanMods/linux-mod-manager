@@ -777,7 +777,7 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm update --dry-run`                 | Preview what would update                            |
 | `lmm update rollback <mod-id>`         | Rollback to previous version                         |
 | `lmm verify`                           | Verify cached mod files (see below)                  |
-| `lmm verify --fix`                     | Re-download missing files, populate missing checksums |
+| `lmm verify --fix`                     | Re-download missing files, populate missing checksums, repair version-record mismatches |
 | `lmm mod enable <mod-id>`              | Enable a disabled mod                                |
 | `lmm mod disable <mod-id>`             | Disable mod (keep in cache)                          |
 | `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                          |
@@ -897,6 +897,13 @@ When you run `lmm update`, the tool checks each installed mod against the source
 - **? ModName (fileID) - NO CHECKSUM** - File was installed without a stored checksum (e.g. before checksum support or with `--skip-verify`).
 - **! ModName - FILE COUNT MISMATCH** - The cache directory exists but is empty, when downloads were expected (per-mod, not per-file); not repaired by `--fix`.
 - **? Unknown mod ID - SKIPPED** - A stored checksum row references a mod that's no longer installed; not repaired by `--fix`.
+
+`lmm verify` also contacts each installed mod's source to check its recorded version against what the stored file ID(s) actually are upstream (issue #94: older installs could record the mod's "latest" version instead of the version of the file that was actually downloaded and deployed), reporting per mod:
+
+- **X ModName - VERSION MISMATCH (recorded X, source reports Y)** - The recorded version doesn't match what the installed file ID(s) report upstream; use `--fix` to repair.
+- **? ModName - VERSION UNVERIFIABLE** - None of the recorded file ID(s) are listed by the source anymore; not repaired by `--fix` (reinstall the mod instead).
+
+Mods installed from a local source, mods requiring manual download, and mods with no recorded file IDs are skipped silently. `--fix` repairs a VERSION MISMATCH by re-keying the cache entry to the effective (source-reported) version, correcting the DB row and active profile record, and re-linking symlink deployments; if a cache entry already exists under the effective version the rename is skipped and a note is printed (also included as `note` in `--json` output) while the DB/profile are still corrected.
 
 ## Architecture
 

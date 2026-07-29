@@ -96,3 +96,29 @@ func TestExtractVersionFromName(t *testing.T) {
 		})
 	}
 }
+
+func TestEffectiveInstalledVersion(t *testing.T) {
+	f := func(id, version string, primary bool) *DownloadableFile {
+		return &DownloadableFile{ID: id, Version: version, IsPrimary: primary}
+	}
+	tests := []struct {
+		name     string
+		modVer   string
+		selected []*DownloadableFile
+		want     string
+	}{
+		{"no files falls back to mod version", "1.5", nil, "1.5"},
+		{"single file with version wins", "1.5", []*DownloadableFile{f("10", "1.0", false)}, "1.0"},
+		{"file without version falls back", "1.5", []*DownloadableFile{f("10", "", true)}, "1.5"},
+		{"primary file version preferred over earlier non-primary", "1.5",
+			[]*DownloadableFile{f("10", "0.9-patch", false), f("11", "1.0", true)}, "1.0"},
+		{"first non-empty when no primary has a version", "1.5",
+			[]*DownloadableFile{f("10", "", true), f("11", "1.0", false)}, "1.0"},
+		{"nil entries skipped", "1.5", []*DownloadableFile{nil, f("10", "1.0", false)}, "1.0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, EffectiveInstalledVersion(tt.modVer, tt.selected))
+		})
+	}
+}

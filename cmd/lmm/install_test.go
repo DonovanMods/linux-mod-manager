@@ -381,6 +381,17 @@ type fakeInstallSource struct {
 	files     map[string][]domain.DownloadableFile
 	downloads map[string][]byte // fileID -> raw content
 	srv       *httptest.Server
+
+	// receivedGameFileIDs records the mod.GameID GetModFiles was actually
+	// called with, in call order - mirrors internal/core/updater_test.go's
+	// gameIDCapturingSource pattern, for tests asserting a caller applied
+	// (or didn't apply) the game's per-source ID mapping before calling in.
+	receivedGameFileIDs []string
+
+	// getModFilesErr, when set, makes GetModFiles return this error
+	// instead of a normal lookup - for tests exercising a "source
+	// unreachable" path (nil by default, so every other test is unaffected).
+	getModFilesErr error
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -426,6 +437,10 @@ func (s *fakeInstallSource) GetDependencies(ctx context.Context, mod *domain.Mod
 	return s.mods[mod.ID].Dependencies, nil
 }
 func (s *fakeInstallSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	s.receivedGameFileIDs = append(s.receivedGameFileIDs, mod.GameID)
+	if s.getModFilesErr != nil {
+		return nil, s.getModFilesErr
+	}
 	return s.files[mod.ID], nil
 }
 func (s *fakeInstallSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
@@ -1050,4 +1065,26 @@ func TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError(t *testin
 
 	_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
 	assert.Error(t, dbErr)
+}
+
+// TestBatchInstallMods_StampsSelectedFileVersion guards issue #94 for
+// batchInstallMods (the multi-select/dependency-resolved install save
+// site): when the selected primary file carries its own version distinct
+// from the mod's latest version, the persisted InstalledMod row must record
+// the file's version - the version of the bytes actually deployed - not the
+// mod-level "latest" version, so subsequent update checks compare against
+// what's really on disk.
+func TestBatchInstallMods_StampsSelectedFileVersion(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"}
+	src.AddMod(mod, []domain.DownloadableFile{
+		{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.1"},
+	})
+	src.AddDownload("main", []byte("plugin content"))
+
+	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+
+	installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the mod's latest version")
 }
