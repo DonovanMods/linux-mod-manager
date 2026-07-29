@@ -170,9 +170,10 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	gameCache := svc.GetGameCache(game)
 	var issues, warnings int
 	// checked mixes two counters: per-FILE increments from the main loop
-	// below and per-MOD skip/ok increments from the version-record pre-pass
-	// above it - both feed the same "no files found" zero-check, so neither
-	// needed its own variable.
+	// below and per-MOD increments from the version-record pre-pass - and
+	// the pre-pass only counts its quiet-OK path (recorded version matches);
+	// its skip/mismatch paths continue without counting. Both feed the same
+	// "no files found" zero-check, so neither needed its own variable.
 	var checked int
 	var jsonFiles []verifyFileJSON
 
