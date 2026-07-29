@@ -325,14 +325,19 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 				warnings += siblingFailures
 				if repairErr != nil {
 					if jsonOutput {
-						// The PRIMARY row itself wasn't fixed (status/issues
-						// stay as already recorded above). The failure
-						// reason itself (audit Finding 7) and note can
-						// still carry a successful SIBLING repair - see
-						// repairModVersion's doc comment - and dropping
-						// either here would make them invisible to a
-						// --json caller even though they genuinely
-						// happened/occurred.
+						// The PRIMARY row keeps reporting version_mismatch
+						// (status/issues stay as already recorded above),
+						// but the repair may have PARTIALLY succeeded: a
+						// step-4 re-link failure surfaces here after the
+						// cache rename and the DB/profile version
+						// correction have already landed and are not
+						// rolled back (see repairModVersion's doc). The
+						// failure reason itself (audit Finding 7) and note
+						// can still carry a successful SIBLING repair -
+						// see repairModVersion's doc comment - and
+						// dropping either here would make them invisible
+						// to a --json caller even though they genuinely
+						// happened.
 						repairNote := "repair failed: " + repairErr.Error()
 						if note != "" {
 							repairNote += "; " + note
