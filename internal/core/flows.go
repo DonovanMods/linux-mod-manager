@@ -2462,6 +2462,30 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID strin
 
 // InstallOptions configures ApplyInstall.
 type InstallOptions struct {
+	// TargetVersion, when non-empty, pins the exact version to install for
+	// plan.Mod ONLY (#96 decision 6: batch dependencies always install at
+	// latest, untouched by this field). It matters exclusively to the BATCH
+	// (Dependencies-present) path: the STRICT path never reads it here at
+	// all - doInstall (cmd/lmm/install.go) already resolves --version
+	// CLI-side via core.ResolveVersionFiles before ApplyInstall is ever
+	// called, and applyInstallPrimary installs exactly plan.Files as a
+	// result. The BATCH path's own per-mod file selection
+	// (applyInstallBatchMod) never consults plan.Files for any mod - it
+	// always re-derives its own selection via GetModFiles - so without this
+	// field --version was silently ignored for the primary whenever the
+	// named mod had resolvable dependencies (#93's "flag lies" class,
+	// found again during #96 review).
+	//
+	// Resolved ONCE, up front, before ApplyInstall's BATCH loop touches ANY
+	// mod (dependency or primary) - not lazily when the loop reaches the
+	// primary's turn. A version that doesn't resolve is fatal to the WHOLE
+	// install and returned immediately, with zero dependencies installed:
+	// the user explicitly asked for this version, so a quiet per-mod
+	// "Failed: 1 (X)" summary line is not loud enough, and installing
+	// dependencies for a primary that is about to fail to install at all
+	// would leave a confusing half-applied state.
+	TargetVersion string
+
 	// SkipVerify mirrors doInstall's --skip-verify: when true, a downloaded
 	// file's checksum is neither saved (SaveFileChecksum) nor reported via
 	// an InstallChecksumComputed event, matching downloadSelectedFiles' "if
@@ -2783,12 +2807,37 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		primary := plan.Mod // local, addressable copy - distinct from plan.Mod
 		mods = append(mods, &primary)
 
+		// #96: opts.TargetVersion pins the PRIMARY only (see its doc
+		// comment) - resolved here, once, before any mod in mods is
+		// touched, so an unresolvable version aborts the whole install
+		// with zero side effects rather than surfacing as a per-mod
+		// "Failed" line after dependencies already installed.
+		// primaryOverrideFiles is passed to applyInstallBatchMod ONLY for
+		// the primary's own iteration (the last entry in mods, by
+		// construction above); every dependency iteration gets nil and
+		// re-derives its own selection exactly as before.
+		var primaryOverrideFiles []domain.DownloadableFile
+		if opts.TargetVersion != "" {
+			files, err := s.GetModFiles(ctx, primary.SourceID, &primary)
+			if err != nil {
+				return result, fmt.Errorf("failed to get mod files: %w", err)
+			}
+			primaryOverrideFiles, err = ResolveVersionFiles(primary.SourceID, files, opts.TargetVersion)
+			if err != nil {
+				return result, err
+			}
+		}
+
 		total := len(mods)
 		for idx, mod := range mods {
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
-			if warn := s.applyInstallBatchMod(ctx, game, plan, mod, idx, total, linkMethod, pm, opts, result, emit); warn != nil {
+			var overrideFiles []domain.DownloadableFile
+			if idx == total-1 {
+				overrideFiles = primaryOverrideFiles
+			}
+			if warn := s.applyInstallBatchMod(ctx, game, plan, mod, idx, total, linkMethod, pm, opts, result, emit, overrideFiles); warn != nil {
 				deferredWarnings = append(deferredWarnings, *warn)
 			}
 		}
@@ -2834,7 +2883,16 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 // a non-blocking inline conflict warning (never a blocking prompt). Returns
 // the install.after_each warning event to defer (nil if none), matching
 // ApplyInstall's deferredWarnings convention.
-func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress)) *DeployProgress {
+//
+// overrideFiles, when non-nil, is used verbatim as the candidate file list
+// INSTEAD of the usual GetModFiles + filterAndSortInstallFiles derivation -
+// exclusively how ApplyInstall's #96 opts.TargetVersion pin reaches the
+// PRIMARY's iteration (already resolved via ResolveVersionFiles before the
+// loop started; see ApplyInstall's own comment). Every dependency iteration
+// always passes nil here and re-derives its own selection exactly as
+// before - decision 6, dependencies install at latest regardless of
+// TargetVersion.
+func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress), overrideFiles []domain.DownloadableFile) *DeployProgress {
 	base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name, ModVersion: mod.Version, ModID: mod.ID, SourceID: mod.SourceID}
 	skip := func(label, reason string) {
 		evt := base
@@ -2882,12 +2940,21 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		}
 	}
 
-	files, err := s.GetModFiles(ctx, mod.SourceID, mod)
-	if err != nil {
-		skip("Error", fmt.Sprintf("failed to get mod files: %v", err))
-		return nil
+	var files []domain.DownloadableFile
+	if overrideFiles != nil {
+		// #96: the primary's --version-resolved selection, already fetched
+		// and matched by ApplyInstall before the loop started - see this
+		// function's own doc comment.
+		files = overrideFiles
+	} else {
+		var err error
+		files, err = s.GetModFiles(ctx, mod.SourceID, mod)
+		if err != nil {
+			skip("Error", fmt.Sprintf("failed to get mod files: %v", err))
+			return nil
+		}
+		files = filterAndSortInstallFiles(files, plan.ShowArchived)
 	}
-	files = filterAndSortInstallFiles(files, plan.ShowArchived)
 	if len(files) == 0 {
 		skip("Error", "no downloadable files available")
 		return nil

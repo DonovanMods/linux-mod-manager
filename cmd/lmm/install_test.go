@@ -1109,6 +1109,83 @@ func TestDoInstall_VersionFlag_FileOutsideVersionErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "file ID 10 not found") // selectInstallFiles' existing wording, now scoped to the version's files
 }
 
+// TestDoInstall_VersionFlag_WithDependency_NamedModRecordedAtRequestedVersion
+// is the BATCH-path counterpart to TestDoInstall_VersionFlag_
+// InstallsRequestedVersion: a named mod WITH a resolvable dependency takes
+// doInstall's dependency branch (doInstallBatch -> core.ApplyInstall's
+// BATCH path), which - before this test's fix - re-derived its own file
+// selection per mod via GetModFiles + filterAndSortInstallFiles and never
+// consulted installVersion at all, so --version silently installed the
+// latest for the named mod despite the flag (the #93 "flag lies" class,
+// found again on review). Proves --version reaches the named/primary mod
+// even on this path (its file/version is exactly what --version alone
+// installs), while the dependency is untouched and installs at its own
+// latest (#96 decision 6).
+func TestDoInstall_VersionFlag_WithDependency_NamedModRecordedAtRequestedVersion(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	installYes = true // auto-confirm the "Install N mod(s)?" prompt
+
+	dep := &domain.Mod{ID: "dep1", SourceID: fake.id, Name: "Dep One", Version: "2.0", GameID: game.ID}
+	root := &domain.Mod{ID: "mod1", SourceID: fake.id, Name: "Mod One", Version: "1.5", Author: "Someone", GameID: game.ID,
+		Dependencies: []domain.ModReference{{SourceID: fake.id, ModID: "dep1"}}}
+	fake.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", Name: "Dep Main", FileName: "dep1.esp", IsPrimary: true}})
+	fake.AddDownload("dep-file", []byte("dep content"))
+	fake.AddMod(root, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old", FileName: "mod1.esp", Version: "1.0", Category: "ARCHIVED"},
+	})
+	fake.AddDownload("9", []byte("archived content"))
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	t.Cleanup(func() { installModID, installVersion = "", "" })
+
+	require.NoError(t, doInstall(context.Background(), svc, game, nil))
+
+	primary, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", primary.Version, "the named mod must install the REQUESTED version, not the mod's latest")
+	assert.Equal(t, []string{"9"}, primary.FileIDs)
+
+	depInstalled, err := svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", depInstalled.Version, "a dependency is untouched by --version - it installs at its own latest (#96 decision 6)")
+}
+
+// TestDoInstall_VersionFlag_WithDependency_UnknownVersionAbortsWholeInstall
+// proves an unresolvable --version on a dependency-having install is fatal
+// to the WHOLE install (surfacing ErrVersionNotFound's message, same as the
+// no-dependency case) rather than silently installing the named mod at
+// latest or merely recording it as one "Failed" entry in the batch summary
+// - the user explicitly asked for this version.
+func TestDoInstall_VersionFlag_WithDependency_UnknownVersionAbortsWholeInstall(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	installYes = true
+
+	dep := &domain.Mod{ID: "dep1", SourceID: fake.id, Name: "Dep One", Version: "2.0", GameID: game.ID}
+	root := &domain.Mod{ID: "mod1", SourceID: fake.id, Name: "Mod One", Version: "1.5", Author: "Someone", GameID: game.ID,
+		Dependencies: []domain.ModReference{{SourceID: fake.id, ModID: "dep1"}}}
+	fake.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", Name: "Dep Main", FileName: "dep1.esp", IsPrimary: true}})
+	fake.AddDownload("dep-file", []byte("dep content"))
+	fake.AddMod(root, []domain.DownloadableFile{
+		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN", FileName: "mod1.zip", Name: "Main"},
+	})
+
+	installModID = "mod1"
+	installVersion = "2.0" // does not exist for mod1 (only "1.5" is available)
+	t.Cleanup(func() { installModID, installVersion = "", "" })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `version "2.0"`)
+	assert.Contains(t, err.Error(), "available: 1.5")
+
+	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	assert.Error(t, dbErr, "the named mod must not be installed")
+	_, dbErr = svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	assert.Error(t, dbErr, "no dependency should be installed either - the version check aborts before any mod is touched")
+}
+
 // TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError guards
 // the failure-path convention: diagnostics accumulated before a later fatal
 // error (here, a forced install.before_all warning, followed by a download

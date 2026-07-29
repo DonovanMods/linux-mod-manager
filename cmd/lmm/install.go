@@ -629,11 +629,16 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	fmt.Printf("\nInstalling %d mod(s)...\n", len(plan.Dependencies)+1)
 
 	opts := core.InstallOptions{
-		SkipVerify:  skipVerify,
-		Hooks:       getResolvedHooks(service, game, profileName),
-		HookRunner:  getHookRunner(service),
-		HookContext: makeHookContext(game),
-		Force:       installForce,
+		// TargetVersion pins --version to the named/primary mod ONLY - see
+		// its doc comment. Dependencies still install at latest (#96
+		// decision 6); a version that doesn't resolve for the primary
+		// aborts the whole install before any dependency is touched.
+		TargetVersion: installVersion,
+		SkipVerify:    skipVerify,
+		Hooks:         getResolvedHooks(service, game, profileName),
+		HookRunner:    getHookRunner(service),
+		HookContext:   makeHookContext(game),
+		Force:         installForce,
 	}
 
 	// progress prints every diagnostic and status line at its exact point
@@ -682,10 +687,15 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	if err != nil {
 		// Diagnostics accumulated before a fatal error (install.before_all,
 		// forced) were already printed above, live, via progress - nothing
-		// left to print here. Unlike the STRICT path, a per-mod failure in
-		// the BATCH path never reaches here - it's recorded in
+		// left to print here. Unlike the STRICT path, an ordinary per-mod
+		// failure in the BATCH path never reaches here - it's recorded in
 		// result.Failed/Skipped and printed via the terminal Summary below
-		// instead (see InstallDepSkipped).
+		// instead (see InstallDepSkipped). The one BATCH-path failure that
+		// DOES reach here: --version not resolving for the named/primary
+		// mod (opts.TargetVersion) - #96 decision "abort the whole install,
+		// a per-mod Failed line isn't loud enough for a version the user
+		// explicitly requested" - surfaced before any dependency is
+		// touched, so nothing has been installed yet on this path either.
 		return err
 	}
 
