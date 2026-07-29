@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deploy-shaped flows (deploy, profile switch/import, `profile apply`) whose stored file ID(s) are gone upstream now heal to the mod's recorded version when that version is still available, instead of always hard-failing; the hard-fail from #95 now fires only when the recorded version itself is gone too, and its error distinguishes "file IDs gone upstream" from "installed files don't match the recorded version" — the latter points at `lmm verify --fix`
 - Profile switch replaces a live older deployment when converging a mod to a newer or older version, instead of leaving the stale files on disk alongside the new ones; convergence preserves the mod's `Deployed` flag and update policy
 - `lmm update`'s apply step now records the version of the file it actually installed, not the mod's overall "latest" version — `lmm verify` no longer flags a freshly-updated mod as a version mismatch
+- `lmm profile apply` no longer fails to converge a version-drifted mod whose previous version's cache entry has been pruned — it now falls back to a plain install instead of erroring with "old mod not in cache", matching `profile switch`
 
 ### Internal
 

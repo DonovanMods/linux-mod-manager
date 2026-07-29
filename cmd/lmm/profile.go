@@ -1121,7 +1121,20 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			// true without a corresponding installedByKey[key] row, but a
 			// bare index expression would panic on a nil *InstalledMod if
 			// that invariant were ever violated.
-			if prev, ok := installedByKey[key]; ok && needsReplaceSet[key] {
+			//
+			// Round 2: the deployed flag alone isn't enough - Installer.
+			// Replace reads the OLD version's cache entry to work out which
+			// files to retire and hard-fails with "old mod not in cache"
+			// when it's been pruned, which would abort convergence outright
+			// and leave the old deployment on disk. Only Replace when that
+			// entry is still there; otherwise fall back to a bare Install,
+			// exactly as core's ApplyProfileSwitch does. The caveat is the
+			// same in both twins: without the old file list, files the new
+			// version no longer serves stay behind as stale deployments
+			// (`lmm verify` surfaces them) - strictly better than failing to
+			// converge at all.
+			if prev, ok := installedByKey[key]; ok && needsReplaceSet[key] &&
+				service.GetGameCache(game).Exists(game.ID, prev.SourceID, prev.ID, prev.Version) {
 				if err := installer.Replace(ctx, game, &prev.Mod, mod, profileName); err != nil {
 					fmt.Printf("    Error: deploy failed: %v\n", err)
 					continue

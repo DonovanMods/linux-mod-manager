@@ -2087,7 +2087,13 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// semantics. prior.Deployed alone isn't enough: only Replace
 			// when the OLD version's cache entry is still there for it to
 			// read from (a corrupted/missing old cache falls back to a
-			// bare Install, same as any other toInstall entry).
+			// bare Install, same as any other toInstall entry - Replace
+			// would otherwise hard-fail with "old mod not in cache" and
+			// abort convergence). The caveat, shared with the cmd twin
+			// (cmd/lmm/profile.go's doProfileApply): without the old file
+			// list, files the new version no longer serves stay behind as
+			// stale deployments (`lmm verify` surfaces them) - strictly
+			// better than failing to converge at all.
 			key := domain.ModKey(ref.SourceID, ref.ModID)
 			if prior, ok := plan.PriorVersions[key]; ok && prior.Deployed &&
 				s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version) {
