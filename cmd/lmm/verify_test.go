@@ -596,6 +596,42 @@ func setupDoVerifyFixSiblingTest(t *testing.T) (*cobra.Command, *core.Service, *
 	return cmd, svc, game
 }
 
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotInstalled_SkippedSilently
+// pins Copilot round-2's (suppressed, no inline thread) low-confidence
+// finding: repairSiblingProfiles must distinguish "this profile never had
+// the mod at all" (svc.GetInstalledMod returning domain.ErrModNotFound)
+// from a genuine lookup failure - the former is not a candidate and must
+// stay a silent skip (no warning, not in the failed list), unlike any
+// OTHER GetInstalledMod error, which the production code now surfaces the
+// same way as a SaveInstalledMod/UpsertMod/re-link failure. Adds a
+// "fourth" profile that exists (so pm.List finds it) but was never given
+// an InstalledMod row for mod1 at all - distinct from "third" (which DOES
+// have a row, just at a different recorded version, exercising the
+// `sibling.Version != recorded` branch instead).
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotInstalled_SkippedSilently(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "fourth")
+	require.NoError(t, err)
+	// Deliberately no pm.AddMod / svc.SaveInstalledMod for mod1 in "fourth" -
+	// it's a profile that exists but never had this mod installed.
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "fourth", "a profile that never had the mod must be a silent skip - no warning, no mention at all")
+	assert.NotContains(t, out, "Warning", "the not-installed case must not be reported as a failure")
+
+	_, err = svc.GetInstalledMod("test-src", "mod1", game.ID, "fourth")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "sanity: 'fourth' genuinely has no row for mod1 - this is the ErrModNotFound path, not a different bug")
+}
+
 // TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord
 // is the required end-to-end case: fixing the mismatch via the "default"
 // profile must also correct "second" (same stale recorded version) in both

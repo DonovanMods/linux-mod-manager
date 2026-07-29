@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -551,6 +552,14 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 // rename actually happened; a blocked/skipped rename never orphans
 // anything, so siblings are left alone in that case.
 //
+// A profile that never had the mod installed at all (GetInstalledMod
+// returning domain.ErrModNotFound) is a normal, silent skip - it was never
+// a repair candidate. Any OTHER lookup error (a genuine DB failure) is
+// deliberately NOT treated the same way: it means we couldn't even tell
+// whether that profile needed repair, which is surfaced as a per-sibling
+// failure below rather than silently looking identical to "not a
+// candidate".
+//
 // Sibling rows whose Version differs from recorded are a different state
 // entirely (not something this repair caused) and are left untouched, per
 // the same DB-load-mutate-save pattern the primary path uses (never
@@ -597,7 +606,23 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		}
 
 		sibling, err := svc.GetInstalledMod(mod.SourceID, mod.ID, game.ID, p.Name)
-		if err != nil || sibling.Version != recorded {
+		if err != nil {
+			if !errors.Is(err, domain.ErrModNotFound) {
+				// A genuine lookup failure (DB error, corruption, etc.) is
+				// NOT the same as "this profile never had the mod" - the
+				// latter is a normal, silent skip; the former means we
+				// couldn't even tell whether this profile needed repair,
+				// which must be surfaced the same as any other per-sibling
+				// failure rather than looking indistinguishable from "not a
+				// candidate".
+				failed = append(failed, fmt.Sprintf("%s (checking sibling: %v)", p.Name, err))
+				if !jsonOutput {
+					fmt.Printf("  Warning: could not repair profile %s: %v\n", p.Name, err)
+				}
+			}
+			continue
+		}
+		if sibling.Version != recorded {
 			continue
 		}
 
