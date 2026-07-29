@@ -109,6 +109,60 @@ func TestSetModLinkMethod_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
+// TestSetModVersion guards the epic98 audit's Finding 1 (Critical):
+// SaveInstalledMod's full-row upsert always replaces installed_mod_files
+// via replaceModFileIDsTx (DELETE + re-INSERT with only file_id, no
+// checksum column), so ANY SaveInstalledMod call - even one that only
+// intends to correct the version string, with FileIDs completely unchanged
+// - silently wipes every stored checksum for that mod. SetModVersion is a
+// plain UPDATE of the version column alone: no file-row replacement (so
+// stored checksums survive), and no PreviousVersion/PreviousFileIDs shift
+// either (unlike UpdateModVersion, which is for real version bumps that
+// SHOULD be rollback-able - a version-record *correction* isn't one).
+func TestSetModVersion(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "1.5",
+			GameID:   "skyrim-se",
+		},
+		ProfileName: "default",
+		Enabled:     true,
+		FileIDs:     []string{"111"},
+	}
+	require.NoError(t, database.SaveInstalledMod(mod))
+	require.NoError(t, database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "111", "deadbeef"))
+
+	err = database.SetModVersion("nexusmods", "12345", "skyrim-se", "default", "1.0")
+	require.NoError(t, err)
+
+	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", retrieved.Version, "version must be corrected")
+	assert.Empty(t, retrieved.PreviousVersion, "SetModVersion must not shift PreviousVersion - unlike UpdateModVersion, this is a correction, not an update with a rollback path")
+	assert.Equal(t, []string{"111"}, retrieved.FileIDs, "FileIDs must be untouched")
+
+	files, err := database.GetFilesWithChecksums("skyrim-se", "default")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "deadbeef", files[0].Checksum, "SetModVersion must NOT wipe the stored checksum - unlike SaveInstalledMod's full-row upsert, which replaces installed_mod_files and loses it")
+}
+
+func TestSetModVersion_NotFound(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+	err = database.SetModVersion("nexusmods", "nonexistent", "skyrim-se", "default", "1.0")
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+}
+
 func TestSetModFileIDs(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
