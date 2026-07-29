@@ -3342,9 +3342,6 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	if err != nil {
 		return result, fmt.Errorf("fetching new version: %w", err)
 	}
-	if newMod.Version != newVersion {
-		newMod.Version = newVersion
-	}
 
 	files, err := s.GetModFiles(ctx, mod.SourceID, newMod)
 	if err != nil {
@@ -3369,6 +3366,15 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	if err != nil {
 		return result, fmt.Errorf("selecting files to download: %w", err)
 	}
+
+	// #96/#94: record what is actually being installed, not the mod-level
+	// NewVersion - update-apply was the last recording flow stamping the
+	// mod-level string verbatim, which made verify's version-record check
+	// flag freshly-updated mods whose file version differs from the mod
+	// version. effectiveVersion keys the cache (via newMod.Version), the DB
+	// row, and the profile ref below, matching every install flow.
+	effectiveVersion := domain.EffectiveInstalledVersion(newVersion, filesToDownload)
+	newMod.Version = effectiveVersion
 
 	var downloadedFileIDs []string
 	for _, file := range filesToDownload {
@@ -3445,7 +3451,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		emit(evt)
 	}
 
-	if err := s.ApplyModUpdate(mod.SourceID, mod.ID, game.ID, profileName, newVersion, downloadedFileIDs); err != nil {
+	if err := s.ApplyModUpdate(mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
 		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
@@ -3459,14 +3465,14 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	pm := s.NewProfileManager()
-	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: newVersion, FileIDs: downloadedFileIDs}
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
 		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName)      //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
 
-	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, newVersion))
+	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, effectiveVersion))
 	return result, nil
 }
 
