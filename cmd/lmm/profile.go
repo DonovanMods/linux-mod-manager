@@ -1201,21 +1201,31 @@ func anyFileHasVersion(files []domain.DownloadableFile) bool {
 // falls back to the primary file. Otherwise: stored IDs win only while their
 // effective version agrees with the record; drift and gone-IDs heal by
 // exact-match resolution to the SAME version (never latest); unresolvable
-// targets are hard per-mod errors naming the version. Returns an error if
-// files is empty (avoids returning a slice containing nil).
+// targets are hard per-mod errors naming the version - the "gone upstream"
+// #95 wording only when the stored IDs themselves match nothing at all
+// upstream, versus a distinct errVersionUnavailable wrap when at least one
+// stored ID IS still present upstream but the recorded version isn't (the
+// classic pre-#94 mis-stamped row, which isn't a "gone" file - it's a wrong
+// version record on a file that's still there).
 func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string, version string) ([]*domain.DownloadableFile, error) {
 	if version == "" || !anyFileHasVersion(files) {
 		return selectFilesToDownloadLegacy(files, storedFileIDs)
 	}
-	if len(files) == 0 {
-		return nil, errNoDownloadableFiles
-	}
+	var idSet map[string]bool
 	if len(storedFileIDs) > 0 {
-		if found := findFilesByIDs(files, storedFileIDs); len(found) > 0 {
-			if domain.EffectiveInstalledVersion(version, found) == version {
-				return found, nil
-			}
+		idSet = make(map[string]bool, len(storedFileIDs))
+		for _, id := range storedFileIDs {
+			idSet[id] = true
 		}
+	}
+	var found []*domain.DownloadableFile
+	for i := range files {
+		if idSet[files[i].ID] {
+			found = append(found, &files[i])
+		}
+	}
+	if len(found) > 0 && domain.EffectiveInstalledVersion(version, found) == version {
+		return found, nil
 	}
 	var matches []*domain.DownloadableFile
 	for i := range files {
@@ -1225,15 +1235,20 @@ func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []stri
 	}
 	if len(matches) == 0 {
 		if len(storedFileIDs) > 0 {
+			if len(found) > 0 {
+				// At least one stored ID is still present upstream - the
+				// files aren't gone, only the recorded version doesn't
+				// match anything. Distinct from the #95 "gone" wording
+				// below: this is a version-record problem, not a
+				// missing-file problem, so it points at verify/update
+				// instead of reinstall.
+				return nil, fmt.Errorf("%w: installed file(s) (ID(s): %s) do not match recorded version %q, which is not available upstream - run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version", errVersionUnavailable, strings.Join(storedFileIDs, ", "), version)
+			}
 			return nil, fmt.Errorf("%w (file ID(s): %s; version %q not available) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "), version)
 		}
 		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", errVersionUnavailable, version, strings.Join(availableVersions(files), ", "))
 	}
 	if len(storedFileIDs) > 0 {
-		idSet := make(map[string]bool, len(storedFileIDs))
-		for _, id := range storedFileIDs {
-			idSet[id] = true
-		}
 		var stored []*domain.DownloadableFile
 		for _, m := range matches {
 			if idSet[m.ID] {

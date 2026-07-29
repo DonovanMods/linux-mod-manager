@@ -3123,6 +3123,143 @@ func TestApplyProfileSwitch_VersionlessSource_KeepsLegacyBehavior(t *testing.T) 
 	assert.Error(t, err)
 }
 
+// TestApplyProfileSwitch_StoredIDsBothAgree_FastPathReturnsWholeSet is the
+// #96 fix-round-1 regression guard for rule 2's fast path (previously
+// untested end to end): when ALL of a mod's stored FileIDs are found
+// upstream AND their combined EffectiveInstalledVersion agrees with the
+// recorded version, selectVersionedDeployFiles must return the WHOLE stored
+// set as-is - not re-resolve to matches(version), which would be the
+// narrower set. Here ref.Version is "1.5" (the primary file10's own
+// version), and the stored pair is [file10 (1.5, primary), file9 (1.0)]:
+// EffectiveInstalledVersion picks file10's version ("1.5", since it's
+// primary) as representative, agreeing with the record, so the fast path
+// fires and keeps file9 riding along even though file9's own version isn't
+// 1.5. Rule 3 (stored ∩ matches) would instead compute matches("1.5") =
+// [file10] only and keep just that one file - the DIFFERENT, narrower
+// outcome that distinguishes "fast path took over" from "matches-based
+// resolution ran instead".
+func TestApplyProfileSwitch_StoredIDsBothAgree_FastPathReturnsWholeSet(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.5", FileIDs: []string{"10", "9"}}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"10", "9"}, installed.FileIDs,
+		"the fast path must keep the whole stored set, not re-resolve to the narrower matches(\"1.5\") set")
+}
+
+// TestApplyProfileSwitch_VersionMatchesNothing_NoStoredIDs_ErrVersionNotFoundWrap
+// is the #96 fix-round-1 regression guard for rule 5 (previously untested):
+// no stored FileIDs at all, and the recorded version matches nothing
+// upstream. Must fail naming the version and pointing at editing the
+// profile or reinstalling - not the #95 "gone upstream"/stored-IDs wording,
+// which doesn't apply when there were never any stored IDs to begin with.
+func TestApplyProfileSwitch_VersionMatchesNothing_NoStoredIDs_ErrVersionNotFoundWrap(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "9.9"}},
+	}
+
+	var events []core.DeployProgress
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 0, result.Installed)
+
+	var failEvt *core.DeployProgress
+	for i := range events {
+		if events[i].Phase == core.SwitchInstallError && events[i].ModName == "Mod One" {
+			failEvt = &events[i]
+		}
+	}
+	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
+	assert.Contains(t, failEvt.Detail, "is not available upstream")
+	assert.Contains(t, failEvt.Detail, "edit the profile's version or reinstall")
+}
+
+// TestApplyProfileSwitch_StoredIDPresentButVersionGone_NewErrorWording is
+// the #96 fix-round-1 regression guard for the FINDING 2 split: when at
+// least one stored FileID IS still present upstream but the recorded
+// version doesn't match anything, that's a wrong version RECORD on a file
+// that's still there - not a gone file - so it must get the distinct
+// ErrVersionNotFound wrap (pointing at 'lmm verify --fix'/'lmm update'),
+// never the #95 "no longer available upstream" wording (which implies the
+// file itself is gone, misleading here). file10 (stored) resolves upstream
+// fine; only the recorded version ("9.9") is bogus.
+func TestApplyProfileSwitch_StoredIDPresentButVersionGone_NewErrorWording(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "9.9", FileIDs: []string{"10"}}},
+	}
+
+	var events []core.DeployProgress
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 0, result.Installed)
+
+	var failEvt *core.DeployProgress
+	for i := range events {
+		if events[i].Phase == core.SwitchInstallError && events[i].ModName == "Mod One" {
+			failEvt = &events[i]
+		}
+	}
+	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
+	assert.NotContains(t, failEvt.Detail, "no longer available upstream", "a present-upstream stored ID must not get the gone-file wording")
+	assert.Contains(t, failEvt.Detail, `installed file(s) (ID(s): 10) do not match recorded version "9.9"`)
+	assert.Contains(t, failEvt.Detail, "run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version")
+}
+
 // TestService_ApplyProfileSwitch_InstallLoop_SavesWithNormalizedGameID
 // regression-guards the P3 orphaning bug class (see profile_gameid_test.go's
 // CLI-level counterpart): Service.GetMod may stamp a source-mapped GameID

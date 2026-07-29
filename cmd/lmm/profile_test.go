@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -486,9 +487,16 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 // hard-fails naming the version, and an empty version preserves the exact
 // pre-#96 behavior).
 func TestSelectFilesToDownload_VersionAuthoritative(t *testing.T) {
+	// file11 (another 1.0 file) and file12 (a non-primary file at an
+	// unrelated version, 2.0) extend the base fixture to cover the fast
+	// path and the stored-intersect-matches precedence (rule 3) without
+	// disturbing any of the original four assertions below - each is
+	// re-verified against the larger fixture inline.
 	files := []domain.DownloadableFile{
 		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN"},
 		{ID: "9", Version: "1.0", Category: "ARCHIVED"},
+		{ID: "11", Version: "1.0", Category: "ARCHIVED"},
+		{ID: "12", Version: "2.0", Category: "OPTIONAL"},
 	}
 
 	// Drift: stored ID exists upstream but is the wrong version - version wins.
@@ -502,7 +510,8 @@ func TestSelectFilesToDownload_VersionAuthoritative(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "9", got[0].ID)
 
-	// Unresolvable: extended #95 wording.
+	// Unresolvable, no stored ID present upstream at all: extended #95
+	// wording (rule 4a).
 	_, err = selectFilesToDownload(files, []string{"999"}, "0.5")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `version "0.5" not available`)
@@ -511,6 +520,50 @@ func TestSelectFilesToDownload_VersionAuthoritative(t *testing.T) {
 	got, err = selectFilesToDownload(files, nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, "10", got[0].ID)
+
+	// Rule 2 (fast path): both stored IDs are returned as-is, without
+	// re-resolution, once their combined effective version agrees with the
+	// record - file9 (1.0) is the representative (neither stored file is
+	// primary, so the first one carrying a version wins), and file12 (2.0,
+	// an unrelated companion file's own version) rides along BOTH. This is
+	// what distinguishes the fast path from rule 3's stored-intersect-
+	// matches, which would keep only file9 (file12 isn't a 1.0 match).
+	got, err = selectFilesToDownload(files, []string{"9", "12"}, "1.0")
+	require.NoError(t, err)
+	require.Len(t, got, 2, "fast path must return the whole stored set, not just the version-matching subset")
+	gotIDs := []string{got[0].ID, got[1].ID}
+	assert.ElementsMatch(t, []string{"9", "12"}, gotIDs)
+
+	// Rule 3 (stored ∩ matches): stored IDs 10 and 9 disagree in effective
+	// version with the record (file10, the primary, is 1.5) so the fast
+	// path does not fire; among the files that DO match "1.0" (9 and 11),
+	// only the one that was ALSO a stored ID (9) is kept - file11 is
+	// excluded even though it's a 1.0 match, because it was never a stored
+	// ID for this mod.
+	got, err = selectFilesToDownload(files, []string{"10", "9"}, "1.0")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "9", got[0].ID)
+
+	// Rule 5 (ErrVersionNotFound wrap): no stored IDs at all, and the
+	// requested version matches nothing upstream.
+	_, err = selectFilesToDownload(files, nil, "3.0")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errVersionUnavailable))
+	assert.Contains(t, err.Error(), "edit the profile's version or reinstall")
+
+	// Rule 4b (new split, #96 fix round 1): a stored ID (12) IS still
+	// present upstream, but the recorded version (3.0) matches nothing -
+	// this is a wrong version record on a file that's still there, not a
+	// gone file, so it must NOT get the #95 "no longer available upstream"
+	// wording; it gets a distinct ErrVersionNotFound wrap pointing at
+	// verify/update instead of reinstall.
+	_, err = selectFilesToDownload(files, []string{"12"}, "3.0")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errVersionUnavailable))
+	assert.NotContains(t, err.Error(), "no longer available upstream", "a present-upstream stored ID must not get the gone-file wording")
+	assert.Contains(t, err.Error(), `installed file(s) (ID(s): 12) do not match recorded version "3.0"`)
+	assert.Contains(t, err.Error(), "run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version")
 }
 
 // TestDoProfileApply_StampsSelectedFileVersion guards issue #94 for
