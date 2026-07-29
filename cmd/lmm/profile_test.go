@@ -515,3 +515,61 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the profile ref's version")
 }
+
+// TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution guards
+// #95 for doProfileApply's "install missing mods" loop: when a profile mod's
+// stored FileIDs no longer match anything the source currently lists,
+// selectFilesToDownload must fail the mod with the upstream-gone error
+// instead of silently substituting the primary file (mirrors
+// internal/core's TestService_DeployProfile_StoredFileIDsGone_
+// SkipsModWithClearError from task B1). A second mod with valid FileIDs
+// proves the toInstall loop continues past the failure rather than
+// aborting.
+func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+
+	src := newFakeInstallSource("test-src")
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"test-src": game.ID}
+
+	// mod1: stored FileIDs reference "stale-id", which the source no longer
+	// lists (only "main" is offered). No download is registered for "main"
+	// either - if the old fallback-to-primary behavior fired, the download
+	// itself would fail with a distinct (download) error, not the
+	// upstream-gone message this test asserts on.
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Stale Mod", Version: "1.0", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+		})
+
+	// mod2: stored FileIDs match what the source lists - must install normally.
+	src.AddMod(&domain.Mod{ID: "mod2", SourceID: "test-src", Name: "Good Mod", Version: "1.0", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main2", Name: "Main File", FileName: "mod2.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+		})
+	src.AddDownload("main2", []byte("plugin content"))
+
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0", FileIDs: []string{"stale-id"}}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod2", Version: "1.0", FileIDs: []string{"main2"}}))
+
+	origYes := profileApplyYes
+	profileApplyYes = true
+	t.Cleanup(func() { profileApplyYes = origYes })
+
+	out := captureStdout(t, func() error {
+		return doProfileApply(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "no longer available upstream", "mod1's stale FileIDs must fail with the upstream-gone error, not a silent fallback")
+	assert.Contains(t, out, "stale-id", "the error must name the stale file ID")
+	assert.NotContains(t, out, "using primary", "the old silent-fallback warning must not print")
+
+	_, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	assert.Error(t, err, "mod1 must not be installed - no substitution should occur")
+
+	installed2, err := svc.GetInstalledMod("test-src", "mod2", game.ID, "default")
+	require.NoError(t, err, "mod2 must still install - the toInstall loop must continue past mod1's failure")
+	assert.Equal(t, "1.0", installed2.Version)
+}
