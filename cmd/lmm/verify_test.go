@@ -974,6 +974,14 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_WarnsInTextM
 	assert.Contains(t, out, "Warning", "an UpsertMod failure for a sibling must be surfaced, not swallowed")
 	assert.Contains(t, out, "second", "the warning must identify which sibling profile failed")
 
+	// PR #128 Copilot review round 4: a surfaced sibling failure must also
+	// move the needle on the actual warnings COUNT, not just print a line -
+	// the primary row's own repair succeeded (issues drops to 0), but the
+	// summary must not claim a clean "All files verified OK." while a
+	// sibling repair genuinely failed.
+	assert.Contains(t, out, "1 warning(s)", "a failed sibling repair must be counted as a warning in the summary")
+	assert.NotContains(t, out, "All files verified OK.", "the summary must not claim a clean run while a sibling repair failed")
+
 	thirdMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "third")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", thirdMod.Version, "a sibling that was never a candidate must not be touched by another sibling's failure")
@@ -1009,6 +1017,12 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_JSONNotesFai
 		}
 	}
 	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+
+	// PR #128 Copilot review round 4: the JSON "warnings" field must
+	// reflect the failed sibling repair - not just the note text - so a
+	// --json caller can detect the problem without string-matching "FAILED"
+	// inside a human-readable note.
+	assert.Equal(t, 1, result.Warnings, "the failed sibling repair must be counted in the JSON warnings field")
 }
 
 // TestDoVerify_Fix_VersionMismatch_SiblingProfile_ListFails_WarnsOnce guards
@@ -1038,6 +1052,10 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_ListFails_WarnsOnce(t *test
 		return doVerify(cmd, svc, game, nil)
 	})
 	assert.Equal(t, 1, strings.Count(out, "Warning"), "the pm.List failure must be surfaced exactly once, not once per (nonexistent) sibling")
+
+	// PR #128 Copilot review round 4: a pm.List failure counts as exactly
+	// one warning in the actual counter, not just in the printed text.
+	assert.Contains(t, out, "1 warning(s)", "the pm.List failure must count as exactly one warning")
 
 	// The primary repair (by-path, unaffected by the missing read bit on
 	// the shared directory) must still have gone through.

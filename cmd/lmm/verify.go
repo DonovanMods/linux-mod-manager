@@ -278,7 +278,14 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			}
 			issues++
 			if verifyFix && mod.SourceID != domain.SourceLocal {
-				note, repairErr := repairModVersion(cmd, svc, game, profile, mod, effective)
+				note, siblingFailures, repairErr := repairModVersion(cmd, svc, game, profile, mod, effective)
+				// Sibling failures are warnings regardless of how the
+				// PRIMARY row's own repair turned out - a failed sibling
+				// repair is real, surfaced work left undone, and the
+				// warnings counter (fed into both the --json output and the
+				// text summary line below) must reflect it either way, not
+				// just when the primary repair also happened to succeed.
+				warnings += siblingFailures
 				if repairErr != nil {
 					if jsonOutput {
 						// The PRIMARY row itself wasn't fixed (status/issues
@@ -424,6 +431,28 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	return nil
 }
 
+// sourceMappedMod returns a copy of mod with GameID translated through the
+// game's per-source ID mapping (game.SourceIDs) - the same rule
+// Service.GetMod already applies (internal/core/service.go) before calling
+// into a source. Installed rows persist the LMM game ID (see
+// setupDoVerifyVersionTest and every InstalledMod fixture: GameID:
+// game.ID), but Service.GetModFiles does NOT translate it itself - unlike
+// GetMod, it forwards straight to the source. Sources like NexusMods
+// address games by their own domain (e.g. "skyrimspecialedition"), so any
+// direct svc.GetModFiles call driven off an installed row's mod.Mod (as
+// opposed to one already sourced from the source itself, e.g. a fresh
+// search result) needs this translation first or it silently queries the
+// wrong game. An empty mapping value means "this source applies to any
+// game" (e.g. directory sources: `donovan-mods: ""`) and must not blank
+// out the LMM ID - matches Service.GetMod's `ok && id != ""` guard exactly.
+func sourceMappedMod(game *domain.Game, mod *domain.Mod) *domain.Mod {
+	mapped := *mod
+	if id, ok := game.SourceIDs[mod.SourceID]; ok && id != "" {
+		mapped.GameID = id
+	}
+	return &mapped
+}
+
 // repairModVersion repairs a VERSION MISMATCH row for --fix (issue #94):
 // the recorded Version doesn't match what the stored file ID(s) actually
 // are upstream (effective), so the cache entry, DB row, and profile record
@@ -462,6 +491,13 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 //     failed - the primary's re-link outcome has no bearing on whether
 //     siblings were orphaned by the same rename.
 //
+// siblingFailures is the count of per-sibling failures from step 5 (a
+// pm.List failure counts as one), structurally propagated - not
+// string-matched out of note - so the caller can add it straight into its
+// own warnings counter. It's independent of err: siblingFailures can be
+// non-zero whether or not the PRIMARY row's own repair (this function's
+// err) succeeded, since a sibling's fate has no bearing on the primary's.
+//
 // mod is mutated in place (Version set to effective) only once the DB save
 // that carries it has actually succeeded, so a failure partway through
 // never leaves the in-memory row claiming a fix that didn't happen. If
@@ -474,29 +510,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 // isn't there. Clearing it at least keeps that one field honest so other
 // surfaces (status displays, a future `lmm deploy`, which redeploys every
 // enabled mod regardless of its recorded Deployed value) aren't misled.
-// sourceMappedMod returns a copy of mod with GameID translated through the
-// game's per-source ID mapping (game.SourceIDs) - the same rule
-// Service.GetMod already applies (internal/core/service.go) before calling
-// into a source. Installed rows persist the LMM game ID (see
-// setupDoVerifyVersionTest and every InstalledMod fixture: GameID:
-// game.ID), but Service.GetModFiles does NOT translate it itself - unlike
-// GetMod, it forwards straight to the source. Sources like NexusMods
-// address games by their own domain (e.g. "skyrimspecialedition"), so any
-// direct svc.GetModFiles call driven off an installed row's mod.Mod (as
-// opposed to one already sourced from the source itself, e.g. a fresh
-// search result) needs this translation first or it silently queries the
-// wrong game. An empty mapping value means "this source applies to any
-// game" (e.g. directory sources: `donovan-mods: ""`) and must not blank
-// out the LMM ID - matches Service.GetMod's `ok && id != ""` guard exactly.
-func sourceMappedMod(game *domain.Game, mod *domain.Mod) *domain.Mod {
-	mapped := *mod
-	if id, ok := game.SourceIDs[mod.SourceID]; ok && id != "" {
-		mapped.GameID = id
-	}
-	return &mapped
-}
-
-func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, effective string) (note string, err error) {
+func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, effective string) (note string, siblingFailures int, err error) {
 	recorded := mod.Version
 	gameCache := svc.GetGameCache(game)
 	oldPath := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, recorded)
@@ -507,7 +521,7 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 		if _, statErr := os.Stat(newPath); statErr == nil {
 			note = fmt.Sprintf("cache entry for %s already exists; left %s in place", effective, recorded)
 		} else if renameErr := os.Rename(oldPath, newPath); renameErr != nil {
-			return "", fmt.Errorf("renaming cache entry: %w", renameErr)
+			return "", 0, fmt.Errorf("renaming cache entry: %w", renameErr)
 		} else {
 			renamed = true
 		}
@@ -516,7 +530,7 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 	updated := *mod
 	updated.Version = effective
 	if err := svc.SaveInstalledMod(&updated); err != nil {
-		return note, fmt.Errorf("saving installed mod: %w", err)
+		return note, 0, fmt.Errorf("saving installed mod: %w", err)
 	}
 	*mod = updated
 
@@ -527,7 +541,7 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 		Version:  effective,
 		FileIDs:  mod.FileIDs,
 	}); err != nil {
-		return note, fmt.Errorf("updating profile record: %w", err)
+		return note, 0, fmt.Errorf("updating profile record: %w", err)
 	}
 
 	// A blocked rename (note != "") leaves the existing deployment pointed
@@ -554,14 +568,14 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 	// renamed == true (the rename either happened or was blocked, never
 	// both) - a plain assignment is enough, no concatenation needed.
 	if renamed {
-		note = repairSiblingProfiles(cmd, svc, game, profile, mod, recorded, effective)
+		note, siblingFailures = repairSiblingProfiles(cmd, svc, game, profile, mod, recorded, effective)
 	}
 
 	if relinkErr != nil {
-		return note, relinkErr
+		return note, siblingFailures, relinkErr
 	}
 
-	return note, nil
+	return note, siblingFailures, nil
 }
 
 // repairSiblingProfiles corrects every OTHER profile's installed_mods row
@@ -609,8 +623,13 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 // Returns a human-readable summary of which profiles were repaired and/or
 // failed (empty if neither), for the caller to fold into repairModVersion's
 // own note - the --json contract's vehicle for surfacing this, per the
-// primary row's existing "note" field.
-func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.Game, currentProfile string, mod *domain.InstalledMod, recorded, effective string) string {
+// primary row's existing "note" field - and, structurally (not by
+// string-matching the note text), the count of per-sibling failures, so
+// the caller can add it straight into its own warnings counter: a failed
+// sibling repair is real, surfaced work left undone and must count as a
+// warning regardless of how the PRIMARY row's own repair turned out. A
+// pm.List failure counts as one.
+func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.Game, currentProfile string, mod *domain.InstalledMod, recorded, effective string) (note string, failedCount int) {
 	pm := getProfileManager(svc)
 	profiles, err := pm.List(game.ID)
 	if err != nil {
@@ -618,7 +637,7 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		if !jsonOutput {
 			fmt.Printf("  Warning: %s\n", msg)
 		}
-		return "sibling repair check FAILED: " + msg
+		return "sibling repair check FAILED: " + msg, 1
 	}
 
 	var repaired, failed []string
@@ -703,7 +722,7 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 	if len(failed) > 0 {
 		parts = append(parts, fmt.Sprintf("repair FAILED in profile(s): %s", strings.Join(failed, ", ")))
 	}
-	return strings.Join(parts, "; ")
+	return strings.Join(parts, "; "), len(failed)
 }
 
 // redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
