@@ -397,13 +397,13 @@ func TestSaveProfile_PreservesLockedMarker(t *testing.T) {
 // TestLoadProfile_PreservesLockedMarker guards that Locked is read correctly from YAML.
 func TestLoadProfile_PreservesLockedMarker(t *testing.T) {
 	tests := map[string]struct {
-		yaml          string
-		wantLocked    bool
-		wantVersion   string
+		yaml        string
+		wantLocked  bool
+		wantVersion string
 	}{
-		"absent locked key":    {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n", false, "1.0.0"},
-		"locked true":          {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n    locked: true\n", true, "1.0.0"},
-		"locked false":         {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n    locked: false\n", false, "1.0.0"},
+		"absent locked key": {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n", false, "1.0.0"},
+		"locked true":       {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n    locked: true\n", true, "1.0.0"},
+		"locked false":      {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n    locked: false\n", false, "1.0.0"},
 	}
 
 	for label, tc := range tests {
@@ -487,4 +487,3 @@ func TestImportProfile_PreservesLockedMarker(t *testing.T) {
 	require.Len(t, imported.Mods, 1)
 	assert.True(t, imported.Mods[0].Locked, "locked marker should be preserved on import")
 }
-
