@@ -61,4 +61,6 @@ coverage.html
 .envrc
 
 # Other files
-TODO.local.md
+*.local.md
+docs/plans
+!docs/plans/archive
