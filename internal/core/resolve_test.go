@@ -1,0 +1,98 @@
+package core_test
+
+import (
+	"errors"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestResolveVersionFiles(t *testing.T) {
+	f := func(id, version, category string, primary bool) domain.DownloadableFile {
+		return domain.DownloadableFile{ID: id, Version: version, Category: category, IsPrimary: primary}
+	}
+
+	tests := []struct {
+		name    string
+		files   []domain.DownloadableFile
+		version string
+		wantIDs []string
+		wantErr error // sentinel matched with errors.Is; nil = success
+	}{
+		{
+			name:    "exact match returns the matching file",
+			files:   []domain.DownloadableFile{f("10", "1.5", "MAIN", true), f("9", "1.0", "OLD_VERSION", false)},
+			version: "1.0",
+			wantIDs: []string{"9"},
+		},
+		{
+			name:    "archived files are eligible - no filtering",
+			files:   []domain.DownloadableFile{f("10", "1.5", "MAIN", true), f("9", "1.0", "ARCHIVED", false)},
+			version: "1.0",
+			wantIDs: []string{"9"},
+		},
+		{
+			name: "multiple files of one version all returned, category-sorted MAIN first",
+			files: []domain.DownloadableFile{
+				f("11", "1.0", "OPTIONAL", false),
+				f("10", "1.0", "MAIN", true),
+				f("12", "1.5", "MAIN", false),
+			},
+			version: "1.0",
+			wantIDs: []string{"10", "11"},
+		},
+		{
+			name:    "no match is ErrVersionNotFound",
+			files:   []domain.DownloadableFile{f("10", "1.5", "MAIN", true), f("9", "1.0", "MAIN", false)},
+			version: "2.0",
+			wantErr: core.ErrVersionNotFound,
+		},
+		{
+			name:    "version-less list is ErrNotSupported",
+			files:   []domain.DownloadableFile{f("main", "", "", true)},
+			version: "1.0",
+			wantErr: source.ErrNotSupported,
+		},
+		{
+			name:    "empty list is ErrNotSupported",
+			files:   nil,
+			version: "1.0",
+			wantErr: source.ErrNotSupported,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := core.ResolveVersionFiles("src", tt.files, tt.version)
+			if tt.wantErr != nil {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			ids := make([]string, len(got))
+			for i, g := range got {
+				ids[i] = g.ID
+			}
+			assert.Equal(t, tt.wantIDs, ids)
+		})
+	}
+}
+
+func TestResolveVersionFiles_NotFoundListsAvailableVersions(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "10", Version: "1.5"},
+		{ID: "9", Version: "1.0"},
+		{ID: "8", Version: "1.5"}, // duplicate version - listed once
+		{ID: "7"},                 // version-less file - not listed
+	}
+	_, err := core.ResolveVersionFiles("src", files, "2.0")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, core.ErrVersionNotFound))
+	assert.Contains(t, err.Error(), `version "2.0"`)
+	assert.Contains(t, err.Error(), "available: 1.5, 1.0")
+}
