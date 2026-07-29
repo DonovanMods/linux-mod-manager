@@ -123,17 +123,16 @@ func TestInstallCmd_GameNotFound(t *testing.T) {
 	installModID = ""
 }
 
-// TestInstallCmd_VersionFlag_RejectedBeforeGameResolution guards the #93
-// interim fix (EPIC #98's decided option 2 - reject clearly): --version must
-// error out at runInstall's own entry, before withGameService ever resolves
-// a game or opens a service - proven here by leaving gameID unset (which
-// would otherwise fail with "no game specified", see TestInstallCmd_NoGame).
-// configDir/dataDir are still set to fresh t.TempDir()s (isolation from
-// other tests, not part of the ordering proof); if runInstall reached
-// withGameService, the unset gameID would surface as that different error
-// instead. Real version-specific installs are #96/#97's job; this guard
-// only stops the flag from silently lying to users in the meantime.
-func TestInstallCmd_VersionFlag_RejectedBeforeGameResolution(t *testing.T) {
+// TestInstallCmd_VersionFlag_NoLongerRejected guards the #96 removal of the
+// #93 interim guard (installVersionGuard): --version must now proceed past
+// its own validation into normal game resolution, rather than being
+// rejected up front with "not yet supported". gameID is left unset so the
+// only possible error here is game resolution's own ("no game specified"),
+// proving the old guard is gone. Real version->file resolution is exercised
+// against doInstall directly, below (setupDoInstallTest gives it a
+// configured game/source, which this command-level test deliberately does
+// not).
+func TestInstallCmd_VersionFlag_NoLongerRejected(t *testing.T) {
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 	gameID = ""
@@ -151,10 +150,10 @@ func TestInstallCmd_VersionFlag_RejectedBeforeGameResolution(t *testing.T) {
 	err := cmd.Execute()
 	installVersion = "" // reset package-level flag state for later tests
 
+	// The flag now proceeds past its own validation into normal game
+	// resolution (which fails here because no game is configured).
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--version")
-	assert.Contains(t, err.Error(), "not yet supported")
-	assert.NotContains(t, err.Error(), "no game specified")
+	assert.NotContains(t, err.Error(), "not yet supported")
 }
 
 // TestFormatSize tests the formatSize function
@@ -1036,6 +1035,78 @@ func TestDoInstall_ShowArchivedFlag_ThreadsThroughRefit(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []string{"old"}, installed.FileIDs)
 	})
+}
+
+// TestDoInstall_VersionFlag_InstallsRequestedVersion is #96's core proof:
+// --version resolves against the mod's RAW file list (archived included -
+// a version pin usually names an archived file, unlike the default flow
+// which hides them) and the resolved match becomes the selection pool, so
+// the archived 1.0 file installs even though --show-archived was never
+// passed. The recorded version must be the requested one, not the mod's
+// latest (#94 invariant).
+func TestDoInstall_VersionFlag_InstallsRequestedVersion(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: fake.id, GameID: game.ID, Name: "Mod One", Version: "1.5", Author: "Someone"}
+	fake.AddMod(mod, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old", FileName: "mod1.esp", Version: "1.0", Category: "ARCHIVED"},
+	})
+	fake.AddDownload("9", []byte("archived content"))
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	installYes = true
+	t.Cleanup(func() { installModID, installVersion = "", ""; installYes = false })
+
+	require.NoError(t, doInstall(context.Background(), svc, game, nil))
+
+	im, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", im.Version, "recorded version must be the requested one (#94 invariant)")
+	assert.Equal(t, []string{"9"}, im.FileIDs)
+}
+
+// TestDoInstall_VersionFlag_UnknownVersionListsAvailable proves an unknown
+// --version surfaces core.ErrVersionNotFound's message, naming both the
+// requested version and the versions that ARE available.
+func TestDoInstall_VersionFlag_UnknownVersionListsAvailable(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: fake.id, GameID: game.ID, Name: "Mod One", Version: "1.5", Author: "Someone"}
+	fake.AddMod(mod, []domain.DownloadableFile{
+		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN", FileName: "mod1.zip", Name: "Main"},
+	})
+
+	installModID = "mod1"
+	installVersion = "2.0"
+	installYes = true
+	t.Cleanup(func() { installModID, installVersion = "", ""; installYes = false })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `version "2.0"`)
+	assert.Contains(t, err.Error(), "available: 1.5")
+}
+
+// TestDoInstall_VersionFlag_FileOutsideVersionErrors proves --file is scoped
+// to the --version-resolved selection pool, not the mod's full file list:
+// naming a file ID that belongs to a different version yields
+// selectInstallFiles' existing "file ID %s not found" wording.
+func TestDoInstall_VersionFlag_FileOutsideVersionErrors(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: fake.id, GameID: game.ID, Name: "Mod One", Version: "1.5", Author: "Someone"}
+	fake.AddMod(mod, []domain.DownloadableFile{
+		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN", FileName: "mod1.zip", Name: "Main"},
+		{ID: "9", Version: "1.0", Category: "ARCHIVED", FileName: "mod1.esp", Name: "Old"},
+	})
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	installFileID = "10" // belongs to 1.5, not 1.0
+	t.Cleanup(func() { installModID, installVersion, installFileID = "", "", "" })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file ID 10 not found") // selectInstallFiles' existing wording, now scoped to the version's files
 }
 
 // TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError guards

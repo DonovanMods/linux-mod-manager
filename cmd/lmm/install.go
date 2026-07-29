@@ -307,7 +307,7 @@ Examples:
 func init() {
 	installCmd.Flags().StringVarP(&installSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured, -y picks the first alphabetically)")
 	installCmd.Flags().StringVarP(&installProfile, "profile", "p", "", "profile to install to (default: active profile)")
-	installCmd.Flags().StringVar(&installVersion, "version", "", "not yet supported; use --file to pick a specific file instead (latest is installed otherwise)")
+	installCmd.Flags().StringVar(&installVersion, "version", "", "specific version to install (default: latest; archived files are searched automatically)")
 	installCmd.Flags().StringVar(&installModID, "id", "", "mod ID (skips search)")
 	installCmd.Flags().StringVar(&installFileID, "file", "", "file ID(s), comma-separated (skips file selection)")
 	installCmd.Flags().BoolVarP(&installYes, "yes", "y", false, "auto-select first/primary option (no prompts)")
@@ -360,29 +360,7 @@ func looksOpaqueFileName(fileName string) bool {
 	return true
 }
 
-// installVersionGuard is an interim honesty fix per #93/#104 (EPIC #98's
-// decided option 2: reject clearly): installVersion previously parsed and
-// was silently ignored - lmm install --version 1.2.3 installed the latest
-// while claiming otherwise. Placed at runInstall's own entry, before
-// withGameService resolves a game or opens a service, so the flag is
-// rejected before any plan/network work happens. Remove this guard once #96
-// wires the real version->file resolver.
-func installVersionGuard() error {
-	if installVersion != "" {
-		// User-facing wording points at the workaround that exists today
-		// (--file picks an exact file, --show-archived surfaces old
-		// versions) rather than internal issue IDs — those live in this
-		// guard's doc comment for maintainers, not in the error.
-		return fmt.Errorf("--version is not yet supported: to install a specific version today, pick its file with --file (add --show-archived to list older versions); omit --version to install the latest")
-	}
-	return nil
-}
-
 func runInstall(cmd *cobra.Command, args []string) error {
-	if err := installVersionGuard(); err != nil {
-		return err
-	}
-
 	// Either query or --id is required
 	if len(args) == 0 && installModID == "" {
 		return fmt.Errorf("either a search query or --id is required")
@@ -485,6 +463,8 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// installModsWithDeps(...)"), which never reached any of that either.
 	// See doInstallBatch's own doc comment and task-2-report.md's "Fix wave
 	// 1" entry for the full review trace this restores.
+	// --version applies to the named mod only; dependencies install at
+	// latest (#96 decision 6).
 	if len(plan.Dependencies) > 0 {
 		return doInstallBatch(ctx, service, game, plan, profileName)
 	}
@@ -498,7 +478,17 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	if err != nil {
 		return fmt.Errorf("failed to get mod files: %w", err)
 	}
-	files = filterAndSortFiles(files, installShowArchived)
+	if installVersion != "" {
+		// #96: resolve --version against the RAW list (archived included -
+		// a version pin usually names an archived file). The matches become
+		// the selection pool for --file / --yes / the interactive prompt.
+		files, err = core.ResolveVersionFiles(installSource, files, installVersion)
+		if err != nil {
+			return err
+		}
+	} else {
+		files = filterAndSortFiles(files, installShowArchived)
+	}
 	if len(files) == 0 {
 		return fmt.Errorf("no downloadable files available for this mod")
 	}
