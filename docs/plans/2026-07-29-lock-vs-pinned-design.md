@@ -1,7 +1,7 @@
 # Design Note: Lock vs. Pinned Policy (EPIC #98, pre-#97)
 
 **Status**: Approved design note. Settles the epic's open "lock vs. `pinned` policy" question ahead of #96/#97 implementation.
-**Issues**: #98 (epic), #96 (version→file resolution), #97 (lock/unlock surface), #93 (closed by #96 when the resolver replaces the interim guard).
+**Issues**: #98 (epic), #96 (version→file resolution), #97 (lock/unlock surface), #93 (stays open until #96's resolver replaces the interim guard).
 **Decisions made with the user (2026-07-29)**: locks and update policy remain orthogonal concepts with the lock winning at every conflict point; locking is policy-neutral (never touches `UpdatePolicy`); "locked but informed" is the default experience; "locked and silent" is expressed by composing a lock with the existing `pinned` policy, not by a new directive; `pinned` is reframed in docs as a check-mute, not a version freeze.
 
 ## The distinction
