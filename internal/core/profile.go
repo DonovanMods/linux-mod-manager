@@ -165,6 +165,8 @@ func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModRe
 		if profile.Mods[i].SourceID == mod.SourceID && profile.Mods[i].ModID == mod.ModID {
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs
+			// Preserve Locked marker on in-place update (#97: survives UpsertMod).
+			// Do not modify Locked; it is only changed via explicit lock/unlock operations.
 			found = true
 			break
 		}

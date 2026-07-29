@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -347,3 +348,143 @@ func TestImportProfile_TracksLinkMethodExplicit(t *testing.T) {
 	assert.True(t, imported.LinkMethodExplicit)
 	assert.Equal(t, domain.LinkCopy, imported.LinkMethod)
 }
+
+// TestSaveProfile_PreservesLockedMarker guards that Locked is written to YAML when true,
+// omitted when false (omitempty), and survives a round-trip save → load.
+func TestSaveProfile_PreservesLockedMarker(t *testing.T) {
+	configDir := t.TempDir()
+
+	// Create and save a profile with one locked mod and one unlocked mod
+	profile := &domain.Profile{
+		Name:   "default",
+		GameID: "skyrim-se",
+		Mods: []domain.ModReference{
+			{
+				SourceID: "nexusmods",
+				ModID:    "123",
+				Version:  "1.0.0",
+				Locked:   true,
+			},
+			{
+				SourceID: "nexusmods",
+				ModID:    "456",
+				Version:  "2.0.0",
+				Locked:   false,
+			},
+		},
+	}
+
+	require.NoError(t, SaveProfile(configDir, profile))
+
+	yaml := profileYAML(t, configDir, "skyrim-se", "default")
+	assert.Contains(t, yaml, "locked: true", "locked mod should have locked: true in YAML")
+	// Check that the second mod entry doesn't contain locked: true
+	lines := strings.Split(yaml, "\n")
+	var inSecondMod bool
+	for _, line := range lines {
+		if strings.Contains(line, "mod_id: \"456\"") || strings.Contains(line, "mod_id: '456'") {
+			inSecondMod = true
+		}
+		if inSecondMod && strings.Contains(line, "locked:") {
+			t.Fatal("unlocked mod should not have locked key in YAML (omitempty should drop it)")
+		}
+		if inSecondMod && (strings.HasPrefix(strings.TrimSpace(line), "- source_id:") || strings.HasPrefix(strings.TrimSpace(line), "source_id:") && !strings.Contains(line, "nexusmods")) {
+			break
+		}
+	}
+}
+
+// TestLoadProfile_PreservesLockedMarker guards that Locked is read correctly from YAML.
+func TestLoadProfile_PreservesLockedMarker(t *testing.T) {
+	tests := map[string]struct {
+		yaml          string
+		wantLocked    bool
+		wantVersion   string
+	}{
+		"absent locked key":    {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n", false, "1.0.0"},
+		"locked true":          {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n    locked: true\n", true, "1.0.0"},
+		"locked false":         {"name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n    locked: false\n", false, "1.0.0"},
+	}
+
+	for label, tc := range tests {
+		t.Run(label, func(t *testing.T) {
+			configDir := t.TempDir()
+			profileDir := filepath.Join(configDir, "games", "skyrim-se", "profiles")
+			require.NoError(t, os.MkdirAll(profileDir, 0755))
+			require.NoError(t, os.WriteFile(filepath.Join(profileDir, "default.yaml"), []byte(tc.yaml), 0644))
+
+			profile, err := LoadProfile(configDir, "skyrim-se", "default")
+			require.NoError(t, err)
+
+			require.Len(t, profile.Mods, 1)
+			assert.Equal(t, tc.wantLocked, profile.Mods[0].Locked, "locked marker should match")
+			assert.Equal(t, tc.wantVersion, profile.Mods[0].Version, "version should match")
+		})
+	}
+}
+
+// TestLoadProfile_RoundTripPreservesLockedMarker guards that a locked mod survives
+// load → save → load without modification.
+func TestLoadProfile_RoundTripPreservesLockedMarker(t *testing.T) {
+	configDir := t.TempDir()
+	profile := &domain.Profile{
+		Name:   "default",
+		GameID: "skyrim-se",
+		Mods: []domain.ModReference{
+			{
+				SourceID: "nexusmods",
+				ModID:    "123",
+				Version:  "1.0.0",
+				Locked:   true,
+			},
+		},
+	}
+
+	require.NoError(t, SaveProfile(configDir, profile))
+
+	loaded, err := LoadProfile(configDir, "skyrim-se", "default")
+	require.NoError(t, err)
+	require.Len(t, loaded.Mods, 1)
+	assert.True(t, loaded.Mods[0].Locked, "locked marker should survive round-trip")
+
+	require.NoError(t, SaveProfile(configDir, loaded))
+
+	loaded2, err := LoadProfile(configDir, "skyrim-se", "default")
+	require.NoError(t, err)
+	require.Len(t, loaded2.Mods, 1)
+	assert.True(t, loaded2.Mods[0].Locked, "locked marker should survive second round-trip")
+}
+
+// TestExportProfile_PreservesLockedMarker guards that Locked survives export.
+func TestExportProfile_PreservesLockedMarker(t *testing.T) {
+	profile := &domain.Profile{
+		Name:   "default",
+		GameID: "skyrim-se",
+		Mods: []domain.ModReference{
+			{
+				SourceID: "nexusmods",
+				ModID:    "123",
+				Version:  "1.0.0",
+				Locked:   true,
+			},
+		},
+	}
+
+	data, err := ExportProfile(profile)
+	require.NoError(t, err)
+
+	yaml := string(data)
+	assert.Contains(t, yaml, "locked: true", "locked marker should be preserved in export")
+}
+
+// TestImportProfile_PreservesLockedMarker guards that Locked survives import.
+func TestImportProfile_PreservesLockedMarker(t *testing.T) {
+	yaml := "name: default\ngame_id: skyrim-se\nmods:\n  - source_id: nexusmods\n    mod_id: \"123\"\n    version: 1.0.0\n    locked: true\n"
+
+	imported, err := ImportProfile([]byte(yaml))
+	require.NoError(t, err)
+
+	require.Len(t, imported.Mods, 1)
+	assert.True(t, imported.Mods[0].Locked, "locked marker should be preserved on import")
+}
+

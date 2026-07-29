@@ -43,6 +43,7 @@ type ModReferenceConfig struct {
 	ModID    string   `yaml:"mod_id"`
 	Version  string   `yaml:"version,omitempty"`
 	FileIDs  []string `yaml:"file_ids,omitempty"`
+	Locked   bool     `yaml:"locked,omitempty"`
 }
 
 // parseProfileHooks converts YAML hooks to domain types, tracking which were explicitly set
@@ -149,6 +150,7 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 			ModID:    m.ModID,
 			Version:  m.Version,
 			FileIDs:  m.FileIDs,
+			Locked:   m.Locked,
 		}
 	}
 
@@ -188,6 +190,7 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 			ModID:    m.ModID,
 			Version:  m.Version,
 			FileIDs:  m.FileIDs,
+			Locked:   m.Locked,
 		}
 	}
 
