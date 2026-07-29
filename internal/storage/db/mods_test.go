@@ -59,6 +59,42 @@ func TestUpdateModPolicy(t *testing.T) {
 	assert.Equal(t, domain.UpdateAuto, retrieved.UpdatePolicy)
 }
 
+// TestSaveInstalledMod_PreservesUpdatePolicyOnResave guards against issue
+// #134: every SaveInstalledMod caller hardcodes UpdatePolicy: UpdateNotify, so
+// re-saving an existing row (reinstall/import) must not clobber a policy the
+// user set via UpdateModPolicy (--pin/--auto). A fresh first-time insert still
+// takes the policy passed in (covered by TestGetInstalledMod in db_test.go).
+func TestSaveInstalledMod_PreservesUpdatePolicyOnResave(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+	installTestMod(t, database) // saved with domain.UpdateNotify
+
+	err = database.UpdateModPolicy("nexusmods", "12345", "skyrim-se", "default", domain.UpdatePinned)
+	require.NoError(t, err)
+
+	// Simulate a reinstall: callers always pass UpdateNotify.
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "12345",
+			SourceID: "nexusmods",
+			Name:     "Test Mod",
+			Version:  "1.0.0",
+			GameID:   "skyrim-se",
+		},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}
+	require.NoError(t, database.SaveInstalledMod(mod))
+
+	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.UpdatePinned, retrieved.UpdatePolicy,
+		"resaving an installed mod must preserve the existing update policy")
+}
+
 func TestUpdateModPolicy_NotFound(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
