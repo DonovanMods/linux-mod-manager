@@ -307,6 +307,14 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			continue
 		}
 
+		// When every matched file reports an empty Version (custom sources
+		// whose mappings carry no per-file versions), the fallback inside
+		// EffectiveInstalledVersion returns mod.Version and this comparison
+		// passes vacuously. That is a deliberate quiet OK, not a missed
+		// VERSION UNVERIFIABLE (PR #128 triage): install-time stamping
+		// applies the same fallback, so a per-file version mis-stamp cannot
+		// exist for versionless sources - there is nothing to verify, and
+		// warning would flag every mod on every verify for such sources.
 		effective := domain.EffectiveInstalledVersion(mod.Version, matched)
 		if effective != mod.Version {
 			recorded := mod.Version
