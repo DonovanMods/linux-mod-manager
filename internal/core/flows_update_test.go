@@ -125,6 +125,51 @@ func TestService_ApplyUpdate_HappyPathEndToEnd(t *testing.T) {
 	assert.Equal(t, []string{"new-1"}, profile.Mods[0].FileIDs)
 }
 
+// TestApplyUpdate_StoredFileIDsGoneUpstream_FallsBackToPrimary guards #95's
+// retained update-path fallback (selectDeployFiles's allowFallback=true):
+// when the installed mod's stored FileIDs don't appear among the NEW
+// version's files at all, and FileIDReplacements offers no substitution,
+// ApplyUpdate must still succeed by falling back to the new version's
+// primary file - unlike deploy/switch/import, which now hard-fail via
+// allowFallback=false. This is correct update semantics: a source pruning
+// old file IDs after a version bump (CurseForge routinely does) should
+// resolve to the new version's primary file, not an error - see
+// selectDeployFiles's doc comment and ApplyUpdate's own
+// FileIDReplacements-resolution doc comment for why this differs from the
+// other three flows.
+func TestApplyUpdate_StoredFileIDsGoneUpstream_FallsBackToPrimary(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files:                   []domain.DownloadableFile{{ID: "new-1", Name: "New File", FileName: "mod1-new.esp", IsPrimary: true}},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+	mock.AddDownload("new-1", []byte("new-content"))
+
+	// No FileIDReplacements - the old stored ID "old-1" simply isn't among
+	// the new version's files at all, forcing the primary-file fallback.
+	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
+	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err, "update must succeed via the primary-file fallback, not fail")
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
+
+	newContent, err := os.ReadFile(filepath.Join(gameDir, "mod1-new.esp"))
+	require.NoError(t, err, "the new version's primary file must be deployed")
+	assert.Equal(t, "new-content", string(newContent))
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"new-1"}, updated.FileIDs, "the fallback primary file's ID must be recorded")
+}
+
 // TestService_ApplyUpdate_HookOrder proves ApplyUpdate's hook ordering
 // exactly matches applyUpdate's own: uninstall.before_each (old mod) ->
 // install.before_each (new mod) -> Replace -> uninstall.after_each (old

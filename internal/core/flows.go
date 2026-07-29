@@ -303,6 +303,8 @@ const (
 	DeployRedownloading
 	// DeployFallbackUsed: ModName's stored file IDs were not found on the
 	// source; falling back to the primary file.
+	// Dead as of #95 - removed in the renderer-cleanup task (B2); the emit
+	// site (redeployFromSource) now hard-fails instead of falling back.
 	DeployFallbackUsed
 	// DeployDownloading: a file for ModName is downloading. Percent is the
 	// 0-100 completion (only reported once the source declares a total
@@ -449,6 +451,9 @@ const (
 	// were not found on the source and the primary file was used instead,
 	// mirroring doProfileSwitch's unconditional (NOT --verbose-gated)
 	// "    Warning: stored file IDs not found, using primary".
+	// Dead as of #95 - removed in the renderer-cleanup task (B2); the emit
+	// site (ApplyProfileSwitch's install loop) now hard-fails via
+	// SwitchInstallError instead of falling back.
 	SwitchFallbackUsed
 	// SwitchDownloading mirrors DeployDownloading for the install loop's
 	// download progress (Percent set, gated the same way: only once the
@@ -784,6 +789,9 @@ const (
 	// primary file was used instead - mirroring doProfileImport's
 	// unconditional (NOT --verbose-gated) "    Warning: stored file IDs not
 	// found, using primary".
+	// Dead as of #95 - removed in the renderer-cleanup task (B2); the emit
+	// site (ApplyImport's install loop) now hard-fails via ImportModFailed
+	// instead of falling back.
 	ImportFallbackUsed
 	// ImportDownloading mirrors the per-mod download-progress readout ("\r
 	// Downloading: %.1f%%") - Percent only, gated on a known total size,
@@ -943,6 +951,14 @@ type DeployResult struct {
 // excludes touching profile.go to hoist it out; see the task report.
 var errNoDeployFiles = fmt.Errorf("no downloadable files")
 
+// errStoredFilesUnavailable is selectDeployFiles' sentinel for a would-be
+// primary-file fallback rejected by allowFallback=false (#95): the mod's
+// stored file IDs no longer match anything the source currently offers, and
+// - unlike the update path - silently substituting the primary file would
+// deploy/install/switch-in a file the caller never asked for. Always wrapped
+// with the missing IDs and a remediation hint; see selectDeployFiles.
+var errStoredFilesUnavailable = errors.New("stored file(s) no longer available upstream")
+
 // filterAndSortInstallFiles is PlanInstall's faithful port of
 // cmd/lmm/install.go's filterAndSortFiles (duplicated rather than shared for
 // the same reason selectDeployFiles duplicates selectFilesToDownload:
@@ -991,10 +1007,22 @@ func installFileCategoryPriority(category string) int {
 }
 
 // selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
-// the files matching storedFileIDs if any are found, else the primary file
-// (first file with IsPrimary, or simply the first file), reporting whether
-// it had to fall back. Mirrors cmd/lmm/profile.go's selectFilesToDownload.
-func selectDeployFiles(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, bool, error) {
+// the files matching storedFileIDs if any are found, else - only when
+// allowFallback is true - the primary file (first file with IsPrimary, or
+// simply the first file), reporting whether it had to fall back. Mirrors
+// cmd/lmm/profile.go's selectFilesToDownload.
+//
+// allowFallback is a per-call-site policy (#95): the update path (ApplyUpdate)
+// passes true because falling back to the NEW version's primary file is
+// correct semantics there - a source that prunes old file IDs after a
+// version bump (CurseForge routinely does) should resolve to the current
+// primary file, not an error. Every other caller (deploy, switch, import,
+// and the nil-storedFileIDs install paths, where the branch is unreachable)
+// passes false: silently deploying/installing a file the caller never asked
+// for is exactly the silent-fallback bug #95 tracks. With allowFallback
+// false, a would-be fallback instead returns errStoredFilesUnavailable,
+// wrapped with the missing IDs and a remediation hint.
+func selectDeployFiles(files []domain.DownloadableFile, storedFileIDs []string, allowFallback bool) ([]*domain.DownloadableFile, bool, error) {
 	if len(files) == 0 {
 		return nil, false, errNoDeployFiles
 	}
@@ -1019,6 +1047,9 @@ func selectDeployFiles(files []domain.DownloadableFile, storedFileIDs []string) 
 		}
 		if len(found) > 0 {
 			return found, false, nil
+		}
+		if !allowFallback {
+			return nil, false, fmt.Errorf("%w (file ID(s): %s) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "))
 		}
 		return []*domain.DownloadableFile{primary()}, true, nil
 	}
@@ -1318,14 +1349,9 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		return skip("no files available")
 	}
 
-	filesToDownload, usedFallback, err := selectDeployFiles(files, mod.FileIDs)
+	filesToDownload, _, err := selectDeployFiles(files, mod.FileIDs, false)
 	if err != nil {
 		return skip(err.Error())
-	}
-	if usedFallback {
-		fb := base
-		fb.Phase = DeployFallbackUsed
-		emit(fb)
 	}
 
 	for _, file := range filesToDownload {
@@ -1917,15 +1943,10 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 
-			filesToDownload, usedFallback, err := selectDeployFiles(files, ref.FileIDs)
+			filesToDownload, _, err := selectDeployFiles(files, ref.FileIDs, false)
 			if err != nil {
 				fail(err.Error())
 				continue
-			}
-			if usedFallback && len(ref.FileIDs) > 0 {
-				fallbackEvt := base
-				fallbackEvt.Phase = SwitchFallbackUsed
-				emit(fallbackEvt)
 			}
 
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
@@ -2199,7 +2220,7 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no downloadable files available for this mod")
 	}
-	selected, _, err := selectDeployFiles(files, nil)
+	selected, _, err := selectDeployFiles(files, nil, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select files: %w", err)
 	}
@@ -2756,7 +2777,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		skip("Error", "no downloadable files available")
 		return nil
 	}
-	selected, _, err := selectDeployFiles(files, nil)
+	selected, _, err := selectDeployFiles(files, nil, false)
 	if err != nil {
 		skip("Error", err.Error())
 		return nil
@@ -3229,7 +3250,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 			}
 		}
 	}
-	filesToDownload, _, err := selectDeployFiles(files, effectiveFileIDs)
+	filesToDownload, _, err := selectDeployFiles(files, effectiveFileIDs, true)
 	if err != nil {
 		return result, fmt.Errorf("selecting files to download: %w", err)
 	}
@@ -3823,15 +3844,10 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		} else if len(ref.FileIDs) > 0 {
 			fileIDsToUse = ref.FileIDs
 		}
-		filesToDownload, usedFallback, err := selectDeployFiles(files, fileIDsToUse)
+		filesToDownload, _, err := selectDeployFiles(files, fileIDsToUse, false)
 		if err != nil {
 			fail(err.Error())
 			continue
-		}
-		if usedFallback && len(fileIDsToUse) > 0 {
-			fbEvt := base
-			fbEvt.Phase = ImportFallbackUsed
-			emit(fbEvt)
 		}
 
 		mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
