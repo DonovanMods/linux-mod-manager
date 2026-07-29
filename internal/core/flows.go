@@ -4078,6 +4078,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      true,
 			FileIDs:      downloadedFileIDs,
+			Deployed:     true, // installer.Install above just succeeded
 		}
 		installedMod.Mod.GameID = game.ID
 		if err := s.SaveInstalledMod(installedMod); err != nil {

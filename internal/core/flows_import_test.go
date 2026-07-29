@@ -125,6 +125,7 @@ func TestApplyImportSavesAndInstalls(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1"}, installed.FileIDs)
 	assert.True(t, installed.Enabled)
+	assert.True(t, installed.Deployed, "installer.Install just succeeded, so the row must record Deployed")
 
 	savedProfile, err := svc.NewProfileManager().Get("g1", "target")
 	require.NoError(t, err)

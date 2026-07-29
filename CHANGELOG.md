@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `lmm install --version <version>` installs an exact-match version — archived/old files are searched automatically, no `--show-archived` needed — instead of always latest (closes #93)
 - Version→file resolution (`Service.ResolveModVersion`), which resolves a named version to its file(s) whenever the mod's returned files actually carry version info (decided dynamically per call, not by a capability flag) — plus a new `versions` source capability that advertises `mod_files` endpoint support for display (`lmm source list`); mods/sources without file-level version data keep the existing file-ID behavior
-- `lmm profile apply`, `profile switch`, and `profile import` now converge each installed mod to the profile's recorded version — including downgrades — instead of only healing missing files
+- `lmm profile apply` and `profile switch` now converge each installed mod to the profile's recorded version — including downgrades — instead of only healing missing files; `profile import` honors the recorded version for mods it installs or redownloads, with drift on an already-installed mod converging on the next apply/switch
 
 ### Fixed
 
