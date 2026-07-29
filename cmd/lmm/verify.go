@@ -558,17 +558,22 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 // sibling Deployed via symlink has its links re-created through the
 // installer exactly like the primary row's would be; on a per-sibling
 // re-link failure, that row's Deployed flag alone is cleared (matching the
-// primary row's own re-link-failure handling) and processing continues
+// primary row's own re-link-failure handling), but - unlike the DB/profile
+// steps, which did succeed - this is reported as a FAILURE, not folded
+// into "repaired": the version record is correct, but the deployment
+// itself is still broken, so printing the same green "Repaired" line
+// would misreport a partial fix as a clean success. Processing continues
 // with the remaining siblings rather than aborting the whole pass.
 //
 // Per DEV.md's "never swallow errors without logging/context": a failure
 // to correct one sibling (pm.List itself, or a given sibling's
-// SaveInstalledMod/UpsertMod) is NOT silently skipped - it's printed as a
-// warning in text mode and folded into the returned summary, since a
-// write failure here leaves that profile in exactly the orphaned state
-// this whole repair exists to fix, indistinguishable from "was never a
-// candidate" if left unreported. The loop still continues past a single
-// sibling's failure - best-effort, not all-or-nothing.
+// SaveInstalledMod/UpsertMod/re-link) is NOT silently skipped - it's
+// printed as a warning in text mode and folded into the returned summary,
+// since a write or re-link failure here leaves that profile in exactly
+// the orphaned/dangling state this whole repair exists to fix,
+// indistinguishable from "was never a candidate" if left unreported. The
+// loop still continues past a single sibling's failure - best-effort, not
+// all-or-nothing.
 //
 // Returns a human-readable summary of which profiles were repaired and/or
 // failed (empty if neither), for the caller to fold into repairModVersion's
@@ -623,7 +628,18 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		if sibling.Deployed && sibling.LinkMethod == domain.LinkSymlink {
 			if err := svc.GetInstaller(game).Install(cmd.Context(), game, &sibling.Mod, p.Name); err != nil {
 				sibling.Deployed = false
-				_ = svc.SaveInstalledMod(sibling) //nolint:errcheck // best-effort: the version correction above already stands regardless
+				if saveErr := svc.SaveInstalledMod(sibling); saveErr != nil {
+					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v; also failed to clear deployed flag: %v)", p.Name, err, saveErr))
+				} else {
+					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v)", p.Name, err))
+				}
+				if !jsonOutput {
+					fmt.Printf("  Warning: could not repair profile %s: %v\n", p.Name, err)
+				}
+				// The version correction (DB + profile, above) stands, but
+				// the deployment itself is still broken - report this as a
+				// failure, not a clean "Repaired" success.
+				continue
 			}
 		}
 

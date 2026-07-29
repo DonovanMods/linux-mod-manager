@@ -762,7 +762,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 	jsonOutput = false
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
-	_ = captureStdout(t, func() error {
+	out := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
 
@@ -774,6 +774,57 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 	primaryMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", primaryMod.Version, "the primary row must still be repaired despite the sibling's re-link failure")
+
+	// PR #128 Copilot review, Claim 2: a sibling re-link failure must be
+	// surfaced like any other per-sibling failure (SaveInstalledMod/
+	// UpsertMod already are, per the previous round) - not silently
+	// absorbed into a false "Repaired" success line while the deployment
+	// is actually left broken.
+	assert.Contains(t, out, "Warning", "a sibling re-link failure must print a warning, not be silently absorbed")
+	assert.Contains(t, out, "second", "the warning must identify which sibling profile's re-link failed")
+	assert.NotContains(t, out, "Repaired (profile second)", "a sibling whose re-link failed must not be reported as a clean success")
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_JSONNotesFailure
+// covers the --json half of PR #128 Copilot review Claim 2: the primary
+// row's "note" field must flag the sibling's re-link failure the same way
+// it already flags a SaveInstalledMod/UpsertMod failure - fresh state
+// from the text-mode test above since fixing the primary row is a real
+// mutation that can't be observed twice from one doVerify call.
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_JSONNotesFailure(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	secondMod.Deployed = true
+	secondMod.LinkMethod = domain.LinkSymlink
+	require.NoError(t, svc.SaveInstalledMod(secondMod))
+
+	require.NoError(t, os.Chmod(game.ModPath, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Contains(t, f.Note, "second", "JSON note must mention the sibling whose re-link failed")
+			assert.Contains(t, f.Note, "FAILED", "JSON note must clearly flag it as a failure, not a success")
+		}
+	}
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
 }
 
 // --- re-review gaps: silent per-sibling failures + JSON note loss on
@@ -944,4 +995,50 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", secondMod.Version, "the sibling repair must have gone through independently of the primary's relink failure")
+}
+
+// --- PR #128 Copilot review round 1: verifying (not blindly fixing) two
+// claims against the actual code ---
+
+// TestDoVerify_VersionUnverifiable_WithModFilter_ChecksumRowsAlwaysExist is
+// evidence for refuting Copilot's Claim 1 (comment 3670171464): that
+// `checked` is only incremented on the pre-pass's OK path, so a filtered
+// run producing only VERSION MISMATCH/UNVERIFIABLE/source-unreachable
+// output with "no checksum rows" could still wrongly print "No files
+// found for mod ...".
+//
+// That premise doesn't hold: mod.FileIDs (what gates entry into the
+// pre-pass's version-check branches at all - see the `len(mod.FileIDs) ==
+// 0` skip in doVerify) and the `files` slice the main per-file loop
+// iterates (from svc.GetFilesWithChecksums) are BOTH sourced from the
+// exact same `installed_mod_files` table (see
+// internal/storage/db/mods.go: replaceModFileIDsTx populates it,
+// getModFileIDsBatch/GetModFileIDs and GetFilesWithChecksums both read it
+// with no additional filtering beyond game/profile). So whenever
+// mod.FileIDs is non-empty for a modFilter'd mod - the only way the
+// pre-pass can reach VERSION MISMATCH/UNVERIFIABLE/unreachable at all -
+// `files` filtered to that same mod ID is provably non-empty too, and the
+// main loop's unconditional `checked++` (before any per-file status
+// logic) fires for it. The "no checksum rows" state Claim 1 hypothesizes
+// cannot coexist with a non-empty FileIDs set under the current schema.
+//
+// This test constructs exactly the scenario Claim 1 describes (a
+// modFilter'd mod, VERSION UNVERIFIABLE - no matching file ID upstream -
+// and nothing else installed) and asserts the misleading message does
+// NOT appear.
+func TestDoVerify_VersionUnverifiable_WithModFilter_ChecksumRowsAlwaysExist(t *testing.T) {
+	cmd, svc, game := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+		{ID: "3", Name: "Some Other File", FileName: "mod1-other.esp", IsPrimary: true, Category: "MAIN", Version: "2.0"},
+	})
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, []string{"mod1"})
+	})
+
+	assert.Contains(t, out, "VERSION UNVERIFIABLE", "sanity: the scenario Claim 1 hypothesizes must actually be reached")
+	assert.NotContains(t, out, "No files found for mod", "checksum rows for mod1 exist (same installed_mod_files table backs both FileIDs and the checksum listing) - the main loop's checked++ must have fired")
 }
