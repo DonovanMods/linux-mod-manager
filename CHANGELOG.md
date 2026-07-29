@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-07-29
+
+### Added
+
+- `lmm install --version <version>` installs an exact-match version — archived/old files are searched automatically, no `--show-archived` needed — instead of always latest (closes #93)
+- Version→file resolution (`Service.ResolveModVersion`) and a new `versions` source capability advertising per-file version info, so version-aware sources (NexusMods, CurseForge, `manifest`, and `api` sources with a `mod_files` endpoint) can resolve a named version to its file(s); sources without it keep the existing file-ID behavior
+- `lmm profile apply`, `profile switch`, and `profile import` now converge each installed mod to the profile's recorded version — including downgrades — instead of only healing missing files
+
+### Fixed
+
+- Deploy-shaped flows (deploy, profile switch/import, `profile apply`) whose stored file ID(s) are gone upstream now heal to the mod's recorded version when that version is still available, instead of always hard-failing; the hard-fail from #95 now fires only when the recorded version itself is gone too, and its error distinguishes "file IDs gone upstream" from "installed files don't match the recorded version" — the latter points at `lmm verify --fix`
+- Profile switch replaces a live older deployment when converging a mod to a newer or older version, instead of leaving the stale files on disk alongside the new ones; convergence preserves the mod's `Deployed` flag and update policy
+- `lmm update`'s apply step now records the version of the file it actually installed, not the mod's overall "latest" version — `lmm verify` no longer flags a freshly-updated mod as a version mismatch
+
+### Internal
+
+- File-granular cache verification (`Cache.HasFiles`) replaces an existence-only check before deploying from cache, preventing a partial cache entry (missing one or more of a multi-file mod's files) from being silently deployed as if complete
+
 ## [1.24.1] - 2026-07-29
 
 ### Fixed
@@ -1078,7 +1096,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.24.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.25.0...HEAD
+[1.25.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.24.1...v1.25.0
 [1.24.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.24.0...v1.24.1
 [1.24.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.1...v1.24.0
 [1.23.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.0...v1.23.1

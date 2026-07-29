@@ -52,3 +52,14 @@ The only way a locked mod changes version is an explicit re-lock to another name
 - **`verify` becomes lock-aware eventually.** `lmm verify`'s version-record check is already the deploy-state checker; it is policy-blind today and reads no lock. Once `ModReference.Version` is authoritative, verify should treat a locked mod's recorded-vs-locked mismatch as a finding. Scope this inside #96/#97 as fits; it must not silently "fix" a mod to latest.
 - **Version matching**: exact string equality (the epic's lean stands). Anything smarter is per-source capability work, later.
 - **Unavailable targets**: deploy from cache when the locked version is cached; hard error naming the version when it is gone upstream and uncached. Never degrade to latest (#95's rule applies to locks doubly).
+
+## Addendum (2026-07-29, #96 planning)
+
+Since #94, every install stamps the actual installed version into
+`ModReference.Version` — so "version present = locked" cannot be the lock
+signal. Refined model, superseding this note's "unlock removes the version"
+line: **Version is the record** (always populated; deploy converges to it,
+`lmm update` moves it); **#97 adds an explicit `locked:` marker** on the
+profile ref (YAML-only — the epic's "no new DB column" decision holds) whose
+presence is what `lmm update` refuses on and `unlock` clears. The version
+field itself survives unlock, because it is the record, not the lock.
