@@ -3323,10 +3323,16 @@ func TestPlanProfileSwitch_MatchingVersion_RemainsNoop(t *testing.T) {
 }
 
 // TestApplyProfileSwitch_Downgrade_EndToEnd is the #96 convergence
-// end-to-end guard: mod1 installed at 1.5 (file "10"); switching to "stable"
-// (which pins 1.0) must plan AND apply a full reinstall at 1.0 - resolving
-// to the archived file "9" via T5's selectVersionedDeployFiles, caching it,
-// and recording the downgrade in the DB.
+// end-to-end guard: mod1 installed+DEPLOYED at 1.5 (file "10", live on disk
+// as "mod1.esp"); switching to "stable" (which pins 1.0) must plan AND apply
+// a full reinstall at 1.0 - resolving to the archived file "9" via T5's
+// selectVersionedDeployFiles, caching it, recording the downgrade in the DB,
+// and REPLACING the live 1.5 deployment (not merely installing 1.0
+// alongside it) - review round 1 finding 1: a bare Installer.Install call
+// only adds the new version's files; it never removes files the old,
+// still-live deployment holds that the new version doesn't serve, leaving
+// mod1.esp (1.5) orphaned on disk forever (invisible to later uninstalls,
+// which only ever undeploy the CURRENTLY RECORDED version's files).
 func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
@@ -3341,7 +3347,21 @@ func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
 	mock := newTwoVersionSource(t)
 	svc.RegisterSource(mock)
 
-	seedInstalledMod(t, svc, game, "src", "mod1", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		FileIDs:      []string{"10"},
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
+
 	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 	require.NoError(t, pm.UpsertMod(game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
@@ -3359,8 +3379,69 @@ func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version)
 	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
+	assert.True(t, installed.Deployed, "the row must record that files are actually live on disk (review finding 3)")
 
 	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the downgraded version must be cached")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	assert.True(t, os.IsNotExist(err), "the obsolete 1.5 file must be removed by Replace, not left behind by a bare Install (review finding 1)")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the new 1.0 file must be deployed")
+}
+
+// TestApplyProfileSwitch_PartialCacheEntry_StillDownloads is the #96 review
+// round 1 finding 2 guard: a version directory can exist on disk without
+// being fully populated (e.g. a previous download run that broke off before
+// any file was committed, or partway through a multi-file mod). The
+// cache-first guard must not mistake directory presence alone for "already
+// cached" - bare cache.Exists would report true here and silently skip the
+// download forever, leaving the mod stuck without its files.
+func TestApplyProfileSwitch_PartialCacheEntry_StillDownloads(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	// Simulate a version directory left behind by a previously broken-off
+	// download run: the directory exists (bare cache.Exists would report
+	// "cached") but holds none of the expected files.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), 0755))
+	require.True(t, gameCache.Exists(game.ID, "src", "mod1", "1.0"), "precondition: bare Exists must see the empty dir as already cached")
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "stable",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed, "a partial cache entry must not fool the cache-first guard into skipping the download")
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"9"}, installed.FileIDs, "the download must actually have run and selected the 1.0 file")
+
+	// The DB's FileIDs alone don't prove the download actually ran (they're
+	// stamped from the SELECTED files regardless of whether the download
+	// loop executed) - what distinguishes a real download from a
+	// fooled-by-directory-presence skip is whether the byte content is
+	// actually on disk, both in the cache and deployed into the game dir.
+	cached, err := gameCache.ListFiles(game.ID, "src", "mod1", "1.0")
+	require.NoError(t, err)
+	assert.Contains(t, cached, "mod1-old.esp", "the cache entry must actually contain the downloaded file, not just an empty directory")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the file must actually be deployed, not merely a DB row claiming so")
 }
 
 // TestService_ApplyProfileSwitch_InstallLoop_SavesWithNormalizedGameID

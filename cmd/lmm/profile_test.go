@@ -780,6 +780,7 @@ func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version, "must record the pinned version, not the source's latest")
 	assert.Equal(t, []string{"old"}, installed.FileIDs, "must have selected the archived 1.0 file")
+	assert.True(t, installed.Deployed, "the row must record that files are actually live on disk (review finding 3)")
 
 	assert.True(t, svc.GetGameCache(game).Exists(game.ID, "test-src", "mod1", "1.0"), "the downgraded version must be cached")
 
@@ -787,4 +788,50 @@ func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) 
 	assert.True(t, os.IsNotExist(err), "the obsolete 1.5 file must be removed by Replace, not left behind by a bare Install")
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
 	assert.NoError(t, err, "the new 1.0 file must be deployed")
+}
+
+// TestDoProfileApply_PartialCacheEntry_StillDownloads is the #96 review
+// round 1 finding 2 guard for the cmd twin: a version directory can exist on
+// disk (e.g. left behind by a previous download run that broke off before
+// any file was committed) without actually holding the expected file. The
+// cache-first guard must not mistake directory presence alone for "already
+// cached" - bare cache.Exists would report true here and silently skip the
+// download, leaving the mod stuck without its files despite doProfileApply
+// reporting success.
+func TestDoProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+
+	src := newFakeInstallSource("test-src")
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"test-src": game.ID}
+
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main", Name: "Main", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN"},
+		})
+	src.AddDownload("main", []byte("plugin content"))
+
+	// Simulate a version directory left behind by a previously broken-off
+	// download run: the directory exists but holds none of the expected
+	// files.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "test-src", "mod1", "1.0"), 0755))
+	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "precondition: bare Exists must see the empty dir as already cached")
+
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+
+	origYes := profileApplyYes
+	profileApplyYes = true
+	t.Cleanup(func() { profileApplyYes = origYes })
+
+	require.NoError(t, doProfileApply(context.Background(), svc, game, nil))
+
+	cached, err := gameCache.ListFiles(game.ID, "test-src", "mod1", "1.0")
+	require.NoError(t, err)
+	assert.Contains(t, cached, "mod1.esp", "the cache entry must actually contain the downloaded file, not just an empty directory")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	assert.NoError(t, err, "the file must actually be deployed, not merely a DB row claiming so")
 }

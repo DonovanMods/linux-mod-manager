@@ -1073,11 +1073,18 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			// #96: cache-first - a convergence entry (or any other
 			// already-cached-at-this-version reinstall) skips the download
 			// step entirely once the stamped version is already cached.
+			// Review finding 2: HasFiles (not bare Exists) - a version
+			// directory can exist yet be only PARTIALLY populated by a
+			// previous download run that broke off partway through a
+			// multi-file mod; skipping on directory presence alone would
+			// silently leave it that way forever.
 			downloadedFileIDs := make([]string, 0, len(filesToDownload))
+			downloadedFileNames := make([]string, 0, len(filesToDownload))
 			for _, f := range filesToDownload {
 				downloadedFileIDs = append(downloadedFileIDs, f.ID)
+				downloadedFileNames = append(downloadedFileNames, f.FileName)
 			}
-			if !service.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+			if !service.GetGameCache(game).HasFiles(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileNames) {
 				// Download each file
 				progressFn := func(p core.DownloadProgress) {
 					if p.TotalBytes > 0 {
@@ -1106,9 +1113,12 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			// be replaced (removing files the new version no longer serves),
 			// not just have new files installed alongside stale ones -
 			// mirrors ApplyUpdate's Installer.Replace semantics
-			// (internal/core/flows.go).
-			if needsReplaceSet[key] {
-				prev := installedByKey[key]
+			// (internal/core/flows.go). Review finding 4: guard the map
+			// lookup with its own ok - needsReplaceSet[key] should never be
+			// true without a corresponding installedByKey[key] row, but a
+			// bare index expression would panic on a nil *InstalledMod if
+			// that invariant were ever violated.
+			if prev, ok := installedByKey[key]; ok && needsReplaceSet[key] {
 				if err := installer.Replace(ctx, game, &prev.Mod, mod, profileName); err != nil {
 					fmt.Printf("    Error: deploy failed: %v\n", err)
 					continue
@@ -1125,6 +1135,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				ProfileName:  profileName,
 				UpdatePolicy: domain.UpdateNotify,
 				Enabled:      true,
+				Deployed:     true, // review finding 3: Install/Replace above just succeeded
 				FileIDs:      downloadedFileIDs,
 			}
 			installedMod.Mod.GameID = game.ID

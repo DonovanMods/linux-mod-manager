@@ -41,6 +41,38 @@ func (c *Cache) Exists(gameID, sourceID, modID, version string) bool {
 	return err == nil && info.IsDir()
 }
 
+// HasFiles reports whether every named file already exists within the given
+// (gameID, sourceID, modID, version) cache entry - a stronger guard than
+// Exists alone, which only checks the version directory's presence and can
+// return true for a PARTIALLY populated entry (e.g. a previous download run
+// that stored file 1 of 2 before failing - each file is committed to the
+// cache individually, so a broken-off run leaves the directory present but
+// incomplete). Callers doing a "cache already has this, skip downloading"
+// check (see internal/core/flows.go's ApplyProfileSwitch and
+// cmd/lmm/profile.go's doProfileApply, both #96) should use this instead of
+// Exists to decide whether a re-download is genuinely unnecessary.
+//
+// A filename that doesn't correspond to the cache's actual on-disk layout
+// (e.g. an archive's internal member names, which often don't match the
+// DownloadableFile's own FileName) makes this report false - the safe
+// direction, since it costs an unnecessary redundant download rather than
+// silently trusting an incomplete cache entry. An empty/blank filename is
+// treated the same way (unverifiable, so false) rather than skipped.
+func (c *Cache) HasFiles(gameID, sourceID, modID, version string, filenames []string) bool {
+	if !c.Exists(gameID, sourceID, modID, version) {
+		return false
+	}
+	for _, name := range filenames {
+		if name == "" {
+			return false
+		}
+		if _, err := os.Stat(c.GetFilePath(gameID, sourceID, modID, version, name)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // Store saves a file to the cache
 func (c *Cache) Store(gameID, sourceID, modID, version, relativePath string, content []byte) error {
 	modPath := c.ModPath(gameID, sourceID, modID, version)

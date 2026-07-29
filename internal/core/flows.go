@@ -1708,6 +1708,17 @@ type SwitchPlan struct {
 	ToDisable []domain.InstalledMod // enabled under From but absent from To -> disable, undeployed under From
 	ToInstall []domain.ModReference // in To but not installed anywhere -> download+install (FileIDs preserved from the installed mod's own record when this is really a cache-miss redeploy - see PlanProfileSwitch)
 
+	// PriorVersions carries, for each ToInstall entry that is really a #96
+	// version-drift convergence (keyed by domain.ModKey(SourceID, ModID)),
+	// the installed row being converged AWAY from - review round 1 finding
+	// 1: ToInstall's own element type (domain.ModReference) has no room for
+	// this, but ApplyProfileSwitch's install loop needs it to know whether
+	// a LIVE older deployment exists that must be replaced (removing files
+	// the new version doesn't serve) rather than merely installed over -
+	// mirroring ApplyUpdate's Installer.Replace semantics. Absent for every
+	// other ToInstall entry (brand-new installs, cache-miss redeploys).
+	PriorVersions map[string]domain.InstalledMod
+
 	NoChanges     bool // To's mod set matches From's content-wise; only SetDefault is needed
 	AlreadyActive bool // To is already the active default profile; nothing to plan
 }
@@ -1772,6 +1783,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 
 	var toDisable, toEnable []domain.InstalledMod
 	var toInstall []domain.ModReference
+	var priorVersions map[string]domain.InstalledMod // #96 - see SwitchPlan.PriorVersions
 
 	// Deterministic order: iterate currentMods in fromProfile's load order
 	// (mods enabled but absent from fromProfile.Mods sort first by key - see
@@ -1810,8 +1822,15 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 			// the installed row - reinstall at the profile's version
 			// (downgrades included). ref is passed as-is: its own FileIDs
 			// (if any) describe the TARGET version; the installed row's
-			// describe the wrong one.
+			// describe the wrong one. The installed row itself is recorded
+			// in priorVersions (review finding 1) so ApplyProfileSwitch's
+			// install loop can Replace a live older deployment instead of
+			// installing over it.
 			toInstall = append(toInstall, ref)
+			if priorVersions == nil {
+				priorVersions = make(map[string]domain.InstalledMod)
+			}
+			priorVersions[key] = *im
 		case !s.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version):
 			// Cache missing - needs a redownload; preserve the installed
 			// mod's own FileIDs (not the profile YAML's, which may be
@@ -1835,7 +1854,8 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	return &SwitchPlan{
 		GameID: game.ID, From: currentName, To: target,
 		ToDisable: toDisable, ToEnable: toEnable, ToInstall: toInstall,
-		NoChanges: len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0,
+		PriorVersions: priorVersions,
+		NoChanges:     len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0,
 	}, nil
 }
 
@@ -2020,10 +2040,17 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
 			downloadedFileIDs := make([]string, 0, len(filesToDownload))
+			downloadedFileNames := make([]string, 0, len(filesToDownload))
 			for _, f := range filesToDownload {
 				downloadedFileIDs = append(downloadedFileIDs, f.ID)
+				downloadedFileNames = append(downloadedFileNames, f.FileName)
 			}
-			if !s.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+			// #96 review finding 2: HasFiles (not bare Exists) - a version
+			// directory can exist yet be only PARTIALLY populated by a
+			// previous download run that broke off partway through a
+			// multi-file mod; skipping the download on directory presence
+			// alone would silently leave it that way forever.
+			if !s.GetGameCache(game).HasFiles(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileNames) {
 				downloadFailed := false
 				for _, file := range filesToDownload {
 					progressFn := func(p DownloadProgress) {
@@ -2050,7 +2077,22 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				}
 			}
 
-			if err := installer.Install(ctx, game, mod, plan.To); err != nil {
+			// #96 convergence (review finding 1): a version-drift entry
+			// whose prior installed row is actually live on disk must be
+			// replaced (removing files the new version doesn't serve), not
+			// just installed over - mirrors ApplyUpdate's Installer.Replace
+			// semantics. prior.Deployed alone isn't enough: only Replace
+			// when the OLD version's cache entry is still there for it to
+			// read from (a corrupted/missing old cache falls back to a
+			// bare Install, same as any other toInstall entry).
+			key := domain.ModKey(ref.SourceID, ref.ModID)
+			if prior, ok := plan.PriorVersions[key]; ok && prior.Deployed &&
+				s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version) {
+				if err := installer.Replace(ctx, game, &prior.Mod, mod, plan.To); err != nil {
+					fail(fmt.Sprintf("deploy failed: %v", err))
+					continue
+				}
+			} else if err := installer.Install(ctx, game, mod, plan.To); err != nil {
 				fail(fmt.Sprintf("deploy failed: %v", err))
 				continue
 			}
@@ -2064,6 +2106,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				ProfileName:  plan.To,
 				UpdatePolicy: domain.UpdateNotify,
 				Enabled:      true,
+				Deployed:     true, // review finding 3: Install/Replace above just succeeded
 				FileIDs:      downloadedFileIDs,
 			}
 			installedMod.Mod.GameID = game.ID

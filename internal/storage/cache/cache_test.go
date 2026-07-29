@@ -56,6 +56,49 @@ func TestCache_Exists(t *testing.T) {
 	assert.True(t, c.Exists("skyrim-se", "nexusmods", "12345", "1.0.0"))
 }
 
+// TestCache_HasFiles is the #96 review round 1 finding 2 guard: HasFiles
+// must be a stronger check than Exists - Exists only checks the version
+// directory's presence, which can wrongly report "cached" for a directory
+// left PARTIALLY populated by a previous download run that broke partway
+// through a multi-file mod (each file is committed to the cache
+// individually - see DownloadModToCache's doc comment at
+// internal/core/service.go:411-414). HasFiles must report false whenever
+// any named file is actually missing, even though the directory itself
+// exists.
+func TestCache_HasFiles(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.New(dir)
+
+	// No directory at all yet.
+	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp"}))
+
+	// Directory exists but is completely empty (e.g. MkdirAll ran but no
+	// file was ever committed) - still not "has files".
+	require.NoError(t, os.MkdirAll(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), 0755))
+	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp"}))
+
+	// Directory has ONE of two expected files - a partial download.
+	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "a.esp", []byte("a")))
+	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp", "b.esp"}),
+		"a partially-populated cache entry must not report having all requested files")
+
+	// Both expected files present - fully cached.
+	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "b.esp", []byte("b")))
+	assert.True(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp", "b.esp"}))
+
+	// An empty filenames list against a nonexistent entry is still false -
+	// HasFiles is never weaker than Exists.
+	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "no-such-mod", "1.0.0", nil))
+
+	// An empty filenames list against an entry that DOES exist has nothing
+	// left to verify beyond Exists itself.
+	assert.True(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", nil))
+
+	// A blank filename can never be verified - the safe direction is false
+	// (triggers a redundant re-download, not a silently-trusted gap).
+	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp", ""}))
+}
+
 func TestCache_ListFiles(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
