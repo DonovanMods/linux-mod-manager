@@ -349,6 +349,40 @@ func getModFileIDsTx(tx *sql.Tx, sourceID, modID, gameID, profileName string) (f
 	return fileIDs, rows.Err()
 }
 
+// SetModVersion corrects an installed mod's recorded version in place: a
+// plain UPDATE of the version column only. Unlike UpdateModVersion, it does
+// NOT shift the current version into previous_version/previous_file_ids -
+// this is for repairing a WRONG recorded value (issue #94's verify --fix),
+// not a real version change that should be rollback-able. And unlike
+// SaveInstalledMod's full-row upsert, it does NOT touch installed_mod_files
+// at all: SaveInstalledMod always runs replaceModFileIDsTx (DELETE + a
+// checksum-less re-INSERT), so calling it just to fix the version string
+// silently wipes every stored checksum for the mod's files even when the
+// file IDs themselves never changed. SetModVersion exists specifically to
+// avoid that: the version is wrong, the file IDs and their checksums are
+// not, so only the version column should move.
+func (d *DB) SetModVersion(sourceID, modID, gameID, profileName, version string) error {
+	result, err := d.Exec(`
+		UPDATE installed_mods SET version = ?
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, version, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("setting mod version: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		// A driver error here must not be read as "0 rows affected" -
+		// that would misreport a real DB failure as domain.ErrModNotFound.
+		return fmt.Errorf("setting mod version: checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrModNotFound
+	}
+
+	return nil
+}
+
 // UpdateModVersion updates a mod's version, preserving the previous version and file IDs for rollback.
 func (d *DB) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion string) error {
 	currentFileIDs, err := d.GetModFileIDs(sourceID, modID, gameID, profileName)

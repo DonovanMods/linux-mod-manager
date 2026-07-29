@@ -48,6 +48,27 @@ type DownloadableFile struct {
 	SHA256      string // Expected SHA-256 of the download (hex); empty = source declares no checksum
 }
 
+// EffectiveInstalledVersion resolves the version string that describes what
+// the selected files actually are: the primary selected file's Version when
+// it carries one, else the first selected file with a non-empty Version,
+// else modVersion (the mod-level version). Install-recording flows stamp
+// this onto the mod before downloading so the DB row, the profile
+// ModReference, and the cache directory key all describe the bytes on disk
+// (issue #94) instead of the mod-level latest.
+func EffectiveInstalledVersion(modVersion string, selected []*DownloadableFile) string {
+	for _, f := range selected {
+		if f != nil && f.IsPrimary && f.Version != "" {
+			return f.Version
+		}
+	}
+	for _, f := range selected {
+		if f != nil && f.Version != "" {
+			return f.Version
+		}
+	}
+	return modVersion
+}
+
 // ModReference is a pointer to a mod (used in profiles, dependencies)
 type ModReference struct {
 	SourceID string   `yaml:"source_id"`          // "nexusmods", "curseforge", etc.

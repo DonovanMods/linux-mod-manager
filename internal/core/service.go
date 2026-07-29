@@ -821,6 +821,18 @@ func (s *Service) SaveInstalledMod(mod *domain.InstalledMod) error {
 	return s.db.SaveInstalledMod(mod)
 }
 
+// SetModVersion corrects an installed mod's recorded version without
+// shifting PreviousVersion (unlike a real version update) or re-keying its
+// file-ID rows (unlike SaveInstalledMod's full-row upsert, whose
+// replaceModFileIDsTx would silently wipe stored checksums even when the
+// file IDs themselves haven't changed - see internal/storage/db/mods.go).
+// For repairing a version string known to be WRONG (verify --fix's
+// version-record repair, issue #94), where the file IDs and their
+// checksums are already correct.
+func (s *Service) SetModVersion(sourceID, modID, gameID, profileName, version string) error {
+	return s.db.SetModVersion(sourceID, modID, gameID, profileName, version)
+}
+
 // DeleteInstalledMod removes the installed-mod record from the active profile.
 func (s *Service) DeleteInstalledMod(sourceID, modID, gameID, profileName string) error {
 	return s.db.DeleteInstalledMod(sourceID, modID, gameID, profileName)

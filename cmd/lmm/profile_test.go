@@ -478,3 +478,40 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 	assert.Less(t, insB, insC, "install-eligible mods must print in profile.Mods order")
 	assert.Less(t, insC, insA, "install-eligible mods must print in profile.Mods order")
 }
+
+// TestDoProfileApply_StampsSelectedFileVersion guards issue #94 for
+// doProfileApply's "install missing mods" save site: when a mod referenced
+// by the profile (but not yet installed) has a primary file whose version
+// differs from the mod's latest version, the persisted InstalledMod row
+// must record the file's version - the version of the bytes actually
+// downloaded and deployed - not the mod-level "latest" version. Reuses
+// fakeInstallSource (defined in install_test.go, same package) rather than
+// setupDoProfileSwitchTest's sourceless default, since this path needs a
+// real GetMod/GetModFiles/download round-trip.
+func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+
+	src := newFakeInstallSource("test-src")
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"test-src": game.ID}
+
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.1"},
+		})
+	src.AddDownload("main", []byte("plugin content"))
+
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+
+	origYes := profileApplyYes
+	profileApplyYes = true
+	t.Cleanup(func() { profileApplyYes = origYes })
+
+	require.NoError(t, doProfileApply(context.Background(), svc, game, nil))
+
+	installed, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the profile ref's version")
+}

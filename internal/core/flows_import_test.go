@@ -386,6 +386,64 @@ func TestApplyImportRedownloadUsesStoredFileIDs(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "the primary file must NOT have been downloaded/deployed")
 }
 
+// TestApplyImport_InstallLoop_RecordsFileVersion is the #94 regression test
+// for ApplyImport's install loop: like
+// TestApplyImportRedownloadUsesStoredFileIDs above, a prior install recorded
+// FileIDs=["1"] with no matching cache entry (forcing a redownload), but
+// here the source's served file "1" carries its own Version ("1.0"),
+// distinct from the mod-level Version ("1.5"). The saved InstalledMod row
+// and cache dir must be stamped with the file's version, not the mod's -
+// mirroring flows_test.go's TestService_ApplyProfileSwitch_InstallLoop_
+// RecordsFileVersion for this flow. versionedFileSource is defined in
+// flows_test.go (same core_test package).
+func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &versionedFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"})
+
+	zipPath := createTestZip(t, t.TempDir(), map[string]string{"mod1.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent)
+
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	// A prior install recorded FileIDs=["1"], but its cache entry is gone -
+	// a cache-miss redownload, matching TestApplyImportRedownloadUsesStoredFileIDs's setup.
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"1"},
+	}))
+
+	profile := &domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.5"}}}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.NeedsRedownload, 1)
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Installed)
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "target")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version, "DB row must record the selected file's version, not the mod's latest")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "cache must be keyed by the installed file's version")
+}
+
 // TestApplyImportCtxCancelled covers the loop's cancellation check: it must
 // be honored BETWEEN mods (never mid-file-operation), matching
 // DeployProfile/ApplyProfileSwitch's identical check - the quit-drain

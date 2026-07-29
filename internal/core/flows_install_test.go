@@ -548,6 +548,42 @@ func (s *multiFileDownloadSource) GetModFiles(ctx context.Context, mod *domain.M
 	return s.files, nil
 }
 
+// oldFileSource serves two files: the primary/latest (v1.5) and an archived
+// older file (v1.0) - mockSource's default GetModFiles (a single, Version-
+// less file) is overridden so a test can exercise installing the non-primary
+// file explicitly, mirroring the CLI --file path (cmd/lmm/install.go:
+// 497-513 overwrites plan.Files with a caller-picked file after PlanInstall)
+// - see TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey (#94).
+type oldFileSource struct {
+	*mockSourceWithDownloads
+}
+
+func (s *oldFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{ID: "1", Name: "Main File", FileName: mod.ID + ".zip", Version: "1.5", IsPrimary: true},
+		{ID: "2", Name: "Old File", FileName: mod.ID + "-old.zip", Version: "1.0"},
+	}, nil
+}
+
+// versionOverrideFileSource is oldFileSource's BATCH-path counterpart: like
+// perModFileSource, its single served file's ID is the mod's own ID (so
+// distinct mods - e.g. a dependency and its primary - each get an
+// unambiguous download key and can be installed together via
+// applyInstallBatchMod), but the file's Version is looked up per mod.ID in
+// fileVersions rather than left blank, so a test can diverge it from the
+// mod's own Version field - see
+// TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion (#94).
+type versionOverrideFileSource struct {
+	*mockSourceWithDownloads
+	fileVersions map[string]string // mod.ID -> served file's Version
+}
+
+func (s *versionOverrideFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{ID: mod.ID, Name: mod.Name, FileName: mod.ID + ".zip", Version: s.fileVersions[mod.ID], IsPrimary: true},
+	}, nil
+}
+
 // registerDownloadableMod registers mod with mock and stages a one-file zip
 // archive (containing relativePath -> content) as that mod's download,
 // keyed by mod.ID (matching perModFileSource's GetModFiles).
@@ -1174,6 +1210,187 @@ func TestService_ApplyInstall_EditedPlanFilesHonored(t *testing.T) {
 	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"main", "optional"}, installed.FileIDs)
+}
+
+// TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey is the #94
+// regression test: installing an explicitly-picked non-primary (older) file
+// must record THAT FILE's version - not the mod's own (newer) Version - in
+// the DB row and the cache directory key, so a subsequent CheckUpdates still
+// offers the real update instead of the old file silently masquerading as
+// current. Mirrors the CLI --file path (cmd/lmm/install.go:497-513), which
+// overwrites plan.Files with the caller-picked file after PlanInstall.
+func TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &oldFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"}
+	mock.AddMod(mod.GameID, mod)
+
+	oldZip := createTestZip(t, t.TempDir(), map[string]string{"mod1.esp": "old-payload"})
+	oldContent, err := os.ReadFile(oldZip)
+	require.NoError(t, err)
+	mock.AddDownload("2", oldContent)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Files, 1, "PlanInstall's own default picks just the primary file")
+	assert.Equal(t, "1", plan.Files[0].ID)
+
+	// Caller (CLI's --file override) picks the archived old file instead.
+	plan.Files = []domain.DownloadableFile{
+		{ID: "2", Name: "Old File", FileName: "mod1-old.zip", Version: "1.0"},
+	}
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Mod One"}, result.Installed)
+
+	got, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", got.Version, "DB row must record the selected file's version, not the mod's latest")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "cache must be keyed by the installed file's version")
+	assert.False(t, gameCache.Exists("g1", "src", "mod1", "1.5"), "cache must NOT be keyed by the mod's latest version when an older file was installed")
+
+	// The user-visible symptom: installing an older file must not suppress
+	// its own update notification. domain.IsNewerVersion backs CheckUpdates'
+	// comparison for sources that use it directly.
+	assert.True(t, domain.IsNewerVersion(got.Version, "1.5"))
+
+	// Confirm at the CheckUpdates level too, via a source mock whose
+	// CheckUpdates is actually wired up (mockSource's always returns nil).
+	registry := source.NewRegistry()
+	updateSrc := &updateMockSource{
+		id: "src",
+		currentMod: &domain.Mod{
+			ID:       "mod1",
+			SourceID: "src",
+			Name:     "Mod One",
+			Version:  "1.5",
+			GameID:   "g1",
+		},
+	}
+	registry.Register(updateSrc)
+	updater := core.NewUpdater(registry)
+
+	updates, err := updater.CheckUpdates(context.Background(), game, []domain.InstalledMod{*got})
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	assert.Equal(t, "1.5", updates[0].NewVersion)
+}
+
+// TestApplyInstall_ExplicitOldFile_BeforeEachHookSeesEffectiveVersion pins
+// the other observable consequence of the #94 stamp: applyInstallPrimary
+// sets hookCtx.ModVersion (flows.go, right after the stamp) from the SAME
+// now-effective mod.Version, so install.before_each - and therefore the
+// LMM_MOD_VERSION env var a hook script sees (hooks.go's Run) - reports the
+// file actually being installed ("1.0"), not the mod's own latest version
+// ("1.5"). Mirrors TestService_ApplyUpdate_HookOrder's callLog pattern
+// (flows_update_test.go) for capturing hook context via a real script.
+func TestApplyInstall_ExplicitOldFile_BeforeEachHookSeesEffectiveVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &oldFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"}
+	mock.AddMod(mod.GameID, mod)
+
+	oldZip := createTestZip(t, t.TempDir(), map[string]string{"mod1.esp": "old-payload"})
+	oldContent, err := os.ReadFile(oldZip)
+	require.NoError(t, err)
+	mock.AddDownload("2", oldContent)
+
+	callLog := filepath.Join(scriptsDir, "calls.log")
+	beforeEach := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "install.before_each:$LMM_MOD_ID:$LMM_MOD_VERSION" >> `+callLog+`
+exit 0`)
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: beforeEach}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	// Caller (CLI's --file override) picks the archived old file instead.
+	plan.Files = []domain.DownloadableFile{
+		{ID: "2", Name: "Old File", FileName: "mod1-old.zip", Version: "1.0"},
+	}
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Mod One"}, result.Installed)
+
+	logContent, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	assert.Equal(t, "install.before_each:mod1:1.0\n", string(logContent),
+		"install.before_each must see the effective (selected-file) version, not the mod-level 1.5")
+}
+
+// TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion is the #94
+// regression test for the BATCH path (applyInstallBatchMod), which installs
+// dependencies AND the primary identically and - unlike applyInstallPrimary
+// - always re-resolves its own file from the source rather than consulting
+// plan.Files. A dependency mod's source reports a mod-level Version ("2.0")
+// that differs from its actually-served primary file's Version ("2.0.1");
+// the DB row and cache dir must carry the file's version, matching
+// TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey's PRIMARY
+// path assertion but exercised via a dependency install instead.
+func TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &versionOverrideFileSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		fileVersions:            map[string]string{"dep1": "2.0.1", "root": "1.0"},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "2.0", GameID: "g1"}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+
+	depZip := createTestZip(t, t.TempDir(), map[string]string{"dep1.esp": "dep-payload"})
+	depContent, err := os.ReadFile(depZip)
+	require.NoError(t, err)
+	mock.AddDownload("dep1", depContent)
+	mock.AddMod(dep1.GameID, dep1)
+
+	rootZip := createTestZip(t, t.TempDir(), map[string]string{"root.esp": "root-payload"})
+	rootContent, err := os.ReadFile(rootZip)
+	require.NoError(t, err)
+	mock.AddDownload("root", rootContent)
+	mock.AddMod(root.GameID, root)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+
+	got, err := svc.GetInstalledMod("src", "dep1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0.1", got.Version, "the dependency's DB row must record the selected file's version, not the mod's mod-level 2.0")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists("g1", "src", "dep1", "2.0.1"), "cache must be keyed by the installed file's version")
+	assert.False(t, gameCache.Exists("g1", "src", "dep1", "2.0"), "cache must NOT be keyed by the mod's mod-level version when the file's own version differs")
 }
 
 // TestService_ApplyInstall_ContextCancellation proves ApplyInstall checks

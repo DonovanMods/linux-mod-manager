@@ -18,6 +18,24 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// versionedFileSource serves a single file under mockSource's default ID
+// ("1" - the same ID both ApplyProfileSwitch and ApplyImport's install
+// loops select via stored FileIDs), but with an explicit Version ("1.0")
+// distinct from the mod-level Version a test passes to AddMod - mirroring
+// flows_install_test.go's oldFileSource/versionOverrideFileSource fixtures
+// for the #94 stamp, applied to the two remaining flows (Task A4). See
+// TestService_ApplyProfileSwitch_InstallLoop_RecordsFileVersion and
+// TestApplyImport_InstallLoop_RecordsFileVersion.
+type versionedFileSource struct {
+	*mockSourceWithDownloads
+}
+
+func (s *versionedFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{
+		{ID: "1", Name: "Main File", FileName: mod.ID + ".zip", Version: "1.0", IsPrimary: true},
+	}, nil
+}
+
 // newFlowsTestService returns a *core.Service backed by fresh temp dirs
 // (config/data/cache), matching the construction pattern used throughout
 // service_test.go.
@@ -2713,6 +2731,52 @@ func TestService_ApplyProfileSwitch_InstallLoop_FallbackUsedWhenStoredFileIDsNot
 		}
 	}
 	assert.True(t, sawFallback, "expected a SwitchFallbackUsed event")
+}
+
+// TestService_ApplyProfileSwitch_InstallLoop_RecordsFileVersion is the #94
+// regression test for ApplyProfileSwitch's install loop: the source's served
+// file ("1") carries its own Version ("1.0"), distinct from the mod-level
+// Version ("1.5") GetMod returns. The saved InstalledMod row and the cache
+// dir must be stamped with the file's version, not the mod's, mirroring
+// flows_install_test.go's TestApplyInstall_ExplicitOldFile_
+// RecordsFileVersionAndCacheKey for this flow.
+func TestService_ApplyProfileSwitch_InstallLoop_RecordsFileVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, err)
+
+	mock := &versionedFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	tmpDir := t.TempDir()
+	zipPath := createTestZip(t, tmpDir, map[string]string{"mod1.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"})
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.5", FileIDs: []string{"1"}}},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "target")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version, "DB row must record the selected file's version, not the mod's latest")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"), "cache must be keyed by the installed file's version")
 }
 
 // TestService_ApplyProfileSwitch_InstallLoop_SavesWithNormalizedGameID

@@ -1060,6 +1060,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			if usedFallback && len(fileIDsToUse) > 0 {
 				fmt.Printf("    Warning: stored file IDs not found, using primary\n")
 			}
+			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
 			// Download each file
 			progressFn := func(p core.DownloadProgress) {

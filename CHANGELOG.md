@@ -7,11 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.22.1] - 2026-07-28
+## [1.23.1] - 2026-07-28
 
 ### Fixed
 
-- Database writes (delete/policy/enable/deploy/version/link-method updates on installed mods) no longer misreport a driver failure while checking affected rows as "mod not found" — the error is now returned with context instead of being read as zero rows affected (extends the `SetModVersion` fix from PR #128 to the remaining six sites in `internal/storage/db/mods.go`)
+- Database writes (delete/policy/enable/deploy/version/link-method updates on installed mods) no longer misreport a driver failure while checking affected rows as "mod not found" — the error is now returned wrapped with its operation's context instead of being read as zero rows affected (extends the `SetModVersion` fix from PR #128 to the remaining six sites in `internal/storage/db/mods.go`, and aligns that site's error wording with the sweep)
+
+## [1.23.0] - 2026-07-28
+
+### Fixed
+
+- Installed mods now record the version of the file that was actually selected and downloaded, not the mod's overall "latest" version, across every install path (primary install, batch/dependency installs, profile switch, import, and the CLI's batch-install and profile-apply flows) — the mod cache is keyed to match, so a file pinned to an older release no longer gets stamped or cached under a newer version it isn't (#94)
+
+### Added
+
+- `lmm verify` now also checks each installed mod's recorded version against what its stored file ID(s) actually report upstream, surfacing `version_mismatch` (issue, fixable) and `version_unverifiable` (warning, not fixable — reinstall instead) statuses alongside the existing file checks
+- `lmm verify --fix` repairs a `version_mismatch` by re-keying the cache entry to the source-reported version, correcting the DB row and active profile record, and re-linking symlink deployments (a blocked rename, when a cache entry already exists under the target version, is left alone and reported via a new additive `note` field rather than clobbered); since the mod cache is shared across profiles, a successful rename also corrects any other profile's stale record for the same mod (DB, profile record, and re-linking if deployed), surfaced as its own output line per profile in text mode or folded into the `note` field in `--json`
+- `--json` verify output gains the optional `note` field carrying repair/skip detail — blocked cache renames, sibling-profile repair outcomes, and repair/re-download failure reasons
 
 ## [1.22.0] - 2026-07-28
 
@@ -1054,8 +1066,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.1...HEAD
-[1.22.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.0...v1.22.1
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.1...HEAD
+[1.23.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.0...v1.23.1
+[1.23.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.1...v1.21.0
 [1.20.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.0...v1.20.1
