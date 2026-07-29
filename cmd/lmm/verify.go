@@ -273,7 +273,11 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		sourceFiles, err := svc.GetModFiles(ctx, mod.SourceID, sourceMappedMod(game, &mod.Mod))
 		if err != nil {
 			if jsonOutput {
-				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: "", Status: "skipped"})
+				// Copilot round 6 (PR #128): the source-unreachable reason
+				// must reach --json too, not just the text-mode line below
+				// - status stays "skipped" and warnings is unaffected,
+				// only the note is new.
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: "", Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)})
 			} else {
 				fmt.Printf("%s %s - could not check version (source unreachable)\n", colorYellow("?"), mod.Name)
 			}

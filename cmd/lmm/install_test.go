@@ -387,6 +387,11 @@ type fakeInstallSource struct {
 	// gameIDCapturingSource pattern, for tests asserting a caller applied
 	// (or didn't apply) the game's per-source ID mapping before calling in.
 	receivedGameFileIDs []string
+
+	// getModFilesErr, when set, makes GetModFiles return this error
+	// instead of a normal lookup - for tests exercising a "source
+	// unreachable" path (nil by default, so every other test is unaffected).
+	getModFilesErr error
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -433,6 +438,9 @@ func (s *fakeInstallSource) GetDependencies(ctx context.Context, mod *domain.Mod
 }
 func (s *fakeInstallSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
 	s.receivedGameFileIDs = append(s.receivedGameFileIDs, mod.GameID)
+	if s.getModFilesErr != nil {
+		return nil, s.getModFilesErr
+	}
 	return s.files[mod.ID], nil
 }
 func (s *fakeInstallSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {

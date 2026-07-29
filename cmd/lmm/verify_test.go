@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,6 +164,43 @@ func TestDoVerify_VersionUnverifiable_ReportedAsWarning(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected a version_unverifiable entry in JSON files: %+v", result.Files)
+}
+
+// TestDoVerify_VersionCheck_SourceUnreachable_JSONNotesReason guards PR
+// #128 Copilot round-6's suppressed finding: when svc.GetModFiles fails in
+// the version-record pre-pass (the "source unreachable" case), --json
+// emitted a "skipped" row with the error dropped entirely, while text mode
+// at least printed "could not check version (source unreachable)" - a
+// --json caller had no way to see WHY. Forces the failure via
+// fakeInstallSource.getModFilesErr (a real error the fake source itself
+// returns, not a permission trick, since this is a source-layer failure).
+func TestDoVerify_VersionCheck_SourceUnreachable_JSONNotesReason(t *testing.T) {
+	cmd, svc, game, src := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+		{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+	})
+	src.getModFilesErr = errors.New("connection refused")
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 0, result.Issues, "source-unreachable is a warning, not an issue")
+	assert.Equal(t, 1, result.Warnings, "the warnings count must be unaffected by adding the note")
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Equal(t, "skipped", f.Status, "status must stay skipped")
+			assert.Contains(t, f.Note, "connection refused", "the source-unreachable reason must reach the JSON note, not just the text-mode line")
+		}
+	}
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
 }
 
 // TestDoVerify_VersionCheck_MapsGameIDPerSourceMapping guards PR #128
