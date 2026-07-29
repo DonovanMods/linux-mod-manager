@@ -15,6 +15,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -834,4 +835,58 @@ func TestDoProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
 
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	assert.NoError(t, err, "the file must actually be deployed, not merely a DB row claiming so")
+
+	// The completed download must leave the entry MARKED, so a later apply
+	// over the same profile is a genuine cache hit.
+	assert.True(t, gameCache.HasFileIDs(game.ID, "test-src", "mod1", "1.0", []string{"main"}),
+		"a successful download must commit the per-file completion marker")
+	assert.Equal(t, 1, src.DownloadCount(), "exactly one download, not a retry loop")
+}
+
+// TestDoProfileApply_FullyMarkedCache_SkipsDownload is the #96 review round 2
+// guard for the cmd twin (mirrors internal/core/flows_test.go's
+// TestApplyProfileSwitch_FullyMarkedCache_SkipsDownload): the cache-first
+// guard must actually FIRE for a complete cache entry. Round 1 keyed the
+// check off DownloadableFile.FileName, but the default DeployExtract flow
+// stores an archive's extracted MEMBERS ("mod1.esp" here) rather than the
+// archive's own name ("mod1.zip") - so the guard read false for essentially
+// every archive-based mod and redownloaded despite a complete cache.
+func TestDoProfileApply_FullyMarkedCache_SkipsDownload(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+
+	src := newFakeInstallSource("test-src")
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"test-src": game.ID}
+
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main", Name: "Main", FileName: "mod1.zip", IsPrimary: true, Category: "MAIN"},
+		})
+	src.AddDownload("main", []byte("archive bytes"))
+
+	// A COMPLETE cache entry as a real extract-mode download leaves it: the
+	// archive member on disk under a name that matches nothing about the
+	// DownloadableFile ("mod1.zip"), plus file "main"'s completion marker.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("plugin content")))
+	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "test-src", "mod1", "1.0"), "main"))
+
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+
+	origYes := profileApplyYes
+	profileApplyYes = true
+	t.Cleanup(func() { profileApplyYes = origYes })
+
+	out := captureStdout(t, func() error {
+		return doProfileApply(context.Background(), svc, game, nil)
+	})
+	assert.Contains(t, out, "✓ Installed: Mod One\n")
+
+	assert.Equal(t, 0, src.DownloadCount(),
+		"a fully-marked cache entry must be deployed from cache, not redownloaded")
+
+	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	assert.NoError(t, err, "the cached file must still be deployed")
 }

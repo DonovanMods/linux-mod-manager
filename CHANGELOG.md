@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
-- File-granular cache verification (`Cache.HasFiles`) replaces an existence-only check before deploying from cache, preventing a partial cache entry (missing one or more of a multi-file mod's files) from being silently deployed as if complete
+- File-granular cache verification (`Cache.HasFileIDs`) replaces an existence-only check before deploying from cache, preventing a partial cache entry (missing one or more of a multi-file mod's files) from being silently deployed as if complete. Completeness is tracked with a zero-byte `.lmm-file-<fileID>` marker committed atomically alongside each downloaded file, so the check works for extracted archives (whose cached member names bear no relation to the downloaded file's name) instead of redundantly redownloading them. Cache entries created before this release carry no markers and are redownloaded once
 
 ## [1.24.1] - 2026-07-29
 

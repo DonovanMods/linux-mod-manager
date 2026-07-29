@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -699,6 +700,12 @@ type mockSourceWithDownloads struct {
 	*mockSource
 	downloads map[string][]byte // fileID -> zip content
 	server    *httptest.Server
+
+	// served counts download requests the test server actually handled, so a
+	// test can assert a cache-first guard SKIPPED the download rather than
+	// inferring it from side effects (#96 round 2). Atomic because the
+	// handler runs on the server's own goroutine.
+	served atomic.Int64
 }
 
 func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
@@ -708,6 +715,7 @@ func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
 	}
 	// Create test server that serves our downloads
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m.served.Add(1)
 		fileID := filepath.Base(r.URL.Path)
 		if content, ok := m.downloads[fileID]; ok {
 			w.Header().Set("Content-Type", "application/zip")
@@ -728,6 +736,9 @@ func (m *mockSourceWithDownloads) AddDownload(fileID string, content []byte) {
 func (m *mockSourceWithDownloads) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	return m.server.URL + "/" + fileID, nil
 }
+
+// DownloadCount reports how many download requests the mock actually served.
+func (m *mockSourceWithDownloads) DownloadCount() int { return int(m.served.Load()) }
 
 func (m *mockSourceWithDownloads) Close() {
 	m.server.Close()

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -391,6 +392,13 @@ type fakeInstallSource struct {
 	// instead of a normal lookup - for tests exercising a "source
 	// unreachable" path (nil by default, so every other test is unaffected).
 	getModFilesErr error
+
+	// served counts download requests the test server actually handled, so a
+	// test can assert a cache-first guard SKIPPED the download rather than
+	// inferring it from side effects (#96 round 2). Atomic because the
+	// handler runs on the server's own goroutine. Mirrors
+	// internal/core/service_test.go's mockSourceWithDownloads.served.
+	served atomic.Int64
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -402,6 +410,7 @@ func newFakeInstallSource(id string) *fakeInstallSource {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		s.served.Add(1)
 		fileID := strings.TrimPrefix(r.URL.Path, "/")
 		if content, ok := s.downloads[fileID]; ok {
 			_, _ = w.Write(content)
@@ -464,6 +473,9 @@ func (s *fakeInstallSource) AddMod(mod *domain.Mod, files []domain.DownloadableF
 func (s *fakeInstallSource) AddDownload(fileID string, content []byte) {
 	s.downloads[fileID] = content
 }
+
+// DownloadCount reports how many download requests the fake actually served.
+func (s *fakeInstallSource) DownloadCount() int { return int(s.served.Load()) }
 
 // setupDoInstallTest builds a *core.Service, a game configured for
 // fakeInstallSource, and resets install's package-level flag globals to

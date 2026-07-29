@@ -1073,18 +1073,21 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			// #96: cache-first - a convergence entry (or any other
 			// already-cached-at-this-version reinstall) skips the download
 			// step entirely once the stamped version is already cached.
-			// Review finding 2: HasFiles (not bare Exists) - a version
+			// Review finding 2: HasFileIDs (not bare Exists) - a version
 			// directory can exist yet be only PARTIALLY populated by a
 			// previous download run that broke off partway through a
 			// multi-file mod; skipping on directory presence alone would
-			// silently leave it that way forever.
+			// silently leave it that way forever. Round 2: the check is by
+			// FILE ID (the per-file completion markers
+			// commitStagedCacheWithMarker stamps), never by FileName - a
+			// cache entry for an extracted archive holds member names that
+			// match no DownloadableFile, so a name-based check would miss
+			// every archive-based mod and redownload a complete cache.
 			downloadedFileIDs := make([]string, 0, len(filesToDownload))
-			downloadedFileNames := make([]string, 0, len(filesToDownload))
 			for _, f := range filesToDownload {
 				downloadedFileIDs = append(downloadedFileIDs, f.ID)
-				downloadedFileNames = append(downloadedFileNames, f.FileName)
 			}
-			if !service.GetGameCache(game).HasFiles(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileNames) {
+			if !service.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
 				// Download each file
 				progressFn := func(p core.DownloadProgress) {
 					if p.TotalBytes > 0 {

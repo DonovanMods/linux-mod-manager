@@ -2040,17 +2040,20 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
 			downloadedFileIDs := make([]string, 0, len(filesToDownload))
-			downloadedFileNames := make([]string, 0, len(filesToDownload))
 			for _, f := range filesToDownload {
 				downloadedFileIDs = append(downloadedFileIDs, f.ID)
-				downloadedFileNames = append(downloadedFileNames, f.FileName)
 			}
-			// #96 review finding 2: HasFiles (not bare Exists) - a version
+			// #96 review finding 2: HasFileIDs (not bare Exists) - a version
 			// directory can exist yet be only PARTIALLY populated by a
 			// previous download run that broke off partway through a
 			// multi-file mod; skipping the download on directory presence
-			// alone would silently leave it that way forever.
-			if !s.GetGameCache(game).HasFiles(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileNames) {
+			// alone would silently leave it that way forever. Round 2: the
+			// check is by FILE ID (the per-file completion markers
+			// commitStagedCacheWithMarker stamps), never by FileName - a
+			// cache entry for an extracted archive holds member names that
+			// match no DownloadableFile, so a name-based check would miss
+			// every archive-based mod and redownload a complete cache.
+			if !s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
 				downloadFailed := false
 				for _, file := range filesToDownload {
 					progressFn := func(p DownloadProgress) {

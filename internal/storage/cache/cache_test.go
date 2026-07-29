@@ -56,47 +56,138 @@ func TestCache_Exists(t *testing.T) {
 	assert.True(t, c.Exists("skyrim-se", "nexusmods", "12345", "1.0.0"))
 }
 
-// TestCache_HasFiles is the #96 review round 1 finding 2 guard: HasFiles
-// must be a stronger check than Exists - Exists only checks the version
-// directory's presence, which can wrongly report "cached" for a directory
-// left PARTIALLY populated by a previous download run that broke partway
-// through a multi-file mod (each file is committed to the cache
-// individually - see DownloadModToCache's doc comment at
-// internal/core/service.go:411-414). HasFiles must report false whenever
-// any named file is actually missing, even though the directory itself
-// exists.
-func TestCache_HasFiles(t *testing.T) {
+// TestCache_HasFileIDs is the #96 review round 1 finding 2 guard, reworked in
+// round 2: the completeness check must be a stronger check than Exists (which
+// only checks the version directory's presence, and so wrongly reports
+// "cached" for a directory left PARTIALLY populated by a download run that
+// broke off partway through a multi-file mod) WITHOUT being archive-blind.
+// The round 1 implementation keyed off DownloadableFile.FileName, but the
+// default DeployExtract flow stores an archive's EXTRACTED MEMBERS - whose
+// names have nothing to do with the archive's own filename - so every
+// archive-based mod read as "incomplete" and redownloaded despite a complete
+// cache. HasFileIDs instead keys off the per-file completion markers
+// MarkFileComplete writes at commit time.
+func TestCache_HasFileIDs(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.New(dir)
 
 	// No directory at all yet.
-	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp"}))
+	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}))
 
 	// Directory exists but is completely empty (e.g. MkdirAll ran but no
-	// file was ever committed) - still not "has files".
+	// file was ever committed) - still not complete.
 	require.NoError(t, os.MkdirAll(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), 0755))
-	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp"}))
+	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}))
 
-	// Directory has ONE of two expected files - a partial download.
-	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "a.esp", []byte("a")))
-	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp", "b.esp"}),
+	// A legacy (pre-marker) cache entry - real content, no markers - reads as
+	// incomplete: one redundant redownload, which then writes the markers.
+	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "SomeArchiveMember.esp", []byte("a")))
+	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}),
+		"a pre-marker cache entry must read as incomplete")
+
+	// One of two files marked complete - a partial download.
+	require.NoError(t, cache.MarkFileComplete(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "1001"))
+	assert.True(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}))
+	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001", "1002"}),
 		"a partially-populated cache entry must not report having all requested files")
 
-	// Both expected files present - fully cached.
-	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "b.esp", []byte("b")))
-	assert.True(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp", "b.esp"}))
+	// Both marked - fully cached, even though NEITHER file ID resembles any
+	// on-disk name (the archive-extracted case round 1 got wrong).
+	require.NoError(t, cache.MarkFileComplete(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "1002"))
+	assert.True(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001", "1002"}))
 
-	// An empty filenames list against a nonexistent entry is still false -
-	// HasFiles is never weaker than Exists.
-	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "no-such-mod", "1.0.0", nil))
+	// An empty ID list against a nonexistent entry is still false -
+	// HasFileIDs is never weaker than Exists.
+	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "no-such-mod", "1.0.0", nil))
 
-	// An empty filenames list against an entry that DOES exist has nothing
-	// left to verify beyond Exists itself.
-	assert.True(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", nil))
+	// An empty ID list against an entry that DOES exist has nothing left to
+	// verify beyond Exists itself.
+	assert.True(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", nil))
 
-	// A blank filename can never be verified - the safe direction is false
-	// (triggers a redundant re-download, not a silently-trusted gap).
-	assert.False(t, c.HasFiles("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"a.esp", ""}))
+	// A blank or path-bearing file ID can never be verified - the safe
+	// direction is false (a redundant re-download, not a silently-trusted
+	// gap, and never a marker lookup that escapes the version directory).
+	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001", ""}))
+	assert.False(t, c.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"../../etc/passwd"}))
+}
+
+// TestCache_MarkersAreNeverContent is the #96 round 2 exclusion guard: the
+// per-file completion markers MarkFileComplete writes live INSIDE the version
+// directory, so every enumerator of that directory must skip them. ListFiles
+// is the choke point every deploy/conflict/verify/count path goes through
+// (Installer.Install/Replace/Undeploy, DetectConflicts, `lmm verify`'s
+// file-count check, DownloadModResult.FilesExtracted, CloneMod); Size is the
+// only other walker.
+func TestCache_MarkersAreNeverContent(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.New(dir)
+
+	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "real.esp", []byte("12345")))
+	sizeBefore, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), sizeBefore)
+
+	require.NoError(t, cache.MarkFileComplete(c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "1001"))
+
+	files, err := c.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"real.esp"}, files, "markers must never be listed as mod content")
+
+	sizeAfter, err := c.Size("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.Equal(t, sizeBefore, sizeAfter, "markers must not be counted toward cache size")
+
+	// A version directory holding ONLY markers still has zero files - `lmm
+	// verify` flags "cache dir exists but has 0 files", and a marker must not
+	// mask that.
+	require.NoError(t, os.MkdirAll(c.ModPath("skyrim-se", "nexusmods", "67890", "2.0.0"), 0755))
+	require.NoError(t, cache.MarkFileComplete(c.ModPath("skyrim-se", "nexusmods", "67890", "2.0.0"), "1001"))
+	empty, err := c.ListFiles("skyrim-se", "nexusmods", "67890", "2.0.0")
+	require.NoError(t, err)
+	assert.Empty(t, empty, "a marker-only version directory must still count as 0 files")
+}
+
+// TestCache_CloneMod_PreservesMarkers is CloneMod's deliberate exception to
+// the marker-exclusion rule: it reproduces a cache ENTRY rather than
+// enumerating its mod content, and core's reinstall cache transaction
+// round-trips a live entry through a staged/snapshot cache and back. Dropping
+// the markers there would silently downgrade a complete entry to a
+// pre-marker one and cost a redundant redownload.
+func TestCache_CloneMod_PreservesMarkers(t *testing.T) {
+	src := cache.New(t.TempDir())
+	dst := cache.New(t.TempDir())
+
+	require.NoError(t, src.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "real.esp", []byte("data")))
+	require.NoError(t, cache.MarkFileComplete(src.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "1001"))
+
+	require.NoError(t, src.CloneMod(dst, "skyrim-se", "nexusmods", "12345", "1.0.0"))
+
+	files, err := dst.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"real.esp"}, files, "the clone's CONTENT must still exclude markers")
+	assert.True(t, dst.HasFileIDs("skyrim-se", "nexusmods", "12345", "1.0.0", []string{"1001"}),
+		"a cloned entry must stay complete - markers travel with the entry")
+}
+
+// TestCache_MarkFileComplete_UnverifiableIDs pins MarkFileComplete's refusal
+// to write a marker it could never match back: a blank or path-bearing file
+// ID is skipped (no error, no file), leaving HasFileIDs to report incomplete
+// - the safe direction - rather than writing a marker outside the version
+// directory.
+func TestCache_MarkFileComplete_UnverifiableIDs(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.New(dir)
+	modPath := c.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0")
+	require.NoError(t, os.MkdirAll(modPath, 0755))
+
+	require.NoError(t, cache.MarkFileComplete(modPath, ""))
+	require.NoError(t, cache.MarkFileComplete(modPath, "../escape"))
+
+	entries, err := os.ReadDir(modPath)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "an unverifiable file ID must not produce a marker")
+	_, err = os.Stat(filepath.Join(filepath.Dir(modPath), ".lmm-file-../escape"))
+	assert.Error(t, err)
 }
 
 func TestCache_ListFiles(t *testing.T) {
