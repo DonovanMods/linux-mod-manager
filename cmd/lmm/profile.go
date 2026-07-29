@@ -1206,16 +1206,9 @@ var errNoDownloadableFiles = fmt.Errorf("no downloadable files")
 // selectFilesToDownload below and on selectDeployFiles in flows.go.
 var errStoredFilesUnavailable = errors.New("stored file(s) no longer available upstream")
 
-// errVersionUnavailable mirrors internal/core/resolve.go's ErrVersionNotFound
-// (#96): this package can't import internal/core's exported sentinel without
-// creating an import cycle risk shared with the rest of this file's
-// duplicated helpers, so it's mirrored here by hand - see the CANONICAL NOTE
-// at internal/tui/service_core.go:254-261 for the convention this follows.
-var errVersionUnavailable = errors.New("version not found")
-
 // availableVersions mirrors internal/core/resolve.go's unexported helper of
 // the same name: the distinct non-empty versions in files, in first-seen
-// order - display material for errVersionUnavailable.
+// order - display material for core.ErrVersionNotFound.
 func availableVersions(files []domain.DownloadableFile) []string {
 	seen := make(map[string]bool, len(files))
 	var out []string
@@ -1261,7 +1254,7 @@ func anyFileHasVersion(files []domain.DownloadableFile) bool {
 // exact-match resolution to the SAME version (never latest); unresolvable
 // targets are hard per-mod errors naming the version - the "gone upstream"
 // #95 wording only when the stored IDs themselves match nothing at all
-// upstream, versus a distinct errVersionUnavailable wrap when at least one
+// upstream, versus a distinct core.ErrVersionNotFound wrap when at least one
 // stored ID IS still present upstream but the recorded version isn't (the
 // classic pre-#94 mis-stamped row, which isn't a "gone" file - it's a wrong
 // version record on a file that's still there).
@@ -1300,11 +1293,11 @@ func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []stri
 				// below: this is a version-record problem, not a
 				// missing-file problem, so it points at verify/update
 				// instead of reinstall.
-				return nil, fmt.Errorf("%w: installed file(s) (ID(s): %s) do not match recorded version %q, which is not available upstream - run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version", errVersionUnavailable, strings.Join(storedFileIDs, ", "), version)
+				return nil, fmt.Errorf("%w: installed file(s) (ID(s): %s) do not match recorded version %q, which is not available upstream - run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version", core.ErrVersionNotFound, strings.Join(storedFileIDs, ", "), version)
 			}
 			return nil, fmt.Errorf("%w (file ID(s): %s; version %q not available) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "), version)
 		}
-		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", errVersionUnavailable, version, strings.Join(availableVersions(files), ", "))
+		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", core.ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
 	}
 	if len(storedFileIDs) > 0 {
 		var stored []*domain.DownloadableFile

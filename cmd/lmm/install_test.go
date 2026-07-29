@@ -155,6 +155,7 @@ func TestInstallCmd_VersionFlag_NoLongerRejected(t *testing.T) {
 	// resolution (which fails here because no game is configured).
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "not yet supported")
+	assert.Contains(t, err.Error(), "no game specified")
 }
 
 // TestFormatSize tests the formatSize function

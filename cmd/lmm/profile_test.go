@@ -550,7 +550,7 @@ func TestSelectFilesToDownload_VersionAuthoritative(t *testing.T) {
 	// requested version matches nothing upstream.
 	_, err = selectFilesToDownload(files, nil, "3.0")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, errVersionUnavailable))
+	assert.True(t, errors.Is(err, core.ErrVersionNotFound))
 	assert.Contains(t, err.Error(), "edit the profile's version or reinstall")
 
 	// Rule 4b (new split, #96 fix round 1): a stored ID (12) IS still
@@ -561,7 +561,7 @@ func TestSelectFilesToDownload_VersionAuthoritative(t *testing.T) {
 	// verify/update instead of reinstall.
 	_, err = selectFilesToDownload(files, []string{"12"}, "3.0")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, errVersionUnavailable))
+	assert.True(t, errors.Is(err, core.ErrVersionNotFound))
 	assert.NotContains(t, err.Error(), "no longer available upstream", "a present-upstream stored ID must not get the gone-file wording")
 	assert.Contains(t, err.Error(), `installed file(s) (ID(s): 12) do not match recorded version "3.0"`)
 	assert.Contains(t, err.Error(), "run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version")
