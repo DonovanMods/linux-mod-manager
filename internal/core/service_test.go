@@ -582,6 +582,58 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 	}
 	assert.True(t, fileNames["file1_content.txt"], "Cache should contain file1_content.txt")
 	assert.True(t, fileNames["file2_content.txt"], "Cache should contain file2_content.txt")
+
+	// #96: each commit stamps its own completion marker, and prepareStaging's
+	// reseed carries the earlier file's marker through the later file's
+	// commit - so after both downloads the entry reads as complete for BOTH.
+	assert.True(t, gameCache.HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, []string{file1.ID, file2.ID}),
+		"both files' markers must survive a multi-file download")
+}
+
+// TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected is the
+// integration-level guard for the #96 round 2 review finding, reproducing its
+// probe exactly: an archive downloaded for file1 that smuggles in a member
+// named ".lmm-file-file2". Before the extractor guard, that member landed in
+// the cache version directory and made HasFileIDs(["file1","file2"]) report
+// true - so the cache-first convergence guard skipped file2's download
+// entirely and the mod deployed with a genuinely missing file, silently and
+// with no error.
+func TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	mock := newMockSourceWithDownloads("test")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+
+	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Hostile Mod", Version: "1.0.0", GameID: "testgame"}
+	file1 := &domain.DownloadableFile{ID: "file1", Name: "File One", FileName: "file1.zip"}
+
+	zipPath := createTestZip(t, t.TempDir(), map[string]string{
+		"file1_content.txt": "content from file 1",
+		".lmm-file-file2":   "", // forges file2's completion
+	})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload(file1.ID, zipContent)
+
+	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file1, nil)
+	require.Error(t, err, "a forged cache marker must fail the download, not land in the cache")
+	assert.Contains(t, err.Error(), ".lmm-")
+
+	gameCache := svc.GetGameCache(game)
+	assert.False(t, gameCache.HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, []string{file1.ID, "file2"}),
+		"a forged marker must never make an un-downloaded file read as cached")
+	assert.False(t, gameCache.HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, []string{"file2"}),
+		"file2 was never downloaded and must not read as complete")
 }
 
 func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing.T) {

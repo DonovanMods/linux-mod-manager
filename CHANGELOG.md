@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `lmm update`'s apply step now records the version of the file it actually installed, not the mod's overall "latest" version — `lmm verify` no longer flags a freshly-updated mod as a version mismatch
 - `lmm profile apply` no longer fails to converge a version-drifted mod whose previous version's cache entry has been pruned — it now falls back to a plain install instead of erroring with "old mod not in cache", matching `profile switch`
 
+### Security
+
+- Archive extraction now rejects mod archives containing members under lmm's reserved `.lmm-` cache namespace (at any path depth, including members nested under a `.lmm-`-prefixed directory). Such a member could forge another file's cache-completion marker — making the cache-first guard skip a download that never happened and deploy the mod with a genuinely missing file, silently — or hide itself from deployment entirely. Consistent with the existing zip-slip and symlink-containment guards, the extraction fails and names the offending member
+
 ### Internal
 
 - File-granular cache verification (`Cache.HasFileIDs`) replaces an existence-only check before deploying from cache, preventing a partial cache entry (missing one or more of a multi-file mod's files) from being silently deployed as if complete. Completeness is tracked with a zero-byte `.lmm-file-<fileID>` marker committed atomically alongside each downloaded file, so the check works for extracted archives (whose cached member names bear no relation to the downloaded file's name) instead of redundantly redownloading them. Cache entries created before this release carry no markers and are redownloaded once

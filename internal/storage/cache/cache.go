@@ -42,20 +42,26 @@ func (c *Cache) Exists(gameID, sourceID, modID, version string) bool {
 	return err == nil && info.IsDir()
 }
 
-// reservedPrefix marks lmm's own bookkeeping entries inside a cache version
+// ReservedPrefix marks lmm's own bookkeeping entries inside a cache version
 // directory. Nothing under it is mod content: reserved entries are excluded
 // from every enumerator of a version directory (ListFiles, Size) so they can
 // never be deployed, counted, checksummed, or conflict-matched.
-const reservedPrefix = ".lmm-"
+//
+// It is exported so the archive extractor (internal/core) can enforce the
+// same namespace from the other side: mod archives are untrusted content, and
+// a member shipped under this prefix could otherwise forge a completion
+// marker (making the cache-first guard skip a real download) or hide itself
+// from deploy. One constant, both sides.
+const ReservedPrefix = ".lmm-"
 
 // fileMarkerPrefix names the per-source-file completion markers written by
 // MarkFileComplete and read by HasFileIDs.
-const fileMarkerPrefix = reservedPrefix + "file-"
+const fileMarkerPrefix = ReservedPrefix + "file-"
 
 // isReserved reports whether a cache directory entry is lmm bookkeeping
 // rather than mod content.
 func isReserved(name string) bool {
-	return strings.HasPrefix(name, reservedPrefix)
+	return strings.HasPrefix(name, ReservedPrefix)
 }
 
 // verifiableFileID reports whether a source file ID can be round-tripped
