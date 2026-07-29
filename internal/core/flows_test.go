@@ -3260,6 +3260,109 @@ func TestApplyProfileSwitch_StoredIDPresentButVersionGone_NewErrorWording(t *tes
 	assert.Contains(t, failEvt.Detail, "run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version")
 }
 
+// TestPlanProfileSwitch_VersionDrift_SchedulesReinstall is the #96
+// convergence guard: mod1 is installed+enabled at 1.5 under "testing" (the
+// current default profile), but the target profile "stable" pins it at 1.0.
+// PlanProfileSwitch must classify this as ToInstall (carrying the ref as-is,
+// version "1.0") rather than leaving it alone as already-satisfied - the
+// version mismatch itself, not cache/enabled state, drives the decision.
+func TestPlanProfileSwitch_VersionDrift_SchedulesReinstall(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "testing")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "testing"))
+	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "testing", "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
+	require.NoError(t, pm.AddMod(game.ID, "testing", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.UpsertMod(game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "stable")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+
+	assert.False(t, plan.NoChanges)
+	assert.Empty(t, plan.ToEnable)
+	assert.Empty(t, plan.ToDisable)
+	require.Len(t, plan.ToInstall, 1)
+	assert.Equal(t, "mod1", plan.ToInstall[0].ModID)
+	assert.Equal(t, "1.0", plan.ToInstall[0].Version, "must schedule reinstall at the profile's (lower) version")
+}
+
+// TestPlanProfileSwitch_MatchingVersion_RemainsNoop is the regression guard
+// for the new drift case's guard conditions: when the target ref's Version
+// matches the installed mod's (or is empty), the mod must be classified
+// exactly as it was before #96 - no ToInstall entry.
+func TestPlanProfileSwitch_MatchingVersion_RemainsNoop(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "testing")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "testing"))
+	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "testing", "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
+	require.NoError(t, pm.AddMod(game.ID, "testing", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.UpsertMod(game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "stable")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+
+	assert.True(t, plan.NoChanges, "matching version must remain a no-op, exactly as before #96")
+	assert.Empty(t, plan.ToInstall)
+	assert.Empty(t, plan.ToEnable)
+	assert.Empty(t, plan.ToDisable)
+}
+
+// TestApplyProfileSwitch_Downgrade_EndToEnd is the #96 convergence
+// end-to-end guard: mod1 installed at 1.5 (file "10"); switching to "stable"
+// (which pins 1.0) must plan AND apply a full reinstall at 1.0 - resolving
+// to the archived file "9" via T5's selectVersionedDeployFiles, caching it,
+// and recording the downgrade in the DB.
+func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	seedInstalledMod(t, svc, game, "src", "mod1", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.UpsertMod(game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "stable")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.Len(t, plan.ToInstall, 1, "the version-drifted mod must be scheduled for reinstall")
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version)
+	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
+
+	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the downgraded version must be cached")
+}
+
 // TestService_ApplyProfileSwitch_InstallLoop_SavesWithNormalizedGameID
 // regression-guards the P3 orphaning bug class (see profile_gameid_test.go's
 // CLI-level counterpart): Service.GetMod may stamp a source-mapped GameID

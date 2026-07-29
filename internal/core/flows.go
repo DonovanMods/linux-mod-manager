@@ -1805,6 +1805,13 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
+		case ref.Version != "" && im.Version != ref.Version:
+			// #96 convergence: the profile names a different version than
+			// the installed row - reinstall at the profile's version
+			// (downgrades included). ref is passed as-is: its own FileIDs
+			// (if any) describe the TARGET version; the installed row's
+			// describe the wrong one.
+			toInstall = append(toInstall, ref)
 		case !s.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version):
 			// Cache missing - needs a redownload; preserve the installed
 			// mod's own FileIDs (not the profile YAML's, which may be
@@ -2012,31 +2019,35 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
-			var downloadedFileIDs []string
-			downloadFailed := false
-			for _, file := range filesToDownload {
-				progressFn := func(p DownloadProgress) {
-					if p.TotalBytes > 0 {
-						dl := base
-						dl.Phase, dl.Percent = SwitchDownloading, p.Percentage
-						emit(dl)
+			downloadedFileIDs := make([]string, 0, len(filesToDownload))
+			for _, f := range filesToDownload {
+				downloadedFileIDs = append(downloadedFileIDs, f.ID)
+			}
+			if !s.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+				downloadFailed := false
+				for _, file := range filesToDownload {
+					progressFn := func(p DownloadProgress) {
+						if p.TotalBytes > 0 {
+							dl := base
+							dl.Phase, dl.Percent = SwitchDownloading, p.Percentage
+							emit(dl)
+						}
+					}
+					if _, err := s.DownloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
+						evt := base
+						evt.Phase, evt.Detail = SwitchDownloadFailed, fmt.Sprintf("download failed: %v", err)
+						emit(evt)
+						downloadFailed = true
+						break
 					}
 				}
-				if _, err := s.DownloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
-					evt := base
-					evt.Phase, evt.Detail = SwitchDownloadFailed, fmt.Sprintf("download failed: %v", err)
-					emit(evt)
-					downloadFailed = true
-					break
-				}
-				downloadedFileIDs = append(downloadedFileIDs, file.ID)
-			}
-			doneEvt := base
-			doneEvt.Phase = SwitchDownloadDone
-			emit(doneEvt)
+				doneEvt := base
+				doneEvt.Phase = SwitchDownloadDone
+				emit(doneEvt)
 
-			if downloadFailed {
-				continue
+				if downloadFailed {
+					continue
+				}
 			}
 
 			if err := installer.Install(ctx, game, mod, plan.To); err != nil {

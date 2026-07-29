@@ -889,6 +889,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	var toEnable []*domain.InstalledMod
 	var toInstall []domain.ModReference
 	needsRedownloadSet := make(map[string]bool) // Track which mods are re-downloads
+	needsReplaceSet := make(map[string]bool)    // #96: mods needing Installer.Replace (already deployed at the wrong version), not a bare Install
 
 	// Check installed mods against profile. Deterministic order: iterate
 	// core.OrderByProfile(profile, installedMods) - not `for key, im :=
@@ -904,7 +905,20 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				toDisable = append(toDisable, im)
 			}
 		} else {
-			// In profile - make sure it's enabled
+			// In profile - make sure it's enabled and at the profile's version
+			ref := profileKeys[key]
+			if ref.Version != "" && im.Version != ref.Version {
+				// #96 convergence: the profile names a different version
+				// than the installed row - reinstall at the profile's
+				// version (downgrades included), regardless of enabled
+				// state. ref is passed as-is: its own FileIDs (if any)
+				// describe the TARGET version; the installed row's
+				// describe the wrong one.
+				toInstall = append(toInstall, ref)
+				needsRedownloadSet[key] = false // fresh target version: profile FileIDs, not the DB's
+				needsReplaceSet[key] = im.Deployed
+				continue
+			}
 			if !im.Enabled {
 				// Check if cache exists before adding to toEnable
 				if service.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version) {
@@ -1056,33 +1070,50 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			}
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
-			// Download each file
-			progressFn := func(p core.DownloadProgress) {
-				if p.TotalBytes > 0 {
-					fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
+			// #96: cache-first - a convergence entry (or any other
+			// already-cached-at-this-version reinstall) skips the download
+			// step entirely once the stamped version is already cached.
+			downloadedFileIDs := make([]string, 0, len(filesToDownload))
+			for _, f := range filesToDownload {
+				downloadedFileIDs = append(downloadedFileIDs, f.ID)
+			}
+			if !service.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+				// Download each file
+				progressFn := func(p core.DownloadProgress) {
+					if p.TotalBytes > 0 {
+						fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
+					}
+				}
+
+				downloadFailed := false
+				for _, selectedFile := range filesToDownload {
+					_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
+					if err != nil {
+						fmt.Println()
+						fmt.Printf("    Error: download failed: %v\n", err)
+						downloadFailed = true
+						break
+					}
+				}
+				fmt.Println()
+
+				if downloadFailed {
+					continue
 				}
 			}
 
-			var downloadedFileIDs []string
-			downloadFailed := false
-			for _, selectedFile := range filesToDownload {
-				_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
-				if err != nil {
-					fmt.Println()
-					fmt.Printf("    Error: download failed: %v\n", err)
-					downloadFailed = true
-					break
+			// Deploy. #96: a mod already deployed at the wrong version must
+			// be replaced (removing files the new version no longer serves),
+			// not just have new files installed alongside stale ones -
+			// mirrors ApplyUpdate's Installer.Replace semantics
+			// (internal/core/flows.go).
+			if needsReplaceSet[key] {
+				prev := installedByKey[key]
+				if err := installer.Replace(ctx, game, &prev.Mod, mod, profileName); err != nil {
+					fmt.Printf("    Error: deploy failed: %v\n", err)
+					continue
 				}
-				downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
-			}
-			fmt.Println()
-
-			if downloadFailed {
-				continue
-			}
-
-			// Deploy
-			if err := installer.Install(ctx, game, mod, profileName); err != nil {
+			} else if err := installer.Install(ctx, game, mod, profileName); err != nil {
 				fmt.Printf("    Error: deploy failed: %v\n", err)
 				continue
 			}
