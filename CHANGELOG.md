@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `lmm deploy`, profile switch, profile import, and `lmm profile apply` now **fail a mod** whose stored file ID(s) are no longer available upstream, instead of silently substituting the primary file — the error names the missing file ID(s) and points at the fix ("reinstall the mod or run `lmm update` to adopt the current version"). The failure is per-mod: other mods in the same operation continue. The "using primary file" fallback-warning lines are gone from both CLI and TUI output. Applying an update intentionally keeps the old fallback behavior — falling back to the new version's primary file is correct when a source has pruned the old file IDs (#95)
 
+## [1.23.1] - 2026-07-28
+
+### Fixed
+
+- Database writes (delete/policy/enable/deploy/version/link-method updates on installed mods) no longer misreport a driver failure while checking affected rows as "mod not found" — the error is now returned wrapped with its operation's context instead of being read as zero rows affected (extends the `SetModVersion` fix from PR #128 to the remaining six sites in `internal/storage/db/mods.go`, and aligns that site's error wording with the sweep)
+
 ## [1.23.0] - 2026-07-28
 
 ### Fixed
@@ -1067,7 +1073,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MIT License
 
 [Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.24.0...HEAD
-[1.24.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.0...v1.24.0
+[1.24.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.1...v1.24.0
+[1.23.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.0...v1.23.1
 [1.23.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.20.1...v1.21.0

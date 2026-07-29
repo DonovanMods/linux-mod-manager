@@ -30,6 +30,20 @@ func installTestMod(t *testing.T, database *db.DB) {
 	require.NoError(t, database.SaveInstalledMod(mod))
 }
 
+// Note: the result.RowsAffected() error-classification branch shared by
+// DeleteInstalledMod, UpdateModPolicy, SetModEnabled, SetModDeployed,
+// UpdateModVersion, SetModVersion, and SetModLinkMethod (a driver error
+// there must be returned, not misread as "0 rows affected" ->
+// domain.ErrModNotFound) is
+// not covered by a dedicated test. modernc.org/sqlite's
+// Result.RowsAffected() is a locally-computed value from the just-executed
+// statement, not a fresh round-trip that can fail independently of Exec's
+// own error return (already checked above it) - there's no realistic way to
+// make it error with the standard driver without a custom sql.Driver mock,
+// which isn't otherwise justified here. Verified by inspection: each site
+// wraps and returns the error with operation context instead of discarding
+// it via `_`.
+
 func TestUpdateModPolicy(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
@@ -162,17 +176,6 @@ func TestSetModVersion_NotFound(t *testing.T) {
 	err = database.SetModVersion("nexusmods", "nonexistent", "skyrim-se", "default", "1.0")
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
-
-// Note: SetModVersion's result.RowsAffected() error-classification branch
-// (a driver error there must be returned, not misread as "0 rows affected"
-// -> domain.ErrModNotFound - PR #128 Copilot round 6) is not covered by a
-// dedicated test. modernc.org/sqlite's Result.RowsAffected() is a
-// locally-computed value from the just-executed statement, not a fresh
-// round-trip that can fail independently of Exec's own error return
-// (already checked above it) - there's no realistic way to make it error
-// with the standard driver without a custom sql.Driver mock, which isn't
-// otherwise justified here. Verified by inspection: the fix wraps and
-// returns the error instead of discarding it via `_`.
 
 func TestSetModFileIDs(t *testing.T) {
 	database, err := db.New(":memory:")
