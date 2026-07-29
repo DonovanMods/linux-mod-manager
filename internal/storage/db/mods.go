@@ -350,7 +350,16 @@ func (d *DB) SetModVersion(sourceID, modID, gameID, profileName, version string)
 		return fmt.Errorf("setting mod version: %w", err)
 	}
 
-	rows, _ := result.RowsAffected()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		// A driver error here must not be read as "0 rows affected" -
+		// doing so would misreport a real DB failure as
+		// domain.ErrModNotFound (Copilot round 6, PR #128), which callers
+		// (e.g. cmd/lmm/verify.go's repair paths) treat as a normal,
+		// non-retryable "not a candidate" case rather than the transient
+		// failure it actually is.
+		return fmt.Errorf("checking rows affected: %w", err)
+	}
 	if rows == 0 {
 		return domain.ErrModNotFound
 	}
