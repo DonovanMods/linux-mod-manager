@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -773,4 +774,174 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 	primaryMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", primaryMod.Version, "the primary row must still be repaired despite the sibling's re-link failure")
+}
+
+// --- re-review gaps: silent per-sibling failures + JSON note loss on
+// primary relink failure (final-fix-wave, second round) ---
+
+// setupDoVerifyFixSiblingUpsertFailureTest builds on
+// setupDoVerifyFixSiblingTest and chmods the "second" profile's own YAML
+// file (not the shared profiles directory, which would also block the
+// PRIMARY profile's own already-completed upsert) read-only, so
+// config.SaveProfile's os.WriteFile - which needs write permission on the
+// file itself to truncate and rewrite it - fails specifically for
+// "second"'s sibling repair.
+func setupDoVerifyFixSiblingUpsertFailureTest(t *testing.T) (*cobra.Command, *core.Service, *domain.Game) {
+	t.Helper()
+
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	secondProfilePath := filepath.Join(configDir, "games", game.ID, "profiles", "second.yaml")
+	require.NoError(t, os.Chmod(secondProfilePath, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(secondProfilePath, 0o644) }) // restore before TempDir's own cleanup removes it
+
+	return cmd, svc, game
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_WarnsInTextMode
+// guards against DEV.md's "never swallow errors without logging/context":
+// repairSiblingProfiles must not silently `continue` past a failed
+// pm.UpsertMod for one sibling - it must print a warning identifying which
+// profile failed, while still processing any remaining siblings
+// (best-effort loop, not aborted - "third", a different recorded version
+// and never a repair candidate in the first place, is untouched either way).
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_WarnsInTextMode(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixSiblingUpsertFailureTest(t)
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "Warning", "an UpsertMod failure for a sibling must be surfaced, not swallowed")
+	assert.Contains(t, out, "second", "the warning must identify which sibling profile failed")
+
+	thirdMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "third")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", thirdMod.Version, "a sibling that was never a candidate must not be touched by another sibling's failure")
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_JSONNotesFailure
+// covers the --json half of the same failure: the primary row's "note"
+// field must fold in the failed sibling, not just the successful ones -
+// separate fresh state from the text-mode test above since fixing the
+// primary row (which succeeds regardless of the sibling's own failure) is
+// a real mutation that can't be observed twice from one doVerify call.
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_JSONNotesFailure(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixSiblingUpsertFailureTest(t)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Contains(t, f.Note, "second", "JSON note must mention the failed sibling profile")
+			assert.Contains(t, f.Note, "FAILED", "JSON note must clearly flag the failure, not read as a success")
+		}
+	}
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_ListFails_WarnsOnce guards
+// the pm.List failure path: it must surface once (a warning line plus a
+// note), not be silently swallowed. Forces the failure by stripping read
+// permission from the shared profiles directory (0o311: search/write, no
+// read) so os.ReadDir (which pm.List/config.ListProfiles depends on) fails,
+// while by-path opens of already-known files (LoadProfile/SaveProfile of
+// the PRIMARY "default" profile, which only need search permission on
+// ancestor directories) keep working - the primary repair itself must
+// still succeed.
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_ListFails_WarnsOnce(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	profilesDir := filepath.Join(configDir, "games", game.ID, "profiles")
+	require.NoError(t, os.Chmod(profilesDir, 0o311))
+	t.Cleanup(func() { _ = os.Chmod(profilesDir, 0o755) }) // restore before TempDir's own cleanup removes it
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Equal(t, 1, strings.Count(out, "Warning"), "the pm.List failure must be surfaced exactly once, not once per (nonexistent) sibling")
+
+	// The primary repair (by-path, unaffected by the missing read bit on
+	// the shared directory) must still have gone through.
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", mod.Version, "the primary row must still be repaired even though sibling discovery failed")
+}
+
+// TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNoteVisible
+// guards the second re-review gap: repairModVersion can return a non-empty
+// note (successful sibling repair) alongside a non-nil err (the PRIMARY
+// row's own re-link failed) - doVerify's caller must still attach that
+// note to the JSON row even though repairErr != nil, or a --json consumer
+// has zero visibility into the sibling repair that actually happened. The
+// row's status must stay "version_mismatch" (nothing about the primary
+// row itself was fixed) and issues must NOT be decremented.
+func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNoteVisible(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	primaryMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	primaryMod.Deployed = true
+	primaryMod.LinkMethod = domain.LinkSymlink
+	require.NoError(t, svc.SaveInstalledMod(primaryMod))
+	require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &primaryMod.Mod, "default"))
+
+	// Force the PRIMARY's own re-link to fail (same read-only-game-dir
+	// trick as TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag).
+	require.NoError(t, os.Chmod(game.ModPath, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 1, result.Issues, "the primary row's own repair failed, so the issue must still be counted")
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Equal(t, "version_mismatch", f.Status, "status must stay version_mismatch - the PRIMARY row itself was not fixed")
+			assert.Contains(t, f.Note, "second", "the successful sibling repair must still be visible in the note despite the primary relink failure")
+		}
+	}
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+
+	// The sibling itself was, in fact, repaired.
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", secondMod.Version, "the sibling repair must have gone through independently of the primary's relink failure")
 }

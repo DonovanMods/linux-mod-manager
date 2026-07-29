@@ -279,7 +279,17 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			if verifyFix && mod.SourceID != domain.SourceLocal {
 				note, repairErr := repairModVersion(cmd, svc, game, profile, mod, effective)
 				if repairErr != nil {
-					if !jsonOutput {
+					if jsonOutput {
+						// The PRIMARY row itself wasn't fixed (status/issues
+						// stay as already recorded above), but note can
+						// still carry a successful SIBLING repair - see
+						// repairModVersion's doc comment - and dropping it
+						// here would make that repair invisible to a --json
+						// caller even though it genuinely happened.
+						if note != "" {
+							jsonFiles[len(jsonFiles)-1].Note = note
+						}
+					} else {
 						fmt.Printf("  Repair failed: %v\n", repairErr)
 					}
 				} else {
@@ -515,15 +525,13 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 
 	// Sibling repair runs regardless of the primary re-link's own outcome
 	// (above) - a sibling row's orphaning is caused by the cache rename,
-	// not by anything that happens to the primary row's deployment.
+	// not by anything that happens to the primary row's deployment. note is
+	// always "" here: it's only ever set in the "blocked because a cache
+	// entry already exists" branch above, which is mutually exclusive with
+	// renamed == true (the rename either happened or was blocked, never
+	// both) - a plain assignment is enough, no concatenation needed.
 	if renamed {
-		if siblingNote := repairSiblingProfiles(cmd, svc, game, profile, mod, recorded, effective); siblingNote != "" {
-			if note == "" {
-				note = siblingNote
-			} else {
-				note = note + "; " + siblingNote
-			}
-		}
+		note = repairSiblingProfiles(cmd, svc, game, profile, mod, recorded, effective)
 	}
 
 	if relinkErr != nil {
@@ -553,18 +561,31 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 // primary row's own re-link-failure handling) and processing continues
 // with the remaining siblings rather than aborting the whole pass.
 //
-// Returns a human-readable summary of which profiles were repaired (empty
-// if none), for the caller to fold into repairModVersion's own note - the
-// --json contract's vehicle for surfacing this, per the primary row's
-// existing "note" field.
+// Per DEV.md's "never swallow errors without logging/context": a failure
+// to correct one sibling (pm.List itself, or a given sibling's
+// SaveInstalledMod/UpsertMod) is NOT silently skipped - it's printed as a
+// warning in text mode and folded into the returned summary, since a
+// write failure here leaves that profile in exactly the orphaned state
+// this whole repair exists to fix, indistinguishable from "was never a
+// candidate" if left unreported. The loop still continues past a single
+// sibling's failure - best-effort, not all-or-nothing.
+//
+// Returns a human-readable summary of which profiles were repaired and/or
+// failed (empty if neither), for the caller to fold into repairModVersion's
+// own note - the --json contract's vehicle for surfacing this, per the
+// primary row's existing "note" field.
 func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.Game, currentProfile string, mod *domain.InstalledMod, recorded, effective string) string {
 	pm := getProfileManager(svc)
 	profiles, err := pm.List(game.ID)
 	if err != nil {
-		return ""
+		msg := fmt.Sprintf("could not enumerate profiles to check for shared-cache siblings: %v", err)
+		if !jsonOutput {
+			fmt.Printf("  Warning: %s\n", msg)
+		}
+		return "sibling repair check FAILED: " + msg
 	}
 
-	var repaired []string
+	var repaired, failed []string
 	for _, p := range profiles {
 		if p.Name == currentProfile {
 			continue
@@ -578,6 +599,10 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		updated := *sibling
 		updated.Version = effective
 		if err := svc.SaveInstalledMod(&updated); err != nil {
+			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
+			if !jsonOutput {
+				fmt.Printf("  Warning: could not repair profile %s: %v\n", p.Name, err)
+			}
 			continue
 		}
 		*sibling = updated
@@ -588,6 +613,10 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 			Version:  effective,
 			FileIDs:  sibling.FileIDs,
 		}); err != nil {
+			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
+			if !jsonOutput {
+				fmt.Printf("  Warning: could not repair profile %s: %v\n", p.Name, err)
+			}
 			continue
 		}
 
@@ -604,10 +633,14 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		}
 	}
 
-	if len(repaired) == 0 {
-		return ""
+	var parts []string
+	if len(repaired) > 0 {
+		parts = append(parts, fmt.Sprintf("also repaired in profile(s): %s", strings.Join(repaired, ", ")))
 	}
-	return fmt.Sprintf("also repaired in profile(s): %s", strings.Join(repaired, ", "))
+	if len(failed) > 0 {
+		parts = append(parts, fmt.Sprintf("repair FAILED in profile(s): %s", strings.Join(failed, ", ")))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
