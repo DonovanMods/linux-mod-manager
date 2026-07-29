@@ -30,6 +30,19 @@ func installTestMod(t *testing.T, database *db.DB) {
 	require.NoError(t, database.SaveInstalledMod(mod))
 }
 
+// Note: the result.RowsAffected() error-classification branch shared by
+// DeleteInstalledMod, UpdateModPolicy, SetModEnabled, SetModDeployed,
+// UpdateModVersion, and SetModLinkMethod (a driver error there must be
+// returned, not misread as "0 rows affected" -> domain.ErrModNotFound) is
+// not covered by a dedicated test. modernc.org/sqlite's
+// Result.RowsAffected() is a locally-computed value from the just-executed
+// statement, not a fresh round-trip that can fail independently of Exec's
+// own error return (already checked above it) - there's no realistic way to
+// make it error with the standard driver without a custom sql.Driver mock,
+// which isn't otherwise justified here. Verified by inspection: each site
+// wraps and returns the error ("checking rows affected: %w") instead of
+// discarding it via `_`.
+
 func TestUpdateModPolicy(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
