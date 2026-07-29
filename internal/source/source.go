@@ -67,8 +67,11 @@ type Capabilities struct {
 	Dependencies bool
 	Updates      bool
 	Auth         bool
-	// Versions: GetModFiles carries per-file Version strings usable for
-	// exact version->file resolution (#96)
+	// Versions: the source CAN carry per-file Version strings usable for
+	// exact version->file resolution (#96). Advisory, not a guarantee:
+	// resolution itself degrades dynamically per mod - a file list with no
+	// version data yields ErrNotSupported even when this is true (see
+	// core.ResolveVersionFiles).
 	Versions bool
 }
 
