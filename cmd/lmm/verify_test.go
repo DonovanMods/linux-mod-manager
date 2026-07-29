@@ -899,6 +899,12 @@ func setupDoVerifyFixSiblingTest(t *testing.T) (*cobra.Command, *core.Service, *
 		Enabled:     true,
 		FileIDs:     []string{"2"},
 	}))
+	// Seed a checksum for "second" too, mirroring "default"'s fixture
+	// (setupDoVerifyVersionTest) - realistic (a real sibling profile has
+	// its own recorded checksum, not a NULL one), and load-bearing for
+	// tests asserting the sibling repair path doesn't wipe it (audit
+	// Finding 1's class, Copilot round 8).
+	require.NoError(t, svc.SaveFileChecksum("test-src", "mod1", game.ID, "second", "2", "deadbeef"))
 
 	_, err = pm.Create(game.ID, "third")
 	require.NoError(t, err)
@@ -911,6 +917,7 @@ func setupDoVerifyFixSiblingTest(t *testing.T) (*cobra.Command, *core.Service, *
 		Enabled:     true,
 		FileIDs:     []string{"2"},
 	}))
+	require.NoError(t, svc.SaveFileChecksum("test-src", "mod1", game.ID, "third", "2", "deadbeef"))
 
 	return cmd, svc, game
 }
@@ -1109,11 +1116,12 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRep
 func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing.T) {
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
-	require.NoError(t, err)
-	secondMod.Deployed = true
-	secondMod.LinkMethod = domain.LinkSymlink
-	require.NoError(t, svc.SaveInstalledMod(secondMod))
+	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - the
+	// latter's full-row upsert would wipe the checksum
+	// setupDoVerifyVersionTest seeded (audit Finding 1's exact pattern,
+	// here as a test-setup artifact - Copilot round 8, PR #128).
+	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
 
 	oldJSON := jsonOutput
 	jsonOutput = true
@@ -1135,6 +1143,18 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing
 	require.NoError(t, err, "sibling symlink must resolve, not dangle")
 	assert.Equal(t, "plugin content", string(content))
 
+	// This doVerify run only checks the "default" profile - checking
+	// result.Files' status wouldn't observe whether "second"'s own
+	// checksum survived the targeted setters above, since verify never
+	// looks at a non-active profile's checksums. Check directly instead.
+	secondFiles, err := svc.GetFilesWithChecksums(game.ID, "second")
+	require.NoError(t, err)
+	for _, f := range secondFiles {
+		if f.ModID == "mod1" && f.FileID == "2" {
+			assert.Equal(t, "deadbeef", f.Checksum, "the targeted setters (and the sibling repair itself) must not wipe the seeded checksum")
+		}
+	}
+
 	afterMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.True(t, afterMod.Deployed, "Deployed remains true after a successful sibling re-link")
@@ -1152,11 +1172,10 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 	}
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
-	require.NoError(t, err)
-	secondMod.Deployed = true
-	secondMod.LinkMethod = domain.LinkSymlink
-	require.NoError(t, svc.SaveInstalledMod(secondMod))
+	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - see
+	// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks.
+	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
 
 	require.NoError(t, os.Chmod(game.ModPath, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
@@ -1168,6 +1187,17 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 	out := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
+
+	// This run only checks the "default" profile, so "NO CHECKSUM" in its
+	// own output wouldn't reflect whether "second"'s checksum survived the
+	// targeted setters above - check directly instead.
+	secondFiles, err := svc.GetFilesWithChecksums(game.ID, "second")
+	require.NoError(t, err)
+	for _, f := range secondFiles {
+		if f.ModID == "mod1" && f.FileID == "2" {
+			assert.Equal(t, "deadbeef", f.Checksum, "the targeted setters must not wipe the seeded checksum")
+		}
+	}
 
 	afterMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
@@ -1200,11 +1230,10 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_JSONNo
 	}
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
-	require.NoError(t, err)
-	secondMod.Deployed = true
-	secondMod.LinkMethod = domain.LinkSymlink
-	require.NoError(t, svc.SaveInstalledMod(secondMod))
+	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - see
+	// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks.
+	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
 
 	require.NoError(t, os.Chmod(game.ModPath, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
@@ -1228,6 +1257,17 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_JSONNo
 		}
 	}
 	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+
+	// This run only checks the "default" profile, so result.Files wouldn't
+	// reflect whether "second"'s checksum survived the targeted setters
+	// above - check directly instead.
+	secondFiles, err := svc.GetFilesWithChecksums(game.ID, "second")
+	require.NoError(t, err)
+	for _, f := range secondFiles {
+		if f.ModID == "mod1" && f.FileID == "2" {
+			assert.Equal(t, "deadbeef", f.Checksum, "the targeted setters must not wipe the seeded checksum")
+		}
+	}
 }
 
 // --- re-review gaps: silent per-sibling failures + JSON note loss on
@@ -1379,11 +1419,16 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 	}
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
+	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - see
+	// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks (this
+	// straggler wasn't in Copilot round 8's three cited sites, but matches
+	// the same pattern - caught by grepping the whole file per the
+	// coordinator's instruction).
+	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "default", true))
+	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "default", domain.LinkSymlink))
+
 	primaryMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
-	primaryMod.Deployed = true
-	primaryMod.LinkMethod = domain.LinkSymlink
-	require.NoError(t, svc.SaveInstalledMod(primaryMod))
 	require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &primaryMod.Mod, "default"))
 
 	// Force the PRIMARY's own re-link to fail (same read-only-game-dir
@@ -1409,6 +1454,7 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 			assert.Equal(t, "version_mismatch", f.Status, "status must stay version_mismatch - the PRIMARY row itself was not fixed")
 			assert.Contains(t, f.Note, "second", "the successful sibling repair must still be visible in the note despite the primary relink failure")
 		}
+		assert.NotEqual(t, "no_checksum", f.Status, "the targeted setters must not have wiped the seeded checksum: %+v", f)
 	}
 	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
 
