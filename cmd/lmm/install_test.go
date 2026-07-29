@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -123,17 +124,16 @@ func TestInstallCmd_GameNotFound(t *testing.T) {
 	installModID = ""
 }
 
-// TestInstallCmd_VersionFlag_RejectedBeforeGameResolution guards the #93
-// interim fix (EPIC #98's decided option 2 - reject clearly): --version must
-// error out at runInstall's own entry, before withGameService ever resolves
-// a game or opens a service - proven here by leaving gameID unset (which
-// would otherwise fail with "no game specified", see TestInstallCmd_NoGame).
-// configDir/dataDir are still set to fresh t.TempDir()s (isolation from
-// other tests, not part of the ordering proof); if runInstall reached
-// withGameService, the unset gameID would surface as that different error
-// instead. Real version-specific installs are #96/#97's job; this guard
-// only stops the flag from silently lying to users in the meantime.
-func TestInstallCmd_VersionFlag_RejectedBeforeGameResolution(t *testing.T) {
+// TestInstallCmd_VersionFlag_NoLongerRejected guards the #96 removal of the
+// #93 interim guard (installVersionGuard): --version must now proceed past
+// its own validation into normal game resolution, rather than being
+// rejected up front with "not yet supported". gameID is left unset so the
+// only possible error here is game resolution's own ("no game specified"),
+// proving the old guard is gone. Real version->file resolution is exercised
+// against doInstall directly, below (setupDoInstallTest gives it a
+// configured game/source, which this command-level test deliberately does
+// not).
+func TestInstallCmd_VersionFlag_NoLongerRejected(t *testing.T) {
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 	gameID = ""
@@ -151,10 +151,11 @@ func TestInstallCmd_VersionFlag_RejectedBeforeGameResolution(t *testing.T) {
 	err := cmd.Execute()
 	installVersion = "" // reset package-level flag state for later tests
 
+	// The flag now proceeds past its own validation into normal game
+	// resolution (which fails here because no game is configured).
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--version")
-	assert.Contains(t, err.Error(), "not yet supported")
-	assert.NotContains(t, err.Error(), "no game specified")
+	assert.NotContains(t, err.Error(), "not yet supported")
+	assert.Contains(t, err.Error(), "no game specified")
 }
 
 // TestFormatSize tests the formatSize function
@@ -392,6 +393,13 @@ type fakeInstallSource struct {
 	// instead of a normal lookup - for tests exercising a "source
 	// unreachable" path (nil by default, so every other test is unaffected).
 	getModFilesErr error
+
+	// served counts download requests the test server actually handled, so a
+	// test can assert a cache-first guard SKIPPED the download rather than
+	// inferring it from side effects (#96 round 2). Atomic because the
+	// handler runs on the server's own goroutine. Mirrors
+	// internal/core/service_test.go's mockSourceWithDownloads.served.
+	served atomic.Int64
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -403,6 +411,7 @@ func newFakeInstallSource(id string) *fakeInstallSource {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		s.served.Add(1)
 		fileID := strings.TrimPrefix(r.URL.Path, "/")
 		if content, ok := s.downloads[fileID]; ok {
 			_, _ = w.Write(content)
@@ -465,6 +474,9 @@ func (s *fakeInstallSource) AddMod(mod *domain.Mod, files []domain.DownloadableF
 func (s *fakeInstallSource) AddDownload(fileID string, content []byte) {
 	s.downloads[fileID] = content
 }
+
+// DownloadCount reports how many download requests the fake actually served.
+func (s *fakeInstallSource) DownloadCount() int { return int(s.served.Load()) }
 
 // setupDoInstallTest builds a *core.Service, a game configured for
 // fakeInstallSource, and resets install's package-level flag globals to
@@ -1036,6 +1048,155 @@ func TestDoInstall_ShowArchivedFlag_ThreadsThroughRefit(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []string{"old"}, installed.FileIDs)
 	})
+}
+
+// TestDoInstall_VersionFlag_InstallsRequestedVersion is #96's core proof:
+// --version resolves against the mod's RAW file list (archived included -
+// a version pin usually names an archived file, unlike the default flow
+// which hides them) and the resolved match becomes the selection pool, so
+// the archived 1.0 file installs even though --show-archived was never
+// passed. The recorded version must be the requested one, not the mod's
+// latest (#94 invariant).
+func TestDoInstall_VersionFlag_InstallsRequestedVersion(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: fake.id, GameID: game.ID, Name: "Mod One", Version: "1.5", Author: "Someone"}
+	fake.AddMod(mod, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old", FileName: "mod1.esp", Version: "1.0", Category: "ARCHIVED"},
+	})
+	fake.AddDownload("9", []byte("archived content"))
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	installYes = true
+	t.Cleanup(func() { installModID, installVersion = "", ""; installYes = false })
+
+	require.NoError(t, doInstall(context.Background(), svc, game, nil))
+
+	im, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", im.Version, "recorded version must be the requested one (#94 invariant)")
+	assert.Equal(t, []string{"9"}, im.FileIDs)
+}
+
+// TestDoInstall_VersionFlag_UnknownVersionListsAvailable proves an unknown
+// --version surfaces core.ErrVersionNotFound's message, naming both the
+// requested version and the versions that ARE available.
+func TestDoInstall_VersionFlag_UnknownVersionListsAvailable(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: fake.id, GameID: game.ID, Name: "Mod One", Version: "1.5", Author: "Someone"}
+	fake.AddMod(mod, []domain.DownloadableFile{
+		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN", FileName: "mod1.zip", Name: "Main"},
+	})
+
+	installModID = "mod1"
+	installVersion = "2.0"
+	installYes = true
+	t.Cleanup(func() { installModID, installVersion = "", ""; installYes = false })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `version "2.0"`)
+	assert.Contains(t, err.Error(), "available: 1.5")
+}
+
+// TestDoInstall_VersionFlag_FileOutsideVersionErrors proves --file is scoped
+// to the --version-resolved selection pool, not the mod's full file list:
+// naming a file ID that belongs to a different version yields
+// selectInstallFiles' existing "file ID %s not found" wording.
+func TestDoInstall_VersionFlag_FileOutsideVersionErrors(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: fake.id, GameID: game.ID, Name: "Mod One", Version: "1.5", Author: "Someone"}
+	fake.AddMod(mod, []domain.DownloadableFile{
+		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN", FileName: "mod1.zip", Name: "Main"},
+		{ID: "9", Version: "1.0", Category: "ARCHIVED", FileName: "mod1.esp", Name: "Old"},
+	})
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	installFileID = "10" // belongs to 1.5, not 1.0
+	t.Cleanup(func() { installModID, installVersion, installFileID = "", "", "" })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file ID 10 not found") // selectInstallFiles' existing wording, now scoped to the version's files
+}
+
+// TestDoInstall_VersionFlag_WithDependency_NamedModRecordedAtRequestedVersion
+// is the BATCH-path counterpart to TestDoInstall_VersionFlag_
+// InstallsRequestedVersion: a named mod WITH a resolvable dependency takes
+// doInstall's dependency branch (doInstallBatch -> core.ApplyInstall's
+// BATCH path), which - before this test's fix - re-derived its own file
+// selection per mod via GetModFiles + filterAndSortInstallFiles and never
+// consulted installVersion at all, so --version silently installed the
+// latest for the named mod despite the flag (the #93 "flag lies" class,
+// found again on review). Proves --version reaches the named/primary mod
+// even on this path (its file/version is exactly what --version alone
+// installs), while the dependency is untouched and installs at its own
+// latest (#96 decision 6).
+func TestDoInstall_VersionFlag_WithDependency_NamedModRecordedAtRequestedVersion(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	installYes = true // auto-confirm the "Install N mod(s)?" prompt
+
+	dep := &domain.Mod{ID: "dep1", SourceID: fake.id, Name: "Dep One", Version: "2.0", GameID: game.ID}
+	root := &domain.Mod{ID: "mod1", SourceID: fake.id, Name: "Mod One", Version: "1.5", Author: "Someone", GameID: game.ID,
+		Dependencies: []domain.ModReference{{SourceID: fake.id, ModID: "dep1"}}}
+	fake.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", Name: "Dep Main", FileName: "dep1.esp", IsPrimary: true}})
+	fake.AddDownload("dep-file", []byte("dep content"))
+	fake.AddMod(root, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old", FileName: "mod1.esp", Version: "1.0", Category: "ARCHIVED"},
+	})
+	fake.AddDownload("9", []byte("archived content"))
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	t.Cleanup(func() { installModID, installVersion = "", "" })
+
+	require.NoError(t, doInstall(context.Background(), svc, game, nil))
+
+	primary, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", primary.Version, "the named mod must install the REQUESTED version, not the mod's latest")
+	assert.Equal(t, []string{"9"}, primary.FileIDs)
+
+	depInstalled, err := svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", depInstalled.Version, "a dependency is untouched by --version - it installs at its own latest (#96 decision 6)")
+}
+
+// TestDoInstall_VersionFlag_WithDependency_UnknownVersionAbortsWholeInstall
+// proves an unresolvable --version on a dependency-having install is fatal
+// to the WHOLE install (surfacing ErrVersionNotFound's message, same as the
+// no-dependency case) rather than silently installing the named mod at
+// latest or merely recording it as one "Failed" entry in the batch summary
+// - the user explicitly asked for this version.
+func TestDoInstall_VersionFlag_WithDependency_UnknownVersionAbortsWholeInstall(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	installYes = true
+
+	dep := &domain.Mod{ID: "dep1", SourceID: fake.id, Name: "Dep One", Version: "2.0", GameID: game.ID}
+	root := &domain.Mod{ID: "mod1", SourceID: fake.id, Name: "Mod One", Version: "1.5", Author: "Someone", GameID: game.ID,
+		Dependencies: []domain.ModReference{{SourceID: fake.id, ModID: "dep1"}}}
+	fake.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", Name: "Dep Main", FileName: "dep1.esp", IsPrimary: true}})
+	fake.AddDownload("dep-file", []byte("dep content"))
+	fake.AddMod(root, []domain.DownloadableFile{
+		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN", FileName: "mod1.zip", Name: "Main"},
+	})
+
+	installModID = "mod1"
+	installVersion = "2.0" // does not exist for mod1 (only "1.5" is available)
+	t.Cleanup(func() { installModID, installVersion = "", "" })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `version "2.0"`)
+	assert.Contains(t, err.Error(), "available: 1.5")
+
+	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	assert.Error(t, dbErr, "the named mod must not be installed")
+	_, dbErr = svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	assert.Error(t, dbErr, "no dependency should be installed either - the version check aborts before any mod is touched")
 }
 
 // TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError guards

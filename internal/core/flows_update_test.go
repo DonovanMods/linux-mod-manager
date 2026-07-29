@@ -669,3 +669,57 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 		assert.Equal(t, "2.0", updated.Version, "the update itself must still have applied")
 	})
 }
+
+// fileVersionDivergesSource serves a single file whose Version diverges from
+// the mod-level version GetMod reports, simulating the routine NexusMods case
+// where a file's own version string (e.g. a beta re-upload) differs from the
+// mod page's headline version.
+type fileVersionDivergesSource struct{ *mockSourceWithDownloads }
+
+func (s *fileVersionDivergesSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	// Mod-level says "2.0"; the actual file says "2.0b" (routine on NexusMods).
+	return []domain.DownloadableFile{
+		{ID: "20", Name: "Main", FileName: mod.ID + "-new.esp", Version: "2.0b", IsPrimary: true, Category: "MAIN"},
+	}, nil
+}
+
+// TestApplyUpdate_RecordsEffectiveFileVersion is the #96/#94 regression test:
+// ApplyUpdate must record what was actually installed (the selected file's
+// own Version, via domain.EffectiveInstalledVersion) rather than stamping the
+// mod-level upd.NewVersion verbatim - the DB row, cache directory key, and
+// profile ModReference must all agree with the deployed bytes, matching every
+// other install/deploy flow (#94's original fix) instead of being the one
+// recording path still stamping the mod-level string.
+func TestApplyUpdate_RecordsEffectiveFileVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"10"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+
+	mock := &fileVersionDivergesSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+	mock.AddDownload("20", []byte("new-content"))
+
+	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
+	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0b", updated.Version, "the file's own version must be recorded, not the mod-level NewVersion")
+	assert.Equal(t, "1.0", updated.PreviousVersion, "rollback must still target the prior installed version")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists("g1", "src", "mod1", "2.0b"), "cache must be keyed by the effective file version")
+	assert.False(t, gameCache.Exists("g1", "src", "mod1", "2.0"), "cache must not be keyed by the mod-level version")
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get("g1", "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "2.0b", profile.Mods[0].Version, "the profile ref must record the effective file version")
+}

@@ -84,7 +84,7 @@ func (n *NexusMods) TypeLabel() string {
 // Capabilities implements source.CapabilityReporter. NexusMods supports all
 // ModSource operations.
 func (n *NexusMods) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}
 }
 
 // ExchangeToken exchanges an OAuth code for tokens.

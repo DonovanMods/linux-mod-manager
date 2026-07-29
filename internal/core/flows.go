@@ -983,6 +983,79 @@ func installFileCategoryPriority(category string) int {
 	}
 }
 
+// selectVersionedDeployFiles is selectDeployFiles with the recorded version
+// made authoritative (#96). version == "" (legacy refs) and version-less
+// file lists (the #130 vacuous rule) fall through to selectDeployFiles
+// unchanged. Otherwise: stored IDs win only while their effective version
+// agrees with the record; drift and gone-IDs heal by exact-match resolution
+// to the SAME version (never latest - #95's rule extended); unresolvable
+// targets are hard per-mod errors naming the version - the "gone upstream"
+// #95 wording only when the stored IDs themselves match nothing at all
+// upstream, versus a distinct ErrVersionNotFound wrap when at least one
+// stored ID IS still present upstream but the recorded version isn't (the
+// classic pre-#94 mis-stamped row, which isn't a "gone" file - it's a wrong
+// version record on a file that's still there). Mirrors cmd/lmm/profile.go's
+// selectFilesToDownload.
+func selectVersionedDeployFiles(files []domain.DownloadableFile, version string, storedFileIDs []string, allowFallback bool) ([]*domain.DownloadableFile, bool, error) {
+	if version == "" || !anyFileHasVersion(files) {
+		return selectDeployFiles(files, storedFileIDs, allowFallback)
+	}
+	var idSet map[string]bool
+	if len(storedFileIDs) > 0 {
+		idSet = make(map[string]bool, len(storedFileIDs))
+		for _, id := range storedFileIDs {
+			idSet[id] = true
+		}
+	}
+	var found []*domain.DownloadableFile
+	for i := range files {
+		if idSet[files[i].ID] {
+			found = append(found, &files[i])
+		}
+	}
+	if len(found) > 0 && domain.EffectiveInstalledVersion(version, found) == version {
+		return found, false, nil
+	}
+	var matches []*domain.DownloadableFile
+	for i := range files {
+		if files[i].Version == version {
+			matches = append(matches, &files[i])
+		}
+	}
+	if len(matches) == 0 {
+		if len(storedFileIDs) > 0 {
+			if len(found) > 0 {
+				// At least one stored ID is still present upstream - the
+				// files aren't gone, only the recorded version doesn't
+				// match anything. Distinct from the #95 "gone" wording
+				// below: this is a version-record problem, not a
+				// missing-file problem, so it points at verify/update
+				// instead of reinstall.
+				return nil, false, fmt.Errorf("%w: installed file(s) (ID(s): %s) do not match recorded version %q, which is not available upstream - run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version", ErrVersionNotFound, strings.Join(storedFileIDs, ", "), version)
+			}
+			return nil, false, fmt.Errorf("%w (file ID(s): %s; version %q not available) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "), version)
+		}
+		return nil, false, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
+	}
+	if len(storedFileIDs) > 0 {
+		var stored []*domain.DownloadableFile
+		for _, m := range matches {
+			if idSet[m.ID] {
+				stored = append(stored, m)
+			}
+		}
+		if len(stored) > 0 {
+			return stored, false, nil
+		}
+	}
+	for _, m := range matches {
+		if m.IsPrimary {
+			return []*domain.DownloadableFile{m}, false, nil
+		}
+	}
+	return []*domain.DownloadableFile{matches[0]}, false, nil
+}
+
 // selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
 // the files matching storedFileIDs if any are found, else - only when
 // allowFallback is true - the primary file (first file with IsPrimary, or
@@ -1326,10 +1399,21 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		return skip("no files available")
 	}
 
-	filesToDownload, _, err := selectDeployFiles(files, mod.FileIDs, false)
+	filesToDownload, _, err := selectVersionedDeployFiles(files, mod.Version, mod.FileIDs, false)
 	if err != nil {
 		return skip(err.Error())
 	}
+
+	// fetchedMod (not the InstalledMod's own mod.Mod - see this function's
+	// doc comment) is what actually gets downloaded and cached below, so its
+	// Version must be stamped to match the resolved file's effective version
+	// (#94's convention, applied here for #96): otherwise a healed/pinned
+	// version (mod.Version) that differs from the source's mod-level
+	// Version - exactly the drift case this function now resolves - caches
+	// under the WRONG version, and the installer.Install call that follows
+	// (using the InstalledMod's own, unmodified mod.Version) fails with "mod
+	// not in cache" even though the download just succeeded.
+	fetchedMod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload)
 
 	for _, file := range filesToDownload {
 		progressFn := func(p DownloadProgress) {
@@ -1624,6 +1708,17 @@ type SwitchPlan struct {
 	ToDisable []domain.InstalledMod // enabled under From but absent from To -> disable, undeployed under From
 	ToInstall []domain.ModReference // in To but not installed anywhere -> download+install (FileIDs preserved from the installed mod's own record when this is really a cache-miss redeploy - see PlanProfileSwitch)
 
+	// PriorVersions carries, for each ToInstall entry that is really a #96
+	// version-drift convergence (keyed by domain.ModKey(SourceID, ModID)),
+	// the installed row being converged AWAY from - review round 1 finding
+	// 1: ToInstall's own element type (domain.ModReference) has no room for
+	// this, but ApplyProfileSwitch's install loop needs it to know whether
+	// a LIVE older deployment exists that must be replaced (removing files
+	// the new version doesn't serve) rather than merely installed over -
+	// mirroring ApplyUpdate's Installer.Replace semantics. Absent for every
+	// other ToInstall entry (brand-new installs, cache-miss redeploys).
+	PriorVersions map[string]domain.InstalledMod
+
 	NoChanges     bool // To's mod set matches From's content-wise; only SetDefault is needed
 	AlreadyActive bool // To is already the active default profile; nothing to plan
 }
@@ -1688,6 +1783,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 
 	var toDisable, toEnable []domain.InstalledMod
 	var toInstall []domain.ModReference
+	var priorVersions map[string]domain.InstalledMod // #96 - see SwitchPlan.PriorVersions
 
 	// Deterministic order: iterate currentMods in fromProfile's load order
 	// (mods enabled but absent from fromProfile.Mods sort first by key - see
@@ -1721,6 +1817,20 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
+		case ref.Version != "" && im.Version != ref.Version:
+			// #96 convergence: the profile names a different version than
+			// the installed row - reinstall at the profile's version
+			// (downgrades included). ref is passed as-is: its own FileIDs
+			// (if any) describe the TARGET version; the installed row's
+			// describe the wrong one. The installed row itself is recorded
+			// in priorVersions (review finding 1) so ApplyProfileSwitch's
+			// install loop can Replace a live older deployment instead of
+			// installing over it.
+			toInstall = append(toInstall, ref)
+			if priorVersions == nil {
+				priorVersions = make(map[string]domain.InstalledMod)
+			}
+			priorVersions[key] = *im
 		case !s.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version):
 			// Cache missing - needs a redownload; preserve the installed
 			// mod's own FileIDs (not the profile YAML's, which may be
@@ -1744,7 +1854,8 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	return &SwitchPlan{
 		GameID: game.ID, From: currentName, To: target,
 		ToDisable: toDisable, ToEnable: toEnable, ToInstall: toInstall,
-		NoChanges: len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0,
+		PriorVersions: priorVersions,
+		NoChanges:     len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0,
 	}, nil
 }
 
@@ -1920,7 +2031,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 
-			filesToDownload, _, err := selectDeployFiles(files, ref.FileIDs, false)
+			filesToDownload, _, err := selectVersionedDeployFiles(files, ref.Version, ref.FileIDs, false)
 			if err != nil {
 				fail(err.Error())
 				continue
@@ -1928,34 +2039,69 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
-			var downloadedFileIDs []string
-			downloadFailed := false
-			for _, file := range filesToDownload {
-				progressFn := func(p DownloadProgress) {
-					if p.TotalBytes > 0 {
-						dl := base
-						dl.Phase, dl.Percent = SwitchDownloading, p.Percentage
-						emit(dl)
+			downloadedFileIDs := make([]string, 0, len(filesToDownload))
+			for _, f := range filesToDownload {
+				downloadedFileIDs = append(downloadedFileIDs, f.ID)
+			}
+			// #96 review finding 2: HasFileIDs (not bare Exists) - a version
+			// directory can exist yet be only PARTIALLY populated by a
+			// previous download run that broke off partway through a
+			// multi-file mod; skipping the download on directory presence
+			// alone would silently leave it that way forever. Round 2: the
+			// check is by FILE ID (the per-file completion markers
+			// commitStagedCacheWithMarker stamps), never by FileName - a
+			// cache entry for an extracted archive holds member names that
+			// match no DownloadableFile, so a name-based check would miss
+			// every archive-based mod and redownload a complete cache.
+			if !s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
+				downloadFailed := false
+				for _, file := range filesToDownload {
+					progressFn := func(p DownloadProgress) {
+						if p.TotalBytes > 0 {
+							dl := base
+							dl.Phase, dl.Percent = SwitchDownloading, p.Percentage
+							emit(dl)
+						}
+					}
+					if _, err := s.DownloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
+						evt := base
+						evt.Phase, evt.Detail = SwitchDownloadFailed, fmt.Sprintf("download failed: %v", err)
+						emit(evt)
+						downloadFailed = true
+						break
 					}
 				}
-				if _, err := s.DownloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
-					evt := base
-					evt.Phase, evt.Detail = SwitchDownloadFailed, fmt.Sprintf("download failed: %v", err)
-					emit(evt)
-					downloadFailed = true
-					break
+				doneEvt := base
+				doneEvt.Phase = SwitchDownloadDone
+				emit(doneEvt)
+
+				if downloadFailed {
+					continue
 				}
-				downloadedFileIDs = append(downloadedFileIDs, file.ID)
-			}
-			doneEvt := base
-			doneEvt.Phase = SwitchDownloadDone
-			emit(doneEvt)
-
-			if downloadFailed {
-				continue
 			}
 
-			if err := installer.Install(ctx, game, mod, plan.To); err != nil {
+			// #96 convergence (review finding 1): a version-drift entry
+			// whose prior installed row is actually live on disk must be
+			// replaced (removing files the new version doesn't serve), not
+			// just installed over - mirrors ApplyUpdate's Installer.Replace
+			// semantics. prior.Deployed alone isn't enough: only Replace
+			// when the OLD version's cache entry is still there for it to
+			// read from (a corrupted/missing old cache falls back to a
+			// bare Install, same as any other toInstall entry - Replace
+			// would otherwise hard-fail with "old mod not in cache" and
+			// abort convergence). The caveat, shared with the cmd twin
+			// (cmd/lmm/profile.go's doProfileApply): without the old file
+			// list, files the new version no longer serves stay behind as
+			// stale deployments (`lmm verify` surfaces them) - strictly
+			// better than failing to converge at all.
+			key := domain.ModKey(ref.SourceID, ref.ModID)
+			if prior, ok := plan.PriorVersions[key]; ok && prior.Deployed &&
+				s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version) {
+				if err := installer.Replace(ctx, game, &prior.Mod, mod, plan.To); err != nil {
+					fail(fmt.Sprintf("deploy failed: %v", err))
+					continue
+				}
+			} else if err := installer.Install(ctx, game, mod, plan.To); err != nil {
 				fail(fmt.Sprintf("deploy failed: %v", err))
 				continue
 			}
@@ -1969,6 +2115,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				ProfileName:  plan.To,
 				UpdatePolicy: domain.UpdateNotify,
 				Enabled:      true,
+				Deployed:     true, // review finding 3: Install/Replace above just succeeded
 				FileIDs:      downloadedFileIDs,
 			}
 			installedMod.Mod.GameID = game.ID
@@ -2324,6 +2471,30 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID strin
 
 // InstallOptions configures ApplyInstall.
 type InstallOptions struct {
+	// TargetVersion, when non-empty, pins the exact version to install for
+	// plan.Mod ONLY (#96 decision 6: batch dependencies always install at
+	// latest, untouched by this field). It matters exclusively to the BATCH
+	// (Dependencies-present) path: the STRICT path never reads it here at
+	// all - doInstall (cmd/lmm/install.go) already resolves --version
+	// CLI-side via core.ResolveVersionFiles before ApplyInstall is ever
+	// called, and applyInstallPrimary installs exactly plan.Files as a
+	// result. The BATCH path's own per-mod file selection
+	// (applyInstallBatchMod) never consults plan.Files for any mod - it
+	// always re-derives its own selection via GetModFiles - so without this
+	// field --version was silently ignored for the primary whenever the
+	// named mod had resolvable dependencies (#93's "flag lies" class,
+	// found again during #96 review).
+	//
+	// Resolved ONCE, up front, before ApplyInstall's BATCH loop touches ANY
+	// mod (dependency or primary) - not lazily when the loop reaches the
+	// primary's turn. A version that doesn't resolve is fatal to the WHOLE
+	// install and returned immediately, with zero dependencies installed:
+	// the user explicitly asked for this version, so a quiet per-mod
+	// "Failed: 1 (X)" summary line is not loud enough, and installing
+	// dependencies for a primary that is about to fail to install at all
+	// would leave a confusing half-applied state.
+	TargetVersion string
+
 	// SkipVerify mirrors doInstall's --skip-verify: when true, a downloaded
 	// file's checksum is neither saved (SaveFileChecksum) nor reported via
 	// an InstallChecksumComputed event, matching downloadSelectedFiles' "if
@@ -2645,12 +2816,37 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		primary := plan.Mod // local, addressable copy - distinct from plan.Mod
 		mods = append(mods, &primary)
 
+		// #96: opts.TargetVersion pins the PRIMARY only (see its doc
+		// comment) - resolved here, once, before any mod in mods is
+		// touched, so an unresolvable version aborts the whole install
+		// with zero side effects rather than surfacing as a per-mod
+		// "Failed" line after dependencies already installed.
+		// primaryOverrideFiles is passed to applyInstallBatchMod ONLY for
+		// the primary's own iteration (the last entry in mods, by
+		// construction above); every dependency iteration gets nil and
+		// re-derives its own selection exactly as before.
+		var primaryOverrideFiles []domain.DownloadableFile
+		if opts.TargetVersion != "" {
+			files, err := s.GetModFiles(ctx, primary.SourceID, &primary)
+			if err != nil {
+				return result, fmt.Errorf("failed to get mod files: %w", err)
+			}
+			primaryOverrideFiles, err = ResolveVersionFiles(primary.SourceID, files, opts.TargetVersion)
+			if err != nil {
+				return result, err
+			}
+		}
+
 		total := len(mods)
 		for idx, mod := range mods {
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
-			if warn := s.applyInstallBatchMod(ctx, game, plan, mod, idx, total, linkMethod, pm, opts, result, emit); warn != nil {
+			var overrideFiles []domain.DownloadableFile
+			if idx == total-1 {
+				overrideFiles = primaryOverrideFiles
+			}
+			if warn := s.applyInstallBatchMod(ctx, game, plan, mod, idx, total, linkMethod, pm, opts, result, emit, overrideFiles); warn != nil {
 				deferredWarnings = append(deferredWarnings, *warn)
 			}
 		}
@@ -2696,7 +2892,16 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 // a non-blocking inline conflict warning (never a blocking prompt). Returns
 // the install.after_each warning event to defer (nil if none), matching
 // ApplyInstall's deferredWarnings convention.
-func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress)) *DeployProgress {
+//
+// overrideFiles, when non-nil, is used verbatim as the candidate file list
+// INSTEAD of the usual GetModFiles + filterAndSortInstallFiles derivation -
+// exclusively how ApplyInstall's #96 opts.TargetVersion pin reaches the
+// PRIMARY's iteration (already resolved via ResolveVersionFiles before the
+// loop started; see ApplyInstall's own comment). Every dependency iteration
+// always passes nil here and re-derives its own selection exactly as
+// before - decision 6, dependencies install at latest regardless of
+// TargetVersion.
+func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress), overrideFiles []domain.DownloadableFile) *DeployProgress {
 	base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name, ModVersion: mod.Version, ModID: mod.ID, SourceID: mod.SourceID}
 	skip := func(label, reason string) {
 		evt := base
@@ -2744,12 +2949,21 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		}
 	}
 
-	files, err := s.GetModFiles(ctx, mod.SourceID, mod)
-	if err != nil {
-		skip("Error", fmt.Sprintf("failed to get mod files: %v", err))
-		return nil
+	var files []domain.DownloadableFile
+	if overrideFiles != nil {
+		// #96: the primary's --version-resolved selection, already fetched
+		// and matched by ApplyInstall before the loop started - see this
+		// function's own doc comment.
+		files = overrideFiles
+	} else {
+		var err error
+		files, err = s.GetModFiles(ctx, mod.SourceID, mod)
+		if err != nil {
+			skip("Error", fmt.Sprintf("failed to get mod files: %v", err))
+			return nil
+		}
+		files = filterAndSortInstallFiles(files, plan.ShowArchived)
 	}
-	files = filterAndSortInstallFiles(files, plan.ShowArchived)
 	if len(files) == 0 {
 		skip("Error", "no downloadable files available")
 		return nil
@@ -3204,9 +3418,6 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	if err != nil {
 		return result, fmt.Errorf("fetching new version: %w", err)
 	}
-	if newMod.Version != newVersion {
-		newMod.Version = newVersion
-	}
 
 	files, err := s.GetModFiles(ctx, mod.SourceID, newMod)
 	if err != nil {
@@ -3231,6 +3442,15 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	if err != nil {
 		return result, fmt.Errorf("selecting files to download: %w", err)
 	}
+
+	// #96/#94: record what is actually being installed, not the mod-level
+	// NewVersion - update-apply was the last recording flow stamping the
+	// mod-level string verbatim, which made verify's version-record check
+	// flag freshly-updated mods whose file version differs from the mod
+	// version. effectiveVersion keys the cache (via newMod.Version), the DB
+	// row, and the profile ref below, matching every install flow.
+	effectiveVersion := domain.EffectiveInstalledVersion(newVersion, filesToDownload)
+	newMod.Version = effectiveVersion
 
 	var downloadedFileIDs []string
 	for _, file := range filesToDownload {
@@ -3307,7 +3527,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		emit(evt)
 	}
 
-	if err := s.ApplyModUpdate(mod.SourceID, mod.ID, game.ID, profileName, newVersion, downloadedFileIDs); err != nil {
+	if err := s.ApplyModUpdate(mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
 		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
@@ -3321,14 +3541,14 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	pm := s.NewProfileManager()
-	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: newVersion, FileIDs: downloadedFileIDs}
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
 		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName)      //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
 
-	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, newVersion))
+	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, effectiveVersion))
 	return result, nil
 }
 
@@ -3821,7 +4041,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		} else if len(ref.FileIDs) > 0 {
 			fileIDsToUse = ref.FileIDs
 		}
-		filesToDownload, _, err := selectDeployFiles(files, fileIDsToUse, false)
+		filesToDownload, _, err := selectVersionedDeployFiles(files, ref.Version, fileIDsToUse, false)
 		if err != nil {
 			fail(err.Error())
 			continue
@@ -3867,6 +4087,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      true,
 			FileIDs:      downloadedFileIDs,
+			Deployed:     true, // installer.Install above just succeeded
 		}
 		installedMod.Mod.GameID = game.ID
 		if err := s.SaveInstalledMod(installedMod); err != nil {

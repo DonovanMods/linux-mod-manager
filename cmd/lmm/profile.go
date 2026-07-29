@@ -889,6 +889,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	var toEnable []*domain.InstalledMod
 	var toInstall []domain.ModReference
 	needsRedownloadSet := make(map[string]bool) // Track which mods are re-downloads
+	needsReplaceSet := make(map[string]bool)    // #96: mods needing Installer.Replace (already deployed at the wrong version), not a bare Install
 
 	// Check installed mods against profile. Deterministic order: iterate
 	// core.OrderByProfile(profile, installedMods) - not `for key, im :=
@@ -904,7 +905,20 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				toDisable = append(toDisable, im)
 			}
 		} else {
-			// In profile - make sure it's enabled
+			// In profile - make sure it's enabled and at the profile's version
+			ref := profileKeys[key]
+			if ref.Version != "" && im.Version != ref.Version {
+				// #96 convergence: the profile names a different version
+				// than the installed row - reinstall at the profile's
+				// version (downgrades included), regardless of enabled
+				// state. ref is passed as-is: its own FileIDs (if any)
+				// describe the TARGET version; the installed row's
+				// describe the wrong one.
+				toInstall = append(toInstall, ref)
+				needsRedownloadSet[key] = false // fresh target version: profile FileIDs, not the DB's
+				needsReplaceSet[key] = im.Deployed
+				continue
+			}
 			if !im.Enabled {
 				// Check if cache exists before adding to toEnable
 				if service.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version) {
@@ -1049,40 +1063,83 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				// New install: use FileIDs from profile
 				fileIDsToUse = ref.FileIDs
 			}
-			filesToDownload, err := selectFilesToDownload(files, fileIDsToUse)
+			filesToDownload, err := selectFilesToDownload(files, fileIDsToUse, ref.Version)
 			if err != nil {
 				fmt.Printf("    Error: %v\n", err)
 				continue
 			}
 			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
-			// Download each file
-			progressFn := func(p core.DownloadProgress) {
-				if p.TotalBytes > 0 {
-					fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
+			// #96: cache-first - a convergence entry (or any other
+			// already-cached-at-this-version reinstall) skips the download
+			// step entirely once the stamped version is already cached.
+			// Review finding 2: HasFileIDs (not bare Exists) - a version
+			// directory can exist yet be only PARTIALLY populated by a
+			// previous download run that broke off partway through a
+			// multi-file mod; skipping on directory presence alone would
+			// silently leave it that way forever. Round 2: the check is by
+			// FILE ID (the per-file completion markers
+			// commitStagedCacheWithMarker stamps), never by FileName - a
+			// cache entry for an extracted archive holds member names that
+			// match no DownloadableFile, so a name-based check would miss
+			// every archive-based mod and redownload a complete cache.
+			downloadedFileIDs := make([]string, 0, len(filesToDownload))
+			for _, f := range filesToDownload {
+				downloadedFileIDs = append(downloadedFileIDs, f.ID)
+			}
+			if !service.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
+				// Download each file
+				progressFn := func(p core.DownloadProgress) {
+					if p.TotalBytes > 0 {
+						fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
+					}
+				}
+
+				downloadFailed := false
+				for _, selectedFile := range filesToDownload {
+					_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
+					if err != nil {
+						fmt.Println()
+						fmt.Printf("    Error: download failed: %v\n", err)
+						downloadFailed = true
+						break
+					}
+				}
+				fmt.Println()
+
+				if downloadFailed {
+					continue
 				}
 			}
 
-			var downloadedFileIDs []string
-			downloadFailed := false
-			for _, selectedFile := range filesToDownload {
-				_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
-				if err != nil {
-					fmt.Println()
-					fmt.Printf("    Error: download failed: %v\n", err)
-					downloadFailed = true
-					break
+			// Deploy. #96: a mod already deployed at the wrong version must
+			// be replaced (removing files the new version no longer serves),
+			// not just have new files installed alongside stale ones -
+			// mirrors ApplyUpdate's Installer.Replace semantics
+			// (internal/core/flows.go). Review finding 4: guard the map
+			// lookup with its own ok - needsReplaceSet[key] should never be
+			// true without a corresponding installedByKey[key] row, but a
+			// bare index expression would panic on a nil *InstalledMod if
+			// that invariant were ever violated.
+			//
+			// Round 2: the deployed flag alone isn't enough - Installer.
+			// Replace reads the OLD version's cache entry to work out which
+			// files to retire and hard-fails with "old mod not in cache"
+			// when it's been pruned, which would abort convergence outright
+			// and leave the old deployment on disk. Only Replace when that
+			// entry is still there; otherwise fall back to a bare Install,
+			// exactly as core's ApplyProfileSwitch does. The caveat is the
+			// same in both twins: without the old file list, files the new
+			// version no longer serves stay behind as stale deployments
+			// (`lmm verify` surfaces them) - strictly better than failing to
+			// converge at all.
+			if prev, ok := installedByKey[key]; ok && needsReplaceSet[key] &&
+				service.GetGameCache(game).Exists(game.ID, prev.SourceID, prev.ID, prev.Version) {
+				if err := installer.Replace(ctx, game, &prev.Mod, mod, profileName); err != nil {
+					fmt.Printf("    Error: deploy failed: %v\n", err)
+					continue
 				}
-				downloadedFileIDs = append(downloadedFileIDs, selectedFile.ID)
-			}
-			fmt.Println()
-
-			if downloadFailed {
-				continue
-			}
-
-			// Deploy
-			if err := installer.Install(ctx, game, mod, profileName); err != nil {
+			} else if err := installer.Install(ctx, game, mod, profileName); err != nil {
 				fmt.Printf("    Error: deploy failed: %v\n", err)
 				continue
 			}
@@ -1094,6 +1151,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				ProfileName:  profileName,
 				UpdatePolicy: domain.UpdateNotify,
 				Enabled:      true,
+				Deployed:     true, // review finding 3: Install/Replace above just succeeded
 				FileIDs:      downloadedFileIDs,
 			}
 			installedMod.Mod.GameID = game.ID
@@ -1148,19 +1206,127 @@ var errNoDownloadableFiles = fmt.Errorf("no downloadable files")
 // selectFilesToDownload below and on selectDeployFiles in flows.go.
 var errStoredFilesUnavailable = errors.New("stored file(s) no longer available upstream")
 
-// selectFilesToDownload picks files to download based on stored FileIDs (for re-downloads)
-// or primary file (for fresh installs). Mirrors internal/core/flows.go's
-// selectDeployFiles with allowFallback=false (doProfileApply's only caller
-// is deploy-class, so no allowFallback parameter is needed here): when
-// storedFileIDs is non-empty but none of it matches what the source
-// currently offers, silently substituting the primary file would install a
-// file the caller never asked for - exactly the silent-fallback bug #95
-// tracks - so this returns errStoredFilesUnavailable instead, wrapped with
-// the missing IDs and a remediation hint (byte-identical wording to
-// selectDeployFiles' wrap, so callers/tests can't tell which package
-// produced it). Returns an error if files is empty (avoids returning a
-// slice containing nil).
-func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, error) {
+// availableVersions mirrors internal/core/resolve.go's unexported helper of
+// the same name: the distinct non-empty versions in files, in first-seen
+// order - display material for core.ErrVersionNotFound.
+func availableVersions(files []domain.DownloadableFile) []string {
+	seen := make(map[string]bool, len(files))
+	var out []string
+	for _, f := range files {
+		if f.Version == "" || seen[f.Version] {
+			continue
+		}
+		seen[f.Version] = true
+		out = append(out, f.Version)
+	}
+	return out
+}
+
+// anyFileHasVersion mirrors internal/core/resolve.go's unexported helper of
+// the same name: reports whether at least one file carries version info -
+// the gate between version-aware and legacy (FileIDs-only) behavior.
+func anyFileHasVersion(files []domain.DownloadableFile) bool {
+	for _, f := range files {
+		if f.Version != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// selectFilesToDownload picks files to download based on the recorded
+// version (#96), stored FileIDs (for re-downloads), or primary file (for
+// fresh installs). Mirrors internal/core/flows.go's selectVersionedDeployFiles
+// with allowFallback=false (doProfileApply's only caller is deploy-class, so
+// no allowFallback parameter is needed here) exactly - same precedence,
+// byte-identical error wording, so callers/tests can't tell which package
+// produced a given error. See the CANONICAL NOTE at
+// internal/tui/service_core.go:254-261 for why this is a hand-duplicated
+// twin rather than a shared helper (cmd/lmm is package main).
+//
+// version == "" (legacy refs) and version-less file lists (the #130 vacuous
+// rule) fall through to the pre-#96 behavior unchanged: storedFileIDs found
+// upstream win, storedFileIDs missing hard-fail via errStoredFilesUnavailable
+// (#95 - no fallback, since silently substituting the primary file would
+// install a file the caller never asked for), and no storedFileIDs at all
+// falls back to the primary file. Otherwise: stored IDs win only while their
+// effective version agrees with the record; drift and gone-IDs heal by
+// exact-match resolution to the SAME version (never latest); unresolvable
+// targets are hard per-mod errors naming the version - the "gone upstream"
+// #95 wording only when the stored IDs themselves match nothing at all
+// upstream, versus a distinct core.ErrVersionNotFound wrap when at least one
+// stored ID IS still present upstream but the recorded version isn't (the
+// classic pre-#94 mis-stamped row, which isn't a "gone" file - it's a wrong
+// version record on a file that's still there).
+func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string, version string) ([]*domain.DownloadableFile, error) {
+	if version == "" || !anyFileHasVersion(files) {
+		return selectFilesToDownloadLegacy(files, storedFileIDs)
+	}
+	var idSet map[string]bool
+	if len(storedFileIDs) > 0 {
+		idSet = make(map[string]bool, len(storedFileIDs))
+		for _, id := range storedFileIDs {
+			idSet[id] = true
+		}
+	}
+	var found []*domain.DownloadableFile
+	for i := range files {
+		if idSet[files[i].ID] {
+			found = append(found, &files[i])
+		}
+	}
+	if len(found) > 0 && domain.EffectiveInstalledVersion(version, found) == version {
+		return found, nil
+	}
+	var matches []*domain.DownloadableFile
+	for i := range files {
+		if files[i].Version == version {
+			matches = append(matches, &files[i])
+		}
+	}
+	if len(matches) == 0 {
+		if len(storedFileIDs) > 0 {
+			if len(found) > 0 {
+				// At least one stored ID is still present upstream - the
+				// files aren't gone, only the recorded version doesn't
+				// match anything. Distinct from the #95 "gone" wording
+				// below: this is a version-record problem, not a
+				// missing-file problem, so it points at verify/update
+				// instead of reinstall.
+				return nil, fmt.Errorf("%w: installed file(s) (ID(s): %s) do not match recorded version %q, which is not available upstream - run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version", core.ErrVersionNotFound, strings.Join(storedFileIDs, ", "), version)
+			}
+			return nil, fmt.Errorf("%w (file ID(s): %s; version %q not available) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "), version)
+		}
+		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", core.ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
+	}
+	if len(storedFileIDs) > 0 {
+		var stored []*domain.DownloadableFile
+		for _, m := range matches {
+			if idSet[m.ID] {
+				stored = append(stored, m)
+			}
+		}
+		if len(stored) > 0 {
+			return stored, nil
+		}
+	}
+	for _, m := range matches {
+		if m.IsPrimary {
+			return []*domain.DownloadableFile{m}, nil
+		}
+	}
+	return []*domain.DownloadableFile{matches[0]}, nil
+}
+
+// selectFilesToDownloadLegacy is selectFilesToDownload's pre-#96 behavior,
+// mirroring internal/core/flows.go's selectDeployFiles with
+// allowFallback=false: when storedFileIDs is non-empty but none of it
+// matches what the source currently offers, silently substituting the
+// primary file would install a file the caller never asked for - exactly
+// the silent-fallback bug #95 tracks - so this returns
+// errStoredFilesUnavailable instead, wrapped with the missing IDs and a
+// remediation hint.
+func selectFilesToDownloadLegacy(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, error) {
 	if len(files) == 0 {
 		return nil, errNoDownloadableFiles
 	}

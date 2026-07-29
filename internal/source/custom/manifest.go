@@ -250,7 +250,7 @@ func (m *Manifest) ExchangeToken(ctx context.Context, code string) (*source.Toke
 // Capabilities implements source.CapabilityReporter. Auth reflects whether the
 // definition declares an auth block.
 func (m *Manifest) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: m.auth != nil}
+	return source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: m.auth != nil, Versions: true}
 }
 
 // TypeLabel implements source.TypeLabeler.

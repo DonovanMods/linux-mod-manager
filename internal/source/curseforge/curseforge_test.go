@@ -420,7 +420,7 @@ func TestCurseForge_TypeLabel(t *testing.T) {
 
 func TestCurseForge_Capabilities(t *testing.T) {
 	cf := New(nil, "")
-	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true}, cf.Capabilities())
+	assert.Equal(t, source.Capabilities{Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true}, cf.Capabilities())
 }
 
 func TestCurseForge_AuthInstructions(t *testing.T) {

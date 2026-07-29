@@ -3,10 +3,12 @@ package core_test
 import (
 	"archive/zip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -305,6 +307,136 @@ func TestExtractor_Extract_ZipSlipPrevention(t *testing.T) {
 		_, err := os.Stat("/etc/passwd_test")
 		assert.True(t, os.IsNotExist(err), "should not write outside destination")
 	}
+}
+
+// createOrderedTestZip is createTestZip with a deterministic member order -
+// needed when a test cares which members were written before extraction
+// aborts on a rejected one.
+func createOrderedTestZip(t *testing.T, dir, name string, members []struct{ Name, Content string }) string {
+	t.Helper()
+	zipPath := filepath.Join(dir, name)
+	f, err := os.Create(zipPath)
+	require.NoError(t, err)
+
+	w := zip.NewWriter(f)
+	for _, m := range members {
+		fw, err := w.Create(m.Name)
+		require.NoError(t, err)
+		_, err = fw.Write([]byte(m.Content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+	require.NoError(t, f.Close())
+	return zipPath
+}
+
+// TestExtractor_Extract_RejectsReservedCacheMarkerNames is the #96 round 2
+// review finding: a mod archive could ship members under lmm's reserved
+// ".lmm-" cache namespace, which the marker-based cache-first guard trusts as
+// its own bookkeeping. Two concrete abuses were demonstrated against a probe
+// archive downloaded for file1:
+//
+//   - FORGERY: a member named ".lmm-file-file2" made
+//     HasFileIDs(["file1","file2"]) report true, so the cache-first guard
+//     skipped file2's download entirely and the mod deployed with a genuinely
+//     missing file - silently, with no error.
+//   - HIDING: a member named ".lmm-hidden.esp" was excluded from ListFiles and
+//     therefore never deployed, again silently.
+//
+// The extractor now refuses such members outright. This mirrors how the
+// sibling untrusted-archive guards in this repo behave - sanitizePath's zip
+// slip check and copyDir's symlink containment check both FAIL the operation
+// naming the offending entry rather than skipping it silently, on the
+// reasoning that the archive is malformed or hostile and the user should see
+// why. Legitimate markers never travel through an archive: they are written
+// by cache.MarkFileComplete and reseeded by prepareStaging's copyDir.
+func TestExtractor_Extract_RejectsReservedCacheMarkerNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		member  string
+		comment string
+	}{
+		{"forged completion marker", ".lmm-file-file2", "forges another file's completion"},
+		{"hidden member", ".lmm-hidden.esp", "hides from ListFiles and deploy"},
+		{"nested under reserved dir", ".lmm-evil/payload.esp", "a reserved DIRECTORY hides everything under it"},
+		{"reserved name in a subdirectory", "sub/.lmm-file-file2", "reserved names are rejected at any depth"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srcDir := t.TempDir()
+			destDir := t.TempDir()
+
+			// The legitimate member comes FIRST so it is already written when
+			// extraction aborts on the reserved one - proving the rejection
+			// is what stopped it, not an unrelated early failure.
+			zipPath := createOrderedTestZip(t, srcDir, "malicious.zip", []struct{ Name, Content string }{
+				{"mod1.esp", "legitimate content"},
+				{tt.member, "hostile content"},
+			})
+
+			err := core.NewExtractor().Extract(zipPath, destDir)
+			require.Error(t, err, "extraction must fail: %s", tt.comment)
+			assert.Contains(t, err.Error(), ".lmm-", "the error must name the reserved prefix it rejected")
+
+			_, statErr := os.Stat(filepath.Join(destDir, tt.member))
+			assert.True(t, os.IsNotExist(statErr), "the reserved member must never be written to disk")
+
+			_, statErr = os.Stat(filepath.Join(destDir, "mod1.esp"))
+			assert.NoError(t, statErr, "the preceding legitimate member is unaffected")
+		})
+	}
+}
+
+// TestExtractor_Extract_ReservedNameRejection_AppliesTo7z covers the external
+// extractor path (.7z/.rar shell out to the system 7z binary, so there is no
+// per-member hook to reject at - the guard has to inspect what 7z actually
+// wrote). Skipped where 7z isn't installed, same as any other 7z-dependent
+// behavior.
+func TestExtractor_Extract_ReservedNameRejection_AppliesTo7z(t *testing.T) {
+	if _, err := exec.LookPath("7z"); err != nil {
+		t.Skip("7z not installed")
+	}
+
+	srcDir := t.TempDir()
+	destDir := t.TempDir()
+
+	// Build a .7z holding one legitimate member and one forged marker.
+	stage := filepath.Join(srcDir, "stage")
+	require.NoError(t, os.MkdirAll(stage, 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(stage, "mod1.esp"), []byte("legitimate content"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(stage, ".lmm-file-file2"), nil, 0644))
+
+	archivePath := filepath.Join(srcDir, "malicious.7z")
+	cmd := exec.Command("7z", "a", "-y", archivePath, filepath.Join(stage, "."))
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "building fixture archive: %s", out)
+
+	err = core.NewExtractor().Extract(archivePath, destDir)
+	require.Error(t, err, "a forged marker must fail extraction on the 7z path too")
+	assert.Contains(t, err.Error(), ".lmm-")
+}
+
+// TestExtractor_Extract_KeepsPreexistingMarkersInDest guards the multi-file
+// download flow against a false positive: prepareStaging reseeds the staging
+// directory from the existing cache entry BEFORE extracting the next file, so
+// markers written by a mod's earlier files are legitimately already sitting
+// in destDir. The reserved-name check must judge what THIS archive
+// contributed, never what was already there.
+func TestExtractor_Extract_KeepsPreexistingMarkersInDest(t *testing.T) {
+	srcDir := t.TempDir()
+	destDir := t.TempDir()
+
+	// A marker from a previous file's commit, reseeded into staging.
+	require.NoError(t, cache.MarkFileComplete(destDir, "file1"))
+
+	zipPath := createTestZip(t, srcDir, map[string]string{"mod2.esp": "second file"})
+	require.NoError(t, core.NewExtractor().Extract(zipPath, destDir))
+
+	_, err := os.Stat(filepath.Join(destDir, ".lmm-file-file1"))
+	assert.NoError(t, err, "a legitimately pre-existing marker must survive extraction untouched")
+	_, err = os.Stat(filepath.Join(destDir, "mod2.esp"))
+	assert.NoError(t, err)
 }
 
 func TestExtractor_Extract_PreservesPermissions(t *testing.T) {

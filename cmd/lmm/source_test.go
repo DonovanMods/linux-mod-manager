@@ -32,6 +32,15 @@ func TestSourceCmd_Structure(t *testing.T) {
 	assert.Contains(t, names, "validate")
 }
 
+// TestCapabilitySummary_IncludesVersions pins that capabilitySummary appends
+// the "versions" token after "auth" (#96).
+func TestCapabilitySummary_IncludesVersions(t *testing.T) {
+	assert.Equal(t, "search,deps,updates,auth,versions", capabilitySummary(source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+	}))
+	assert.Equal(t, "search", capabilitySummary(source.Capabilities{Search: true}))
+}
+
 // runSourceCmd executes the source command tree with args against a fresh
 // cobra root, capturing combined stdout/stderr. Shared by TestSourceValidateCmd
 // and TestSourceValidateProbe so both drive the real command wiring rather

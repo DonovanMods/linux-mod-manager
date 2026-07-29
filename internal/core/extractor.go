@@ -5,11 +5,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 )
 
 // Extractor handles archive extraction for mod files
@@ -183,11 +186,47 @@ func (e *Extractor) extractZipFile(f *zip.File, destDir string) (err error) {
 	return nil
 }
 
+// hasReservedSegment reports whether any path segment of name uses the cache's
+// reserved bookkeeping prefix. Checking every SEGMENT (not just the base name)
+// is what rejects a member nested under a reserved DIRECTORY, which would
+// otherwise hide its whole subtree from ListFiles.
+func hasReservedSegment(name string) bool {
+	for _, segment := range strings.Split(filepath.ToSlash(filepath.Clean(name)), "/") {
+		if strings.HasPrefix(segment, cache.ReservedPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// errReservedName builds the rejection error for an archive member that
+// claims a name in lmm's reserved cache namespace.
+func errReservedName(name string) error {
+	return fmt.Errorf("reserved name detected: %s (archive members may not use lmm's reserved %q prefix)", name, cache.ReservedPrefix)
+}
+
 // sanitizePath ensures the extracted file path is within the destination directory
 // This prevents "zip slip" attacks where malicious archives contain paths like "../../../etc/passwd"
+//
+// It also rejects members claiming lmm's reserved cache namespace (see
+// cache.ReservedPrefix). Mod archives are untrusted content, and a member
+// named e.g. ".lmm-file-<someOtherFileID>" would forge that file's cache
+// completion marker - making the cache-first convergence guard skip a
+// download that never happened and deploy the mod with a genuinely missing
+// file, silently. A ".lmm-"-prefixed member also hides itself from ListFiles
+// and therefore from deploy entirely. Both are refused rather than skipped,
+// matching this repo's other untrusted-archive guards (the zip slip check
+// right below, and copyDir's symlink containment check): the archive is
+// malformed or hostile and the user should see why. Legitimate markers never
+// arrive by extraction - they are written by cache.MarkFileComplete and
+// reseeded into staging by prepareStaging's copyDir.
 func (e *Extractor) sanitizePath(destDir, filePath string) (string, error) {
 	// Clean the path to remove any . or .. components
 	cleanPath := filepath.Clean(filePath)
+
+	if hasReservedSegment(cleanPath) {
+		return "", errReservedName(filePath)
+	}
 
 	// Join with destination directory
 	destPath := filepath.Join(destDir, cleanPath)
@@ -218,6 +257,18 @@ func (e *Extractor) extract7z(archivePath, destDir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), extract7zTimeout)
 	defer cancel()
 
+	// The reserved-namespace check the native zip path makes per member (see
+	// sanitizePath) has no equivalent hook here - 7z writes the members
+	// itself - so it has to be made against what 7z actually produced.
+	// destDir is NOT necessarily empty: prepareStaging reseeds it from the
+	// existing cache entry before each file of a multi-file mod, so genuine
+	// markers from earlier files are legitimately already present. Only
+	// reserved names this extraction ADDED are rejected.
+	preexisting, err := reservedNamesIn(destDir)
+	if err != nil {
+		return err
+	}
+
 	// -y: assume yes to all queries; -o: output directory (no space between -o and path)
 	cmd := exec.CommandContext(ctx, "7z", "x", "-y", "-o"+destDir, archivePath)
 	output, err := cmd.CombinedOutput()
@@ -228,5 +279,66 @@ func (e *Extractor) extract7z(archivePath, destDir string) error {
 		return fmt.Errorf("7z extraction failed: %w\nOutput: %s", err, string(output))
 	}
 
-	return nil
+	return rejectNewReservedNames(destDir, preexisting)
+}
+
+// reservedNamesIn returns the destDir-relative paths of entries already using
+// the reserved cache prefix, so a later sweep can tell them apart from ones an
+// extraction introduced. Reserved directories are recorded but not descended
+// into, matching rejectNewReservedNames.
+func reservedNamesIn(destDir string) (map[string]bool, error) {
+	found := make(map[string]bool)
+	if _, err := os.Stat(destDir); err != nil {
+		if os.IsNotExist(err) {
+			return found, nil
+		}
+		return nil, fmt.Errorf("inspecting destination directory: %w", err)
+	}
+
+	err := filepath.WalkDir(destDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == destDir || !strings.HasPrefix(d.Name(), cache.ReservedPrefix) {
+			return nil
+		}
+		rel, err := filepath.Rel(destDir, path)
+		if err != nil {
+			return err
+		}
+		found[rel] = true
+		if d.IsDir() {
+			return fs.SkipDir
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("inspecting destination directory: %w", err)
+	}
+	return found, nil
+}
+
+// rejectNewReservedNames fails when an extraction introduced any entry using
+// lmm's reserved cache namespace - see sanitizePath for why such a member is
+// refused rather than skipped.
+func rejectNewReservedNames(destDir string, preexisting map[string]bool) error {
+	return filepath.WalkDir(destDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == destDir || !strings.HasPrefix(d.Name(), cache.ReservedPrefix) {
+			return nil
+		}
+		rel, err := filepath.Rel(destDir, path)
+		if err != nil {
+			return err
+		}
+		if preexisting[rel] {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		return errReservedName(rel)
+	})
 }

@@ -377,6 +377,17 @@ func (s *Service) GetModFiles(ctx context.Context, sourceID string, mod *domain.
 	return src.GetModFiles(ctx, mod)
 }
 
+// ResolveModVersion fetches mod's raw file list from sourceID and resolves
+// version against it via ResolveVersionFiles (#96). The list is deliberately
+// unfiltered - archived files are exactly what a version pin usually names.
+func (s *Service) ResolveModVersion(ctx context.Context, sourceID string, mod *domain.Mod, version string) ([]domain.DownloadableFile, error) {
+	files, err := s.GetModFiles(ctx, sourceID, mod)
+	if err != nil {
+		return nil, fmt.Errorf("listing files for version resolution: %w", err)
+	}
+	return ResolveVersionFiles(sourceID, files, version)
+}
+
 // GetDownloadURL gets the download URL for a specific mod file
 func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *domain.Mod, fileID string) (string, error) {
 	src, err := s.registry.Get(sourceID)
@@ -466,7 +477,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		if err := copyFileStreaming(archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
-		if err := commitStagedCache(cachePath, stagePath); err != nil {
+		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID); err != nil {
 			return nil, err
 		}
 		return &DownloadModResult{
@@ -478,7 +489,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	if err := s.extractor.Extract(archivePath, stagePath); err != nil {
 		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
-	if err := commitStagedCache(cachePath, stagePath); err != nil {
+	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID); err != nil {
 		return nil, err
 	}
 
@@ -534,7 +545,7 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		}
 	}
 
-	if err := commitStagedCache(cachePath, stagePath); err != nil {
+	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID); err != nil {
 		return nil, err
 	}
 
@@ -587,6 +598,29 @@ func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) 
 		}
 	}
 	return cachePath, stagePath, nil
+}
+
+// commitStagedCacheWithMarker is the single commit point for a per-file
+// download/ingest: it stamps fileID's completion marker into the staging
+// directory and then commits that directory into place, so the marker and the
+// content it vouches for become visible in the SAME atomic swap - a marker
+// can never appear for content that isn't there.
+//
+// The markers are what the cache-first convergence guards read back
+// (cache.HasFileIDs, used by ApplyProfileSwitch here and doProfileApply in
+// cmd/lmm/profile.go, both #96). They key off the source file ID rather than
+// any on-disk name because the default DeployExtract mode stores an archive's
+// EXTRACTED MEMBERS, whose names bear no relation to the DownloadableFile's
+// FileName.
+//
+// prepareStaging seeds stagePath from the existing cache entry when one is
+// present, and copyDir copies dotfiles, so markers written by a mod's earlier
+// files survive into every later file's commit.
+func commitStagedCacheWithMarker(cachePath, stagePath, fileID string) error {
+	if err := cache.MarkFileComplete(stagePath, fileID); err != nil {
+		return err
+	}
+	return commitStagedCache(cachePath, stagePath)
 }
 
 func commitStagedCache(cachePath, stagePath string) error {

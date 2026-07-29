@@ -586,11 +586,11 @@ Unknown keys anywhere in `mappings.mod` or `mappings.file` fail validation at lo
 
 - no `search` → searching is unsupported (a valid install-by-ID-only source; probe one with `lmm source validate --probe --id <mod-id>`, see below)
 - no `get_mod` → fetching a single mod is unsupported, and so are update checks (`api` sources check for updates by calling `get_mod` on each installed mod and comparing versions)
-- no `mod_files` → listing a mod's files is unsupported
+- no `mod_files` → listing a mod's files is unsupported, and so is the `versions` capability (per-file version→file resolution, used by `install --version` and profile version convergence)
 - no `download_url` → resolving a download URL is unsupported
 - dependency resolution (`GetDependencies`) is **always** unsupported for `api` sources — there is no dependency endpoint in v1
 
-`lmm source list`'s `CAPABILITIES` column reflects exactly this: a definition with only `get_mod` shows `updates`; adding `search` adds `search` to that list; `auth` appears only when the definition declares an `auth` block.
+`lmm source list`'s `CAPABILITIES` column reflects exactly this: a definition with only `get_mod` shows `updates`; adding `search` adds `search` to that list; `auth` appears only when the definition declares an `auth` block; `versions` appears once `mod_files` is defined. That `versions` flag only advertises the endpoint's presence, though — whether `install --version` can actually resolve a given mod depends on whether the files that mod's `mod_files` call returns carry version info, checked dynamically per call (see `install --version`'s own entry below).
 
 **Guardrails:**
 
@@ -636,8 +636,8 @@ lmm source list
 Output:
 
 ```
-ID            NAME                    TYPE       AUTH  CAPABILITIES              ERROR
-nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth
+ID            NAME                    TYPE       AUTH  CAPABILITIES                       ERROR
+nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth,versions
 donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates
 ```
 
@@ -650,12 +650,12 @@ lmm source list --all
 Output:
 
 ```
-ID            NAME                    TYPE       AUTH  CAPABILITIES              IN USE  ERROR
-nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth  yes
-curseforge    CurseForge              built-in   yes   search,deps,updates,auth  no
-donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates            yes
-my-repo       My Mod Repo             manifest   no    search,deps,updates,auth  no
-esoui         ESOUI                   api        no    search,updates,auth       no
+ID            NAME                    TYPE       AUTH  CAPABILITIES                       IN USE  ERROR
+nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth,versions  yes
+curseforge    CurseForge              built-in   yes   search,deps,updates,auth,versions  no
+donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates                     yes
+my-repo       My Mod Repo             manifest   no    search,deps,updates,auth,versions  no
+esoui         ESOUI                   api        no    search,updates,auth                no
 ```
 
 With no game resolvable (no `-g`, no default game set), `--all` has no effect: the full registry is shown either way, with no `IN USE` column, exactly as when no game exists at all. Definitions that failed to load are always shown, in every view, as an `error` row. `--json` follows the same scoping; the `"in_use"` key is only ever present in the `--all`-with-game-resolvable combination.
@@ -734,7 +734,7 @@ Error: probe: this definition has no search endpoint; provide a known mod id wit
    lmm install --source my-local-mods --id BiggerBackpack -g skyrim-se
    ```
 
-A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A `manifest` source shows `search,deps,updates` (plus `auth` if the definition declares one, with the `AUTH` column reporting `yes`/`no` once a key is or isn't configured). An `api` source shows only the capabilities its defined endpoints provide — `updates` alone for a `get_mod`-only definition, `search,updates` once a `search` endpoint is added, plus `auth` if the definition declares one — and never `deps` (dependency resolution isn't supported for `api` sources). Any type will show as an `error` row if construction fails (e.g. a directory source's path doesn't exist). A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
+A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A `manifest` source shows `search,deps,updates,versions` (plus `auth` if the definition declares one, with the `AUTH` column reporting `yes`/`no` once a key is or isn't configured). An `api` source shows only the capabilities its defined endpoints provide — `updates` alone for a `get_mod`-only definition, `search,updates` once a `search` endpoint is added, plus `auth` if the definition declares one, plus `versions` once a `mod_files` endpoint is defined — and never `deps` (dependency resolution isn't supported for `api` sources). Any type will show as an `error` row if construction fails (e.g. a directory source's path doesn't exist). A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
 
 ## CLI Reference
 
@@ -761,6 +761,7 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm install [query]`                  | Search and install a mod (query optional with `--id`) |
 | `lmm install --id <mod-id>`            | Install by mod ID                                    |
 | `lmm install --id <mod-id> --file <file-id>` | Install a specific file, skipping file selection |
+| `lmm install --version <version>`      | Install the exact-match version (archived files searched automatically) |
 | `lmm install --show-archived`          | Include archived/old files when selecting a file      |
 | `lmm install --no-deps`                | Skip automatic dependency installation                 |
 | `lmm install --source ID` / `-s`       | Use a specific source (default: sole configured source; prompts when several are configured, `-y` picks the first alphabetically) |
@@ -815,7 +816,9 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm source validate --probe <file>`   | Also live-smoke-test the definition (scan/fetch/API call) |
 | `lmm source validate --probe --id <mod-id> <file>` | Probe an `api` definition that has no `search` endpoint |
 
-`lmm install --version <version>` is not yet supported and returns a clear error naming the alternative; to install a specific version today, pick its file with `--file` (add `--show-archived` to list older files) instead of `--version` — omitting `--version` installs the latest.
+`lmm install --version <version>` resolves the exact version against the mod's full file list — archived/old files are searched automatically, no `--show-archived` needed — and the matching file(s) become the pool for `--file`/`-y`/the interactive prompt; when the mod has dependencies, only the named mod's version is resolved this way (the whole install aborts if it fails to resolve) — dependencies are unaffected, still installing at latest with their primary file auto-selected. An unknown version fails with an error listing the versions the source actually has (`version not found: version "..." (available: ...)`). A source whose files carry no version information fails with the standard "not supported" gap instead, same as any other missing capability — this is decided dynamically from the actual file data returned for that mod, not from the source's advertised `versions` capability flag (a source can declare `versions` support and still hit this gap for a mod whose files happen to lack version strings). Omitting `--version` installs the latest, unchanged.
+
+**Version behavior in profiles**: a mod reference's `version:` field in a profile is the record of what that profile deploys, not just a display value — `lmm profile apply` and `profile switch` converge the installed mod to match it, downgrades included, healing a stale on-disk deployment back to the recorded version whenever it's still available upstream; `profile import` honors the recorded version for mods it installs or redownloads, and a drifted mod it left alone (already installed and cached at that version) converges on the next apply/switch. Hand-edit a profile's `version:` (or export/share/import the profile) to reproduce an exact build across machines. Sources whose files carry no version information (decided dynamically from the actual file data, not the source's advertised `versions` capability flag) keep the previous file-ID-based behavior instead.
 
 ### Exit Codes
 
