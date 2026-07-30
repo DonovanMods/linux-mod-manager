@@ -284,12 +284,17 @@ func showGameStatus(service *core.Service, gameID string) error {
 	fmt.Printf("  Install Path: %s\n", game.InstallPath)
 	fmt.Printf("  Mod Path: %s\n", game.ModPath)
 
-	// Show link method
-	linkMethod := service.GetGameLinkMethod(game)
-	if game.LinkMethodExplicit {
-		fmt.Printf("  Link Method: %s (per-game)\n", linkMethod)
-	} else if verbose {
-		fmt.Printf("  Link Method: %s (global default)\n", linkMethod)
+	// Show the effective link method for the active profile (the game's
+	// default profile - the one deploys target): per-profile > per-game >
+	// global default (#81).
+	activeProfile, activeErr := pm.GetDefault(gameID)
+	switch {
+	case activeErr == nil && activeProfile.LinkMethodExplicit:
+		fmt.Printf("  Link Method: %s (per-profile)\n", activeProfile.LinkMethod)
+	case game.LinkMethodExplicit:
+		fmt.Printf("  Link Method: %s (per-game)\n", service.GetGameLinkMethod(game))
+	case verbose:
+		fmt.Printf("  Link Method: %s (global default)\n", service.GetGameLinkMethod(game))
 	}
 
 	// Show cache path

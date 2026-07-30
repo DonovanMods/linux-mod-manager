@@ -59,7 +59,7 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 		return nil, fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 
-	installer := s.GetInstaller(game)
+	installer := s.GetInstallerForProfile(game, profileName)
 	if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
 		return nil, fmt.Errorf("failed to deploy mod: %w", err)
 	}
@@ -94,7 +94,7 @@ func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName
 	}
 
 	result := &DisableResult{}
-	installer := s.GetInstaller(game)
+	installer := s.GetInstallerForProfile(game, profileName)
 	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 		// Non-fatal — see doc comment. Historical "Warning: " prefix baked
 		// into the text itself, matching UninstallResult's own convention.
@@ -196,7 +196,7 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err))
 	}
 
-	installer := s.GetInstaller(game)
+	installer := s.GetInstallerForProfile(game, profileName)
 	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 		// Non-fatal - files may have been manually removed. Always
 		// recorded; the historical "Warning: " prefix is baked into the
@@ -254,8 +254,8 @@ type DeployOptions struct {
 	Purge bool // --purge: undeploy every installed mod (regardless of ModID/All) before deploying, remembering which were enabled beforehand for the profile-wide selection below.
 
 	// LinkMethod overrides the link method used for this deploy (--method).
-	// nil (the zero value) means "use the game's effective link method" via
-	// Service.GetGameLinkMethod. A pointer is used, rather than a bare
+	// nil (the zero value) means "use the profile's effective link method" via
+	// Service.GetEffectiveLinkMethod. A pointer is used, rather than a bare
 	// domain.LinkMethod with its zero value as the "unset" sentinel, because
 	// domain.LinkMethod's zero value (LinkSymlink) is itself a valid,
 	// explicit choice - it cannot double as "no override" without losing
@@ -1581,9 +1581,11 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
-	linkMethod := s.GetGameLinkMethod(game)
+	var linkMethod domain.LinkMethod
 	if opts.LinkMethod != nil {
 		linkMethod = *opts.LinkMethod
+	} else {
+		linkMethod = s.GetEffectiveLinkMethod(game, profileName)
 	}
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
@@ -1874,7 +1876,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		spec.emit(DeployProgress{Phase: DeployBeforeAllForced, Detail: msg})
 	}
 
-	installer := s.GetInstaller(game)
+	installer := s.GetInstallerForProfile(game, profileName)
 	spec.emit(DeployProgress{Phase: DeployPurging, Total: len(mods)})
 
 	// deferredWarnings holds uninstall.after_each (per mod, in loop order)
@@ -2286,7 +2288,12 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 	}
 
-	installer := s.GetInstaller(game)
+	// #81: a switch spans two profiles that may carry different explicit
+	// link methods - the disable loop undeploys the FROM profile's
+	// deployments (which were made with plan.From's method), while the
+	// enable and install loops deploy into plan.To.
+	fromInstaller := s.GetInstallerForProfile(game, plan.From)
+	toInstaller := s.GetInstallerForProfile(game, plan.To)
 	pm := s.NewProfileManager()
 
 	totalDisable := len(plan.ToDisable)
@@ -2300,7 +2307,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		im := plan.ToDisable[idx]
 		base := DeployProgress{Index: idx + 1, Total: totalDisable, ModName: im.Name, ModID: im.ID}
 
-		if err := installer.Uninstall(ctx, game, &im.Mod, plan.From); err != nil {
+		if err := fromInstaller.Uninstall(ctx, game, &im.Mod, plan.From); err != nil {
 			msg := fmt.Sprintf("Warning: failed to undeploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			evt := base
@@ -2330,7 +2337,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		im := plan.ToEnable[idx]
 		base := DeployProgress{Index: idx + 1, Total: totalEnable, ModName: im.Name, ModID: im.ID}
 
-		if err := installer.Install(ctx, game, &im.Mod, plan.To); err != nil {
+		if err := toInstaller.Install(ctx, game, &im.Mod, plan.To); err != nil {
 			msg := fmt.Sprintf("Warning: failed to deploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			evt := base
@@ -2467,11 +2474,11 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			key := domain.ModKey(ref.SourceID, ref.ModID)
 			if prior, ok := plan.PriorVersions[key]; ok && prior.Deployed &&
 				s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version) {
-				if err := installer.Replace(ctx, game, &prior.Mod, mod, plan.To); err != nil {
+				if err := toInstaller.Replace(ctx, game, &prior.Mod, mod, plan.To); err != nil {
 					fail(fmt.Sprintf("deploy failed: %v", err))
 					continue
 				}
-			} else if err := installer.Install(ctx, game, mod, plan.To); err != nil {
+			} else if err := toInstaller.Install(ctx, game, mod, plan.To); err != nil {
 				fail(fmt.Sprintf("deploy failed: %v", err))
 				continue
 			}
@@ -2739,7 +2746,7 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	// GetConflicts error - including "mod not in cache" for a mod PlanInstall
 	// has (by construction) never downloaded - degrades to "no conflicts
 	// detected", never fails the plan. See Conflicts' doc comment.
-	if conflicts, err := s.GetInstaller(game).GetConflicts(ctx, game, mod, profileName); err == nil {
+	if conflicts, err := s.GetInstallerForProfile(game, profileName).GetConflicts(ctx, game, mod, profileName); err == nil {
 		plan.Conflicts = conflicts
 	}
 
@@ -3253,7 +3260,7 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		emit(DeployProgress{Phase: InstallBeforeAllForced, Detail: msg})
 	}
 
-	linkMethod := s.GetGameLinkMethod(game)
+	linkMethod := s.GetEffectiveLinkMethod(game, plan.Profile)
 	pm := s.NewProfileManager()
 
 	// deferredWarnings holds every install.after_each (BATCH path: every mod
@@ -3381,7 +3388,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		return nil
 	}
 
-	installer := s.GetInstaller(game)
+	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
 	// mod.SourceID (NOT plan.SourceID) is used for every source call below,
 	// matching batchInstallMods' own `sourceID := mod.SourceID` exactly -
@@ -3614,7 +3621,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		emit(evt)
 	}
 
-	installer := s.GetInstaller(game)
+	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 	downloadCache := s.GetGameCache(game)
 
 	var reinstallTxn *reinstallCacheTransaction
@@ -4032,8 +4039,8 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		emit(evt)
 	}
 
-	linkMethod := s.GetGameLinkMethod(game)
-	installer := s.GetInstaller(game)
+	linkMethod := s.GetEffectiveLinkMethod(game, profileName)
+	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
@@ -4269,8 +4276,8 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		emit(evt)
 	}
 
-	linkMethod := s.GetGameLinkMethod(game)
-	installer := s.GetInstaller(game)
+	linkMethod := s.GetEffectiveLinkMethod(game, profileName)
+	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
 	prevMod := mod.Mod
 	prevMod.Version = mod.PreviousVersion
@@ -4552,7 +4559,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		return result, nil
 	}
 
-	installer := s.GetInstaller(game)
+	installer := s.GetInstallerForProfile(game, profile.Name)
 	total := len(toDownload)
 	emit(DeployProgress{Phase: ImportInstalling, Total: total})
 

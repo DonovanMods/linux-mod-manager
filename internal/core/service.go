@@ -854,9 +854,30 @@ func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
 	return s.config.DefaultLinkMethod
 }
 
+// GetEffectiveLinkMethod resolves the link method for operations that deploy
+// into (or undeploy from) profileName: profile-explicit > game-explicit >
+// global default (#81). A missing or unreadable profile degrades to the
+// game-level resolution rather than erroring - callers resolving a method are
+// deploying, not validating, and the profile's absence is diagnosed elsewhere.
+// The CLI --method override sits above all of these and is applied by callers
+// (see DeployOptions.LinkMethod).
+func (s *Service) GetEffectiveLinkMethod(game *domain.Game, profileName string) domain.LinkMethod {
+	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil && profile.LinkMethodExplicit {
+		return profile.LinkMethod
+	}
+	return s.GetGameLinkMethod(game)
+}
+
 // GetInstaller returns an Installer configured for the given game
 func (s *Service) GetInstaller(game *domain.Game) *Installer {
 	return s.NewInstallerWithLinker(game, s.GetLinker(s.GetGameLinkMethod(game)))
+}
+
+// GetInstallerForProfile returns an Installer whose linker honors
+// profileName's effective link method (GetEffectiveLinkMethod) - the
+// profile-aware companion to GetInstaller.
+func (s *Service) GetInstallerForProfile(game *domain.Game, profileName string) *Installer {
+	return s.NewInstallerWithLinker(game, s.GetLinker(s.GetEffectiveLinkMethod(game, profileName)))
 }
 
 // NewInstallerWithLinker returns an Installer for the given game using a
