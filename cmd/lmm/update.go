@@ -148,7 +148,8 @@ mod ID is installed from more than one source in the profile, use
 -s/--source to disambiguate.
 
 --json prints the single-mod document (see 'lmm update --help') with
-status "rolled_back".
+status "rolled_back", or status "skipped" with reason "locked" when the
+mod is locked (unlock or move the lock to roll back).
 
 Examples:
   lmm update rollback 12345 --game skyrim-se
@@ -708,7 +709,8 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 // verbatim: "mod not found: %s" and, before ApplyRollback is ever called,
 // the same PreviousVersion/cache-existence checks ApplyRollback repeats
 // internally - so the header never prints when either guard would fail,
-// matching the pre-extraction ordering exactly) -> calls
+// matching the pre-extraction ordering exactly; a locked mod is likewise
+// refused as a skip before the header, #143) -> calls
 // Service.ApplyRollback, printing from its progress events exactly like
 // applyUpdate does for ApplyUpdate (forced-hook warnings, after_each hook
 // warnings, and the --verbose-gated link-method note all reuse the SAME
@@ -741,6 +743,30 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	// Check if previous version exists in cache
 	if !service.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.PreviousVersion) {
 		return fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
+	}
+
+	// #143: refuse a locked mod up front, mirroring applySingleUpdate's
+	// locked pre-check - the core gate (Service.ApplyRollback) backstops
+	// this regardless, but checking here avoids ever printing the "Rolling
+	// back..." header for a call that will never apply, treats the refusal
+	// as a skip (nil error / "skipped"+"locked" document) like the update
+	// path does, and names both remedy commands instead of surfacing the
+	// core gate's raw error. Same profile-load-failure semantics too: a
+	// missing/unreadable profile is treated as unlocked.
+	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
+			if jsonOutput {
+				return emitSingleUpdateJSON(singleUpdateJSON{
+					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, ToVersion: mod.PreviousVersion, Status: "skipped", Reason: "locked",
+				})
+			}
+			fmt.Printf("Rollback available: %s → %s — but %s is locked at v%s.\n", mod.Version, mod.PreviousVersion, mod.Name, ref.Version)
+			// -s/-p on both remedies for the same reason as applySingleUpdate's
+			// locked branch (#142 round 5): a bare copy-paste could resolve
+			// against the wrong profile or an ambiguous source.
+			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", mod.SourceID, profileName, mod.ID, mod.PreviousVersion, mod.SourceID, profileName, mod.ID)
+			return nil
+		}
 	}
 
 	if !jsonOutput {

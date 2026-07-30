@@ -194,7 +194,9 @@ func (m Model) showDeployedFiles() (tea.Model, tea.Cmd) {
 // profile IS a valid row the user could otherwise act on), this is a benign
 // "nothing to do" outcome for the selected row - mirroring
 // purgeProfilePrompt's own "no mods installed" short-circuit - so
-// statusIsError is false here, not true.
+// statusIsError is false here, not true. A locked mod is refused
+// synchronously too (#143), but as an actual refusal (statusIsError true,
+// pointing at the TUI's own L key) - see the inline comment.
 //
 // Otherwise, opens the standard y/n confirmation modal titled with both
 // versions so the user can see exactly what's about to change, then calls
@@ -210,6 +212,16 @@ func (m Model) rollbackSelectedMod() (Model, tea.Cmd) {
 	if item.PreviousVersion == "" {
 		m.action.status = "no previous version to roll back to"
 		m.action.statusIsError = false
+		return m, nil
+	}
+	// #143 polish: item.Locked is already in hand, so refuse here instead of
+	// opening a confirm modal for an action the core gate (ApplyRollback)
+	// would then refuse anyway. This one IS deleteSelectedProfile's refusal
+	// shape (statusIsError true): the row is otherwise actionable, and the
+	// remedy named is the TUI's own L key, not a CLI command.
+	if item.Locked {
+		m.action.status = fmt.Sprintf("%s is locked at v%s — unlock or move the lock (L) to roll back", item.Name, item.LockedVersion)
+		m.action.statusIsError = true
 		return m, nil
 	}
 
