@@ -1169,10 +1169,20 @@ func updateAmbiguousFileWarning(f *domain.DownloadableFile, installedVersion, ta
 // pairAmbiguousWithReplacement reports which entry of ambiguous the target-
 // version file replacement stands in for: the first one sharing its Category
 // (compared case-insensitively, like installFileCategoryPriority), else the
-// first entry, else -1 when there is nothing to pair. Category is the only
-// signal available - the candidates are label-identical by definition - and
-// sources do populate it (MAIN/OPTIONAL/UPDATE/...), so a new MAIN replaces
-// the stale MAIN and leaves an unchanged OPTIONAL alone.
+// first one sharing its IsPrimary flag, else the first entry, else -1 when
+// there is nothing to pair. The candidates are label-identical by
+// definition, so Category is the strongest signal when both sides carry a
+// matching one (a new MAIN replaces the stale MAIN and leaves an unchanged
+// OPTIONAL alone) - but it routinely decides nothing (#144): custom sources
+// (directory/manifest/api) never populate Category at all, and CurseForge's
+// vocabulary is release types (release/beta/alpha, from releaseTypeName)
+// that need not repeat across versions, so a populated category can still
+// match no ambiguous entry. IsPrimary is the secondary signal for both
+// shapes: a primary replacement stands in for the stale primary (the old
+// main) rather than consuming an unchanged extra by list order - and,
+// symmetrically, a non-primary replacement leaves a still-primary ambiguous
+// file to be retained-and-warned instead of silently displacing it. Only
+// when neither signal decides does list order remain.
 func pairAmbiguousWithReplacement(ambiguous []*domain.DownloadableFile, replacement *domain.DownloadableFile) int {
 	if len(ambiguous) == 0 {
 		return -1
@@ -1182,6 +1192,11 @@ func pairAmbiguousWithReplacement(ambiguous []*domain.DownloadableFile, replacem
 			if strings.ToUpper(a.Category) == want {
 				return i
 			}
+		}
+	}
+	for i, a := range ambiguous {
+		if a.IsPrimary == replacement.IsPrimary {
+			return i
 		}
 	}
 	return 0
