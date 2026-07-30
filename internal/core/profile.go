@@ -171,8 +171,9 @@ func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModRe
 	for i := range profile.Mods {
 		if profile.Mods[i].SourceID == mod.SourceID && profile.Mods[i].ModID == mod.ModID {
 			if profile.Mods[i].Locked && profile.Mods[i].Version != mod.Version {
-				return fmt.Errorf("%w: %s:%s is locked at v%s in profile %q - refusing to record v%s; only 'lmm mod lock'/'lmm mod unlock' move a locked version",
-					ErrModLocked, mod.SourceID, mod.ModID, profile.Mods[i].Version, profileName, mod.Version)
+				return fmt.Errorf("%w: %s:%s is locked at v%s in profile %q - refusing to record v%s; move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'",
+					ErrModLocked, mod.SourceID, mod.ModID, profile.Mods[i].Version, profileName, mod.Version,
+					mod.SourceID, profileName, mod.ModID, mod.SourceID, profileName, mod.ModID)
 			}
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs

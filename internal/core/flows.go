@@ -3092,6 +3092,9 @@ func (s *Service) lockedInstallRefusal(ctx context.Context, plan *InstallPlan, o
 //     (lockedInstallRefusal checks the lock first).
 func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *InstallPlan, opts InstallOptions) (version string, ok bool) {
 	if len(plan.Dependencies) == 0 {
+		if len(plan.Files) == 0 {
+			return "", false
+		}
 		selected := make([]*domain.DownloadableFile, len(plan.Files))
 		for i := range plan.Files {
 			selected[i] = &plan.Files[i]

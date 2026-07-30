@@ -1468,6 +1468,44 @@ func TestService_ApplyInstall_LockedRefDifferentVersion_RefusedBeforeAnySideEffe
 	assert.True(t, ref.Locked)
 }
 
+// TestService_ApplyInstall_LockedRef_EmptyPlanFiles_NotRefusedAsLocked pins
+// resolveInstallTargetVersion's documented ok=false contract on the STRICT
+// path: with plan.Files emptied by a caller, no target version can be
+// derived, so the up-front gate must NOT refuse with ErrModLocked on the
+// mod-level fallback version it never actually derived - the flow's own
+// handling (and the UpsertMod backstop, which still protects the ref) is
+// authoritative for the degenerate shape.
+func TestService_ApplyInstall_LockedRef_EmptyPlanFiles_NotRefusedAsLocked(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &oldFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"}
+	mock.AddMod(mod.GameID, mod)
+
+	lockProfileRef(t, svc, "g1", "default", "src", "mod1", "1.0", []string{"2"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	plan.Files = nil
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	assert.False(t, errors.Is(err, core.ErrModLocked),
+		"an underivable target version (empty plan.Files) must not be refused as a lock conflict, got: %v", err)
+
+	// The backstop still holds: the locked ref is untouched either way.
+	profile, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("src", "mod1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.0", ref.Version, "the locked version must be untouched")
+	assert.True(t, ref.Locked)
+}
+
 // TestService_ApplyInstall_LockedRefExactVersion_Succeeds pins the converge/
 // repair half of #143: installing a locked mod at EXACTLY its locked version
 // stays allowed - the install completes, FileIDs refresh, and the lock
