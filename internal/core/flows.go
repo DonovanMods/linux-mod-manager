@@ -1581,9 +1581,11 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
-	linkMethod := s.GetEffectiveLinkMethod(game, profileName)
+	var linkMethod domain.LinkMethod
 	if opts.LinkMethod != nil {
 		linkMethod = *opts.LinkMethod
+	} else {
+		linkMethod = s.GetEffectiveLinkMethod(game, profileName)
 	}
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
