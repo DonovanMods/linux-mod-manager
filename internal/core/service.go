@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -503,7 +504,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		if err := copyFileStreaming(archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
-		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID); err != nil {
+		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{file.FileName}); err != nil {
 			return nil, err
 		}
 		return &DownloadModResult{
@@ -512,10 +513,11 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		}, nil
 	}
 
-	if err := s.extractor.Extract(archivePath, stagePath); err != nil {
+	members, err := s.extractIntoStaging(archivePath, cachePath, stagePath)
+	if err != nil {
 		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
-	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID); err != nil {
+	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, members); err != nil {
 		return nil, err
 	}
 
@@ -546,10 +548,17 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
+	var members []string
 	switch {
 	case info.IsDir():
 		if err := copyDir(localPath, stagePath); err != nil {
 			return nil, fmt.Errorf("copying mod directory: %w", err)
+		}
+		// Attribute the SOURCE directory's own files, not stagePath's:
+		// prepareStaging seeds stagePath with the existing cache entry, whose
+		// members belong to other file IDs.
+		if members, err = relativeFileMembers(localPath); err != nil {
+			return nil, fmt.Errorf("listing mod directory: %w", err)
 		}
 	case game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(localPath):
 		// file.FileName is the declared name for this mod file - use it so
@@ -565,13 +574,14 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		if err := copyFileStreaming(localPath, filepath.Join(stagePath, destName)); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
+		members = []string{destName}
 	default:
-		if err := s.extractor.Extract(localPath, stagePath); err != nil {
+		if members, err = s.extractIntoStaging(localPath, cachePath, stagePath); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
 	}
 
-	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID); err != nil {
+	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, members); err != nil {
 		return nil, err
 	}
 
@@ -639,14 +649,104 @@ func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) 
 // EXTRACTED MEMBERS, whose names bear no relation to the DownloadableFile's
 // FileName.
 //
+// members lists the stage-relative paths THIS file ID contributed (its
+// extracted members, or the single stored file), recorded into the marker as
+// the file's member manifest (#144 item 4: cache.MarkFileCompleteWithMembers)
+// so a same-version file-only update can later undeploy a superseded file's
+// members with positive provenance. Callers must attribute members to the
+// file itself - never by diffing the staging dir, which prepareStaging seeds
+// with OTHER files' members and which would misattribute overwritten shared
+// members.
+//
 // prepareStaging seeds stagePath from the existing cache entry when one is
 // present, and copyDir copies dotfiles, so markers written by a mod's earlier
 // files survive into every later file's commit.
-func commitStagedCacheWithMarker(cachePath, stagePath, fileID string) error {
-	if err := cache.MarkFileComplete(stagePath, fileID); err != nil {
+func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []string) error {
+	if err := cache.MarkFileCompleteWithMembers(stagePath, fileID, members); err != nil {
 		return err
 	}
 	return commitStagedCache(cachePath, stagePath)
+}
+
+// extractIntoStaging extracts archivePath into a PRISTINE sibling directory of
+// the cache entry, records the exact member set the archive produced, and then
+// merges those members into stagePath (new members overwrite same-named seeded
+// ones, exactly as extracting straight into the seeded stagePath used to).
+//
+// The pristine intermediate exists for attribution (#144 item 4): stagePath is
+// pre-seeded by prepareStaging with the existing cache entry, so extracting
+// into it directly cannot tell this archive's members apart from earlier
+// files' - and a before/after diff would silently misattribute a member the
+// archive OVERWRITES (one also shipped by an earlier file), breaking the
+// shared-member-survives rule. The extractor's own untrusted-archive guards
+// (zip-slip, reserved-namespace rejection) run against the pristine dir, where
+// "preexisting reserved entries" is correctly empty.
+//
+// Returned members are extractDir-relative paths of regular files only,
+// matching cache.ListFiles semantics (directories and symlinks are never
+// listed, deployed, or undeployed).
+func (s *Service) extractIntoStaging(archivePath, cachePath, stagePath string) ([]string, error) {
+	extractPath := cachePath + ".extract"
+	if err := os.RemoveAll(extractPath); err != nil {
+		return nil, fmt.Errorf("clearing extraction dir: %w", err)
+	}
+	defer os.RemoveAll(extractPath) //nolint:errcheck
+
+	if err := s.extractor.Extract(archivePath, extractPath); err != nil {
+		return nil, err
+	}
+
+	var members []string
+	err := filepath.WalkDir(extractPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(extractPath, path)
+		if err != nil {
+			return err
+		}
+		dest := filepath.Join(stagePath, rel)
+		if d.IsDir() {
+			// Preserve (possibly empty) directories, as direct extraction did.
+			return os.MkdirAll(dest, 0755)
+		}
+		if err := os.Rename(path, dest); err != nil {
+			return err
+		}
+		if d.Type().IsRegular() {
+			members = append(members, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("staging extracted members: %w", err)
+	}
+	return members, nil
+}
+
+// relativeFileMembers lists root-relative paths of the regular files under
+// root - the member manifest for a directory ingest, matching cache.ListFiles
+// semantics (directories and symlinks excluded).
+func relativeFileMembers(root string) ([]string, error) {
+	var members []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !d.Type().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		members = append(members, rel)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return members, nil
 }
 
 func commitStagedCache(cachePath, stagePath string) error {
