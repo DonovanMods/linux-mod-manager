@@ -1124,10 +1124,11 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRep
 // The warning text is pinned to the exact wording a scoped re-review
 // flagged: it must name the MOD as locked (not the profile - a profile
 // isn't "locked", a ref in it is), say WHICH profile the lock lives in, and
-// give remedies with an explicit -p <sibling> flag - `lmm mod lock`/
-// `lmm mod unlock` without one resolve against the active/-p profile (the
-// PRIMARY here), so an unflagged remedy would move/clear the lock in the
-// wrong profile if copy-pasted.
+// give remedies with explicit -s/-p flags - `lmm mod lock`/`lmm mod unlock`
+// without them resolve against the active/-p profile (the PRIMARY here) and
+// may need to disambiguate the source, so an unflagged remedy would
+// move/clear the lock in the wrong profile (or fail to resolve a source at
+// all) if copy-pasted.
 func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *testing.T) {
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
@@ -1142,8 +1143,8 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *t
 		return doVerify(cmd, svc, game, nil)
 	})
 	assert.Contains(t, out, "Mod One is locked at v1.5 in profile second", "the warning must name the MOD (not the profile) as locked, and say which profile")
-	assert.Contains(t, out, "lmm mod lock -p second mod1", "the lock remedy must be flagged with -p <sibling> - unflagged would target the wrong (active) profile")
-	assert.Contains(t, out, "lmm mod unlock -p second mod1", "the unlock remedy must be flagged with -p <sibling> too")
+	assert.Contains(t, out, "lmm mod lock -s test-src -p second mod1", "the lock remedy must be flagged with -s/-p <sibling> - unflagged would target the wrong (active) profile/an ambiguous source")
+	assert.Contains(t, out, "lmm mod unlock -s test-src -p second mod1", "the unlock remedy must be flagged the same way")
 	assert.NotContains(t, out, "may be broken", "an un-deployed sibling has no broken deployment to warn about")
 
 	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
@@ -1750,8 +1751,9 @@ func TestDoVerify_Fix_VersionMismatchLocked_RefusesRepair(t *testing.T) {
 	})
 
 	assert.Contains(t, out, "1 issue(s)", "a locked mod's version mismatch must still be reported and counted as an issue")
-	assert.Contains(t, out, "--fix skipped: Mod One is locked at v1.5", "the refusal text must name the mod and the lock's target version")
-	assert.Contains(t, out, "lmm mod lock mod1 <version>", "the refusal must point at the remedy command")
+	assert.Contains(t, out, "--fix skipped: Mod One is locked at v1.5 in profile default", "the refusal text must name the mod, the lock's target version, and the profile holding the lock")
+	assert.Contains(t, out, "lmm mod lock -s test-src -p default mod1 <version>", "the lock remedy must carry -s/-p so a copy-paste can never resolve against a different source/profile")
+	assert.Contains(t, out, "lmm mod unlock -s test-src -p default mod1", "the refusal must also offer the unlock alternative, flagged the same way")
 	assert.NotContains(t, out, "Repaired", "a locked record must never be silently repaired")
 
 	// The record must be completely unchanged: DB still at "1.5", cache

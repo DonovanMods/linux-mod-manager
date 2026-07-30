@@ -251,7 +251,7 @@ func TestDoModLock_VersionlessSource_NamesPin(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `source "novers" cannot resolve versions`)
-	assert.Contains(t, err.Error(), "lmm mod set-update a --pin")
+	assert.Contains(t, err.Error(), "lmm mod set-update -s novers -p default a --pin", "the remedy must carry -s/-p so a copy-paste can never resolve against a different source/profile (#142 round 5)")
 }
 
 // TestDoModUnlock_ClearsMarkerLeavesVersionIntact guards (e): unlock must

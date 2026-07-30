@@ -284,7 +284,11 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		return err
 	}
 	if !caps.Versions {
-		return fmt.Errorf("source %q cannot resolve versions; to freeze this mod use 'lmm mod set-update %s --pin'", modSource, modID)
+		// #142 round 5: set-update is profile-scoped too (SetModUpdatePolicy
+		// takes profileName, same as SetModLock) - name -s/-p here, same as
+		// every other lock/unlock/set-update remedy, so a copy-paste can't
+		// land on the wrong profile/an ambiguous source.
+		return fmt.Errorf("source %q cannot resolve versions; to freeze this mod use 'lmm mod set-update -s %s -p %s %s --pin'", modSource, modSource, profileName, modID)
 	}
 
 	pm := service.NewProfileManager()

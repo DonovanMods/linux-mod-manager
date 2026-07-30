@@ -38,7 +38,7 @@ func TestApplySingleUpdate_Locked_RefusesUpdate_Text(t *testing.T) {
 	})
 
 	assert.Contains(t, out, "Update available: 1.0 → 2.0 — but Mod One is locked at v1.0.")
-	assert.Contains(t, out, "Move the lock: lmm mod lock mod1 2.0   |   Unlock: lmm mod unlock mod1")
+	assert.Contains(t, out, "Move the lock: lmm mod lock -s test-src -p default mod1 2.0   |   Unlock: lmm mod unlock -s test-src -p default mod1", "both remedies must carry -s/-p so a copy-paste can never resolve against a different source/profile (#142 round 5)")
 	assert.NotContains(t, out, "Updating Mod One", "must never print the applying header - it never applies")
 
 	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
@@ -91,7 +91,7 @@ func TestApplySingleUpdate_LockedAndPinned_MessageSaysBoth(t *testing.T) {
 	})
 
 	assert.Contains(t, out, "Mod One is pinned at v1.0 and was not checked (also locked).")
-	assert.Contains(t, out, "Unpin with: lmm mod set-update mod1 --notify")
+	assert.Contains(t, out, "Unpin with: lmm mod set-update -s test-src -p default mod1 --notify", "the unpin remedy must carry -s/-p so a copy-paste can never resolve against a different source/profile (#142 round 5)")
 }
 
 // TestApplySingleUpdate_UnlockedPinned_MessageUnchanged pins the counterpart:

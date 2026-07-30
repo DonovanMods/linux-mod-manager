@@ -360,7 +360,14 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 				// above (verify stays honest about state); only the
 				// repair itself is refused.
 				if ref != nil && ref.Locked {
-					refusal := fmt.Sprintf("--fix skipped: %s is locked at v%s — the record is the lock's target; move the lock ('lmm mod lock %s <version>') instead of rewriting it.", mod.Name, ref.Version, mod.ID)
+					// #142 round 5: name the source/profile in both remedies -
+					// same "copy-paste acts on the wrong target" fix already
+					// applied to the core gates (internal/core/flows.go's
+					// lockedRefRefusalError) and the sibling-repair warning
+					// below - a bare 'lmm mod lock <id> <version>' would
+					// resolve against the active profile/an ambiguous source
+					// if this mod's lock lives elsewhere.
+					refusal := fmt.Sprintf("--fix skipped: %s is locked at v%s in profile %s — the record is the lock's target; move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s' instead of rewriting it.", mod.Name, ref.Version, profile, mod.SourceID, profile, mod.ID, mod.SourceID, profile, mod.ID)
 					if jsonOutput {
 						// The Note field already exists on this contract
 						// (repair-failure/rename-blocked detail) - this is
@@ -918,7 +925,12 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 			if ref := siblingProfile.FindRef(sibling.SourceID, sibling.ID); ref != nil && ref.Locked {
 				locked = append(locked, p.Name)
 				if !jsonOutput {
-					msg := fmt.Sprintf("  Warning: %s is locked at v%s in profile %s; run 'lmm mod lock -p %s %s <version>' or unlock with 'lmm mod unlock -p %s %s' instead of rewriting it", sibling.Name, ref.Version, p.Name, p.Name, sibling.ID, p.Name, sibling.ID)
+					// #142 round 5: also name -s (in addition to the -p this
+					// warning already carried) - resolveSource must otherwise
+					// disambiguate on its own whenever more than one source
+					// is configured, which a copy-pasted remedy shouldn't
+					// depend on.
+					msg := fmt.Sprintf("  Warning: %s is locked at v%s in profile %s; run 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s' instead of rewriting it", sibling.Name, ref.Version, p.Name, sibling.SourceID, p.Name, sibling.ID, sibling.SourceID, p.Name, sibling.ID)
 					if sibling.Deployed {
 						msg += "; its deployment may be broken until the lock is moved or cleared"
 					}

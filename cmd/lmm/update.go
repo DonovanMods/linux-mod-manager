@@ -562,7 +562,11 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 				lockedSuffix = " (also locked)"
 			}
 			fmt.Printf("%s is pinned at v%s and was not checked%s.\n", mod.Name, mod.Version, lockedSuffix)
-			fmt.Printf("Unpin with: lmm mod set-update %s --notify\n", mod.ID)
+			// #142 round 5: -s/-p, same reasoning as the locked-refusal
+			// remedies just below - set-update is profile-scoped
+			// (SetModUpdatePolicy takes profileName) and the mod ID may
+			// exist under more than one configured source.
+			fmt.Printf("Unpin with: lmm mod set-update -s %s -p %s %s --notify\n", mod.SourceID, profileName, mod.ID)
 			return nil
 		}
 		if jsonOutput {
@@ -590,7 +594,13 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 			})
 		}
 		fmt.Printf("Update available: %s → %s — but %s is locked at v%s.\n", oldVersion, newVersion, mod.Name, lockedVersion)
-		fmt.Printf("Move the lock: lmm mod lock %s %s   |   Unlock: lmm mod unlock %s\n", mod.ID, newVersion, mod.ID)
+		// #142 round 5: name -s/-p in both remedies - update honors -p (this
+		// call already resolved profileName, possibly non-active), and the
+		// mod ID may exist under more than one configured source, so a bare
+		// 'lmm mod lock <id> <version>' copy-pasted from here could resolve
+		// against the wrong profile/an ambiguous source (same fix as the
+		// core gates - internal/core/flows.go's lockedRefRefusalError).
+		fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", mod.SourceID, profileName, mod.ID, newVersion, mod.SourceID, profileName, mod.ID)
 		return nil
 	}
 
