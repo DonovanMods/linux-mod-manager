@@ -97,7 +97,10 @@ func (i *Installer) Replace(ctx context.Context, game *domain.Game, oldMod, newM
 // the degenerate same-version shape - a file-only update whose version string
 // does not change shares ONE version-keyed cache directory between the old
 // and new files, so the plain union replace could never undeploy a departing
-// file's members (#144 item 4). See resolveSharedDirUpdate for the exact
+// file's members (#144 item 4). ApplyRollback wires the same transition
+// reversed - current FileIDs -> PreviousFileIDs - so a same-version rollback
+// narrows identically instead of deploying the union (#150). See
+// resolveSharedDirUpdate for the exact
 // ownership rules; on a normal different-version update (distinct cache dirs)
 // this behaves exactly like Replace.
 func (i *Installer) ReplaceForUpdate(ctx context.Context, game *domain.Game, oldMod, newMod *domain.Mod, profileName string, oldFileIDs, newFileIDs []string) error {
