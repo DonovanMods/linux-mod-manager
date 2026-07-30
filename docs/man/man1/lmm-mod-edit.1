@@ -29,8 +29,10 @@ profile - it is not merely a display change.
 
 .PP
 A locked mod (see 'lmm mod lock') refuses --version (other than the
-locked version itself) and re-linking; unlock it first. Metadata-only
-edits (--name/--author) are always allowed.
+locked version itself) and re-linking: move the lock to the desired
+version first, or unlock (re-linking always requires an unlock, since
+it would replace the locked profile entry). Metadata-only edits
+(--name/--author) are always allowed.
 
 .PP
 Examples:

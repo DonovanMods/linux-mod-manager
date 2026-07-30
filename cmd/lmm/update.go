@@ -599,7 +599,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// mod ID may exist under more than one configured source, so a bare
 		// 'lmm mod lock <id> <version>' copy-pasted from here could resolve
 		// against the wrong profile/an ambiguous source (same fix as the
-		// core gates - internal/core/flows.go's lockedRefRefusalError).
+		// core gates - internal/core/flows.go's LockedRefRefusalError).
 		fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", mod.SourceID, profileName, mod.ID, newVersion, mod.SourceID, profileName, mod.ID)
 		return nil
 	}

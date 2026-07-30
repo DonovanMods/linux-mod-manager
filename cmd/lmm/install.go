@@ -1051,7 +1051,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		// lockedInstallRefusal), with UpsertMod's ErrModLocked guard as the
 		// final backstop, and names -s/-p in both remedies for the same
 		// copy-paste-resolves-against-the-wrong-target reason as
-		// lockedRefRefusalError.
+		// LockedRefRefusalError.
 		if prof, err := pm.Get(game.ID, profileName); err == nil {
 			if ref := prof.FindRef(sourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
 				fmt.Printf("  Skipped: %s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'\n",

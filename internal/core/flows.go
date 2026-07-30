@@ -3113,7 +3113,7 @@ func (s *reinstallCacheTransaction) Commit() error {
 }
 
 // lockedInstallRefusal implements ApplyInstall's #143 up-front gate: it
-// returns lockedRefRefusalError when plan.Profile holds a LOCKED ref for
+// returns LockedRefRefusalError when plan.Profile holds a LOCKED ref for
 // plan.Mod AND the version this install would record differs from the
 // locked version, and nil otherwise (no profile, no ref, no lock, same
 // version, or a would-be version that cannot be determined here - the flow

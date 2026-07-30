@@ -1413,7 +1413,7 @@ func lockProfileRef(t *testing.T, svc *core.Service, gameID, profileName, source
 // is #143's STRICT-path flow guard: installing a mod whose profile ref is
 // LOCKED at a different version than the install would record must be
 // refused up front - before any hook, download, deploy, or DB/profile write
-// - with lockedRefRefusalError's remedy wording (errors.Is core.ErrModLocked).
+// - with LockedRefRefusalError's remedy wording (errors.Is core.ErrModLocked).
 // Previously the install deployed the new version and either silently moved
 // the lock target (UpsertMod) or - with the core guard alone - left a
 // deployed-but-unrecorded drift behind a mere Note.
