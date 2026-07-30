@@ -432,7 +432,9 @@ func TestApplyRollbackCompensatesOnDBFailure(t *testing.T) {
 // the same ReplaceForUpdate + ApplyModUpdate + UpsertMod sequence ApplyUpdate
 // itself performs. The withManifests flag picks between the two on-disk
 // shapes PR #149 distinguishes: per-file-ID member manifests (every install
-// made since) or a legacy entry with no markers at all - in which case the
+// made since) or a legacy entry with no recorded manifests (this seed writes
+// no markers at all; a pre-#149 entry's bare zero-byte completion markers
+// parse as not-recorded and fall back identically) - in which case the
 // seeding update itself already deployed the union, the exact pre-manifest
 // starting state.
 func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, withManifests bool) *domain.InstalledMod {
@@ -532,9 +534,10 @@ func TestApplyRollback_SameVersionFileOnlyUpdate_UndeploysRolledBackFromMember(t
 }
 
 // TestApplyRollback_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion
-// pins #149's hard backward-compat rule on the rollback path: a pre-manifest
-// cache entry (no markers at all - the exact on-disk shape of every entry
-// made before manifests existed) must keep the historical union behavior
+// pins #149's hard backward-compat rule on the rollback path: a cache entry
+// with no recorded manifests (seeded here with no markers at all; a pre-#149
+// entry's bare zero-byte completion markers parse as not-recorded and fall
+// back the same way) must keep the historical union behavior
 // silently - nothing undeployed, nothing erroring, nothing warning.
 func TestApplyRollback_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion(t *testing.T) {
 	svc := newFlowsTestService(t)
