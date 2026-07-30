@@ -7,6 +7,7 @@ A terminal-based mod manager for Linux that provides a CLI interface for searchi
 - **Multi-Source Support**: Search, download, install mods from NexusMods and CurseForge
 - **Profile System**: Manage multiple mod configurations per game
 - **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
+- **Version Locking**: Lock a mod's profile entry to an exact version, independent of update policy — see [Locking mods to a version](#locking-mods-to-a-version)
 - **Rollback Support**: Revert to previous mod versions when updates cause issues
 - **Flexible Deployment**: Symlink, hardlink, or copy mods to game directories
 - **Dependency Resolution**: Automatically fetches and installs mod dependencies
@@ -139,9 +140,91 @@ lmm mod set-update 12345 --game skyrim-se --auto
 # Notify only (default)
 lmm mod set-update 12345 --game skyrim-se --notify
 
-# Pin to current version
+# Mute update checks for this mod (does not hold a version — see Locking below)
 lmm mod set-update 12345 --game skyrim-se --pin
 ```
+
+`--pin` is a check-mute, not a version freeze: it stops `lmm update` from asking
+the source about the mod at all, but the mod is free to be reinstalled,
+rolled back, or otherwise moved to a different version by anything other than
+an update check. If what you actually want is "this profile deploys exactly
+version X, and nothing changes that", lock it instead (below). `--pin`
+remains the only freeze available on sources that cannot resolve versions
+(e.g. plain `directory` sources), since locking requires that capability.
+
+### Locking mods to a version
+
+`lmm mod lock <mod-id> [version]` locks the mod's entry in the current
+profile to an exact version. With no version argument it locks at the
+version currently recorded for the mod; with a version argument, that
+version is resolved and validated against the source before the lock is
+written — an unresolvable version is refused instead of writing a lock that
+can never be satisfied. Locking requires a source that can resolve versions
+(NexusMods, CurseForge, `manifest`/`api` sources with `mod_files`); a
+version-less source is refused with a pointer to `lmm mod set-update --pin`
+instead.
+
+```bash
+# Lock at the currently installed version
+lmm mod lock 12345 --game skyrim-se
+
+# Lock at a specific version
+lmm mod lock 12345 1.2.3 --game skyrim-se
+
+# Clear the lock (recorded version is left untouched)
+lmm mod unlock 12345 --game skyrim-se
+```
+
+Locking is a metadata write, not a deploy: if the locked version differs
+from what's currently installed, the command says so and the game directory
+doesn't change until the next `lmm profile apply` (or `lmm deploy`), which
+converges the mod to the locked version — downgrades included. `lmm mod
+unlock` clears only the lock marker; the mod's recorded version is left
+exactly as-is, since that's the record, not the lock.
+
+In the TUI, `L` on the Installed Mods screen opens an async version picker
+for the selected mod (fetched from the source); picking a version confirms
+and locks/moves the lock immediately, and a locked mod's picker gains a
+trailing "unlock" entry. The row's flags column shows `lck` for a locked mod
+(it outranks `pin` when both apply — the lock is what the UI names).
+
+**Lock vs. pin, in one line**: pinning mutes a mod's update *notifications*;
+a lock is a lockfile entry that pins a *build*.
+
+| | `--pin` (update policy) | lock |
+| --- | --- | --- |
+| Statement about | "stop asking the source about this mod" | "this profile deploys exactly version X" |
+| Enforced at | check time only | deploy time (converges, downgrades included) |
+| Scope | per-install, per-profile (SQLite) | per-profile (profile YAML) |
+| Travels with `profile export`/`import` | no | yes — imports reproduce the exact build |
+| Works on version-less sources | yes | no — refused with a capability error |
+
+The two are orthogonal — a mod can be locked, pinned, both, or neither — and
+wherever they'd conflict, the lock wins and the output names it:
+
+- **Locked, any other policy ("locked but informed")**: `lmm update` still
+  checks the mod and reports a newer version if one exists, but deploy/apply
+  still converges to the locked version.
+- **Locked + `auto`**: auto-update skips the mod instead of applying an
+  update to it, reported as a distinct "N locked mod(s) skipped by
+  auto-update" line (`lmm update --all` skips it the same way).
+- **Locked + `pinned` ("locked and silent")**: the mod isn't checked at all,
+  same as any other pinned mod.
+- **`lmm update <locked-mod-id>` (explicit single-mod update)**: refused —
+  "locked at v*X*; move the lock (`lmm mod lock <id> <version>`) or unlock
+  first."
+
+Lock state shows up alongside version info wherever it's installed: `lmm
+list -v`'s `LOCKED` column (the locked version, or `-`), `lmm mod show`'s
+Installed section, and `lmm update`'s table, where a locked mod's `POLICY`
+cell gets a `[locked@<version>]` suffix. `--json` output for `list`, `mod
+show`, and `update` carries the same information additively (`locked`,
+`locked_version`). `lmm verify` still reports a locked mod's version-record
+mismatches, but `--fix` refuses to rewrite a locked mod's record (other,
+unlocked mods in the same run are still fixed) — and when the installed
+version hasn't yet converged to a lock's target, `verify` prints an
+informational "lock pending convergence" note rather than treating it as
+drift to repair.
 
 ### Terminal UI
 
@@ -200,7 +283,10 @@ active profile (using its current enabled mods) from either Installed Mods
 or the Dashboard. `f` opens a scrollable panel listing the selected mod's
 deployed files (`f` again, or `esc`, closes it). `P` opens a notify/auto/pin
 picker for the selected mod's update policy — picking one applies
-immediately, no separate confirmation. `J`/`K` (also `ctrl+down`/`ctrl+up`)
+immediately, no separate confirmation. `L` opens an async version picker
+(fetched from the source) to lock the mod, or move an existing lock — a
+locked mod's picker gains a trailing "unlock" entry — see [Locking mods to a
+version](#locking-mods-to-a-version). `J`/`K` (also `ctrl+down`/`ctrl+up`)
 swap the selected mod with its neighbor in load order and persist the new
 order right away; the list itself renders in load order, and a hint reads
 "order changed — deploy (`D`) to apply" until you redeploy. `<` rolls the
@@ -783,7 +869,9 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `lmm mod disable <mod-id>`             | Disable mod (keep in cache)                          |
 | `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                          |
 | `lmm mod set-update <mod-id> --notify` | Notify only (default)                                |
-| `lmm mod set-update <mod-id> --pin`    | Pin mod to current version                           |
+| `lmm mod set-update <mod-id> --pin`    | Mute update checks for mod (does not hold a version — see [Locking](#locking-mods-to-a-version)) |
+| `lmm mod lock <mod-id> [version]`      | Lock mod's profile entry to its current or a specific version |
+| `lmm mod unlock <mod-id>`              | Clear a mod's lock (recorded version is left untouched) |
 | `lmm mod show <mod-id>`                | Show mod details (description, image, etc.)          |
 | `lmm mod files <mod-id>`               | List files deployed by mod                           |
 | `lmm mod edit <current-id>`            | Edit mod details (name, version, author, source, ID)  |
@@ -905,6 +993,14 @@ When you run `lmm update`, the tool checks each installed mod against the source
 
 - **X ModName - VERSION MISMATCH (recorded X, source reports Y)** - The recorded version doesn't match what the installed file ID(s) report upstream; use `--fix` to repair.
 - **? ModName - VERSION UNVERIFIABLE** - None of the recorded file ID(s) are listed by the source anymore; not repaired by `--fix` (reinstall the mod instead).
+
+A locked mod's VERSION MISMATCH is still reported, but `--fix` refuses to
+rewrite a locked mod's record (other, unlocked mods in the same run are
+still fixed) since the record is the lock's target, not drift to repair —
+move the lock instead. Separately, when a locked mod's installed version
+hasn't yet converged to the lock (see [Locking mods to a
+version](#locking-mods-to-a-version)), `verify` prints an informational
+"lock pending convergence" note rather than treating it as an issue.
 
 Mods installed from a local source, mods requiring manual download, and mods with no recorded file IDs are skipped silently. `--fix` repairs a VERSION MISMATCH by re-keying the cache entry to the effective (source-reported) version, correcting the DB row and active profile record, and re-linking symlink deployments; if a cache entry already exists under the effective version the rename is skipped and a note is printed (also included as `note` in `--json` output) while the DB/profile are still corrected.
 
