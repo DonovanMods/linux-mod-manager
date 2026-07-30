@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -1947,4 +1948,157 @@ func TestDoVerify_LockedConverged_NoNote(t *testing.T) {
 			t.Fatalf("expected no version-check row for a converged locked mod, got: %+v", f)
 		}
 	}
+}
+
+// --- verify --fix re-links honor the profile-effective link method (issue #152) ---
+
+// setVerifyProfileLinkMethod stamps an explicit link_method on an existing
+// profile YAML - the cmd-package twin of internal/core's setProfileLinkMethod
+// test helper (flows_test.go), for driving GetEffectiveLinkMethod's
+// profile-explicit branch from doVerify tests.
+func setVerifyProfileLinkMethod(t *testing.T, svc *core.Service, gameID, profileName string, method domain.LinkMethod) {
+	t.Helper()
+	p, err := config.LoadProfile(svc.ConfigDir(), gameID, profileName)
+	require.NoError(t, err)
+	p.LinkMethod = method
+	p.LinkMethodExplicit = true
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), p))
+}
+
+// TestDoVerify_Fix_VersionMismatch_Deployed_RelinksWithProfileLinkMethod is
+// issue #152's headline failing case: the game explicitly says symlink, the
+// verified profile explicitly says copy (a row deployed as symlink before the
+// profile override existed), and --fix's re-link must resolve the
+// profile-effective method (profile > game > global, PR #151) - not rebuild
+// the installer from the game-level method and "repair" the deployment back
+// to a symlink, re-introducing exactly the drift verify exists to fix. The
+// repaired file must be a real copy, and the row must record the effective
+// method, same as DeployProfile.
+func TestDoVerify_Fix_VersionMismatch_Deployed_RelinksWithProfileLinkMethod(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, true)
+	game.LinkMethod = domain.LinkSymlink
+	game.LinkMethodExplicit = true
+	setVerifyProfileLinkMethod(t, svc, game.ID, "default", domain.LinkCopy)
+
+	deployedPath := filepath.Join(game.ModPath, "mod1.esp")
+	info, err := os.Lstat(deployedPath)
+	require.NoError(t, err)
+	require.True(t, info.Mode()&os.ModeSymlink != 0, "pre-state: the stale deployment is a symlink into the recorded-version cache dir")
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	require.Contains(t, out, "Repaired", "sanity: the repair must have actually run")
+
+	info, err = os.Lstat(deployedPath)
+	require.NoError(t, err, "the repaired deployment must exist")
+	assert.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "the repaired file must be a real copy - the profile-level copy override beats the game's explicit symlink")
+
+	content, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "plugin content", string(content))
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.LinkCopy, mod.LinkMethod, "the re-link must record the effective method on the row, same as DeployProfile")
+	assert.True(t, mod.Deployed, "Deployed remains true after a successful re-link")
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinksWithSiblingProfileLinkMethod
+// covers the second re-link site (repairSiblingProfiles): a deployed sibling
+// row re-links with the SIBLING profile's own effective method - here an
+// explicit copy override on "second" beating the game's explicit symlink -
+// not the game-level method, and not the primary profile's either ("default"
+// has no override, so its effective method is the game's symlink; only
+// resolving against p.Name can produce copy here).
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinksWithSiblingProfileLinkMethod(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+	game.LinkMethod = domain.LinkSymlink
+	game.LinkMethodExplicit = true
+	setVerifyProfileLinkMethod(t, svc, game.ID, "second", domain.LinkCopy)
+
+	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - the
+	// latter's full-row upsert would wipe the checksum the fixture seeded
+	// (audit Finding 1's exact pattern, here as a test-setup artifact).
+	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	require.Contains(t, out, "Repaired (profile second)", "sanity: the sibling repair must have actually run")
+
+	// The primary ("default") row is not deployed in this fixture, so the
+	// only writer to game.ModPath is the sibling's re-link.
+	deployedPath := filepath.Join(game.ModPath, "mod1.esp")
+	info, err := os.Lstat(deployedPath)
+	require.NoError(t, err, "sibling's deployment must have been (re-)created")
+	assert.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "the sibling's repaired file must be a real copy - its own profile's override beats the game's explicit symlink")
+
+	content, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "plugin content", string(content))
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.Equal(t, domain.LinkCopy, secondMod.LinkMethod, "the sibling re-link must record its profile's effective method on the row")
+	assert.True(t, secondMod.Deployed, "Deployed remains true after a successful sibling re-link")
+}
+
+// TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt pins
+// PR #154's Copilot finding: relinkDeployedRow's undeploy-then-install shape
+// treats an Uninstall failure that still lets Install succeed as non-fatal
+// (DeployProfile's own precedent - every file was rewritten, nothing is left
+// broken), but the warning must reach --json's per-row note, not just the
+// text-mode line, or automation has no way to see the partial cleanup a
+// human would be shown. Forces exactly that shape: a regular file squatting
+// where the row's symlink deployment should be makes the symlink linker's
+// Undeploy refuse ("not a symlink"), while its Deploy - which clears dst
+// itself - still succeeds.
+func TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, true)
+
+	deployedPath := filepath.Join(game.ModPath, "mod1.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("squatter"), 0o644))
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 0, result.Issues, "the repair itself succeeded - the undeploy warning must not keep the issue counted")
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Equal(t, "ok", f.Status, "the repaired row still flips to ok")
+			assert.Contains(t, f.Note, "undeploy", "the undeploy warning must reach the JSON note, not just the text-mode line")
+			assert.Contains(t, f.Note, "not a symlink", "the note must carry the underlying reason")
+		}
+	}
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+
+	// The re-link itself must still have completed: the squatter was
+	// replaced by a working symlink into the renamed cache dir.
+	info, err := os.Lstat(deployedPath)
+	require.NoError(t, err)
+	assert.True(t, info.Mode()&os.ModeSymlink != 0, "the squatting file must have been replaced by the re-created symlink")
+	content, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "plugin content", string(content))
 }
