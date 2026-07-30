@@ -77,14 +77,30 @@ func confirmInstallConflicts(service *core.Service, game *domain.Game, profileNa
 	return input == "y" || input == "yes", nil
 }
 
+// installFileIDList parses --file's comma-separated value into clean file
+// IDs (nil when the flag is unset) - the shared source for both
+// selectInstallFiles' CLI-side matching and core.InstallOptions.
+// TargetFileIDs (#140).
+func installFileIDList() []string {
+	if installFileID == "" {
+		return nil
+	}
+	var ids []string
+	for _, fid := range strings.Split(installFileID, ",") {
+		if fid = strings.TrimSpace(fid); fid != "" {
+			ids = append(ids, fid)
+		}
+	}
+	return ids
+}
+
 // selectInstallFiles applies the --file flag, single-file shortcut, --yes default,
 // or interactive prompt to choose which downloadable files to install.
 func selectInstallFiles(files []domain.DownloadableFile) ([]*domain.DownloadableFile, error) {
 	// Direct file ID(s) via --file flag
 	if installFileID != "" {
 		var selected []*domain.DownloadableFile
-		for _, fid := range strings.Split(installFileID, ",") {
-			fid = strings.TrimSpace(fid)
+		for _, fid := range installFileIDList() {
 			found := false
 			for i := range files {
 				if files[i].ID == fid {
@@ -463,8 +479,8 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// installModsWithDeps(...)"), which never reached any of that either.
 	// See doInstallBatch's own doc comment and task-2-report.md's "Fix wave
 	// 1" entry for the full review trace this restores.
-	// --version applies to the named mod only; dependencies install at
-	// latest (#96 decision 6).
+	// --version and --file apply to the named mod only (#96/#140);
+	// dependencies install at latest (#96 decision 6).
 	if len(plan.Dependencies) > 0 {
 		return doInstallBatch(ctx, service, game, plan, profileName)
 	}
@@ -518,11 +534,20 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// collapsing into ApplyInstall's generic "installation cancelled" text.
 	var promptErr error
 	opts := core.InstallOptions{
-		SkipVerify:  skipVerify,
-		Hooks:       getResolvedHooks(service, game, profileName),
-		HookRunner:  getHookRunner(service),
-		HookContext: makeHookContext(game),
-		Force:       installForce,
+		// TargetVersion/TargetFileIDs are resolved in core for the STRICT
+		// path too (#140): plan.Files above already reflects the version
+		// pool sub-selection (interactive/--file/-y), which core keeps
+		// verbatim, so this is normally a no-op cross-check - but it makes
+		// the options describe the user's actual request (the #143 lock
+		// gate judges the same pins the install honors) instead of relying
+		// on the CLI-side plan.Files override alone.
+		TargetVersion: installVersion,
+		TargetFileIDs: installFileIDList(),
+		SkipVerify:    skipVerify,
+		Hooks:         getResolvedHooks(service, game, profileName),
+		HookRunner:    getHookRunner(service),
+		HookContext:   makeHookContext(game),
+		Force:         installForce,
 		// ConfirmConflicts restores the pre-extraction CLI's blocking
 		// conflict prompt at ApplyInstall's own restored position (post-
 		// download/extract, pre-deploy) - see core.InstallOptions.
@@ -617,23 +642,29 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 // is treated COMPLETELY identically, reproducing cmd/lmm/install.go's
 // pre-extraction batchInstallMods console output byte-for-byte (git show
 // 5243286:cmd/lmm/install.go, lines ~1175-1347). In particular, unlike
-// doInstall's own single-mod code above: NO interactive/--file file
-// selection (always the primary-or-first file, re-resolved per mod), NO
-// blocking conflict prompt (a non-blocking inline "⚠ N file conflict(s)"
-// warning only) - doInstall's pre-extraction early return never reached
-// either of those for a dependency-having install, so this function must
-// not either. Must never read stdin - the caller's "Install N mod(s)?"
-// confirm prompt (run before this is ever called) is the only legitimate
-// stdin read anywhere in this path.
+// doInstall's own single-mod code above: NO interactive file selection
+// (always the primary-or-first file, re-resolved per mod - though an
+// explicit --file pins the NAMED mod's selection via opts.TargetFileIDs,
+// #140, exactly as --version pins its version), NO blocking conflict
+// prompt (a non-blocking inline "⚠ N file conflict(s)" warning only) -
+// doInstall's pre-extraction early return never reached either of those
+// for a dependency-having install, so this function must not either. Must
+// never read stdin - the caller's "Install N mod(s)?" confirm prompt (run
+// before this is ever called) is the only legitimate stdin read anywhere
+// in this path.
 func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Game, plan *core.InstallPlan, profileName string) error {
 	fmt.Printf("\nInstalling %d mod(s)...\n", len(plan.Dependencies)+1)
 
 	opts := core.InstallOptions{
-		// TargetVersion pins --version to the named/primary mod ONLY - see
-		// its doc comment. Dependencies still install at latest (#96
-		// decision 6); a version that doesn't resolve for the primary
-		// aborts the whole install before any dependency is touched.
+		// TargetVersion/TargetFileIDs pin --version/--file to the named/
+		// primary mod ONLY - see their doc comments. Dependencies still
+		// install at latest with their own auto-picked primary file (#96
+		// decision 6); a version or file ID that doesn't resolve for the
+		// primary aborts the whole install before any dependency is
+		// touched. Previously --file was silently ignored on this path
+		// (#140, the #93 silent-flag class).
 		TargetVersion: installVersion,
+		TargetFileIDs: installFileIDList(),
 		SkipVerify:    skipVerify,
 		Hooks:         getResolvedHooks(service, game, profileName),
 		HookRunner:    getHookRunner(service),
