@@ -1356,7 +1356,17 @@ func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, in
 		kept[m.ID] = true
 		added = true
 	}
-	if !added || domain.EffectiveInstalledVersion(targetVersion, repaired) == installedVersion {
+	// Two distinct failure shapes deserve distinct remedies (#144): when the
+	// repair found nothing to add, the user ALREADY holds every file the
+	// source offers under the target version, so telling them to pick a
+	// different file would be misleading - there is no other file. That shape
+	// is a source-side labelling problem, not a user-fixable selection. Only
+	// when something WAS added (and the effective version still refuses to
+	// move) does pointing at reinstall/--file make sense.
+	if !added {
+		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): every file the source offers under %q is already installed - likely a source-side file labelling quirk, since nothing upstream is left to advance the record", targetVersion, strings.Join(currentFileIDs, ", "), targetVersion)
+	}
+	if domain.EffectiveInstalledVersion(targetVersion, repaired) == installedVersion {
 		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): no file upstream advances it - reinstall the mod or use --file to pick one explicitly", targetVersion, strings.Join(currentFileIDs, ", "))
 	}
 	return repaired, nil
