@@ -24,6 +24,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
@@ -605,6 +606,200 @@ func TestApplyImport_VersionlessSource_KeepsLegacyBehavior(t *testing.T) {
 
 	_, err = svc.GetInstalledMod("src", "mod1", "g1", "target")
 	assert.Error(t, err)
+}
+
+// TestPlanImport_VersionDrift_SchedulesReinstall guards #138's classification
+// fix: a mod already installed (and cached) at a DIFFERENT version than the
+// imported profile records must be scheduled for reinstall at the profile's
+// version (NeedsRedownload), never classified as "Installed - nothing to do"
+// - mirroring PlanProfileSwitch's #96 drift case. A ref at the SAME version,
+// or one with no version at all (legacy/unpinned), keeps the pre-#138
+// classification.
+func TestPlanImport_VersionDrift_SchedulesReinstall(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "other")
+	require.NoError(t, err)
+
+	// All three installed AND cached at their recorded versions - pre-#138,
+	// every one of them would land in Installed.
+	seedInstalledModUnderProfile(t, svc, game, "other", "src", "drifted-mod", "Drifted Mod", "1.5", true,
+		map[string][]byte{"drifted.esp": []byte("d")})
+	seedInstalledModUnderProfile(t, svc, game, "other", "src", "same-mod", "Same Mod", "1.0", true,
+		map[string][]byte{"same.esp": []byte("s")})
+	seedInstalledModUnderProfile(t, svc, game, "other", "src", "unpinned-mod", "Unpinned Mod", "1.5", true,
+		map[string][]byte{"unpinned.esp": []byte("u")})
+
+	profile := &domain.Profile{
+		Name: "target", GameID: game.ID,
+		Mods: []domain.ModReference{
+			{SourceID: "src", ModID: "drifted-mod", Version: "1.0"},
+			{SourceID: "src", ModID: "same-mod", Version: "1.0"},
+			{SourceID: "src", ModID: "unpinned-mod", Version: ""},
+		},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+
+	require.Len(t, plan.NeedsRedownload, 1, "the version-drifted mod must be scheduled for reinstall at the profile's version")
+	assert.Equal(t, "drifted-mod", plan.NeedsRedownload[0].ModID)
+	assert.Equal(t, "1.0", plan.NeedsRedownload[0].Version, "the reinstall must target the imported profile's version, not the installed one")
+	require.Len(t, plan.Installed, 2, "same-version and unpinned refs keep the pre-#138 classification")
+	assert.Equal(t, "same-mod", plan.Installed[0].ModID)
+	assert.Equal(t, "unpinned-mod", plan.Installed[1].ModID)
+	assert.Empty(t, plan.Missing)
+}
+
+// TestApplyImport_Downgrade_EndToEnd is #138's convergence guard, mirroring
+// TestApplyProfileSwitch_Downgrade_EndToEnd (flows_test.go) for the import
+// flow: mod1 installed+DEPLOYED at 1.5 (file "10", live on disk as
+// "mod1.esp"); importing a profile that pins 1.0 must plan AND apply a full
+// reinstall at 1.0 - resolving to the archived file "9" via
+// selectVersionedDeployFiles, caching it, recording the downgrade in the DB,
+// and REPLACING the live 1.5 deployment (not merely installing 1.0 alongside
+// it). Pre-#138, PlanImport classified the mod as Installed ("nothing to
+// do") and the 1.5 deployment stayed live until the next apply/switch.
+//
+// The imported ref also carries a #97 lock at 1.0, covering the issue's
+// pairing: a lock imported from a shared profile takes effect - converged
+// and recorded - without a second command.
+func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		FileIDs:      []string{"10"},
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+
+	profile := &domain.Profile{
+		Name: "stable", GameID: "g1",
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0", Locked: true}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.NeedsRedownload, 1, "the version-drifted mod must be scheduled for reinstall")
+	assert.Empty(t, plan.Installed, "a drifted mod must not be classified as already-installed")
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+	assert.Equal(t, 0, result.Failed)
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version)
+	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
+	assert.True(t, installed.Deployed, "the row must record that files are actually live on disk")
+
+	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the downgraded version must be cached")
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	assert.True(t, os.IsNotExist(err), "the obsolete 1.5 file must be removed by Replace, not left behind by a bare Install")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the new 1.0 file must be deployed")
+
+	saved, err := pm.Get("g1", "stable")
+	require.NoError(t, err)
+	require.Len(t, saved.Mods, 1)
+	assert.True(t, saved.Mods[0].Locked, "the imported lock must survive the convergence UpsertMod")
+	assert.Equal(t, "1.0", saved.Mods[0].Version)
+}
+
+// TestApplyImport_FullyMarkedCache_SkipsDownload mirrors
+// TestApplyProfileSwitch_FullyMarkedCache_SkipsDownload (flows_test.go) for
+// the import flow's #138 convergence: when the imported profile's recorded
+// version is already fully cached (payload + per-file completion markers),
+// the reinstall must deploy from cache without redownloading - which matters
+// most for exactly this drift case, a downgrade whose archived file may have
+// vanished upstream - while still REPLACING the live drifted deployment.
+func TestApplyImport_FullyMarkedCache_SkipsDownload(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	// 1.5 installed+deployed (the drifted live version), and 1.0 COMPLETELY
+	// cached as a real extract-mode download leaves it: the archive member on
+	// disk plus file "9"'s completion marker.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.0", "mod1-old.esp", []byte("old-payload")))
+	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), "9"))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		FileIDs:      []string{"10"},
+	}))
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+
+	profile := &domain.Profile{
+		Name: "stable", GameID: "g1",
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.NeedsRedownload, 1)
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Installed)
+
+	assert.Equal(t, 0, mock.DownloadCount(),
+		"a fully-marked cache entry must be deployed from cache, not redownloaded")
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installed.Version)
+	assert.Equal(t, []string{"9"}, installed.FileIDs)
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	assert.True(t, os.IsNotExist(err), "the drifted 1.5 deployment must still be replaced, even on a cache hit")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the cached 1.0 file must be deployed")
 }
 
 // TestApplyImportCtxCancelled covers the loop's cancellation check: it must

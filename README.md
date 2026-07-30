@@ -188,16 +188,16 @@ and locks/moves the lock immediately, and a locked mod's picker gains a
 trailing "unlock" entry. The row's flags column shows `lck` for a locked mod
 (it outranks `pin` when both apply — the lock is what the UI names).
 
-**Lock vs. pin, in one line**: pinning mutes a mod's update *notifications*;
-a lock is a lockfile entry that pins a *build*.
+**Lock vs. pin, in one line**: pinning mutes a mod's update _notifications_;
+a lock is a lockfile entry that pins a _build_.
 
-| | `--pin` (update policy) | lock |
-| --- | --- | --- |
-| Statement about | "stop asking the source about this mod" | "this profile deploys exactly version X" |
-| Enforced at | check time only | deploy time (converges, downgrades included) |
-| Scope | per-install (SQLite) | per-profile (profile YAML) |
-| Travels with `profile export`/`import` | no | yes — imports reproduce the exact build |
-| Works on version-less sources | yes | no — refused with a capability error |
+|                                        | `--pin` (update policy)                 | lock                                         |
+| -------------------------------------- | --------------------------------------- | -------------------------------------------- |
+| Statement about                        | "stop asking the source about this mod" | "this profile deploys exactly version X"     |
+| Enforced at                            | check time only                         | deploy time (converges, downgrades included) |
+| Scope                                  | per-install (SQLite)                    | per-profile (profile YAML)                   |
+| Travels with `profile export`/`import` | no                                      | yes — imports reproduce the exact build      |
+| Works on version-less sources          | yes                                     | no — refused with a capability error         |
 
 The two are orthogonal — a mod can be locked, pinned, both, or neither — and
 wherever they'd conflict, the lock wins and the output names it:
@@ -451,10 +451,10 @@ Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml` (or `*.
 ### Source Definition Format
 
 ```yaml
-id: donovan-mods              # required; must match ^[a-z0-9-]+$ and be unique
-name: Donovan's 7D2D Modlets  # required display name
-type: directory               # required: directory (local folders) | manifest | api
-allow_http: false             # optional; permit http:// URLs (default false)
+id: donovan-mods # required; must match ^[a-z0-9-]+$ and be unique
+name: Donovan's 7D2D Modlets # required display name
+type: directory # required: directory (local folders) | manifest | api
+allow_http: false # optional; permit http:// URLs (default false)
 
 # Type-specific configuration (one block required, must match type)
 directory:
@@ -463,12 +463,12 @@ directory:
 
 ### Common Fields
 
-| Field       | Type    | Required | Description                                                                         |
-| ----------- | ------- | -------- | ----------------------------------------------------------------------------------- |
-| `id`        | string  | yes      | Unique source identifier; must contain only lowercase letters, numbers, and hyphens |
-| `name`      | string  | yes      | Display name shown in source lists and commands                                     |
-| `type`      | string  | yes      | Source type: `directory`, `manifest`, or `api`. All three are fully supported, each within its own capabilities (see the sections below; `api` in particular can be install-by-ID-only if its definition omits a `search` endpoint). |
-| `allow_http` | boolean | no       | If `true`, allow unencrypted http:// URLs (default `false`, HTTPS only)            |
+| Field        | Type    | Required | Description                                                                                                                                                                                                                          |
+| ------------ | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`         | string  | yes      | Unique source identifier; must contain only lowercase letters, numbers, and hyphens                                                                                                                                                  |
+| `name`       | string  | yes      | Display name shown in source lists and commands                                                                                                                                                                                      |
+| `type`       | string  | yes      | Source type: `directory`, `manifest`, or `api`. All three are fully supported, each within its own capabilities (see the sections below; `api` in particular can be install-by-ID-only if its definition omits a `search` endpoint). |
+| `allow_http` | boolean | no       | If `true`, allow unencrypted http:// URLs (default `false`, HTTPS only)                                                                                                                                                              |
 
 ### Directory Sources
 
@@ -521,12 +521,12 @@ id: my-repo
 name: My Mod Repo
 type: manifest
 manifest:
-  url: https://example.com/mods.yaml   # https:// URL, or a local path (~ expanded)
-  refresh: 15m                         # optional cache TTL for remote URLs (default 15m)
+  url: https://example.com/mods.yaml # https:// URL, or a local path (~ expanded)
+  refresh: 15m # optional cache TTL for remote URLs (default 15m)
 ```
 
 - **Remote URLs** (`https://...`) are fetched on demand and cached in memory for `refresh` — a Go duration string like `30s`, `15m`, or `2h` (default `15m` when omitted). **Local file paths** are read fresh on every operation instead of being cached, so edits show up immediately.
-- Fetch/parse problems (unreachable URL, malformed document, unsupported `version`) surface as an operation error naming the source and the manifest URL, at the point something actually uses the source. This is different from a broken *definition* file, which is caught at load time and skipped with a warning before lmm ever starts (see above).
+- Fetch/parse problems (unreachable URL, malformed document, unsupported `version`) surface as an operation error naming the source and the manifest URL, at the point something actually uses the source. This is different from a broken _definition_ file, which is caught at load time and skipped with a warning before lmm ever starts (see above).
 - `https://` is required for the manifest `url`, and for every file `url` inside the document, unless the definition sets `allow_http: true`; local paths are exempt.
 - Remote manifest fetches are bounded by a 30-second timeout, so a hung server can't block other operations indefinitely.
 
@@ -540,10 +540,10 @@ mods:
     version: 1.2.0
     author: someone
     summary: Makes things cooler
-    game_ids: [skyrimspecialedition]         # matched against this source's mapped `sources:` value
-    url: https://example.com/mods/cool-mod   # optional web page
-    updated_at: 2026-07-01T00:00:00Z         # optional, RFC 3339
-    dependencies: [other-mod]                # optional, IDs of other mods in this manifest
+    game_ids: [skyrimspecialedition] # matched against this source's mapped `sources:` value
+    url: https://example.com/mods/cool-mod # optional web page
+    updated_at: 2026-07-01T00:00:00Z # optional, RFC 3339
+    dependencies: [other-mod] # optional, IDs of other mods in this manifest
     files:
       - id: main
         name: Main File
@@ -551,7 +551,7 @@ mods:
         version: 1.2.0
         size: 123456
         url: https://example.com/files/cool-mod-1.2.0.zip
-        sha256: <hex digest>                 # optional; verified on download if present
+        sha256: <hex digest> # optional; verified on download if present
         primary: true
 ```
 
@@ -559,31 +559,31 @@ mods:
 
 **`mods[]` fields:**
 
-| Field          | Type     | Required | Description                                                                                                                                                                                            |
-| -------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`           | string   | **yes**  | Unique mod ID within this manifest; also its dependency-reference ID                                                                                                                                  |
-| `name`         | string   | **yes**  | Display name                                                                                                                                                                                            |
-| `version`      | string   | no       | Compared against installed versions for update checks                                                                                                                                                  |
-| `author`       | string   | no       | —                                                                                                                                                                                                        |
-| `summary`      | string   | no       | Shown in search results                                                                                                                                                                                 |
+| Field          | Type     | Required | Description                                                                                                                                                                                                                                       |
+| -------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | string   | **yes**  | Unique mod ID within this manifest; also its dependency-reference ID                                                                                                                                                                              |
+| `name`         | string   | **yes**  | Display name                                                                                                                                                                                                                                      |
+| `version`      | string   | no       | Compared against installed versions for update checks                                                                                                                                                                                             |
+| `author`       | string   | no       | —                                                                                                                                                                                                                                                 |
+| `summary`      | string   | no       | Shown in search results                                                                                                                                                                                                                           |
 | `game_ids`     | []string | no       | Restricts the mod to specific games, matched against the value that game maps for this source under its `sources:` block in `games.yaml` (same convention as NexusMods/CurseForge IDs); omitted or empty matches every game that maps this source |
-| `url`          | string   | no       | Web page for the mod (informational only)                                                                                                                                                              |
-| `updated_at`   | string   | no       | RFC 3339 timestamp; an unparseable value is silently treated as unset rather than an error                                                                                                             |
-| `dependencies` | []string | no       | Other mods' `id`s within this same manifest; resolved automatically like NexusMods dependencies                                                                                                        |
-| `files`        | []object | no       | Downloadable files for this mod, see below                                                                                                                                                              |
+| `url`          | string   | no       | Web page for the mod (informational only)                                                                                                                                                                                                         |
+| `updated_at`   | string   | no       | RFC 3339 timestamp; an unparseable value is silently treated as unset rather than an error                                                                                                                                                        |
+| `dependencies` | []string | no       | Other mods' `id`s within this same manifest; resolved automatically like NexusMods dependencies                                                                                                                                                   |
+| `files`        | []object | no       | Downloadable files for this mod, see below                                                                                                                                                                                                        |
 
 **`files[]` fields:**
 
-| Field      | Type    | Required | Description                                                                                                                 |
-| ---------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `id`       | string  | **yes**  | File ID, used to request a download                                                                                         |
-| `filename` | string  | **yes**  | Name given to the downloaded/cached file                                                                                    |
-| `url`      | string  | **yes**  | Download URL (`https://` unless `allow_http: true`)                                                                         |
-| `name`     | string  | no       | Display name                                                                                                                 |
-| `version`  | string  | no       | —                                                                                                                             |
-| `size`     | integer | no       | Size in bytes                                                                                                                |
-| `sha256`   | string  | no       | Hex-encoded SHA-256 checksum; when present, lmm verifies it after download and **aborts the install if it doesn't match**   |
-| `primary`  | boolean | no       | Marks the default file when a mod publishes more than one                                                                    |
+| Field      | Type    | Required | Description                                                                                                               |
+| ---------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `id`       | string  | **yes**  | File ID, used to request a download                                                                                       |
+| `filename` | string  | **yes**  | Name given to the downloaded/cached file                                                                                  |
+| `url`      | string  | **yes**  | Download URL (`https://` unless `allow_http: true`)                                                                       |
+| `name`     | string  | no       | Display name                                                                                                              |
+| `version`  | string  | no       | —                                                                                                                         |
+| `size`     | integer | no       | Size in bytes                                                                                                             |
+| `sha256`   | string  | no       | Hex-encoded SHA-256 checksum; when present, lmm verifies it after download and **aborts the install if it doesn't match** |
+| `primary`  | boolean | no       | Marks the default file when a mod publishes more than one                                                                 |
 
 To use a manifest source with a game, map it under that game's `sources:` block in `games.yaml`, the same as any built-in source — the mapped value should match the IDs used in the manifest's `game_ids` (unlike `directory` sources, this value is not ignored):
 
@@ -605,35 +605,35 @@ name: ESOUI
 type: api
 api:
   base_url: https://api.example.com
-  page_start: 1                  # optional; first page number the API expects (default 1)
-  auth:                          # optional, same block as manifest sources
+  page_start: 1 # optional; first page number the API expects (default 1)
+  auth: # optional, same block as manifest sources
     api_key:
-      in: header                 # "header" or "query"
+      in: header # "header" or "query"
       name: X-API-Key
-  endpoints:                     # each endpoint is optional; an undefined one is a capability gap (see below)
+  endpoints: # each endpoint is optional; an undefined one is a capability gap (see below)
     search:
       path: /mods?game={game_id}&q={query}&page={page}&limit={page_size}
-      list: results               # required: dot-path to the results array
-      total: pagination.total     # optional: dot-path to a total-count field
+      list: results # required: dot-path to the results array
+      total: pagination.total # optional: dot-path to a total-count field
     get_mod:
       path: /mods/{mod_id}
     mod_files:
       path: /mods/{mod_id}/files
-      list: files                 # required: dot-path to the files array
+      list: files # required: dot-path to the files array
     download_url:
       path: /files/{file_id}/download
-      field: url                  # required: dot-path to the URL string in the response
+      field: url # required: dot-path to the URL string in the response
   mappings:
-    mod:                          # domain field -> JSON dot-path
+    mod: # domain field -> JSON dot-path
       id: id
       name: name
       version: latest_version
       author: author.name
       summary: description
       downloads: download_count
-      updated_at: updated         # RFC 3339 expected; unparseable is left unset
+      updated_at: updated # RFC 3339 expected; unparseable is left unset
       url: web_url
-    file:                         # domain field -> JSON dot-path
+    file: # domain field -> JSON dot-path
       id: id
       name: title
       filename: file_name
@@ -643,40 +643,40 @@ api:
 
 **Placeholders** — every `{placeholder}` in an endpoint's `path` is substituted with a URL-escaped value before the request is made; a placeholder with no value for that request is left in the URL as-is:
 
-| Placeholder   | Value                                                                        | Used by                                          |
-| ------------- | ----------------------------------------------------------------------------- | ------------------------------------------------- |
+| Placeholder   | Value                                                                                                                                    | Used by                                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
 | `{game_id}`   | The current game's ID for this source (from the search query, the mod being fetched/installed, or an installed mod during update checks) | `search`, `get_mod`, `mod_files`, `download_url` |
-| `{query}`     | The search text                                                               | `search`                                          |
-| `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)             | `search`                                          |
-| `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)              | `search`                                          |
-| `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs | `search`                                          |
-| `{mod_id}`    | The mod ID                                                                    | `get_mod`, `mod_files`, `download_url`            |
-| `{file_id}`   | The file ID                                                                   | `download_url`                                    |
+| `{query}`     | The search text                                                                                                                          | `search`                                         |
+| `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)                                                                        | `search`                                         |
+| `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)                                                                         | `search`                                         |
+| `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs                                         | `search`                                         |
+| `{mod_id}`    | The mod ID                                                                                                                               | `get_mod`, `mod_files`, `download_url`           |
+| `{file_id}`   | The file ID                                                                                                                              | `download_url`                                   |
 
 **`mappings.mod` keys** (`id` and `name` are required; every other key is optional and left at its zero value when unmapped or the path doesn't resolve):
 
-| Key           | Required | Domain field                                                |
-| ------------- | -------- | ------------------------------------------------------------- |
-| `id`          | **yes**  | Mod ID                                                         |
-| `name`        | **yes**  | Display name                                                    |
-| `version`     | no       | Compared against installed versions for update checks            |
-| `author`      | no       | —                                                                  |
-| `summary`     | no       | Shown in search results                                             |
-| `description` | no       | Falls back to `summary` when unmapped or empty                       |
-| `downloads`   | no       | Download count                                                        |
-| `updated_at`  | no       | RFC 3339 timestamp; unparseable is silently left unset                 |
-| `url`         | no       | Web page for the mod                                                    |
-| `picture_url` | no       | Main image URL                                                           |
+| Key           | Required | Domain field                                           |
+| ------------- | -------- | ------------------------------------------------------ |
+| `id`          | **yes**  | Mod ID                                                 |
+| `name`        | **yes**  | Display name                                           |
+| `version`     | no       | Compared against installed versions for update checks  |
+| `author`      | no       | —                                                      |
+| `summary`     | no       | Shown in search results                                |
+| `description` | no       | Falls back to `summary` when unmapped or empty         |
+| `downloads`   | no       | Download count                                         |
+| `updated_at`  | no       | RFC 3339 timestamp; unparseable is silently left unset |
+| `url`         | no       | Web page for the mod                                   |
+| `picture_url` | no       | Main image URL                                         |
 
 **`mappings.file` keys** (`id` is required only when `mod_files` is defined):
 
-| Key        | Required                     | Domain field              |
-| ---------- | ------------------------------ | --------------------------- |
-| `id`       | **yes** (when `mod_files` set)  | File ID, used to request a download |
-| `name`     | no                               | Display name                          |
-| `filename` | no                               | Name given to the downloaded/cached file |
-| `version`  | no                               | —                                          |
-| `size`     | no                               | Size in bytes                               |
+| Key        | Required                       | Domain field                             |
+| ---------- | ------------------------------ | ---------------------------------------- |
+| `id`       | **yes** (when `mod_files` set) | File ID, used to request a download      |
+| `name`     | no                             | Display name                             |
+| `filename` | no                             | Name given to the downloaded/cached file |
+| `version`  | no                             | —                                        |
+| `size`     | no                             | Size in bytes                            |
 
 Unknown keys anywhere in `mappings.mod` or `mappings.file` fail validation at load time (typo detection) instead of silently mapping to nothing.
 
@@ -708,7 +708,7 @@ manifest:
   url: https://example.com/mods.yaml
   auth:
     api_key:
-      in: header      # "header" or "query"
+      in: header # "header" or "query"
       name: X-API-Key # header name, or query parameter name, the key is sent as
 ```
 
@@ -765,11 +765,13 @@ lmm source validate ~/.config/lmm/sources/my-source.yaml
 ```
 
 On success:
+
 ```
 ~/.config/lmm/sources/my-source.yaml: valid (directory source "my-source")
 ```
 
 On error (exits with code 1):
+
 ```
 Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
 ```
@@ -797,11 +799,13 @@ Error: probe: this definition has no search endpoint; provide a known mod id wit
 ### Adding a Custom Source
 
 1. Create `~/.config/lmm/sources/` if it doesn't exist:
+
    ```bash
    mkdir -p ~/.config/lmm/sources
    ```
 
 2. Create a YAML file with your source definition:
+
    ```bash
    cat > ~/.config/lmm/sources/my-mods.yaml <<'EOF'
    id: my-local-mods
@@ -813,11 +817,13 @@ Error: probe: this definition has no search endpoint; provide a known mod id wit
    ```
 
 3. Validate the definition:
+
    ```bash
    lmm source validate ~/.config/lmm/sources/my-mods.yaml
    ```
 
 4. Map it under the game(s) that should use it in `games.yaml` (see [Directory Sources](#directory-sources) above):
+
    ```yaml
    games:
      skyrim-se:
@@ -838,95 +844,95 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 ### Global Flags
 
-| Flag         | Short | Description                                                                                                |
-| ------------ | ----- | ---------------------------------------------------------------------------------------------------------- |
-| `--game`     | `-g`  | Game ID (optional if default set via `game set-default`)                                                   |
-| `--verbose`  | `-v`  | Enable verbose output                                                                                      |
-| `--config`   |       | Custom config directory                                                                                    |
-| `--data`     |       | Custom data directory                                                                                      |
+| Flag         | Short | Description                                                                                                             |
+| ------------ | ----- | ----------------------------------------------------------------------------------------------------------------------- |
+| `--game`     | `-g`  | Game ID (optional if default set via `game set-default`)                                                                |
+| `--verbose`  | `-v`  | Enable verbose output                                                                                                   |
+| `--config`   |       | Custom config directory                                                                                                 |
+| `--data`     |       | Custom data directory                                                                                                   |
 | `--json`     |       | Output in JSON (list, status, search, update, conflicts, verify, mod show, source list); errors print `{"error":"..."}` |
-| `--no-hooks` |       | Disable all hooks at runtime                                                                               |
-| `--no-color` |       | Disable colored output (respects NO_COLOR env)                                                             |
+| `--no-hooks` |       | Disable all hooks at runtime                                                                                            |
+| `--no-color` |       | Disable colored output (respects NO_COLOR env)                                                                          |
 
 ### Commands
 
-| Command                                | Description                                          |
-| -------------------------------------- | ---------------------------------------------------- |
-| `lmm search <query>`                   | Search all configured sources concurrently           |
-| `lmm search <query> --source ID`       | Search a single source instead of all configured ones |
-| `lmm search <query> --category ID`     | Filter by category (NexusMods and CurseForge)        |
-| `lmm search <query> --tag TAG`         | Filter by tag (NexusMods only; repeat for multiple)  |
-| `lmm install [query]`                  | Search and install a mod (query optional with `--id`) |
-| `lmm install --id <mod-id>`            | Install by mod ID                                    |
-| `lmm install --id <mod-id> --file <file-id>` | Install a specific file, skipping file selection |
-| `lmm install --version <version>`      | Install the exact-match version (archived files searched automatically) |
-| `lmm install --show-archived`          | Include archived/old files when selecting a file      |
-| `lmm install --no-deps`                | Skip automatic dependency installation                 |
-| `lmm install --source ID` / `-s`       | Use a specific source (default: sole configured source; prompts when several are configured, `-y` picks the first alphabetically) |
-| `lmm uninstall <mod-id>`               | Uninstall a mod                                      |
-| `lmm uninstall <mod-id> --keep-cache`  | Uninstall but keep the cached mod files                |
-| `lmm import`                           | Scan `mod_path` for untracked mods and import them (see [Import](#import) below) |
-| `lmm import <archive-path>`            | Import one local mod archive                           |
-| `lmm list`                             | List installed mods                                  |
-| `lmm list --profiles`                  | List profiles for the game                           |
-| `lmm status`                           | Show current status                                  |
-| `lmm update`                           | Check for and apply auto-updates                     |
-| `lmm update <mod-id>`                  | Update a specific mod                                |
-| `lmm update --all`                     | Apply all available updates                          |
-| `lmm update --dry-run`                 | Preview what would update                            |
-| `lmm update rollback <mod-id>`         | Rollback to previous version                         |
-| `lmm verify`                           | Verify cached mod files (see below)                  |
-| `lmm verify --fix`                     | Re-download missing files, populate missing checksums, repair version-record mismatches |
-| `lmm mod enable <mod-id>`              | Enable a disabled mod                                |
-| `lmm mod disable <mod-id>`             | Disable mod (keep in cache)                          |
-| `lmm mod set-update <mod-id> --auto`   | Enable auto-updates for mod                          |
-| `lmm mod set-update <mod-id> --notify` | Notify only (default)                                |
-| `lmm mod set-update <mod-id> --pin`    | Mute update checks for mod (does not hold a version — see [Locking](#locking-mods-to-a-version)) |
-| `lmm mod lock <mod-id> [version]`      | Lock mod's profile entry to its current or a specific version |
-| `lmm mod unlock <mod-id>`              | Clear a mod's lock (recorded version is left untouched) |
-| `lmm mod show <mod-id>`                | Show mod details (description, image, etc.)          |
-| `lmm mod files <mod-id>`               | List files deployed by mod                           |
-| `lmm mod edit <current-id>`            | Edit mod details (name, version, author, source, ID)  |
-| `lmm game set-default <game-id>`       | Set the default game                                 |
-| `lmm game show-default`                | Show current default game                            |
-| `lmm game clear-default`               | Clear the default game setting                       |
-| `lmm game add`                         | Interactively add a new game configuration             |
-| `lmm game detect`                      | Scan Steam libraries for known moddable games          |
-| `lmm auth login [source]`              | Authenticate with a source (any source declaring auth; nexusmods/curseforge validated live) |
-| `lmm auth logout [source]`             | Remove stored credentials                            |
-| `lmm auth status`                      | Show authentication status                           |
-| `lmm profile list`                     | List profiles                                        |
-| `lmm profile create <name>`            | Create a profile                                     |
-| `lmm profile switch <name>`            | Switch to a profile (installs missing mods)          |
-| `lmm profile delete <name>`            | Delete a profile                                     |
-| `lmm profile export <name>`            | Export profile to YAML                               |
-| `lmm profile import <file>`            | Import profile from YAML                             |
-| `lmm profile import <file> --force`    | Import and overwrite existing                        |
-| `lmm profile reorder [mod-id ...]`     | Show or set load order                               |
-| `lmm profile sync`                     | Update profile to match installed mods               |
-| `lmm profile apply`                    | Install/enable mods to match profile                 |
-| `lmm deploy`                           | Deploy all enabled mods from cache                   |
-| `lmm deploy <mod-id>`                  | Deploy specific mod from cache                       |
-| `lmm deploy --method hardlink`         | Deploy using different link method                   |
-| `lmm deploy --purge`                   | Purge then deploy all mods                           |
-| `lmm purge`                            | Remove all mods from game directory                  |
-| `lmm conflicts`                        | Show file conflicts in current profile               |
-| `lmm source list`                      | List built-in and user-defined mod sources           |
-| `lmm source validate <file>`           | Validate a user-defined source definition           |
-| `lmm source validate --probe <file>`   | Also live-smoke-test the definition (scan/fetch/API call) |
-| `lmm source validate --probe --id <mod-id> <file>` | Probe an `api` definition that has no `search` endpoint |
+| Command                                            | Description                                                                                                                       |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `lmm search <query>`                               | Search all configured sources concurrently                                                                                        |
+| `lmm search <query> --source ID`                   | Search a single source instead of all configured ones                                                                             |
+| `lmm search <query> --category ID`                 | Filter by category (NexusMods and CurseForge)                                                                                     |
+| `lmm search <query> --tag TAG`                     | Filter by tag (NexusMods only; repeat for multiple)                                                                               |
+| `lmm install [query]`                              | Search and install a mod (query optional with `--id`)                                                                             |
+| `lmm install --id <mod-id>`                        | Install by mod ID                                                                                                                 |
+| `lmm install --id <mod-id> --file <file-id>`       | Install a specific file, skipping file selection                                                                                  |
+| `lmm install --version <version>`                  | Install the exact-match version (archived files searched automatically)                                                           |
+| `lmm install --show-archived`                      | Include archived/old files when selecting a file                                                                                  |
+| `lmm install --no-deps`                            | Skip automatic dependency installation                                                                                            |
+| `lmm install --source ID` / `-s`                   | Use a specific source (default: sole configured source; prompts when several are configured, `-y` picks the first alphabetically) |
+| `lmm uninstall <mod-id>`                           | Uninstall a mod                                                                                                                   |
+| `lmm uninstall <mod-id> --keep-cache`              | Uninstall but keep the cached mod files                                                                                           |
+| `lmm import`                                       | Scan `mod_path` for untracked mods and import them (see [Import](#import) below)                                                  |
+| `lmm import <archive-path>`                        | Import one local mod archive                                                                                                      |
+| `lmm list`                                         | List installed mods                                                                                                               |
+| `lmm list --profiles`                              | List profiles for the game                                                                                                        |
+| `lmm status`                                       | Show current status                                                                                                               |
+| `lmm update`                                       | Check for and apply auto-updates                                                                                                  |
+| `lmm update <mod-id>`                              | Update a specific mod                                                                                                             |
+| `lmm update --all`                                 | Apply all available updates                                                                                                       |
+| `lmm update --dry-run`                             | Preview what would update                                                                                                         |
+| `lmm update rollback <mod-id>`                     | Rollback to previous version                                                                                                      |
+| `lmm verify`                                       | Verify cached mod files (see below)                                                                                               |
+| `lmm verify --fix`                                 | Re-download missing files, populate missing checksums, repair version-record mismatches                                           |
+| `lmm mod enable <mod-id>`                          | Enable a disabled mod                                                                                                             |
+| `lmm mod disable <mod-id>`                         | Disable mod (keep in cache)                                                                                                       |
+| `lmm mod set-update <mod-id> --auto`               | Enable auto-updates for mod                                                                                                       |
+| `lmm mod set-update <mod-id> --notify`             | Notify only (default)                                                                                                             |
+| `lmm mod set-update <mod-id> --pin`                | Mute update checks for mod (does not hold a version — see [Locking](#locking-mods-to-a-version))                                  |
+| `lmm mod lock <mod-id> [version]`                  | Lock mod's profile entry to its current or a specific version                                                                     |
+| `lmm mod unlock <mod-id>`                          | Clear a mod's lock (recorded version is left untouched)                                                                           |
+| `lmm mod show <mod-id>`                            | Show mod details (description, image, etc.)                                                                                       |
+| `lmm mod files <mod-id>`                           | List files deployed by mod                                                                                                        |
+| `lmm mod edit <current-id>`                        | Edit mod details (name, version, author, source, ID)                                                                              |
+| `lmm game set-default <game-id>`                   | Set the default game                                                                                                              |
+| `lmm game show-default`                            | Show current default game                                                                                                         |
+| `lmm game clear-default`                           | Clear the default game setting                                                                                                    |
+| `lmm game add`                                     | Interactively add a new game configuration                                                                                        |
+| `lmm game detect`                                  | Scan Steam libraries for known moddable games                                                                                     |
+| `lmm auth login [source]`                          | Authenticate with a source (any source declaring auth; nexusmods/curseforge validated live)                                       |
+| `lmm auth logout [source]`                         | Remove stored credentials                                                                                                         |
+| `lmm auth status`                                  | Show authentication status                                                                                                        |
+| `lmm profile list`                                 | List profiles                                                                                                                     |
+| `lmm profile create <name>`                        | Create a profile                                                                                                                  |
+| `lmm profile switch <name>`                        | Switch to a profile (installs missing mods)                                                                                       |
+| `lmm profile delete <name>`                        | Delete a profile                                                                                                                  |
+| `lmm profile export <name>`                        | Export profile to YAML                                                                                                            |
+| `lmm profile import <file>`                        | Import profile from YAML                                                                                                          |
+| `lmm profile import <file> --force`                | Import and overwrite existing                                                                                                     |
+| `lmm profile reorder [mod-id ...]`                 | Show or set load order                                                                                                            |
+| `lmm profile sync`                                 | Update profile to match installed mods                                                                                            |
+| `lmm profile apply`                                | Install/enable mods to match profile                                                                                              |
+| `lmm deploy`                                       | Deploy all enabled mods from cache                                                                                                |
+| `lmm deploy <mod-id>`                              | Deploy specific mod from cache                                                                                                    |
+| `lmm deploy --method hardlink`                     | Deploy using different link method                                                                                                |
+| `lmm deploy --purge`                               | Purge then deploy all mods                                                                                                        |
+| `lmm purge`                                        | Remove all mods from game directory                                                                                               |
+| `lmm conflicts`                                    | Show file conflicts in current profile                                                                                            |
+| `lmm source list`                                  | List built-in and user-defined mod sources                                                                                        |
+| `lmm source validate <file>`                       | Validate a user-defined source definition                                                                                         |
+| `lmm source validate --probe <file>`               | Also live-smoke-test the definition (scan/fetch/API call)                                                                         |
+| `lmm source validate --probe --id <mod-id> <file>` | Probe an `api` definition that has no `search` endpoint                                                                           |
 
 `lmm install --version <version>` resolves the exact version against the mod's full file list — archived/old files are searched automatically, no `--show-archived` needed — and the matching file(s) become the pool for `--file`/`-y`/the interactive prompt; when the mod has dependencies, only the named mod's version is resolved this way (the whole install aborts if it fails to resolve) — dependencies are unaffected, still installing at latest with their primary file auto-selected. An unknown version fails with an error listing the versions the source actually has (`version not found: version "..." (available: ...)`). A source whose files carry no version information fails with the standard "not supported" gap instead, same as any other missing capability — this is decided dynamically from the actual file data returned for that mod, not from the source's advertised `versions` capability flag (a source can declare `versions` support and still hit this gap for a mod whose files happen to lack version strings). Omitting `--version` installs the latest, unchanged.
 
-**Version behavior in profiles**: a mod reference's `version:` field in a profile is the record of what that profile deploys, not just a display value — `lmm profile apply` and `profile switch` converge the installed mod to match it, downgrades included, healing a stale on-disk deployment back to the recorded version whenever it's still available upstream; `profile import` honors the recorded version for mods it installs or redownloads, and a drifted mod it left alone (already installed and cached at that version) converges on the next apply/switch. Hand-edit a profile's `version:` (or export/share/import the profile) to reproduce an exact build across machines. Sources whose files carry no version information (decided dynamically from the actual file data, not the source's advertised `versions` capability flag) keep the previous file-ID-based behavior instead.
+**Version behavior in profiles**: a mod reference's `version:` field in a profile is the record of what that profile deploys, not just a display value — `lmm profile apply` and `profile switch` converge the installed mod to match it, downgrades included, healing a stale on-disk deployment back to the recorded version whenever it's still available upstream; `profile import` converges the same way: a mod already installed at a different version than the imported profile records is reinstalled at the profile's version as part of the import itself — so a lock carried by a shared profile takes effect without a second command. Hand-edit a profile's `version:` (or export/share/import the profile) to reproduce an exact build across machines. Sources whose files carry no version information (decided dynamically from the actual file data, not the source's advertised `versions` capability flag) keep the previous file-ID-based behavior instead.
 
 ### Exit Codes
 
-| Code | Meaning                                                    |
+| Code | Meaning                                                     |
 | ---- | ----------------------------------------------------------- |
-| `0`  | Success                                                      |
-| `1`  | Error                                                        |
-| `2`  | Cancelled by the user (e.g. declined a confirmation prompt)  |
+| `0`  | Success                                                     |
+| `1`  | Error                                                       |
+| `2`  | Cancelled by the user (e.g. declined a confirmation prompt) |
 
 ### Import
 
@@ -1046,12 +1052,12 @@ internal/
 
 ## File Locations
 
-| Type             | Path                                   |
-| ---------------- | --------------------------------------- |
-| Config           | `~/.config/lmm/`                       |
-| Custom Sources   | `~/.config/lmm/sources/*.yaml`         |
-| Database         | `~/.local/share/lmm/lmm.db`            |
-| Mod Cache        | `~/.local/share/lmm/cache/` (default)  |
+| Type             | Path                                                                         |
+| ---------------- | ---------------------------------------------------------------------------- |
+| Config           | `~/.config/lmm/`                                                             |
+| Custom Sources   | `~/.config/lmm/sources/*.yaml`                                               |
+| Database         | `~/.local/share/lmm/lmm.db`                                                  |
+| Mod Cache        | `~/.local/share/lmm/cache/` (default)                                        |
 | Download Staging | `~/.local/share/lmm/downloads/` (in-flight downloads and archive extraction) |
 
 The mod cache location can be customized via `cache_path` in `config.yaml`. Setting a per-game `cache_path` in `games.yaml` changes that game's on-disk layout too: the global cache is `cache/<game-id>/<source-id>-<mod-id>/<version>/`, but a game-scoped `cache_path` drops the `<game-id>` segment since the configured directory is already specific to that game (`<cache_path>/<source-id>-<mod-id>/<version>/`).
