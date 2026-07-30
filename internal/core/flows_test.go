@@ -992,6 +992,126 @@ func TestService_DeployProfile_LinkMethodOverrideHonored(t *testing.T) {
 	assert.Equal(t, domain.LinkCopy, mod.LinkMethod, "SetModLinkMethod must record the override")
 }
 
+// setProfileLinkMethod stamps an explicit link_method onto an existing profile
+// file, as if the user had set it in the profile YAML by hand.
+func setProfileLinkMethod(t *testing.T, svc *core.Service, gameID, profileName string, method domain.LinkMethod) {
+	t.Helper()
+	p, err := config.LoadProfile(svc.ConfigDir(), gameID, profileName)
+	require.NoError(t, err)
+	p.LinkMethod = method
+	p.LinkMethodExplicit = true
+	require.NoError(t, config.SaveProfile(svc.ConfigDir(), p))
+}
+
+// TestService_GetEffectiveLinkMethod_Precedence pins #81's documented
+// resolution order: profile-explicit > game-explicit > global default
+// (symlink in a fresh test service). A missing profile file must degrade to
+// the game-level resolution, never error.
+func TestService_GetEffectiveLinkMethod_Precedence(t *testing.T) {
+	tests := map[string]struct {
+		gameMethod     domain.LinkMethod
+		gameExplicit   bool
+		profileExists  bool
+		profileMethod  *domain.LinkMethod
+		expectedMethod domain.LinkMethod
+	}{
+		"profile beats game": {
+			gameMethod: domain.LinkHardlink, gameExplicit: true,
+			profileExists: true, profileMethod: linkMethodPtr(domain.LinkCopy),
+			expectedMethod: domain.LinkCopy,
+		},
+		"explicit profile symlink beats non-symlink game": {
+			gameMethod: domain.LinkCopy, gameExplicit: true,
+			profileExists: true, profileMethod: linkMethodPtr(domain.LinkSymlink),
+			expectedMethod: domain.LinkSymlink,
+		},
+		"game wins when profile is silent": {
+			gameMethod: domain.LinkHardlink, gameExplicit: true,
+			profileExists:  true,
+			expectedMethod: domain.LinkHardlink,
+		},
+		"game wins when profile file is missing": {
+			gameMethod: domain.LinkHardlink, gameExplicit: true,
+			expectedMethod: domain.LinkHardlink,
+		},
+		"global default when neither is explicit": {
+			gameMethod:     domain.LinkSymlink,
+			profileExists:  true,
+			expectedMethod: domain.LinkSymlink,
+		},
+	}
+
+	for label, tc := range tests {
+		t.Run(label, func(t *testing.T) {
+			svc := newFlowsTestService(t)
+			game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: tc.gameMethod, LinkMethodExplicit: tc.gameExplicit}
+
+			if tc.profileExists {
+				_, err := svc.NewProfileManager().Create("g1", "default")
+				require.NoError(t, err)
+				if tc.profileMethod != nil {
+					setProfileLinkMethod(t, svc, "g1", "default", *tc.profileMethod)
+				}
+			}
+
+			assert.Equal(t, tc.expectedMethod, svc.GetEffectiveLinkMethod(game, "default"))
+		})
+	}
+}
+
+func linkMethodPtr(m domain.LinkMethod) *domain.LinkMethod {
+	return &m
+}
+
+// TestService_DeployProfile_ProfileLinkMethodOverridesGame is #81's headline
+// failing case: the game explicitly says symlink, the profile explicitly says
+// copy, and the profile must win - the deployed file is a real copy, and
+// SetModLinkMethod records the effective (profile) method.
+func TestService_DeployProfile_ProfileLinkMethodOverridesGame(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+	setProfileLinkMethod(t, svc, "g1", "default", domain.LinkCopy)
+
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Deployed)
+
+	info, err := os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "profile-level copy must beat the game's explicit symlink")
+
+	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, domain.LinkCopy, mod.LinkMethod, "SetModLinkMethod must record the profile's effective method")
+}
+
+// TestService_DeployProfile_CLIMethodOverrideBeatsProfileLinkMethod pins the
+// top of the precedence chain: the --method override (DeployOptions.LinkMethod)
+// still beats a profile-level link_method.
+func TestService_DeployProfile_CLIMethodOverrideBeatsProfileLinkMethod(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+	setProfileLinkMethod(t, svc, "g1", "default", domain.LinkCopy)
+
+	override := domain.LinkSymlink
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{LinkMethod: &override}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Deployed)
+
+	info, err := os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	require.NoError(t, err)
+	assert.NotEqual(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "--method symlink must beat the profile's copy")
+}
+
 // TestService_DeployProfile_PurgeRemovesFilesFirstAndPreservesEnabledSet
 // guards --purge's two documented behaviors. The disabled mod is the key
 // witness for "removed first": it is excluded from the redeploy pass
@@ -2445,6 +2565,88 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	def, err := pm.GetDefault(game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "default", def.Name, "a failed SetDefault must leave the previous default profile in place")
+}
+
+// TestService_ApplyProfileSwitch_UsesTargetProfileLinkMethod guards #81's
+// no-override-hook path: a switch INTO a profile with an explicit link_method
+// must deploy the target's mods with the TARGET profile's method, not the
+// game's. Game explicitly symlink, target profile explicitly copy - the
+// enabled mod's file must land as a real copy.
+func TestService_ApplyProfileSwitch_UsesTargetProfileLinkMethod(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	setProfileLinkMethod(t, svc, "g1", "target", domain.LinkCopy)
+
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "enable-me", "Enable Me", "1.0", false, map[string][]byte{"enable.esp": []byte("e")})
+	enableMod, err := svc.GetInstalledMod("src", "enable-me", "g1", "target")
+	require.NoError(t, err)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToEnable: []domain.InstalledMod{*enableMod},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Enabled)
+	assert.Empty(t, result.Notes)
+
+	info, err := os.Lstat(filepath.Join(gameDir, "enable.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "the target profile's explicit copy must beat the game's explicit symlink")
+}
+
+// TestService_ApplyProfileSwitch_DisableLoopUsesSourceProfileLinkMethod pins
+// the awkward half of #81's two-profile span: the disable loop undeploys the
+// FROM profile's mods, so it must use the FROM profile's method. The from
+// profile is explicitly copy (its file on disk is a real file); undeploying
+// with the game/target symlink method would refuse ("not a symlink") and
+// leave the file behind with a Note.
+func TestService_ApplyProfileSwitch_DisableLoopUsesSourceProfileLinkMethod(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	setProfileLinkMethod(t, svc, "g1", "default", domain.LinkCopy)
+
+	seedNamedInstalledMod(t, svc, game, "src", "disable-me", "Disable Me", "1.0", true, map[string][]byte{"disable.esp": []byte("d")})
+	copyInstaller := svc.NewInstallerWithLinker(game, svc.GetLinker(domain.LinkCopy))
+	require.NoError(t, copyInstaller.Install(context.Background(), game, &domain.Mod{ID: "disable-me", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	deployedPath := filepath.Join(gameDir, "disable.esp")
+	info, err := os.Lstat(deployedPath)
+	require.NoError(t, err, "precondition: the from-profile's mod must be deployed")
+	require.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "precondition: the from-profile deployment must be a real copy")
+
+	disableMod, err := svc.GetInstalledMod("src", "disable-me", "g1", "default")
+	require.NoError(t, err)
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToDisable: []domain.InstalledMod{*disableMod},
+	}
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Disabled)
+	assert.Empty(t, result.Notes, "undeploying the from-profile's copy with the from-profile's method must not error")
+
+	_, err = os.Lstat(deployedPath)
+	assert.True(t, os.IsNotExist(err), "the disable loop must remove the from-profile's copied file")
 }
 
 // TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAreNonFatalNotes_SuccessEventStillFires
