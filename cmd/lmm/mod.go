@@ -9,6 +9,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -534,6 +535,19 @@ func runModShow(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// modShowInstalled carries #97/#92's Installed section - closing #92's last
+// unshipped row (mod show was policy-blind) - for both the JSON and
+// human-readable code paths below, computed exactly once. Update policy
+// (SQLite, per-install) and Lock (profile YAML ref, per-profile) are
+// orthogonal (#97 design decision) and surfaced side by side.
+type modShowInstalled struct {
+	Version       string `json:"version"`
+	Profile       string `json:"profile"`
+	UpdatePolicy  string `json:"update_policy"`
+	Locked        bool   `json:"locked"`
+	LockedVersion string `json:"locked_version,omitempty"`
+}
+
 func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
 	var err error
 	modSource, err = resolveSource(svc, game, modSource, false)
@@ -546,18 +560,47 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		return fmt.Errorf("mod not found: %w", err)
 	}
 
+	// #92: mod show works for any mod on the source, installed or not, so a
+	// resolveProfile failure is a real problem (mirrors every other mod
+	// subcommand's error handling), but "not installed" is the ordinary
+	// case - GetInstalledMod failing just means the section below is
+	// omitted, not that the whole command errors.
+	profileName, err := resolveProfile(svc, game.ID, modProfile)
+	if err != nil {
+		return err
+	}
+	var installedInfo *modShowInstalled
+	if installed, instErr := svc.GetInstalledMod(modSource, modID, game.ID, profileName); instErr == nil {
+		info := modShowInstalled{
+			Version:      installed.Version,
+			Profile:      profileName,
+			UpdatePolicy: policyToString(installed.UpdatePolicy),
+		}
+		if prof, perr := config.LoadProfile(svc.ConfigDir(), game.ID, profileName); perr == nil {
+			for _, ref := range prof.Mods {
+				if ref.SourceID == modSource && ref.ModID == modID && ref.Locked {
+					info.Locked = true
+					info.LockedVersion = ref.Version
+					break
+				}
+			}
+		}
+		installedInfo = &info
+	}
+
 	if jsonOutput {
 		type modShowJSON struct {
-			ID           string `json:"id"`
-			Name         string `json:"name"`
-			Version      string `json:"version"`
-			Author       string `json:"author"`
-			Summary      string `json:"summary"`
-			Description  string `json:"description"`
-			SourceURL    string `json:"source_url,omitempty"`
-			PictureURL   string `json:"picture_url,omitempty"`
-			Category     string `json:"category"`
-			Endorsements *int64 `json:"endorsements,omitempty"`
+			ID           string            `json:"id"`
+			Name         string            `json:"name"`
+			Version      string            `json:"version"`
+			Author       string            `json:"author"`
+			Summary      string            `json:"summary"`
+			Description  string            `json:"description"`
+			SourceURL    string            `json:"source_url,omitempty"`
+			PictureURL   string            `json:"picture_url,omitempty"`
+			Category     string            `json:"category"`
+			Endorsements *int64            `json:"endorsements,omitempty"`
+			Installed    *modShowInstalled `json:"installed,omitempty"`
 		}
 		out := modShowJSON{
 			ID:           mod.ID,
@@ -570,6 +613,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			PictureURL:   mod.PictureURL,
 			Category:     mod.Category,
 			Endorsements: mod.Endorsements,
+			Installed:    installedInfo,
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -610,6 +654,25 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			desc = desc[:maxDesc] + "\n... (truncated; view on site for full description)"
 		}
 		fmt.Println(desc)
+	}
+
+	if installedInfo != nil {
+		fmt.Println()
+		fmt.Printf("Installed: v%s (profile: %s)\n", installedInfo.Version, installedInfo.Profile)
+		fmt.Printf("  Update policy: %s\n", installedInfo.UpdatePolicy)
+		if installedInfo.Locked {
+			lockLine := "locked at v" + installedInfo.LockedVersion
+			// Locking is a metadata write, not a deploy (same #97 design
+			// decision doModLock's own convergence hint follows): only say
+			// so when the lock's target actually differs from what's
+			// installed.
+			if installedInfo.LockedVersion != installedInfo.Version {
+				lockLine += " — run 'lmm profile apply' to converge"
+			}
+			fmt.Printf("  Lock: %s\n", lockLine)
+		} else {
+			fmt.Println("  Lock: none")
+		}
 	}
 
 	return nil
