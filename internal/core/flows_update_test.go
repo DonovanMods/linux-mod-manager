@@ -1203,10 +1203,14 @@ func TestApplyUpdate_CategoryLessAmbiguousPair_PrimaryBreaksTie(t *testing.T) {
 // #144 item 1, case (b) - the reviewer-confirmed sibling of the category-less
 // case: Category can be POPULATED and still decide nothing, because nothing
 // guarantees the replacement's category appears among the ambiguous entries
-// at all. CurseForge's Category vocabulary is release types
+// at all. This fixture's vocabulary borrows CurseForge's release types
 // (release/beta/alpha, from releaseTypeName), which routinely shift across
-// versions - a "beta" main superseded by a "release" main shares no category
-// with it. Pre-#144 the inner Category loop fell out to list order, same coin
+// versions - but note its FLAG pattern is manifest-like (two IsPrimary files
+// in one listing): real CurseForge marks only the globally-first file primary
+// (IsPrimary: i == 0), so there the IsPrimary loop finds no match and
+// behavior stays list order, unchanged. The fix's real-world winner for
+// case (b) is a manifest/directory source with per-file primary flags.
+// Pre-#144 the inner Category loop fell out to list order, same coin
 // flip as case (a); IsPrimary must break the tie here too.
 func TestApplyUpdate_NonMatchingCategoryAmbiguousPair_PrimaryBreaksTie(t *testing.T) {
 	svc := newFlowsTestService(t)
@@ -1299,8 +1303,10 @@ func TestApplyUpdate_NoOpGuard_NothingNewUnderTarget_ErrorsWithLabellingHint(t *
 		"the !added branch must say the source offers nothing new")
 	assert.Contains(t, err.Error(), "file labelling",
 		"the !added branch must point at the source-side labelling quirk")
-	assert.NotContains(t, err.Error(), "--file",
-		"suggesting --file is misleading when there is nothing else to pick")
+	assert.NotContains(t, err.Error(), "use --file to pick one explicitly",
+		"the update-side pick-another-file remedy belongs to the added-but-not-advancing branch only")
+	assert.Contains(t, err.Error(), "lmm install --file",
+		"the one honest remedy in this shape: reinstall keeping only the wanted file undeploys the stale one and advances the record")
 
 	// The error fires during selection - before any hook, download, or write -
 	// so the old version must remain fully installed and deployed.

@@ -1368,13 +1368,16 @@ func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, in
 	}
 	// Two distinct failure shapes deserve distinct remedies (#144): when the
 	// repair found nothing to add, the user ALREADY holds every file the
-	// source offers under the target version, so telling them to pick a
-	// different file would be misleading - there is no other file. That shape
-	// is a source-side labelling problem, not a user-fixable selection. Only
-	// when something WAS added (and the effective version still refuses to
-	// move) does pointing at reinstall/--file make sense.
+	// source offers under the target version, so the update-side "pick a
+	// different file" remedy would be misleading - there is no other file to
+	// download. That shape is a source-side labelling problem; the one
+	// user action that still resolves it is a reinstall that keeps only the
+	// wanted file ('lmm install --file'), which undeploys the stale one and
+	// re-stamps the record from what remains. Only when something WAS added
+	// (and the effective version still refuses to move) does the update-side
+	// reinstall/--file remedy make sense.
 	if !added {
-		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): every file the source offers under %q is already installed - likely a source-side file labelling quirk, since nothing upstream is left to advance the record", targetVersion, strings.Join(currentFileIDs, ", "), targetVersion)
+		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): every file the source offers under %q is already installed - likely a source-side file labelling quirk; if an old file is stale, reinstall keeping only the wanted file with 'lmm install --file'", targetVersion, strings.Join(currentFileIDs, ", "), targetVersion)
 	}
 	if domain.EffectiveInstalledVersion(targetVersion, repaired) == installedVersion {
 		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): no file upstream advances it - reinstall the mod or use --file to pick one explicitly", targetVersion, strings.Join(currentFileIDs, ", "))
