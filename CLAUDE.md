@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Work is tracked via GitHub Issues.** All development tasks should reference or originate from a GitHub issue. When starting work, check for relevant open issues first.
 
+**Branch model (git-flow-lite):** `main` holds released, tagged states only. `develop` is the integration branch — story branches (`feat/…`, `fix/…`) fork from `develop` and PR back into `develop` with an explicit `--base develop` (`main` is still the default branch, so a forgotten flag targets protected `main` and gets caught). Both branches are protected: PRs required, Copilot review, no force-push/deletion; the develop ruleset has a repository-admin bypass reserved for post-release fast-forward syncs, trivial hotfix back-merges, and (last resort) history repair. Full release and hotfix flows are documented in [docs/plans/2026-07-30-develop-branch-workflow-design.md](docs/plans/2026-07-30-develop-branch-workflow-design.md).
+
 ## Before Development
 
 **ALWAYS run `/dev-init` at the start of every new session.** This skill reads the required directive files and ensures consistent development practices.
@@ -125,21 +127,19 @@ Core types in `internal/domain/` have no external dependencies:
 
 ## Versioning
 
-**This project uses [Semantic Versioning](https://semver.org/).** After completing significant work, you MUST:
+**This project uses [Semantic Versioning](https://semver.org/).** Versions are bumped **at release time, not per story PR**:
 
-1. **Bump the version** in `cmd/lmm/root.go` (the `version` variable)
-2. **Update CHANGELOG.md**:
-   - Move `[Unreleased]` items to a new version section with today's date
-   - Add the new version to the comparison links at the bottom
-3. **Commit the version bump** as a separate commit (e.g., `chore: bump version to X.Y.Z`)
+- **Story PRs into `develop`**: no version bump. Add CHANGELOG entries under `[Unreleased]`. The `version` variable in `cmd/lmm/root.go` stays at the last released version between releases.
+- **Releases (develop → main)**: cut `release/vX.Y.Z` from `develop` with a single prep commit — bump `version` in `cmd/lmm/root.go`, move `[Unreleased]` to a dated `vX.Y.Z` section, add the comparison link, and run `make man` (the genman test enforces this). PR it into `main` titled `release: vX.Y.Z`, merge with a merge commit, tag `vX.Y.Z` on the merge commit, then fast-forward develop (`git push origin main:develop`) and delete the release branch.
+- **Hotfixes**: branch from `main`, PR back into `main` with its own PATCH bump + CHANGELOG section + `make man`, tag on the merge commit, then merge `main` back into `develop`.
 
-**Version increment rules:**
+**Version increment rules** (judged by the whole release batch):
 
 - **MAJOR** (X.0.0): Breaking changes to CLI interface or config format
 - **MINOR** (0.X.0): New features, new commands, significant enhancements
 - **PATCH** (0.0.X): Bug fixes, minor improvements, documentation updates
 
-When in doubt, bump MINOR for new functionality, PATCH for fixes.
+When in doubt, bump MINOR for a batch containing any new functionality, PATCH for a fixes-only batch.
 
 ## Implementation Plans
 
