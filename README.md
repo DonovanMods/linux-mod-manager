@@ -218,6 +218,11 @@ wherever they'd conflict, the lock wins and the output names it:
   install included): refused with the same remedies before anything
   downloads or deploys. Installing at exactly the locked version
   (reinstall/repair) still works and keeps the lock.
+- **`lmm mod edit` of a locked mod**: `--version` (other than the locked
+  version itself) and `--source`/`--source-id` re-linking are refused with
+  the same remedies before anything is written — a re-link would replace the
+  locked profile entry with a fresh, unlocked one. Metadata-only edits
+  (`--name`/`--author`) still work.
 
 Lock state shows up alongside version info wherever it's installed: `lmm
 list -v`'s `LOCKED` column (the locked version, or `-`), `lmm mod show`'s

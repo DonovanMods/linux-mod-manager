@@ -38,6 +38,10 @@ any field you didn't explicitly override with --name/--author/--version.
 Re-linking moves the mod to its new source:id in the database and
 profile - it is not merely a display change.
 
+A locked mod (see 'lmm mod lock') refuses --version (other than the
+locked version itself) and re-linking; unlock it first. Metadata-only
+edits (--name/--author) are always allowed.
+
 Examples:
   lmm mod edit abc123 --name "Better Mod Name" --version 1.2.3
   lmm mod edit abc123 --source curseforge --source-id 12345
@@ -83,6 +87,36 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 	}
 	if installedMod == nil {
 		return fmt.Errorf("mod %s not found in profile %s", currentID, profileName)
+	}
+
+	// #146: a LOCKED profile ref converges only via explicit lock/unlock, so
+	// refuse any edit that would move its Version or re-link its identity
+	// BEFORE any state moves. Without this gate, the re-link path dropped the
+	// Locked marker (RemoveMod deletes the locked ref, then UpsertMod appends
+	// a fresh ref with zero-value Locked), and the --version path wrote the
+	// DB row first and only then hit UpsertMod's ErrModLocked guard - demoted
+	// to a verbose-only warning, i.e. success output plus silent
+	// DB-vs-profile divergence. Mirrors the install/update gates
+	// (internal/core/flows.go LockedRefRefusalError / lockedInstallRefusal):
+	// a --version equal to the locked version is a realign, not a move, and
+	// stays allowed - the same allowance UpsertMod itself grants. A
+	// missing/unreadable profile cannot hold a lock (the gates' tolerant
+	// precedent). Metadata-only edits (--name/--author) touch neither
+	// Version nor identity and pass through.
+	relink := editSource != "" || editID != ""
+	if relink || editVersion != "" {
+		if prof, err := getProfileManager(service).Get(game.ID, profileName); err == nil {
+			if ref := prof.FindRef(installedMod.SourceID, installedMod.ID); ref != nil && ref.Locked {
+				if relink {
+					return fmt.Errorf("%w: %s is locked at v%s in profile %s - re-linking would replace the locked ref; unlock with 'lmm mod unlock -s %s -p %s %s' first",
+						core.ErrModLocked, installedMod.Name, ref.Version, profileName,
+						installedMod.SourceID, profileName, installedMod.ID)
+				}
+				if editVersion != ref.Version {
+					return core.LockedRefRefusalError(installedMod.Mod, profileName, ref)
+				}
+			}
+		}
 	}
 
 	// Track what changed

@@ -3133,7 +3133,7 @@ func (s *Service) lockedInstallRefusal(ctx context.Context, plan *InstallPlan, o
 	if !ok || target == ref.Version {
 		return nil
 	}
-	return lockedRefRefusalError(plan.Mod, plan.Profile, ref)
+	return LockedRefRefusalError(plan.Mod, plan.Profile, ref)
 }
 
 // resolveInstallTargetVersion computes the version ApplyInstall would record
@@ -3444,7 +3444,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	// Note below.
 	if prof, err := pm.Get(game.ID, plan.Profile); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
-			skip("Skipped", lockedRefRefusalError(*mod, plan.Profile, ref).Error())
+			skip("Skipped", LockedRefRefusalError(*mod, plan.Profile, ref).Error())
 			return nil
 		}
 	}
@@ -3856,10 +3856,12 @@ type UpdateApplyResult struct {
 // locked (#97). Callers branch with errors.Is.
 var ErrModLocked = errors.New("mod is locked")
 
-// lockedRefRefusalError builds the ErrModLocked-wrapping refusal both
+// LockedRefRefusalError builds the ErrModLocked-wrapping refusal both
 // ApplyUpdate and ApplyRollback return when mod's profile ref is locked -
-// factored into one function specifically so the two call sites can never
-// drift apart in wording (PR #142 Copilot round-4: the prior hand-duplicated
+// factored into one function specifically so the call sites can never
+// drift apart in wording (exported since #146 so cmd/lmm's mod-edit
+// version gate reuses the exact same refusal instead of hand-copying it;
+// PR #142 Copilot round-4: the prior hand-duplicated
 // version named no source/profile in its remedies, so a user running the
 // refused operation against a non-active profile, or a mod ID that exists
 // under more than one source, would copy-paste a remedy that resolved
@@ -3872,7 +3874,7 @@ var ErrModLocked = errors.New("mod is locked")
 // `StringVarP(&modProfile, "profile", "p", ...)`), so a copy-pasted remedy
 // always resolves against the SAME ref this error is actually about,
 // regardless of which profile/source the caller had active.
-func lockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModReference) error {
+func LockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModReference) error {
 	return fmt.Errorf("%w: %s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'",
 		ErrModLocked, mod.Name, ref.Version, profileName, mod.SourceID, profileName, mod.ID, mod.SourceID, profileName, mod.ID)
 }
@@ -3942,7 +3944,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	// contract. Checked before any network or hook side effect.
 	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
-			return result, lockedRefRefusalError(mod.Mod, profileName, ref)
+			return result, LockedRefRefusalError(mod.Mod, profileName, ref)
 		}
 	}
 	// (A missing/unreadable profile falls through - matches
@@ -4243,7 +4245,7 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 	// Replace, DB/profile writes).
 	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
-			return result, lockedRefRefusalError(mod.Mod, profileName, ref)
+			return result, LockedRefRefusalError(mod.Mod, profileName, ref)
 		}
 	}
 	// (A missing/unreadable profile falls through - matches ApplyUpdate's
