@@ -1393,6 +1393,362 @@ func TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion(t *testing.T)
 	assert.False(t, gameCache.Exists("g1", "src", "dep1", "2.0"), "cache must NOT be keyed by the mod's mod-level version when the file's own version differs")
 }
 
+// --- #143: locked-ref install guard ---
+
+// lockProfileRef seeds profileName with a ref for sourceID/modID at version
+// (with fileIDs) and locks it - the profile-side state every #143 install
+// guard test starts from.
+func lockProfileRef(t *testing.T, svc *core.Service, gameID, profileName, sourceID, modID, version string, fileIDs []string) {
+	t.Helper()
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(gameID, profileName)
+	require.NoError(t, err)
+	require.NoError(t, pm.UpsertMod(gameID, profileName, domain.ModReference{
+		SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs,
+	}))
+	require.NoError(t, pm.SetModLock(gameID, profileName, sourceID, modID, ""))
+}
+
+// TestService_ApplyInstall_LockedRefDifferentVersion_RefusedBeforeAnySideEffect
+// is #143's STRICT-path flow guard: installing a mod whose profile ref is
+// LOCKED at a different version than the install would record must be
+// refused up front - before any hook, download, deploy, or DB/profile write
+// - with lockedRefRefusalError's remedy wording (errors.Is core.ErrModLocked).
+// Previously the install deployed the new version and either silently moved
+// the lock target (UpsertMod) or - with the core guard alone - left a
+// deployed-but-unrecorded drift behind a mere Note.
+func TestService_ApplyInstall_LockedRefDifferentVersion_RefusedBeforeAnySideEffect(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &oldFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"}
+	mock.AddMod(mod.GameID, mod)
+
+	newZip := createTestZip(t, t.TempDir(), map[string]string{"mod1.esp": "new-payload"})
+	newContent, err := os.ReadFile(newZip)
+	require.NoError(t, err)
+	mock.AddDownload("1", newContent)
+
+	// The profile holds mod1 LOCKED at v1.0; the plan's primary file is v1.5.
+	lockProfileRef(t, svc, "g1", "default", "src", "mod1", "1.0", []string{"2"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Files, 1)
+	assert.Equal(t, "1.5", plan.Files[0].Version)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.Error(t, err, "installing a different version over a locked ref must be refused")
+	assert.True(t, errors.Is(err, core.ErrModLocked), "the refusal must wrap core.ErrModLocked, got: %v", err)
+	assert.Contains(t, err.Error(), "locked at v1.0")
+	assert.Contains(t, err.Error(), "lmm mod lock -s src -p default mod1", "the refusal must carry the move-the-lock remedy")
+	assert.Contains(t, err.Error(), "lmm mod unlock -s src -p default mod1", "the refusal must carry the unlock remedy")
+	require.NotNil(t, result)
+	assert.Empty(t, result.Installed)
+
+	// Zero side effects: nothing downloaded, deployed, or recorded.
+	assert.Equal(t, 0, mock.DownloadCount(), "the refusal must fire BEFORE any download")
+	entries, err := os.ReadDir(gameDir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "nothing may be deployed to the game directory")
+	_, err = svc.GetInstalledMod("src", "mod1", "g1", "default")
+	assert.True(t, errors.Is(err, domain.ErrModNotFound), "no DB row may be written")
+
+	profile, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("src", "mod1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.0", ref.Version, "the locked version must be untouched")
+	assert.Equal(t, []string{"2"}, ref.FileIDs, "the ref's FileIDs must be untouched")
+	assert.True(t, ref.Locked)
+}
+
+// TestService_ApplyInstall_LockedRef_EmptyPlanFiles_NotRefusedAsLocked pins
+// resolveInstallTargetVersion's documented ok=false contract on the STRICT
+// path: with plan.Files emptied by a caller, no target version can be
+// derived, so the up-front gate must NOT refuse with ErrModLocked on the
+// mod-level fallback version it never actually derived - the flow's own
+// handling (and the UpsertMod backstop, which still protects the ref) is
+// authoritative for the degenerate shape.
+func TestService_ApplyInstall_LockedRef_EmptyPlanFiles_NotRefusedAsLocked(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &oldFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"}
+	mock.AddMod(mod.GameID, mod)
+
+	lockProfileRef(t, svc, "g1", "default", "src", "mod1", "1.0", []string{"2"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	plan.Files = nil
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	assert.False(t, errors.Is(err, core.ErrModLocked),
+		"an underivable target version (empty plan.Files) must not be refused as a lock conflict, got: %v", err)
+
+	// The backstop still holds: the locked ref is untouched either way.
+	profile, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("src", "mod1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.0", ref.Version, "the locked version must be untouched")
+	assert.True(t, ref.Locked)
+}
+
+// TestService_ApplyInstall_LockedRefExactVersion_Succeeds pins the converge/
+// repair half of #143: installing a locked mod at EXACTLY its locked version
+// stays allowed - the install completes, FileIDs refresh, and the lock
+// marker survives.
+func TestService_ApplyInstall_LockedRefExactVersion_Succeeds(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &oldFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	mod := &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"}
+	mock.AddMod(mod.GameID, mod)
+
+	newZip := createTestZip(t, t.TempDir(), map[string]string{"mod1.esp": "payload"})
+	newContent, err := os.ReadFile(newZip)
+	require.NoError(t, err)
+	mock.AddDownload("1", newContent)
+
+	// The profile holds mod1 LOCKED at v1.5 - exactly the plan's primary file.
+	lockProfileRef(t, svc, "g1", "default", "src", "mod1", "1.5", nil)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err, "installing a locked mod at exactly its locked version is a legitimate converge/repair")
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Mod One"}, result.Installed)
+	assert.Empty(t, result.Notes, "the profile upsert must succeed, not demote to a Note")
+
+	profile, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("src", "mod1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.5", ref.Version)
+	assert.Equal(t, []string{"1"}, ref.FileIDs, "FileIDs must refresh to the installed file")
+	assert.True(t, ref.Locked, "the lock marker must survive the reinstall")
+}
+
+// TestService_ApplyInstall_LockedRef_BatchPath_RefusedBeforeDependencies is
+// the BATCH-path (dependencies present) variant of the #143 guard: the
+// primary's locked-ref refusal must abort the WHOLE install up front - zero
+// dependencies installed, zero downloads - mirroring the #96 TargetVersion
+// precedent ("abort the whole install rather than a per-mod Failed line
+// after dependencies already installed").
+func TestService_ApplyInstall_LockedRef_BatchPath_RefusedBeforeDependencies(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &versionOverrideFileSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		fileVersions:            map[string]string{"dep1": "1.0", "root": "2.0"},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "2.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+	mock.AddMod(dep1.GameID, dep1)
+	mock.AddMod(root.GameID, root)
+
+	// The profile holds root LOCKED at v1.0; the batch would install v2.0.
+	lockProfileRef(t, svc, "g1", "default", "src", "root", "1.0", nil)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, core.ErrModLocked), "the refusal must wrap core.ErrModLocked, got: %v", err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.Installed, "no dependency may install before the primary's lock refusal")
+	assert.Equal(t, 0, mock.DownloadCount(), "the refusal must fire BEFORE any download")
+	_, err = svc.GetInstalledMod("src", "dep1", "g1", "default")
+	assert.True(t, errors.Is(err, domain.ErrModNotFound), "the dependency must not be installed")
+}
+
+// TestService_ApplyInstall_LockedDependency_BatchPath_SkippedNotMoved covers
+// the batch loop's own #143 backstop for a DEPENDENCY whose profile ref is
+// locked (a profile-YAML/DB drift state: only a ref absent from the DB still
+// resolves as a dependency): the dependency is skipped - batch skip-and-
+// continue semantics, like every other per-mod failure - BEFORE its download
+// or deploy, its locked ref stays untouched, and the primary still installs.
+func TestService_ApplyInstall_LockedDependency_BatchPath_SkippedNotMoved(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &versionOverrideFileSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		fileVersions:            map[string]string{"dep1": "2.0", "root": "3.0"},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "2.0", GameID: "g1"}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "3.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+	mock.AddMod(dep1.GameID, dep1)
+	mock.AddMod(root.GameID, root)
+
+	rootZip := createTestZip(t, t.TempDir(), map[string]string{"root.esp": "root-payload"})
+	rootContent, err := os.ReadFile(rootZip)
+	require.NoError(t, err)
+	mock.AddDownload("root", rootContent)
+
+	// dep1's ref is LOCKED at v1.0 in the profile but has NO DB row, so
+	// PlanInstall still resolves it as a not-yet-installed dependency.
+	lockProfileRef(t, svc, "g1", "default", "src", "dep1", "1.0", []string{"old"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err, "a locked dependency skips - batch per-mod semantics, never fatal")
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Root"}, result.Installed, "the primary must still install")
+	assert.Equal(t, []string{"Dep One"}, result.Failed)
+	require.Len(t, result.Skipped, 1)
+	assert.Contains(t, result.Skipped[0], "locked at v1.0", "the skip reason must name the lock")
+
+	// The locked dependency must be untouched: no DB row, no deploy, ref intact.
+	_, err = svc.GetInstalledMod("src", "dep1", "g1", "default")
+	assert.True(t, errors.Is(err, domain.ErrModNotFound))
+	_, err = os.Lstat(filepath.Join(gameDir, "dep1.esp"))
+	assert.True(t, os.IsNotExist(err), "the locked dependency must not be deployed")
+
+	profile, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("src", "dep1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.0", ref.Version)
+	assert.Equal(t, []string{"old"}, ref.FileIDs)
+	assert.True(t, ref.Locked)
+}
+
+// flakyVersionedFileSource is versionOverrideFileSource with a failNext
+// fuse: the next failNext GetModFiles calls fail with a transient error,
+// then service resumes - so a test can fail EXACTLY the up-front
+// lockedInstallRefusal derivation while the batch loop's own later calls
+// succeed (#143 review finding F2).
+type flakyVersionedFileSource struct {
+	*mockSourceWithDownloads
+	fileVersions map[string]string // mod.ID -> served file's Version
+	failNext     int
+}
+
+func (s *flakyVersionedFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	if s.failNext > 0 {
+		s.failNext--
+		return nil, fmt.Errorf("transient: files endpoint unavailable")
+	}
+	return []domain.DownloadableFile{
+		{ID: mod.ID, Name: mod.Name, FileName: mod.ID + ".zip", Version: s.fileVersions[mod.ID], IsPrimary: true},
+	}, nil
+}
+
+// TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBeforeUninstall
+// closes #143 review finding F2: when lockedInstallRefusal's up-front
+// derivation fails transiently (ok=false), a locked, already-installed
+// PRIMARY falls through to the batch loop - reachable whenever an installed
+// primary has a missing dependency (BATCH path). The loop must then run its
+// own lock check BEFORE the uninstall-existing block: previously the block
+// uninstalled the deployed lock target and deleted its cache, and only THEN
+// the post-selection lock check skipped - leaving the lock target
+// undeployed and uncached while the profile still said locked v1.0.
+func TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBeforeUninstall(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &flakyVersionedFileSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		fileVersions:            map[string]string{"dep1": "1.0", "root": "2.0"},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "2.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+	mock.AddMod(dep1.GameID, dep1)
+	mock.AddMod(root.GameID, root)
+
+	depZip := createTestZip(t, t.TempDir(), map[string]string{"dep1.esp": "dep-payload"})
+	depContent, err := os.ReadFile(depZip)
+	require.NoError(t, err)
+	mock.AddDownload("dep1", depContent)
+
+	// root is installed at v1.0 (DB row + cache entry) and LOCKED at v1.0;
+	// dep1 is NOT installed, so the plan takes the BATCH path.
+	seedNamedInstalledMod(t, svc, game, "src", "root", "Root", "1.0", true, map[string][]byte{
+		"root.esp": []byte("v1 payload"),
+	})
+	lockProfileRef(t, svc, "g1", "default", "src", "root", "1.0", nil)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	// The NEXT GetModFiles call - lockedInstallRefusal's own up-front
+	// derivation - fails transiently; every later call succeeds.
+	mock.failNext = 1
+
+	var events []core.DeployProgress
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err, "batch semantics: the locked primary skips, the run itself succeeds")
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Dep One"}, result.Installed, "the dependency must still install")
+	assert.Equal(t, []string{"Root"}, result.Failed)
+	require.Len(t, result.Skipped, 1)
+	assert.Contains(t, result.Skipped[0], "locked at v1.0", "the skip reason must name the lock")
+
+	// The deployed lock target's cache must survive: the loop's lock check
+	// must fire BEFORE the uninstall-existing block, not after it.
+	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "root", "1.0"),
+		"the lock target's cache entry must not be deleted on a refused reinstall")
+	for _, evt := range events {
+		assert.NotEqual(t, core.InstallDepReinstalling, evt.Phase,
+			"the uninstall-existing block must never run for the refused locked primary")
+	}
+
+	got, dbErr := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, dbErr)
+	assert.Equal(t, "1.0", got.Version, "the DB row must stay at the locked version")
+
+	profile, pErr := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, pErr)
+	ref := profile.FindRef("src", "root")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.0", ref.Version)
+	assert.True(t, ref.Locked)
+}
+
 // TestService_ApplyInstall_ContextCancellation proves ApplyInstall checks
 // ctx at least once before doing any work, so an already-cancelled context
 // leaves nothing installed - the seam Phase 5b's cancel-then-drain task will

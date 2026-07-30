@@ -1018,18 +1018,15 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 
 		installer := service.GetInstaller(game)
 
-		// Remove previous installation if re-installing
-		if existingMod, err := service.GetInstalledMod(sourceID, mod.ID, game.ID, profileName); err == nil && existingMod != nil {
-			fmt.Printf("  Removing previous installation...\n")
-			if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil && verbose {
-				fmt.Printf("  Warning: could not remove old files: %v\n", err)
-			}
-			if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
-				fmt.Printf("  Warning: could not clear old cache: %v\n", err)
-			}
-		}
-
-		// Get and filter available files
+		// Get and filter available files - derived ONCE, BEFORE the
+		// remove-previous block below (#143 review finding F1: the earlier
+		// shape fetched twice - a locked-ref pre-check fetch plus the normal
+		// path's own post-uninstall fetch - so a transient failure of the
+		// first fell through PAST the lock check and uninstalled the
+		// deployed lock target anyway, and a version published between the
+		// two fetches deployed a selection the lock check never judged).
+		// Deriving here also means ANY mod's fetch failure now skips while
+		// its previous installation is still intact.
 		files, err := service.GetModFiles(ctx, sourceID, mod)
 		if err != nil {
 			fmt.Printf("  Error: failed to get mod files: %v\n", err)
@@ -1042,10 +1039,40 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			failed = append(failed, mod.Name)
 			continue
 		}
-
 		selectedFile := selectPrimaryFile(files)
-		fmt.Printf("  File: %s\n", displayFileLabel(*selectedFile))
 		mod.Version = domain.EffectiveInstalledVersion(mod.Version, []*domain.DownloadableFile{selectedFile}) // #94
+
+		// #143: a LOCKED profile ref converges only via explicit lock/unlock
+		// - skip BEFORE the remove-previous block below, so a locked
+		// reinstall-at-another-version never uninstalls the deployed lock
+		// target, and before any download/deploy. Judges the exact selection
+		// derived above - the one that would actually download. Mirrors
+		// core's ApplyInstall gate (internal/core/flows.go
+		// lockedInstallRefusal), with UpsertMod's ErrModLocked guard as the
+		// final backstop, and names -s/-p in both remedies for the same
+		// copy-paste-resolves-against-the-wrong-target reason as
+		// lockedRefRefusalError.
+		if prof, err := pm.Get(game.ID, profileName); err == nil {
+			if ref := prof.FindRef(sourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
+				fmt.Printf("  Skipped: %s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'\n",
+					mod.Name, ref.Version, profileName, sourceID, profileName, mod.ID, sourceID, profileName, mod.ID)
+				failed = append(failed, mod.Name)
+				continue
+			}
+		}
+
+		// Remove previous installation if re-installing
+		if existingMod, err := service.GetInstalledMod(sourceID, mod.ID, game.ID, profileName); err == nil && existingMod != nil {
+			fmt.Printf("  Removing previous installation...\n")
+			if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil && verbose {
+				fmt.Printf("  Warning: could not remove old files: %v\n", err)
+			}
+			if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
+				fmt.Printf("  Warning: could not clear old cache: %v\n", err)
+			}
+		}
+
+		fmt.Printf("  File: %s\n", displayFileLabel(*selectedFile))
 
 		// Download
 		progressFn := func(p core.DownloadProgress) {

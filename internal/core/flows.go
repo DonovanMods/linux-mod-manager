@@ -3047,6 +3047,81 @@ func (s *reinstallCacheTransaction) Commit() error {
 	return err
 }
 
+// lockedInstallRefusal implements ApplyInstall's #143 up-front gate: it
+// returns lockedRefRefusalError when plan.Profile holds a LOCKED ref for
+// plan.Mod AND the version this install would record differs from the
+// locked version, and nil otherwise (no profile, no ref, no lock, same
+// version, or a would-be version that cannot be determined here - the flow
+// itself then produces its own authoritative error/skip, with UpsertMod's
+// ErrModLocked guard as the final backstop). A missing/unreadable profile
+// cannot hold a lock - ApplyUpdate's tolerant precedent.
+func (s *Service) lockedInstallRefusal(ctx context.Context, plan *InstallPlan, opts InstallOptions) error {
+	prof, err := s.NewProfileManager().Get(plan.GameID, plan.Profile)
+	if err != nil {
+		return nil
+	}
+	ref := prof.FindRef(plan.Mod.SourceID, plan.Mod.ID)
+	if ref == nil || !ref.Locked {
+		return nil
+	}
+	target, ok := s.resolveInstallTargetVersion(ctx, plan, opts)
+	if !ok || target == ref.Version {
+		return nil
+	}
+	return lockedRefRefusalError(plan.Mod, plan.Profile, ref)
+}
+
+// resolveInstallTargetVersion computes the version ApplyInstall would record
+// for plan.Mod - mirroring each path's own later derivation exactly, without
+// side effects - solely so lockedInstallRefusal can compare it against a
+// locked ref. ok is false when the derivation fails (no files, unresolvable
+// TargetVersion, source error); the caller must then let the flow proceed to
+// its own authoritative handling of that failure rather than refusing on a
+// version this couldn't determine.
+//
+//   - STRICT (no dependencies): applyInstallPrimary installs exactly
+//     plan.Files (the CLI applies --version/--file overrides to the plan
+//     before ApplyInstall), so the would-be version is plan.Files' effective
+//     version - the same domain.EffectiveInstalledVersion stamp (#94)
+//     applyInstallPrimary itself performs.
+//   - BATCH: applyInstallBatchMod never consults plan.Files - it re-derives
+//     the primary's selection from GetModFiles, honoring opts.TargetVersion
+//     via ResolveVersionFiles (see ApplyInstall's own #96 pre-resolution)
+//     and plan.ShowArchived via filterAndSortInstallFiles otherwise. The
+//     GetModFiles network read here happens ONLY when the ref is locked
+//     (lockedInstallRefusal checks the lock first).
+func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *InstallPlan, opts InstallOptions) (version string, ok bool) {
+	if len(plan.Dependencies) == 0 {
+		if len(plan.Files) == 0 {
+			return "", false
+		}
+		selected := make([]*domain.DownloadableFile, len(plan.Files))
+		for i := range plan.Files {
+			selected[i] = &plan.Files[i]
+		}
+		return domain.EffectiveInstalledVersion(plan.Mod.Version, selected), true
+	}
+
+	primary := plan.Mod // local, addressable copy - distinct from plan.Mod
+	files, err := s.GetModFiles(ctx, primary.SourceID, &primary)
+	if err != nil {
+		return "", false
+	}
+	if opts.TargetVersion != "" {
+		files, err = ResolveVersionFiles(primary.SourceID, files, opts.TargetVersion)
+		if err != nil {
+			return "", false
+		}
+	} else {
+		files = filterAndSortInstallFiles(files, plan.ShowArchived)
+	}
+	selected, _, err := selectDeployFiles(files, nil, false)
+	if err != nil {
+		return "", false
+	}
+	return domain.EffectiveInstalledVersion(primary.Version, selected), true
+}
+
 // ApplyInstall executes a plan produced by PlanInstall, gated on
 // len(plan.Dependencies) - see the DeployPhase Install* constants' doc
 // comments (starting at InstallBeforeAllForced) for the full restored-
@@ -3093,6 +3168,20 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	}
 
 	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+
+	// #143: refuse up front - before any hook, download, deploy, or DB/
+	// profile write - when the target profile holds a LOCKED ref for
+	// plan.Mod and this install would record a DIFFERENT version. Only
+	// explicit lock/unlock may move a locked version; installing at exactly
+	// the locked version (converge/repair) stays allowed. In the BATCH path
+	// this deliberately aborts the WHOLE install with zero dependencies
+	// installed, mirroring the #96 TargetVersion precedent (see
+	// InstallOptions.TargetVersion). UpsertMod's own ErrModLocked guard
+	// backstops this check; refusing here is what keeps a refused install
+	// from deploying first and leaving drift behind a mere Note.
+	if err := s.lockedInstallRefusal(ctx, plan, opts); err != nil {
 		return result, err
 	}
 
@@ -3241,26 +3330,12 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	// this only ever differs from plan.SourceID in the SourceLocal edge
 	// case InstallPlan.Dependencies' doc comment already documents as
 	// unreachable via any registered source in practice.
-	if existing, err := s.GetInstalledMod(mod.SourceID, mod.ID, game.ID, plan.Profile); err == nil && existing != nil {
-		reinstalling := base
-		reinstalling.Phase = InstallDepReinstalling
-		emit(reinstalling)
-		if err := installer.Uninstall(ctx, game, &existing.Mod, plan.Profile); err != nil {
-			msg := fmt.Sprintf("Warning: could not remove old files: %v", err)
-			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = InstallNote, msg
-			emit(evt)
-		}
-		if err := s.GetGameCache(game).Delete(game.ID, existing.SourceID, existing.ID, existing.Version); err != nil {
-			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
-			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = InstallNote, msg
-			emit(evt)
-		}
-	}
-
+	//
+	// File selection is derived BEFORE the uninstall-existing block below
+	// (#143 review finding F2, mirroring cmd/lmm's batchInstallMods after
+	// its own F1 reorder): the #143 lock check must judge the selected
+	// version before anything is removed, and a fetch/selection failure now
+	// skips this mod while its previous installation is still intact.
 	var files []domain.DownloadableFile
 	if overrideFiles != nil {
 		// #96: the primary's --version-resolved selection, already fetched
@@ -3287,6 +3362,47 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	}
 	file := selected[0]
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selected) // #94
+
+	// #143: a LOCKED profile ref converges only via explicit lock/unlock -
+	// skip (batch per-mod semantics) when the selected version differs from
+	// the lock, BEFORE the uninstall-existing block and this mod's
+	// download/deploy. This is NOT redundant with ApplyInstall's up-front
+	// lockedInstallRefusal, for the PRIMARY included: that gate deliberately
+	// passes when its own derivation fails transiently (ok=false), and a
+	// locked, already-installed primary with a missing dependency then
+	// reaches this loop (review finding F2 - the earlier post-uninstall
+	// placement let that fallthrough uninstall the deployed lock target and
+	// delete its cache before skipping). It equally covers a DEPENDENCY
+	// whose ref is locked in the profile but absent from the DB (drift) -
+	// only a ref without a DB row still resolves as a dependency - which
+	// would otherwise deploy and leave drift behind UpsertMod's refusal
+	// Note below.
+	if prof, err := pm.Get(game.ID, plan.Profile); err == nil {
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
+			skip("Skipped", lockedRefRefusalError(*mod, plan.Profile, ref).Error())
+			return nil
+		}
+	}
+
+	if existing, err := s.GetInstalledMod(mod.SourceID, mod.ID, game.ID, plan.Profile); err == nil && existing != nil {
+		reinstalling := base
+		reinstalling.Phase = InstallDepReinstalling
+		emit(reinstalling)
+		if err := installer.Uninstall(ctx, game, &existing.Mod, plan.Profile); err != nil {
+			msg := fmt.Sprintf("Warning: could not remove old files: %v", err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = InstallNote, msg
+			emit(evt)
+		}
+		if err := s.GetGameCache(game).Delete(game.ID, existing.SourceID, existing.ID, existing.Version); err != nil {
+			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = InstallNote, msg
+			emit(evt)
+		}
+	}
 
 	fileEvt := base
 	fileEvt.Phase, fileEvt.File = InstallDepFileSelected, file
