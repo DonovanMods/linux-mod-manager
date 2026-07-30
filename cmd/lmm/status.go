@@ -215,15 +215,26 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 	linkMethod := service.GetGameLinkMethod(game)
 	cachePath := service.GetGameCachePath(game)
 	out := statusGameDetailJSON{
-		ID:          game.ID,
-		Name:        game.Name,
-		InstallPath: game.InstallPath,
-		ModPath:     game.ModPath,
-		LinkMethod:  linkMethod.String(),
-		CachePath:   cachePath,
-		Profiles:    profileList,
+		ID:                  game.ID,
+		Name:                game.Name,
+		InstallPath:         game.InstallPath,
+		ModPath:             game.ModPath,
+		LinkMethod:          linkMethod.String(),
+		EffectiveLinkMethod: linkMethod.String(),
+		LinkMethodSource:    "global",
+		Profiles:            profileList,
+		CachePath:           cachePath,
+	}
+	if game.LinkMethodExplicit {
+		out.LinkMethodSource = "game"
 	}
 	if defaultProfile, err := pm.GetDefault(gameID); err == nil {
+		// Mirror the text twin (showGameStatus): the effective method is the
+		// active profile's resolution (profile > game > global, #155).
+		out.EffectiveLinkMethod = service.GetEffectiveLinkMethod(game, defaultProfile.Name).String()
+		if defaultProfile.LinkMethodExplicit {
+			out.LinkMethodSource = "profile"
+		}
 		mods, _ := service.GetInstalledMods(gameID, defaultProfile.Name)
 		out.ActiveProfile = defaultProfile.Name
 		out.InstalledModCount = len(mods)
@@ -247,16 +258,28 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 }
 
 type statusGameDetailJSON struct {
-	ID                string              `json:"id"`
-	Name              string              `json:"name"`
-	InstallPath       string              `json:"install_path"`
-	ModPath           string              `json:"mod_path"`
-	LinkMethod        string              `json:"link_method"`
-	CachePath         string              `json:"cache_path"`
-	Profiles          []statusProfileJSON `json:"profiles"`
-	ActiveProfile     string              `json:"active_profile,omitempty"`
-	InstalledModCount int                 `json:"installed_mod_count,omitempty"`
-	EnabledModCount   int                 `json:"enabled_mod_count,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	InstallPath string `json:"install_path"`
+	ModPath     string `json:"mod_path"`
+	// LinkMethod is the GAME-level resolution (game-explicit or global
+	// default) - deliberately NOT the profile-effective method, for JSON
+	// contract stability (#155): consumers written before per-profile
+	// overrides existed read this key as the game's setting, so its meaning
+	// stays put and the profile-aware fields below are additive instead.
+	LinkMethod string `json:"link_method"`
+	// EffectiveLinkMethod is what deploys into the active profile actually
+	// use (profile > game > global) - the JSON twin of the text output's
+	// Link Method line. LinkMethodSource says which level won: "profile",
+	// "game", or "global". Both are always present; with no profile
+	// override they equal LinkMethod and its level.
+	EffectiveLinkMethod string              `json:"effective_link_method"`
+	LinkMethodSource    string              `json:"link_method_source"`
+	CachePath           string              `json:"cache_path"`
+	Profiles            []statusProfileJSON `json:"profiles"`
+	ActiveProfile       string              `json:"active_profile,omitempty"`
+	InstalledModCount   int                 `json:"installed_mod_count,omitempty"`
+	EnabledModCount     int                 `json:"enabled_mod_count,omitempty"`
 	// LastDeploy is nil for a profile that has never been deployed. Kept
 	// omitempty (task-4-brief.md / lmm-repo-conventions' JSON-contract-
 	// additions-are-MINOR precedent): an unset field, not a null or zero

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `lmm status -g <game> --json` gains `effective_link_method` and `link_method_source` (`profile`/`game`/`global`): the JSON twin of the text output's effective Link Method line (profile > game > global, PR #151), which the JSON document previously had no way to express — a profile-level `link_method` override made the two outputs disagree. The existing `link_method` key deliberately keeps its game-level meaning (game override or global default) for contract stability. Additive JSON contract change — makes the release containing it MINOR (#155)
+
 ### Changed
 
 - Development now flows through a `develop` integration branch (git-flow-lite): story PRs target `develop`, versions are bumped once per release batch, and `main` holds only released, tagged states. CI's test workflow additionally runs on pushes to `develop`
@@ -244,7 +248,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `lmm update` printed "All mods are up to date" when every installed mod was a local import. Local mods have no remote source and are filtered before any source is queried, so nothing was ever compared. Local and pinned mods are now reported separately, since the remedies differ — a pin can be lifted, a local mod can never be checked
-- `lmm update <mod-id>` failed with "mod X not found in profile Y" (exit 1) for a local mod that *was* in the profile. The lookup matched on source as well as ID, and the resolved source is the game's configured remote, so a local mod could never match. It now says the mod is local and exits 0; a mod genuinely absent from the profile is still an error. A mod belonging to a different configured source now names the source to retry with, instead of claiming the mod is missing
+- `lmm update <mod-id>` failed with "mod X not found in profile Y" (exit 1) for a local mod that _was_ in the profile. The lookup matched on source as well as ID, and the resolved source is the game's configured remote, so a local mod could never match. It now says the mod is local and exits 0; a mod genuinely absent from the profile is still an error. A mod belonging to a different configured source now names the source to retry with, instead of claiming the mod is missing
 - The TUI reported a local mod as "already up to date" for the same reason, and now says it is local
 
 ## [1.15.0] - 2026-07-25
@@ -307,7 +311,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - TUI: the new-profile modal now rejects names containing path separators or `..` inline (matching the config layer's validation), instead of only surfacing the failure after submit
-
 
 ## [1.13.0] - 2026-07-23
 
