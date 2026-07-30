@@ -77,15 +77,31 @@ never fixable automatically since there is no matching upstream file to
 compare against - reinstall the mod instead.
 
 .PP
+A locked mod's VERSION MISMATCH is still reported and counted the same as
+any other (verify stays honest about state), but --fix refuses to repair
+it - rewriting a locked record would silently move what the lock means
+instead of fixing anything. The refusal names the mod, the lock's target
+version, and the remedy ('lmm mod lock  \&' to move the
+lock, or 'lmm mod unlock' to release it); in --json the row keeps
+"version_mismatch" and gains note "locked". Separately, a locked mod whose
+recorded version hasn't yet caught up to the lock's target (pending a
+"lmm profile apply", not corruption) prints its own "~ NAME - lock pending
+convergence" informational line instead of being silently folded into the
+OK case - this is never counted in issues or warnings.
+
+.PP
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
 "version_unverifiable"; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
-redownload failure's reason, or a file-count-check lookup failure - and is
-omitted otherwise. issues counts MISSING files and VERSION MISMATCH rows
-(a successful --fix repair of either decrements it back out); warnings
-counts everything else that isn't OK.
+redownload failure's reason, a file-count-check lookup failure, a --fix
+refusal on a locked record ("locked"), or a locked record's pending
+convergence detail - and is omitted otherwise. issues counts MISSING files
+and VERSION MISMATCH rows (a successful --fix repair of either decrements
+it back out; a locked VERSION MISMATCH stays counted since --fix refuses
+it); warnings counts everything else that isn't OK. Lock-pending-
+convergence rows are informational only and count toward neither.
 
 .PP
 Examples:

@@ -1636,3 +1636,189 @@ func TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure(t *testing.T) {
 	}
 	assert.True(t, found, "expected a mod1 file entry in JSON files: %+v", result.Files)
 }
+
+// --- doVerify lock-awareness (#97, Task 8) ---
+//
+// A locked mod's VERSION MISMATCH must still be reported and counted as an
+// issue - verify stays honest about state - but --fix must refuse to
+// rewrite the locked record, since rewriting it would silently move the
+// lock's meaning out from under the user. Separately, a locked mod whose DB
+// version hasn't yet converged to the lock's target (pending a `profile
+// apply`, not corruption) gets its own informational note instead of being
+// silently swept into the quiet-OK path.
+
+// TestDoVerify_Fix_VersionMismatchLocked_RefusesRepair guards the --fix
+// refusal: builds on setupDoVerifyFixTest's "1.5" recorded / "1.0"
+// effective mismatch fixture, then locks the profile ref at "1.5" (the
+// CURRENTLY recorded version - i.e., the lock target matches what's
+// recorded, but that recorded value itself disagrees with what the
+// installed file ID actually is upstream). --fix must still report the
+// issue, must NOT touch the DB/cache/profile record, and must print the
+// exact refusal text pointing at `lmm mod lock`.
+func TestDoVerify_Fix_VersionMismatchLocked_RefusesRepair(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "1.5"))
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	assert.Contains(t, out, "1 issue(s)", "a locked mod's version mismatch must still be reported and counted as an issue")
+	assert.Contains(t, out, "--fix skipped: Mod One is locked at v1.5", "the refusal text must name the mod and the lock's target version")
+	assert.Contains(t, out, "lmm mod lock mod1 <version>", "the refusal must point at the remedy command")
+	assert.NotContains(t, out, "Repaired", "a locked record must never be silently repaired")
+
+	// The record must be completely unchanged: DB still at "1.5", cache
+	// still keyed at "1.5" (not renamed to the effective "1.0"), profile
+	// ref still at "1.5".
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.5", mod.Version, "a locked record must not be rewritten by --fix")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "cache must remain keyed at the recorded version")
+	assert.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must not be renamed to the effective version for a locked mod")
+
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("test-src", "mod1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.5", ref.Version, "profile ref (the lock's target) must not be rewritten by --fix")
+	assert.True(t, ref.Locked, "the lock must remain set")
+}
+
+// TestDoVerify_Fix_VersionMismatchLocked_JSONKeepsStatusAndNotesLocked
+// guards the --json half: status stays "version_mismatch" (never flips to
+// "ok" the way a successful repair would), issues stays 1, and the existing
+// "note" field carries an additive "locked" marker so a --json caller can
+// tell a refused-due-to-lock row apart from a plain unrepaired mismatch.
+func TestDoVerify_Fix_VersionMismatchLocked_JSONKeepsStatusAndNotesLocked(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "1.5"))
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 1, result.Issues, "a locked mod's version mismatch must still count as an issue since --fix refused it")
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Equal(t, "version_mismatch", f.Status, "status must NOT flip to ok - --fix refused the repair")
+			assert.Equal(t, "locked", f.Note, "note must additively flag the refusal reason")
+		}
+	}
+	assert.True(t, found, "expected a mod1 entry in JSON files: %+v", result.Files)
+}
+
+// TestDoVerify_Fix_VersionMismatchUnlocked_StillRepairs is a guardrail
+// against a lock-awareness regression breaking the existing unlocked --fix
+// path: an unlocked mismatch (setupDoVerifyFixTest's fixture, no lock set)
+// must still be fully repaired exactly as it was before this task.
+func TestDoVerify_Fix_VersionMismatchUnlocked_StillRepairs(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, false)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 0, result.Issues, "an unlocked mismatch must still be repaired and drop back out of issues")
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", mod.Version, "an unlocked record must still be corrected to the effective version")
+}
+
+// setupDoVerifyLockDriftTest builds a fixture where the recorded DB version
+// ("1.5") matches what the installed file ID actually reports upstream (no
+// VERSION MISMATCH), but the profile ref is locked at a DIFFERENT version
+// ("2.0") - the lock hasn't converged yet (a `profile apply` is pending),
+// which is expected drift, not corruption.
+func setupDoVerifyLockDriftTest(t *testing.T) (*cobra.Command, *core.Service, *domain.Game) {
+	t.Helper()
+
+	cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+		{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.5"},
+	})
+
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"},
+	}))
+	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "2.0"))
+
+	return cmd, svc, game
+}
+
+// TestDoVerify_LockedDrift_PrintsInformationalNote guards the pending-
+// convergence case: DB and the source-verified "effective" version agree
+// (no mismatch), but the locked ref's target ("2.0") differs from what's
+// actually installed ("1.5"). This must print an informational note - not
+// be silently absorbed into the quiet-OK path - and must NOT be counted as
+// an issue.
+func TestDoVerify_LockedDrift_PrintsInformationalNote(t *testing.T) {
+	cmd, svc, game := setupDoVerifyLockDriftTest(t)
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	assert.Contains(t, out, "Mod One — lock pending convergence (installed v1.5, locked v2.0)", "the informational line must name the mod and both versions")
+	assert.Contains(t, out, "lmm profile apply", "the informational line must point at the remedy command")
+	assert.NotContains(t, out, "1 issue(s)", "pending convergence must not be counted as an issue")
+}
+
+// TestDoVerify_LockedDrift_JSONNotCountedAsIssue guards the --json half:
+// issues stays 0 for pending-convergence drift.
+func TestDoVerify_LockedDrift_JSONNotCountedAsIssue(t *testing.T) {
+	cmd, svc, game := setupDoVerifyLockDriftTest(t)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 0, result.Issues, "pending convergence must not be counted as an issue")
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Contains(t, f.Note, "lock pending convergence", "the JSON note must additively carry the pending-convergence detail")
+		}
+	}
+	assert.True(t, found, "expected a mod1 entry in JSON files: %+v", result.Files)
+}
