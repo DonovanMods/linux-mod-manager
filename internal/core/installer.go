@@ -87,21 +87,34 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 // Replace swaps an existing deployment with a new cached version and restores
 // the old files if the replacement fails.
 func (i *Installer) Replace(ctx context.Context, game *domain.Game, oldMod, newMod *domain.Mod, profileName string) error {
-	return i.replaceWithCaches(ctx, game, i.cache, i.cache, oldMod, newMod, profileName)
+	return i.replaceWithCaches(ctx, game, i.cache, i.cache, oldMod, newMod, profileName, nil)
+}
+
+// ReplaceForUpdate is Replace carrying the update path's superseded file IDs:
+// the OLD source file IDs whose FileIDReplacements were actually applied
+// (ApplyUpdate resolves them; see flows.go). They matter only in the
+// degenerate same-version shape - a file-only update whose version string
+// does not change shares ONE version-keyed cache directory between the old
+// and new files, so the plain union replace could never undeploy the
+// superseded file's members (#144 item 4). See supersededOnlyMembers for the
+// provenance rules; on a normal different-version update (distinct cache
+// dirs) this behaves exactly like Replace.
+func (i *Installer) ReplaceForUpdate(ctx context.Context, game *domain.Game, oldMod, newMod *domain.Mod, profileName string, supersededFileIDs []string) error {
+	return i.replaceWithCaches(ctx, game, i.cache, i.cache, oldMod, newMod, profileName, supersededFileIDs)
 }
 
 // ReplaceWithCaches swaps an existing deployment using explicit old and new caches.
 func (i *Installer) ReplaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
-	return i.replaceWithCaches(ctx, game, oldCache, newCache, oldMod, newMod, profileName)
+	return i.replaceWithCaches(ctx, game, oldCache, newCache, oldMod, newMod, profileName, nil)
 }
 
 // ReplaceWithOldCache swaps an existing deployment using an alternate cache
 // snapshot for the old version.
 func (i *Installer) ReplaceWithOldCache(ctx context.Context, game *domain.Game, oldCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
-	return i.replaceWithCaches(ctx, game, oldCache, i.cache, oldMod, newMod, profileName)
+	return i.replaceWithCaches(ctx, game, oldCache, i.cache, oldMod, newMod, profileName, nil)
 }
 
-func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
+func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string, supersededFileIDs []string) error {
 	if !oldCache.Exists(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version) {
 		return fmt.Errorf("old mod not in cache: %s/%s@%s", oldMod.SourceID, oldMod.ID, oldMod.Version)
 	}
@@ -116,6 +129,23 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	newFiles, err := newCache.ListFiles(game.ID, newMod.SourceID, newMod.ID, newMod.Version)
 	if err != nil {
 		return fmt.Errorf("listing new cached files: %w", err)
+	}
+
+	// #144 item 4: in the degenerate same-version shape (old and new resolve
+	// to ONE cache dir, so both listings are the same union), members owned
+	// solely by superseded file IDs are excluded from the NEW side - the
+	// obsolete-file loop below then undeploys them like any other old-only
+	// file, and the deploy/DB loops never touch them. An empty result (no
+	// superseded IDs, distinct dirs, or incomplete provenance) leaves the
+	// historical union behavior byte-for-byte intact.
+	if supersededOnly := supersededOnlyMembers(game.ID, oldCache, newCache, oldMod, newMod, supersededFileIDs, newFiles); len(supersededOnly) > 0 {
+		kept := make([]string, 0, len(newFiles))
+		for _, file := range newFiles {
+			if !supersededOnly[file] {
+				kept = append(kept, file)
+			}
+		}
+		newFiles = kept
 	}
 
 	oldSet := make(map[string]bool, len(oldFiles))
@@ -188,6 +218,84 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	}
 
 	return nil
+}
+
+// supersededOnlyMembers resolves which members of a SHARED old/new cache
+// directory are owned solely by superseded file IDs and must therefore be
+// undeployed by a same-version file-only update (#144 item 4). It returns nil
+// - meaning "fall back to today's union behavior exactly" - unless EVERY
+// condition for positive provenance holds:
+//
+//   - there are superseded IDs and the old and new keys resolve to the same
+//     version directory (the degenerate shape; distinct dirs are already
+//     handled by the obsolete-file loop),
+//   - every completion marker in that directory carries a recorded member
+//     manifest (a legacy bare marker - any pre-manifest cache entry - makes
+//     both what a superseded file contributed and what a survivor still needs
+//     unknowable),
+//   - every superseded ID actually has a marker there,
+//   - every file in the directory listing is attributed by at least one
+//     manifest (unattributed content proves an unmanifested contributor
+//     exists, e.g. an entry populated directly by `lmm import`).
+//
+// The result is union(superseded manifests) minus union(surviving manifests):
+// a member also listed by ANY surviving file stays. The fallback is
+// deliberately silent - pre-manifest caches are the norm for existing
+// installs, and they must not produce a warning storm; they simply keep the
+// historical union behavior. Never guess, never undeploy without positive
+// provenance.
+func supersededOnlyMembers(gameID string, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, supersededFileIDs []string, unionFiles []string) map[string]bool {
+	if len(supersededFileIDs) == 0 {
+		return nil
+	}
+	oldDir := oldCache.ModPath(gameID, oldMod.SourceID, oldMod.ID, oldMod.Version)
+	newDir := newCache.ModPath(gameID, newMod.SourceID, newMod.ID, newMod.Version)
+	if filepath.Clean(oldDir) != filepath.Clean(newDir) {
+		return nil
+	}
+
+	manifests, err := newCache.FileManifests(gameID, newMod.SourceID, newMod.ID, newMod.Version)
+	if err != nil {
+		return nil // unreadable bookkeeping is absent bookkeeping: union fallback
+	}
+	attributed := make(map[string]bool)
+	for _, m := range manifests {
+		if !m.Recorded {
+			return nil
+		}
+		for _, member := range m.Members {
+			attributed[member] = true
+		}
+	}
+	for _, file := range unionFiles {
+		if !attributed[file] {
+			return nil
+		}
+	}
+
+	superseded := make(map[string]bool, len(supersededFileIDs))
+	for _, id := range supersededFileIDs {
+		if _, ok := manifests[id]; !ok {
+			return nil
+		}
+		superseded[id] = true
+	}
+
+	result := make(map[string]bool)
+	for id := range superseded {
+		for _, member := range manifests[id].Members {
+			result[member] = true
+		}
+	}
+	for id, m := range manifests {
+		if superseded[id] {
+			continue
+		}
+		for _, member := range m.Members {
+			delete(result, member)
+		}
+	}
+	return result
 }
 
 func (i *Installer) restoreOldFiles(oldCache *cache.Cache, game *domain.Game, oldMod *domain.Mod, removedOld, replacedOrAdded []string, oldSet map[string]bool) error {
