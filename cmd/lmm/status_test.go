@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -211,6 +212,103 @@ func TestShowGameStatusJSON_NeverDeployed_OmitsLastDeploy(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &raw))
 	_, present := raw["last_deploy"]
 	assert.False(t, present, "never-deployed game must omit last_deploy entirely")
+}
+
+// --- status --json link_method parity with the text twin (issue #155) ---
+//
+// Since PR #151 the text output resolves the profile-effective link method
+// (profile > game > global) while the JSON document's link_method stayed
+// game-level - a deliberate JSON-contract non-change. These tests pin the
+// additive resolution: link_method keeps its game-level meaning, and the new
+// effective_link_method / link_method_source fields carry what the text
+// twin shows.
+
+// TestShowGameStatusJSON_ProfileLinkMethodOverride_TextJSONParity is issue
+// #155's headline failing case: the game explicitly says symlink, the active
+// profile explicitly says copy. The text twin shows "copy (per-profile)";
+// the JSON document must agree via effective_link_method while link_method
+// keeps reporting the game-level symlink.
+func TestShowGameStatusJSON_ProfileLinkMethodOverride_TextJSONParity(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.LinkMethod = domain.LinkSymlink
+	game.LinkMethodExplicit = true
+	require.NoError(t, svc.AddGame(game))
+	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+	setVerifyProfileLinkMethod(t, svc, game.ID, "default", domain.LinkCopy)
+
+	textOut := captureStdout(t, func() error {
+		return showGameStatus(svc, game.ID)
+	})
+	require.Contains(t, textOut, "Link Method: copy (per-profile)", "sanity: the text twin resolves the profile override")
+
+	jsonOut := captureStdout(t, func() error {
+		return showGameStatusJSON(svc, game.ID)
+	})
+
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(jsonOut), &raw))
+	assert.Equal(t, "symlink", raw["link_method"], "link_method keeps its game-level meaning (JSON contract)")
+	assert.Equal(t, "copy", raw["effective_link_method"], "effective_link_method must agree with the text twin")
+	assert.Equal(t, "profile", raw["link_method_source"])
+}
+
+// TestShowGameStatusJSON_LinkMethodSource_GameAndGlobal drives the two
+// non-profile branches of link_method_source: a game-explicit method reports
+// "game", and no override anywhere reports "global" - in both cases
+// effective_link_method equals link_method, so pre-#155 consumers reading
+// link_method saw the right value all along.
+func TestShowGameStatusJSON_LinkMethodSource_GameAndGlobal(t *testing.T) {
+	tests := []struct {
+		name         string
+		gameExplicit bool
+		wantMethod   string
+		wantSource   string
+	}{
+		{name: "game-explicit hardlink", gameExplicit: true, wantMethod: "hardlink", wantSource: "game"},
+		{name: "global default symlink", gameExplicit: false, wantMethod: "symlink", wantSource: "global"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, game := setupDoDeployTest(t)
+			if tt.gameExplicit {
+				game.LinkMethod = domain.LinkHardlink
+				game.LinkMethodExplicit = true
+			}
+			require.NoError(t, svc.AddGame(game))
+			seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
+
+			out := captureStdout(t, func() error {
+				return showGameStatusJSON(svc, game.ID)
+			})
+
+			var raw map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(out), &raw))
+			assert.Equal(t, tt.wantMethod, raw["link_method"])
+			assert.Equal(t, tt.wantMethod, raw["effective_link_method"])
+			assert.Equal(t, tt.wantSource, raw["link_method_source"])
+		})
+	}
+}
+
+// TestShowGameStatusJSON_NoProfiles_LinkMethodSourceStillPresent pins the
+// no-active-profile edge: with no profiles at all, the resolution degrades
+// to the game level (mirroring GetEffectiveLinkMethod's missing-profile
+// behavior) and the additive fields are still present - not omitted - so
+// consumers can rely on them unconditionally.
+func TestShowGameStatusJSON_NoProfiles_LinkMethodSourceStillPresent(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	game.LinkMethod = domain.LinkCopy
+	game.LinkMethodExplicit = true
+	require.NoError(t, svc.AddGame(game))
+
+	out := captureStdout(t, func() error {
+		return showGameStatusJSON(svc, game.ID)
+	})
+
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(out), &raw))
+	assert.Equal(t, "copy", raw["effective_link_method"])
+	assert.Equal(t, "game", raw["link_method_source"])
 }
 
 // TestShowGameStatusJSON_AfterDeploy_IncludesLastDeploy pins that a real

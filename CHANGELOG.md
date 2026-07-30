@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `lmm status -g <game> --json` gains `effective_link_method` and `link_method_source` (`profile`/`game`/`global`): the JSON twin of the text output's effective Link Method line (profile > game > global, PR #151), which the JSON document previously had no way to express — a profile-level `link_method` override made the two outputs disagree. The existing `link_method` key deliberately keeps its game-level meaning (game override or global default) for contract stability. Additive JSON contract change — makes the release containing it MINOR (#155)
+
 ### Changed
 
 - Development now flows through a `develop` integration branch (git-flow-lite): story PRs target `develop`, versions are bumped once per release batch, and `main` holds only released, tagged states. CI's test workflow additionally runs on pushes to `develop`
