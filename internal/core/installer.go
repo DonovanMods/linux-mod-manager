@@ -241,11 +241,14 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 // (#144 item 4). It returns ok=false - meaning "fall back to today's union
 // behavior exactly" - unless EVERY condition for positive provenance holds:
 //
-//   - both ID sets are known, at least one old ID is departing (present in
-//     oldFileIDs but not newFileIDs - the update actually supersedes
-//     something), and the old and new keys resolve to the same version
-//     directory (distinct dirs are already handled by the obsolete-file
-//     loop),
+//   - both ID sets are known, the transition actually CHANGES the installed
+//     ID set (set(oldFileIDs) != set(newFileIDs) - a symmetric predicate, so
+//     the forward call and its swapped-transition compensation call always
+//     answer the same way; asking only "does an old ID depart?" diverges on
+//     pure-removal/pure-addition transitions and made a compensated failure
+//     union-deploy a stale generation's never-deployed member), and the old
+//     and new keys resolve to the same version directory (distinct dirs are
+//     already handled by the obsolete-file loop),
 //   - every ID in oldFileIDs and newFileIDs has a completion marker with a
 //     RECORDED member manifest (a legacy bare marker - any pre-manifest
 //     cache entry - makes what that file contributed, or what it still
@@ -279,14 +282,20 @@ func resolveSharedDirUpdate(gameID string, oldCache, newCache *cache.Cache, oldM
 	for _, id := range newFileIDs {
 		newIDs[id] = true
 	}
-	departing := false
+	oldIDs := make(map[string]bool, len(oldFileIDs))
 	for _, id := range oldFileIDs {
-		if !newIDs[id] {
-			departing = true
-			break
+		oldIDs[id] = true
+	}
+	sameIDSet := len(oldIDs) == len(newIDs)
+	if sameIDSet {
+		for id := range oldIDs {
+			if !newIDs[id] {
+				sameIDSet = false
+				break
+			}
 		}
 	}
-	if !departing {
+	if sameIDSet {
 		return nil, nil, false
 	}
 	oldDir := oldCache.ModPath(gameID, oldMod.SourceID, oldMod.ID, oldMod.Version)

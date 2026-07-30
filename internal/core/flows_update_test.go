@@ -1587,6 +1587,74 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_ChainedUpdatesStayUndeployed(t *t
 	assert.Equal(t, []string{"fileC"}, updated.FileIDs)
 }
 
+// TestApplyUpdate_SameVersionFileOnlyUpdate_PureRemovalCompensationStaysNarrow:
+// the shared-dir gate must be SYMMETRIC - "the transition changes the
+// installed ID set" - not "some old ID departs". On a pure-removal update
+// (old={A,B} -> new={B}: the author merged two files into one) the forward
+// replace narrows, but the compensation call sees the swapped transition
+// {B} -> {A,B}, where NO old ID departs - an asymmetric gate falls back to
+// union there and deploys a stale generation's member that was never
+// deployed before the update. After a compensated failure the game dir must
+// hold exactly the pre-update deployment: a.esp and b.esp, never s.esp.
+func TestApplyUpdate_SameVersionFileOnlyUpdate_PureRemovalCompensationStaysNarrow(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"fileA", "fileB"},
+		map[string][]byte{"mod1-fileA.esp": []byte("A"), "mod1-fileB.esp": []byte("B")})
+	seedSameVersionManifest(t, svc, game, "src", "mod1", "1.0", "fileA", []string{"mod1-fileA.esp"})
+	seedSameVersionManifest(t, svc, game, "src", "mod1", "1.0", "fileB", []string{"mod1-fileB.esp"})
+	// A stale, departed generation: its member sits in the shared dir with
+	// recorded provenance but was NOT deployed before the update.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store("g1", "src", "mod1", "1.0", "mod1-fileS.esp", []byte("S")))
+	seedSameVersionManifest(t, svc, game, "src", "mod1", "1.0", "fileS", []string{"mod1-fileS.esp"})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "fileA", Name: "Part A", FileName: "mod1-fileA.esp", Version: "1.0", Category: "MAIN"},
+			{ID: "fileB", Name: "Part B", FileName: "mod1-fileB.esp", Version: "1.0", IsPrimary: true, Category: "MAIN"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	mock.AddDownload("fileB", []byte("B-content"))
+
+	// Force the profile upsert - the LAST write - to fail.
+	profilePath := filepath.Join(configDir, "games", "g1", "profiles", "default.yaml")
+	require.NoError(t, os.Chmod(profilePath, 0444))
+	t.Cleanup(func() { _ = os.Chmod(profilePath, 0644) })
+
+	// fileA was merged into fileB: a pure-removal transition {A,B} -> {B}.
+	upd := domain.Update{
+		InstalledMod:       *old,
+		NewVersion:         "1.0",
+		FileIDReplacements: map[string]string{"fileA": "fileB"},
+	}
+	_, err = svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "updating profile")
+
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	assert.NoError(t, statErr, "the removed part must be restored by the compensation")
+	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	assert.NoError(t, statErr, "the retained part must stay deployed")
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileS.esp"))
+	assert.True(t, os.IsNotExist(statErr),
+		"the reversed compensation must narrow too - a stale generation's member never deployed pre-update must not appear")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"fileA", "fileB"}, updated.FileIDs, "RollbackModVersion must have restored the record")
+}
+
 // TestApplyUpdate_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion is
 // the hard backward-compat rule for pre-manifest cache entries: the old
 // file's provenance is unrecorded (seedUpdatableMod writes no markers - the

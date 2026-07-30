@@ -803,6 +803,44 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_StaleMarkerIsNotASurvivor(t *te
 		"the stale generation's member must stay undeployed - its marker is not a survivor")
 }
 
+// TestInstaller_ReplaceForUpdate_SameCacheDir_PureAdditionNarrowsToo pins the
+// symmetric gate on the forward direction: a transition that only ADDS an ID
+// (old={A} -> new={A,B}) still changes the installed ID set, so the deploy
+// set narrows to the new IDs' members - a stale departed generation's member
+// (s.esp, recorded but not deployed) must not ride along in a union deploy.
+// This is the mirror of the pure-removal compensation shape: the same
+// predicate must answer both directions identically.
+func TestInstaller_ReplaceForUpdate_SameCacheDir_PureAdditionNarrowsToo(t *testing.T) {
+	gameDir := t.TempDir()
+	modCache := cache.New(t.TempDir())
+	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
+	versionDir := modCache.ModPath("g", "src", "mod", "1.0")
+
+	// Stale departed generation: recorded, on disk, NOT deployed.
+	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "s.esp", []byte("s")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileS", []string{"s.esp"}))
+	// Currently installed generation A, deployed.
+	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "a.esp", []byte("a")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileA", []string{"a.esp"}))
+	lnk := linker.New(domain.LinkSymlink)
+	require.NoError(t, lnk.Deploy(modCache.GetFilePath("g", "src", "mod", "1.0", "a.esp"), filepath.Join(gameDir, "a.esp")))
+	// The update adds B alongside A.
+	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "b.esp", []byte("b")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileB", []string{"b.esp"}))
+
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
+	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}, []string{"fileA", "fileB"}))
+
+	_, err := os.Lstat(filepath.Join(gameDir, "a.esp"))
+	assert.NoError(t, err, "the retained ID's member must stay deployed")
+	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.NoError(t, err, "the added ID's member must be deployed")
+	_, err = os.Lstat(filepath.Join(gameDir, "s.esp"))
+	assert.True(t, os.IsNotExist(err),
+		"a pure-addition transition must narrow like any other set change - the stale member must not be union-deployed")
+}
+
 // TestInstaller_ReplaceForUpdate_DistinctCacheDirs_MatchesReplace: on a normal
 // different-version update the old and new cache keys differ, the existing
 // obsolete-file loop already handles supersession, and the file-ID transition
