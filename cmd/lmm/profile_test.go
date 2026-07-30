@@ -567,6 +567,58 @@ func TestSelectFilesToDownload_VersionAuthoritative(t *testing.T) {
 	assert.Contains(t, err.Error(), "run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version")
 }
 
+// TestSelectFilesToDownload_CategoryPriorityTieBreak covers #144 item 5 for
+// the cmd twin: when the recorded version offers no primary file and no
+// stored ID narrows the choice, the final fallback used to be matches[0] -
+// upstream listing order - ignoring fileCategoryPriority entirely. The
+// category priority (MAIN > OPTIONAL > UPDATE > MISCELLANEOUS > unknown >
+// archived) now breaks that tie, stable: first-listed wins among equal
+// priorities, so category-less listings (custom sources) behave exactly as
+// before.
+//
+// PARITY: internal/core/flows_selection_test.go's
+// TestSelectVersionedDeployFiles_CategoryPriorityTieBreak encodes this SAME
+// fixture table and expected picks through selectVersionedDeployFiles - this
+// tail is the hand-mirrored twin of core's pickVersionMatch (internal/core
+// cannot import cmd/lmm), so the two tests are the drift guard for the
+// twins. Change both together, or not at all.
+func TestSelectFilesToDownload_CategoryPriorityTieBreak(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "misc20", Version: "2.0", Category: "MISCELLANEOUS"},
+		{ID: "upd20", Version: "2.0", Category: "UPDATE"},
+		{ID: "opt20", Version: "2.0", Category: "OPTIONAL"},
+		{ID: "optA30", Version: "3.0", Category: "OPTIONAL"},
+		{ID: "optB30", Version: "3.0", Category: "OPTIONAL"},
+		{ID: "plain40a", Version: "4.0"},
+		{ID: "plain40b", Version: "4.0"},
+		{ID: "beta50", Version: "5.0", Category: "beta"},
+		{ID: "upd50", Version: "5.0", Category: "update"},
+		{ID: "opt60", Version: "6.0", Category: "OPTIONAL"},
+		{ID: "miscPrim60", Version: "6.0", Category: "MISCELLANEOUS", IsPrimary: true},
+	}
+
+	cases := []struct {
+		name    string
+		version string
+		wantID  string
+	}{
+		{"category priority beats listing order", "2.0", "opt20"},
+		{"equal categories keep first-listed", "3.0", "optA30"},
+		{"category-less files keep first-listed", "4.0", "plain40a"},
+		{"known category beats unknown, case-insensitively", "5.0", "upd50"},
+		{"a primary file still outranks category priority", "6.0", "miscPrim60"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := selectFilesToDownload(files, nil, tc.version)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.Equal(t, tc.wantID, got[0].ID)
+		})
+	}
+}
+
 // TestDoProfileApply_StampsSelectedFileVersion guards issue #94 for
 // doProfileApply's "install missing mods" save site: when a mod referenced
 // by the profile (but not yet installed) has a primary file whose version

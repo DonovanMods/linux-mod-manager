@@ -1054,9 +1054,13 @@ func selectVersionedDeployFiles(files []domain.DownloadableFile, version string,
 // resolved - down to the one(s) to actually use: the stored-ID subset when
 // any stored ID is among them (so a mod installed from an OPTIONAL/extra
 // file of that version keeps that file rather than being silently moved to
-// the main one), else the version's primary file, else its first file.
-// matches must be non-empty. idSet may be nil (reads as all-false), which
-// simply skips the stored-ID preference.
+// the main one), else the version's primary file, else its best file by
+// installFileCategoryPriority (#144 item 5 - a version whose files are e.g.
+// {MISCELLANEOUS, OPTIONAL} with no primary picks the OPTIONAL, not
+// whichever the source happened to list first; ties keep first-listed, so
+// category-less listings behave exactly as before). matches must be
+// non-empty. idSet may be nil (reads as all-false), which simply skips the
+// stored-ID preference.
 //
 // Shared by selectVersionedDeployFiles (#96) and selectUpdateDeployFiles
 // (#143) specifically so the two cannot drift: both answer the same
@@ -1078,7 +1082,13 @@ func pickVersionMatch(matches []*domain.DownloadableFile, idSet map[string]bool)
 			return []*domain.DownloadableFile{m}
 		}
 	}
-	return []*domain.DownloadableFile{matches[0]}
+	best := 0
+	for i := 1; i < len(matches); i++ {
+		if installFileCategoryPriority(matches[i].Category) < installFileCategoryPriority(matches[best].Category) {
+			best = i
+		}
+	}
+	return []*domain.DownloadableFile{matches[best]}
 }
 
 // selectUpdateDeployFiles picks the file(s) ApplyUpdate should download to

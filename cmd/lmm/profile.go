@@ -1299,10 +1299,12 @@ func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []stri
 		}
 		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", core.ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
 	}
-	// This "stored subset, else primary, else first" tail is the twin of
-	// internal/core/flows.go's pickVersionMatch, shared there by
-	// selectVersionedDeployFiles (#96) and selectUpdateDeployFiles (#143) -
-	// mirror any change to it here, and vice versa.
+	// This "stored subset, else primary, else best category priority, else
+	// first" tail is the twin of internal/core/flows.go's pickVersionMatch,
+	// shared there by selectVersionedDeployFiles (#96) and
+	// selectUpdateDeployFiles (#143) - mirror any change to it here, and vice
+	// versa (drift guard: TestSelectFilesToDownload_CategoryPriorityTieBreak
+	// and its core-side parity test).
 	if len(storedFileIDs) > 0 {
 		var stored []*domain.DownloadableFile
 		for _, m := range matches {
@@ -1319,7 +1321,13 @@ func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []stri
 			return []*domain.DownloadableFile{m}, nil
 		}
 	}
-	return []*domain.DownloadableFile{matches[0]}, nil
+	best := 0
+	for i := 1; i < len(matches); i++ {
+		if fileCategoryPriority(matches[i].Category) < fileCategoryPriority(matches[best].Category) {
+			best = i
+		}
+	}
+	return []*domain.DownloadableFile{matches[best]}, nil
 }
 
 // selectFilesToDownloadLegacy is selectFilesToDownload's pre-#96 behavior,
