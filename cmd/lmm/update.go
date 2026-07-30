@@ -43,9 +43,10 @@ type updateJSONOutput struct {
 // mods CheckUpdates never even queried a source for. Locked mods do NOT
 // belong here (#97): they ARE checked ("locked but informed") - a locked-and-
 // skippable-at-apply-time mod is reported instead via the bulk table's
-// "[locked@<version>]" POLICY marker and the CLI's own auto/--all locked-skip
-// line (text only; see applySingleUpdate's singleUpdateJSON.Reason for the
-// single-mod --json equivalent).
+// "[locked@<version>]" POLICY marker, the CLI's own auto/--all locked-skip
+// line, and updateModJSON.Locked on its updates[] entry (#143; see
+// applySingleUpdate's singleUpdateJSON.Reason for the single-mod --json
+// equivalent).
 type updateSkippedJSON struct {
 	Pinned int `json:"pinned"`
 	Local  int `json:"local"`
@@ -57,6 +58,11 @@ type updateModJSON struct {
 	Current      string `json:"current_version"`
 	Available    string `json:"available_version"`
 	UpdatePolicy string `json:"update_policy"`
+	// Locked is the --json sibling of the bulk table's "[locked@<version>]"
+	// POLICY marker (#143): true means applying this update is refused until
+	// the lock moves or clears, even under auto policy or --all. Omitted
+	// (not false) when unlocked, so pre-#143 documents are unchanged.
+	Locked bool `json:"locked,omitempty"`
 }
 
 // singleUpdateJSON is the one-document --json result of `lmm update <mod-id>`
@@ -113,7 +119,9 @@ exits non-zero rather than silently claiming success.
   - Bulk check (no mod ID): {game_id, profile, updates: [...], skipped:
     {pinned, local}, error?}. error is present when the check itself
     failed partway through; updates/skipped still reflect whatever was
-    learned first.
+    learned first. A locked mod's updates[] entry carries "locked": true
+    (omitted when unlocked): the update is reported but will not be
+    applied until the lock moves or clears.
   - Single mod (a mod ID given) or 'update rollback': {mod_id, name,
     from_version, to_version, changelog, status, reason}. status is one
     of "updated", "up_to_date", "skipped", "available" (--dry-run), or
@@ -346,6 +354,20 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return finish()
 	}
 
+	// #97: locked refs get a POLICY marker (or, under --json, "locked": true)
+	// and are excluded from auto/--all application below (loaded once, keyed
+	// by domain.ModKey - locked mods ARE checked, so they show up in updates
+	// like any other row; only applying is refused). A precomputed map, not
+	// per-row FindRef, since this loops over every update below.
+	lockedRefs := map[string]string{}
+	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
+		for _, ref := range prof.Mods {
+			if ref.Locked {
+				lockedRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref.Version
+			}
+		}
+	}
+
 	if jsonOutput {
 		skips := core.CountUpdateSkips(installed)
 		out := updateJSONOutput{
@@ -356,12 +378,14 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			out.Error = checkErr.Error()
 		}
 		for i, u := range updates {
+			_, isLocked := lockedRefs[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)]
 			out.Updates[i] = updateModJSON{
 				ModID:        u.InstalledMod.ID,
 				Name:         u.InstalledMod.Name,
 				Current:      u.InstalledMod.Version,
 				Available:    u.NewVersion,
 				UpdatePolicy: policyToString(u.InstalledMod.UpdatePolicy),
+				Locked:       isLocked,
 			}
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -379,20 +403,6 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 	if _, err := fmt.Fprintf(w, "---\t-------\t---------\t------\n"); err != nil {
 		return fmt.Errorf("writing separator: %w", err)
-	}
-
-	// #97: locked refs get a POLICY marker and are excluded from auto/--all
-	// application below (loaded once, keyed by domain.ModKey - locked mods
-	// ARE checked, so they show up in updates like any other row; only
-	// applying is refused). A precomputed map, not per-row FindRef, since
-	// this loops over every update below.
-	lockedRefs := map[string]string{}
-	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
-		for _, ref := range prof.Mods {
-			if ref.Locked {
-				lockedRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref.Version
-			}
-		}
 	}
 
 	var autoUpdates []domain.Update

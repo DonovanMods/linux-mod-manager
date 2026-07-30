@@ -194,6 +194,46 @@ func TestDoUpdate_TableMarksLockedAndSkipsAutoApply(t *testing.T) {
 	assert.Equal(t, "2.0", updatedB.Version, "unlocked auto mod must apply as before")
 }
 
+// TestDoUpdate_BulkJSON_MarksLockedEntries is the --json sibling of the bulk
+// table's "[locked@<version>]" marker (#143 polish): a locked mod's updates[]
+// entry must carry "locked": true so a JSON consumer can tell that a locked
+// auto-policy mod will not be applied, and an unlocked entry alongside it must
+// stay false (and, being omitempty, absent from the raw document).
+func TestDoUpdate_BulkJSON_MarksLockedEntries(t *testing.T) {
+	withJSONOutput(t)
+	svc, game, src := setupDoUpdateTest(t)
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
+	require.NoError(t, svc.SetModUpdatePolicy("test-src", "modA", "g1", "default", domain.UpdateAuto))
+	setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
+	src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
+	src.AddDownload("a-new", []byte("new"))
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "modB", "Mod B", "1.0", []string{"b-old"}, map[string][]byte{"b-old.esp": []byte("old")})
+	src.AddMod(&domain.Mod{ID: "modB", SourceID: "test-src", Name: "Mod B", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "b-new", FileName: "b-new.esp", IsPrimary: true}})
+	src.AddDownload("b-new", []byte("new"))
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	var doc updateJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	require.Len(t, doc.Updates, 2)
+
+	byID := map[string]updateModJSON{}
+	for _, u := range doc.Updates {
+		byID[u.ModID] = u
+	}
+	require.Contains(t, byID, "modA")
+	require.Contains(t, byID, "modB")
+	assert.True(t, byID["modA"].Locked, "locked mod's entry must carry locked: true")
+	assert.False(t, byID["modB"].Locked, "unlocked mod's entry must stay unmarked")
+	assert.NotContains(t, out, `"locked": false`, "locked is omitempty: absent, not false, on unlocked entries")
+}
+
 // TestDoUpdate_NoAutoUpdates_StillReportsLockedSkip covers the "no-auto
 // case too" bullet: when the ONLY auto-policy candidate is locked,
 // autoUpdates ends up empty (so "Applying N auto-update(s)..." never
