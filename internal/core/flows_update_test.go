@@ -800,3 +800,100 @@ func TestApplyUpdate_UnlockedRefStillUpdates(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version)
 }
+
+// TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion is the
+// PR #142 smoke-report regression test (root cause is pre-existing in
+// v1.25.0, not introduced by #97): a source that keeps its HISTORICAL file
+// entries listed alongside the new ones - NexusMods routinely does, and it
+// is the norm when an author "rebuilds the mod files" and uploads brand-new
+// entries with no FileUpdates chain linking old -> new, so
+// upd.FileIDReplacements is empty.
+//
+// ApplyUpdate's file selection is anchored on the mod's STORED file IDs.
+// Those IDs are still present in the new listing, so the version-blind
+// selectDeployFiles happily re-selects the ALREADY-INSTALLED 1.0.1 file:
+// the "update" re-downloads and re-deploys 1.0.1, EffectiveInstalledVersion
+// stamps 1.0.1 back onto the row (previous_version == version, the DB
+// signature the user's machine showed), no new cache directory is ever
+// created, and the very next update check re-finds the identical update -
+// the user's infinite "u -> confirm -> nothing happens" loop, with no error
+// surfaced anywhere.
+func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	// Installed at 1.0.1, recorded against that version's file ID ("101").
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0.1", []string{"101"}, map[string][]byte{"mod1-101.esp": []byte("v101")})
+
+	// The source lists every version's file, oldest first - the historical
+	// entries the installed ID still resolves against.
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "100", Name: "Main 1.0.0", FileName: "mod1-100.esp", Version: "1.0.0", Category: "MAIN"},
+			{ID: "101", Name: "Main 1.0.1", FileName: "mod1-101.esp", Version: "1.0.1", Category: "MAIN"},
+			{ID: "102", Name: "Main 1.0.2", FileName: "mod1-102.esp", Version: "1.0.2", Category: "MAIN"},
+			{ID: "103", Name: "Main 1.0.3", FileName: "mod1-103.esp", Version: "1.0.3", IsPrimary: true, Category: "MAIN"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0.3", GameID: "g1"})
+	// Every listed file is downloadable, exactly like upstream - so a
+	// wrong selection fails SILENTLY (the smoke report's "no error I
+	// noticed") instead of 404-ing.
+	mock.AddDownload("101", []byte("v101"))
+	mock.AddDownload("103", []byte("v103"))
+
+	upd := domain.Update{InstalledMod: *old, NewVersion: "1.0.3"}
+	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.3", updated.Version, "the update must advance the recorded version, not re-stamp the installed one")
+	assert.Equal(t, []string{"103"}, updated.FileIDs, "the NEW version's file must be selected, not the still-listed old one")
+	assert.Equal(t, "1.0.1", updated.PreviousVersion, "previous_version must be the version actually superseded")
+	assert.NotEqual(t, updated.Version, updated.PreviousVersion,
+		"previous_version == version is the smoke report's DB signature for a no-op 'update'")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.Exists("g1", "src", "mod1", "1.0.3"), "the new version must be cached under its own key")
+
+	newContent, err := os.ReadFile(filepath.Join(gameDir, "mod1-103.esp"))
+	require.NoError(t, err, "the new version's file must be deployed")
+	assert.Equal(t, "v103", string(newContent))
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get("g1", "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "1.0.3", profile.Mods[0].Version, "the profile ref must advance too")
+
+	// The loop actually closes: a fresh check must now find nothing (the
+	// user's "press u again, same three updates" symptom).
+	again, err := svc.NewUpdater().CheckUpdates(context.Background(), game, []domain.InstalledMod{*updated})
+	require.NoError(t, err)
+	assert.Empty(t, again, "a re-check after a successful update must find no further update")
+
+	// And `lmm verify` agrees: the version record matches what the STORED
+	// file IDs actually are, so `--fix` has nothing to repair downward.
+	// (Before this fix, the record and the stored IDs disagreed, which is
+	// what made verify --fix knock these very mods back down - see
+	// cmd/lmm/verify.go's EffectiveInstalledVersion comparison.)
+	sourceFiles, err := svc.GetModFiles(context.Background(), "src", &updated.Mod)
+	require.NoError(t, err)
+	var matched []*domain.DownloadableFile
+	for _, id := range updated.FileIDs {
+		for i := range sourceFiles {
+			if sourceFiles[i].ID == id {
+				matched = append(matched, &sourceFiles[i])
+				break
+			}
+		}
+	}
+	require.NotEmpty(t, matched, "the recorded file IDs must still resolve upstream")
+	assert.Equal(t, updated.Version, domain.EffectiveInstalledVersion(updated.Version, matched),
+		"verify must see no VERSION MISMATCH, so --fix cannot repair the record back downward")
+}

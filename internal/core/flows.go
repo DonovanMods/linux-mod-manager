@@ -1037,23 +1037,85 @@ func selectVersionedDeployFiles(files []domain.DownloadableFile, version string,
 		}
 		return nil, false, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
 	}
-	if len(storedFileIDs) > 0 {
-		var stored []*domain.DownloadableFile
-		for _, m := range matches {
-			if idSet[m.ID] {
-				stored = append(stored, m)
-			}
+	return pickVersionMatch(matches, idSet), false, nil
+}
+
+// pickVersionMatch narrows matches - every file carrying the version being
+// resolved - down to the one(s) to actually use: the stored-ID subset when
+// any stored ID is among them (so a mod installed from an OPTIONAL/extra
+// file of that version keeps that file rather than being silently moved to
+// the main one), else the version's primary file, else its first file.
+// matches must be non-empty. idSet may be nil (reads as all-false), which
+// simply skips the stored-ID preference.
+//
+// Shared by selectVersionedDeployFiles (#96) and selectUpdateDeployFiles
+// (#143) specifically so the two cannot drift: both answer the same
+// question - "given the files for THIS version, which ones does this mod
+// use" - and only differ in how they decide the version and what to do when
+// it isn't offered at all.
+func pickVersionMatch(matches []*domain.DownloadableFile, idSet map[string]bool) []*domain.DownloadableFile {
+	var stored []*domain.DownloadableFile
+	for _, m := range matches {
+		if idSet[m.ID] {
+			stored = append(stored, m)
 		}
-		if len(stored) > 0 {
-			return stored, false, nil
-		}
+	}
+	if len(stored) > 0 {
+		return stored
 	}
 	for _, m := range matches {
 		if m.IsPrimary {
-			return []*domain.DownloadableFile{m}, false, nil
+			return []*domain.DownloadableFile{m}
 		}
 	}
-	return []*domain.DownloadableFile{matches[0]}, false, nil
+	return []*domain.DownloadableFile{matches[0]}
+}
+
+// selectUpdateDeployFiles picks the file(s) ApplyUpdate should download to
+// reach targetVersion (#143). The update path's target is a version the mod
+// is NOT currently on, so - unlike every other flow - its stored file IDs
+// describe the version being moved AWAY from and cannot be the primary
+// anchor.
+//
+// The bug this exists to fix: ApplyUpdate resolved files with the
+// version-blind selectDeployFiles, whose stored-IDs-win rule matched the
+// OLD version's file whenever the source still lists its historical file
+// entries (NexusMods routinely does) and the update carried no
+// FileIDReplacements chain to remap them (the norm when an author rebuilds
+// and re-uploads a mod's files rather than superseding them in place). The
+// "update" then re-downloaded and re-deployed the already-installed
+// version, EffectiveInstalledVersion honestly stamped that same version
+// back onto the row, and the next check re-found the identical update -
+// forever, with no error anywhere. See
+// TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion.
+//
+// So targetVersion wins whenever the listing actually offers it. When it
+// does not - a version-less file list, an empty targetVersion, or the
+// routine NexusMods case where the mod-level version ("2.0") and its file's
+// own version ("2.0b") simply differ (upd.NewVersion is advisory, not a
+// guarantee - see the Versions capability comment in internal/source) -
+// this falls through to selectDeployFiles with allowFallback=true,
+// preserving #95's deliberate update-path fallback verbatim.
+func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion string, storedFileIDs []string) ([]*domain.DownloadableFile, bool, error) {
+	if targetVersion != "" {
+		var matches []*domain.DownloadableFile
+		for i := range files {
+			if files[i].Version == targetVersion {
+				matches = append(matches, &files[i])
+			}
+		}
+		if len(matches) > 0 {
+			var idSet map[string]bool
+			if len(storedFileIDs) > 0 {
+				idSet = make(map[string]bool, len(storedFileIDs))
+				for _, id := range storedFileIDs {
+					idSet[id] = true
+				}
+			}
+			return pickVersionMatch(matches, idSet), false, nil
+		}
+	}
+	return selectDeployFiles(files, storedFileIDs, true)
 }
 
 // selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
@@ -3394,9 +3456,12 @@ func lockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModRe
 // FileIDReplacements resolution mirrors applyUpdate exactly: each of the
 // installed mod's own FileIDs is looked up in upd.FileIDReplacements; a hit
 // substitutes the new (superseding) file ID, a miss retains the ORIGINAL id
-// verbatim (never silently dropped) - selectDeployFiles' own primary-file
-// fallback only kicks in afterward, if NONE of the resulting IDs are found
-// among the new version's available files at all.
+// verbatim (never silently dropped). Those IDs are then handed to
+// selectUpdateDeployFiles, for which they are only a tie-break WITHIN
+// upd.NewVersion's own files - see that function's doc comment (#143) for
+// why the update path, alone among the flows, cannot let stored IDs
+// outrank the target version, and for when its selectDeployFiles
+// primary-file fallback (#95) still applies.
 //
 // A download failure returns immediately - before any hook runs, before
 // Replace, before any DB/profile write - so the old version is left
@@ -3474,7 +3539,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 			}
 		}
 	}
-	filesToDownload, _, err := selectDeployFiles(files, effectiveFileIDs, true)
+	filesToDownload, _, err := selectUpdateDeployFiles(files, newVersion, effectiveFileIDs)
 	if err != nil {
 		return result, fmt.Errorf("selecting files to download: %w", err)
 	}

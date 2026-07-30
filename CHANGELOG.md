@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `lmm update` (and the TUI's update-apply) no longer re-installs the version a mod is already on when the source still lists that version's file entries alongside the new ones and offers no file-supersede mapping — common on NexusMods when an author uploads rebuilt files rather than replacing them in place. File selection now resolves against the update's target version, with the mod's stored file IDs acting only as a tie-break among that version's files; sources that report no per-file versions, or whose file version legitimately differs from the mod-level version, keep the existing primary-file fallback. Previously the update re-downloaded and re-deployed the installed version, recorded that same version back onto the row (leaving `previous_version` equal to `version`), and the next check re-reported the identical update — repeating indefinitely with no error shown
+
 ## [1.26.0] - 2026-07-29
 
 ### Added
