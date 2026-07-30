@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.25.0" "User Commands"
+.TH "LMM" "1" "Jul 2026" "lmm 1.26.0" "User Commands"
 
 .SH NAME
 lmm-update - Check for or apply mod updates
@@ -36,8 +36,8 @@ exits non-zero rather than silently claiming success.
   - Single mod (a mod ID given) or 'update rollback': {mod_id, name,
     from_version, to_version, changelog, status, reason}. status is one
     of "updated", "up_to_date", "skipped", "available" (--dry-run), or
-    "rolled_back"; reason is set only when status is "skipped" ("pinned"
-    or "local").
+    "rolled_back"; reason is set only when status is "skipped" ("pinned",
+    "local", or "locked").
 
 .PP
 Examples:

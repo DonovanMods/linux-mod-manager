@@ -67,6 +67,13 @@ const (
 	// same-game import - see that field's own doc comment) dispatches a
 	// deferred "switch to it now?" offer (importAppliedMsg, mutations.go).
 	actionImport
+	// actionSetLock and actionUnlock are Task 7's Installed-Mods lock/unlock
+	// action kinds (#97, see mutations.go's editSelectedModLock/
+	// resolveLockChosen/resolveUnlockChosen). Neither needs an actionDoneMsg
+	// branch of its own (app.go) - the default status+refresh path already
+	// covers both, exactly like actionSetPolicy above.
+	actionSetLock
+	actionUnlock
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation

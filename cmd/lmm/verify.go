@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -95,15 +96,30 @@ alone instead, with a note naming it and suggesting a manual
 never fixable automatically since there is no matching upstream file to
 compare against - reinstall the mod instead.
 
+A locked mod's VERSION MISMATCH is still reported and counted the same as
+any other (verify stays honest about state), but --fix refuses to repair
+it - rewriting a locked record would silently move what the lock means
+instead of fixing anything. The refusal names the mod and the lock's
+target version, and points at the remedy: 'lmm mod lock' to move the
+lock, or 'lmm mod unlock' to release it; in --json the row keeps
+"version_mismatch" and gains note "locked". Separately, a locked mod whose
+recorded version hasn't yet caught up to the lock's target (pending a
+"lmm profile apply", not corruption) prints its own "~ NAME - lock pending
+convergence" informational line instead of being silently folded into the
+OK case - this is never counted in issues or warnings.
+
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
 "version_unverifiable"; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
-redownload failure's reason, or a file-count-check lookup failure - and is
-omitted otherwise. issues counts MISSING files and VERSION MISMATCH rows
-(a successful --fix repair of either decrements it back out); warnings
-counts everything else that isn't OK.
+redownload failure's reason, a file-count-check lookup failure, a --fix
+refusal on a locked record ("locked"), or a locked record's pending
+convergence detail - and is omitted otherwise. issues counts MISSING files
+and VERSION MISMATCH rows (a successful --fix repair of either decrements
+it back out; a locked VERSION MISMATCH stays counted since --fix refuses
+it); warnings counts everything else that isn't OK. Lock-pending-
+convergence rows are informational only and count toward neither.
 
 Examples:
   lmm verify --game skyrim-se           # Verify all mods
@@ -254,6 +270,16 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	// One entry per installed mod, FileID left empty (there's no single
 	// file at fault - the row's version metadata as a whole is what's
 	// wrong).
+	// #97 (Task 8): load the profile once, up front, so the per-mod loop
+	// below can look up each ref's lock state (Profile.FindRef) without
+	// reloading the profile per mod. A missing/unreadable profile is
+	// treated as unlocked - same tolerant precedent as ApplyUpdate's core
+	// gate (internal/core/flows.go) and applySingleUpdate (cmd/lmm/update.go):
+	// a lock cannot exist in a profile that can't be loaded, so FindRef's
+	// nil-receiver-safe behavior on a nil *domain.Profile does the right
+	// thing here without an extra guard.
+	prof, _ := config.LoadProfile(svc.ConfigDir(), game.ID, profile)
+
 	ctx := cmd.Context()
 	installedMods, err := svc.GetInstalledMods(game.ID, profile)
 	if err != nil {
@@ -270,6 +296,8 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		if mod.SourceID == domain.SourceLocal || mod.ManualDownload || len(mod.FileIDs) == 0 {
 			continue
 		}
+
+		ref := prof.FindRef(mod.SourceID, mod.ID)
 
 		sourceFiles, err := svc.GetModFiles(ctx, mod.SourceID, sourceMappedMod(game, &mod.Mod))
 		if err != nil {
@@ -325,6 +353,35 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			}
 			issues++
 			if verifyFix && mod.SourceID != domain.SourceLocal {
+				// #97 (Task 8): a locked ref's Version is the lock's
+				// TARGET, not a repairable mistake - rewriting it here
+				// would silently move what the lock means instead of
+				// fixing anything. The mismatch stays reported/counted
+				// above (verify stays honest about state); only the
+				// repair itself is refused.
+				if ref != nil && ref.Locked {
+					// #142 round 5: name the source/profile in both remedies -
+					// same "copy-paste acts on the wrong target" fix already
+					// applied to the core gates (internal/core/flows.go's
+					// lockedRefRefusalError) and the sibling-repair warning
+					// below - a bare 'lmm mod lock <id> <version>' would
+					// resolve against the active profile/an ambiguous source
+					// if this mod's lock lives elsewhere.
+					refusal := fmt.Sprintf("--fix skipped: %s is locked at v%s in profile %s — the record is the lock's target; move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s' instead of rewriting it.", mod.Name, ref.Version, profile, mod.SourceID, profile, mod.ID, mod.SourceID, profile, mod.ID)
+					if jsonOutput {
+						// The Note field already exists on this contract
+						// (repair-failure/rename-blocked detail) - this is
+						// an additive use of it, not a new field. Kept
+						// short ("locked") rather than the full refusal
+						// sentence since a --json caller mainly needs the
+						// machine-checkable reason; the sentence itself is
+						// the text-mode surface.
+						jsonFiles[len(jsonFiles)-1].Note = "locked"
+					} else {
+						fmt.Printf("  %s\n", refusal)
+					}
+					continue
+				}
 				note, siblingFailures, repairErr := repairModVersion(cmd, svc, game, profile, mod, effective)
 				// Sibling failures are warnings regardless of how the
 				// PRIMARY row's own repair turned out - a failed sibling
@@ -373,7 +430,20 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		}
 
 		// Recorded version matches what the source reports - OK, but not
-		// printed per-line (same quiet-ok convention as the file loop below).
+		// printed per-line (same quiet-ok convention as the file loop below)
+		// - UNLESS the mod is locked and the DB version hasn't yet
+		// converged to the lock's target (ref.Version): that's expected
+		// drift pending a `profile apply`, not corruption (#97 Task 8), so
+		// it gets its own informational note instead of pure silence. Never
+		// counted in issues (or warnings) - it isn't a problem.
+		if ref != nil && ref.Locked && ref.Version != mod.Version {
+			convergenceNote := fmt.Sprintf("lock pending convergence (installed v%s, locked v%s)", mod.Version, ref.Version)
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: "", Status: "ok", Note: convergenceNote})
+			} else {
+				fmt.Printf("~ %s — %s — run 'lmm profile apply'\n", mod.Name, convergenceNote)
+			}
+		}
 		checked++
 	}
 
@@ -740,6 +810,28 @@ func fileIDsEqual(a, b []string) bool {
 // surfaced as its own warning pointing at the right manual fix
 // (`verify --fix -p <profile>`).
 //
+// A sibling whose ref is LOCKED in its OWN profile (checked fresh per
+// sibling, since the lock lives in that sibling's profile YAML, not the
+// primary's) is likewise left untouched, for the same reason the primary
+// row's own repair refuses a locked ref (repairModVersion's caller,
+// verify.go:362-377): the record IS that sibling's lock target, and
+// rewriting it here would silently move what the lock means just as surely
+// as rewriting the primary would - circumventing verify's own primary-row
+// refusal by going around it through a sibling. Surfaced as its own
+// warning naming the sibling profile, distinct from the "differs" decline.
+// The warning names the MOD as locked (matching the primary refusal's own
+// wording), not the profile - a profile isn't "locked", a ref in it is -
+// and gives its remedies with an explicit -p <sibling> flag, since
+// `lmm mod lock`/`lmm mod unlock` without one resolve against the
+// active/-p profile (the PRIMARY here), and copy-pasting an unflagged
+// remedy would move/clear the lock in the wrong profile. When the sibling
+// was Deployed, the primary repair has already renamed the shared cache
+// dir out from under it (repairSiblingProfiles' own doc above) and this
+// decline bypasses the re-link that would otherwise follow - so the
+// warning also says the sibling's deployment may be broken until the lock
+// is moved or cleared, since `verify --fix -p <sibling>` will decline the
+// same way until then.
+//
 // Like the primary path (repairModVersion), the profile YAML is upserted
 // BEFORE the DB version is set (audit Finding 3): the DB row is what a
 // LATER verify run's mismatch detection reads for that sibling too, so if
@@ -769,8 +861,8 @@ func fileIDsEqual(a, b []string) bool {
 // all-or-nothing.
 //
 // Returns a human-readable summary of which profiles were repaired,
-// failed, and/or declined for differing file selection (empty if none),
-// for the caller to fold into repairModVersion's own note - the --json
+// failed, and/or declined (for differing file selection or a lock - empty
+// if none), for the caller to fold into repairModVersion's own note - the --json
 // contract's vehicle for surfacing this, per the primary row's existing
 // "note" field - and, structurally (not by string-matching the note
 // text), the combined count of per-sibling failures and declines, so the
@@ -789,7 +881,7 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		return "sibling repair check FAILED: " + msg, 1
 	}
 
-	var repaired, failed, differs []string
+	var repaired, failed, differs, locked []string
 	for _, p := range profiles {
 		if p.Name == currentProfile {
 			continue
@@ -822,6 +914,34 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 			}
 			continue
 		}
+
+		// #97: a sibling ref locked in ITS OWN profile refuses the same
+		// rewrite the primary row's own repair refuses (verify.go:362-377) -
+		// the record is that sibling's lock target, and rewriting it here
+		// would silently move what the lock means, just as surely as
+		// rewriting the primary would. Loaded fresh per-sibling since the
+		// lock lives in that sibling's own profile YAML, not the primary's.
+		if siblingProfile, perr := pm.Get(game.ID, p.Name); perr == nil {
+			if ref := siblingProfile.FindRef(sibling.SourceID, sibling.ID); ref != nil && ref.Locked {
+				locked = append(locked, p.Name)
+				if !jsonOutput {
+					// #142 round 5: also name -s (in addition to the -p this
+					// warning already carried) - resolveSource must otherwise
+					// disambiguate on its own whenever more than one source
+					// is configured, which a copy-pasted remedy shouldn't
+					// depend on.
+					msg := fmt.Sprintf("  Warning: %s is locked at v%s in profile %s; run 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s' instead of rewriting it", sibling.Name, ref.Version, p.Name, sibling.SourceID, p.Name, sibling.ID, sibling.SourceID, p.Name, sibling.ID)
+					if sibling.Deployed {
+						msg += "; its deployment may be broken until the lock is moved or cleared"
+					}
+					fmt.Println(msg)
+				}
+				continue
+			}
+		}
+		// (A missing/unreadable sibling profile falls through - matches
+		// ApplyUpdate/ApplyRollback's own precedent: a lock cannot exist in
+		// an unloadable profile.)
 
 		if err := pm.UpsertMod(game.ID, p.Name, domain.ModReference{
 			SourceID: sibling.SourceID,
@@ -878,7 +998,10 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 	if len(differs) > 0 {
 		parts = append(parts, fmt.Sprintf("differs in file selection in profile(s): %s (run verify --fix -p <profile>)", strings.Join(differs, ", ")))
 	}
-	return strings.Join(parts, "; "), len(failed) + len(differs)
+	if len(locked) > 0 {
+		parts = append(parts, fmt.Sprintf("locked in profile(s): %s (move the lock or unlock instead)", strings.Join(locked, ", ")))
+	}
+	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked)
 }
 
 // redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.

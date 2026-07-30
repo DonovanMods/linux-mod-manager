@@ -2,29 +2,40 @@
 .TH "LMM" "1" "Jul 2026" "lmm 1.26.0" "User Commands"
 
 .SH NAME
-lmm-mod-enable - Enable a disabled mod
+lmm-mod-lock - Lock a mod at its current or a specific version
 
 
 .SH SYNOPSIS
-\fBlmm mod enable <mod-id> [flags]\fP
+\fBlmm mod lock <mod-id> [version] [flags]\fP
 
 
 .SH DESCRIPTION
-Enable a mod that was previously disabled.
+Lock an installed mod so 'lmm update' refuses to change it.
 
 .PP
-This deploys the mod files from the cache to the game directory.
-The mod must already be installed and in the cache.
+Locking is a metadata write, not a deploy: if the locked version differs
+from what is currently installed, run 'lmm profile apply' (or 'lmm deploy')
+afterward to converge the game directory.
+
+.PP
+With no version argument, locks the mod at its currently recorded version.
+With a version argument, the version is resolved and validated against the
+source before the lock is written.
+
+.PP
+Requires a source that can resolve versions. A version-less source cannot
+be locked to a specific version this way - run 'lmm mod set-update' with
+--pin to mute its update checks instead.
 
 .PP
 Examples:
-  lmm mod enable 12345 --game skyrim-se
-  lmm mod enable 12345 --game skyrim-se --profile survival
+  lmm mod lock 12345 --game skyrim-se
+  lmm mod lock 12345 1.2.3 --game skyrim-se
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
-	help for enable
+	help for lock
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

@@ -388,6 +388,32 @@ func (s *Service) ResolveModVersion(ctx context.Context, sourceID string, mod *d
 	return ResolveVersionFiles(sourceID, files, version)
 }
 
+// AvailableModVersions lists the distinct per-file versions mod's source
+// reports, in first-seen order - the TUI version picker's data (#97).
+// Wraps source.ErrNotSupported (same format as ResolveVersionFiles) when
+// the file list carries no version info at all.
+func (s *Service) AvailableModVersions(ctx context.Context, sourceID string, mod *domain.Mod) ([]string, error) {
+	files, err := s.GetModFiles(ctx, sourceID, mod)
+	if err != nil {
+		return nil, fmt.Errorf("listing files for version resolution: %w", err)
+	}
+	if !anyFileHasVersion(files) {
+		return nil, fmt.Errorf("source %q: version resolution: %w", sourceID, source.ErrNotSupported)
+	}
+	return availableVersions(files), nil
+}
+
+// SourceCapabilities reports sourceID's declared capabilities (#97: static
+// lock gating). Mirrors SearchAllSources' registry access (service.go's
+// source.CapabilitiesOf(src) call).
+func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, error) {
+	src, err := s.registry.Get(sourceID)
+	if err != nil {
+		return source.Capabilities{}, err
+	}
+	return source.CapabilitiesOf(src), nil
+}
+
 // GetDownloadURL gets the download URL for a specific mod file
 func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *domain.Mod, fileID string) (string, error) {
 	src, err := s.registry.Get(sourceID)

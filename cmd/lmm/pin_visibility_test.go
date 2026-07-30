@@ -158,3 +158,74 @@ func TestDoUpdate_SomePinned_SeparatesFromPrecedingOutput(t *testing.T) {
 	// should fail this assertion, not panic on an index out of range.
 	assert.False(t, strings.HasPrefix(out, "\n"), "but not a leading blank line")
 }
+
+// TestList_VerboseShowsLockedVersion: #97 locked mods had no visibility in
+// `lmm list -v` — reviewing which mods are locked (and at what version)
+// meant checking each profile YAML by hand.
+func TestList_VerboseShowsLockedVersion(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
+	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "b", "1.2.3"))
+
+	out := listVerbose(t, svc, game, false)
+
+	assert.Contains(t, out, "LOCKED", "verbose listing needs a locked column")
+	lines := strings.Split(out, "\n")
+	var rowA, rowB string
+	for _, l := range lines {
+		switch {
+		case strings.Contains(l, "Mod A"):
+			rowA = l
+		case strings.Contains(l, "Mod B"):
+			rowB = l
+		}
+	}
+	require.NotEmpty(t, rowA)
+	require.NotEmpty(t, rowB)
+	assert.Contains(t, rowB, "1.2.3", "the locked mod's row should show its locked version")
+	assert.Regexp(t, `\s-\s*$`, rowA, "an unlocked mod's LOCKED column should be a placeholder, not blank")
+}
+
+// TestList_JSONIncludesLockState: --json consumers could not see lock state
+// at all. Present unconditionally, not gated on --verbose (mirrors
+// UpdatePolicy's own JSON-contract-additions-are-MINOR precedent).
+func TestList_JSONIncludesLockState(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
+	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "b", "1.2.3"))
+
+	var out struct {
+		Mods []struct {
+			ID            string `json:"id"`
+			Locked        bool   `json:"locked"`
+			LockedVersion string `json:"locked_version"`
+		} `json:"mods"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(listVerbose(t, svc, game, true)), &out))
+	require.Len(t, out.Mods, 2)
+	for _, m := range out.Mods {
+		switch m.ID {
+		case "a":
+			assert.False(t, m.Locked, "mod a was never locked")
+		case "b":
+			assert.True(t, m.Locked)
+			assert.Equal(t, "1.2.3", m.LockedVersion)
+		default:
+			t.Fatalf("unexpected mod id %q", m.ID)
+		}
+	}
+}
+
+// TestList_JSONOmitsLockedVersionWhenUnlocked: locked_version carries
+// omitempty — an unlocked mod's raw JSON must not have the field at all, not
+// just an empty string, matching the update_policy precedent's care around
+// additive-only JSON fields.
+func TestList_JSONOmitsLockedVersionWhenUnlocked(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+
+	raw := listVerbose(t, svc, game, true)
+	assert.NotContains(t, raw, `"locked_version"`, "omitempty must drop the field entirely when unlocked")
+}

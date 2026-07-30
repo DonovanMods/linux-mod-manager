@@ -165,6 +165,8 @@ func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModRe
 		if profile.Mods[i].SourceID == mod.SourceID && profile.Mods[i].ModID == mod.ModID {
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs
+			// Preserve Locked marker on in-place update (#97: survives UpsertMod).
+			// Do not modify Locked; it is only changed via explicit lock/unlock operations.
 			found = true
 			break
 		}
@@ -176,6 +178,54 @@ func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModRe
 	}
 
 	return config.SaveProfile(pm.configDir, profile)
+}
+
+// SetModLock marks the profile ref for sourceID/modID as locked (#97: the
+// mod refuses `lmm update` while this is set - see flows.go's ApplyUpdate
+// gate). A non-empty version also moves the lock's target - ref.Version, the
+// same field the installed-version record lives in (a lock has no separate
+// target field: the record IS the target while locked). version == ""
+// locks at whatever is currently installed, leaving Version untouched.
+// Mirrors UpsertMod's load->mutate-in-place->save shape. Returns an error
+// naming the mod when it is not already in the profile - a lock must target
+// a specific existing install, never create one.
+func (pm *ProfileManager) SetModLock(gameID, profileName, sourceID, modID, version string) error {
+	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
+	if err != nil {
+		return err
+	}
+
+	for i := range profile.Mods {
+		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID {
+			profile.Mods[i].Locked = true
+			if version != "" {
+				profile.Mods[i].Version = version
+			}
+			return config.SaveProfile(pm.configDir, profile)
+		}
+	}
+
+	return fmt.Errorf("mod %s:%s not found in profile %q", sourceID, modID, profileName)
+}
+
+// ClearModLock clears ONLY the locked marker for sourceID/modID; Version is
+// left exactly as it is - it is the installed-version record, not lock-only
+// data, and unlocking must not disturb it. Mirrors SetModLock's
+// load->mutate-in-place->save shape and not-found error.
+func (pm *ProfileManager) ClearModLock(gameID, profileName, sourceID, modID string) error {
+	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
+	if err != nil {
+		return err
+	}
+
+	for i := range profile.Mods {
+		if profile.Mods[i].SourceID == sourceID && profile.Mods[i].ModID == modID {
+			profile.Mods[i].Locked = false
+			return config.SaveProfile(pm.configDir, profile)
+		}
+	}
+
+	return fmt.Errorf("mod %s:%s not found in profile %q", sourceID, modID, profileName)
 }
 
 // RemoveMod removes a mod reference from a profile

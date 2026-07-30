@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `lmm update` (and the TUI's update-apply) no longer re-installs the version a mod is already on when the source still lists that version's file entries alongside the new ones and offers no file-supersede mapping — common on NexusMods when an author uploads rebuilt files rather than replacing them in place. File selection now resolves against the update's target version, with the mod's stored file IDs acting only as a tie-break among that version's files; sources that report no per-file versions, or whose file version legitimately differs from the mod-level version, keep the existing primary-file fallback. Previously the update re-downloaded and re-deployed the installed version, recorded that same version back onto the row (leaving `previous_version` equal to `version`), and the next check re-reported the identical update — repeating indefinitely with no error shown
+
+## [1.26.0] - 2026-07-29
+
+### Added
+
+- `lmm mod lock <mod-id> [version]` locks a mod's entry in the current profile to an exact version — with no version argument, locks at the currently recorded version; with one, the version is resolved and validated against the source before the lock is written. Requires a source that can resolve versions; version-less sources are refused with a pointer to `lmm mod set-update --pin`. Locking is a metadata write, not a deploy: convergence happens on the next `profile apply`/`deploy`, and the success message says so when the locked version differs from what's installed. `lmm mod unlock <mod-id>` clears only the lock marker — the recorded version is left untouched, since it's the record, not the lock (#97)
+- TUI: `L` on Installed Mods opens an async version picker (fetched from the source) to lock the selected mod or move an existing lock; picking a version confirms immediately, and a locked mod's picker gains a trailing "unlock" entry. The row flags column shows `lck` for a locked mod, outranking `pin` when both apply
+- Lock state surfaces everywhere a mod's version does: `lmm list -v` gains a `LOCKED` column (the locked version, or `-`); `lmm mod show` gains an Installed section (version, profile, update policy, lock state); `lmm update`'s table appends `[locked@<version>]` to a locked mod's `POLICY` cell. `--json` output for `list` and `mod show` carries the same information additively (`locked`, `locked_version`); single-mod `lmm update --json` instead reports a refused apply as `status:"skipped", reason:"locked"`
+- `lmm update` refuses to apply to a locked mod: a locked mod is still checked ("locked but informed") and reports available updates, but a single-mod `lmm update <id>` on a locked mod is refused with remedies (move the lock or unlock first; `--json` reports `status:"skipped", reason:"locked"`); `--all` and auto-policy mods skip locked mods and report them in a distinct summary line instead of applying to them
+- `lmm verify` is lock-aware: a locked mod's version-record mismatch is still reported, but `--fix` refuses to rewrite a locked mod's record (other, unlocked mods in the same run are still fixed) since the record is the lock's target, not drift to repair; when a locked mod's installed version hasn't yet converged to the lock, `verify` prints an informational "lock pending convergence" note instead of treating it as an issue
+
+### Changed
+
+- `--pin` (`lmm mod set-update --pin`) is reframed everywhere — CLI help, TUI, README — as a check-mute rather than a version freeze: it stops `lmm update` from asking the source about a mod, but does not hold a version. To hold an exact version, lock it (`lmm mod lock`). `--pin` remains the only freeze available on sources that cannot resolve versions
+
 ## [1.25.0] - 2026-07-29
 
 ### Added
@@ -1101,7 +1119,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.25.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.26.0...HEAD
+[1.26.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.25.0...v1.26.0
 [1.25.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.24.1...v1.25.0
 [1.24.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.24.0...v1.24.1
 [1.24.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.23.1...v1.24.0

@@ -12,6 +12,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -38,6 +39,13 @@ type updateJSONOutput struct {
 	Error string `json:"error,omitempty"`
 }
 
+// updateSkippedJSON counts CHECK-time filtering only (core.CountUpdateSkips):
+// mods CheckUpdates never even queried a source for. Locked mods do NOT
+// belong here (#97): they ARE checked ("locked but informed") - a locked-and-
+// skippable-at-apply-time mod is reported instead via the bulk table's
+// "[locked@<version>]" POLICY marker and the CLI's own auto/--all locked-skip
+// line (text only; see applySingleUpdate's singleUpdateJSON.Reason for the
+// single-mod --json equivalent).
 type updateSkippedJSON struct {
 	Pinned int `json:"pinned"`
 	Local  int `json:"local"`
@@ -67,7 +75,8 @@ type singleUpdateJSON struct {
 	Changelog   string `json:"changelog,omitempty"`
 	// Status: "updated" | "up_to_date" | "skipped" | "available" | "rolled_back"
 	Status string `json:"status"`
-	// Reason qualifies status=="skipped": "pinned" | "local". Omitted otherwise.
+	// Reason qualifies status=="skipped": "pinned" | "local" | "locked".
+	// Omitted otherwise.
 	Reason string `json:"reason,omitempty"`
 }
 
@@ -108,8 +117,8 @@ exits non-zero rather than silently claiming success.
   - Single mod (a mod ID given) or 'update rollback': {mod_id, name,
     from_version, to_version, changelog, status, reason}. status is one
     of "updated", "up_to_date", "skipped", "available" (--dry-run), or
-    "rolled_back"; reason is set only when status is "skipped" ("pinned"
-    or "local").
+    "rolled_back"; reason is set only when status is "skipped" ("pinned",
+    "local", or "locked").
 
 Examples:
   lmm update --game skyrim-se                    # Check all mods for updates
@@ -372,12 +381,41 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
+	// #97: locked refs get a POLICY marker and are excluded from auto/--all
+	// application below (loaded once, keyed by domain.ModKey - locked mods
+	// ARE checked, so they show up in updates like any other row; only
+	// applying is refused). A precomputed map, not per-row FindRef, since
+	// this loops over every update below.
+	lockedRefs := map[string]string{}
+	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
+		for _, ref := range prof.Mods {
+			if ref.Locked {
+				lockedRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref.Version
+			}
+		}
+	}
+
 	var autoUpdates []domain.Update
+	// lockedAuto/lockedNames accumulate every locked mod skipped from
+	// application below - auto-policy rows here, plus (further down) any
+	// notify-policy rows --all would otherwise have applied. Reported once,
+	// after both sections, via a single combined line.
+	var lockedAuto int
+	var lockedNames []string
 	for _, update := range updates {
 		policyStr := policyToString(update.InstalledMod.UpdatePolicy)
+		lockedVersion, isLocked := lockedRefs[domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID)]
+		if isLocked {
+			policyStr += " [locked@" + lockedVersion + "]"
+		}
 		if update.InstalledMod.UpdatePolicy == domain.UpdateAuto {
-			policyStr += " ✓"
-			autoUpdates = append(autoUpdates, update)
+			if isLocked {
+				lockedAuto++
+				lockedNames = append(lockedNames, update.InstalledMod.Name)
+			} else {
+				policyStr += " ✓"
+				autoUpdates = append(autoUpdates, update)
+			}
 		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			truncate(update.InstalledMod.Name, 40),
@@ -448,9 +486,15 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if updateAll {
 		var notifyUpdates []domain.Update
 		for _, update := range updates {
-			if update.InstalledMod.UpdatePolicy != domain.UpdateAuto {
-				notifyUpdates = append(notifyUpdates, update)
+			if update.InstalledMod.UpdatePolicy == domain.UpdateAuto {
+				continue // already handled above (applied, or reported as a locked skip)
 			}
+			if _, isLocked := lockedRefs[domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID)]; isLocked {
+				lockedAuto++
+				lockedNames = append(lockedNames, update.InstalledMod.Name)
+				continue
+			}
+			notifyUpdates = append(notifyUpdates, update)
 		}
 
 		if len(notifyUpdates) > 0 {
@@ -465,10 +509,34 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 	}
 
+	// #97: one combined report for every locked mod that would otherwise
+	// have been applied above - auto-policy rows always land here; --all's
+	// notify-policy rows only do when --all was actually passed. Placed
+	// after both application sections (so it "covers" whichever ran), but
+	// fires on its own whenever lockedAuto > 0 even if neither section had
+	// anything else to apply.
+	if lockedAuto > 0 {
+		fmt.Printf("\n%d locked mod(s) not applied: %s — move the lock or unlock to update.\n", lockedAuto, strings.Join(lockedNames, ", "))
+	}
+
 	return finish()
 }
 
 func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, profileName string) error {
+	// #97: load the profile once up front so both branches below (zero
+	// updates + pinned, and update-found) can consult the ref's lock state
+	// without a second load. A missing/unreadable profile is treated as
+	// unlocked - matches ApplyUpdate's own core gate precedent (a lock
+	// cannot exist in an unloadable profile).
+	locked := false
+	lockedVersion := mod.Version
+	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil {
+			locked = ref.Locked
+			lockedVersion = ref.Version
+		}
+	}
+
 	// Check for update for this specific mod
 	updater := service.NewUpdater()
 	updates, err := updater.CheckUpdates(ctx, game, []domain.InstalledMod{*mod})
@@ -489,8 +557,16 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, Status: "skipped", Reason: "pinned",
 				})
 			}
-			fmt.Printf("%s is pinned at v%s and was not checked.\n", mod.Name, mod.Version)
-			fmt.Printf("Unpin with: lmm mod set-update %s --notify\n", mod.ID)
+			lockedSuffix := ""
+			if locked {
+				lockedSuffix = " (also locked)"
+			}
+			fmt.Printf("%s is pinned at v%s and was not checked%s.\n", mod.Name, mod.Version, lockedSuffix)
+			// #142 round 5: -s/-p, same reasoning as the locked-refusal
+			// remedies just below - set-update is profile-scoped
+			// (SetModUpdatePolicy takes profileName) and the mod ID may
+			// exist under more than one configured source.
+			fmt.Printf("Unpin with: lmm mod set-update -s %s -p %s %s --notify\n", mod.SourceID, profileName, mod.ID)
 			return nil
 		}
 		if jsonOutput {
@@ -505,6 +581,29 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	update := updates[0]
 	oldVersion := mod.Version
 	newVersion := update.NewVersion
+
+	// #97: refuse up front - the core gate (Service.ApplyUpdate) backstops
+	// this regardless, but checking here avoids ever printing the
+	// "Updating..." header/changelog for a call that will never actually
+	// apply, and gives an actionable message naming both remedy commands
+	// instead of surfacing the core gate's raw error.
+	if locked {
+		if jsonOutput {
+			return emitSingleUpdateJSON(singleUpdateJSON{
+				ModID: mod.ID, Name: mod.Name, FromVersion: oldVersion, ToVersion: newVersion, Status: "skipped", Reason: "locked",
+			})
+		}
+		fmt.Printf("Update available: %s → %s — but %s is locked at v%s.\n", oldVersion, newVersion, mod.Name, lockedVersion)
+		// #142 round 5: name -s/-p in both remedies - update honors -p (this
+		// call already resolved profileName, possibly non-active), and the
+		// mod ID may exist under more than one configured source, so a bare
+		// 'lmm mod lock <id> <version>' copy-pasted from here could resolve
+		// against the wrong profile/an ambiguous source (same fix as the
+		// core gates - internal/core/flows.go's lockedRefRefusalError).
+		fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", mod.SourceID, profileName, mod.ID, newVersion, mod.SourceID, profileName, mod.ID)
+		return nil
+	}
+
 	if !jsonOutput {
 		fmt.Printf("Updating %s %s → %s...\n", mod.Name, oldVersion, newVersion)
 		if update.Changelog != "" {

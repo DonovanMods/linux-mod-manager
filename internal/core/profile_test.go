@@ -412,3 +412,219 @@ func TestProfileManager_UpsertMod(t *testing.T) {
 	assert.Equal(t, "12345", profile.Mods[0].ModID)
 	assert.Equal(t, "67890", profile.Mods[1].ModID)
 }
+
+// TestProfileManager_UpsertMod_PreservesLockedMarker guards that Locked survives
+// an in-place update (when a mod already exists, it gets updated but Locked is preserved).
+func TestProfileManager_UpsertMod_PreservesLockedMarker(t *testing.T) {
+	dir := t.TempDir()
+
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	// Create a profile and add a locked mod
+	_, err = pm.Create("skyrim-se", "test")
+	require.NoError(t, err)
+
+	lockedModRef := domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "1.0.0",
+		Locked:   true,
+	}
+	err = pm.UpsertMod("skyrim-se", "test", lockedModRef)
+	require.NoError(t, err)
+
+	profile, err := pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.True(t, profile.Mods[0].Locked, "locked marker should be set")
+
+	// Now upsert the same mod with updated version but without Locked flag
+	// (fresh/zero-value ref, as would come from an update operation)
+	updatedModRef := domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "2.0.0",
+		Locked:   false,
+	}
+	err = pm.UpsertMod("skyrim-se", "test", updatedModRef)
+	require.NoError(t, err)
+
+	profile, err = pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "2.0.0", profile.Mods[0].Version, "version should be updated")
+	assert.True(t, profile.Mods[0].Locked, "locked marker should be preserved despite zero-value in input")
+}
+
+// TestProfileManager_ReorderMods_PreservesLockedMarker guards that Locked survives
+// when the TUI reorders mods by building refs from the loaded profile.
+func TestProfileManager_ReorderMods_PreservesLockedMarker(t *testing.T) {
+	dir := t.TempDir()
+
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	// Create a profile and add two mods, one locked
+	_, err = pm.Create("skyrim-se", "test")
+	require.NoError(t, err)
+
+	err = pm.AddMod("skyrim-se", "test", domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "1.0.0",
+		Locked:   true,
+	})
+	require.NoError(t, err)
+
+	err = pm.AddMod("skyrim-se", "test", domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "67890",
+		Version:  "2.0.0",
+		Locked:   false,
+	})
+	require.NoError(t, err)
+
+	profile, err := pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 2)
+
+	// Reorder with the mods in reverse order
+	// (simulates what TUI does: builds the slice from loaded profile.Mods)
+	reorderedMods := []domain.ModReference{
+		profile.Mods[1], // modID 67890
+		profile.Mods[0], // modID 12345 (still locked)
+	}
+
+	err = pm.ReorderMods("skyrim-se", "test", reorderedMods)
+	require.NoError(t, err)
+
+	// Verify the order changed and locked marker survived
+	profile, err = pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 2)
+	assert.Equal(t, "67890", profile.Mods[0].ModID, "first mod should be reordered")
+	assert.Equal(t, "12345", profile.Mods[1].ModID, "second mod should be reordered")
+	assert.False(t, profile.Mods[0].Locked, "first mod (67890) should not be locked")
+	assert.True(t, profile.Mods[1].Locked, "second mod (12345) should remain locked")
+}
+
+// TestProfileManager_SetModLock covers the lock write itself: Locked flips
+// true, and a non-empty version moves ref.Version (the lock's target and
+// the installed-version record are the same field, #97).
+func TestProfileManager_SetModLock(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.Create("skyrim-se", "test")
+	require.NoError(t, err)
+
+	require.NoError(t, pm.AddMod("skyrim-se", "test", domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "1.0.0",
+	}))
+
+	// version == "" locks at the currently-installed version; Version is untouched.
+	require.NoError(t, pm.SetModLock("skyrim-se", "test", "nexusmods", "12345", ""))
+
+	profile, err := pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.True(t, profile.Mods[0].Locked, "locked marker should be set")
+	assert.Equal(t, "1.0.0", profile.Mods[0].Version, "version should be untouched when \"\" is given")
+
+	// A non-empty version moves the lock target.
+	require.NoError(t, pm.SetModLock("skyrim-se", "test", "nexusmods", "12345", "2.0.0"))
+
+	profile, err = pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	assert.True(t, profile.Mods[0].Locked)
+	assert.Equal(t, "2.0.0", profile.Mods[0].Version, "a non-empty version moves the lock target")
+}
+
+// TestProfileManager_SetModLock_NotInProfile pins the not-found error message.
+func TestProfileManager_SetModLock_NotInProfile(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.Create("skyrim-se", "test")
+	require.NoError(t, err)
+
+	err = pm.SetModLock("skyrim-se", "test", "nexusmods", "12345", "")
+	require.Error(t, err)
+	assert.EqualError(t, err, `mod nexusmods:12345 not found in profile "test"`)
+}
+
+// TestProfileManager_ClearModLock covers the unlock write: only the marker
+// clears, Version is left exactly as it is (it is the installed-version
+// record, not lock-only data, #97).
+func TestProfileManager_ClearModLock(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.Create("skyrim-se", "test")
+	require.NoError(t, err)
+
+	require.NoError(t, pm.AddMod("skyrim-se", "test", domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "1.0.0",
+		Locked:   true,
+	}))
+
+	require.NoError(t, pm.ClearModLock("skyrim-se", "test", "nexusmods", "12345"))
+
+	profile, err := pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.False(t, profile.Mods[0].Locked, "locked marker should be cleared")
+	assert.Equal(t, "1.0.0", profile.Mods[0].Version, "version stays - it is the record, not lock-only data")
+}
+
+// TestProfileManager_ClearModLock_NotInProfile pins the not-found error message.
+func TestProfileManager_ClearModLock_NotInProfile(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.Create("skyrim-se", "test")
+	require.NoError(t, err)
+
+	err = pm.ClearModLock("skyrim-se", "test", "nexusmods", "12345")
+	require.Error(t, err)
+	assert.EqualError(t, err, `mod nexusmods:12345 not found in profile "test"`)
+}

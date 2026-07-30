@@ -73,8 +73,9 @@ func EffectiveInstalledVersion(modVersion string, selected []*DownloadableFile) 
 type ModReference struct {
 	SourceID string   `yaml:"source_id"`          // "nexusmods", "curseforge", etc.
 	ModID    string   `yaml:"mod_id"`             // Source-specific identifier
-	Version  string   `yaml:"version"`            // Empty string means "latest"
+	Version  string   `yaml:"version"`            // The installed-version record (#94/#96): always stamped by installs, moved by updates, converged to by deploy. When Locked, also the lock's target.
 	FileIDs  []string `yaml:"file_ids,omitempty"` // Source-specific file IDs that were installed
+	Locked   bool     `yaml:"locked,omitempty"`   // #97 lock marker: lmm update refuses this mod; Version is the lock's target. Set/cleared only by lock/unlock; survives UpsertMod (in-place update) and export/import.
 }
 
 // Mod represents a mod from any source

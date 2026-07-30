@@ -659,6 +659,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resolveCheckUpdatesFailure(msg)
 	case policyChosenMsg:
 		return m.resolvePolicyChoice(msg)
+	case versionsFetchedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveVersionsFetched(msg)
+	case versionsFetchFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveVersionsFetchFailed(msg)
+	case lockChosenMsg:
+		return m.resolveLockChosen(msg)
+	case unlockChosenMsg:
+		return m.resolveUnlockChosen(msg)
 	case profileCreateSubmittedMsg:
 		return m.resolveProfileCreate(msg)
 	case gameChosenMsg:
@@ -935,6 +949,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.showDeployedFiles()
 	case key.Matches(msg, m.keys.Policy):
 		return m.editSelectedModPolicy()
+	case key.Matches(msg, m.keys.Lock):
+		return m.editSelectedModLock()
 	case key.Matches(msg, m.keys.CreateProfile):
 		return m.createProfilePrompt()
 	case key.Matches(msg, m.keys.DeleteProfile):
@@ -2055,6 +2071,10 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.CheckUpdates),
 			helpEntry(m.keys.Files),
 			helpEntry(m.keys.Policy),
+			// Lock is Task 7's lock/unlock version-picker key (#97, see
+			// mutations.go's editSelectedModLock) - listed beside Policy since
+			// both open an item-scoped picker with no separate confirm modal.
+			helpEntry(m.keys.Lock),
 			helpEntry(m.keys.Purge),
 			// MoveDown/MoveUp are Task 4's load-order reorder keys (see
 			// mutations.go's moveSelectedMod).
@@ -2269,27 +2289,33 @@ func (m Model) modRow(index, width int, mod ModItem) string {
 	return m.row(index, line)
 }
 
-// modFlags renders the per-mod flag column: "pin" (left-aligned in the
-// first 3 columns) for a mod held back from update checks, and "*" (the
-// last column) for a mod actually updated THIS session - not merely
-// checked. The wire string "pin" (not the CLI's "pinned") matches
-// ModItem.UpdatePolicy's documented values - see service_core.go's
-// policyToString for why the two interfaces differ. The fixed
-// "%-3s %s" shape always fills exactly flagsWidth (5) columns - "pin *",
-// "pin  ", "    *", or "     " - so pin and the marker can appear
-// independently, together, or not at all without ever shifting the
-// author/version columns that follow (mirrors the pin-only column's own
-// fixed-width reasoning above modRow).
+// modFlags renders the per-mod flag column: "lck" or "pin" (left-aligned in
+// the first 3 columns) and "*" (the last column) for a mod actually updated
+// THIS session - not merely checked. "lck" (#97) outranks "pin" in the
+// 3-char slot - a locked+pinned mod shows "lck" ("lock wins the slot and
+// the UI names the lock"); the mod's pin state is untouched and stays
+// visible in the P picker and mod actions, it just doesn't get its own
+// glyph here when a lock is also set. The wire string "pin" (not the CLI's
+// "pinned") matches ModItem.UpdatePolicy's documented values - see
+// service_core.go's policyToString for why the two interfaces differ. The
+// fixed "%-3s %s" shape always fills exactly flagsWidth (5) columns -
+// "lck *", "pin *", "pin  ", "    *", or "     " - so the flag and the
+// marker can appear independently, together, or not at all without ever
+// shifting the author/version columns that follow (mirrors the pin-only
+// column's own fixed-width reasoning above modRow).
 func (m Model) modFlags(mod ModItem) string {
-	pin := ""
-	if mod.UpdatePolicy == "pin" {
-		pin = "pin"
+	flag := ""
+	switch {
+	case mod.Locked:
+		flag = "lck" // lock wins the slot ("the UI names the lock"); pin state stays visible in the P picker and mod actions
+	case mod.UpdatePolicy == "pin":
+		flag = "pin"
 	}
 	marker := " "
 	if m.wasUpdatedThisSession(mod) {
 		marker = "*"
 	}
-	return fmt.Sprintf("%-3s %s", pin, marker)
+	return fmt.Sprintf("%-3s %s", flag, marker)
 }
 
 // wasUpdatedThisSession reports whether mod was actually brought current by

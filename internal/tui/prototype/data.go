@@ -126,6 +126,18 @@ type Mod struct {
 	// unset, so --prototype mode can also demo the "no previous version to
 	// roll back to" refusal (mutations.go's rollbackSelectedMod) on those.
 	PreviousVersion string
+
+	// Locked/LockedVersion feed prototypeProvider.SetLock/Unlock's in-memory
+	// lock flags (#97) and ModItem.Locked/LockedVersion's projection
+	// (service.go's modItems) - mirroring UpdatePolicy's own "canned field
+	// mutated in place, visible in a repeated Overview" convention above.
+	// LockedVersion is only meaningful (and only ever set) while Locked is
+	// true - Unlock clears both, matching ModItem.LockedVersion's own
+	// "empty whenever Locked is false" contract. Every InstalledMods entry
+	// leaves both unset, so --prototype mode can also demo the unlocked
+	// case on every canned mod.
+	Locked        bool
+	LockedVersion string
 }
 
 // Load returns static demo data. It must never touch disk, network, DB, or APIs.

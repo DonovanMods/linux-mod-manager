@@ -701,6 +701,16 @@ const (
 	// end-of-whole-run deferral, since applyUpdate itself prints these
 	// immediately, well before its own DB-update steps below.
 	//
+	// #143 additionally fires this phase for file-SELECTION warnings (a
+	// stored file whose version label left it unresolvable - see
+	// updateAmbiguousFileWarning). Those come from a pure decision made
+	// BEFORE any download, so unlike the hook failures above they can
+	// precede every side effect - the phase no longer implies that Replace
+	// or the hooks have run. That early emission is deliberate: the fact is
+	// already known, and surfacing it up front means the user sees it even
+	// if a later download fails (ApplyUpdate's partial-result convention
+	// returns accumulated diagnostics alongside the error either way).
+	//
 	// Reused (Phase 6b Task 5): ApplyRollback fires this SAME phase for its
 	// own two always-non-fatal after_each hooks, in the same
 	// uninstall-then-install order, mirroring doUpdateRollback's own
@@ -1037,23 +1047,325 @@ func selectVersionedDeployFiles(files []domain.DownloadableFile, version string,
 		}
 		return nil, false, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
 	}
-	if len(storedFileIDs) > 0 {
-		var stored []*domain.DownloadableFile
-		for _, m := range matches {
-			if idSet[m.ID] {
-				stored = append(stored, m)
-			}
+	return pickVersionMatch(matches, idSet), false, nil
+}
+
+// pickVersionMatch narrows matches - every file carrying the version being
+// resolved - down to the one(s) to actually use: the stored-ID subset when
+// any stored ID is among them (so a mod installed from an OPTIONAL/extra
+// file of that version keeps that file rather than being silently moved to
+// the main one), else the version's primary file, else its first file.
+// matches must be non-empty. idSet may be nil (reads as all-false), which
+// simply skips the stored-ID preference.
+//
+// Shared by selectVersionedDeployFiles (#96) and selectUpdateDeployFiles
+// (#143) specifically so the two cannot drift: both answer the same
+// question - "given the files for THIS version, which ones does this mod
+// use" - and only differ in how they decide the version and what to do when
+// it isn't offered at all.
+func pickVersionMatch(matches []*domain.DownloadableFile, idSet map[string]bool) []*domain.DownloadableFile {
+	var stored []*domain.DownloadableFile
+	for _, m := range matches {
+		if idSet[m.ID] {
+			stored = append(stored, m)
 		}
-		if len(stored) > 0 {
-			return stored, false, nil
-		}
+	}
+	if len(stored) > 0 {
+		return stored
 	}
 	for _, m := range matches {
 		if m.IsPrimary {
-			return []*domain.DownloadableFile{m}, false, nil
+			return []*domain.DownloadableFile{m}
 		}
 	}
-	return []*domain.DownloadableFile{matches[0]}, false, nil
+	return []*domain.DownloadableFile{matches[0]}
+}
+
+// selectUpdateDeployFiles picks the file(s) ApplyUpdate should download to
+// reach targetVersion (#143). The update path's target is a version the mod
+// is NOT currently on, so - unlike every other flow - its stored file IDs
+// describe the version being moved AWAY from and cannot be the primary
+// anchor.
+//
+// The bug this exists to fix: ApplyUpdate resolved files with the
+// version-blind selectDeployFiles, whose stored-IDs-win rule matched the
+// OLD version's file whenever the source still lists its historical file
+// entries (NexusMods routinely does) and the update carried no
+// FileIDReplacements chain to remap them (the norm when an author rebuilds
+// and re-uploads a mod's files rather than superseding them in place). The
+// "update" then re-downloaded and re-deployed the already-installed
+// version, EffectiveInstalledVersion honestly stamped that same version
+// back onto the row, and the next check re-found the identical update -
+// forever, with no error anywhere. See
+// TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion.
+//
+// So targetVersion wins whenever the listing actually offers it. When it
+// does not - a version-less file list, an empty targetVersion, or the
+// routine NexusMods case where the mod-level version ("2.0") and its file's
+// own version ("2.0b") simply differ (upd.NewVersion is advisory, not a
+// guarantee - see the Versions capability comment in internal/source) -
+// this falls through to selectDeployFiles with allowFallback=true,
+// preserving #95's deliberate update-path fallback verbatim.
+//
+// The discriminator is per-FILE, not per-update (PR #142 review round 2).
+// An earlier version switched the narrowing off whenever the update carried
+// ANY FileIDReplacements mapping, which was wrong: nexusmods adds a map
+// entry only for stored files that actually have a FileUpdates chain, so a
+// PARTIAL map is the norm for any multi-file mod with one superseded-in-
+// place file and one rebuilt file - exactly the mods most likely to hit the
+// loop. Each stored ID is now classified on its own:
+//
+//   - a replacement HIT names a NEW file by construction (it cannot be the
+//     stale anchor), so it is authoritative and always kept, whatever its
+//     own label says. This matters because a superseding file routinely
+//     carries its own label rather than the mod-level NewVersion - a patch
+//     moving 1.3 -> 1.4 while the mod moves to 2.0.
+//   - an uncovered ID still listed upstream under a DIFFERENT label than
+//     installedVersion is an unchanged extra: carried over, honouring
+//     ApplyUpdate's documented "a miss retains the ORIGINAL id verbatim".
+//   - an uncovered ID still listed upstream under EXACTLY installedVersion
+//     is label-ambiguous: it is either the stale anchor or a genuine
+//     unchanged extra, and nothing upstream distinguishes them. It is
+//     replaced by an unselected targetVersion file when one is available
+//     (1:1) - that replacement IS the update - and otherwise RETAINED with
+//     a warning naming it (see updateAmbiguousFileWarning).
+//
+// Round 2 ruled this ambiguity must never be silent, and considered
+// dropping the unresolvable file instead of retaining it. Retaining is used
+// because it is strictly safer: the ruling's rationale was avoiding a
+// re-deployed stale primary (duplicate paks, and the loop), and both are
+// already prevented independently - the 1:1 replacement above removes the
+// stale primary, and guardNoOpUpdateSelection below proves the selection
+// advances the record - whereas dropping would silently un-deploy a file
+// the mod is still using, which is the round-1 regression this same review
+// caught. The user is told either way; only the safer default differs.
+//
+// installedVersion == "" also switches narrowing off: with no recorded
+// version nothing can be classified.
+func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion, installedVersion string, currentFileIDs, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
+	selected, warnings, err := resolveUpdateSelection(files, targetVersion, installedVersion, storedFileIDs, replacedIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	selected, err = guardNoOpUpdateSelection(files, targetVersion, installedVersion, currentFileIDs, replacedIDs, selected)
+	if err != nil {
+		return nil, nil, err
+	}
+	return selected, warnings, nil
+}
+
+// updateAmbiguousFileWarning describes a stored file selectUpdateDeployFiles
+// could not classify - still listed upstream under the very version being
+// updated away from, with no replacement available to take its place.
+func updateAmbiguousFileWarning(f *domain.DownloadableFile, installedVersion, targetVersion string) string {
+	name := f.Name
+	if name == "" {
+		name = f.FileName
+	}
+	return fmt.Sprintf("%q (file ID %s) still reports version %s - the version being updated from - so it could not be matched to anything in %s; it was kept as-is. If it is a stale entry, reinstall the mod or use --file to re-select.",
+		name, f.ID, installedVersion, targetVersion)
+}
+
+// pairAmbiguousWithReplacement reports which entry of ambiguous the target-
+// version file replacement stands in for: the first one sharing its Category
+// (compared case-insensitively, like installFileCategoryPriority), else the
+// first entry, else -1 when there is nothing to pair. Category is the only
+// signal available - the candidates are label-identical by definition - and
+// sources do populate it (MAIN/OPTIONAL/UPDATE/...), so a new MAIN replaces
+// the stale MAIN and leaves an unchanged OPTIONAL alone.
+func pairAmbiguousWithReplacement(ambiguous []*domain.DownloadableFile, replacement *domain.DownloadableFile) int {
+	if len(ambiguous) == 0 {
+		return -1
+	}
+	if want := strings.ToUpper(replacement.Category); want != "" {
+		for i, a := range ambiguous {
+			if strings.ToUpper(a.Category) == want {
+				return i
+			}
+		}
+	}
+	return 0
+}
+
+// resolveUpdateSelection is selectUpdateDeployFiles' classification pass -
+// see that function's doc comment for the per-file rules it implements.
+func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, installedVersion string, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
+	if targetVersion == "" || installedVersion == "" || len(storedFileIDs) == 0 {
+		sel, _, err := selectDeployFiles(files, storedFileIDs, true)
+		return sel, nil, err
+	}
+
+	byID := make(map[string]*domain.DownloadableFile, len(files))
+	var matches []*domain.DownloadableFile
+	for i := range files {
+		byID[files[i].ID] = &files[i]
+		if files[i].Version == targetVersion {
+			matches = append(matches, &files[i])
+		}
+	}
+	if len(matches) == 0 {
+		sel, _, err := selectDeployFiles(files, storedFileIDs, true)
+		return sel, nil, err
+	}
+
+	var selected, ambiguous []*domain.DownloadableFile
+	chosen := make(map[string]bool, len(storedFileIDs))
+	needsReplacement := false
+	for _, id := range storedFileIDs {
+		f := byID[id]
+		switch {
+		case f == nil:
+			needsReplacement = true // gone upstream (#95's fallback case)
+		case replacedIDs[id]:
+			if !chosen[id] {
+				selected = append(selected, f)
+				chosen[id] = true
+			}
+		case f.Version == installedVersion:
+			ambiguous = append(ambiguous, f)
+			needsReplacement = true
+		default:
+			if !chosen[id] {
+				selected = append(selected, f)
+				chosen[id] = true
+			}
+		}
+	}
+
+	if needsReplacement {
+		var candidates []*domain.DownloadableFile
+		for _, m := range matches {
+			if !chosen[m.ID] {
+				candidates = append(candidates, m)
+			}
+		}
+		if len(candidates) > 0 {
+			for _, p := range pickVersionMatch(candidates, nil) {
+				if chosen[p.ID] {
+					continue
+				}
+				selected = append(selected, p)
+				chosen[p.ID] = true
+				// This replacement stands in for ONE ambiguous file - pair
+				// them by Category rather than list order (PR #142 review
+				// round 3). Order alone is a DB-order coin flip: with a
+				// stale MAIN and an unchanged OPTIONAL both label-ambiguous,
+				// it could replace the OPTIONAL and retain the stale MAIN,
+				// leaving the old main pak deployed beside the new one.
+				if i := pairAmbiguousWithReplacement(ambiguous, p); i >= 0 {
+					ambiguous = append(ambiguous[:i], ambiguous[i+1:]...)
+				}
+			}
+		}
+	}
+
+	// Anything still unresolved is retained rather than lost.
+	var warnings []string
+	for _, a := range ambiguous {
+		if !chosen[a.ID] {
+			selected = append(selected, a)
+			chosen[a.ID] = true
+		}
+		warnings = append(warnings, updateAmbiguousFileWarning(a, installedVersion, targetVersion))
+	}
+
+	if len(selected) == 0 {
+		sel, _, err := selectDeployFiles(files, storedFileIDs, true)
+		return sel, nil, err
+	}
+	return selected, warnings, nil
+}
+
+// guardNoOpUpdateSelection is the defense-in-depth backstop (PR #142 review
+// round 2, corrected in round 3): whatever path produced selected, catch a
+// selection that provably cannot change anything, so a mis-resolution
+// surfaces instead of looping forever.
+//
+// The no-op test is an ID-SET comparison against what is already installed,
+// NOT a version-string comparison. Round 2 used the latter and hard-failed a
+// whole legitimate class: internal/source/nexusmods reports an update when
+// the mod version moved OR a file was superseded, and in the second case
+// (hasFileUpdate && !modVersionNewer) it sets NewVersion to the new FILE's
+// own version - routinely the SAME string as the installed one, because the
+// author re-uploaded a fixed archive under an unchanged label. Real new
+// bytes, identical version string; "effective version == installed version"
+// says nothing about it. See
+// TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies.
+//
+// A selection containing any FileIDReplacements hit is likewise never a
+// no-op: the source itself stated those files move, so this never
+// second-guesses it.
+//
+// The repair is ADDITIVE, never wholesale (round 3): only the members
+// positively identified as the version being left behind are dropped, and
+// the target version's file is added alongside whatever else survives -
+// round 2 replaced the entire selection, discarding replacement hits and
+// carried-over extras with it.
+func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, installedVersion string, currentFileIDs []string, replacedIDs map[string]bool, selected []*domain.DownloadableFile) ([]*domain.DownloadableFile, error) {
+	if targetVersion == "" || installedVersion == "" || len(selected) == 0 {
+		return selected, nil
+	}
+	for _, f := range selected {
+		if replacedIDs[f.ID] {
+			return selected, nil
+		}
+	}
+	if !sameFileIDSet(selected, currentFileIDs) {
+		return selected, nil
+	}
+	var matches []*domain.DownloadableFile
+	for i := range files {
+		if files[i].Version == targetVersion {
+			matches = append(matches, &files[i])
+		}
+	}
+	if len(matches) == 0 || domain.EffectiveInstalledVersion(targetVersion, selected) != installedVersion {
+		return selected, nil
+	}
+
+	repaired := make([]*domain.DownloadableFile, 0, len(selected)+1)
+	kept := make(map[string]bool, len(selected))
+	for _, f := range selected {
+		if f.Version == installedVersion {
+			continue
+		}
+		repaired = append(repaired, f)
+		kept[f.ID] = true
+	}
+	added := false
+	for _, m := range pickVersionMatch(matches, nil) {
+		if kept[m.ID] {
+			continue
+		}
+		repaired = append(repaired, m)
+		kept[m.ID] = true
+		added = true
+	}
+	if !added || domain.EffectiveInstalledVersion(targetVersion, repaired) == installedVersion {
+		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): no file upstream advances it - reinstall the mod or use --file to pick one explicitly", targetVersion, strings.Join(currentFileIDs, ", "))
+	}
+	return repaired, nil
+}
+
+// sameFileIDSet reports whether selected is exactly the set of currentFileIDs
+// - the only provable "this update changes nothing" condition (see
+// guardNoOpUpdateSelection).
+func sameFileIDSet(selected []*domain.DownloadableFile, currentFileIDs []string) bool {
+	if len(currentFileIDs) == 0 {
+		return false
+	}
+	current := make(map[string]bool, len(currentFileIDs))
+	for _, id := range currentFileIDs {
+		current[id] = true
+	}
+	seen := make(map[string]bool, len(selected))
+	for _, f := range selected {
+		if !current[f.ID] {
+			return false
+		}
+		seen[f.ID] = true
+	}
+	return len(seen) == len(current)
 }
 
 // selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
@@ -3359,6 +3671,31 @@ type UpdateApplyResult struct {
 	Notes    []string
 }
 
+// ErrModLocked reports an update apply refused because the profile ref is
+// locked (#97). Callers branch with errors.Is.
+var ErrModLocked = errors.New("mod is locked")
+
+// lockedRefRefusalError builds the ErrModLocked-wrapping refusal both
+// ApplyUpdate and ApplyRollback return when mod's profile ref is locked -
+// factored into one function specifically so the two call sites can never
+// drift apart in wording (PR #142 Copilot round-4: the prior hand-duplicated
+// version named no source/profile in its remedies, so a user running the
+// refused operation against a non-active profile, or a mod ID that exists
+// under more than one source, would copy-paste a remedy that resolved
+// against the wrong target - the active profile / an ambiguous source -
+// the same "copy-paste acts on the wrong target" class already fixed for
+// verify's sibling-repair warning). Both remedies now carry the mod's
+// actual source (-s) and the profile actually holding the lock (-p) -
+// modCmd's real, registered flags (cmd/lmm/mod.go: `modCmd.PersistentFlags
+// ().StringVarP(&modSource, "source", "s", ...)` /
+// `StringVarP(&modProfile, "profile", "p", ...)`), so a copy-pasted remedy
+// always resolves against the SAME ref this error is actually about,
+// regardless of which profile/source the caller had active.
+func lockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModReference) error {
+	return fmt.Errorf("%w: %s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'",
+		ErrModLocked, mod.Name, ref.Version, profileName, mod.SourceID, profileName, mod.ID, mod.SourceID, profileName, mod.ID)
+}
+
 // ApplyUpdate applies upd to the installed mod it references
 // (upd.InstalledMod), following cmd/lmm/update.go's pre-extraction
 // applyUpdate ordering exactly: GetMod (the new version) -> GetModFiles ->
@@ -3369,9 +3706,12 @@ type UpdateApplyResult struct {
 // FileIDReplacements resolution mirrors applyUpdate exactly: each of the
 // installed mod's own FileIDs is looked up in upd.FileIDReplacements; a hit
 // substitutes the new (superseding) file ID, a miss retains the ORIGINAL id
-// verbatim (never silently dropped) - selectDeployFiles' own primary-file
-// fallback only kicks in afterward, if NONE of the resulting IDs are found
-// among the new version's available files at all.
+// verbatim (never silently dropped). Those IDs are then handed to
+// selectUpdateDeployFiles, for which they are only a tie-break WITHIN
+// upd.NewVersion's own files - see that function's doc comment (#143) for
+// why the update path, alone among the flows, cannot let stored IDs
+// outrank the target version, and for when its selectDeployFiles
+// primary-file fallback (#95) still applies.
 //
 // A download failure returns immediately - before any hook runs, before
 // Replace, before any DB/profile write - so the old version is left
@@ -3414,6 +3754,17 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	newVersion := upd.NewVersion
 	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
 
+	// #97: a locked ref refuses update-apply entirely - the lock's whole
+	// contract. Checked before any network or hook side effect.
+	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
+			return result, lockedRefRefusalError(mod.Mod, profileName, ref)
+		}
+	}
+	// (A missing/unreadable profile falls through - matches
+	// PlanProfileSwitch's ignore-errors precedent for profile loads: a lock
+	// cannot exist in an unloadable profile.)
+
 	newMod, err := s.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
 	if err != nil {
 		return result, fmt.Errorf("fetching new version: %w", err)
@@ -3427,20 +3778,33 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		return result, fmt.Errorf("no downloadable files available")
 	}
 
+	// replacedIDs records which of the resulting IDs came from an actual
+	// FileIDReplacements HIT, so selectUpdateDeployFiles can treat those as
+	// authoritative per-file rather than inferring anything from the map's
+	// mere presence (a partial map is the norm - see its doc comment).
 	effectiveFileIDs := mod.FileIDs
+	var replacedIDs map[string]bool
 	if len(upd.FileIDReplacements) > 0 {
 		effectiveFileIDs = make([]string, len(mod.FileIDs))
+		replacedIDs = make(map[string]bool, len(upd.FileIDReplacements))
 		for i, fid := range mod.FileIDs {
 			if newID, ok := upd.FileIDReplacements[fid]; ok {
 				effectiveFileIDs[i] = newID
+				replacedIDs[newID] = true
 			} else {
 				effectiveFileIDs[i] = fid
 			}
 		}
 	}
-	filesToDownload, _, err := selectDeployFiles(files, effectiveFileIDs, true)
+	filesToDownload, selectionWarnings, err := selectUpdateDeployFiles(files, newVersion, mod.Version, mod.FileIDs, effectiveFileIDs, replacedIDs)
 	if err != nil {
 		return result, fmt.Errorf("selecting files to download: %w", err)
+	}
+	for _, w := range selectionWarnings {
+		result.Warnings = append(result.Warnings, w)
+		evt := base
+		evt.Phase, evt.Detail = UpdateWarning, w
+		emit(evt)
 	}
 
 	// #96/#94: record what is actually being installed, not the mod-level
@@ -3678,6 +4042,19 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 	if err != nil {
 		return result, fmt.Errorf("mod not found: %s", modID)
 	}
+
+	// #97: a locked ref refuses rollback entirely, mirroring ApplyUpdate's
+	// own gate - rollback moves a locked ref's Version just as surely as an
+	// update would, and the lock's whole contract is that only an explicit
+	// re-lock or unlock may do that. Checked before any side effect (hooks,
+	// Replace, DB/profile writes).
+	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
+			return result, lockedRefRefusalError(mod.Mod, profileName, ref)
+		}
+	}
+	// (A missing/unreadable profile falls through - matches ApplyUpdate's
+	// own precedent: a lock cannot exist in an unloadable profile.)
 
 	if mod.PreviousVersion == "" {
 		return result, fmt.Errorf("no previous version available for rollback")

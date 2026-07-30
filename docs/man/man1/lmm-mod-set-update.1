@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.25.0" "User Commands"
+.TH "LMM" "1" "Jul 2026" "lmm 1.26.0" "User Commands"
 
 .SH NAME
 lmm-mod-set-update - Set update policy for a mod
@@ -16,7 +16,7 @@ Set the update policy for an installed mod.
 Policies:
   --auto    Automatically apply updates when checking
   --notify  Show available updates, require manual approval (default)
-  --pin     Never update this mod automatically
+  --pin     Mute update checks for this mod (to hold an exact version, use 'lmm mod lock')
 
 .PP
 Examples:
@@ -39,7 +39,7 @@ Examples:
 
 .PP
 \fB--pin\fP[=false]
-	pin to current version
+	mute update checks for this mod (to hold an exact version, use 'lmm mod lock')
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

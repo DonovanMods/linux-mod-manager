@@ -601,6 +601,82 @@ func TestPrototypeExportSucceedsWithoutWriting(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "prototypeProvider.ExportProfile must never write to the filesystem")
 }
 
+// TestPrototypeProviderActions_SetLock_UnlockRoundTrip mirrors
+// TestPrototypeProviderActions_EnableMod_FlipsStatusVisibleInRepeatedOverview's
+// own shape (#97): a single prototypeProvider instance driven as both
+// DataProvider and ActionProvider must reflect SetLock/Unlock on the next
+// Overview call.
+func TestPrototypeProviderActions_SetLock_UnlockRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+	item := ModItem{ID: "ussep", Source: "nexusmods", Name: "USSEP"}
+
+	outcome, err := actions.SetLock(context.Background(), item, "")
+	require.NoError(t, err)
+	assert.Equal(t, `Locked "USSEP"`, outcome.Message)
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	locked := requireModByID(t, mods, "ussep")
+	assert.True(t, locked.Locked)
+	assert.Equal(t, locked.Version, locked.LockedVersion, `version=="" locks at whatever is currently installed`)
+
+	outcome, err = actions.Unlock(context.Background(), item)
+	require.NoError(t, err)
+	assert.Equal(t, `Unlocked "USSEP"`, outcome.Message)
+
+	_, mods, err = provider.Overview(context.Background())
+	require.NoError(t, err)
+	unlocked := requireModByID(t, mods, "ussep")
+	assert.False(t, unlocked.Locked, "Unlock must clear the lock marker")
+	assert.Empty(t, unlocked.LockedVersion)
+}
+
+// TestPrototypeProviderActions_SetLock_WithVersion_MovesTarget mirrors
+// TestCoreProviderActions_SetLock_WithVersion_MovesTarget's own coverage
+// (service_core_test.go) for the prototype implementation: a non-empty
+// version moves the LOCK's target (LockedVersion) - locking is a metadata
+// write, not a deploy, so the mod's installed Version must NOT move until a
+// later apply/deploy converges it (SetLock's own doc comment, and
+// ProfileManager.SetModLock's - "the record is the lock's target while
+// locked" is a profile-YAML-ref concept the prototype's flattened Mod
+// doesn't model with a separate field, but Version standing in for
+// "installed" must still behave the same either way). ussep's canned
+// Version (4.3) deliberately differs from the locked-to version (4.2) here,
+// so a regression that moves Version would be caught.
+func TestPrototypeProviderActions_SetLock_WithVersion_MovesTarget(t *testing.T) {
+	t.Parallel()
+
+	provider := NewPrototypeProvider()
+	actions := provider.(ActionProvider)
+	item := ModItem{ID: "ussep", Source: "nexusmods", Name: "USSEP"}
+
+	outcome, err := actions.SetLock(context.Background(), item, "4.2")
+	require.NoError(t, err)
+	assert.Equal(t, `Locked "USSEP" at 4.2`, outcome.Message)
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	locked := requireModByID(t, mods, "ussep")
+	assert.True(t, locked.Locked)
+	assert.Equal(t, "4.2", locked.LockedVersion)
+	assert.Equal(t, "4.3", locked.Version, "SetLock must never move the installed Version - only LockedVersion, matching the real implementation's metadata-write-only contract")
+}
+
+// TestPrototypeProviderActions_AvailableVersions_ReturnsCannedList covers
+// the demo's canned lock-picker data source.
+func TestPrototypeProviderActions_AvailableVersions_ReturnsCannedList(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	versions, err := actions.AvailableVersions(context.Background(), ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"})
+	require.NoError(t, err)
+	assert.NotEmpty(t, versions)
+}
+
 func requireModByID(t *testing.T, mods []ModItem, id string) ModItem {
 	t.Helper()
 	for _, m := range mods {
@@ -637,6 +713,17 @@ type recordingActions struct {
 	// []ModItem (mirroring the other *Calls fields) since both the mod
 	// identity and the chosen policy string matter to those tests.
 	SetPolicyCalls []struct{ ModID, Policy string }
+	// SetLockCalls records each SetLock call as {modID, version} - Task 6's
+	// lock wiring tests assert against this, mirroring SetPolicyCalls' own
+	// struct-per-call shape above (two arguments matter here too).
+	SetLockCalls []struct{ ModID, Version string }
+	// UnlockCalls records each Unlock call's item argument - Task 6's unlock
+	// wiring tests assert against this, mirroring EnableCalls/DisableCalls/
+	// UninstallCalls' own single-ModItem-argument shape above.
+	UnlockCalls []ModItem
+	// AvailableVersionsCalls records each AvailableVersions call's item
+	// argument, mirroring UnlockCalls immediately above.
+	AvailableVersionsCalls []ModItem
 	// CreateProfileCalls/DeleteProfileCalls record each call's name argument
 	// - Task 6's create/delete wiring tests assert against these, mirroring
 	// PlanCalls/ApplyCalls' own single-string-argument shape above.
@@ -682,6 +769,7 @@ type recordingActions struct {
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
+	SetLockOutcome, UnlockOutcome                                                ActionOutcome
 	CreateProfileOutcome, DeleteProfileOutcome                                   ActionOutcome
 	PurgeOutcome                                                                 ActionOutcome
 	ReorderOutcome                                                               ActionOutcome
@@ -692,6 +780,7 @@ type recordingActions struct {
 	PlanImportViewOut                                                            ImportPlanView
 	ApplyImportOutcome                                                           ActionOutcome
 	ExportOutcome                                                                ActionOutcome
+	AvailableVersionsOut                                                         []string
 
 	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks/PurgeTicks, if
 	// set, are replayed through the matching method's progress callback (in
@@ -708,6 +797,7 @@ type recordingActions struct {
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
 	SetPolicyErr                                                      error
+	SetLockErr, UnlockErr, AvailableVersionsErr                       error
 	CreateProfileErr, DeleteProfileErr                                error
 	PurgeErr                                                          error
 	SetGameErr                                                        error
@@ -794,6 +884,24 @@ func (r *recordingActions) ApplyUpdate(_ context.Context, u UpdateItem, progress
 func (r *recordingActions) SetUpdatePolicy(_ context.Context, item ModItem, policy string) (ActionOutcome, error) {
 	r.SetPolicyCalls = append(r.SetPolicyCalls, struct{ ModID, Policy string }{item.ID, policy})
 	return r.SetPolicyOutcome, r.SetPolicyErr
+}
+
+// SetLock implements ActionProvider (Task 6).
+func (r *recordingActions) SetLock(_ context.Context, item ModItem, version string) (ActionOutcome, error) {
+	r.SetLockCalls = append(r.SetLockCalls, struct{ ModID, Version string }{item.ID, version})
+	return r.SetLockOutcome, r.SetLockErr
+}
+
+// Unlock implements ActionProvider (Task 6).
+func (r *recordingActions) Unlock(_ context.Context, item ModItem) (ActionOutcome, error) {
+	r.UnlockCalls = append(r.UnlockCalls, item)
+	return r.UnlockOutcome, r.UnlockErr
+}
+
+// AvailableVersions implements ActionProvider (Task 6).
+func (r *recordingActions) AvailableVersions(_ context.Context, item ModItem) ([]string, error) {
+	r.AvailableVersionsCalls = append(r.AvailableVersionsCalls, item)
+	return r.AvailableVersionsOut, r.AvailableVersionsErr
 }
 
 func (r *recordingActions) CreateProfile(_ context.Context, name string) (ActionOutcome, error) {
@@ -917,6 +1025,18 @@ func (f failingActions) ApplyUpdate(context.Context, UpdateItem, func(ActionProg
 
 func (f failingActions) SetUpdatePolicy(context.Context, ModItem, string) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) SetLock(context.Context, ModItem, string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) Unlock(context.Context, ModItem) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) AvailableVersions(context.Context, ModItem) ([]string, error) {
+	return nil, f.err()
 }
 
 func (f failingActions) CreateProfile(context.Context, string) (ActionOutcome, error) {

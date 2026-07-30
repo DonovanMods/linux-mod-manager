@@ -30,6 +30,31 @@ type Profile struct {
 	HooksExplicit      GameHooksExplicit // Tracks which hooks were explicitly set
 }
 
+// FindRef returns a pointer into p.Mods for the reference matching
+// sourceID+modID (the same identity ModKey keys on), scanned in load order,
+// or nil when the profile does not list it. Nil-receiver-safe, mirroring
+// the tolerant "_ = " profile-load precedent (coreProvider.Overview,
+// ApplyUpdate's lock gate) so a caller that already handled a failed
+// config.LoadProfile as "profile stays nil" can call FindRef unconditionally
+// instead of guarding it separately.
+//
+// Consolidates what used to be five near-identical "scan profile.Mods for
+// one ref" loops (#97 review) spread across internal/core/flows.go,
+// cmd/lmm/update.go, cmd/lmm/list.go, and cmd/lmm/mod.go, some of which used
+// inconsistent key-separator conventions ("|" vs ":") despite all meaning
+// the same domain.ModKey identity.
+func (p *Profile) FindRef(sourceID, modID string) *ModReference {
+	if p == nil {
+		return nil
+	}
+	for i := range p.Mods {
+		if p.Mods[i].SourceID == sourceID && p.Mods[i].ModID == modID {
+			return &p.Mods[i]
+		}
+	}
+	return nil
+}
+
 // ExportedProfile is the YAML-serializable format for sharing
 type ExportedProfile struct {
 	Name       string            `yaml:"name"`
