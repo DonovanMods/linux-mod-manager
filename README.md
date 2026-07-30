@@ -217,9 +217,10 @@ wherever they'd conflict, the lock wins and the output names it:
 Lock state shows up alongside version info wherever it's installed: `lmm
 list -v`'s `LOCKED` column (the locked version, or `-`), `lmm mod show`'s
 Installed section, and `lmm update`'s table, where a locked mod's `POLICY`
-cell gets a `[locked@<version>]` suffix. `--json` output for `list`, `mod
-show`, and `update` carries the same information additively (`locked`,
-`locked_version`). `lmm verify` still reports a locked mod's version-record
+cell gets a `[locked@<version>]` suffix. `--json` output for `list` and `mod
+show` carries the same information additively (`locked`, `locked_version`);
+single-mod `lmm update --json` instead reports a refused apply as
+`status: "skipped", reason: "locked"`. `lmm verify` still reports a locked mod's version-record
 mismatches, but `--fix` refuses to rewrite a locked mod's record (other,
 unlocked mods in the same run are still fixed) — and when the installed
 version hasn't yet converged to a lock's target, `verify` prints an
