@@ -2103,6 +2103,70 @@ func TestCheckUpdatesModalContentListsUpdatesAndWarningsCount(t *testing.T) {
 	require.Contains(t, model.action.pending.detail, "1 warning(s) during check")
 }
 
+// TestCheckUpdatesModalMarksLockedRows (#143 polish): a locked update's row
+// in the "Apply N update(s)?" modal must carry the same "[locked@<version>]"
+// marker the CLI's bulk table uses, so the user can see up front which rows
+// the apply will refuse — and an unlocked row alongside must stay unmarked.
+func TestCheckUpdatesModalMarksLockedRows(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{UpdatesViewOut: UpdatesView{
+		Updates: []UpdateItem{
+			{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Locked: true, LockedVersion: "5.2"},
+			{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+		},
+	}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	updated, cmd := model.Update(keyRunes("u"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.action.pending)
+	require.Contains(t, model.action.pending.detail, "SkyUI 5.2 → 5.3 [locked@5.2]")
+	require.Contains(t, model.action.pending.detail, "USSEP 4.3 → 4.4", "the unlocked row must stay exactly as before, unmarked")
+}
+
+// TestApplyUpdatesSequentially_LockedRefusalWordedForTUI (#143 polish): when
+// a batch apply hits the core lock gate, the per-mod failure line used to
+// carry core.LockedRefRefusalError's CLI remedies ("lmm mod lock ...")
+// verbatim — commands that mean nothing inside the TUI, which has its own L
+// key. The ✗ result line and the warning must instead point at L, and the
+// raw CLI command text must not leak through. Any other error still flows
+// through unchanged (the USSEP row proves it).
+func TestApplyUpdatesSequentially_LockedRefusalWordedForTUI(t *testing.T) {
+	t.Parallel()
+
+	lockedErr := core.LockedRefRefusalError(
+		domain.Mod{ID: "skyui", SourceID: "nexusmods", Name: "SkyUI"},
+		"default",
+		&domain.ModReference{SourceID: "nexusmods", ModID: "skyui", Version: "5.2", Locked: true},
+	)
+	rec := &recordingActions{ApplyUpdateErrByID: map[string]error{
+		"skyui": lockedErr,
+		"ussep": errors.New("boom"),
+	}}
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3", Locked: true, LockedVersion: "5.2"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+
+	outcome, err := applyUpdatesSequentially(context.Background(), rec, updates, nil)
+	require.NoError(t, err)
+
+	require.Len(t, outcome.ResultLines, 2)
+	require.Equal(t, "✗ SkyUI: locked at v5.2 — unlock or move the lock (L) to update", outcome.ResultLines[0])
+	require.Equal(t, "✗ USSEP: boom", outcome.ResultLines[1], "non-lock failures must keep the raw error")
+	require.Len(t, outcome.Warnings, 2)
+	require.Equal(t, "SkyUI: locked at v5.2 — unlock or move the lock (L) to update", outcome.Warnings[0])
+	for _, line := range append(append([]string{}, outcome.ResultLines...), outcome.Warnings...) {
+		require.NotContains(t, line, "lmm mod", "CLI remedy commands must never surface inside the TUI")
+	}
+}
+
 // --- Check/apply updates: changelog viewer ('v') ---
 
 // openUpdatesModal is the shared setup for the changelog-viewer tests below:

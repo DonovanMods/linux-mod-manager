@@ -91,6 +91,57 @@ func TestDoUpdateRollback_MissingCache_ReturnsExactError(t *testing.T) {
 	assert.Empty(t, out, "the header must never print when this guard fails")
 }
 
+// TestDoUpdateRollback_Locked_RefusesBeforeHeader_Text (#143 polish): a
+// locked mod's rollback must be refused by a CLI pre-check BEFORE the
+// optimistic "Rolling back..." header prints (the core gate backstops this
+// regardless, but fired only after the header), mirroring applySingleUpdate's
+// locked pre-check: a skip with both remedy commands, not an error.
+func TestDoUpdateRollback_Locked_RefusesBeforeHeader_Text(t *testing.T) {
+	svc, game, _ := setupRollbackReadyMod(t)
+	setLockedForUpdate(t, svc, game, "test-src", "mod1", "2.0")
+
+	var callErr error
+	out := captureStdout(t, func() error {
+		callErr = doUpdateRollback(context.Background(), svc, game, "mod1")
+		return nil
+	})
+	require.NoError(t, callErr, "a locked rollback is a skip, like a locked single-mod update, not a failure")
+	assert.NotContains(t, out, "Rolling back", "the optimistic header must never print for a refused rollback")
+	assert.Contains(t, out, "Rollback available: 2.0 → 1.0 — but Mod One is locked at v2.0.")
+	assert.Contains(t, out, "Move the lock: lmm mod lock -s test-src -p default mod1 1.0   |   Unlock: lmm mod unlock -s test-src -p default mod1", "both remedies must carry -s/-p so a copy-paste can never resolve against a different source/profile")
+
+	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated.Version, "a locked mod must not roll back")
+}
+
+// TestDoUpdateRollback_Locked_JSON_SkippedDocument: the --json sibling — a
+// locked rollback emits the single-mod document with status "skipped"/reason
+// "locked" (parity with applySingleUpdate's locked skip), instead of the
+// {"error": ...} shape the core gate's error used to produce.
+func TestDoUpdateRollback_Locked_JSON_SkippedDocument(t *testing.T) {
+	svc, game, _ := setupRollbackReadyMod(t)
+	withJSONOutput(t)
+	setLockedForUpdate(t, svc, game, "test-src", "mod1", "2.0")
+
+	out := captureStdout(t, func() error {
+		return doUpdateRollback(context.Background(), svc, game, "mod1")
+	})
+
+	var doc singleUpdateJSON
+	decodeSingleDoc(t, out, &doc)
+	assert.Equal(t, "mod1", doc.ModID)
+	assert.Equal(t, "Mod One", doc.Name)
+	assert.Equal(t, "2.0", doc.FromVersion)
+	assert.Equal(t, "1.0", doc.ToVersion)
+	assert.Equal(t, "skipped", doc.Status)
+	assert.Equal(t, "locked", doc.Reason)
+
+	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated.Version)
+}
+
 // TestDoUpdateRollback_HookForceGate covers doUpdateRollback's Force-gated
 // before_each hook checks: fatal without --force, a "Warning: ... (forced):
 // ..." stderr line (and the rollback still applying) with --force.

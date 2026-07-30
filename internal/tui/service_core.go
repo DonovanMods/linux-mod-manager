@@ -1422,12 +1422,28 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 	}
 
 	updates, checkErr := p.svc.NewUpdater().CheckUpdates(ctx, game, installed)
+
+	// #143: join the profile YAML's lock state onto the update rows - the
+	// same projection (and the same nil-safe "an unreadable profile leaves
+	// every mod unlocked" degradation) Overview makes for ModItem, so the
+	// batch-apply modal can mark rows ApplyUpdate will refuse.
+	lockedRefs := map[string]string{}
+	if profileYAML, perr := config.LoadProfile(p.svc.ConfigDir(), game.ID, profile); perr == nil && profileYAML != nil {
+		for _, ref := range profileYAML.Mods {
+			if ref.Locked {
+				lockedRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref.Version
+			}
+		}
+	}
+
 	var view UpdatesView
 	for _, u := range updates {
+		lockedVersion, isLocked := lockedRefs[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)]
 		view.Updates = append(view.Updates, UpdateItem{
 			Source: u.InstalledMod.SourceID, ID: u.InstalledMod.ID, Name: u.InstalledMod.Name,
 			FromVersion: u.InstalledMod.Version, ToVersion: u.NewVersion,
 			Changelog: core.CleanChangelog(u.Changelog),
+			Locked:    isLocked, LockedVersion: lockedVersion,
 		})
 	}
 	if skipped := updateSkipWarning(core.CountUpdateSkips(installed)); skipped != "" {
