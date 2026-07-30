@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -9,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
@@ -1438,12 +1440,18 @@ func (m Model) resolveCheckUpdatesFailure(msg checkUpdatesFailedMsg) (Model, tea
 // modal's detail lines: one "<name> <from> → <to>" line per update (the
 // machinery's own "+N more" collapsing, actionModalView, applies here
 // exactly like switchDetailLines' per-mod lines when the list is long),
-// plus a trailing warning-count line when CheckUpdates surfaced any
-// per-source diagnostics alongside the updates it did resolve.
+// a trailing "[locked@<version>]" marker - the CLI bulk table's own
+// wording (#143) - on rows the apply below will refuse, plus a trailing
+// warning-count line when CheckUpdates surfaced any per-source
+// diagnostics alongside the updates it did resolve.
 func updateDetailLines(view UpdatesView) []string {
 	lines := make([]string, 0, len(view.Updates)+1)
 	for _, u := range view.Updates {
-		lines = append(lines, fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion))
+		line := fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion)
+		if u.Locked {
+			line += fmt.Sprintf(" [locked@%s]", u.LockedVersion)
+		}
+		lines = append(lines, line)
 	}
 	if len(view.Warnings) > 0 {
 		lines = append(lines, fmt.Sprintf("%d warning(s) during check", len(view.Warnings)))
@@ -1525,8 +1533,21 @@ func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updat
 		}
 		outcome, err := actions.ApplyUpdate(ctx, u, progress)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: %s", u.Name, singleLine(err.Error())))
-			resultLines = append(resultLines, fmt.Sprintf("✗ %s: %s", u.Name, singleLine(err.Error())))
+			failure := singleLine(err.Error())
+			// #143 polish: the core lock gate's refusal names CLI remedy
+			// commands ('lmm mod lock ...') that mean nothing inside the
+			// TUI - reword it for the TUI's own L key. Keyed off the error,
+			// not u.Locked, so a lock raced in after CheckUpdates still gets
+			// the TUI wording (falling back to a version-less message when
+			// the stale UpdateItem carries no LockedVersion).
+			if errors.Is(err, core.ErrModLocked) {
+				failure = "locked — unlock or move the lock (L) to update"
+				if u.LockedVersion != "" {
+					failure = fmt.Sprintf("locked at v%s — unlock or move the lock (L) to update", u.LockedVersion)
+				}
+			}
+			warnings = append(warnings, fmt.Sprintf("%s: %s", u.Name, failure))
+			resultLines = append(resultLines, fmt.Sprintf("✗ %s: %s", u.Name, failure))
 			continue
 		}
 		applied++

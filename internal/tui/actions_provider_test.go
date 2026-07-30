@@ -478,6 +478,32 @@ func TestPrototypeProviderActions_ApplyUpdate_TicksProgressAndBumpsVersionVisibl
 	}
 }
 
+// TestPrototypeProviderActions_CheckUpdates_ProjectsLockState (#143 polish):
+// the prototype's CheckUpdates must project the canned mod's in-memory
+// Locked/LockedVersion onto its UpdateItem — same join coreProvider does
+// from the profile YAML — so the --prototype demo's batch modal shows the
+// locked marker after an L-key lock, and unlocked entries stay unmarked.
+func TestPrototypeProviderActions_CheckUpdates_ProjectsLockState(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+	_, err := actions.SetLock(context.Background(), ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"}, "5.2")
+	require.NoError(t, err)
+
+	view, err := actions.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	byID := map[string]UpdateItem{}
+	for _, u := range view.Updates {
+		byID[u.ID] = u
+	}
+	require.Contains(t, byID, "skyui")
+	require.Contains(t, byID, "ussep")
+	assert.True(t, byID["skyui"].Locked)
+	assert.Equal(t, "5.2", byID["skyui"].LockedVersion)
+	assert.False(t, byID["ussep"].Locked)
+	assert.Empty(t, byID["ussep"].LockedVersion)
+}
+
 func TestPrototypeProviderActions_ApplyUpdate_UnknownModErrors(t *testing.T) {
 	t.Parallel()
 

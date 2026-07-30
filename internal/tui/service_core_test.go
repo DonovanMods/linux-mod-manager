@@ -1923,6 +1923,40 @@ func TestCoreProviderActions_CheckUpdates_OneUpdateAndOneErroringSourceSurfacesW
 	assert.Contains(t, view.Warnings[0], "flaky")
 }
 
+// TestCoreProviderActions_CheckUpdates_PopulatesLockState (#143 polish):
+// coreProvider.CheckUpdates must join the profile YAML's lock state onto the
+// UpdateItems it reports — same "locked but informed" projection Overview
+// does for ModItem — so the batch-apply modal can mark locked rows up front.
+// The unlocked sibling proves the default stays false/empty.
+func TestCoreProviderActions_CheckUpdates_PopulatesLockState(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	seedActionMod(t, svc, game, "src", "modL", "Mod L", "1.0", true, nil)
+	seedActionMod(t, svc, game, "src", "modU", "Mod U", "1.0", true, nil)
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "modL", "1.0")
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "modU", "1.0")
+	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "modL", "1.0"))
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.updates = []domain.Update{
+		{InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: "modL", SourceID: "src", Name: "Mod L", Version: "1.0"}}, NewVersion: "1.1"},
+		{InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: "modU", SourceID: "src", Name: "Mod U", Version: "1.0"}}, NewVersion: "1.1"},
+	}
+
+	view, err := actions.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	require.Len(t, view.Updates, 2)
+	byID := map[string]tui.UpdateItem{}
+	for _, u := range view.Updates {
+		byID[u.ID] = u
+	}
+	assert.True(t, byID["modL"].Locked, "the locked ref's update must carry Locked")
+	assert.Equal(t, "1.0", byID["modL"].LockedVersion)
+	assert.False(t, byID["modU"].Locked)
+	assert.Empty(t, byID["modU"].LockedVersion)
+}
+
 // TestCoreProviderCheckUpdatesPopulatesChangelog guards Phase 6b Task 7's
 // UpdateItem.Changelog wiring: coreProvider.CheckUpdates must run the
 // source's raw HTML changelog through core.CleanChangelog before it ever
