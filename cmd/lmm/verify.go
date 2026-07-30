@@ -363,7 +363,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 					// #142 round 5: name the source/profile in both remedies -
 					// same "copy-paste acts on the wrong target" fix already
 					// applied to the core gates (internal/core/flows.go's
-					// lockedRefRefusalError) and the sibling-repair warning
+					// LockedRefRefusalError) and the sibling-repair warning
 					// below - a bare 'lmm mod lock <id> <version>' would
 					// resolve against the active profile/an ambiguous source
 					// if this mod's lock lives elsewhere.

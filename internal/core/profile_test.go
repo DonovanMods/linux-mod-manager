@@ -513,7 +513,7 @@ func TestProfileManager_UpsertMod_LockedRefRefusesVersionMove(t *testing.T) {
 	assert.Contains(t, err.Error(), "1.0.0", "the refusal must name the locked version")
 	assert.Contains(t, err.Error(), "test", "the refusal must name the profile")
 	assert.Contains(t, err.Error(), "lmm mod lock -s nexusmods -p test 12345",
-		"the remedy must carry -s/-p so a copy-paste can never act on the wrong source/profile (the lockedRefRefusalError precedent)")
+		"the remedy must carry -s/-p so a copy-paste can never act on the wrong source/profile (the LockedRefRefusalError precedent)")
 	assert.Contains(t, err.Error(), "lmm mod unlock -s nexusmods -p test 12345",
 		"the unlock remedy must carry -s/-p for the same reason")
 
