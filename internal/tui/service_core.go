@@ -132,6 +132,19 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 	profileYAML, _ := config.LoadProfile(p.svc.ConfigDir(), game.ID, profile)
 	mods = core.OrderByProfile(profileYAML, mods)
 
+	// refsByKey joins the profile YAML's lock state onto the DB-sourced
+	// mods list below by (sourceID, modID) - domain.ModKey (#97). Built
+	// once, up front, rather than re-scanning profileYAML.Mods per item via
+	// Profile.FindRef: same nil-safe "an unreadable profile.yaml leaves
+	// every mod unlocked" degradation OrderByProfile above already accepts
+	// (profileYAML may be nil here - see its own doc comment).
+	refsByKey := make(map[string]domain.ModReference, len(mods))
+	if profileYAML != nil {
+		for _, ref := range profileYAML.Mods {
+			refsByKey[domain.ModKey(ref.SourceID, ref.ModID)] = ref
+		}
+	}
+
 	enabled := 0
 	for _, mod := range mods {
 		if mod.Enabled {
@@ -141,7 +154,7 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {
-		items = append(items, ModItem{
+		item := ModItem{
 			ID:              mod.ID,
 			Name:            mod.Name,
 			Author:          mod.Author,
@@ -150,7 +163,16 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 			Status:          installedModStatus(mod),
 			UpdatePolicy:    policyToString(mod.UpdatePolicy),
 			PreviousVersion: mod.PreviousVersion,
-		})
+		}
+		// ModItem.LockedVersion is only ever populated alongside Locked
+		// (see that field's own doc comment) - an unlocked ref's Version is
+		// the installed-version record, not a lock target, so it's left
+		// out here even when a ref exists.
+		if ref, ok := refsByKey[domain.ModKey(mod.SourceID, mod.ID)]; ok && ref.Locked {
+			item.Locked = true
+			item.LockedVersion = ref.Version
+		}
+		items = append(items, item)
 	}
 
 	// #106a: recomputed on EVERY Overview call (every loadData refresh, not
@@ -1528,6 +1550,54 @@ func (p *coreProvider) SetUpdatePolicy(_ context.Context, item ModItem, policy s
 		return ActionOutcome{}, fmt.Errorf("setting update policy for %s: %w", item.Name, err)
 	}
 	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
+}
+
+// SetLock locks item at version (""=the ref's current recorded version) via
+// ProfileManager.SetModLock - a local profile YAML write, no network call,
+// no hooks (mirroring SetUpdatePolicy's own "local write" shape above and
+// ActionProvider.SetLock's doc comment: never touches the network or
+// deploys - convergence happens on the next profile apply/switch).
+func (p *coreProvider) SetLock(_ context.Context, item ModItem, version string) (ActionOutcome, error) {
+	if err := p.svc.NewProfileManager().SetModLock(p.currentGame().ID, p.currentProfile(), item.Source, item.ID, version); err != nil {
+		return ActionOutcome{}, fmt.Errorf("locking %s: %w", item.Name, err)
+	}
+	if version != "" {
+		return ActionOutcome{Message: fmt.Sprintf("Locked %q at %s", item.Name, version)}, nil
+	}
+	return ActionOutcome{Message: fmt.Sprintf("Locked %q", item.Name)}, nil
+}
+
+// Unlock clears item's lock marker via ProfileManager.ClearModLock; the
+// ref's Version record is left untouched (see ClearModLock's own doc
+// comment). Local write, no network call, no hooks - mirroring SetLock
+// immediately above.
+func (p *coreProvider) Unlock(_ context.Context, item ModItem) (ActionOutcome, error) {
+	if err := p.svc.NewProfileManager().ClearModLock(p.currentGame().ID, p.currentProfile(), item.Source, item.ID); err != nil {
+		return ActionOutcome{}, fmt.Errorf("unlocking %s: %w", item.Name, err)
+	}
+	return ActionOutcome{Message: fmt.Sprintf("Unlocked %q", item.Name)}, nil
+}
+
+// AvailableVersions lists the distinct versions item's source reports - the
+// lock picker's data source (#97). Fetches item's current mod record via
+// svc.GetMod first (so the source-specific game-ID mapping GetMod performs
+// is respected, exactly like ApplyUpdate's own GetMod-then-GetModFiles
+// precedent - flows.go's ApplyUpdate) before delegating to
+// svc.AvailableModVersions. A source with no version info to report (or any
+// other network-path failure) is mapped through mapNetworkError, naming
+// pin (P) as the fallback: an un-versioned source can still be held back
+// from update checks even though its exact versions can't be listed.
+func (p *coreProvider) AvailableVersions(ctx context.Context, item ModItem) ([]string, error) {
+	action := fmt.Sprintf("listing versions for %s", item.Name)
+	mod, err := p.svc.GetMod(ctx, item.Source, p.currentGame().ID, item.ID)
+	if err != nil {
+		return nil, mapNetworkError(action, item.Source, "version resolution", "pin it instead (P)", err)
+	}
+	versions, err := p.svc.AvailableModVersions(ctx, item.Source, mod)
+	if err != nil {
+		return nil, mapNetworkError(action, item.Source, "version resolution", "pin it instead (P)", err)
+	}
+	return versions, nil
 }
 
 // CreateProfile creates a new, empty profile via ProfileManager.Create - a

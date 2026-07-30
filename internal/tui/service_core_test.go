@@ -2338,6 +2338,178 @@ func TestCoreProviderOverview_MapsUpdatePolicyToWireString(t *testing.T) {
 	assert.Equal(t, "pin", byID["202"].UpdatePolicy)
 }
 
+// TestCoreProviderOverview_MapsLockToModItem covers the ModItem.Locked/
+// LockedVersion fields Task 6 added: a profile ref with `locked: true`
+// (added directly via ProfileManager.UpsertMod, mirroring
+// TestProfileManager_SetModLock's own fixture shape in profile_test.go)
+// must surface as Locked=true / LockedVersion=<ref's Version> on the
+// matching ModItem, joined by (Source, ID) - see Overview's refsByKey
+// mapping (service_core.go). A mod with no profile ref at all (the
+// fixture's pre-existing "101"/"102" rows, which newCoreProviderFixture
+// never adds to the profile YAML) must stay Locked=false/LockedVersion="".
+func TestCoreProviderOverview_MapsLockToModItem(t *testing.T) {
+	provider, svc, game := newCoreProviderFixture(t)
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:         domain.Mod{ID: "301", SourceID: "nexusmods", GameID: game.ID, Name: "Locked Mod", Version: "2.0"},
+		ProfileName: "default",
+		Enabled:     true,
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "nexusmods", ModID: "301", Version: "2.0", Locked: true}))
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+
+	byID := map[string]tui.ModItem{}
+	for _, m := range mods {
+		byID[m.ID] = m
+	}
+	require.Contains(t, byID, "301")
+	assert.True(t, byID["301"].Locked)
+	assert.Equal(t, "2.0", byID["301"].LockedVersion)
+
+	require.Contains(t, byID, "101", "pre-existing fixture mod (no profile ref at all) must still be present")
+	assert.False(t, byID["101"].Locked)
+	assert.Empty(t, byID["101"].LockedVersion)
+}
+
+// TestCoreProviderActions_SetLock_UnlockRoundTrip proves SetLock/Unlock's
+// full round trip through a real Service/ProfileManager - not a recording
+// fake - visible in a subsequent Overview call from a SEPARATE
+// coreProvider instance bound to the SAME (svc, game, profile) triple
+// (NewCoreActions' own doc comment: "two constructors are independent...
+// always observe the same underlying truth").
+func TestCoreProviderActions_SetLock_UnlockRoundTrip(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modL", "Mod L", "1.0", true, nil)
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "modL", "1.0")
+	provider := tui.NewCoreProvider(svc, game, "default")
+	item := tui.ModItem{ID: "modL", Source: "src", Name: "Mod L"}
+
+	outcome, err := actions.SetLock(context.Background(), item, "")
+	require.NoError(t, err)
+	assert.Equal(t, `Locked "Mod L"`, outcome.Message)
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	byID := map[string]tui.ModItem{}
+	for _, m := range mods {
+		byID[m.ID] = m
+	}
+	require.Contains(t, byID, "modL")
+	assert.True(t, byID["modL"].Locked)
+	assert.Equal(t, "1.0", byID["modL"].LockedVersion)
+
+	outcome, err = actions.Unlock(context.Background(), item)
+	require.NoError(t, err)
+	assert.Equal(t, `Unlocked "Mod L"`, outcome.Message)
+
+	_, mods, err = provider.Overview(context.Background())
+	require.NoError(t, err)
+	byID = map[string]tui.ModItem{}
+	for _, m := range mods {
+		byID[m.ID] = m
+	}
+	require.Contains(t, byID, "modL")
+	assert.False(t, byID["modL"].Locked, "Unlock must clear the lock marker")
+}
+
+// TestCoreProviderActions_SetLock_WithVersion_MovesTarget covers SetLock's
+// version argument: a non-empty version moves the ref's Version (the
+// lock's target) - not just the DB-recorded installed version, which
+// SetLock never touches (ProfileManager.SetModLock's own doc comment).
+func TestCoreProviderActions_SetLock_WithVersion_MovesTarget(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	seedActionMod(t, svc, game, "src", "modM", "Mod M", "1.0", true, nil)
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "modM", "1.0")
+	item := tui.ModItem{ID: "modM", Source: "src", Name: "Mod M"}
+
+	outcome, err := actions.SetLock(context.Background(), item, "2.0")
+	require.NoError(t, err)
+	assert.Equal(t, `Locked "Mod M" at 2.0`, outcome.Message)
+
+	pm := svc.NewProfileManager()
+	prof, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	ref := prof.FindRef("src", "modM")
+	require.NotNil(t, ref)
+	assert.True(t, ref.Locked)
+	assert.Equal(t, "2.0", ref.Version, "a non-empty version must move the lock's target")
+
+	installedMod, err := svc.GetInstalledMod("src", "modM", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", installedMod.Version, "SetLock must never touch the DB-recorded installed version")
+}
+
+// TestCoreProviderActions_SetLock_NotInProfileErrors mirrors
+// TestCoreProviderActions_SetUpdatePolicy_UnknownPolicyErrors' own "map
+// errors with the mod name" contract: locking a mod with no matching
+// profile ref surfaces ProfileManager.SetModLock's not-found error wrapped
+// with the mod's display name.
+func TestCoreProviderActions_SetLock_NotInProfileErrors(t *testing.T) {
+	actions, _, _ := newCoreActionsFixture(t)
+	item := tui.ModItem{ID: "ghost", Source: "src", Name: "Ghost Mod"}
+
+	_, err := actions.SetLock(context.Background(), item, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Ghost Mod")
+}
+
+// TestCoreProviderActions_AvailableVersions_ListsDistinctVersions covers
+// the happy path: coreProvider.AvailableVersions fetches item's mod record
+// via svc.GetMod and delegates to svc.AvailableModVersions, returning the
+// distinct per-file versions in first-seen order (core.Service.
+// AvailableModVersions' own documented contract).
+func TestCoreProviderActions_AvailableVersions_ListsDistinctVersions(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modV", SourceID: "src", Name: "Mod V", Version: "1.5", GameID: game.ID})
+	netSrc.files["modV"] = []domain.DownloadableFile{
+		{ID: "10", Version: "1.5", IsPrimary: true},
+		{ID: "9", Version: "1.0"},
+	}
+
+	versions, err := actions.AvailableVersions(context.Background(), tui.ModItem{ID: "modV", Source: "src", Name: "Mod V"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"1.5", "1.0"}, versions)
+}
+
+// TestCoreProviderActions_AvailableVersions_MapsNotSupportedError guards
+// the ErrNotSupported degrade (a source whose files carry no version info
+// at all): mapNetworkError's capability-gap wording, naming "version
+// resolution" and pointing at the pin (P) fallback per task-6-brief.md.
+func TestCoreProviderActions_AvailableVersions_MapsNotSupportedError(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	// No files entry for "modW" - netSource's default synthesized file
+	// carries no Version, so AvailableModVersions degrades to
+	// source.ErrNotSupported.
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modW", SourceID: "src", Name: "Mod W", Version: "1.0", GameID: game.ID})
+
+	_, err := actions.AvailableVersions(context.Background(), tui.ModItem{ID: "modW", Source: "src", Name: "Mod W"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `source "src" does not support version resolution`)
+	assert.Contains(t, err.Error(), "pin it instead (P)")
+}
+
+// TestCoreProviderActions_AvailableVersions_MapsAuthRequiredError mirrors
+// TestCoreProviderActions_PlanInstall_MapsAuthRequiredError's own coverage
+// (mapNetworkError is the SAME shared helper) for AvailableVersions' own
+// GetMod call site.
+func TestCoreProviderActions_AvailableVersions_MapsAuthRequiredError(t *testing.T) {
+	actions, svc, _ := newCoreActionsFixture(t)
+	netSrc := newNetSource(t, "src")
+	netSrc.getModErr = domain.ErrAuthRequired
+	svc.RegisterSource(netSrc)
+
+	_, err := actions.AvailableVersions(context.Background(), tui.ModItem{ID: "modK", Source: "src", Name: "Mod K"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Authentication required for src")
+	assert.Contains(t, err.Error(), "lmm auth login src")
+}
+
 // --- Task 8: in-TUI game switcher ---
 
 // TestCoreProviderListGames guards ListGames' basic contract: every

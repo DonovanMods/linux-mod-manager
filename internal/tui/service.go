@@ -83,6 +83,30 @@ type ModItem struct {
 	// mirroring UpdatePolicy's own "only Overview populates it" convention
 	// above.
 	PreviousVersion string
+	// Locked reports whether the profile ref for this mod carries `locked:
+	// true` (#97) - lmm update refuses a locked mod (core.ErrModLocked, see
+	// core.Service.ApplyUpdate's gate in flows.go). coreProvider's Overview
+	// mapping (service_core.go) populates this from the profile YAML's
+	// domain.ModReference.Locked, joined by (Source, ID) against the
+	// installed-mods list it already loaded; prototypeProvider from the
+	// canned Mod.Locked field. False for a Search-derived ModItem, mirroring
+	// UpdatePolicy/PreviousVersion's own "only Overview populates it"
+	// convention above. modFlags (app.go) gives Locked precedence over
+	// UpdatePolicy == "pin" in the flags column - the "lck" flag wins the
+	// slot; the mod's pin state is untouched and still visible in the P
+	// picker and mod actions.
+	Locked bool
+	// LockedVersion is the profile ref's Version field when Locked is true -
+	// the lock's target (domain.ModReference.Version's doc comment: "When
+	// Locked, also the lock's target"). This is NOT necessarily the same
+	// value as Version above: Version is the mod's actually-installed
+	// version (from the DB record GetInstalledMods returns), while
+	// LockedVersion is what the profile ref currently records as the locked
+	// target - they can differ until the next profile apply/switch
+	// converges them (SetLock/Unlock never deploy - see ActionProvider.
+	// SetLock's doc comment). Empty whenever Locked is false, mirroring
+	// PreviousVersion's own "empty means nothing to show" convention.
+	LockedVersion string
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of
@@ -574,6 +598,8 @@ func modItems(mods []prototype.Mod) []ModItem {
 			HasEndorsements: mod.HasEndorsements,
 			UpdatePolicy:    mod.UpdatePolicy,
 			PreviousVersion: mod.PreviousVersion,
+			Locked:          mod.Locked,
+			LockedVersion:   mod.LockedVersion,
 		})
 	}
 	return items

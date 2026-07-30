@@ -79,6 +79,16 @@ type ActionProvider interface {
 	// network - a local DB write - so it carries no progress callback.
 	SetUpdatePolicy(ctx context.Context, item ModItem, policy string) (ActionOutcome, error)
 
+	// SetLock locks item at version (""= the ref's current recorded version).
+	// Metadata write on the profile ref - never touches the network or deploys;
+	// convergence happens on the next profile apply/switch.
+	SetLock(ctx context.Context, item ModItem, version string) (ActionOutcome, error)
+	// Unlock clears the lock marker; the version record stays.
+	Unlock(ctx context.Context, item ModItem) (ActionOutcome, error)
+	// AvailableVersions lists the distinct versions item's source reports
+	// (network). The lock picker's data source.
+	AvailableVersions(ctx context.Context, item ModItem) ([]string, error)
+
 	// CreateProfile creates a new, empty profile named name (Task 6's
 	// Profiles-screen 'c' binding - see mutations.go's createProfilePrompt).
 	// A name colliding with an existing profile is rejected - coreProvider
@@ -745,6 +755,66 @@ func (p *prototypeProvider) SetUpdatePolicy(_ context.Context, item ModItem, pol
 	}
 	p.activeMods()[idx].UpdatePolicy = policy
 	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
+}
+
+// prototypeAvailableVersions is the fixed version list every
+// prototypeProvider.AvailableVersions call returns - a canned demo list, no
+// per-mod variation needed (mirrors this file's other canned-outcome
+// constants, e.g. errCannotDeleteActiveProfile's shared-wording precedent).
+var prototypeAvailableVersions = []string{"1.2", "1.1", "1.0"}
+
+// SetLock mutates the canned InstalledMods entry's Locked/LockedVersion
+// fields in place - visible in a repeated Overview, mirroring
+// SetUpdatePolicy's own "same instance, same session" contract. version ==
+// "" locks at whatever LockedVersion resolves to from the mod's current
+// Version (mirroring coreProvider.SetLock/ProfileManager.SetModLock's own
+// "version==\"\" locks at whatever is currently installed" contract); a
+// non-empty version moves the lock's target, same as the real
+// implementation.
+func (p *prototypeProvider) SetLock(_ context.Context, item ModItem, version string) (ActionOutcome, error) {
+	idx := p.findInstalledIndex(item.Source, item.ID)
+	if idx < 0 {
+		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	mods := p.activeMods()
+	mods[idx].Locked = true
+	target := version
+	if target == "" {
+		target = mods[idx].Version
+	} else {
+		mods[idx].Version = target
+	}
+	mods[idx].LockedVersion = target
+	msg := fmt.Sprintf("Locked %q", item.Name)
+	if version != "" {
+		msg = fmt.Sprintf("Locked %q at %s", item.Name, version)
+	}
+	return ActionOutcome{Message: msg}, nil
+}
+
+// Unlock clears the canned InstalledMods entry's Locked marker (and
+// LockedVersion, which is only ever meaningful while Locked is true - see
+// prototype.Mod's own doc comment) in place - the version record (Version)
+// stays untouched, mirroring ProfileManager.ClearModLock's own contract.
+func (p *prototypeProvider) Unlock(_ context.Context, item ModItem) (ActionOutcome, error) {
+	idx := p.findInstalledIndex(item.Source, item.ID)
+	if idx < 0 {
+		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	mods := p.activeMods()
+	mods[idx].Locked = false
+	mods[idx].LockedVersion = ""
+	return ActionOutcome{Message: fmt.Sprintf("Unlocked %q", item.Name)}, nil
+}
+
+// AvailableVersions returns the canned prototypeAvailableVersions list for
+// any installed mod - the --prototype demo's lock-picker data source, no
+// network call.
+func (p *prototypeProvider) AvailableVersions(_ context.Context, item ModItem) ([]string, error) {
+	if p.findInstalledIndex(item.Source, item.ID) < 0 {
+		return nil, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	return prototypeAvailableVersions, nil
 }
 
 // PurgeProfile emits one fake progress tick per canned InstalledMods entry
