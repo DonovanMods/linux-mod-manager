@@ -424,7 +424,7 @@ Mods can be deployed using three methods:
 | `hardlink` | Hard links (transparent to games, requires same filesystem)    |
 | `copy`     | Full file copies (maximum compatibility, uses more disk space) |
 
-**Priority**: Per-game `link_method` in `games.yaml` takes precedence over `default_link_method` in `config.yaml`. If neither is set, defaults to `symlink`. A profile-level `link_method` is parsed and round-tripped through export/import but currently has no effect at deploy time ([#81](https://github.com/DonovanMods/linux-mod-manager/issues/81)) — see [Configuration reference](docs/configuration.md) for details.
+**Priority**: A profile-level `link_method` (in the profile's YAML) takes precedence over the per-game `link_method` in `games.yaml`, which takes precedence over `default_link_method` in `config.yaml`. If none is set, defaults to `symlink`. An explicit `--method` flag (e.g. `lmm deploy --method`) beats all three. See [Configuration reference](docs/configuration.md) for details, including an upgrade note for profiles saved before v1.14.1.
 
 ### Cache Path Priority
 
