@@ -430,10 +430,11 @@ func TestApplyRollbackCompensatesOnDBFailure(t *testing.T) {
 // dir) and is rollback-ready: PreviousVersion == Version == "1.0",
 // PreviousFileIDs == {fileA}, FileIDs == {fileB}. The update is applied via
 // the same ReplaceForUpdate + ApplyModUpdate + UpsertMod sequence ApplyUpdate
-// itself performs. withManifests picks between the two on-disk shapes PR #149
-// distinguishes: per-file-ID member manifests (every install made since) or a
-// legacy entry with no markers at all - in which case the seeding update
-// itself already deployed the union, the exact pre-manifest starting state.
+// itself performs. The withManifests flag picks between the two on-disk
+// shapes PR #149 distinguishes: per-file-ID member manifests (every install
+// made since) or a legacy entry with no markers at all - in which case the
+// seeding update itself already deployed the union, the exact pre-manifest
+// starting state.
 func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, withManifests bool) *domain.InstalledMod {
 	t.Helper()
 

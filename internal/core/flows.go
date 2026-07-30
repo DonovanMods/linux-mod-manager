@@ -4178,9 +4178,10 @@ type RollbackResult struct {
 // ApplyRollback rolls the installed mod identified by sourceID/modID back to
 // its PreviousVersion, following cmd/lmm/update.go's pre-extraction
 // doUpdateRollback ordering exactly: GetInstalledMod -> guard checks ->
-// hooks -> installer.ReplaceForUpdate(current -> previous; plain Replace at
-// extraction time - it has since gained the file-ID transition, reversed,
-// for #150's same-version shape) -> RollbackModVersion (DB
+// hooks -> installer.ReplaceForUpdate(current -> previous) - the extracted
+// CLI's plain Replace step, now carrying the reversed file-ID transition
+// (current FileIDs -> PreviousFileIDs) that narrows a same-version rollback
+// to the restored file's own members (#150) -> RollbackModVersion (DB
 // swap, with a compensating reverse-replace on failure) -> SetModLinkMethod
 // -> reload -> ProfileManager.UpsertMod (compensating BOTH the DB swap and
 // the Replace on failure). This is a behavior-preserving extraction - see the
