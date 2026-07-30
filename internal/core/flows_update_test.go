@@ -1036,10 +1036,10 @@ func TestApplyUpdate_PartialFileIDReplacements_StillAdvances(t *testing.T) {
 	mock := &multiFileDownloadSource{
 		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
 		files: []domain.DownloadableFile{
-			{ID: "main101", Name: "Main 1.0.1", FileName: "mod1-main101.esp", Version: "1.0.1"},
-			{ID: "extra999", Name: "Extra 1.0.1", FileName: "mod1-extra999.esp", Version: "1.0.1"},
-			{ID: "main103", Name: "Main 1.0.3", FileName: "mod1-main103.esp", Version: "1.0.3", IsPrimary: true},
-			{ID: "extra1000", Name: "Extra 1.0.3", FileName: "mod1-extra1000.esp", Version: "1.0.3"},
+			{ID: "main101", Name: "Main 1.0.1", FileName: "mod1-main101.esp", Version: "1.0.1", Category: "MAIN"},
+			{ID: "extra999", Name: "Extra 1.0.1", FileName: "mod1-extra999.esp", Version: "1.0.1", Category: "OPTIONAL"},
+			{ID: "main103", Name: "Main 1.0.3", FileName: "mod1-main103.esp", Version: "1.0.3", IsPrimary: true, Category: "MAIN"},
+			{ID: "extra1000", Name: "Extra 1.0.3", FileName: "mod1-extra1000.esp", Version: "1.0.3", Category: "OPTIONAL"},
 		},
 	}
 	defer mock.Close()
@@ -1096,9 +1096,9 @@ func TestApplyUpdate_LabelAmbiguousExtra_IsSurfacedAsAWarning(t *testing.T) {
 	mock := &multiFileDownloadSource{
 		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
 		files: []domain.DownloadableFile{
-			{ID: "main101", Name: "Main 1.0.1", FileName: "mod1-main101.esp", Version: "1.0.1"},
-			{ID: "extra999", Name: "Extra 1.0.1", FileName: "mod1-extra999.esp", Version: "1.0.1"},
-			{ID: "main103", Name: "Main 1.0.3", FileName: "mod1-main103.esp", Version: "1.0.3", IsPrimary: true},
+			{ID: "main101", Name: "Main 1.0.1", FileName: "mod1-main101.esp", Version: "1.0.1", Category: "MAIN"},
+			{ID: "extra999", Name: "Extra 1.0.1", FileName: "mod1-extra999.esp", Version: "1.0.1", Category: "OPTIONAL"},
+			{ID: "main103", Name: "Main 1.0.3", FileName: "mod1-main103.esp", Version: "1.0.3", IsPrimary: true, Category: "MAIN"},
 		},
 	}
 	defer mock.Close()
@@ -1116,22 +1116,82 @@ func TestApplyUpdate_LabelAmbiguousExtra_IsSurfacedAsAWarning(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.3", updated.Version, "the record must still advance")
 
-	// One ambiguous file is replaced 1:1 by the target primary; the other
-	// cannot be resolved and is retained. WHICH of the two is retained is
-	// not determinable - they are label-identical, and the stored order
-	// comes back from the DB - so this pins the invariant rather than a
-	// specific ID: the mod keeps two files, one of them main103, and the
-	// warning names exactly the one that could not be resolved.
-	require.Len(t, updated.FileIDs, 2, "the retained file must not be silently dropped")
-	assert.Contains(t, updated.FileIDs, "main103", "the target version's primary must replace one anchor")
-	retained := updated.FileIDs[0]
-	if retained == "main103" {
-		retained = updated.FileIDs[1]
-	}
+	// PR #142 review round 3: WHICH ambiguous file the single target file
+	// stands in for is decided by Category, not by list order. main103 is
+	// MAIN, so it pairs with main101 (MAIN) and the OPTIONAL extra999 is the
+	// one retained-and-warned. Before this, the pairing consumed DB order and
+	// could just as easily replace the OPTIONAL and retain the stale MAIN -
+	// leaving the old main pak deployed beside the new one, wrong half the
+	// time.
+	assert.ElementsMatch(t, []string{"main103", "extra999"}, updated.FileIDs,
+		"the target MAIN must replace the stale MAIN, retaining the OPTIONAL")
+
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-main103.esp"))
+	assert.NoError(t, statErr, "the new main file must be deployed")
+	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-main101.esp"))
+	assert.True(t, os.IsNotExist(statErr), "the stale main must NOT be double-deployed beside the new one")
 
 	require.NotEmpty(t, result.Warnings, "a label-ambiguous stored file must never be resolved silently")
 	joined := strings.Join(result.Warnings, "\n")
-	assert.Contains(t, joined, retained, "the warning must name the file that was retained unresolved")
+	assert.Contains(t, joined, "extra999", "the warning must name the file that was retained unresolved")
 	assert.Contains(t, joined, "1.0.1", "the warning must name the version that makes it ambiguous")
 	assert.NotContains(t, joined, "main103", "the cleanly replaced file is not ambiguous and must not be warned about")
+}
+
+// TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies is PR #142 review
+// round 3, Important: "the selection's effective version equals the installed
+// version" is NOT proof of a no-op.
+//
+// internal/source/nexusmods reports an update when the mod version moved OR
+// any installed file was superseded. In the second class (hasFileUpdate &&
+// !modVersionNewer) it sets NewVersion to the new FILE's own version, which
+// is routinely the SAME string as the installed one - the author re-uploaded
+// a fixed archive under an unchanged version label. That is a real update
+// with real new bytes, and it must apply.
+//
+// The round-2 backstop hard-failed exactly this shape ("would re-install the
+// installed version"), a regression against v1.25.0. The true no-op test is
+// "the selection IS what is already installed" - an ID-set comparison - not a
+// version-string comparison.
+func TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"fileA"}, map[string][]byte{"mod1-fileA.esp": []byte("A")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "fileA", Name: "Old Archive", FileName: "mod1-fileA.esp", Version: "1.0", Category: "MAIN"},
+			{ID: "fileB", Name: "Fixed Archive", FileName: "mod1-fileB.esp", Version: "1.0", IsPrimary: true, Category: "MAIN"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	mock.AddDownload("fileB", []byte("B-content"))
+
+	upd := domain.Update{
+		InstalledMod:       *old,
+		NewVersion:         "1.0",
+		FileIDReplacements: map[string]string{"fileA": "fileB"},
+	}
+	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err, "a file-only update whose version string is unchanged must still apply")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"fileB"}, updated.FileIDs, "the superseding file must be recorded")
+
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	assert.NoError(t, statErr, "the new file must be deployed")
+
+	// Deliberately NOT asserting that mod1-fileA.esp is undeployed. The cache
+	// is keyed by version (#94/#96), so a file-only update - whose version
+	// string does not change - shares ONE cache directory between the old and
+	// new files, and Installer.Replace deploys whatever that directory holds.
+	// That is pre-existing behavior of the cache keying, identical on v1.25.0
+	// and independent of file selection; it is out of scope here. See §9 of
+	// the smoke-bug report.
 }

@@ -701,6 +701,16 @@ const (
 	// end-of-whole-run deferral, since applyUpdate itself prints these
 	// immediately, well before its own DB-update steps below.
 	//
+	// #143 additionally fires this phase for file-SELECTION warnings (a
+	// stored file whose version label left it unresolvable - see
+	// updateAmbiguousFileWarning). Those come from a pure decision made
+	// BEFORE any download, so unlike the hook failures above they can
+	// precede every side effect - the phase no longer implies that Replace
+	// or the hooks have run. That early emission is deliberate: the fact is
+	// already known, and surfacing it up front means the user sees it even
+	// if a later download fails (ApplyUpdate's partial-result convention
+	// returns accumulated diagnostics alongside the error either way).
+	//
 	// Reused (Phase 6b Task 5): ApplyRollback fires this SAME phase for its
 	// own two always-non-fatal after_each hooks, in the same
 	// uninstall-then-install order, mirroring doUpdateRollback's own
@@ -1132,12 +1142,12 @@ func pickVersionMatch(matches []*domain.DownloadableFile, idSet map[string]bool)
 //
 // installedVersion == "" also switches narrowing off: with no recorded
 // version nothing can be classified.
-func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion, installedVersion string, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
+func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion, installedVersion string, currentFileIDs, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
 	selected, warnings, err := resolveUpdateSelection(files, targetVersion, installedVersion, storedFileIDs, replacedIDs)
 	if err != nil {
 		return nil, nil, err
 	}
-	selected, err = guardNoOpUpdateSelection(files, targetVersion, installedVersion, selected)
+	selected, err = guardNoOpUpdateSelection(files, targetVersion, installedVersion, currentFileIDs, replacedIDs, selected)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1154,6 +1164,27 @@ func updateAmbiguousFileWarning(f *domain.DownloadableFile, installedVersion, ta
 	}
 	return fmt.Sprintf("%q (file ID %s) still reports version %s - the version being updated from - so it could not be matched to anything in %s; it was kept as-is. If it is a stale entry, reinstall the mod or use --file to re-select.",
 		name, f.ID, installedVersion, targetVersion)
+}
+
+// pairAmbiguousWithReplacement reports which entry of ambiguous the target-
+// version file replacement stands in for: the first one sharing its Category
+// (compared case-insensitively, like installFileCategoryPriority), else the
+// first entry, else -1 when there is nothing to pair. Category is the only
+// signal available - the candidates are label-identical by definition - and
+// sources do populate it (MAIN/OPTIONAL/UPDATE/...), so a new MAIN replaces
+// the stale MAIN and leaves an unchanged OPTIONAL alone.
+func pairAmbiguousWithReplacement(ambiguous []*domain.DownloadableFile, replacement *domain.DownloadableFile) int {
+	if len(ambiguous) == 0 {
+		return -1
+	}
+	if want := strings.ToUpper(replacement.Category); want != "" {
+		for i, a := range ambiguous {
+			if strings.ToUpper(a.Category) == want {
+				return i
+			}
+		}
+	}
+	return 0
 }
 
 // resolveUpdateSelection is selectUpdateDeployFiles' classification pass -
@@ -1215,9 +1246,14 @@ func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, inst
 				}
 				selected = append(selected, p)
 				chosen[p.ID] = true
-				// This replacement stands in for one ambiguous file.
-				if len(ambiguous) > 0 {
-					ambiguous = ambiguous[1:]
+				// This replacement stands in for ONE ambiguous file - pair
+				// them by Category rather than list order (PR #142 review
+				// round 3). Order alone is a DB-order coin flip: with a
+				// stale MAIN and an unchanged OPTIONAL both label-ambiguous,
+				// it could replace the OPTIONAL and retain the stale MAIN,
+				// leaving the old main pak deployed beside the new one.
+				if i := pairAmbiguousWithReplacement(ambiguous, p); i >= 0 {
+					ambiguous = append(ambiguous[:i], ambiguous[i+1:]...)
 				}
 			}
 		}
@@ -1241,19 +1277,40 @@ func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, inst
 }
 
 // guardNoOpUpdateSelection is the defense-in-depth backstop (PR #142 review
-// round 2): whatever path produced selected, if targetVersion IS offered in
-// the listing and the selection's effective version is still the version we
-// are updating FROM, that selection provably cannot advance the record - it
-// would re-deploy what is already installed and the next check would report
-// the identical update forever. Rather than loop silently, prefer the target
-// version's own file; if even that cannot advance the record, fail loudly.
+// round 2, corrected in round 3): whatever path produced selected, catch a
+// selection that provably cannot change anything, so a mis-resolution
+// surfaces instead of looping forever.
 //
-// The "targetVersion is offered" precondition is what keeps this off the
-// legitimate advisory-version path, where the mod-level NewVersion ("2.0")
-// and the file's own label ("2.0b") simply differ and no file carries the
-// target label at all.
-func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, installedVersion string, selected []*domain.DownloadableFile) ([]*domain.DownloadableFile, error) {
+// The no-op test is an ID-SET comparison against what is already installed,
+// NOT a version-string comparison. Round 2 used the latter and hard-failed a
+// whole legitimate class: internal/source/nexusmods reports an update when
+// the mod version moved OR a file was superseded, and in the second case
+// (hasFileUpdate && !modVersionNewer) it sets NewVersion to the new FILE's
+// own version - routinely the SAME string as the installed one, because the
+// author re-uploaded a fixed archive under an unchanged label. Real new
+// bytes, identical version string; "effective version == installed version"
+// says nothing about it. See
+// TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies.
+//
+// A selection containing any FileIDReplacements hit is likewise never a
+// no-op: the source itself stated those files move, so this never
+// second-guesses it.
+//
+// The repair is ADDITIVE, never wholesale (round 3): only the members
+// positively identified as the version being left behind are dropped, and
+// the target version's file is added alongside whatever else survives -
+// round 2 replaced the entire selection, discarding replacement hits and
+// carried-over extras with it.
+func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, installedVersion string, currentFileIDs []string, replacedIDs map[string]bool, selected []*domain.DownloadableFile) ([]*domain.DownloadableFile, error) {
 	if targetVersion == "" || installedVersion == "" || len(selected) == 0 {
+		return selected, nil
+	}
+	for _, f := range selected {
+		if replacedIDs[f.ID] {
+			return selected, nil
+		}
+	}
+	if !sameFileIDSet(selected, currentFileIDs) {
 		return selected, nil
 	}
 	var matches []*domain.DownloadableFile
@@ -1266,11 +1323,49 @@ func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, in
 		return selected, nil
 	}
 
-	replacement := pickVersionMatch(matches, nil)
-	if domain.EffectiveInstalledVersion(targetVersion, replacement) == installedVersion {
-		return nil, fmt.Errorf("update to %q would re-install the installed version %q: no file upstream advances it", targetVersion, installedVersion)
+	repaired := make([]*domain.DownloadableFile, 0, len(selected)+1)
+	kept := make(map[string]bool, len(selected))
+	for _, f := range selected {
+		if f.Version == installedVersion {
+			continue
+		}
+		repaired = append(repaired, f)
+		kept[f.ID] = true
 	}
-	return replacement, nil
+	added := false
+	for _, m := range pickVersionMatch(matches, nil) {
+		if kept[m.ID] {
+			continue
+		}
+		repaired = append(repaired, m)
+		kept[m.ID] = true
+		added = true
+	}
+	if !added || domain.EffectiveInstalledVersion(targetVersion, repaired) == installedVersion {
+		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): no file upstream advances it - reinstall the mod or use --file to pick one explicitly", targetVersion, strings.Join(currentFileIDs, ", "))
+	}
+	return repaired, nil
+}
+
+// sameFileIDSet reports whether selected is exactly the set of currentFileIDs
+// - the only provable "this update changes nothing" condition (see
+// guardNoOpUpdateSelection).
+func sameFileIDSet(selected []*domain.DownloadableFile, currentFileIDs []string) bool {
+	if len(currentFileIDs) == 0 {
+		return false
+	}
+	current := make(map[string]bool, len(currentFileIDs))
+	for _, id := range currentFileIDs {
+		current[id] = true
+	}
+	seen := make(map[string]bool, len(selected))
+	for _, f := range selected {
+		if !current[f.ID] {
+			return false
+		}
+		seen[f.ID] = true
+	}
+	return len(seen) == len(current)
 }
 
 // selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
@@ -3701,7 +3796,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 			}
 		}
 	}
-	filesToDownload, selectionWarnings, err := selectUpdateDeployFiles(files, newVersion, mod.Version, effectiveFileIDs, replacedIDs)
+	filesToDownload, selectionWarnings, err := selectUpdateDeployFiles(files, newVersion, mod.Version, mod.FileIDs, effectiveFileIDs, replacedIDs)
 	if err != nil {
 		return result, fmt.Errorf("selecting files to download: %w", err)
 	}
