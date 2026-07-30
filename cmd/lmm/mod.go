@@ -310,11 +310,12 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		if err != nil {
 			return fmt.Errorf("loading profile: %w", err)
 		}
-		for _, ref := range profile.Mods {
-			if ref.SourceID == modSource && ref.ModID == modID {
-				target = ref.Version
-				break
-			}
+		// FindRef (domain/profile.go): the canonical ref lookup this PR
+		// itself introduced - target simply stays "" when the ref is
+		// absent, same as before; SetModLock's own not-found error handles
+		// that case below, so no new error path is added here.
+		if ref := profile.FindRef(modSource, modID); ref != nil {
+			target = ref.Version
 		}
 	}
 

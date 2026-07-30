@@ -378,20 +378,22 @@ func TestSaveProfile_PreservesLockedMarker(t *testing.T) {
 
 	yaml := profileYAML(t, configDir, "skyrim-se", "default")
 	assert.Contains(t, yaml, "locked: true", "locked mod should have locked: true in YAML")
-	// Check that the second mod entry doesn't contain locked: true
-	lines := strings.Split(yaml, "\n")
-	var inSecondMod bool
-	for _, line := range lines {
-		if strings.Contains(line, "mod_id: \"456\"") || strings.Contains(line, "mod_id: '456'") {
-			inSecondMod = true
-		}
-		if inSecondMod && strings.Contains(line, "locked:") {
-			t.Fatal("unlocked mod should not have locked key in YAML (omitempty should drop it)")
-		}
-		if inSecondMod && (strings.HasPrefix(strings.TrimSpace(line), "- source_id:") || strings.HasPrefix(strings.TrimSpace(line), "source_id:") && !strings.Contains(line, "nexusmods")) {
-			break
-		}
-	}
+
+	// Marshal-format-independent assertions (Copilot PR #142 round-3, also
+	// flagged by our own T1 review): the previous version of this test
+	// scanned for a quoted `mod_id: "456"` line to find the second entry,
+	// but yaml.v3 may emit an unquoted scalar instead depending on
+	// content, so that scan could silently never match and the test would
+	// false-negative - passing even if `locked:` were wrongly written on
+	// the unlocked entry. Assert on the raw YAML directly instead: exactly
+	// ONE "locked:" occurrence total (the locked mod's own line), and NO
+	// "locked: false" anywhere - omitempty must drop the key entirely for
+	// the unlocked mod, not merely write it as false. (Sanity check: if
+	// omitempty were removed, the unlocked mod would gain its own
+	// "locked: false" line, making the count 2 and the NotContains fail -
+	// either assertion alone still catches that regression.)
+	assert.Equal(t, 1, strings.Count(yaml, "locked:"), "exactly one mod (the locked one) should have a locked key in YAML; omitempty must drop it for the unlocked mod")
+	assert.NotContains(t, yaml, "locked: false", "omitempty should drop the key entirely, never write locked: false")
 }
 
 // TestLoadProfile_PreservesLockedMarker guards that Locked is read correctly from YAML.
