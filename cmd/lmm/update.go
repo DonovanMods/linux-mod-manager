@@ -516,7 +516,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// fires on its own whenever lockedAuto > 0 even if neither section had
 	// anything else to apply.
 	if lockedAuto > 0 {
-		fmt.Printf("\n%d locked mod(s) skipped by auto-update: %s — move the lock or unlock to update.\n", lockedAuto, strings.Join(lockedNames, ", "))
+		fmt.Printf("\n%d locked mod(s) not applied: %s — move the lock or unlock to update.\n", lockedAuto, strings.Join(lockedNames, ", "))
 	}
 
 	return finish()

@@ -350,7 +350,8 @@ func TestImportProfile_TracksLinkMethodExplicit(t *testing.T) {
 }
 
 // TestSaveProfile_PreservesLockedMarker guards that Locked is written to YAML when true,
-// omitted when false (omitempty), and survives a round-trip save → load.
+// omitted when false (omitempty), verified against the raw saved YAML
+// (LoadProfile round-trip behavior is covered by the sibling Load tests).
 func TestSaveProfile_PreservesLockedMarker(t *testing.T) {
 	configDir := t.TempDir()
 
