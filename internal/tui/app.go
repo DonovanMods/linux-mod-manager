@@ -659,6 +659,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resolveCheckUpdatesFailure(msg)
 	case policyChosenMsg:
 		return m.resolvePolicyChoice(msg)
+	case versionsFetchedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveVersionsFetched(msg)
+	case versionsFetchFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveVersionsFetchFailed(msg)
+	case lockChosenMsg:
+		return m.resolveLockChosen(msg)
+	case unlockChosenMsg:
+		return m.resolveUnlockChosen(msg)
 	case profileCreateSubmittedMsg:
 		return m.resolveProfileCreate(msg)
 	case gameChosenMsg:
@@ -935,6 +949,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.showDeployedFiles()
 	case key.Matches(msg, m.keys.Policy):
 		return m.editSelectedModPolicy()
+	case key.Matches(msg, m.keys.Lock):
+		return m.editSelectedModLock()
 	case key.Matches(msg, m.keys.CreateProfile):
 		return m.createProfilePrompt()
 	case key.Matches(msg, m.keys.DeleteProfile):
@@ -2055,6 +2071,10 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.CheckUpdates),
 			helpEntry(m.keys.Files),
 			helpEntry(m.keys.Policy),
+			// Lock is Task 7's lock/unlock version-picker key (#97, see
+			// mutations.go's editSelectedModLock) - listed beside Policy since
+			// both open an item-scoped picker with no separate confirm modal.
+			helpEntry(m.keys.Lock),
 			helpEntry(m.keys.Purge),
 			// MoveDown/MoveUp are Task 4's load-order reorder keys (see
 			// mutations.go's moveSelectedMod).

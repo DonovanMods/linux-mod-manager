@@ -494,6 +494,264 @@ func (m Model) resolvePolicyChoice(msg policyChosenMsg) (Model, tea.Cmd) {
 	return model, pa.confirm()
 }
 
+// --- Lock/unlock version picker ('L' on Installed Mods, #97) ---
+
+// lockModalTitle formats the title for the lock version picker, mirroring
+// policyModalTitle's own shape above.
+func lockModalTitle(modName string) string {
+	return fmt.Sprintf("Lock version — %s", modName)
+}
+
+// versionsFetchedMsg carries a successful ActionProvider.AvailableVersions
+// result, tagged with the generation established when the fetch was
+// dispatched (see editSelectedModLock) so a superseded result can be
+// discarded - mirrors checkUpdatesResultMsg/planResultMsg's own gen-guard
+// shape (this file's template for every async network fetch).
+type versionsFetchedMsg struct {
+	gen      int
+	item     ModItem
+	versions []string
+}
+
+// versionsFetchFailedMsg carries a failed AvailableVersions call, tagged
+// like versionsFetchedMsg. coreProvider.AvailableVersions (service_core.go)
+// already maps a source.ErrNotSupported failure through mapNetworkError,
+// naming pin (P) as the fallback - this type carries that mapped error
+// string through unchanged; resolveVersionsFetchFailed renders it verbatim
+// on the status line, exactly like resolvePlanFailure/
+// resolveCheckUpdatesFailure render every other mapped provider error.
+type versionsFetchFailedMsg struct {
+	gen int
+	err error
+}
+
+// editSelectedModLock handles 'L' on Installed Mods (task-7-brief.md): a
+// no-op on the wrong screen, an empty list, with no ActionProvider
+// configured, or while another action/fetch is already in flight - mirrors
+// checkForUpdates' own guard shape (this is network I/O, unlike Policy's
+// synchronous fixed-option picker, so it follows checkForUpdates' async
+// three-step pattern rather than editSelectedModPolicy's synchronous one).
+// Sets the running/status state ("Fetching versions for <name>…") and
+// returns a Cmd calling ActionProvider.AvailableVersions, tagged with a
+// fresh generation so a stale result from a superseded fetch (e.g. the user
+// presses 'L' again, or navigates and quits, before this one lands) is
+// dropped by app.go's gen check before it ever reaches
+// resolveVersionsFetched/resolveVersionsFetchFailed.
+func (m Model) editSelectedModLock() (Model, tea.Cmd) {
+	if m.screen != ScreenInstalledMods || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	item, ok := m.selectedMod()
+	if !ok {
+		return m, nil
+	}
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.action.cancel = cancel
+	m.action.gen++
+	gen := m.action.gen
+	m.action.running = true
+	m.action.status = fmt.Sprintf("Fetching versions for %s…", item.Name)
+	m.action.statusIsError = false
+
+	return m, func() tea.Msg {
+		versions, err := m.actions.AvailableVersions(ctx, item)
+		if err != nil {
+			return versionsFetchFailedMsg{gen: gen, err: err}
+		}
+		return versionsFetchedMsg{gen: gen, item: item, versions: versions}
+	}
+}
+
+// lockPickerOptions builds one pickerOption per entry in versions for
+// editSelectedModLock's picker (task-7-brief.md): the option matching
+// item.Version is noted "installed", the option matching item.LockedVersion
+// (only when item.Locked) is noted "locked" - both notes land on the SAME
+// row, joined "installed, locked", when the mod is locked at exactly its
+// installed version. Returns the options alongside the index to pre-select:
+// the locked target when item.Locked, else the installed version - index 0
+// (with nothing marked) when neither is found in versions, mirroring
+// editSelectedModPolicy's own "never guesses" fallback for an unmatched
+// current value.
+//
+// versions is read only, never mutated or reordered here - per
+// ActionProvider.AvailableVersions' own doc comment, a caller that needs to
+// sort/filter/annotate the result should copy first; this function does
+// neither (it walks the slice once, in the order the provider returned it,
+// building a SEPARATE []pickerOption instead of writing into versions
+// itself), so no copy is needed.
+func lockPickerOptions(item ModItem, versions []string) ([]pickerOption, int) {
+	options := make([]pickerOption, len(versions))
+	selected := 0
+	for i, v := range versions {
+		var notes []string
+		if v == item.Version {
+			notes = append(notes, "installed")
+		}
+		if item.Locked && v == item.LockedVersion {
+			notes = append(notes, "locked")
+		}
+		options[i] = pickerOption{Label: v, Note: strings.Join(notes, ", ")}
+		switch {
+		case item.Locked && v == item.LockedVersion:
+			selected = i
+		case !item.Locked && v == item.Version:
+			selected = i
+		}
+	}
+	return options, selected
+}
+
+// resolveVersionsFetched handles a fresh (non-stale - callers check msg.gen
+// first) versionsFetchedMsg: builds the lock-version picker via
+// lockPickerOptions, appending a trailing "unlock" option when item.Locked
+// (task-7-brief.md). choose dispatches lockChosenMsg/unlockChosenMsg rather
+// than mutating the Model directly - mirrors editSelectedModPolicy's own
+// choose closure, and policyChosenMsg's doc comment explains in full why
+// that indirection is required (pendingPicker.choose can only return a
+// tea.Cmd, never a mutated Model).
+func (m Model) resolveVersionsFetched(msg versionsFetchedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	// Copilot PR #63 finding (mirrors resolvePlanResult/
+	// resolveCheckUpdatesResult): resolve a quit-triggered drain immediately
+	// instead of opening the picker below - the app is exiting.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+
+	item := msg.item
+	versions := msg.versions
+	options, selected := lockPickerOptions(item, versions)
+	unlockIdx := -1
+	if item.Locked {
+		unlockIdx = len(options)
+		options = append(options, pickerOption{Label: "unlock"})
+	}
+
+	picker := pendingPicker{
+		title:    lockModalTitle(item.Name),
+		options:  options,
+		selected: selected,
+		choose: func(idx int) tea.Cmd {
+			if unlockIdx >= 0 && idx == unlockIdx {
+				return func() tea.Msg { return unlockChosenMsg{item: item} }
+			}
+			version := versions[idx]
+			return func() tea.Msg { return lockChosenMsg{item: item, version: version} }
+		},
+	}
+	return m.promptPicker(picker), nil
+}
+
+// resolveVersionsFetchFailed handles a fresh versionsFetchFailedMsg: status
+// line error, no picker, mirroring resolvePlanFailure/
+// resolveCheckUpdatesFailure.
+func (m Model) resolveVersionsFetchFailed(msg versionsFetchFailedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+	m.action.status = singleLine(msg.err.Error())
+	m.action.statusIsError = true
+	return m, nil
+}
+
+// lockOutcomeMessage renders the status line for a successful SetLock call
+// (task-7-brief.md): "<name> locked at v<version>", plus a " — apply the
+// profile to converge" caveat when version differs from item.Version - the
+// mod's CURRENTLY DEPLOYED version - since SetLock never deploys itself (see
+// ActionProvider.SetLock's own doc comment: "convergence happens on the next
+// profile apply/switch"). Locking at the already-installed version needs no
+// such caveat: nothing has to change on the next deploy for that case.
+func lockOutcomeMessage(item ModItem, version string) string {
+	msg := fmt.Sprintf("%s locked at v%s", item.Name, version)
+	if version != item.Version {
+		msg += " — apply the profile to converge"
+	}
+	return msg
+}
+
+// lockChosenMsg carries the version the user picked in the lock-version
+// picker (see resolveVersionsFetched/resolveLockChosen), naming both the
+// ModItem the picker was opened for and the chosen version - mirrors
+// policyChosenMsg's own shape and role in full (see that type's doc comment
+// for why this indirection through Update() is required).
+type lockChosenMsg struct {
+	item    ModItem
+	version string
+}
+
+// unlockChosenMsg carries the picker's trailing "unlock" row being chosen on
+// a locked mod - mirrors lockChosenMsg's own role, with no version argument
+// since Unlock takes none.
+type unlockChosenMsg struct {
+	item ModItem
+}
+
+// resolveLockChosen handles a lockChosenMsg: builds the actionSetLock action
+// for msg.item/msg.version and confirms it immediately - "the pick IS the
+// confirmation" (task-7-brief.md), mirroring resolvePolicyChoice's own
+// shape and single-flight drop guard in full (see that method's doc comment
+// for why the guard is checked HERE rather than left to buildAction's own
+// refusal). The outcome's Message is overwritten with lockOutcomeMessage
+// (SetLock's own coreProvider/prototypeProvider wording doesn't carry the
+// convergence caveat this task's status line needs) - Warnings, if any, are
+// left untouched, so formatOutcomeStatus still appends them normally.
+func (m Model) resolveLockChosen(msg lockChosenMsg) (Model, tea.Cmd) {
+	if m.action.running || m.action.pending != nil {
+		m.setIdleStatus("busy — choice ignored", false)
+		return m, nil
+	}
+	item := msg.item
+	version := msg.version
+	model, pa := m.buildAction(actionSetLock, lockModalTitle(item.Name), nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
+		outcome, err := m.actions.SetLock(ctx, item, version)
+		if err != nil {
+			return outcome, err
+		}
+		outcome.Message = lockOutcomeMessage(item, version)
+		return outcome, nil
+	})
+	model.action.running = true
+	return model, pa.confirm()
+}
+
+// resolveUnlockChosen handles an unlockChosenMsg: builds the actionUnlock
+// action for msg.item and confirms it immediately, mirroring
+// resolveLockChosen immediately above in full (including its single-flight
+// drop guard) except for the ActionProvider call and outcome message.
+func (m Model) resolveUnlockChosen(msg unlockChosenMsg) (Model, tea.Cmd) {
+	if m.action.running || m.action.pending != nil {
+		m.setIdleStatus("busy — choice ignored", false)
+		return m, nil
+	}
+	item := msg.item
+	model, pa := m.buildAction(actionUnlock, lockModalTitle(item.Name), nil, "", func(ctx context.Context, _ func(ActionProgress)) (ActionOutcome, error) {
+		outcome, err := m.actions.Unlock(ctx, item)
+		if err != nil {
+			return outcome, err
+		}
+		outcome.Message = fmt.Sprintf("%s unlocked", item.Name)
+		return outcome, nil
+	})
+	model.action.running = true
+	return model, pa.confirm()
+}
+
 // planResultMsg carries a successful PlanProfileSwitch result, tagged with
 // the generation established when the fetch was dispatched (see
 // switchSelectedProfile) so a superseded result can be discarded exactly

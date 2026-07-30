@@ -132,6 +132,16 @@ type KeyMap struct {
 	// follows the plain-lowercase pattern ToggleEnable/CycleSource use for
 	// other single-screen, non-destructive toggles.
 	ToggleAllSources key.Binding
+	// Lock is Task 7's lock/unlock version-picker binding (#97, see
+	// mutations.go's editSelectedModLock): fires on ScreenInstalledMods with a
+	// mod selected, dispatching an async fetch (ActionProvider.
+	// AvailableVersions - a network call, unlike Policy's synchronous fixed
+	// three-option picker) whose result opens a picker of that mod's versions
+	// - picking one locks at it immediately (no separate confirm modal,
+	// mirroring Policy/GameSwitch's own "the choice IS the confirmation"
+	// shape); a locked mod's picker additionally offers a trailing "unlock"
+	// row. Capital "L" - lowercase "l" is already NextScreen's alias.
+	Lock key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -292,6 +302,10 @@ func DefaultKeyMap() KeyMap {
 		ToggleAllSources: key.NewBinding(
 			key.WithKeys("a"),
 			key.WithHelp("a", "toggle all sources"),
+		),
+		Lock: key.NewBinding(
+			key.WithKeys("L"),
+			key.WithHelp("L", "lock"),
 		),
 	}
 }
