@@ -68,3 +68,31 @@ func TestSelectVersionedDeployFiles_CategoryPriorityTieBreak(t *testing.T) {
 		})
 	}
 }
+
+// TestGuardNoOpUpdateSelection_UninstalledMatchDowngradesLabellingClaim pins
+// the #144 item-2 wording to a LOCALLY verifiable condition (PR #148 Copilot
+// round): the "every file the source offers under the target version is
+// already installed" claim must only be made when the guard can see that
+// itself - every target-version match present in currentFileIDs. The shape
+// below (an uninstalled target-version file B alongside an installed one
+// that the repair re-picks) is unreachable through resolveUpdateSelection
+// today precisely because of the invariant the guard exists to backstop;
+// the guard must not parrot a claim whose truth rests on the very code it
+// guards against.
+func TestGuardNoOpUpdateSelection_UninstalledMatchDowngradesLabellingClaim(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "m", Version: "1.0", IsPrimary: true},
+		{ID: "o", Version: "2.0"},
+		{ID: "b", Version: "2.0"},
+	}
+	selected := []*domain.DownloadableFile{&files[0], &files[1]}
+
+	_, err := guardNoOpUpdateSelection(files, "2.0", "1.0", []string{"m", "o"}, nil, selected)
+	require.Error(t, err, "the no-op guard must still fail loudly")
+	assert.NotContains(t, err.Error(), "every file the source offers",
+		"with target-version file b uninstalled, the every-file-installed claim is false and must not be made")
+	assert.NotContains(t, err.Error(), "labelling",
+		"the labelling-quirk diagnosis belongs only to the locally-proven all-installed shape")
+	assert.Contains(t, err.Error(), "use --file to pick one explicitly",
+		"the generic remedy applies when another target-version file exists to pick")
+}

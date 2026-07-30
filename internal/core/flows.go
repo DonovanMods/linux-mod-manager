@@ -1377,7 +1377,27 @@ func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, in
 	// (and the effective version still refuses to move) does the update-side
 	// reinstall/--file remedy make sense.
 	if !added {
-		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): every file the source offers under %q is already installed - likely a source-side file labelling quirk; if an old file is stale, reinstall keeping only the wanted file with 'lmm install --file'", targetVersion, strings.Join(currentFileIDs, ", "), targetVersion)
+		// Make the strong "every file already installed" claim only when it
+		// is LOCALLY true (every target-version match among currentFileIDs) -
+		// not because resolveUpdateSelection's candidate-consumption
+		// invariant implies it. The guard exists to backstop that invariant,
+		// so its diagnosis must not assume it (PR #148 Copilot round; the
+		// unreachable-today shape is pinned by an in-package test).
+		curSet := make(map[string]bool, len(currentFileIDs))
+		for _, id := range currentFileIDs {
+			curSet[id] = true
+		}
+		allInstalled := true
+		for _, m := range matches {
+			if !curSet[m.ID] {
+				allInstalled = false
+				break
+			}
+		}
+		if allInstalled {
+			return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): every file the source offers under %q is already installed - likely a source-side file labelling quirk; if an old file is stale, reinstall keeping only the wanted file with 'lmm install --file'", targetVersion, strings.Join(currentFileIDs, ", "), targetVersion)
+		}
+		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): no file upstream advances it - reinstall the mod or use --file to pick one explicitly", targetVersion, strings.Join(currentFileIDs, ", "))
 	}
 	if domain.EffectiveInstalledVersion(targetVersion, repaired) == installedVersion {
 		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): no file upstream advances it - reinstall the mod or use --file to pick one explicitly", targetVersion, strings.Join(currentFileIDs, ", "))
