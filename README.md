@@ -195,7 +195,7 @@ a lock is a lockfile entry that pins a *build*.
 | --- | --- | --- |
 | Statement about | "stop asking the source about this mod" | "this profile deploys exactly version X" |
 | Enforced at | check time only | deploy time (converges, downgrades included) |
-| Scope | per-install, per-profile (SQLite) | per-profile (profile YAML) |
+| Scope | per-install (SQLite) | per-profile (profile YAML) |
 | Travels with `profile export`/`import` | no | yes — imports reproduce the exact build |
 | Works on version-less sources | yes | no — refused with a capability error |
 
