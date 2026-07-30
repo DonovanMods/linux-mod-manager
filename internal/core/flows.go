@@ -1097,65 +1097,180 @@ func pickVersionMatch(matches []*domain.DownloadableFile, idSet map[string]bool)
 // this falls through to selectDeployFiles with allowFallback=true,
 // preserving #95's deliberate update-path fallback verbatim.
 //
-// Two things deliberately switch the narrowing OFF entirely (PR #142
-// review), because in both the stored IDs are NOT stale guesses and
-// narrowing would silently drop files the mod is still using:
+// The discriminator is per-FILE, not per-update (PR #142 review round 2).
+// An earlier version switched the narrowing off whenever the update carried
+// ANY FileIDReplacements mapping, which was wrong: nexusmods adds a map
+// entry only for stored files that actually have a FileUpdates chain, so a
+// PARTIAL map is the norm for any multi-file mod with one superseded-in-
+// place file and one rebuilt file - exactly the mods most likely to hit the
+// loop. Each stored ID is now classified on its own:
 //
-//   - hasReplacements: the update carries a FileIDReplacements mapping, so
-//     the source has stated exactly how this mod's files move. A hit names
-//     a NEW file by construction (it cannot be the stale anchor above) and
-//     a miss means "unchanged - retain the ORIGINAL id verbatim", this
-//     function's caller's documented contract (see ApplyUpdate). Neither is
-//     a guess, so both keep the pre-#143 selectDeployFiles resolution
-//     verbatim. This matters because a superseding file routinely carries
-//     its OWN label rather than the mod-level NewVersion (a patch moving
-//     1.3 -> 1.4 while the mod moves to 2.0), and an unchanged extra
-//     legitimately still reports the OLD version's label - a target-version
-//     match would discard the first and the second respectively.
-//   - installedVersion == "": with no recorded version there is no way to
-//     tell a stale anchor from a carry-over, so nothing is narrowed.
+//   - a replacement HIT names a NEW file by construction (it cannot be the
+//     stale anchor), so it is authoritative and always kept, whatever its
+//     own label says. This matters because a superseding file routinely
+//     carries its own label rather than the mod-level NewVersion - a patch
+//     moving 1.3 -> 1.4 while the mod moves to 2.0.
+//   - an uncovered ID still listed upstream under a DIFFERENT label than
+//     installedVersion is an unchanged extra: carried over, honouring
+//     ApplyUpdate's documented "a miss retains the ORIGINAL id verbatim".
+//   - an uncovered ID still listed upstream under EXACTLY installedVersion
+//     is label-ambiguous: it is either the stale anchor or a genuine
+//     unchanged extra, and nothing upstream distinguishes them. It is
+//     replaced by an unselected targetVersion file when one is available
+//     (1:1) - that replacement IS the update - and otherwise RETAINED with
+//     a warning naming it (see updateAmbiguousFileWarning).
 //
-// Within the narrowing branch, a stored file that still resolves upstream
-// is carried over unless it is positively identified as the version being
-// moved away from (Version == installedVersion) - that one file is the
-// stale anchor, and replacing it with targetVersion's file is the entire
-// point. Everything else the mod had stays.
-func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion, installedVersion string, storedFileIDs []string, hasReplacements bool) ([]*domain.DownloadableFile, bool, error) {
-	if hasReplacements || targetVersion == "" || installedVersion == "" {
-		return selectDeployFiles(files, storedFileIDs, true)
+// Round 2 ruled this ambiguity must never be silent, and considered
+// dropping the unresolvable file instead of retaining it. Retaining is used
+// because it is strictly safer: the ruling's rationale was avoiding a
+// re-deployed stale primary (duplicate paks, and the loop), and both are
+// already prevented independently - the 1:1 replacement above removes the
+// stale primary, and guardNoOpUpdateSelection below proves the selection
+// advances the record - whereas dropping would silently un-deploy a file
+// the mod is still using, which is the round-1 regression this same review
+// caught. The user is told either way; only the safer default differs.
+//
+// installedVersion == "" also switches narrowing off: with no recorded
+// version nothing can be classified.
+func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion, installedVersion string, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
+	selected, warnings, err := resolveUpdateSelection(files, targetVersion, installedVersion, storedFileIDs, replacedIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	selected, err = guardNoOpUpdateSelection(files, targetVersion, installedVersion, selected)
+	if err != nil {
+		return nil, nil, err
+	}
+	return selected, warnings, nil
+}
+
+// updateAmbiguousFileWarning describes a stored file selectUpdateDeployFiles
+// could not classify - still listed upstream under the very version being
+// updated away from, with no replacement available to take its place.
+func updateAmbiguousFileWarning(f *domain.DownloadableFile, installedVersion, targetVersion string) string {
+	name := f.Name
+	if name == "" {
+		name = f.FileName
+	}
+	return fmt.Sprintf("%q (file ID %s) still reports version %s - the version being updated from - so it could not be matched to anything in %s; it was kept as-is. If it is a stale entry, reinstall the mod or use --file to re-select.",
+		name, f.ID, installedVersion, targetVersion)
+}
+
+// resolveUpdateSelection is selectUpdateDeployFiles' classification pass -
+// see that function's doc comment for the per-file rules it implements.
+func resolveUpdateSelection(files []domain.DownloadableFile, targetVersion, installedVersion string, storedFileIDs []string, replacedIDs map[string]bool) ([]*domain.DownloadableFile, []string, error) {
+	if targetVersion == "" || installedVersion == "" || len(storedFileIDs) == 0 {
+		sel, _, err := selectDeployFiles(files, storedFileIDs, true)
+		return sel, nil, err
 	}
 
+	byID := make(map[string]*domain.DownloadableFile, len(files))
+	var matches []*domain.DownloadableFile
+	for i := range files {
+		byID[files[i].ID] = &files[i]
+		if files[i].Version == targetVersion {
+			matches = append(matches, &files[i])
+		}
+	}
+	if len(matches) == 0 {
+		sel, _, err := selectDeployFiles(files, storedFileIDs, true)
+		return sel, nil, err
+	}
+
+	var selected, ambiguous []*domain.DownloadableFile
+	chosen := make(map[string]bool, len(storedFileIDs))
+	needsReplacement := false
+	for _, id := range storedFileIDs {
+		f := byID[id]
+		switch {
+		case f == nil:
+			needsReplacement = true // gone upstream (#95's fallback case)
+		case replacedIDs[id]:
+			if !chosen[id] {
+				selected = append(selected, f)
+				chosen[id] = true
+			}
+		case f.Version == installedVersion:
+			ambiguous = append(ambiguous, f)
+			needsReplacement = true
+		default:
+			if !chosen[id] {
+				selected = append(selected, f)
+				chosen[id] = true
+			}
+		}
+	}
+
+	if needsReplacement {
+		var candidates []*domain.DownloadableFile
+		for _, m := range matches {
+			if !chosen[m.ID] {
+				candidates = append(candidates, m)
+			}
+		}
+		if len(candidates) > 0 {
+			for _, p := range pickVersionMatch(candidates, nil) {
+				if chosen[p.ID] {
+					continue
+				}
+				selected = append(selected, p)
+				chosen[p.ID] = true
+				// This replacement stands in for one ambiguous file.
+				if len(ambiguous) > 0 {
+					ambiguous = ambiguous[1:]
+				}
+			}
+		}
+	}
+
+	// Anything still unresolved is retained rather than lost.
+	var warnings []string
+	for _, a := range ambiguous {
+		if !chosen[a.ID] {
+			selected = append(selected, a)
+			chosen[a.ID] = true
+		}
+		warnings = append(warnings, updateAmbiguousFileWarning(a, installedVersion, targetVersion))
+	}
+
+	if len(selected) == 0 {
+		sel, _, err := selectDeployFiles(files, storedFileIDs, true)
+		return sel, nil, err
+	}
+	return selected, warnings, nil
+}
+
+// guardNoOpUpdateSelection is the defense-in-depth backstop (PR #142 review
+// round 2): whatever path produced selected, if targetVersion IS offered in
+// the listing and the selection's effective version is still the version we
+// are updating FROM, that selection provably cannot advance the record - it
+// would re-deploy what is already installed and the next check would report
+// the identical update forever. Rather than loop silently, prefer the target
+// version's own file; if even that cannot advance the record, fail loudly.
+//
+// The "targetVersion is offered" precondition is what keeps this off the
+// legitimate advisory-version path, where the mod-level NewVersion ("2.0")
+// and the file's own label ("2.0b") simply differ and no file carries the
+// target label at all.
+func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, installedVersion string, selected []*domain.DownloadableFile) ([]*domain.DownloadableFile, error) {
+	if targetVersion == "" || installedVersion == "" || len(selected) == 0 {
+		return selected, nil
+	}
 	var matches []*domain.DownloadableFile
 	for i := range files {
 		if files[i].Version == targetVersion {
 			matches = append(matches, &files[i])
 		}
 	}
-	if len(matches) == 0 {
-		return selectDeployFiles(files, storedFileIDs, true)
+	if len(matches) == 0 || domain.EffectiveInstalledVersion(targetVersion, selected) != installedVersion {
+		return selected, nil
 	}
 
-	var idSet map[string]bool
-	if len(storedFileIDs) > 0 {
-		idSet = make(map[string]bool, len(storedFileIDs))
-		for _, id := range storedFileIDs {
-			idSet[id] = true
-		}
+	replacement := pickVersionMatch(matches, nil)
+	if domain.EffectiveInstalledVersion(targetVersion, replacement) == installedVersion {
+		return nil, fmt.Errorf("update to %q would re-install the installed version %q: no file upstream advances it", targetVersion, installedVersion)
 	}
-	selected := pickVersionMatch(matches, idSet)
-
-	chosen := make(map[string]bool, len(selected))
-	for _, f := range selected {
-		chosen[f.ID] = true
-	}
-	for i := range files {
-		if !idSet[files[i].ID] || chosen[files[i].ID] || files[i].Version == installedVersion {
-			continue
-		}
-		selected = append(selected, &files[i])
-		chosen[files[i].ID] = true
-	}
-	return selected, false, nil
+	return replacement, nil
 }
 
 // selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
@@ -3568,20 +3683,33 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		return result, fmt.Errorf("no downloadable files available")
 	}
 
+	// replacedIDs records which of the resulting IDs came from an actual
+	// FileIDReplacements HIT, so selectUpdateDeployFiles can treat those as
+	// authoritative per-file rather than inferring anything from the map's
+	// mere presence (a partial map is the norm - see its doc comment).
 	effectiveFileIDs := mod.FileIDs
+	var replacedIDs map[string]bool
 	if len(upd.FileIDReplacements) > 0 {
 		effectiveFileIDs = make([]string, len(mod.FileIDs))
+		replacedIDs = make(map[string]bool, len(upd.FileIDReplacements))
 		for i, fid := range mod.FileIDs {
 			if newID, ok := upd.FileIDReplacements[fid]; ok {
 				effectiveFileIDs[i] = newID
+				replacedIDs[newID] = true
 			} else {
 				effectiveFileIDs[i] = fid
 			}
 		}
 	}
-	filesToDownload, _, err := selectUpdateDeployFiles(files, newVersion, mod.Version, effectiveFileIDs, len(upd.FileIDReplacements) > 0)
+	filesToDownload, selectionWarnings, err := selectUpdateDeployFiles(files, newVersion, mod.Version, effectiveFileIDs, replacedIDs)
 	if err != nil {
 		return result, fmt.Errorf("selecting files to download: %w", err)
+	}
+	for _, w := range selectionWarnings {
+		result.Warnings = append(result.Warnings, w)
+		evt := base
+		evt.Phase, evt.Detail = UpdateWarning, w
+		emit(evt)
 	}
 
 	// #96/#94: record what is actually being installed, not the mod-level

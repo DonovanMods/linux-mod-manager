@@ -21,6 +21,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -958,9 +959,30 @@ func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.
 
 	// The loop actually closes: a fresh check must now find nothing (the
 	// user's "press u again, same three updates" symptom).
-	again, err := svc.NewUpdater().CheckUpdates(context.Background(), game, []domain.InstalledMod{*updated})
+	//
+	// PR #142 review round 2: this must run against a source whose
+	// CheckUpdates actually COMPARES versions. mockSourceWithDownloads'
+	// returns nil unconditionally, so asserting Empty on it passed for any
+	// selection whatsoever - the assertion did no work. updateMockSource
+	// (updater_test.go) reports an update iff the installed version differs
+	// from the source's current version, which is exactly the comparison
+	// the real loop hinges on.
+	loopRegistry := source.NewRegistry()
+	loopRegistry.Register(&updateMockSource{
+		id:         "src",
+		currentMod: &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0.3", GameID: "g1"},
+	})
+	again, err := core.NewUpdater(loopRegistry).CheckUpdates(context.Background(), game, []domain.InstalledMod{*updated})
 	require.NoError(t, err)
 	assert.Empty(t, again, "a re-check after a successful update must find no further update")
+
+	// ...and the same check DOES still fire for a row left on the old
+	// version, proving the assertion above can actually fail.
+	stale := *updated
+	stale.Version = "1.0.1"
+	staleAgain, err := core.NewUpdater(loopRegistry).CheckUpdates(context.Background(), game, []domain.InstalledMod{stale})
+	require.NoError(t, err)
+	require.Len(t, staleAgain, 1, "control: a row still on 1.0.1 must still be reported as updatable")
 
 	// And `lmm verify` agrees: the version record matches what the STORED
 	// file IDs actually are, so `--fix` has nothing to repair downward.
@@ -981,4 +1003,135 @@ func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.
 	require.NotEmpty(t, matched, "the recorded file IDs must still resolve upstream")
 	assert.Equal(t, updated.Version, domain.EffectiveInstalledVersion(updated.Version, matched),
 		"verify must see no VERSION MISMATCH, so --fix cannot repair the record back downward")
+}
+
+// TestApplyUpdate_PartialFileIDReplacements_StillAdvances is PR #142 review
+// round 2, Important 1. A PARTIAL FileIDReplacements map is the NORM, not an
+// edge case: internal/source/nexusmods adds a map entry only for stored files
+// that actually have a FileUpdates chain, so any multi-file mod with one
+// superseded-in-place file and one rebuilt file produces a map covering some
+// stored IDs and not others.
+//
+// Round 1's per-UPDATE discriminator ("any mapping at all disables the
+// narrowing") therefore switched the #143 fix off for exactly the mods most
+// likely to hit it, reproducing the original loop signature. The
+// discriminator is now per-FILE: a replacement HIT is authoritative and
+// always kept, while an uncovered stored ID goes through the narrowing.
+//
+// Expected outcome, reasoning from both contracts at once: extra999 is
+// explicitly superseded, so extra1000 is kept on the map's authority even
+// though its label is not consulted. main101 is uncovered and still listed
+// at exactly the installed version - the stale anchor - so it is replaced by
+// the target version's primary, main103. The mod keeps its two-file shape,
+// both files land on 1.0.3, and the record advances.
+func TestApplyUpdate_PartialFileIDReplacements_StillAdvances(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0.1",
+		[]string{"main101", "extra999"},
+		map[string][]byte{"mod1-main101.esp": []byte("main101"), "mod1-extra999.esp": []byte("extra999")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "main101", Name: "Main 1.0.1", FileName: "mod1-main101.esp", Version: "1.0.1"},
+			{ID: "extra999", Name: "Extra 1.0.1", FileName: "mod1-extra999.esp", Version: "1.0.1"},
+			{ID: "main103", Name: "Main 1.0.3", FileName: "mod1-main103.esp", Version: "1.0.3", IsPrimary: true},
+			{ID: "extra1000", Name: "Extra 1.0.3", FileName: "mod1-extra1000.esp", Version: "1.0.3"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0.3", GameID: "g1"})
+	mock.AddDownload("main103", []byte("main103-content"))
+	mock.AddDownload("extra1000", []byte("extra1000-content"))
+	mock.AddDownload("main101", []byte("main101"))
+	mock.AddDownload("extra999", []byte("extra999"))
+
+	upd := domain.Update{
+		InstalledMod:       *old,
+		NewVersion:         "1.0.3",
+		FileIDReplacements: map[string]string{"extra999": "extra1000"},
+	}
+	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.3", updated.Version, "a partial map must not switch the #143 fix off")
+	assert.ElementsMatch(t, []string{"extra1000", "main103"}, updated.FileIDs,
+		"the mapped file is kept on the map's authority; the uncovered stale anchor is replaced by the target primary")
+	assert.NotEqual(t, updated.Version, updated.PreviousVersion, "the original loop signature must not reappear")
+
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-main103.esp"))
+	assert.NoError(t, statErr, "the target version's main file must be deployed")
+	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-main101.esp"))
+	assert.True(t, os.IsNotExist(statErr), "the stale anchor must not stay deployed alongside it")
+}
+
+// TestApplyUpdate_LabelAmbiguousExtra_IsSurfacedAsAWarning covers PR #142
+// review round 2, Important 2. With no mapping at all, two stored files both
+// still listed at exactly the installed version are label-INDISTINGUISHABLE:
+// either could be the stale anchor, either could be a genuine unchanged
+// extra. The target version offers one unselected file, so exactly one anchor
+// can be replaced 1:1; the other cannot be resolved either way.
+//
+// Per the round-2 ruling this ambiguity must never be silent. See
+// selectUpdateDeployFiles' doc comment for why the unresolvable file is
+// RETAINED-and-warned rather than dropped-and-warned (retaining cannot cause
+// the loop the ruling exists to prevent - guardNoOpUpdateSelection proves
+// that independently - while dropping would silently un-deploy a file the
+// mod is still using, which is the round-1 regression).
+func TestApplyUpdate_LabelAmbiguousExtra_IsSurfacedAsAWarning(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0.1",
+		[]string{"main101", "extra999"},
+		map[string][]byte{"mod1-main101.esp": []byte("main101"), "mod1-extra999.esp": []byte("extra999")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "main101", Name: "Main 1.0.1", FileName: "mod1-main101.esp", Version: "1.0.1"},
+			{ID: "extra999", Name: "Extra 1.0.1", FileName: "mod1-extra999.esp", Version: "1.0.1"},
+			{ID: "main103", Name: "Main 1.0.3", FileName: "mod1-main103.esp", Version: "1.0.3", IsPrimary: true},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0.3", GameID: "g1"})
+	mock.AddDownload("main103", []byte("main103-content"))
+	mock.AddDownload("extra999", []byte("extra999"))
+	mock.AddDownload("main101", []byte("main101"))
+
+	upd := domain.Update{InstalledMod: *old, NewVersion: "1.0.3"}
+	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.3", updated.Version, "the record must still advance")
+
+	// One ambiguous file is replaced 1:1 by the target primary; the other
+	// cannot be resolved and is retained. WHICH of the two is retained is
+	// not determinable - they are label-identical, and the stored order
+	// comes back from the DB - so this pins the invariant rather than a
+	// specific ID: the mod keeps two files, one of them main103, and the
+	// warning names exactly the one that could not be resolved.
+	require.Len(t, updated.FileIDs, 2, "the retained file must not be silently dropped")
+	assert.Contains(t, updated.FileIDs, "main103", "the target version's primary must replace one anchor")
+	retained := updated.FileIDs[0]
+	if retained == "main103" {
+		retained = updated.FileIDs[1]
+	}
+
+	require.NotEmpty(t, result.Warnings, "a label-ambiguous stored file must never be resolved silently")
+	joined := strings.Join(result.Warnings, "\n")
+	assert.Contains(t, joined, retained, "the warning must name the file that was retained unresolved")
+	assert.Contains(t, joined, "1.0.1", "the warning must name the version that makes it ambiguous")
+	assert.NotContains(t, joined, "main103", "the cleanly replaced file is not ambiguous and must not be warned about")
 }
