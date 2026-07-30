@@ -382,14 +382,15 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// #97: locked refs get a POLICY marker and are excluded from auto/--all
-	// application below (loaded once, keyed by "sourceID|modID" - locked
-	// mods ARE checked, so they show up in updates like any other row; only
-	// applying is refused).
+	// application below (loaded once, keyed by domain.ModKey - locked mods
+	// ARE checked, so they show up in updates like any other row; only
+	// applying is refused). A precomputed map, not per-row FindRef, since
+	// this loops over every update below.
 	lockedRefs := map[string]string{}
 	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
 		for _, ref := range prof.Mods {
 			if ref.Locked {
-				lockedRefs[ref.SourceID+"|"+ref.ModID] = ref.Version
+				lockedRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref.Version
 			}
 		}
 	}
@@ -403,7 +404,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	var lockedNames []string
 	for _, update := range updates {
 		policyStr := policyToString(update.InstalledMod.UpdatePolicy)
-		lockedVersion, isLocked := lockedRefs[update.InstalledMod.SourceID+"|"+update.InstalledMod.ID]
+		lockedVersion, isLocked := lockedRefs[domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID)]
 		if isLocked {
 			policyStr += " [locked@" + lockedVersion + "]"
 		}
@@ -488,7 +489,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			if update.InstalledMod.UpdatePolicy == domain.UpdateAuto {
 				continue // already handled above (applied, or reported as a locked skip)
 			}
-			if _, isLocked := lockedRefs[update.InstalledMod.SourceID+"|"+update.InstalledMod.ID]; isLocked {
+			if _, isLocked := lockedRefs[domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID)]; isLocked {
 				lockedAuto++
 				lockedNames = append(lockedNames, update.InstalledMod.Name)
 				continue
@@ -530,12 +531,9 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	locked := false
 	lockedVersion := mod.Version
 	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
-		for _, ref := range prof.Mods {
-			if ref.SourceID == mod.SourceID && ref.ModID == mod.ID {
-				locked = ref.Locked
-				lockedVersion = ref.Version
-				break
-			}
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil {
+			locked = ref.Locked
+			lockedVersion = ref.Version
 		}
 	}
 

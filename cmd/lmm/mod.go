@@ -577,12 +577,9 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			UpdatePolicy: policyToString(installed.UpdatePolicy),
 		}
 		if prof, perr := config.LoadProfile(svc.ConfigDir(), game.ID, profileName); perr == nil {
-			for _, ref := range prof.Mods {
-				if ref.SourceID == modSource && ref.ModID == modID && ref.Locked {
-					info.Locked = true
-					info.LockedVersion = ref.Version
-					break
-				}
+			if ref := prof.FindRef(modSource, modID); ref != nil && ref.Locked {
+				info.Locked = true
+				info.LockedVersion = ref.Version
 			}
 		}
 		installedInfo = &info

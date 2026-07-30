@@ -86,7 +86,8 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 
 	// #97: lock state lives on the profile YAML ref, not the DB row
 	// GetInstalledMods above already returned - load it separately and key
-	// by "sourceID:modID" for O(1) lookup per mod below. Tolerant of a
+	// by domain.ModKey for O(1) lookup per mod below (a precomputed map,
+	// not per-row FindRef, since this loops over every mod). Tolerant of a
 	// missing/unreadable profile.yaml (mirrors coreProvider.Overview's own
 	// "_ =" shape, internal/tui/service_core.go): an unreadable profile just
 	// means nothing shows as locked, not a failed listing.
@@ -95,7 +96,7 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	if profileYAML != nil {
 		for _, ref := range profileYAML.Mods {
 			if ref.Locked {
-				lockedByKey[ref.SourceID+":"+ref.ModID] = ref
+				lockedByKey[domain.ModKey(ref.SourceID, ref.ModID)] = ref
 			}
 		}
 	}
@@ -107,7 +108,7 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 			if mod.SourceID == domain.SourceLocal {
 				sourceDisplay = "local"
 			}
-			lockedRef, locked := lockedByKey[mod.SourceID+":"+mod.ID]
+			lockedRef, locked := lockedByKey[domain.ModKey(mod.SourceID, mod.ID)]
 			lockedVersion := ""
 			if locked {
 				lockedVersion = lockedRef.Version
@@ -179,7 +180,7 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 				sourceDisplay = "(local)"
 			}
 			locked := "-"
-			if lockedRef, ok := lockedByKey[mod.SourceID+":"+mod.ID]; ok {
+			if lockedRef, ok := lockedByKey[domain.ModKey(mod.SourceID, mod.ID)]; ok {
 				locked = lockedRef.Version
 			}
 			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String(), policyToString(mod.UpdatePolicy), locked)

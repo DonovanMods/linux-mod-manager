@@ -3421,10 +3421,8 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	// #97: a locked ref refuses update-apply entirely - the lock's whole
 	// contract. Checked before any network or hook side effect.
 	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
-		for _, ref := range prof.Mods {
-			if ref.SourceID == mod.SourceID && ref.ModID == mod.ID && ref.Locked {
-				return result, fmt.Errorf("%w: %s is locked at v%s - move the lock with 'lmm mod lock %s <version>' or unlock with 'lmm mod unlock %s'", ErrModLocked, mod.Name, ref.Version, mod.ID, mod.ID)
-			}
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
+			return result, fmt.Errorf("%w: %s is locked at v%s - move the lock with 'lmm mod lock %s <version>' or unlock with 'lmm mod unlock %s'", ErrModLocked, mod.Name, ref.Version, mod.ID, mod.ID)
 		}
 	}
 	// (A missing/unreadable profile falls through - matches
