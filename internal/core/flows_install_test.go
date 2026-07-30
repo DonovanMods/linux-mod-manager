@@ -1611,6 +1611,106 @@ func TestService_ApplyInstall_LockedDependency_BatchPath_SkippedNotMoved(t *test
 	assert.True(t, ref.Locked)
 }
 
+// flakyVersionedFileSource is versionOverrideFileSource with a failNext
+// fuse: the next failNext GetModFiles calls fail with a transient error,
+// then service resumes - so a test can fail EXACTLY the up-front
+// lockedInstallRefusal derivation while the batch loop's own later calls
+// succeed (#143 review finding F2).
+type flakyVersionedFileSource struct {
+	*mockSourceWithDownloads
+	fileVersions map[string]string // mod.ID -> served file's Version
+	failNext     int
+}
+
+func (s *flakyVersionedFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	if s.failNext > 0 {
+		s.failNext--
+		return nil, fmt.Errorf("transient: files endpoint unavailable")
+	}
+	return []domain.DownloadableFile{
+		{ID: mod.ID, Name: mod.Name, FileName: mod.ID + ".zip", Version: s.fileVersions[mod.ID], IsPrimary: true},
+	}, nil
+}
+
+// TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBeforeUninstall
+// closes #143 review finding F2: when lockedInstallRefusal's up-front
+// derivation fails transiently (ok=false), a locked, already-installed
+// PRIMARY falls through to the batch loop - reachable whenever an installed
+// primary has a missing dependency (BATCH path). The loop must then run its
+// own lock check BEFORE the uninstall-existing block: previously the block
+// uninstalled the deployed lock target and deleted its cache, and only THEN
+// the post-selection lock check skipped - leaving the lock target
+// undeployed and uncached while the profile still said locked v1.0.
+func TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBeforeUninstall(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &flakyVersionedFileSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		fileVersions:            map[string]string{"dep1": "1.0", "root": "2.0"},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	dep1 := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "2.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "src", ModID: "dep1"}}}
+	mock.AddMod(dep1.GameID, dep1)
+	mock.AddMod(root.GameID, root)
+
+	depZip := createTestZip(t, t.TempDir(), map[string]string{"dep1.esp": "dep-payload"})
+	depContent, err := os.ReadFile(depZip)
+	require.NoError(t, err)
+	mock.AddDownload("dep1", depContent)
+
+	// root is installed at v1.0 (DB row + cache entry) and LOCKED at v1.0;
+	// dep1 is NOT installed, so the plan takes the BATCH path.
+	seedNamedInstalledMod(t, svc, game, "src", "root", "Root", "1.0", true, map[string][]byte{
+		"root.esp": []byte("v1 payload"),
+	})
+	lockProfileRef(t, svc, "g1", "default", "src", "root", "1.0", nil)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	// The NEXT GetModFiles call - lockedInstallRefusal's own up-front
+	// derivation - fails transiently; every later call succeeds.
+	mock.failNext = 1
+
+	var events []core.DeployProgress
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
+		events = append(events, p)
+	})
+	require.NoError(t, err, "batch semantics: the locked primary skips, the run itself succeeds")
+	require.NotNil(t, result)
+	assert.Equal(t, []string{"Dep One"}, result.Installed, "the dependency must still install")
+	assert.Equal(t, []string{"Root"}, result.Failed)
+	require.Len(t, result.Skipped, 1)
+	assert.Contains(t, result.Skipped[0], "locked at v1.0", "the skip reason must name the lock")
+
+	// The deployed lock target's cache must survive: the loop's lock check
+	// must fire BEFORE the uninstall-existing block, not after it.
+	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "root", "1.0"),
+		"the lock target's cache entry must not be deleted on a refused reinstall")
+	for _, evt := range events {
+		assert.NotEqual(t, core.InstallDepReinstalling, evt.Phase,
+			"the uninstall-existing block must never run for the refused locked primary")
+	}
+
+	got, dbErr := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, dbErr)
+	assert.Equal(t, "1.0", got.Version, "the DB row must stay at the locked version")
+
+	profile, pErr := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, pErr)
+	ref := profile.FindRef("src", "root")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.0", ref.Version)
+	assert.True(t, ref.Locked)
+}
+
 // TestService_ApplyInstall_ContextCancellation proves ApplyInstall checks
 // ctx at least once before doing any work, so an already-cancelled context
 // leaves nothing installed - the seam Phase 5b's cancel-then-drain task will

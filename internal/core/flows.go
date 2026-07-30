@@ -3327,26 +3327,12 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	// this only ever differs from plan.SourceID in the SourceLocal edge
 	// case InstallPlan.Dependencies' doc comment already documents as
 	// unreachable via any registered source in practice.
-	if existing, err := s.GetInstalledMod(mod.SourceID, mod.ID, game.ID, plan.Profile); err == nil && existing != nil {
-		reinstalling := base
-		reinstalling.Phase = InstallDepReinstalling
-		emit(reinstalling)
-		if err := installer.Uninstall(ctx, game, &existing.Mod, plan.Profile); err != nil {
-			msg := fmt.Sprintf("Warning: could not remove old files: %v", err)
-			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = InstallNote, msg
-			emit(evt)
-		}
-		if err := s.GetGameCache(game).Delete(game.ID, existing.SourceID, existing.ID, existing.Version); err != nil {
-			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
-			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = InstallNote, msg
-			emit(evt)
-		}
-	}
-
+	//
+	// File selection is derived BEFORE the uninstall-existing block below
+	// (#143 review finding F2, mirroring cmd/lmm's batchInstallMods after
+	// its own F1 reorder): the #143 lock check must judge the selected
+	// version before anything is removed, and a fetch/selection failure now
+	// skips this mod while its previous installation is still intact.
 	var files []domain.DownloadableFile
 	if overrideFiles != nil {
 		// #96: the primary's --version-resolved selection, already fetched
@@ -3375,20 +3361,43 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selected) // #94
 
 	// #143: a LOCKED profile ref converges only via explicit lock/unlock -
-	// skip (batch per-mod semantics) before this mod's download/deploy when
-	// the selected version differs from the lock. For the PRIMARY this is
-	// unreachable in practice: ApplyInstall's lockedInstallRefusal already
-	// refused the whole install up front. It matters for a DEPENDENCY whose
-	// ref is locked in the profile but absent from the DB (drift) - only a
-	// ref without a DB row still resolves as a dependency - which would
-	// otherwise deploy and then leave drift behind UpsertMod's refusal Note
-	// below. Placement after file selection is safe for that case: a
-	// dependency has no existing install, so the uninstall-existing block
-	// above was a no-op.
+	// skip (batch per-mod semantics) when the selected version differs from
+	// the lock, BEFORE the uninstall-existing block and this mod's
+	// download/deploy. This is NOT redundant with ApplyInstall's up-front
+	// lockedInstallRefusal, for the PRIMARY included: that gate deliberately
+	// passes when its own derivation fails transiently (ok=false), and a
+	// locked, already-installed primary with a missing dependency then
+	// reaches this loop (review finding F2 - the earlier post-uninstall
+	// placement let that fallthrough uninstall the deployed lock target and
+	// delete its cache before skipping). It equally covers a DEPENDENCY
+	// whose ref is locked in the profile but absent from the DB (drift) -
+	// only a ref without a DB row still resolves as a dependency - which
+	// would otherwise deploy and leave drift behind UpsertMod's refusal
+	// Note below.
 	if prof, err := pm.Get(game.ID, plan.Profile); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
 			skip("Skipped", lockedRefRefusalError(*mod, plan.Profile, ref).Error())
 			return nil
+		}
+	}
+
+	if existing, err := s.GetInstalledMod(mod.SourceID, mod.ID, game.ID, plan.Profile); err == nil && existing != nil {
+		reinstalling := base
+		reinstalling.Phase = InstallDepReinstalling
+		emit(reinstalling)
+		if err := installer.Uninstall(ctx, game, &existing.Mod, plan.Profile); err != nil {
+			msg := fmt.Sprintf("Warning: could not remove old files: %v", err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = InstallNote, msg
+			emit(evt)
+		}
+		if err := s.GetGameCache(game).Delete(game.ID, existing.SourceID, existing.ID, existing.Version); err != nil {
+			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
+			result.Notes = append(result.Notes, msg)
+			evt := base
+			evt.Phase, evt.Detail = InstallNote, msg
+			emit(evt)
 		}
 	}
 
