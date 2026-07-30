@@ -3856,11 +3856,13 @@ type UpdateApplyResult struct {
 // locked (#97). Callers branch with errors.Is.
 var ErrModLocked = errors.New("mod is locked")
 
-// LockedRefRefusalError builds the ErrModLocked-wrapping refusal both
-// ApplyUpdate and ApplyRollback return when mod's profile ref is locked -
-// factored into one function specifically so the call sites can never
-// drift apart in wording (exported since #146 so cmd/lmm's mod-edit
-// version gate reuses the exact same refusal instead of hand-copying it;
+// LockedRefRefusalError builds the ErrModLocked-wrapping refusal every
+// lock gate returns when mod's profile ref is locked - ApplyUpdate,
+// ApplyRollback, install gating (lockedInstallRefusal /
+// applyInstallBatchMod), and cmd/lmm's mod-edit version gate - factored
+// into one function specifically so the call sites can never drift apart
+// in wording (exported since #146 so cmd/lmm can reuse the exact same
+// refusal instead of hand-copying it;
 // PR #142 Copilot round-4: the prior hand-duplicated
 // version named no source/profile in its remedies, so a user running the
 // refused operation against a non-active profile, or a mod ID that exists
