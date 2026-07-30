@@ -242,6 +242,83 @@ func TestLockFetchErrorNamesPinningForNotSupported(t *testing.T) {
 	require.Contains(t, model.action.status, "pin it instead (P)")
 }
 
+// TestLockFetchEmptyVersionsUnlockedShowsStatusNoPicker covers PR #142
+// Copilot round-2's low-confidence finding (independently confirming an
+// item our own final whole-branch review had deferred):
+// ActionProvider.AvailableVersions is permitted by the interface to return
+// an empty, error-free slice (neither shipped provider does this today -
+// coreProvider maps a versionless source to source.ErrNotSupported instead,
+// and prototypeProvider's canned list is always non-empty - but nothing in
+// the interface forbids it). For an UNLOCKED mod, an empty versions slice
+// has no trailing unlock row either, so the picker resolveVersionsFetched
+// used to build would have zero options - choosable but empty, and
+// choosing (Enter/a digit) would index past the end of both the options and
+// (pre-fix) the parallel versions slice. resolveVersionsFetched must refuse
+// to open a picker at all in this case, surfacing an error status instead -
+// worded to match mapNetworkError's own capability-gap phrasing ("...; pin
+// it instead (P)") so the two read as one voice.
+func TestLockFetchEmptyVersionsUnlockedShowsStatusNoPicker(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{AvailableVersionsOut: []string{}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0 // "SkyUI", unlocked
+	require.False(t, model.mods[0].Locked)
+
+	updated, cmd := model.Update(keyRunes("L"))
+	model = updated.(Model)
+	msg := cmd()
+	require.IsType(t, versionsFetchedMsg{}, msg)
+
+	updated, refreshCmd := model.Update(msg)
+	model = updated.(Model)
+	require.Nil(t, refreshCmd, "an empty-versions refusal - like a fetch failure - has nothing to refresh")
+	require.False(t, model.action.running)
+	require.True(t, model.action.statusIsError)
+	require.Contains(t, model.action.status, "no versions reported for SkyUI")
+	require.Contains(t, model.action.status, "pin it instead (P)")
+	require.Nil(t, model.picker, "an unlocked mod with zero versions must not open a choosable-empty picker")
+}
+
+// TestLockFetchEmptyVersionsLockedOpensUnlockOnlyPicker is
+// TestLockFetchEmptyVersionsUnlockedShowsStatusNoPicker's control: a LOCKED
+// mod with an empty versions slice still yields a VALID picker - the
+// trailing unlock row alone is a real, choosable option - so
+// resolveVersionsFetched must let it through rather than treating "zero
+// versions" as unconditionally an error.
+func TestLockFetchEmptyVersionsLockedOpensUnlockOnlyPicker(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{AvailableVersionsOut: nil}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	model.mods[0].Locked = true
+	model.mods[0].LockedVersion = "5.1"
+
+	updated, cmd := model.Update(keyRunes("L"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.False(t, model.action.statusIsError)
+	require.NotNil(t, model.picker)
+	require.Len(t, model.picker.options, 1, "zero versions plus the trailing unlock option")
+	require.Equal(t, "unlock", model.picker.options[0].Label)
+	require.Equal(t, 0, model.picker.selected)
+
+	updated, chooseCmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.Nil(t, model.picker, "choosing must clear the picker")
+	require.NotNil(t, chooseCmd)
+	chosenMsg := chooseCmd()
+	require.IsType(t, unlockChosenMsg{}, chosenMsg)
+	picked := chosenMsg.(unlockChosenMsg)
+	require.Equal(t, "skyui", picked.item.ID)
+}
+
 // TestLockPickerRowsNotesAndPreselectionWhenUnlocked covers an UNLOCKED mod:
 // the installed version is noted "installed" and pre-selected, no other row
 // carries a note, and no trailing "unlock" option is appended.

@@ -631,6 +631,27 @@ func (m Model) resolveVersionsFetched(msg versionsFetchedMsg) (Model, tea.Cmd) {
 
 	item := msg.item
 	versions := msg.versions
+
+	// PR #142 Copilot round-2 (independently confirms a final-review item
+	// we'd deferred): ActionProvider.AvailableVersions is permitted by the
+	// interface to return an empty, error-free slice (neither shipped
+	// provider does this today - coreProvider maps a versionless source to
+	// source.ErrNotSupported instead, and prototypeProvider's canned list
+	// is always non-empty - but nothing in the interface forbids a future
+	// one). For an UNLOCKED item, an empty slice means no rows at all (no
+	// versions AND no trailing unlock row below), which would open a
+	// choosable-but-empty picker - refuse instead, with an error status
+	// worded to match mapNetworkError's own capability-gap phrasing
+	// ("...; pin it instead (P)", service_core.go) so the two read as one
+	// voice. A LOCKED item still gets a valid picker even with zero
+	// versions: the unlock row alone is a real, choosable option, so that
+	// case is deliberately let through below.
+	if len(versions) == 0 && !item.Locked {
+		m.action.status = fmt.Sprintf("no versions reported for %s; pin it instead (P)", item.Name)
+		m.action.statusIsError = true
+		return m, nil
+	}
+
 	options, selected := lockPickerOptions(item, versions)
 	unlockIdx := -1
 	if item.Locked {
@@ -646,7 +667,15 @@ func (m Model) resolveVersionsFetched(msg versionsFetchedMsg) (Model, tea.Cmd) {
 			if unlockIdx >= 0 && idx == unlockIdx {
 				return func() tea.Msg { return unlockChosenMsg{item: item} }
 			}
-			version := versions[idx]
+			// Defense in depth (PR #142 Copilot round-2): read the picked
+			// version from the SAME options slice the picker rendered and
+			// dispatched idx against, instead of indexing the separate
+			// versions slice in parallel - options[i].Label is exactly
+			// versions[i] for every non-unlock row (lockPickerOptions
+			// builds it that way), so this is behavior-identical, but
+			// removes a second slice that could silently drift out of sync
+			// with what the user actually saw and chose.
+			version := options[idx].Label
 			return func() tea.Msg { return lockChosenMsg{item: item, version: version} }
 		},
 	}
