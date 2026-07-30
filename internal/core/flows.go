@@ -453,7 +453,9 @@ const (
 	SwitchDownloadFailed
 	// SwitchDownloadDone fires once per install-loop mod after its download
 	// loop finishes, on both success and failure - doProfileSwitch's
-	// `fmt.Println()` after the loop runs unconditionally either way. A
+	// `fmt.Println()` after the loop runs unconditionally either way. When
+	// the #96 cache-first guard skips the download entirely, this phase is
+	// skipped with it (there is no download readout to terminate). A
 	// caller wanting byte-identical output prints a bare blank line here;
 	// combined with SwitchDownloadFailed's own leading blank line, a failed
 	// download reproduces the original's blank/error/blank sequence, and a
@@ -784,12 +786,16 @@ const (
 	// Downloading: %.1f%%") - Percent only, gated on a known total size,
 	// matching every other flow's own gating.
 	ImportDownloading
-	// ImportDownloadDone fires once per attempted mod, unconditionally
-	// (success OR failure alike), immediately after its download loop
-	// finishes - mirroring doProfileImport's own unconditional `fmt.Println()`
-	// right after the download loop, which precedes ImportModFailed's own
-	// leading blank line on failure (see ImportModFailed). A caller wanting
-	// byte-identical output prints a bare `fmt.Println()` here.
+	// ImportDownloadDone fires once per mod whose download loop actually
+	// ran (success OR failure alike), immediately after that loop finishes
+	// - mirroring doProfileImport's own unconditional `fmt.Println()` right
+	// after the download loop, which precedes ImportModFailed's own leading
+	// blank line on failure (see ImportModFailed). When #138's cache-first
+	// guard skips the download entirely (target version already fully
+	// marked in cache), this phase is skipped with it - the same shape as
+	// SwitchDownloadDone under ApplyProfileSwitch's #96 guard - so there is
+	// no download readout to terminate. A caller wanting byte-identical
+	// output prints a bare `fmt.Println()` here.
 	ImportDownloadDone
 	// ImportModFailed fires for ANY of the download loop's mod-skipping
 	// failure reasons - a failed GetMod, GetModFiles, an empty file list, a
@@ -4393,7 +4399,7 @@ type ImportPlan struct {
 	// ParseProfile purely for preview, without persisting anything.
 	data []byte
 
-	// storedFileIDs maps "sourceID:modID" (for NeedsRedownload's cache-miss
+	// storedFileIDs maps domain.ModKey keys (for NeedsRedownload's cache-miss
 	// entries only) to that mod's DB-recorded FileIDs - preserving
 	// doProfileImport's :541-552 rule: a redownload uses the INSTALLED row's
 	// own FileIDs, never the imported profile YAML's ref.FileIDs (which may
@@ -4405,7 +4411,7 @@ type ImportPlan struct {
 	// PlanProfileSwitch's drift case applies.
 	storedFileIDs map[string][]string
 
-	// priorVersions maps "sourceID:modID" (for NeedsRedownload's #138
+	// priorVersions maps domain.ModKey keys (for NeedsRedownload's #138
 	// version-drift entries only) to the installed row being converged AWAY
 	// from - the import twin of SwitchPlan.PriorVersions (see its doc
 	// comment): ApplyImport's install loop needs it to know whether a LIVE
@@ -4440,7 +4446,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	installedMods, _ := s.GetInstalledMods(game.ID, profile.Name)
 	installedData := make(map[string]domain.InstalledMod)
 	for _, im := range installedMods {
-		key := im.SourceID + ":" + im.ID
+		key := domain.ModKey(im.SourceID, im.ID)
 		installedData[key] = im
 	}
 
@@ -4452,7 +4458,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	for _, p := range allProfiles {
 		mods, _ := s.GetInstalledMods(game.ID, p.Name)
 		for _, im := range mods {
-			key := im.SourceID + ":" + im.ID
+			key := domain.ModKey(im.SourceID, im.ID)
 			if _, exists := installedData[key]; !exists {
 				installedData[key] = im
 			}
@@ -4464,7 +4470,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	var priorVersions map[string]domain.InstalledMod // #138 - see ImportPlan.priorVersions
 	gameCache := s.GetGameCache(game)
 	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
+		key := domain.ModKey(ref.SourceID, ref.ModID)
 		im, inDB := installedData[key]
 		switch {
 		case !inDB:
@@ -4645,7 +4651,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		// redownload, or the imported profile's own FileIDs for a fresh
 		// install (:541-552's rule; see ImportPlan.storedFileIDs' doc
 		// comment for why this can't just be ref.FileIDs uniformly).
-		key := ref.SourceID + ":" + ref.ModID
+		key := domain.ModKey(ref.SourceID, ref.ModID)
 		var fileIDsToUse []string
 		if stored, ok := plan.storedFileIDs[key]; ok {
 			fileIDsToUse = stored
