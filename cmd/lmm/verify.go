@@ -99,9 +99,9 @@ compare against - reinstall the mod instead.
 A locked mod's VERSION MISMATCH is still reported and counted the same as
 any other (verify stays honest about state), but --fix refuses to repair
 it - rewriting a locked record would silently move what the lock means
-instead of fixing anything. The refusal names the mod, the lock's target
-version, and the remedy ('lmm mod lock <mod-id> <version>' to move the
-lock, or 'lmm mod unlock' to release it); in --json the row keeps
+instead of fixing anything. The refusal names the mod and the lock's
+target version, and points at the remedy: 'lmm mod lock' to move the
+lock, or 'lmm mod unlock' to release it; in --json the row keeps
 "version_mismatch" and gains note "locked". Separately, a locked mod whose
 recorded version hasn't yet caught up to the lock's target (pending a
 "lmm profile apply", not corruption) prints its own "~ NAME - lock pending

@@ -1822,3 +1822,47 @@ func TestDoVerify_LockedDrift_JSONNotCountedAsIssue(t *testing.T) {
 	}
 	assert.True(t, found, "expected a mod1 entry in JSON files: %+v", result.Files)
 }
+
+// TestDoVerify_LockedConverged_NoNote closes the named no-note edge case: a
+// locked mod whose DB version ALREADY equals the lock's target (fully
+// converged - no pending `profile apply` needed) must stay on the plain
+// quiet-OK path, exactly like an unlocked matching mod - no informational
+// note printed, and (matching the pre-existing quiet-OK convention) no
+// extra JSON row emitted for it either.
+func TestDoVerify_LockedConverged_NoNote(t *testing.T) {
+	cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+		{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.5"},
+	})
+
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"},
+	}))
+	// Lock target equals the already-installed version: converged, nothing pending.
+	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "1.5"))
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.NotContains(t, out, "lock pending convergence", "a converged lock must not print the pending-convergence note")
+	assert.NotContains(t, out, "1 issue(s)")
+
+	jsonOutput = true
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 0, result.Issues)
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			t.Fatalf("expected no version-check row for a converged locked mod, got: %+v", f)
+		}
+	}
+}
