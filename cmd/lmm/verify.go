@@ -812,8 +812,19 @@ func fileIDsEqual(a, b []string) bool {
 // as rewriting the primary would - circumventing verify's own primary-row
 // refusal by going around it through a sibling. Surfaced as its own
 // warning naming the sibling profile, distinct from the "differs" decline.
+// The warning names the MOD as locked (matching the primary refusal's own
+// wording), not the profile - a profile isn't "locked", a ref in it is -
+// and gives its remedies with an explicit -p <sibling> flag, since
+// `lmm mod lock`/`lmm mod unlock` without one resolve against the
+// active/-p profile (the PRIMARY here), and copy-pasting an unflagged
+// remedy would move/clear the lock in the wrong profile. When the sibling
+// was Deployed, the primary repair has already renamed the shared cache
+// dir out from under it (repairSiblingProfiles' own doc above) and this
+// decline bypasses the re-link that would otherwise follow - so the
+// warning also says the sibling's deployment may be broken until the lock
+// is moved or cleared, since `verify --fix -p <sibling>` will decline the
+// same way until then.
 //
-
 // Like the primary path (repairModVersion), the profile YAML is upserted
 // BEFORE the DB version is set (audit Finding 3): the DB row is what a
 // LATER verify run's mismatch detection reads for that sibling too, so if
@@ -907,7 +918,11 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 			if ref := siblingProfile.FindRef(sibling.SourceID, sibling.ID); ref != nil && ref.Locked {
 				locked = append(locked, p.Name)
 				if !jsonOutput {
-					fmt.Printf("  Warning: profile %s is locked at v%s; run 'lmm mod lock %s <version>' or unlock with 'lmm mod unlock %s' instead of rewriting it\n", p.Name, ref.Version, sibling.ID, sibling.ID)
+					msg := fmt.Sprintf("  Warning: %s is locked at v%s in profile %s; run 'lmm mod lock -p %s %s <version>' or unlock with 'lmm mod unlock -p %s %s' instead of rewriting it", sibling.Name, ref.Version, p.Name, p.Name, sibling.ID, p.Name, sibling.ID)
+					if sibling.Deployed {
+						msg += "; its deployment may be broken until the lock is moved or cleared"
+					}
+					fmt.Println(msg)
 				}
 				continue
 			}

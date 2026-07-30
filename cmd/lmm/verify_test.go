@@ -1120,6 +1120,14 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRep
 // version=="" locks at whatever is already recorded, 1.5); "third" (a
 // different recorded version, so never a repair candidate here regardless)
 // stays as the unlocked control alongside it.
+//
+// The warning text is pinned to the exact wording a scoped re-review
+// flagged: it must name the MOD as locked (not the profile - a profile
+// isn't "locked", a ref in it is), say WHICH profile the lock lives in, and
+// give remedies with an explicit -p <sibling> flag - `lmm mod lock`/
+// `lmm mod unlock` without one resolve against the active/-p profile (the
+// PRIMARY here), so an unflagged remedy would move/clear the lock in the
+// wrong profile if copy-pasted.
 func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *testing.T) {
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
@@ -1133,8 +1141,10 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *t
 	out := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	assert.Contains(t, out, "second", "a warning must identify the locked sibling profile")
-	assert.Contains(t, out, "locked", "the warning must explain why this sibling wasn't auto-repaired")
+	assert.Contains(t, out, "Mod One is locked at v1.5 in profile second", "the warning must name the MOD (not the profile) as locked, and say which profile")
+	assert.Contains(t, out, "lmm mod lock -p second mod1", "the lock remedy must be flagged with -p <sibling> - unflagged would target the wrong (active) profile")
+	assert.Contains(t, out, "lmm mod unlock -p second mod1", "the unlock remedy must be flagged with -p <sibling> too")
+	assert.NotContains(t, out, "may be broken", "an un-deployed sibling has no broken deployment to warn about")
 
 	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
@@ -1146,6 +1156,37 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *t
 	require.NotNil(t, ref)
 	assert.Equal(t, "1.5", ref.Version, "the locked sibling's profile YAML ref must be unchanged")
 	assert.True(t, ref.Locked, "the sibling must remain locked")
+}
+
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_LockedAndDeployed_WarnsDeploymentMayBeBroken
+// covers the same decline, but with the locked sibling also Deployed via
+// symlink: the primary repair has already renamed the shared cache dir out
+// from under it, and declining the sibling rewrite (correctly - the lock
+// still refuses it) means the re-link that would otherwise follow never
+// runs either, leaving that sibling's deployment pointed at a path that no
+// longer exists until the lock is moved or cleared. The warning must say
+// so, folded into the same line (not a separate warning).
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_LockedAndDeployed_WarnsDeploymentMayBeBroken(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.SetModLock(game.ID, "second", "test-src", "mod1", ""))
+	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "Mod One is locked at v1.5 in profile second")
+	assert.Contains(t, out, "its deployment may be broken until the lock is moved or cleared", "a Deployed locked sibling's warning must flag the now-broken deployment")
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.Equal(t, "1.5", secondMod.Version, "still not auto-repaired")
 }
 
 // TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks guards
