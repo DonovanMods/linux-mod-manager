@@ -3363,6 +3363,27 @@ type UpdateApplyResult struct {
 // locked (#97). Callers branch with errors.Is.
 var ErrModLocked = errors.New("mod is locked")
 
+// lockedRefRefusalError builds the ErrModLocked-wrapping refusal both
+// ApplyUpdate and ApplyRollback return when mod's profile ref is locked -
+// factored into one function specifically so the two call sites can never
+// drift apart in wording (PR #142 Copilot round-4: the prior hand-duplicated
+// version named no source/profile in its remedies, so a user running the
+// refused operation against a non-active profile, or a mod ID that exists
+// under more than one source, would copy-paste a remedy that resolved
+// against the wrong target - the active profile / an ambiguous source -
+// the same "copy-paste acts on the wrong target" class already fixed for
+// verify's sibling-repair warning). Both remedies now carry the mod's
+// actual source (-s) and the profile actually holding the lock (-p) -
+// modCmd's real, registered flags (cmd/lmm/mod.go: `modCmd.PersistentFlags
+// ().StringVarP(&modSource, "source", "s", ...)` /
+// `StringVarP(&modProfile, "profile", "p", ...)`), so a copy-pasted remedy
+// always resolves against the SAME ref this error is actually about,
+// regardless of which profile/source the caller had active.
+func lockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModReference) error {
+	return fmt.Errorf("%w: %s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'",
+		ErrModLocked, mod.Name, ref.Version, profileName, mod.SourceID, profileName, mod.ID, mod.SourceID, profileName, mod.ID)
+}
+
 // ApplyUpdate applies upd to the installed mod it references
 // (upd.InstalledMod), following cmd/lmm/update.go's pre-extraction
 // applyUpdate ordering exactly: GetMod (the new version) -> GetModFiles ->
@@ -3422,7 +3443,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	// contract. Checked before any network or hook side effect.
 	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
-			return result, fmt.Errorf("%w: %s is locked at v%s - move the lock with 'lmm mod lock %s <version>' or unlock with 'lmm mod unlock %s'", ErrModLocked, mod.Name, ref.Version, mod.ID, mod.ID)
+			return result, lockedRefRefusalError(mod.Mod, profileName, ref)
 		}
 	}
 	// (A missing/unreadable profile falls through - matches
@@ -3701,7 +3722,7 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 	// Replace, DB/profile writes).
 	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
-			return result, fmt.Errorf("%w: %s is locked at v%s - move the lock with 'lmm mod lock %s <version>' or unlock with 'lmm mod unlock %s'", ErrModLocked, mod.Name, ref.Version, mod.ID, mod.ID)
+			return result, lockedRefRefusalError(mod.Mod, profileName, ref)
 		}
 	}
 	// (A missing/unreadable profile falls through - matches ApplyUpdate's

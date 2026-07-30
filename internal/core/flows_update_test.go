@@ -754,8 +754,9 @@ func TestApplyUpdate_LockedRefRefusesUpdate(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrModLocked)
 	assert.Contains(t, err.Error(), "locked at v")
-	assert.Contains(t, err.Error(), "lmm mod lock mod1")
-	assert.Contains(t, err.Error(), "lmm mod unlock mod1")
+	assert.Contains(t, err.Error(), "in profile default", "the remedy must name the profile actually holding the lock (#142 round 4)")
+	assert.Contains(t, err.Error(), "lmm mod lock -s src -p default mod1", "the remedy must carry -s/-p so a copy-paste can never resolve against a different source/profile")
+	assert.Contains(t, err.Error(), "lmm mod unlock -s src -p default mod1")
 
 	assert.Equal(t, 0, mock.DownloadCount(), "a locked mod must never be downloaded")
 
