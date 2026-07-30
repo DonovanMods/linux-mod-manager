@@ -3694,6 +3694,19 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		return result, fmt.Errorf("mod not found: %s", modID)
 	}
 
+	// #97: a locked ref refuses rollback entirely, mirroring ApplyUpdate's
+	// own gate - rollback moves a locked ref's Version just as surely as an
+	// update would, and the lock's whole contract is that only an explicit
+	// re-lock or unlock may do that. Checked before any side effect (hooks,
+	// Replace, DB/profile writes).
+	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
+			return result, fmt.Errorf("%w: %s is locked at v%s - move the lock with 'lmm mod lock %s <version>' or unlock with 'lmm mod unlock %s'", ErrModLocked, mod.Name, ref.Version, mod.ID, mod.ID)
+		}
+	}
+	// (A missing/unreadable profile falls through - matches ApplyUpdate's
+	// own precedent: a lock cannot exist in an unloadable profile.)
+
 	if mod.PreviousVersion == "" {
 		return result, fmt.Errorf("no previous version available for rollback")
 	}

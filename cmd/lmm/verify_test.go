@@ -1109,6 +1109,45 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRep
 	assert.Equal(t, "1.0", secondMod.Version, "a sibling with matching FileIDs must still be auto-repaired")
 }
 
+// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite
+// covers the whole-branch review's #97 sibling-repair finding:
+// repairSiblingProfiles must not move a LOCKED sibling's ref Version even
+// though its own version/FileIDs both match the primary's pre-repair state
+// (the exact condition that otherwise triggers an auto-repair) - rewriting
+// it would silently move what that sibling's lock means, the same reason
+// the PRIMARY row's own repair refuses a locked ref (verify.go:362-377).
+// "second" is locked in place (no version argument - SetModLock's
+// version=="" locks at whatever is already recorded, 1.5); "third" (a
+// different recorded version, so never a repair candidate here regardless)
+// stays as the unlocked control alongside it.
+func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
+
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.SetModLock(game.ID, "second", "test-src", "mod1", ""))
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "second", "a warning must identify the locked sibling profile")
+	assert.Contains(t, out, "locked", "the warning must explain why this sibling wasn't auto-repaired")
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	assert.Equal(t, "1.5", secondMod.Version, "a locked sibling must NOT be auto-repaired - rewriting it would move the lock's target")
+
+	secondProfile, err := pm.Get(game.ID, "second")
+	require.NoError(t, err)
+	ref := secondProfile.FindRef("test-src", "mod1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.5", ref.Version, "the locked sibling's profile YAML ref must be unchanged")
+	assert.True(t, ref.Locked, "the sibling must remain locked")
+}
+
 // TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks guards
 // the deployed-sibling variant: a sibling row marked Deployed via symlink
 // has its links re-created through the installer exactly like the primary

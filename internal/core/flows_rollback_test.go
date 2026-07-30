@@ -167,6 +167,69 @@ func TestApplyRollbackMissingCache(t *testing.T) {
 	assert.Empty(t, result.ModName, "no identity fields should be populated before this guard")
 }
 
+// TestApplyRollback_LockedRefRefusesRollback covers #97's whole contract for
+// ApplyRollback, mirroring TestApplyUpdate_LockedRefRefusesUpdate: a locked
+// profile ref refuses the rollback entirely, before any side effect -
+// nothing redeployed, nothing changed in the DB or profile YAML.
+func TestApplyRollback_LockedRefRefusesRollback(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mod := seedRollbackReadyMod(t, svc, game, "src", "mod1", "Mod One", "1.0", "2.0",
+		[]string{"old-1"}, []string{"new-1"},
+		map[string][]byte{"mod1-old.esp": []byte("old-content")},
+		map[string][]byte{"mod1-new.esp": []byte("new-content")})
+	require.Equal(t, "2.0", mod.Version)
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.SetModLock("g1", "default", "src", "mod1", ""))
+
+	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, core.ErrModLocked)
+	assert.Contains(t, err.Error(), "locked at v")
+	assert.Contains(t, err.Error(), "lmm mod lock mod1")
+	assert.Contains(t, err.Error(), "lmm mod unlock mod1")
+	require.NotNil(t, result)
+	assert.Empty(t, result.ModName, "no identity fields should be populated before this guard")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated.Version, "the DB row must be unchanged")
+
+	profile, err := pm.Get("g1", "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "2.0", profile.Mods[0].Version, "the profile ref must be unchanged")
+
+	_, err = os.Lstat(filepath.Join(gameDir, "mod1-new.esp"))
+	assert.NoError(t, err, "the current version's file must remain deployed - nothing redeployed")
+}
+
+// TestApplyRollback_UnlockedRefStillRollsBack is the explicit control for
+// TestApplyRollback_LockedRefRefusesRollback: an unlocked ref must roll back
+// exactly as before the #97 gate was added.
+func TestApplyRollback_UnlockedRefStillRollsBack(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mod := seedRollbackReadyMod(t, svc, game, "src", "mod1", "Mod One", "1.0", "2.0",
+		[]string{"old-1"}, []string{"new-1"},
+		map[string][]byte{"mod1-old.esp": []byte("old-content")},
+		map[string][]byte{"mod1-new.esp": []byte("new-content")})
+	require.Equal(t, "2.0", mod.Version)
+
+	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", updated.Version)
+}
+
 // TestApplyRollbackHookForceGate covers the Force-gate/fatal semantics for
 // ApplyRollback's two before_each hooks (uninstall.before_each for the
 // CURRENT version, install.before_each for the PREVIOUS version being

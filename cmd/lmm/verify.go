@@ -803,6 +803,17 @@ func fileIDsEqual(a, b []string) bool {
 // surfaced as its own warning pointing at the right manual fix
 // (`verify --fix -p <profile>`).
 //
+// A sibling whose ref is LOCKED in its OWN profile (checked fresh per
+// sibling, since the lock lives in that sibling's profile YAML, not the
+// primary's) is likewise left untouched, for the same reason the primary
+// row's own repair refuses a locked ref (repairModVersion's caller,
+// verify.go:362-377): the record IS that sibling's lock target, and
+// rewriting it here would silently move what the lock means just as surely
+// as rewriting the primary would - circumventing verify's own primary-row
+// refusal by going around it through a sibling. Surfaced as its own
+// warning naming the sibling profile, distinct from the "differs" decline.
+//
+
 // Like the primary path (repairModVersion), the profile YAML is upserted
 // BEFORE the DB version is set (audit Finding 3): the DB row is what a
 // LATER verify run's mismatch detection reads for that sibling too, so if
@@ -832,8 +843,8 @@ func fileIDsEqual(a, b []string) bool {
 // all-or-nothing.
 //
 // Returns a human-readable summary of which profiles were repaired,
-// failed, and/or declined for differing file selection (empty if none),
-// for the caller to fold into repairModVersion's own note - the --json
+// failed, and/or declined (for differing file selection or a lock - empty
+// if none), for the caller to fold into repairModVersion's own note - the --json
 // contract's vehicle for surfacing this, per the primary row's existing
 // "note" field - and, structurally (not by string-matching the note
 // text), the combined count of per-sibling failures and declines, so the
@@ -852,7 +863,7 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		return "sibling repair check FAILED: " + msg, 1
 	}
 
-	var repaired, failed, differs []string
+	var repaired, failed, differs, locked []string
 	for _, p := range profiles {
 		if p.Name == currentProfile {
 			continue
@@ -885,6 +896,25 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 			}
 			continue
 		}
+
+		// #97: a sibling ref locked in ITS OWN profile refuses the same
+		// rewrite the primary row's own repair refuses (verify.go:362-377) -
+		// the record is that sibling's lock target, and rewriting it here
+		// would silently move what the lock means, just as surely as
+		// rewriting the primary would. Loaded fresh per-sibling since the
+		// lock lives in that sibling's own profile YAML, not the primary's.
+		if siblingProfile, perr := pm.Get(game.ID, p.Name); perr == nil {
+			if ref := siblingProfile.FindRef(sibling.SourceID, sibling.ID); ref != nil && ref.Locked {
+				locked = append(locked, p.Name)
+				if !jsonOutput {
+					fmt.Printf("  Warning: profile %s is locked at v%s; run 'lmm mod lock %s <version>' or unlock with 'lmm mod unlock %s' instead of rewriting it\n", p.Name, ref.Version, sibling.ID, sibling.ID)
+				}
+				continue
+			}
+		}
+		// (A missing/unreadable sibling profile falls through - matches
+		// ApplyUpdate/ApplyRollback's own precedent: a lock cannot exist in
+		// an unloadable profile.)
 
 		if err := pm.UpsertMod(game.ID, p.Name, domain.ModReference{
 			SourceID: sibling.SourceID,
@@ -941,7 +971,10 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 	if len(differs) > 0 {
 		parts = append(parts, fmt.Sprintf("differs in file selection in profile(s): %s (run verify --fix -p <profile>)", strings.Join(differs, ", ")))
 	}
-	return strings.Join(parts, "; "), len(failed) + len(differs)
+	if len(locked) > 0 {
+		parts = append(parts, fmt.Sprintf("locked in profile(s): %s (move the lock or unlock instead)", strings.Join(locked, ", ")))
+	}
+	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked)
 }
 
 // redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
