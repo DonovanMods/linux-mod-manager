@@ -643,10 +643,14 @@ func cacheDirExists(path string) (bool, error) {
 //     current symlinks already point at valid content, so there's nothing
 //     to fix). Otherwise, if the mod is Deployed via a symlink, the
 //     game-dir symlinks point INTO the cache dir renamed in step 1 and are
-//     now dangling - re-run the installer to refresh them. Hardlink/copy
-//     deployments are untouched by the cache rename, so they're left
-//     alone regardless. On failure, SetModDeployed (not SaveInstalledMod -
-//     audit Finding 1 again) clears the flag without touching file IDs.
+//     now dangling - re-run the installer to refresh them, built from the
+//     PROFILE-effective link method and recording it on the row
+//     (relinkDeployedRow, #152) - not the game-level method, which would
+//     "repair" a profile-level copy/hardlink override back to the game's.
+//     Hardlink/copy deployments are untouched by the cache rename, so
+//     they're left alone regardless. On failure, SetModDeployed (not
+//     SaveInstalledMod - audit Finding 1 again) clears the flag without
+//     touching file IDs.
 //  5. Sibling profiles: runs when step 1 renamed the cache THIS run, OR
 //     (audit Finding 2) when the cache already lives under the effective
 //     version from an EARLIER, partially-failed run - old path absent,
@@ -729,13 +733,25 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 	// re-linking would only repoint a working deployment into the
 	// unvetted pre-existing effective-version dir for no reason.
 	var relinkErr error
+	var recordNote string
 	if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink {
-		if err := svc.GetInstaller(game).Install(cmd.Context(), game, &mod.Mod, profile); err != nil {
+		installErr, recordErr := relinkDeployedRow(cmd, svc, game, profile, mod)
+		if installErr != nil {
 			mod.Deployed = false
 			if saveErr := svc.SetModDeployed(mod.SourceID, mod.ID, mod.GameID, profile, false); saveErr != nil {
-				relinkErr = fmt.Errorf("relinking deployed files: %w (also failed to clear deployed flag: %v)", err, saveErr)
+				relinkErr = fmt.Errorf("relinking deployed files: %w (also failed to clear deployed flag: %v)", installErr, saveErr)
 			} else {
-				relinkErr = fmt.Errorf("relinking deployed files: %w", err)
+				relinkErr = fmt.Errorf("relinking deployed files: %w", installErr)
+			}
+		} else if recordErr != nil {
+			// Non-fatal, like DeployProfile's own SetModLinkMethod failure
+			// handling: the deployment itself is fixed; only the recorded
+			// method is stale. Surfaced in text here and folded into the
+			// row's note below (after the sibling pass, which overwrites
+			// note wholesale).
+			recordNote = fmt.Sprintf("could not record link method: %v", recordErr)
+			if !jsonOutput {
+				fmt.Printf("  Warning: %s\n", recordNote)
 			}
 		}
 	}
@@ -745,6 +761,14 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 	// not by anything that happens to the primary row's deployment.
 	if renamed || (!oldExists && newExists && note == "") {
 		note, siblingFailures = repairSiblingProfiles(cmd, svc, game, profile, mod, recorded, effective)
+	}
+
+	if recordNote != "" {
+		if note != "" {
+			note += "; " + recordNote
+		} else {
+			note = recordNote
+		}
 	}
 
 	if relinkErr != nil {
@@ -841,7 +865,10 @@ func fileIDsEqual(a, b []string) bool {
 // which would wipe stored checksums - audit Finding 1) do the writes.
 //
 // A sibling Deployed via symlink has its links re-created through the
-// installer exactly like the primary row's would be; on a per-sibling
+// installer exactly like the primary row's would be - built from that
+// sibling's OWN profile-effective link method (relinkDeployedRow, #152),
+// since a link_method override lives per-profile and the sibling's may
+// differ from both the game's and the primary profile's; on a per-sibling
 // re-link failure, that row's Deployed flag alone is cleared (matching the
 // primary row's own re-link-failure handling), but - unlike the DB/profile
 // steps, which did succeed - this is reported as a FAILURE, not folded
@@ -881,7 +908,7 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		return "sibling repair check FAILED: " + msg, 1
 	}
 
-	var repaired, failed, differs, locked []string
+	var repaired, failed, differs, locked, methodNotes []string
 	for _, p := range profiles {
 		if p.Name == currentProfile {
 			continue
@@ -966,19 +993,31 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		sibling.Version = effective
 
 		if sibling.Deployed && sibling.LinkMethod == domain.LinkSymlink {
-			if err := svc.GetInstaller(game).Install(cmd.Context(), game, &sibling.Mod, p.Name); err != nil {
+			installErr, recordErr := relinkDeployedRow(cmd, svc, game, p.Name, sibling)
+			if installErr != nil {
 				if saveErr := svc.SetModDeployed(sibling.SourceID, sibling.ID, sibling.GameID, p.Name, false); saveErr != nil {
-					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v; also failed to clear deployed flag: %v)", p.Name, err, saveErr))
+					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v; also failed to clear deployed flag: %v)", p.Name, installErr, saveErr))
 				} else {
-					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v)", p.Name, err))
+					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v)", p.Name, installErr))
 				}
 				if !jsonOutput {
-					fmt.Printf("  Warning: could not repair profile %s: %v\n", p.Name, err)
+					fmt.Printf("  Warning: could not repair profile %s: %v\n", p.Name, installErr)
 				}
 				// The version correction (DB + profile, above) stands, but
 				// the deployment itself is still broken - report this as a
 				// failure, not a clean "Repaired" success.
 				continue
+			}
+			if recordErr != nil {
+				// Non-fatal (DeployProfile's own precedent): the sibling's
+				// deployment is fixed; only its recorded method is stale.
+				// Not counted in failedCount - unlike the failures above,
+				// nothing here is left broken on disk - but still surfaced
+				// in both output modes via its own parts entry below.
+				methodNotes = append(methodNotes, fmt.Sprintf("%s (%v)", p.Name, recordErr))
+				if !jsonOutput {
+					fmt.Printf("  Warning: could not record link method for profile %s: %v\n", p.Name, recordErr)
+				}
 			}
 		}
 
@@ -1001,7 +1040,59 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 	if len(locked) > 0 {
 		parts = append(parts, fmt.Sprintf("locked in profile(s): %s (move the lock or unlock instead)", strings.Join(locked, ", ")))
 	}
+	if len(methodNotes) > 0 {
+		parts = append(parts, fmt.Sprintf("could not record link method in profile(s): %s", strings.Join(methodNotes, ", ")))
+	}
 	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked)
+}
+
+// relinkDeployedRow re-runs the installer for a row recorded as a symlink
+// deployment whose links dangle after a cache re-key, building the installer
+// from profileName's EFFECTIVE link method (profile > game > global, #81) -
+// not the game-level one (#152): a profile-level copy/hardlink override
+// would otherwise be "repaired" back to the game's method, re-introducing
+// exactly the drift verify exists to fix. The method is resolved once (the
+// same single-resolve shape as DeployProfile, internal/core/flows.go) and,
+// on a successful install, recorded on the row via SetModLinkMethod exactly
+// like DeployProfile records its own deploys - the row was just re-linked
+// with the effective method, and leaving it claiming the old one would be a
+// new record-vs-reality drift. The write is skipped when the method didn't
+// change; on success mod.LinkMethod is updated in place.
+//
+// installErr is the Install failure (the caller owns clearing Deployed and
+// reporting, since the primary and sibling sites do so differently);
+// recordErr is a SetModLinkMethod failure after a SUCCESSFUL install, for
+// the caller to surface non-fatally - DeployProfile's own precedent: the
+// deployment itself is fixed, only the recorded method is stale, and
+// failing the whole repair over it would misreport a fixed deployment as
+// broken. The two are mutually exclusive.
+func relinkDeployedRow(cmd *cobra.Command, svc *core.Service, game *domain.Game, profileName string, mod *domain.InstalledMod) (installErr, recordErr error) {
+	method := svc.GetEffectiveLinkMethod(game, profileName)
+	installer := svc.NewInstallerWithLinker(game, svc.GetLinker(method))
+	// Undeploy-then-install, the same shape DeployProfile uses
+	// (internal/core/flows.go) and for the same reason: dst still holds
+	// whatever the previous deployment left behind (here, the dangling
+	// symlinks the cache re-key orphaned), and only the symlink and
+	// hardlink linkers' Deploy clear an existing dst themselves - the copy
+	// linker's OpenFile would follow (or trip over) a stale symlink instead
+	// of replacing it. The Uninstall failure is a text-mode warning, not a
+	// returned error, again matching DeployProfile: a failed undeploy that
+	// still lets Install succeed left nothing broken (every file was
+	// rewritten), and one that does break Install surfaces through
+	// installErr - the signal both output modes already report.
+	if err := installer.Uninstall(cmd.Context(), game, &mod.Mod, profileName); err != nil && !jsonOutput {
+		fmt.Printf("  Warning: undeploy %s: %v\n", mod.Name, err)
+	}
+	if err := installer.Install(cmd.Context(), game, &mod.Mod, profileName); err != nil {
+		return err, nil
+	}
+	if method != mod.LinkMethod {
+		if err := svc.SetModLinkMethod(mod.SourceID, mod.ID, mod.GameID, profileName, method); err != nil {
+			return nil, err
+		}
+		mod.LinkMethod = method
+	}
+	return nil, nil
 }
 
 // redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
