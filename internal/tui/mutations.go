@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -590,7 +591,10 @@ func (m Model) editSelectedModLock() (Model, tea.Cmd) {
 // the locked target when item.Locked, else the installed version - index 0
 // (with nothing marked) when neither is found in versions, mirroring
 // editSelectedModPolicy's own "never guesses" fallback for an unmatched
-// current value.
+// current value. A locked item whose lock target is absent from versions is
+// the one case the caller overrides that fallback (#143): the vanished
+// target is signalled on the trailing unlock row instead - see
+// resolveVersionsFetched.
 //
 // versions is read only, never mutated or reordered here - per
 // ActionProvider.AvailableVersions' own doc comment, a caller that needs to
@@ -668,7 +672,17 @@ func (m Model) resolveVersionsFetched(msg versionsFetchedMsg) (Model, tea.Cmd) {
 	unlockIdx := -1
 	if item.Locked {
 		unlockIdx = len(options)
-		options = append(options, pickerOption{Label: "unlock"})
+		unlockOption := pickerOption{Label: "unlock"}
+		// #143 polish: when the locked version vanished from the source's
+		// list (removed/archived upstream), lockPickerOptions fell back to
+		// index 0 - the newest version, with nothing marked - which read as
+		// if the lock pointed there. Pre-select the unlock row and say why,
+		// so the vanished target is signalled rather than papered over.
+		if !slices.Contains(versions, item.LockedVersion) {
+			unlockOption.Note = fmt.Sprintf("locked v%s no longer listed", item.LockedVersion)
+			selected = unlockIdx
+		}
+		options = append(options, unlockOption)
 	}
 
 	picker := pendingPicker{

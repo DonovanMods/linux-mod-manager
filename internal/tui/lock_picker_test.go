@@ -379,6 +379,38 @@ func TestLockPickerRowsNotesAndPreselectionWhenLocked(t *testing.T) {
 	require.Empty(t, model.picker.options[3].Note)
 }
 
+// TestLockPickerVanishedLockTargetPreselectsUnlock (#143 polish): when the
+// locked version no longer appears in the source's list (the file was
+// removed/archived upstream), the picker used to silently pre-select index 0
+// — the newest version, with nothing marked — which read as if the lock
+// pointed there. It must instead pre-select the trailing unlock row and note
+// on it that the locked version is no longer listed, so the vanished target
+// is signalled rather than silently papered over.
+func TestLockPickerVanishedLockTargetPreselectsUnlock(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{AvailableVersionsOut: []string{"5.3", "5.2", "5.1"}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	model.mods[0].Locked = true
+	model.mods[0].LockedVersion = "4.9" // vanished: not in the fetched list
+	require.Equal(t, "5.2", model.mods[0].Version)
+
+	updated, cmd := model.Update(keyRunes("L"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.picker)
+	require.Len(t, model.picker.options, 4, "3 versions plus a trailing unlock option")
+	require.Equal(t, "installed", model.picker.options[1].Note, "the installed note must still land")
+	require.Equal(t, "unlock", model.picker.options[3].Label)
+	require.Equal(t, "locked v4.9 no longer listed", model.picker.options[3].Note)
+	require.Equal(t, 3, model.picker.selected, "the unlock row must start pre-selected when the lock target vanished")
+}
+
 // TestLockPickerRowNotesCombineWhenLockedAtInstalledVersion covers the case
 // both notes land on the SAME row (task-7-brief.md: "both notes may land on
 // the same row"): a mod locked at exactly its installed version.
