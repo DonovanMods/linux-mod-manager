@@ -2513,6 +2513,10 @@ func TestCoreProviderActions_AvailableVersions_ListsDistinctVersions(t *testing.
 // the ErrNotSupported degrade (a source whose files carry no version info
 // at all): mapNetworkError's capability-gap wording, naming "version
 // resolution" and pointing at the pin (P) fallback per task-6-brief.md.
+// This test OWNS that mapping contract (#143 polish) — the dispatch-layer
+// sibling, TestLockFetchErrorReachesStatusLineVerbatim
+// (lock_picker_test.go), only proves an AvailableVersions error string
+// reaches the status line unchanged, with the error hand-fed.
 func TestCoreProviderActions_AvailableVersions_MapsNotSupportedError(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	netSrc := newNetSource(t, "src")

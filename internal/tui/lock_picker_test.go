@@ -219,12 +219,19 @@ func TestLockFetchFailureShowsStatusNoPicker(t *testing.T) {
 	require.Nil(t, model.picker)
 }
 
-// TestLockFetchErrorNamesPinningForNotSupported proves a source's
-// version-listing failure (coreProvider.AvailableVersions already maps
-// source.ErrNotSupported through mapNetworkError naming "pin it instead (P)"
-// - service_core.go) reaches the status line unchanged, so the TUI dispatch
-// layer doesn't lose or reword that fallback guidance.
-func TestLockFetchErrorNamesPinningForNotSupported(t *testing.T) {
+// TestLockFetchErrorReachesStatusLineVerbatim is a PASS-THROUGH test of the
+// TUI dispatch layer only (#143 polish rename — the old name,
+// TestLockFetchErrorNamesPinningForNotSupported, read as if it exercised the
+// ErrNotSupported→"pin it instead (P)" mapping; it never did): the provider
+// error here is hand-fed, and the contract proven is that
+// resolveVersionsFetchFailed renders whatever AvailableVersions returned on
+// the status line verbatim, without losing or rewording it. The actual
+// mapping contract — coreProvider.AvailableVersions turning
+// source.ErrNotSupported into that "pin it instead (P)" wording via
+// mapNetworkError — lives in
+// TestCoreProviderActions_AvailableVersions_MapsNotSupportedError
+// (service_core_test.go).
+func TestLockFetchErrorReachesStatusLineVerbatim(t *testing.T) {
 	t.Parallel()
 
 	rec := &recordingActions{AvailableVersionsErr: errors.New("listing versions for SkyUI: nexusmods does not support version resolution — pin it instead (P)")}
@@ -239,7 +246,8 @@ func TestLockFetchErrorNamesPinningForNotSupported(t *testing.T) {
 	model = updated.(Model)
 
 	require.True(t, model.action.statusIsError)
-	require.Contains(t, model.action.status, "pin it instead (P)")
+	require.Equal(t, "listing versions for SkyUI: nexusmods does not support version resolution — pin it instead (P)", model.action.status,
+		"the fed error must reach the status line verbatim — this test owns pass-through, not the error's wording")
 }
 
 // TestLockFetchEmptyVersionsUnlockedShowsStatusNoPicker covers PR #142
