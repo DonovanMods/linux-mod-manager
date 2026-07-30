@@ -453,7 +453,9 @@ const (
 	SwitchDownloadFailed
 	// SwitchDownloadDone fires once per install-loop mod after its download
 	// loop finishes, on both success and failure - doProfileSwitch's
-	// `fmt.Println()` after the loop runs unconditionally either way. A
+	// `fmt.Println()` after the loop runs unconditionally either way. When
+	// the #96 cache-first guard skips the download entirely, this phase is
+	// skipped with it (there is no download readout to terminate). A
 	// caller wanting byte-identical output prints a bare blank line here;
 	// combined with SwitchDownloadFailed's own leading blank line, a failed
 	// download reproduces the original's blank/error/blank sequence, and a
@@ -784,12 +786,16 @@ const (
 	// Downloading: %.1f%%") - Percent only, gated on a known total size,
 	// matching every other flow's own gating.
 	ImportDownloading
-	// ImportDownloadDone fires once per attempted mod, unconditionally
-	// (success OR failure alike), immediately after its download loop
-	// finishes - mirroring doProfileImport's own unconditional `fmt.Println()`
-	// right after the download loop, which precedes ImportModFailed's own
-	// leading blank line on failure (see ImportModFailed). A caller wanting
-	// byte-identical output prints a bare `fmt.Println()` here.
+	// ImportDownloadDone fires once per mod whose download loop actually
+	// ran (success OR failure alike), immediately after that loop finishes
+	// - mirroring doProfileImport's own unconditional `fmt.Println()` right
+	// after the download loop, which precedes ImportModFailed's own leading
+	// blank line on failure (see ImportModFailed). When #138's cache-first
+	// guard skips the download entirely (target version already fully
+	// marked in cache), this phase is skipped with it - the same shape as
+	// SwitchDownloadDone under ApplyProfileSwitch's #96 guard - so there is
+	// no download readout to terminate. A caller wanting byte-identical
+	// output prints a bare `fmt.Println()` here.
 	ImportDownloadDone
 	// ImportModFailed fires for ANY of the download loop's mod-skipping
 	// failure reasons - a failed GetMod, GetModFiles, an empty file list, a
@@ -4178,8 +4184,11 @@ type RollbackResult struct {
 // ApplyRollback rolls the installed mod identified by sourceID/modID back to
 // its PreviousVersion, following cmd/lmm/update.go's pre-extraction
 // doUpdateRollback ordering exactly: GetInstalledMod -> guard checks ->
-// hooks -> installer.Replace(current -> previous) -> RollbackModVersion (DB
-// swap, with a compensating reverse-Replace on failure) -> SetModLinkMethod
+// hooks -> installer.ReplaceForUpdate(current -> previous) - the extracted
+// CLI's plain Replace step, now carrying the reversed file-ID transition
+// (current FileIDs -> PreviousFileIDs) that narrows a same-version rollback
+// to the restored file's own members (#150) -> RollbackModVersion (DB
+// swap, with a compensating reverse-replace on failure) -> SetModLinkMethod
 // -> reload -> ProfileManager.UpsertMod (compensating BOTH the DB swap and
 // the Replace on failure). This is a behavior-preserving extraction - see the
 // task report for the full mapping. Unlike ApplyUpdate, there is no
@@ -4210,11 +4219,12 @@ type RollbackResult struct {
 // before the DB/profile writes below - see UpdateWarning's doc comment).
 //
 // A failure to write RollbackModVersion triggers a best-effort compensating
-// reverse Installer.Replace (redeploying the CURRENT version, undoing the
-// Replace this function just performed) before returning the error; a
+// reverse Installer.ReplaceForUpdate (redeploying the CURRENT version with
+// the file-ID transition swapped back, undoing the replace this function
+// just performed) before returning the error; a
 // failure to write ProfileManager.UpsertMod afterward compensates BOTH -
 // another RollbackModVersion (undoing the DB swap) AND another reverse
-// Replace - matching doUpdateRollback's own two, textually-near-identical
+// replace - matching doUpdateRollback's own two, textually-near-identical
 // compensation blocks exactly. A failure reloading the rolled-back mod
 // (the GetInstalledMod call between those two steps) is, however, NOT
 // compensated - matching doUpdateRollback's own verbatim behavior, a
@@ -4298,7 +4308,12 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		emit(evt)
 	}
 
-	if err := installer.Replace(ctx, game, &mod.Mod, &prevMod, profileName); err != nil {
+	// #150: the update path's file-ID transition, reversed - current FileIDs
+	// back to PreviousFileIDs - so a same-version file-only rollback (ONE
+	// shared cache dir) narrows to the restored file's members instead of
+	// deploying the union; see ReplaceForUpdate/resolveSharedDirUpdate. On a
+	// normal different-version rollback this behaves exactly like Replace.
+	if err := installer.ReplaceForUpdate(ctx, game, &mod.Mod, &prevMod, profileName, mod.FileIDs, mod.PreviousFileIDs); err != nil {
 		return result, fmt.Errorf("deploying previous version: %w", err)
 	}
 
@@ -4320,7 +4335,7 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 	}
 
 	if err := s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName); err != nil {
-		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(ctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
 
@@ -4344,8 +4359,8 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		Version:  rolledBackMod.Version,
 		FileIDs:  rolledBackMod.FileIDs,
 	}); err != nil {
-		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
-		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName)    //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)                                         //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(ctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
 
@@ -4367,12 +4382,18 @@ type ImportPlan struct {
 	Profile *domain.Profile
 
 	// Installed holds every profile mod already installed (a DB row exists)
-	// AND cached at that exact version - nothing to do for these.
-	// NeedsRedownload holds mods with a DB row but no matching cache entry -
-	// installed somewhere, but must be re-fetched. Missing holds mods with
-	// no DB row anywhere (checked across EVERY saved profile for the game,
-	// not just the one being imported into - doProfileImport's cross-profile
-	// scan, :428-438). All three preserve profile.Mods' own order.
+	// at the profile's own version (or with no version recorded in the
+	// profile at all) AND cached at that exact version - nothing to do for
+	// these. NeedsRedownload holds mods that must be re-fetched: a DB row
+	// with no matching cache entry (installed somewhere, cache gone), or -
+	// #138's convergence case, mirroring PlanProfileSwitch's #96 drift case -
+	// a row installed at a DIFFERENT version than the imported profile
+	// records, scheduled for reinstall at the profile's version (downgrades
+	// included; each such ref also records the row being converged away from
+	// in priorVersions). Missing holds mods with no DB row anywhere (checked
+	// across EVERY saved profile for the game, not just the one being
+	// imported into - doProfileImport's cross-profile scan, :428-438). All
+	// three preserve profile.Mods' own order.
 	Installed, NeedsRedownload, Missing []domain.ModReference
 
 	// Exists reports whether a profile with this name is already saved for
@@ -4387,13 +4408,26 @@ type ImportPlan struct {
 	// ParseProfile purely for preview, without persisting anything.
 	data []byte
 
-	// storedFileIDs maps "sourceID:modID" (for every entry in
-	// NeedsRedownload only) to that mod's DB-recorded FileIDs - preserving
+	// storedFileIDs maps domain.ModKey keys (for NeedsRedownload's cache-miss
+	// entries only) to that mod's DB-recorded FileIDs - preserving
 	// doProfileImport's :541-552 rule: a redownload uses the INSTALLED row's
 	// own FileIDs, never the imported profile YAML's ref.FileIDs (which may
 	// be empty or stale, since the row may have been updated - or reinstalled
 	// under a different FileIDs set - after that profile was last exported).
+	// A #138 version-drift entry is deliberately absent here: the stored
+	// FileIDs describe the WRONG (installed) version, while the imported
+	// ref's own FileIDs (if any) describe the target one - the same rule
+	// PlanProfileSwitch's drift case applies.
 	storedFileIDs map[string][]string
+
+	// priorVersions maps domain.ModKey keys (for NeedsRedownload's #138
+	// version-drift entries only) to the installed row being converged AWAY
+	// from - the import twin of SwitchPlan.PriorVersions (see its doc
+	// comment): ApplyImport's install loop needs it to know whether a LIVE
+	// older deployment exists that must be replaced (removing files the new
+	// version doesn't serve) rather than merely installed over. Private,
+	// like storedFileIDs: pure plan-to-apply plumbing no preview renders.
+	priorVersions map[string]domain.InstalledMod
 }
 
 // PlanImport parses data (an exported profile) and categorizes its mods
@@ -4413,19 +4447,16 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	_, existErr := pm.Get(game.ID, profile.Name)
 	exists := existErr == nil
 
-	// installedInfo mirrors doProfileImport's own local type: the DB's
-	// Version/FileIDs for a mod key, needed to (a) check the cache at the
-	// RIGHT version and (b) preserve the redownload FileIDs rule above.
-	type installedInfo struct {
-		Version string
-		FileIDs []string
-	}
-
+	// installedData keeps each mod key's full installed row (doProfileImport
+	// tracked only Version/FileIDs), needed to (a) check the cache at the
+	// RIGHT version, (b) preserve the redownload FileIDs rule above, and
+	// (c) record the prior row a #138 version-drift entry converges away
+	// from (priorVersions needs the whole Mod for Installer.Replace).
 	installedMods, _ := s.GetInstalledMods(game.ID, profile.Name)
-	installedData := make(map[string]installedInfo)
+	installedData := make(map[string]domain.InstalledMod)
 	for _, im := range installedMods {
-		key := im.SourceID + ":" + im.ID
-		installedData[key] = installedInfo{Version: im.Version, FileIDs: im.FileIDs}
+		key := domain.ModKey(im.SourceID, im.ID)
+		installedData[key] = im
 	}
 
 	// Cross-profile scan (:428-438): a mod installed under some OTHER saved
@@ -4436,27 +4467,43 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	for _, p := range allProfiles {
 		mods, _ := s.GetInstalledMods(game.ID, p.Name)
 		for _, im := range mods {
-			key := im.SourceID + ":" + im.ID
+			key := domain.ModKey(im.SourceID, im.ID)
 			if _, exists := installedData[key]; !exists {
-				installedData[key] = installedInfo{Version: im.Version, FileIDs: im.FileIDs}
+				installedData[key] = im
 			}
 		}
 	}
 
 	var installed, needsRedownload, missing []domain.ModReference
 	storedFileIDs := make(map[string][]string)
+	var priorVersions map[string]domain.InstalledMod // #138 - see ImportPlan.priorVersions
 	gameCache := s.GetGameCache(game)
 	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
-		info, inDB := installedData[key]
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		im, inDB := installedData[key]
 		switch {
 		case !inDB:
 			missing = append(missing, ref)
-		case gameCache.Exists(game.ID, ref.SourceID, ref.ModID, info.Version):
+		case ref.Version != "" && im.Version != ref.Version:
+			// #138 convergence, mirroring PlanProfileSwitch's #96 drift
+			// case: the imported profile names a different version than the
+			// installed row - reinstall at the profile's version (downgrades
+			// included). ref is passed as-is: its own FileIDs (if any)
+			// describe the TARGET version; the installed row's describe the
+			// wrong one (so no storedFileIDs entry). The installed row
+			// itself is recorded in priorVersions so ApplyImport's install
+			// loop can Replace a live older deployment instead of
+			// installing over it.
+			needsRedownload = append(needsRedownload, ref)
+			if priorVersions == nil {
+				priorVersions = make(map[string]domain.InstalledMod)
+			}
+			priorVersions[key] = im
+		case gameCache.Exists(game.ID, ref.SourceID, ref.ModID, im.Version):
 			installed = append(installed, ref)
 		default:
 			needsRedownload = append(needsRedownload, ref)
-			storedFileIDs[key] = info.FileIDs
+			storedFileIDs[key] = im.FileIDs
 		}
 	}
 
@@ -4468,6 +4515,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		Exists:          exists,
 		data:            data,
 		storedFileIDs:   storedFileIDs,
+		priorVersions:   priorVersions,
 	}, nil
 }
 
@@ -4524,7 +4572,11 @@ type ProfileImportResult struct {
 // (ProfileManager.ImportWithOptions), then - unless there is nothing to
 // download, NoInstall is set, or ConfirmInstall declines - downloads and
 // installs every NeedsRedownload/Missing mod, in that order, matching
-// doProfileImport exactly (:481-633). progress may be nil.
+// doProfileImport exactly (:481-633). Since #138 the install loop also
+// carries ApplyProfileSwitch's convergence machinery: a fully-cached target
+// version (by per-file completion marker) deploys from cache without
+// redownloading, and a version-drift entry with a live prior deployment is
+// Replaced rather than installed over. progress may be nil.
 //
 // plan is executed EXACTLY as given - like PlanProfileSwitch/ApplyProfileSwitch,
 // this method never re-plans or re-validates it against current state (see
@@ -4608,7 +4660,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		// redownload, or the imported profile's own FileIDs for a fresh
 		// install (:541-552's rule; see ImportPlan.storedFileIDs' doc
 		// comment for why this can't just be ref.FileIDs uniformly).
-		key := ref.SourceID + ":" + ref.ModID
+		key := domain.ModKey(ref.SourceID, ref.ModID)
 		var fileIDsToUse []string
 		if stored, ok := plan.storedFileIDs[key]; ok {
 			fileIDsToUse = stored
@@ -4623,32 +4675,57 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 
 		mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
 
-		var downloadedFileIDs []string
-		downloadFailed := false
-		for _, file := range filesToDownload {
-			progressFn := func(p DownloadProgress) {
-				if p.TotalBytes > 0 {
-					dl := base
-					dl.Phase, dl.Percent = ImportDownloading, p.Percentage
-					emit(dl)
+		downloadedFileIDs := make([]string, 0, len(filesToDownload))
+		for _, f := range filesToDownload {
+			downloadedFileIDs = append(downloadedFileIDs, f.ID)
+		}
+		// #138: cache-first, by per-file completion marker - the same guard
+		// (and the same two review findings) as ApplyProfileSwitch's install
+		// loop: HasFileIDs, not bare Exists (a version directory can exist
+		// yet be only PARTIALLY populated by a broken-off download run), and
+		// by FILE ID, never FileName (an extracted archive's cache entry
+		// holds member names that match no DownloadableFile). Deploying from
+		// cache matters most for exactly this flow's drift convergence: a
+		// downgrade's archived file may have vanished upstream.
+		if !s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
+			downloadFailed := false
+			for _, file := range filesToDownload {
+				progressFn := func(p DownloadProgress) {
+					if p.TotalBytes > 0 {
+						dl := base
+						dl.Phase, dl.Percent = ImportDownloading, p.Percentage
+						emit(dl)
+					}
+				}
+				if _, err := s.DownloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
+					fail(fmt.Sprintf("download failed: %v", err))
+					downloadFailed = true
+					break
 				}
 			}
-			if _, err := s.DownloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
-				fail(fmt.Sprintf("download failed: %v", err))
-				downloadFailed = true
-				break
+			doneEvt := base
+			doneEvt.Phase = ImportDownloadDone
+			emit(doneEvt)
+
+			if downloadFailed {
+				continue
 			}
-			downloadedFileIDs = append(downloadedFileIDs, file.ID)
-		}
-		doneEvt := base
-		doneEvt.Phase = ImportDownloadDone
-		emit(doneEvt)
-
-		if downloadFailed {
-			continue
 		}
 
-		if err := installer.Install(ctx, game, mod, profile.Name); err != nil {
+		// #138 convergence: a version-drift entry whose prior installed row
+		// is actually live on disk must be replaced (removing files the new
+		// version doesn't serve), not just installed over - the same gate,
+		// with the same caveats, as ApplyProfileSwitch's install loop (see
+		// its comment): only Replace when the OLD version's cache entry is
+		// still there for it to read from; a corrupted/missing old cache
+		// falls back to a bare Install rather than hard-failing convergence.
+		if prior, ok := plan.priorVersions[key]; ok && prior.Deployed &&
+			s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version) {
+			if err := installer.Replace(ctx, game, &prior.Mod, mod, profile.Name); err != nil {
+				fail(fmt.Sprintf("deploy failed: %v", err))
+				continue
+			}
+		} else if err := installer.Install(ctx, game, mod, profile.Name); err != nil {
 			fail(fmt.Sprintf("deploy failed: %v", err))
 			continue
 		}
