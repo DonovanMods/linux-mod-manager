@@ -2052,3 +2052,53 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinksWithSibling
 	assert.Equal(t, domain.LinkCopy, secondMod.LinkMethod, "the sibling re-link must record its profile's effective method on the row")
 	assert.True(t, secondMod.Deployed, "Deployed remains true after a successful sibling re-link")
 }
+
+// TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt pins
+// PR #154's Copilot finding: relinkDeployedRow's undeploy-then-install shape
+// treats an Uninstall failure that still lets Install succeed as non-fatal
+// (DeployProfile's own precedent - every file was rewritten, nothing is left
+// broken), but the warning must reach --json's per-row note, not just the
+// text-mode line, or automation has no way to see the partial cleanup a
+// human would be shown. Forces exactly that shape: a regular file squatting
+// where the row's symlink deployment should be makes the symlink linker's
+// Undeploy refuse ("not a symlink"), while its Deploy - which clears dst
+// itself - still succeeds.
+func TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt(t *testing.T) {
+	cmd, svc, game := setupDoVerifyFixTest(t, true)
+
+	deployedPath := filepath.Join(game.ModPath, "mod1.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("squatter"), 0o644))
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 0, result.Issues, "the repair itself succeeded - the undeploy warning must not keep the issue counted")
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "mod1" && f.FileID == "" {
+			found = true
+			assert.Equal(t, "ok", f.Status, "the repaired row still flips to ok")
+			assert.Contains(t, f.Note, "undeploy", "the undeploy warning must reach the JSON note, not just the text-mode line")
+			assert.Contains(t, f.Note, "not a symlink", "the note must carry the underlying reason")
+		}
+	}
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+
+	// The re-link itself must still have completed: the squatter was
+	// replaced by a working symlink into the renamed cache dir.
+	info, err := os.Lstat(deployedPath)
+	require.NoError(t, err)
+	assert.True(t, info.Mode()&os.ModeSymlink != 0, "the squatting file must have been replaced by the re-created symlink")
+	content, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "plugin content", string(content))
+}

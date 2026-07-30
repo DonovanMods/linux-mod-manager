@@ -733,9 +733,20 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 	// re-linking would only repoint a working deployment into the
 	// unvetted pre-existing effective-version dir for no reason.
 	var relinkErr error
-	var recordNote string
+	var relinkNotes []string
 	if note == "" && mod.Deployed && mod.LinkMethod == domain.LinkSymlink {
-		installErr, recordErr := relinkDeployedRow(cmd, svc, game, profile, mod)
+		installErr, recordErr, undeployErr := relinkDeployedRow(cmd, svc, game, profile, mod)
+		if undeployErr != nil {
+			// Non-fatal (see relinkDeployedRow's doc) - but surfaced in
+			// BOTH output modes (PR #154 Copilot): text here, and folded
+			// into the row's note below (after the sibling pass, which
+			// overwrites note wholesale), so a --json caller sees the
+			// partial cleanup a human would be shown.
+			relinkNotes = append(relinkNotes, fmt.Sprintf("undeploy before re-link: %v", undeployErr))
+			if !jsonOutput {
+				fmt.Printf("  Warning: undeploy %s: %v\n", mod.Name, undeployErr)
+			}
+		}
 		if installErr != nil {
 			mod.Deployed = false
 			if saveErr := svc.SetModDeployed(mod.SourceID, mod.ID, mod.GameID, profile, false); saveErr != nil {
@@ -746,12 +757,12 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 		} else if recordErr != nil {
 			// Non-fatal, like DeployProfile's own SetModLinkMethod failure
 			// handling: the deployment itself is fixed; only the recorded
-			// method is stale. Surfaced in text here and folded into the
-			// row's note below (after the sibling pass, which overwrites
-			// note wholesale).
-			recordNote = fmt.Sprintf("could not record link method: %v", recordErr)
+			// method is stale. Same two-mode surfacing as the undeploy
+			// warning above.
+			msg := fmt.Sprintf("could not record link method: %v", recordErr)
+			relinkNotes = append(relinkNotes, msg)
 			if !jsonOutput {
-				fmt.Printf("  Warning: %s\n", recordNote)
+				fmt.Printf("  Warning: %s\n", msg)
 			}
 		}
 	}
@@ -763,11 +774,12 @@ func repairModVersion(cmd *cobra.Command, svc *core.Service, game *domain.Game, 
 		note, siblingFailures = repairSiblingProfiles(cmd, svc, game, profile, mod, recorded, effective)
 	}
 
-	if recordNote != "" {
+	if len(relinkNotes) > 0 {
+		joined := strings.Join(relinkNotes, "; ")
 		if note != "" {
-			note += "; " + recordNote
+			note += "; " + joined
 		} else {
-			note = recordNote
+			note = joined
 		}
 	}
 
@@ -908,7 +920,7 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		return "sibling repair check FAILED: " + msg, 1
 	}
 
-	var repaired, failed, differs, locked, methodNotes []string
+	var repaired, failed, differs, locked, methodNotes, undeployWarns []string
 	for _, p := range profiles {
 		if p.Name == currentProfile {
 			continue
@@ -993,7 +1005,19 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 		sibling.Version = effective
 
 		if sibling.Deployed && sibling.LinkMethod == domain.LinkSymlink {
-			installErr, recordErr := relinkDeployedRow(cmd, svc, game, p.Name, sibling)
+			installErr, recordErr, undeployErr := relinkDeployedRow(cmd, svc, game, p.Name, sibling)
+			if undeployErr != nil {
+				// Non-fatal (see relinkDeployedRow's doc), but surfaced in
+				// both output modes (PR #154 Copilot) via its own parts
+				// entry below - reported BEFORE the install-failure branch
+				// so it reaches the note either way. Not counted in
+				// failedCount: with a successful install nothing is left
+				// broken, and a failed one already counts itself.
+				undeployWarns = append(undeployWarns, fmt.Sprintf("%s (%v)", p.Name, undeployErr))
+				if !jsonOutput {
+					fmt.Printf("  Warning: undeploy %s in profile %s: %v\n", sibling.Name, p.Name, undeployErr)
+				}
+			}
 			if installErr != nil {
 				if saveErr := svc.SetModDeployed(sibling.SourceID, sibling.ID, sibling.GameID, p.Name, false); saveErr != nil {
 					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v; also failed to clear deployed flag: %v)", p.Name, installErr, saveErr))
@@ -1043,6 +1067,9 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 	if len(methodNotes) > 0 {
 		parts = append(parts, fmt.Sprintf("could not record link method in profile(s): %s", strings.Join(methodNotes, ", ")))
 	}
+	if len(undeployWarns) > 0 {
+		parts = append(parts, fmt.Sprintf("undeploy warning in profile(s): %s", strings.Join(undeployWarns, ", ")))
+	}
 	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked)
 }
 
@@ -1059,14 +1086,19 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 // new record-vs-reality drift. The write is skipped when the method didn't
 // change; on success mod.LinkMethod is updated in place.
 //
-// installErr is the Install failure (the caller owns clearing Deployed and
-// reporting, since the primary and sibling sites do so differently);
-// recordErr is a SetModLinkMethod failure after a SUCCESSFUL install, for
-// the caller to surface non-fatally - DeployProfile's own precedent: the
-// deployment itself is fixed, only the recorded method is stale, and
-// failing the whole repair over it would misreport a fixed deployment as
-// broken. The two are mutually exclusive.
-func relinkDeployedRow(cmd *cobra.Command, svc *core.Service, game *domain.Game, profileName string, mod *domain.InstalledMod) (installErr, recordErr error) {
+// The helper does no reporting of its own - the caller owns it all, since
+// the primary and sibling sites surface things differently. installErr is
+// the Install failure (the caller also owns clearing Deployed);
+// undeployErr is an Uninstall failure, which is deliberately NOT fatal
+// (DeployProfile's own precedent): one that still lets Install succeed
+// left nothing broken - every file was rewritten - and one that does break
+// Install surfaces through installErr too, so undeployErr can accompany
+// installErr as context. recordErr is a SetModLinkMethod failure after a
+// SUCCESSFUL install, likewise non-fatal: the deployment itself is fixed,
+// only the recorded method is stale, and failing the whole repair over it
+// would misreport a fixed deployment as broken. installErr and recordErr
+// are mutually exclusive.
+func relinkDeployedRow(cmd *cobra.Command, svc *core.Service, game *domain.Game, profileName string, mod *domain.InstalledMod) (installErr, recordErr, undeployErr error) {
 	method := svc.GetEffectiveLinkMethod(game, profileName)
 	installer := svc.NewInstallerWithLinker(game, svc.GetLinker(method))
 	// Undeploy-then-install, the same shape DeployProfile uses
@@ -1075,24 +1107,18 @@ func relinkDeployedRow(cmd *cobra.Command, svc *core.Service, game *domain.Game,
 	// symlinks the cache re-key orphaned), and only the symlink and
 	// hardlink linkers' Deploy clear an existing dst themselves - the copy
 	// linker's OpenFile would follow (or trip over) a stale symlink instead
-	// of replacing it. The Uninstall failure is a text-mode warning, not a
-	// returned error, again matching DeployProfile: a failed undeploy that
-	// still lets Install succeed left nothing broken (every file was
-	// rewritten), and one that does break Install surfaces through
-	// installErr - the signal both output modes already report.
-	if err := installer.Uninstall(cmd.Context(), game, &mod.Mod, profileName); err != nil && !jsonOutput {
-		fmt.Printf("  Warning: undeploy %s: %v\n", mod.Name, err)
-	}
+	// of replacing it.
+	undeployErr = installer.Uninstall(cmd.Context(), game, &mod.Mod, profileName)
 	if err := installer.Install(cmd.Context(), game, &mod.Mod, profileName); err != nil {
-		return err, nil
+		return err, nil, undeployErr
 	}
 	if method != mod.LinkMethod {
 		if err := svc.SetModLinkMethod(mod.SourceID, mod.ID, mod.GameID, profileName, method); err != nil {
-			return nil, err
+			return nil, err, undeployErr
 		}
 		mod.LinkMethod = method
 	}
-	return nil, nil
+	return nil, nil, undeployErr
 }
 
 // redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
