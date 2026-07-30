@@ -1529,6 +1529,64 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_SharedMemberSurvives(t *testing.T
 	assert.NoError(t, statErr, "the new file's member must be deployed")
 }
 
+// TestApplyUpdate_SameVersionFileOnlyUpdate_ChainedUpdatesStayUndeployed:
+// two same-version file-only updates in a row (A superseded by B, then B by
+// C) share the SAME version dir throughout, and every generation's marker
+// stays behind. A's stale marker must not act as a "survivor" protecting
+// a.esp in the second update - the survivor set is the mod's CURRENT file
+// IDs, not every marker present - or update 2 would re-deploy the member
+// update 1 correctly removed, and it would persist forever (A never returns
+// to the installed set).
+func TestApplyUpdate_SameVersionFileOnlyUpdate_ChainedUpdatesStayUndeployed(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"fileA"}, map[string][]byte{"mod1-fileA.esp": []byte("A")})
+	seedSameVersionManifest(t, svc, game, "src", "mod1", "1.0", "fileA", []string{"mod1-fileA.esp"})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "fileA", Name: "Archive r1", FileName: "mod1-fileA.esp", Version: "1.0", Category: "MAIN"},
+			{ID: "fileB", Name: "Archive r2", FileName: "mod1-fileB.esp", Version: "1.0", Category: "MAIN"},
+			{ID: "fileC", Name: "Archive r3", FileName: "mod1-fileC.esp", Version: "1.0", IsPrimary: true, Category: "MAIN"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	mock.AddDownload("fileB", []byte("B-content"))
+	mock.AddDownload("fileC", []byte("C-content"))
+
+	// Update 1: A -> B.
+	upd1 := domain.Update{InstalledMod: *old, NewVersion: "1.0", FileIDReplacements: map[string]string{"fileA": "fileB"}}
+	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd1, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	require.True(t, os.IsNotExist(statErr), "update 1 must undeploy A's member")
+
+	// Update 2: B -> C, against the reloaded record.
+	mid, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	require.Equal(t, []string{"fileB"}, mid.FileIDs)
+	upd2 := domain.Update{InstalledMod: *mid, NewVersion: "1.0", FileIDReplacements: map[string]string{"fileB": "fileC"}}
+	_, err = svc.ApplyUpdate(context.Background(), game, "default", upd2, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+
+	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-fileC.esp"))
+	assert.NoError(t, statErr, "update 2 must deploy C's member")
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	assert.True(t, os.IsNotExist(statErr), "update 2 must undeploy B's member")
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	assert.True(t, os.IsNotExist(statErr),
+		"A's STALE marker must not resurrect a.esp - survivors are the current file IDs, not every marker in the dir")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"fileC"}, updated.FileIDs)
+}
+
 // TestApplyUpdate_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion is
 // the hard backward-compat rule for pre-manifest cache entries: the old
 // file's provenance is unrecorded (seedUpdatableMod writes no markers - the

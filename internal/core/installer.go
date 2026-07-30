@@ -87,34 +87,35 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 // Replace swaps an existing deployment with a new cached version and restores
 // the old files if the replacement fails.
 func (i *Installer) Replace(ctx context.Context, game *domain.Game, oldMod, newMod *domain.Mod, profileName string) error {
-	return i.replaceWithCaches(ctx, game, i.cache, i.cache, oldMod, newMod, profileName, nil)
+	return i.replaceWithCaches(ctx, game, i.cache, i.cache, oldMod, newMod, profileName, nil, nil)
 }
 
-// ReplaceForUpdate is Replace carrying the update path's superseded file IDs:
-// the OLD source file IDs whose FileIDReplacements were actually applied
-// (ApplyUpdate resolves them; see flows.go). They matter only in the
-// degenerate same-version shape - a file-only update whose version string
+// ReplaceForUpdate is Replace carrying the update path's file-ID transition:
+// the mod's installed file IDs BEFORE the update (oldFileIDs) and the full
+// set being installed by it (newFileIDs - ApplyUpdate's downloadedFileIDs,
+// exactly what it records to the DB row and profile ref). They matter only in
+// the degenerate same-version shape - a file-only update whose version string
 // does not change shares ONE version-keyed cache directory between the old
-// and new files, so the plain union replace could never undeploy the
-// superseded file's members (#144 item 4). See supersededOnlyMembers for the
-// provenance rules; on a normal different-version update (distinct cache
-// dirs) this behaves exactly like Replace.
-func (i *Installer) ReplaceForUpdate(ctx context.Context, game *domain.Game, oldMod, newMod *domain.Mod, profileName string, supersededFileIDs []string) error {
-	return i.replaceWithCaches(ctx, game, i.cache, i.cache, oldMod, newMod, profileName, supersededFileIDs)
+// and new files, so the plain union replace could never undeploy a departing
+// file's members (#144 item 4). See resolveSharedDirUpdate for the exact
+// ownership rules; on a normal different-version update (distinct cache dirs)
+// this behaves exactly like Replace.
+func (i *Installer) ReplaceForUpdate(ctx context.Context, game *domain.Game, oldMod, newMod *domain.Mod, profileName string, oldFileIDs, newFileIDs []string) error {
+	return i.replaceWithCaches(ctx, game, i.cache, i.cache, oldMod, newMod, profileName, oldFileIDs, newFileIDs)
 }
 
 // ReplaceWithCaches swaps an existing deployment using explicit old and new caches.
 func (i *Installer) ReplaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
-	return i.replaceWithCaches(ctx, game, oldCache, newCache, oldMod, newMod, profileName, nil)
+	return i.replaceWithCaches(ctx, game, oldCache, newCache, oldMod, newMod, profileName, nil, nil)
 }
 
 // ReplaceWithOldCache swaps an existing deployment using an alternate cache
 // snapshot for the old version.
 func (i *Installer) ReplaceWithOldCache(ctx context.Context, game *domain.Game, oldCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string) error {
-	return i.replaceWithCaches(ctx, game, oldCache, i.cache, oldMod, newMod, profileName, nil)
+	return i.replaceWithCaches(ctx, game, oldCache, i.cache, oldMod, newMod, profileName, nil, nil)
 }
 
-func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string, supersededFileIDs []string) error {
+func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, profileName string, oldFileIDs, newFileIDs []string) error {
 	if !oldCache.Exists(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version) {
 		return fmt.Errorf("old mod not in cache: %s/%s@%s", oldMod.SourceID, oldMod.ID, oldMod.Version)
 	}
@@ -132,24 +133,39 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	}
 
 	// #144 item 4: in the degenerate same-version shape (old and new resolve
-	// to ONE cache dir, so both listings are the same union), members owned
-	// solely by superseded file IDs are excluded from the NEW side - the
-	// obsolete-file loop below then undeploys them like any other old-only
-	// file, and the deploy/DB loops never touch them. An empty result (no
-	// superseded IDs, distinct dirs, or incomplete provenance) leaves the
+	// to ONE cache dir, so both listings are the same union), the deploy set
+	// narrows to the members the mod's CURRENT file IDs own - every other
+	// listed member is excluded from the NEW side, so the obsolete-file loop
+	// below undeploys it like any other old-only file (Undeploy tolerates an
+	// already-absent path) and the deploy/DB loops never touch it. Rollback
+	// likewise narrows to what the OLD side's IDs actually owned. A false ok
+	// (distinct dirs, no departing ID, or incomplete provenance) leaves the
 	// historical union behavior byte-for-byte intact.
-	if supersededOnly := supersededOnlyMembers(game.ID, oldCache, newCache, oldMod, newMod, supersededFileIDs, newFiles); len(supersededOnly) > 0 {
+	newCurrent, oldDeployed, provenanceOK := resolveSharedDirUpdate(game.ID, oldCache, newCache, oldMod, newMod, oldFileIDs, newFileIDs, newFiles)
+	oldRestorable := oldFiles
+	if provenanceOK {
 		kept := make([]string, 0, len(newFiles))
 		for _, file := range newFiles {
-			if !supersededOnly[file] {
+			if newCurrent[file] {
 				kept = append(kept, file)
 			}
 		}
 		newFiles = kept
+
+		kept = make([]string, 0, len(oldFiles))
+		for _, file := range oldFiles {
+			if oldDeployed[file] {
+				kept = append(kept, file)
+			}
+		}
+		oldRestorable = kept
 	}
 
-	oldSet := make(map[string]bool, len(oldFiles))
-	for _, file := range oldFiles {
+	// oldSet drives every restore decision: only members the OLD deployment
+	// actually owned may be put back by a rollback. Without provenance it is
+	// the full old listing, preserving the historical behavior exactly.
+	oldSet := make(map[string]bool, len(oldRestorable))
+	for _, file := range oldRestorable {
 		oldSet[file] = true
 	}
 	newSet := make(map[string]bool, len(newFiles))
@@ -206,7 +222,7 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		for _, file := range newFiles {
 			if err := i.db.SaveDeployedFile(game.ID, profileName, file, newMod.SourceID, newMod.ID); err != nil {
 				_ = i.db.DeleteDeployedFiles(game.ID, profileName, newMod.SourceID, newMod.ID)
-				for _, oldFile := range oldFiles {
+				for _, oldFile := range oldRestorable {
 					_ = i.db.SaveDeployedFile(game.ID, profileName, oldFile, oldMod.SourceID, oldMod.ID)
 				}
 				if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
@@ -220,48 +236,95 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	return nil
 }
 
-// supersededOnlyMembers resolves which members of a SHARED old/new cache
-// directory are owned solely by superseded file IDs and must therefore be
-// undeployed by a same-version file-only update (#144 item 4). It returns nil
-// - meaning "fall back to today's union behavior exactly" - unless EVERY
-// condition for positive provenance holds:
+// resolveSharedDirUpdate resolves member ownership for a same-version
+// file-only update whose old and new cache keys share ONE version directory
+// (#144 item 4). It returns ok=false - meaning "fall back to today's union
+// behavior exactly" - unless EVERY condition for positive provenance holds:
 //
-//   - there are superseded IDs and the old and new keys resolve to the same
-//     version directory (the degenerate shape; distinct dirs are already
-//     handled by the obsolete-file loop),
-//   - every completion marker in that directory carries a recorded member
-//     manifest (a legacy bare marker - any pre-manifest cache entry - makes
-//     both what a superseded file contributed and what a survivor still needs
-//     unknowable),
-//   - every superseded ID actually has a marker there,
-//   - every file in the directory listing is attributed by at least one
-//     manifest (unattributed content proves an unmanifested contributor
-//     exists, e.g. an entry populated directly by `lmm import`).
+//   - both ID sets are known, at least one old ID is departing (present in
+//     oldFileIDs but not newFileIDs - the update actually supersedes
+//     something), and the old and new keys resolve to the same version
+//     directory (distinct dirs are already handled by the obsolete-file
+//     loop),
+//   - every ID in oldFileIDs and newFileIDs has a completion marker with a
+//     RECORDED member manifest (a legacy bare marker - any pre-manifest
+//     cache entry - makes what that file contributed, or what it still
+//     needs, unknowable),
+//   - every file in the shared directory's listing is attributed by at least
+//     one recorded manifest, stale markers included (unattributed content
+//     proves an unmanifested contributor exists, e.g. an entry populated
+//     directly by `lmm import`).
 //
-// The result is union(superseded manifests) minus union(surviving manifests):
-// a member also listed by ANY surviving file stays. The fallback is
-// deliberately silent - pre-manifest caches are the norm for existing
-// installs, and they must not produce a warning storm; they simply keep the
-// historical union behavior. Never guess, never undeploy without positive
-// provenance.
-func supersededOnlyMembers(gameID string, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, supersededFileIDs []string, unionFiles []string) map[string]bool {
-	if len(supersededFileIDs) == 0 {
-		return nil
+// The ownership rule: the DEPLOY set is exactly the members attributed to the
+// mod's current (new-side) file IDs - newCurrent. Every other listed member
+// is undeployed, its provenance being its own manifest: that covers both the
+// departing IDs of THIS update and stale members left by earlier same-version
+// updates, whose markers remain in the shared dir after their IDs left the
+// installed set. Those stale markers are deliberately NOT survivors - a
+// survivor is an ID the mod still installs, never "any marker present" -
+// otherwise chained same-version updates would resurrect the members the
+// previous update correctly removed. oldDeployed (the members attributed to
+// the old-side IDs) is what a rollback may restore: the pre-replace
+// deployment, not the union.
+//
+// The fallback is deliberately silent - pre-manifest caches are the norm for
+// existing installs, and they must not produce a warning storm; they simply
+// keep the historical union behavior. Never guess, never undeploy without
+// positive provenance.
+func resolveSharedDirUpdate(gameID string, oldCache, newCache *cache.Cache, oldMod, newMod *domain.Mod, oldFileIDs, newFileIDs, unionFiles []string) (newCurrent, oldDeployed map[string]bool, ok bool) {
+	if len(oldFileIDs) == 0 || len(newFileIDs) == 0 {
+		return nil, nil, false
+	}
+	newIDs := make(map[string]bool, len(newFileIDs))
+	for _, id := range newFileIDs {
+		newIDs[id] = true
+	}
+	departing := false
+	for _, id := range oldFileIDs {
+		if !newIDs[id] {
+			departing = true
+			break
+		}
+	}
+	if !departing {
+		return nil, nil, false
 	}
 	oldDir := oldCache.ModPath(gameID, oldMod.SourceID, oldMod.ID, oldMod.Version)
 	newDir := newCache.ModPath(gameID, newMod.SourceID, newMod.ID, newMod.Version)
 	if filepath.Clean(oldDir) != filepath.Clean(newDir) {
-		return nil
+		return nil, nil, false
 	}
 
 	manifests, err := newCache.FileManifests(gameID, newMod.SourceID, newMod.ID, newMod.Version)
 	if err != nil {
-		return nil // unreadable bookkeeping is absent bookkeeping: union fallback
+		return nil, nil, false // unreadable bookkeeping is absent bookkeeping: union fallback
 	}
+	memberSet := func(ids []string) (map[string]bool, bool) {
+		set := make(map[string]bool)
+		for _, id := range ids {
+			m, present := manifests[id]
+			if !present || !m.Recorded {
+				return nil, false
+			}
+			for _, member := range m.Members {
+				set[member] = true
+			}
+		}
+		return set, true
+	}
+	newCurrent, ok = memberSet(newFileIDs)
+	if !ok {
+		return nil, nil, false
+	}
+	oldDeployed, ok = memberSet(oldFileIDs)
+	if !ok {
+		return nil, nil, false
+	}
+
 	attributed := make(map[string]bool)
 	for _, m := range manifests {
 		if !m.Recorded {
-			return nil
+			continue // a bare STALE marker attributes nothing; old/new-side bareness already failed above
 		}
 		for _, member := range m.Members {
 			attributed[member] = true
@@ -269,33 +332,10 @@ func supersededOnlyMembers(gameID string, oldCache, newCache *cache.Cache, oldMo
 	}
 	for _, file := range unionFiles {
 		if !attributed[file] {
-			return nil
+			return nil, nil, false
 		}
 	}
-
-	superseded := make(map[string]bool, len(supersededFileIDs))
-	for _, id := range supersededFileIDs {
-		if _, ok := manifests[id]; !ok {
-			return nil
-		}
-		superseded[id] = true
-	}
-
-	result := make(map[string]bool)
-	for id := range superseded {
-		for _, member := range manifests[id].Members {
-			result[member] = true
-		}
-	}
-	for id, m := range manifests {
-		if superseded[id] {
-			continue
-		}
-		for _, member := range m.Members {
-			delete(result, member)
-		}
-	}
-	return result
+	return newCurrent, oldDeployed, true
 }
 
 func (i *Installer) restoreOldFiles(oldCache *cache.Cache, game *domain.Game, oldMod *domain.Mod, removedOld, replacedOrAdded []string, oldSet map[string]bool) error {
@@ -318,6 +358,14 @@ func (i *Installer) restoreOldFiles(oldCache *cache.Cache, game *domain.Game, ol
 
 	for j := len(removedOld) - 1; j >= 0; j-- {
 		file := removedOld[j]
+		// Only restore members the OLD deployment actually owned. Without
+		// provenance oldSet is the full old listing and this never skips;
+		// with it, a stale member routed through the obsolete loop (its
+		// Undeploy was a no-op - it wasn't deployed) must not be deployed
+		// by the rollback either.
+		if !oldSet[file] {
+			continue
+		}
 		srcPath := oldCache.GetFilePath(game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {

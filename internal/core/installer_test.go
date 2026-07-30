@@ -573,34 +573,34 @@ func TestGetConflicts_NoDatabase(t *testing.T) {
 
 // --- #144 item 4: same-version cache sharing on file-only updates ---
 
-// seedSameDirUpdate builds the degenerate same-version update shape: ONE cache
-// version directory holding both the old file's members (deployed) and the new
-// file's members (just downloaded into the same dir), each file ID carrying a
-// member manifest unless the caller passes it in legacyIDs (bare marker, no
-// manifest - the pre-existing-cache shape). shared.esp belongs to BOTH files.
-func seedSameDirUpdate(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, legacyIDs ...string) {
+// seedSameDirOldFile seeds the OLD file's members (a.esp + shared.esp) into
+// the shared version dir with fileA's manifest (or a legacy bare marker).
+// Callers Install after this - the realistic pre-update deployment holds the
+// old file's members ONLY - and then seedSameDirNewFile the replacement.
+func seedSameDirOldFile(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, legacy bool) {
 	t.Helper()
-
 	require.NoError(t, modCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "a.esp", []byte("a")))
 	require.NoError(t, modCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "shared.esp", []byte("shared")))
-	require.NoError(t, modCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "b.esp", []byte("b")))
-
 	versionDir := modCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
-	manifests := map[string][]string{
-		"fileA": {"a.esp", "shared.esp"},
-		"fileB": {"b.esp", "shared.esp"},
+	if legacy {
+		require.NoError(t, cache.MarkFileComplete(versionDir, "fileA"))
+		return
 	}
-	legacy := make(map[string]bool, len(legacyIDs))
-	for _, id := range legacyIDs {
-		legacy[id] = true
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileA", []string{"a.esp", "shared.esp"}))
+}
+
+// seedSameDirNewFile lands the NEW file's members (b.esp, plus shared.esp
+// which BOTH files ship) into the same version dir, as the download step
+// does after the old deployment already exists.
+func seedSameDirNewFile(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, legacy bool) {
+	t.Helper()
+	require.NoError(t, modCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "b.esp", []byte("b")))
+	versionDir := modCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if legacy {
+		require.NoError(t, cache.MarkFileComplete(versionDir, "fileB"))
+		return
 	}
-	for id, members := range manifests {
-		if legacy[id] {
-			require.NoError(t, cache.MarkFileComplete(versionDir, id))
-			continue
-		}
-		require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, id, members))
-	}
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileB", []string{"b.esp", "shared.esp"}))
 }
 
 func TestInstaller_ReplaceForUpdate_SameCacheDir_UndeploysSupersededSoleMembers(t *testing.T) {
@@ -612,15 +612,13 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_UndeploysSupersededSoleMembers(
 	modCache := cache.New(t.TempDir())
 	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 	mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
-	seedSameDirUpdate(t, modCache, game, mod)
 
 	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), database)
-	// The "old deployment": in reality Install ran before fileB was downloaded,
-	// but deploying the union changes nothing observable - what matters is that
-	// a.esp and shared.esp are deployed before the update.
+	seedSameDirOldFile(t, modCache, game, mod, false)
 	require.NoError(t, inst.Install(context.Background(), game, mod, "default"))
+	seedSameDirNewFile(t, modCache, game, mod, false)
 
-	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}))
+	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}, []string{"fileB"}))
 
 	_, err = os.Lstat(filepath.Join(gameDir, "a.esp"))
 	assert.True(t, os.IsNotExist(err), "the superseded file's sole member must be undeployed")
@@ -639,25 +637,31 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_UndeploysSupersededSoleMembers(
 // is #144 item 4's hard backward-compat rule: when positive provenance is
 // incomplete in ANY way, behave exactly as before - deploy the union, undeploy
 // nothing, no error. Three incompleteness shapes:
-//   - the superseded file's own marker is a legacy bare one,
-//   - a SURVIVOR's marker is bare (its members unknowable, so sole ownership
-//     of anything is unprovable),
+//   - the departing (old-side) file's marker is a legacy bare one,
+//   - the new-side file's marker is bare (what the current deployment needs
+//     is unknowable),
 //   - the dir holds content no recorded manifest attributes (an unmanifested
 //     contributor exists - e.g. an entry populated by `lmm import`).
 func TestInstaller_ReplaceForUpdate_SameCacheDir_FallsBackToUnionWithoutProvenance(t *testing.T) {
 	cases := []struct {
 		name string
-		seed func(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod)
+		seed func(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, inst *core.Installer)
 	}{
-		{"superseded marker is legacy-bare", func(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod) {
-			seedSameDirUpdate(t, modCache, game, mod, "fileA")
+		{"old-side marker is legacy-bare", func(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, inst *core.Installer) {
+			seedSameDirOldFile(t, modCache, game, mod, true)
+			require.NoError(t, inst.Install(context.Background(), game, mod, "default"))
+			seedSameDirNewFile(t, modCache, game, mod, false)
 		}},
-		{"survivor marker is legacy-bare", func(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod) {
-			seedSameDirUpdate(t, modCache, game, mod, "fileB")
+		{"new-side marker is legacy-bare", func(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, inst *core.Installer) {
+			seedSameDirOldFile(t, modCache, game, mod, false)
+			require.NoError(t, inst.Install(context.Background(), game, mod, "default"))
+			seedSameDirNewFile(t, modCache, game, mod, true)
 		}},
-		{"unattributed content present", func(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod) {
-			seedSameDirUpdate(t, modCache, game, mod)
+		{"unattributed content present", func(t *testing.T, modCache *cache.Cache, game *domain.Game, mod *domain.Mod, inst *core.Installer) {
+			seedSameDirOldFile(t, modCache, game, mod, false)
 			require.NoError(t, modCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "orphan.esp", []byte("o")))
+			require.NoError(t, inst.Install(context.Background(), game, mod, "default"))
+			seedSameDirNewFile(t, modCache, game, mod, false)
 		}},
 	}
 	for _, tc := range cases {
@@ -666,12 +670,10 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_FallsBackToUnionWithoutProvenan
 			modCache := cache.New(t.TempDir())
 			game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 			mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
-			tc.seed(t, modCache, game, mod)
-
 			inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
-			require.NoError(t, inst.Install(context.Background(), game, mod, "default"))
+			tc.seed(t, modCache, game, mod, inst)
 
-			require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}),
+			require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}, []string{"fileB"}),
 				"incomplete provenance must fall back silently, never error")
 
 			for _, f := range []string{"a.esp", "shared.esp", "b.esp"} {
@@ -685,44 +687,62 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_FallsBackToUnionWithoutProvenan
 // TestInstaller_ReplaceForUpdate_SameCacheDir_ReverseRestoresOldDeployment
 // pins the compensation path ApplyUpdate leans on: after a forward
 // ReplaceForUpdate, a failed DB/profile write compensates with the REVERSE
-// call (new->old, superseded = the NEW file IDs). That must redeploy the
-// superseded old members and remove the new file's sole members - the update
-// that didn't commit leaves the game dir exactly as before.
+// call (the file-ID transition swapped). That must redeploy the superseded
+// member, remove the uncommitted new file's sole member, and restore the
+// deployed-file rows to the old file's members - the update that didn't
+// commit leaves the game dir AND the tracking table exactly as before.
 func TestInstaller_ReplaceForUpdate_SameCacheDir_ReverseRestoresOldDeployment(t *testing.T) {
 	gameDir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
 	modCache := cache.New(t.TempDir())
 	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 	mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
-	seedSameDirUpdate(t, modCache, game, mod)
 
-	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), database)
+	seedSameDirOldFile(t, modCache, game, mod, false)
 	require.NoError(t, inst.Install(context.Background(), game, mod, "default"))
-	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}))
+	seedSameDirNewFile(t, modCache, game, mod, false)
 
-	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileB"}))
+	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}, []string{"fileB"}))
+	rows, err := database.GetDeployedFilesForMod("g", "default", "src", "mod")
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"shared.esp", "b.esp"}, rows)
 
-	_, err := os.Lstat(filepath.Join(gameDir, "a.esp"))
+	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileB"}, []string{"fileA"}))
+
+	_, err = os.Lstat(filepath.Join(gameDir, "a.esp"))
 	assert.NoError(t, err, "the compensated update must not leave the superseded member undeployed")
 	_, err = os.Lstat(filepath.Join(gameDir, "shared.esp"))
 	assert.NoError(t, err)
 	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
 	assert.True(t, os.IsNotExist(err), "the uncommitted new file's sole member must be removed")
+
+	rows, err = database.GetDeployedFilesForMod("g", "default", "src", "mod")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"a.esp", "shared.esp"}, rows,
+		"the compensated deployed-file rows must describe the restored OLD deployment")
 }
 
 // TestInstaller_ReplaceForUpdate_SameCacheDir_MidReplaceFailureRestoresSuperseded:
 // a deploy failure INSIDE the replace must restore the already-undeployed
 // superseded member (it is in removedOld, and the shared version dir still
 // holds its bytes - the rollback-fidelity precondition for never re-keying
-// this cache).
+// this cache) and must NOT leave the new file's failed member behind. The
+// pre-state is the realistic one: only the OLD file's members are deployed
+// when the replace begins.
 func TestInstaller_ReplaceForUpdate_SameCacheDir_MidReplaceFailureRestoresSuperseded(t *testing.T) {
 	gameDir := t.TempDir()
 	modCache := cache.New(t.TempDir())
 	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 	mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
-	seedSameDirUpdate(t, modCache, game, mod)
 
 	initial := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
+	seedSameDirOldFile(t, modCache, game, mod, false)
 	require.NoError(t, initial.Install(context.Background(), game, mod, "default"))
+	seedSameDirNewFile(t, modCache, game, mod, false)
 
 	lnk := &conditionalFailingLinker{
 		Linker:           linker.New(domain.LinkSymlink),
@@ -730,19 +750,63 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_MidReplaceFailureRestoresSupers
 		failAfter:        0,
 	}
 	inst := core.NewInstaller(modCache, lnk, nil)
-	err := inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"})
+	err := inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}, []string{"fileB"})
 	require.Error(t, err)
 
 	_, statErr := os.Lstat(filepath.Join(gameDir, "a.esp"))
 	assert.NoError(t, statErr, "the superseded member must be restored after a mid-replace failure")
 	_, statErr = os.Lstat(filepath.Join(gameDir, "shared.esp"))
 	assert.NoError(t, statErr)
+	_, statErr = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.True(t, os.IsNotExist(statErr),
+		"the new file's failed member was not part of the old deployment and must be removed by the rollback")
+}
+
+// TestInstaller_ReplaceForUpdate_SameCacheDir_StaleMarkerIsNotASurvivor is
+// the chained-update trap at the installer level: a marker whose file ID has
+// LEFT the installed set (a departed generation of an earlier same-version
+// update) must neither protect its members from undeploy nor trip the
+// unattributed-content fallback - its stale manifest is exactly the positive
+// provenance for removing them. Here fileA has already departed (deployed
+// state reflects fileB), and the B->C update must leave a.esp undeployed,
+// remove b.esp, and deploy c.esp.
+func TestInstaller_ReplaceForUpdate_SameCacheDir_StaleMarkerIsNotASurvivor(t *testing.T) {
+	gameDir := t.TempDir()
+	modCache := cache.New(t.TempDir())
+	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	mod := &domain.Mod{ID: "mod", SourceID: "src", Version: "1.0", GameID: "g"}
+	versionDir := modCache.ModPath("g", "src", "mod", "1.0")
+
+	// Generation A (departed): its member and manifest remain in the dir.
+	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "a.esp", []byte("a")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileA", []string{"a.esp"}))
+	// Generation B (currently installed and deployed).
+	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "b.esp", []byte("b")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileB", []string{"b.esp"}))
+
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
+	lnk := linker.New(domain.LinkSymlink)
+	require.NoError(t, lnk.Deploy(modCache.GetFilePath("g", "src", "mod", "1.0", "b.esp"), filepath.Join(gameDir, "b.esp")))
+
+	// Generation C arrives (the new download).
+	require.NoError(t, modCache.Store("g", "src", "mod", "1.0", "c.esp", []byte("c")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "fileC", []string{"c.esp"}))
+
+	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileB"}, []string{"fileC"}))
+
+	_, err := os.Lstat(filepath.Join(gameDir, "c.esp"))
+	assert.NoError(t, err, "the new generation's member must be deployed")
+	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
+	assert.True(t, os.IsNotExist(err), "the departing generation's member must be undeployed")
+	_, err = os.Lstat(filepath.Join(gameDir, "a.esp"))
+	assert.True(t, os.IsNotExist(err),
+		"the stale generation's member must stay undeployed - its marker is not a survivor")
 }
 
 // TestInstaller_ReplaceForUpdate_DistinctCacheDirs_MatchesReplace: on a normal
 // different-version update the old and new cache keys differ, the existing
-// obsolete-file loop already handles supersession, and the superseded set must
-// change nothing.
+// obsolete-file loop already handles supersession, and the file-ID transition
+// must change nothing.
 func TestInstaller_ReplaceForUpdate_DistinctCacheDirs_MatchesReplace(t *testing.T) {
 	gameDir := t.TempDir()
 	modCache := cache.New(t.TempDir())
@@ -760,7 +824,7 @@ func TestInstaller_ReplaceForUpdate_DistinctCacheDirs_MatchesReplace(t *testing.
 	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 	require.NoError(t, inst.Install(context.Background(), game, oldMod, "default"))
 
-	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, oldMod, newMod, "default", []string{"fileA"}))
+	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, oldMod, newMod, "default", []string{"fileA"}, []string{"fileB"}))
 
 	_, err := os.Lstat(filepath.Join(gameDir, "old-only.esp"))
 	assert.True(t, os.IsNotExist(err), "the obsolete-file loop already removes old-only files")
