@@ -153,6 +153,13 @@ func (pm *ProfileManager) AddMod(gameID, profileName string, mod domain.ModRefer
 // If the mod exists, it updates Version and FileIDs while preserving position.
 // If the mod doesn't exist, it appends to the end.
 // This is the preferred method for install/update operations.
+//
+// A LOCKED existing ref refuses a Version move (#143): the record IS the
+// lock's target (see the #97 design note), so only explicit lock/unlock
+// (SetModLock/ClearModLock) may change a locked ref's Version - never an
+// install/update-style upsert. The refusal wraps ErrModLocked and leaves the
+// profile unwritten. A same-version upsert (a FileIDs refresh / reinstall
+// repair) stays legitimate and preserves the marker as before.
 func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModReference) error {
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
@@ -163,6 +170,10 @@ func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModRe
 	found := false
 	for i := range profile.Mods {
 		if profile.Mods[i].SourceID == mod.SourceID && profile.Mods[i].ModID == mod.ModID {
+			if profile.Mods[i].Locked && profile.Mods[i].Version != mod.Version {
+				return fmt.Errorf("%w: %s:%s is locked at v%s in profile %q - refusing to record v%s; only 'lmm mod lock'/'lmm mod unlock' move a locked version",
+					ErrModLocked, mod.SourceID, mod.ModID, profile.Mods[i].Version, profileName, mod.Version)
+			}
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs
 			// Preserve Locked marker on in-place update (#97: survives UpsertMod).

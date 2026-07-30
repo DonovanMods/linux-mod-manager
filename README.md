@@ -213,6 +213,11 @@ wherever they'd conflict, the lock wins and the output names it:
 - **`lmm update <locked-mod-id>` (explicit single-mod update)**: refused —
   "locked at v*X*; move the lock (`lmm mod lock <id> <version>`) or unlock
   first."
+- **`lmm install` of a locked mod at any other version** (an explicit
+  `--version`, or a plain reinstall that would land on a newer latest — TUI
+  install included): refused with the same remedies before anything
+  downloads or deploys. Installing at exactly the locked version
+  (reinstall/repair) still works and keeps the lock.
 
 Lock state shows up alongside version info wherever it's installed: `lmm
 list -v`'s `LOCKED` column (the locked version, or `-`), `lmm mod show`'s
