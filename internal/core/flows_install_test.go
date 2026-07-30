@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2294,4 +2295,330 @@ func TestService_ApplyInstall_ConfirmConflicts_SameVersionReinstall_DeclineLeave
 	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version, "DB row must be unchanged")
+}
+
+// --- #140: --version/--file interplay (TargetFileIDs; strict-path TargetVersion) ---
+
+// perModMultiFileSource serves a caller-supplied file list PER MOD ID - the
+// #140 interplay tests need the primary to offer several files across
+// several versions (so --version pools, --file pins, and the archived
+// filter all diverge) while a dependency keeps a single unambiguous file.
+// fileFetches counts GetModFiles calls so a test can pin the "caller's
+// selection already satisfies the targets - no refetch" fast path.
+type perModMultiFileSource struct {
+	*mockSourceWithDownloads
+	files       map[string][]domain.DownloadableFile // mod.ID -> served files, verbatim
+	fileFetches atomic.Int64
+}
+
+func (s *perModMultiFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	s.fileFetches.Add(1)
+	return s.files[mod.ID], nil
+}
+
+// interplayRootFiles is root's served file list for every #140 test: v2.0's
+// primary MAIN file, v1.0's superseded MAIN (OLD_VERSION category, so the
+// default archived filter drops it), and a v1.0 OPTIONAL patch. The v1.0
+// version pool therefore holds two files whose auto-pick (no IsPrimary ->
+// category sort puts OPTIONAL first) differs from an explicit --file pin on
+// the OLD_VERSION file.
+func interplayRootFiles() []domain.DownloadableFile {
+	return []domain.DownloadableFile{
+		{ID: "root-main-2", Name: "Root 2.0", FileName: "root-2.0.zip", Version: "2.0", IsPrimary: true, Category: "MAIN"},
+		{ID: "root-main-1", Name: "Root 1.0", FileName: "root-1.0.zip", Version: "1.0", Category: "OLD_VERSION"},
+		{ID: "root-opt-1", Name: "Root Patch 1.0", FileName: "root-patch-1.0.zip", Version: "1.0", Category: "OPTIONAL"},
+	}
+}
+
+// stageInterplayDownload registers a one-file zip download for fileID.
+func stageInterplayDownload(t *testing.T, mock *perModMultiFileSource, fileID, relativePath string) {
+	t.Helper()
+	zipPath := createTestZip(t, t.TempDir(), map[string]string{relativePath: fileID + "-payload"})
+	content, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload(fileID, content)
+}
+
+// setupInterplayService builds a service whose "src" source serves root's
+// interplayRootFiles (and, when withDep, a single-file dep1 that root
+// depends on - forcing PlanInstall onto the BATCH path).
+func setupInterplayService(t *testing.T, withDep bool) (*core.Service, *domain.Game, *perModMultiFileSource) {
+	t.Helper()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	mock := &perModMultiFileSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files:                   map[string][]domain.DownloadableFile{"root": interplayRootFiles()},
+	}
+	t.Cleanup(mock.Close)
+	svc.RegisterSource(mock)
+
+	root := &domain.Mod{ID: "root", SourceID: "src", Name: "Root", Version: "2.0", GameID: "g1"}
+	if withDep {
+		root.Dependencies = []domain.ModReference{{SourceID: "src", ModID: "dep1"}}
+		dep := &domain.Mod{ID: "dep1", SourceID: "src", Name: "Dep One", Version: "3.0", GameID: "g1"}
+		mock.files["dep1"] = []domain.DownloadableFile{{ID: "dep1", Name: "Dep One", FileName: "dep1.zip", IsPrimary: true}}
+		stageInterplayDownload(t, mock, "dep1", "dep1.esp")
+		mock.AddMod(dep.GameID, dep)
+	}
+	for _, fid := range []string{"root-main-2", "root-main-1", "root-opt-1"} {
+		stageInterplayDownload(t, mock, fid, fid+".esp")
+	}
+	mock.AddMod(root.GameID, root)
+	return svc, game, mock
+}
+
+// TestService_ApplyInstall_BatchPath_TargetVersionWithFileIDs_HonorsFileForPrimary
+// is #140 item 1's core repro: on the BATCH (dependencies-present) path,
+// TargetVersion + TargetFileIDs must install exactly the pinned file for the
+// primary - previously TargetFileIDs did not exist and the version pool's
+// auto-pick silently won (--file silently ignored, #93's silent-flag class).
+func TestService_ApplyInstall_BatchPath_TargetVersionWithFileIDs_HonorsFileForPrimary(t *testing.T) {
+	svc, game, _ := setupInterplayService(t, true)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1, "root must take the BATCH path")
+
+	opts := core.InstallOptions{TargetVersion: "1.0", TargetFileIDs: []string{"root-main-1"}}
+	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+
+	got, err := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"root-main-1"}, got.FileIDs, "the pinned --file must win over the version pool's auto-pick")
+	assert.Equal(t, "1.0", got.Version)
+
+	profile, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("src", "root")
+	require.NotNil(t, ref)
+	assert.Equal(t, []string{"root-main-1"}, ref.FileIDs)
+	assert.Equal(t, "1.0", ref.Version)
+
+	dep, err := svc.GetInstalledMod("src", "dep1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dep1"}, dep.FileIDs, "dependencies still auto-select their own primary, untouched by the primary's pins")
+}
+
+// TestService_ApplyInstall_BatchPath_TargetFileIDs_MultipleFilesAllInstalled
+// pins full --file fidelity on the BATCH path: several pinned file IDs all
+// download and are all recorded, matching the STRICT path's existing
+// multi-file behavior.
+func TestService_ApplyInstall_BatchPath_TargetFileIDs_MultipleFilesAllInstalled(t *testing.T) {
+	svc, game, mock := setupInterplayService(t, true)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	opts := core.InstallOptions{TargetVersion: "1.0", TargetFileIDs: []string{"root-main-1", "root-opt-1"}}
+	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+
+	got, err := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"root-main-1", "root-opt-1"}, got.FileIDs, "every pinned file must be recorded, in pin order")
+	assert.Equal(t, "1.0", got.Version)
+	assert.Equal(t, 3, mock.DownloadCount(), "dep1 + both pinned root files must each be downloaded")
+}
+
+// TestService_ApplyInstall_BatchPath_TargetFileIDs_UnknownID_AbortsWholeInstall
+// pins the loud-failure half of #140 item 1: a --file ID that doesn't
+// resolve (here: against the version pool) is fatal to the WHOLE install, up
+// front, with zero dependencies installed - the #96 TargetVersion loudness
+// precedent, not a quiet per-mod Failed line.
+func TestService_ApplyInstall_BatchPath_TargetFileIDs_UnknownID_AbortsWholeInstall(t *testing.T) {
+	svc, game, mock := setupInterplayService(t, true)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	opts := core.InstallOptions{TargetVersion: "1.0", TargetFileIDs: []string{"nope"}}
+	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file ID nope not found")
+	require.NotNil(t, result)
+	assert.Empty(t, result.Installed, "zero mods may be installed when the primary's file pin cannot resolve")
+
+	assert.Equal(t, 0, mock.DownloadCount(), "the abort must fire BEFORE any download")
+	_, err = svc.GetInstalledMod("src", "dep1", "g1", "default")
+	assert.True(t, errors.Is(err, domain.ErrModNotFound), "no dependency may be installed")
+}
+
+// TestService_ApplyInstall_BatchPath_TargetFileIDsWithoutVersion_ResolvedAgainstFilteredList
+// pins --file-without---version on the BATCH path: the pin resolves against
+// the plan.ShowArchived-filtered list (the STRICT path's exact pool
+// semantics) - an unarchived file resolves, an archived one is refused.
+func TestService_ApplyInstall_BatchPath_TargetFileIDsWithoutVersion_ResolvedAgainstFilteredList(t *testing.T) {
+	svc, game, _ := setupInterplayService(t, true)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	opts := core.InstallOptions{TargetFileIDs: []string{"root-opt-1"}}
+	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+
+	got, err := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"root-opt-1"}, got.FileIDs)
+	assert.Equal(t, "1.0", got.Version, "the recorded version must be the pinned file's own (#94 effective-version stamp)")
+}
+
+// TestService_ApplyInstall_BatchPath_TargetFileIDs_ArchivedWithoutShowArchived_Refused
+// is the filtered half of the previous test: without ShowArchived, an
+// OLD_VERSION file ID is not in the pool and must be refused loudly (use
+// --version or --show-archived to reach it), never silently swapped.
+func TestService_ApplyInstall_BatchPath_TargetFileIDs_ArchivedWithoutShowArchived_Refused(t *testing.T) {
+	svc, game, mock := setupInterplayService(t, true)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	opts := core.InstallOptions{TargetFileIDs: []string{"root-main-1"}}
+	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file ID root-main-1 not found")
+	assert.Equal(t, 0, mock.DownloadCount())
+}
+
+// TestService_ApplyInstall_StrictPath_TargetVersion_ResolvedInCore is #140
+// item 2's core repro: on the STRICT (no-deps) path, a core caller that sets
+// only opts.TargetVersion (plan.Files still PlanInstall's latest default)
+// must get the target version installed - previously TargetVersion was
+// documented-inert there (the CLI compensated by overriding plan.Files), so
+// a future core caller (the TUI version picker) would silently install
+// latest.
+func TestService_ApplyInstall_StrictPath_TargetVersion_ResolvedInCore(t *testing.T) {
+	svc, game, _ := setupInterplayService(t, false)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Empty(t, plan.Dependencies, "root must take the STRICT path")
+	require.Len(t, plan.Files, 1)
+	assert.Equal(t, "root-main-2", plan.Files[0].ID, "precondition: the plan's default is the latest primary")
+
+	opts := core.InstallOptions{TargetVersion: "1.0"}
+	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Root"}, result.Installed)
+
+	got, err := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", got.Version, "TargetVersion must be honored in core on the STRICT path")
+	assert.Equal(t, []string{"root-opt-1"}, got.FileIDs, "the version pool's auto-pick (category sort, no IsPrimary -> first) must be installed")
+	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "root", "1.0"), "cache must be keyed by the target version")
+}
+
+// TestService_ApplyInstall_StrictPath_TargetVersion_CallerSelectionWithinVersionKept
+// pins the compatibility contract that keeps the CLI's interactive/--file
+// sub-selection working: when plan.Files already sits entirely inside the
+// target version, the caller's exact selection is installed verbatim - core
+// must not re-derive (and must not even refetch the file list).
+func TestService_ApplyInstall_StrictPath_TargetVersion_CallerSelectionWithinVersionKept(t *testing.T) {
+	svc, game, mock := setupInterplayService(t, false)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Empty(t, plan.Dependencies)
+
+	// The caller (the CLI's selectInstallFiles, or a TUI picker) chose the
+	// version pool's NON-default file.
+	plan.Files = []domain.DownloadableFile{interplayRootFiles()[1]} // root-main-1, v1.0
+	fetchesBeforeApply := mock.fileFetches.Load()
+
+	opts := core.InstallOptions{TargetVersion: "1.0"}
+	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+
+	got, err := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"root-main-1"}, got.FileIDs, "a caller selection already within TargetVersion must be installed verbatim")
+	assert.Equal(t, "1.0", got.Version)
+	assert.Equal(t, fetchesBeforeApply, mock.fileFetches.Load(), "a satisfied selection must not trigger a redundant GetModFiles refetch")
+}
+
+// TestService_ApplyInstall_StrictPath_TargetVersionUnresolvable_FailsBeforeSideEffects
+// pins the STRICT path's loud-failure contract for TargetVersion: an unknown
+// version is fatal up front (ErrVersionNotFound), with nothing downloaded,
+// deployed, or recorded - never a silent latest-install.
+func TestService_ApplyInstall_StrictPath_TargetVersionUnresolvable_FailsBeforeSideEffects(t *testing.T) {
+	svc, game, mock := setupInterplayService(t, false)
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+
+	opts := core.InstallOptions{TargetVersion: "9.9"}
+	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, core.ErrVersionNotFound), "must fail with ErrVersionNotFound, got: %v", err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.Installed)
+
+	assert.Equal(t, 0, mock.DownloadCount(), "no download may happen for an unresolvable version")
+	entries, err := os.ReadDir(game.ModPath)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "nothing may be deployed")
+	_, err = svc.GetInstalledMod("src", "root", "g1", "default")
+	assert.True(t, errors.Is(err, domain.ErrModNotFound), "no DB row may be written")
+}
+
+// TestService_ApplyInstall_StrictPath_TargetFileIDs_ResolvedInCore pins
+// TargetFileIDs on the STRICT path for a core caller that never touches
+// plan.Files: the pin resolves against the filtered list and replaces the
+// plan's default selection.
+func TestService_ApplyInstall_StrictPath_TargetFileIDs_ResolvedInCore(t *testing.T) {
+	svc, game, _ := setupInterplayService(t, false)
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Files, 1)
+	require.Equal(t, "root-main-2", plan.Files[0].ID)
+
+	opts := core.InstallOptions{TargetFileIDs: []string{"root-opt-1"}}
+	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+
+	got, err := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"root-opt-1"}, got.FileIDs)
+	assert.Equal(t, "1.0", got.Version)
+}
+
+// TestService_ApplyInstall_StrictPath_TargetVersionConvergesToLock_Allowed
+// pins the #143 lock-gate interplay with core-resolved TargetVersion:
+// installing a locked mod AT exactly its locked version via TargetVersion
+// (plan.Files still the latest default) must converge, not be refused - the
+// up-front gate must judge the version the resolved install would actually
+// record, not the stale plan default.
+func TestService_ApplyInstall_StrictPath_TargetVersionConvergesToLock_Allowed(t *testing.T) {
+	svc, game, _ := setupInterplayService(t, false)
+
+	lockProfileRef(t, svc, "g1", "default", "src", "root", "1.0", []string{"root-opt-1"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Files, 1)
+	require.Equal(t, "2.0", plan.Files[0].Version, "precondition: the plan default is the non-locked latest")
+
+	opts := core.InstallOptions{TargetVersion: "1.0"}
+	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err, "installing at exactly the locked version via TargetVersion must be allowed (converge/repair)")
+
+	got, err := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", got.Version)
+
+	profile, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("src", "root")
+	require.NotNil(t, ref)
+	assert.True(t, ref.Locked, "the lock marker must survive the converge")
+	assert.Equal(t, "1.0", ref.Version)
 }
