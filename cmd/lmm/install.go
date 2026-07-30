@@ -77,17 +77,22 @@ func confirmInstallConflicts(service *core.Service, game *domain.Game, profileNa
 	return input == "y" || input == "yes", nil
 }
 
-// installFileIDList parses --file's comma-separated value into clean file
-// IDs (nil when the flag is unset) - the shared source for both
-// selectInstallFiles' CLI-side matching and core.InstallOptions.
-// TargetFileIDs (#140).
+// installFileIDList parses --file's comma-separated value into clean,
+// deduplicated (first occurrence wins, order preserved) file IDs - nil when
+// the flag is unset - the shared source for both selectInstallFiles'
+// CLI-side matching and core.InstallOptions.TargetFileIDs (#140). Deduping
+// here keeps a repeated ID (--file 9,9) from reaching SaveInstalledMod's
+// PK-constrained installed_mod_files INSERTs, which would fail the install
+// only after download and deploy.
 func installFileIDList() []string {
 	if installFileID == "" {
 		return nil
 	}
+	seen := make(map[string]bool)
 	var ids []string
 	for _, fid := range strings.Split(installFileID, ",") {
-		if fid = strings.TrimSpace(fid); fid != "" {
+		if fid = strings.TrimSpace(fid); fid != "" && !seen[fid] {
+			seen[fid] = true
 			ids = append(ids, fid)
 		}
 	}

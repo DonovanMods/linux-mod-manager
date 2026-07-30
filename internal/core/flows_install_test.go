@@ -2622,3 +2622,25 @@ func TestService_ApplyInstall_StrictPath_TargetVersionConvergesToLock_Allowed(t 
 	assert.True(t, ref.Locked, "the lock marker must survive the converge")
 	assert.Equal(t, "1.0", ref.Version)
 }
+
+// TestService_ApplyInstall_BatchPath_TargetFileIDs_DuplicatesDeduped pins
+// resolveTargetFiles' duplicate handling (#140 review): a repeated pinned ID
+// (--file 9,9) resolves to ONE selection entry - otherwise the duplicate
+// survives to SaveInstalledMod's installed_mod_files INSERTs, whose primary
+// key includes file_id, failing the install only AFTER download and deploy.
+func TestService_ApplyInstall_BatchPath_TargetFileIDs_DuplicatesDeduped(t *testing.T) {
+	svc, game, _ := setupInterplayService(t, true)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+
+	opts := core.InstallOptions{TargetVersion: "1.0", TargetFileIDs: []string{"root-main-1", "root-main-1"}}
+	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err, "a duplicated pin must not fail the install")
+	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+
+	got, err := svc.GetInstalledMod("src", "root", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"root-main-1"}, got.FileIDs, "duplicate pins collapse to one recorded file")
+}

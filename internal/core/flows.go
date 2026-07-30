@@ -3245,16 +3245,24 @@ func selectInstallTargetFiles(pool []domain.DownloadableFile, targetFileIDs []st
 	return out, nil
 }
 
-// resolveTargetFiles returns the pool entries matching ids, in ids order.
-// EVERY id must match - any miss fails with the CLI selectInstallFiles'
-// historical wording ("file ID %s not found"), never a silent partial
-// selection (#95's silent-fallback class). Unlike selectDeployFiles'
-// storedFileIDs matching, which tolerates misses by design (stored IDs go
-// stale when sources prune files), these ids are an explicit, present-tense
-// user request.
+// resolveTargetFiles returns the pool entries matching ids, in ids order,
+// with duplicate ids collapsed to their first occurrence (a repeated pin is
+// the same request twice, and letting it through would fail
+// SaveInstalledMod's PK-constrained installed_mod_files INSERT only after
+// download and deploy). EVERY id must match - any miss fails with the CLI
+// selectInstallFiles' historical wording ("file ID %s not found"), never a
+// silent partial selection (#95's silent-fallback class). Unlike
+// selectDeployFiles' storedFileIDs matching, which tolerates misses by
+// design (stored IDs go stale when sources prune files), these ids are an
+// explicit, present-tense user request.
 func resolveTargetFiles(pool []domain.DownloadableFile, ids []string) ([]domain.DownloadableFile, error) {
+	seen := make(map[string]bool, len(ids))
 	out := make([]domain.DownloadableFile, 0, len(ids))
 	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		found := false
 		for i := range pool {
 			if pool[i].ID == id {

@@ -1460,3 +1460,14 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 // errBoomInstall is a sentinel transient error for
 // TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall.
 var errBoomInstall = errors.New("boom: files endpoint unavailable")
+
+// TestInstallFileIDList_DedupesPreservingOrder pins --file parsing (#140
+// review): duplicate IDs collapse to their first occurrence, in order -
+// otherwise a `--file 9,9` propagates into plan.Files/TargetFileIDs and
+// fails SaveInstalledMod's PK-constrained installed_mod_files INSERT only
+// after download and deploy.
+func TestInstallFileIDList_DedupesPreservingOrder(t *testing.T) {
+	installFileID = " 9, 8 ,9,8"
+	t.Cleanup(func() { installFileID = "" })
+	assert.Equal(t, []string{"9", "8"}, installFileIDList())
+}
