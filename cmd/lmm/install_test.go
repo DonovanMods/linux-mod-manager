@@ -1209,6 +1209,32 @@ func TestDoInstall_FileFlag_WithDependency_HonoredForNamedMod(t *testing.T) {
 	assert.Equal(t, []string{"dep-file"}, depInstalled.FileIDs, "a dependency is untouched by --file")
 }
 
+// TestDoInstall_FileFlag_OnlyCommasOrWhitespace_FailsFast pins the
+// degenerate---file guard (#140 review): a --file value that parses to ZERO
+// file IDs (only commas/whitespace) must fail fast, up front - before any
+// search/fetch - instead of silently degrading into "no --file at all"
+// (selectInstallFiles would return an empty selection with no error, and
+// the batch path's TargetFileIDs pin would silently vanish).
+func TestDoInstall_FileFlag_OnlyCommasOrWhitespace_FailsFast(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: fake.id, GameID: game.ID, Name: "Mod One", Version: "1.5", Author: "Someone"}
+	fake.AddMod(mod, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+	})
+
+	installModID = "mod1"
+	installFileID = " , "
+	t.Cleanup(func() { installModID, installFileID = "", "" })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--file")
+	assert.Contains(t, err.Error(), "no file IDs")
+
+	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	assert.Error(t, dbErr, "nothing may be installed off a no-op --file")
+}
+
 // TestDoInstall_FileFlag_WithDependency_UnknownFileAbortsWholeInstall proves
 // a --file ID outside the --version pool is fatal to the WHOLE
 // dependency-having install - loudly, before any mod is touched - matching

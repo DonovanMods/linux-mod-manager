@@ -387,6 +387,15 @@ func runInstall(cmd *cobra.Command, args []string) error {
 }
 
 func doInstall(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
+	// A --file value that parses to ZERO IDs (only commas/whitespace) fails
+	// fast, before any search or fetch - otherwise it would silently degrade
+	// into "no --file at all": selectInstallFiles' flag branch would return
+	// an empty selection with no error, and the batch path's TargetFileIDs
+	// pin would vanish (#140 review).
+	if installFileID != "" && len(installFileIDList()) == 0 {
+		return fmt.Errorf("--file %q contains no file IDs", installFileID)
+	}
+
 	// Resolve source: flag if set; else the sole configured source, an
 	// interactive prompt when several are configured, or the first
 	// alphabetically under --yes.
