@@ -295,7 +295,14 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 	// untouched in that case).
 	target := version
 	if version != "" {
-		if _, err := service.ResolveModVersion(ctx, modSource, &mod.Mod, version); err != nil {
+		// sourceMappedMod (verify.go): mod.Mod's GameID is the LMM game ID
+		// (installed rows persist normalized IDs), but Service.GetModFiles -
+		// which ResolveModVersion calls into - forwards straight to the
+		// source with no game-ID translation, unlike Service.GetMod. Sources
+		// like NexusMods address games by their own domain, so an unmapped
+		// GameID would silently query the wrong upstream game whenever this
+		// game's per-source mapping differs from its LMM ID.
+		if _, err := service.ResolveModVersion(ctx, modSource, sourceMappedMod(game, &mod.Mod), version); err != nil {
 			return err
 		}
 	} else {

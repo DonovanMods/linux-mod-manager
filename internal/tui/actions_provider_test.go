@@ -636,7 +636,16 @@ func TestPrototypeProviderActions_SetLock_UnlockRoundTrip(t *testing.T) {
 
 // TestPrototypeProviderActions_SetLock_WithVersion_MovesTarget mirrors
 // TestCoreProviderActions_SetLock_WithVersion_MovesTarget's own coverage
-// (service_core_test.go) for the prototype implementation.
+// (service_core_test.go) for the prototype implementation: a non-empty
+// version moves the LOCK's target (LockedVersion) - locking is a metadata
+// write, not a deploy, so the mod's installed Version must NOT move until a
+// later apply/deploy converges it (SetLock's own doc comment, and
+// ProfileManager.SetModLock's - "the record is the lock's target while
+// locked" is a profile-YAML-ref concept the prototype's flattened Mod
+// doesn't model with a separate field, but Version standing in for
+// "installed" must still behave the same either way). ussep's canned
+// Version (4.3) deliberately differs from the locked-to version (4.2) here,
+// so a regression that moves Version would be caught.
 func TestPrototypeProviderActions_SetLock_WithVersion_MovesTarget(t *testing.T) {
 	t.Parallel()
 
@@ -653,6 +662,7 @@ func TestPrototypeProviderActions_SetLock_WithVersion_MovesTarget(t *testing.T) 
 	locked := requireModByID(t, mods, "ussep")
 	assert.True(t, locked.Locked)
 	assert.Equal(t, "4.2", locked.LockedVersion)
+	assert.Equal(t, "4.3", locked.Version, "SetLock must never move the installed Version - only LockedVersion, matching the real implementation's metadata-write-only contract")
 }
 
 // TestPrototypeProviderActions_AvailableVersions_ReturnsCannedList covers

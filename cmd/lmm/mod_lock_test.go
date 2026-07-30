@@ -135,6 +135,48 @@ func TestDoModLock_ExplicitVersion_WritesLockedAndVersionToProfile(t *testing.T)
 	assert.Equal(t, "2.0", profile.Mods[0].Version)
 }
 
+// TestDoModLock_ExplicitVersion_MapsGameIDPerSourceMapping guards a scoped
+// PR review finding (Copilot, PR #142): doModLock's version-resolution call
+// (service.ResolveModVersion(ctx, modSource, &mod.Mod, version)) passes
+// mod.Mod straight from the DB, whose GameID is the LMM game ID - but
+// Service.GetModFiles (which ResolveModVersion calls into) forwards
+// straight to the source with NO game-ID translation, unlike Service.GetMod,
+// which maps through game.SourceIDs[sourceID] first. Sources like NexusMods
+// address games by their own domain (e.g. "skyrimspecialedition"), so
+// whenever a game's per-source mapping differs from its LMM ID, version
+// resolution would silently query the wrong upstream game. The fix is the
+// same one verify.go already applies for exactly this reason
+// (sourceMappedMod, used at verify.go:302/998): pass
+// sourceMappedMod(game, &mod.Mod) instead of &mod.Mod.
+//
+// setupDoModLockTest's fixture maps game.SourceIDs["src"] to "g1" - the SAME
+// as game.ID - which is exactly why none of the existing lock tests caught
+// this: the bug is invisible when the mapped and unmapped IDs happen to
+// coincide. This test deliberately overrides the mapping to a different
+// value so the wrong ID becomes observable, mirroring
+// TestDoVerify_VersionCheck_MapsGameIDPerSourceMapping's own pattern
+// (fakeInstallSource.receivedGameFileIDs, the same test double both
+// packages share).
+func TestDoModLock_ExplicitVersion_MapsGameIDPerSourceMapping(t *testing.T) {
+	svc, game, src := setupDoModLockTest(t)
+	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
+	src.AddMod(&domain.Mod{ID: "a", SourceID: "src", GameID: game.ID}, []domain.DownloadableFile{
+		{ID: "f1", Version: "1.0", Category: "MAIN"},
+		{ID: "f2", Version: "2.0", Category: "MAIN"},
+	})
+	game.SourceIDs["src"] = "mapped-domain"
+
+	var err error
+	_ = captureStdout(t, func() error {
+		err = doModLock(context.Background(), svc, game, "a", "2.0")
+		return err
+	})
+	require.NoError(t, err)
+
+	require.Len(t, src.receivedGameFileIDs, 1, "GetModFiles must have been called exactly once for version resolution")
+	assert.Equal(t, "mapped-domain", src.receivedGameFileIDs[0], "version resolution must translate GameID through game.SourceIDs, same rule as Service.GetMod")
+}
+
 // TestDoModLock_NoVersion_LocksAtCurrentRecordedVersion guards (b) and half
 // of (g): omitting the version argument locks at the ref's current version,
 // leaves Version untouched, and - since target equals what's installed -

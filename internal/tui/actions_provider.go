@@ -769,8 +769,12 @@ var prototypeAvailableVersions = []string{"1.2", "1.1", "1.0"}
 // "" locks at whatever LockedVersion resolves to from the mod's current
 // Version (mirroring coreProvider.SetLock/ProfileManager.SetModLock's own
 // "version==\"\" locks at whatever is currently installed" contract); a
-// non-empty version moves the lock's target, same as the real
-// implementation.
+// non-empty version moves the LOCK's target (LockedVersion) only. Locking is
+// a metadata write, not a deploy (coreProvider.SetLock's own doc comment):
+// the mod's installed Version must NOT move until a later apply/deploy
+// converges it - matching TestCoreProviderActions_SetLock_WithVersion_MovesTarget's
+// real-implementation assertion that SetLock never touches the
+// DB-recorded/installed version, only the lock's target.
 func (p *prototypeProvider) SetLock(_ context.Context, item ModItem, version string) (ActionOutcome, error) {
 	idx := p.findInstalledIndex(item.Source, item.ID)
 	if idx < 0 {
@@ -781,8 +785,6 @@ func (p *prototypeProvider) SetLock(_ context.Context, item ModItem, version str
 	target := version
 	if target == "" {
 		target = mods[idx].Version
-	} else {
-		mods[idx].Version = target
 	}
 	mods[idx].LockedVersion = target
 	msg := fmt.Sprintf("Locked %q", item.Name)
