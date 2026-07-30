@@ -977,7 +977,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		}
 	}
 
-	linkMethod := service.GetGameLinkMethod(game)
+	linkMethod := service.GetEffectiveLinkMethod(game, profileName)
 
 	// Set up hooks
 	hookRunner := getHookRunner(service)
@@ -1016,7 +1016,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			continue
 		}
 
-		installer := service.GetInstaller(game)
+		installer := service.NewInstallerWithLinker(game, service.GetLinker(linkMethod))
 
 		// Get and filter available files - derived ONCE, BEFORE the
 		// remove-previous block below (#143 review finding F1: the earlier

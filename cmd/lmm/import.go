@@ -187,8 +187,8 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	fmt.Printf("  Files: %d\n", result.FilesExtracted)
 
 	// Set up installer for conflict checking and deployment
-	linkMethod := service.GetGameLinkMethod(game)
-	installer := service.GetInstaller(game)
+	linkMethod := service.GetEffectiveLinkMethod(game, profileName)
+	installer := service.GetInstallerForProfile(game, profileName)
 
 	// Check for conflicts (unless --force)
 	if !importForce {
@@ -529,7 +529,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	}
 
 	// Import each untracked mod
-	linkMethod := service.GetGameLinkMethod(game)
+	linkMethod := service.GetEffectiveLinkMethod(game, profileName)
 
 	// Get current installed mods for duplicate checking
 	currentMods, _ := service.GetInstalledMods(game.ID, profileName)
