@@ -288,3 +288,129 @@ func TestCache_CloneMod(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"main.esp", "optional/patch.esp"}, files)
 }
+
+// --- #144 item 4: per-file-ID member manifests in the marker namespace ---
+
+// TestCache_FileManifests_RoundTrip covers the write/read round trip of a
+// completion marker's member manifest: MarkFileCompleteWithMembers records
+// WHICH members a file ID contributed, and FileManifests reads every marker's
+// manifest back keyed by file ID.
+func TestCache_FileManifests_RoundTrip(t *testing.T) {
+	c := cache.New(t.TempDir())
+	versionDir := c.ModPath("g", "src", "mod", "1.0")
+
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "file-a", []string{"main.esp", "textures/skin.dds"}))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "file-b", []string{"optional.esp"}))
+
+	manifests, err := c.FileManifests("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	require.Len(t, manifests, 2)
+
+	a, ok := manifests["file-a"]
+	require.True(t, ok)
+	assert.True(t, a.Recorded)
+	assert.ElementsMatch(t, []string{"main.esp", filepath.Join("textures", "skin.dds")}, a.Members)
+
+	b, ok := manifests["file-b"]
+	require.True(t, ok)
+	assert.True(t, b.Recorded)
+	assert.Equal(t, []string{"optional.esp"}, b.Members)
+}
+
+// TestCache_FileManifests_AbsenceVsEmpty pins the hard backward-compat rule:
+// a legacy bare marker (pre-manifest cache entries, MarkFileComplete) must be
+// distinguishable from a marker that genuinely recorded ZERO members - the
+// consumer (installer's same-version undeploy) must fall back to union
+// behavior on absence, but may trust an empty manifest.
+func TestCache_FileManifests_AbsenceVsEmpty(t *testing.T) {
+	c := cache.New(t.TempDir())
+	versionDir := c.ModPath("g", "src", "mod", "1.0")
+
+	require.NoError(t, cache.MarkFileComplete(versionDir, "legacy"))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "empty", nil))
+
+	manifests, err := c.FileManifests("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	require.Len(t, manifests, 2)
+
+	legacy, ok := manifests["legacy"]
+	require.True(t, ok, "a bare marker still names its file ID")
+	assert.False(t, legacy.Recorded, "a legacy bare marker has NO manifest - not an empty one")
+	assert.Empty(t, legacy.Members)
+
+	empty, ok := manifests["empty"]
+	require.True(t, ok)
+	assert.True(t, empty.Recorded, "a recorded-but-empty manifest is present, not absent")
+	assert.Empty(t, empty.Members)
+
+	// A version directory with no markers at all reads as no manifests.
+	none, err := c.FileManifests("g", "src", "other-mod", "1.0")
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
+// TestCache_FileManifests_UnrepresentableMemberDegradesToBareMarker: the
+// manifest body is line-oriented, so a member name carrying a newline cannot
+// be recorded faithfully. The safe direction is a bare marker (completion
+// still vouched for, manifest absent -> consumers fall back to union), never
+// a corrupted manifest that could undeploy the wrong path.
+func TestCache_FileManifests_UnrepresentableMemberDegradesToBareMarker(t *testing.T) {
+	c := cache.New(t.TempDir())
+	versionDir := c.ModPath("g", "src", "mod", "1.0")
+
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "weird", []string{"ok.esp", "bad\nname.esp"}))
+
+	manifests, err := c.FileManifests("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	m, ok := manifests["weird"]
+	require.True(t, ok, "completion must still be vouched for")
+	assert.False(t, m.Recorded, "an unrepresentable member set must degrade to a bare marker")
+	assert.True(t, c.HasFileIDs("g", "src", "mod", "1.0", []string{"weird"}),
+		"the degraded marker still counts for completeness")
+}
+
+// TestCache_ManifestMarkersStayReservedAndComplete: a marker that carries a
+// manifest BODY (no longer zero-byte) must behave exactly like the bare ones -
+// hidden from every content enumerator, still honored by HasFileIDs, and
+// carried through CloneMod so a reinstall round trip keeps the manifest.
+func TestCache_ManifestMarkersStayReservedAndComplete(t *testing.T) {
+	c := cache.New(t.TempDir())
+
+	require.NoError(t, c.Store("g", "src", "mod", "1.0", "real.esp", []byte("12345")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(c.ModPath("g", "src", "mod", "1.0"), "1001", []string{"real.esp"}))
+
+	files, err := c.ListFiles("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"real.esp"}, files, "manifest-bearing markers must never be listed as content")
+
+	size, err := c.Size("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), size, "manifest bytes must not count toward cache size")
+
+	assert.True(t, c.HasFileIDs("g", "src", "mod", "1.0", []string{"1001"}))
+
+	dst := cache.New(t.TempDir())
+	require.NoError(t, c.CloneMod(dst, "g", "src", "mod", "1.0"))
+	cloned, err := dst.FileManifests("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	m, ok := cloned["1001"]
+	require.True(t, ok, "markers travel with a cloned entry")
+	assert.True(t, m.Recorded, "the manifest must survive the clone, not downgrade to bare")
+	assert.Equal(t, []string{"real.esp"}, m.Members)
+}
+
+// TestCache_MarkFileCompleteWithMembers_UnverifiableIDs mirrors
+// TestCache_MarkFileComplete_UnverifiableIDs for the manifest writer: a blank
+// or path-bearing file ID is skipped (no error, no file, no manifest).
+func TestCache_MarkFileCompleteWithMembers_UnverifiableIDs(t *testing.T) {
+	c := cache.New(t.TempDir())
+	modPath := c.ModPath("g", "src", "mod", "1.0")
+	require.NoError(t, os.MkdirAll(modPath, 0755))
+
+	require.NoError(t, cache.MarkFileCompleteWithMembers(modPath, "", []string{"a.esp"}))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(modPath, "../escape", []string{"a.esp"}))
+
+	entries, err := os.ReadDir(modPath)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "an unverifiable file ID must not produce a marker")
+}
