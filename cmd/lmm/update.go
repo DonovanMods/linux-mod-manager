@@ -43,9 +43,10 @@ type updateJSONOutput struct {
 // mods CheckUpdates never even queried a source for. Locked mods do NOT
 // belong here (#97): they ARE checked ("locked but informed") - a locked-and-
 // skippable-at-apply-time mod is reported instead via the bulk table's
-// "[locked@<version>]" POLICY marker and the CLI's own auto/--all locked-skip
-// line (text only; see applySingleUpdate's singleUpdateJSON.Reason for the
-// single-mod --json equivalent).
+// "[locked@<version>]" POLICY marker, the CLI's own auto/--all locked-skip
+// line, and updateModJSON.Locked on its updates[] entry (#143; see
+// applySingleUpdate's singleUpdateJSON.Reason for the single-mod --json
+// equivalent).
 type updateSkippedJSON struct {
 	Pinned int `json:"pinned"`
 	Local  int `json:"local"`
@@ -57,6 +58,11 @@ type updateModJSON struct {
 	Current      string `json:"current_version"`
 	Available    string `json:"available_version"`
 	UpdatePolicy string `json:"update_policy"`
+	// Locked is the --json sibling of the bulk table's "[locked@<version>]"
+	// POLICY marker (#143): true means applying this update is refused until
+	// the lock moves or clears, even under auto policy or --all. Omitted
+	// (not false) when unlocked, so pre-#143 documents are unchanged.
+	Locked bool `json:"locked,omitempty"`
 }
 
 // singleUpdateJSON is the one-document --json result of `lmm update <mod-id>`
@@ -113,7 +119,9 @@ exits non-zero rather than silently claiming success.
   - Bulk check (no mod ID): {game_id, profile, updates: [...], skipped:
     {pinned, local}, error?}. error is present when the check itself
     failed partway through; updates/skipped still reflect whatever was
-    learned first.
+    learned first. A locked mod's updates[] entry carries "locked": true
+    (omitted when unlocked): the update is reported but will not be
+    applied until the lock moves or clears.
   - Single mod (a mod ID given) or 'update rollback': {mod_id, name,
     from_version, to_version, changelog, status, reason}. status is one
     of "updated", "up_to_date", "skipped", "available" (--dry-run), or
@@ -140,7 +148,8 @@ mod ID is installed from more than one source in the profile, use
 -s/--source to disambiguate.
 
 --json prints the single-mod document (see 'lmm update --help') with
-status "rolled_back".
+status "rolled_back", or status "skipped" with reason "locked" when the
+mod is locked (unlock or move the lock to roll back).
 
 Examples:
   lmm update rollback 12345 --game skyrim-se
@@ -346,6 +355,20 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return finish()
 	}
 
+	// #97: locked refs get a POLICY marker (or, under --json, "locked": true)
+	// and are excluded from auto/--all application below (loaded once, keyed
+	// by domain.ModKey - locked mods ARE checked, so they show up in updates
+	// like any other row; only applying is refused). A precomputed map, not
+	// per-row FindRef, since this loops over every update below.
+	lockedRefs := map[string]string{}
+	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
+		for _, ref := range prof.Mods {
+			if ref.Locked {
+				lockedRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref.Version
+			}
+		}
+	}
+
 	if jsonOutput {
 		skips := core.CountUpdateSkips(installed)
 		out := updateJSONOutput{
@@ -356,12 +379,14 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			out.Error = checkErr.Error()
 		}
 		for i, u := range updates {
+			_, isLocked := lockedRefs[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)]
 			out.Updates[i] = updateModJSON{
 				ModID:        u.InstalledMod.ID,
 				Name:         u.InstalledMod.Name,
 				Current:      u.InstalledMod.Version,
 				Available:    u.NewVersion,
 				UpdatePolicy: policyToString(u.InstalledMod.UpdatePolicy),
+				Locked:       isLocked,
 			}
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -379,20 +404,6 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 	if _, err := fmt.Fprintf(w, "---\t-------\t---------\t------\n"); err != nil {
 		return fmt.Errorf("writing separator: %w", err)
-	}
-
-	// #97: locked refs get a POLICY marker and are excluded from auto/--all
-	// application below (loaded once, keyed by domain.ModKey - locked mods
-	// ARE checked, so they show up in updates like any other row; only
-	// applying is refused). A precomputed map, not per-row FindRef, since
-	// this loops over every update below.
-	lockedRefs := map[string]string{}
-	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
-		for _, ref := range prof.Mods {
-			if ref.Locked {
-				lockedRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref.Version
-			}
-		}
 	}
 
 	var autoUpdates []domain.Update
@@ -698,7 +709,8 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 // verbatim: "mod not found: %s" and, before ApplyRollback is ever called,
 // the same PreviousVersion/cache-existence checks ApplyRollback repeats
 // internally - so the header never prints when either guard would fail,
-// matching the pre-extraction ordering exactly) -> calls
+// matching the pre-extraction ordering exactly; a locked mod is likewise
+// refused as a skip before the header, #143) -> calls
 // Service.ApplyRollback, printing from its progress events exactly like
 // applyUpdate does for ApplyUpdate (forced-hook warnings, after_each hook
 // warnings, and the --verbose-gated link-method note all reuse the SAME
@@ -731,6 +743,30 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	// Check if previous version exists in cache
 	if !service.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.PreviousVersion) {
 		return fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
+	}
+
+	// #143: refuse a locked mod up front, mirroring applySingleUpdate's
+	// locked pre-check - the core gate (Service.ApplyRollback) backstops
+	// this regardless, but checking here avoids ever printing the "Rolling
+	// back..." header for a call that will never apply, treats the refusal
+	// as a skip (nil error / "skipped"+"locked" document) like the update
+	// path does, and names both remedy commands instead of surfacing the
+	// core gate's raw error. Same profile-load-failure semantics too: a
+	// missing/unreadable profile is treated as unlocked.
+	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
+			if jsonOutput {
+				return emitSingleUpdateJSON(singleUpdateJSON{
+					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, ToVersion: mod.PreviousVersion, Status: "skipped", Reason: "locked",
+				})
+			}
+			fmt.Printf("Rollback available: %s → %s — but %s is locked at v%s.\n", mod.Version, mod.PreviousVersion, mod.Name, ref.Version)
+			// -s/-p on both remedies for the same reason as applySingleUpdate's
+			// locked branch (#142 round 5): a bare copy-paste could resolve
+			// against the wrong profile or an ambiguous source.
+			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", mod.SourceID, profileName, mod.ID, mod.PreviousVersion, mod.SourceID, profileName, mod.ID)
+			return nil
+		}
 	}
 
 	if !jsonOutput {

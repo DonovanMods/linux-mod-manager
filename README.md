@@ -229,9 +229,12 @@ Lock state shows up alongside version info wherever it's installed: `lmm
 list -v`'s `LOCKED` column (the locked version, or `-`), `lmm mod show`'s
 Installed section, and `lmm update`'s table, where a locked mod's `POLICY`
 cell gets a `[locked@<version>]` suffix. `--json` output for `list` and `mod
-show` carries the same information additively (`locked`, `locked_version`);
-single-mod `lmm update --json` instead reports a refused apply as
-`status: "skipped", reason: "locked"`. `lmm verify` still reports a locked mod's version-record
+show` carries the same information additively (`locked`, `locked_version`),
+and bulk `lmm update --json` marks a locked mod's `updates[]` entry with
+`"locked": true` (omitted when unlocked); single-mod `lmm update --json`
+instead reports a refused apply as `status: "skipped", reason: "locked"`, and
+`lmm update rollback` of a locked mod is refused the same way — before its
+"Rolling back..." header, with the same remedies and JSON document. `lmm verify` still reports a locked mod's version-record
 mismatches, but `--fix` refuses to rewrite a locked mod's record (other,
 unlocked mods in the same run are still fixed) — and when the installed
 version hasn't yet converged to a lock's target, `verify` prints an
@@ -431,6 +434,8 @@ Mods can be deployed using three methods:
 | `copy`     | Full file copies (maximum compatibility, uses more disk space) |
 
 **Priority**: A profile-level `link_method` (in the profile's YAML) takes precedence over the per-game `link_method` in `games.yaml`, which takes precedence over `default_link_method` in `config.yaml`. If none is set, defaults to `symlink`. An explicit `--method` flag (e.g. `lmm deploy --method`) beats all three. See [Configuration reference](docs/configuration.md) for details, including an upgrade note for profiles saved before v1.14.1.
+
+`lmm status -g <game>` shows the effective method for the active profile, marked `(per-profile)` or `(per-game)`; with no override anywhere the line appears only under `--verbose`, marked `(global default)`. In `--json` output, `link_method` reports the game-level resolution (game override or global default, unchanged for compatibility), while `effective_link_method` and `link_method_source` (`profile`, `game`, or `global`) report what a deploy into the active profile actually uses.
 
 ### Cache Path Priority
 
@@ -924,7 +929,7 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 `lmm install --version <version>` resolves the exact version against the mod's full file list — archived/old files are searched automatically, no `--show-archived` needed — and the matching file(s) become the pool for `--file`/`-y`/the interactive prompt; when the mod has dependencies, `--version` and `--file` apply to the named mod only (`--file` picks from the version's matches when both are given, and the whole install aborts up front if either fails to resolve) — dependencies are unaffected, still installing at latest with their primary file auto-selected. An unknown version fails with an error listing the versions the source actually has (`version not found: version "..." (available: ...)`). A source whose files carry no version information fails with the standard "not supported" gap instead, same as any other missing capability — this is decided dynamically from the actual file data returned for that mod, not from the source's advertised `versions` capability flag (a source can declare `versions` support and still hit this gap for a mod whose files happen to lack version strings). Omitting `--version` installs the latest, unchanged.
 
-**Version behavior in profiles**: a mod reference's `version:` field in a profile is the record of what that profile deploys, not just a display value — `lmm profile apply` and `profile switch` converge the installed mod to match it, downgrades included, healing a stale on-disk deployment back to the recorded version whenever it's still available upstream; `profile import` honors the recorded version for mods it installs or redownloads, and a drifted mod it left alone (already installed and cached at that version) converges on the next apply/switch. Hand-edit a profile's `version:` (or export/share/import the profile) to reproduce an exact build across machines. Sources whose files carry no version information (decided dynamically from the actual file data, not the source's advertised `versions` capability flag) keep the previous file-ID-based behavior instead.
+**Version behavior in profiles**: a mod reference's `version:` field in a profile is the record of what that profile deploys, not just a display value — `lmm profile apply` and `profile switch` converge the installed mod to match it, downgrades included, healing a stale on-disk deployment back to the recorded version whenever it's still available upstream; `profile import` converges the same way: a mod already installed at a different version than the imported profile records is reinstalled at the profile's version as part of the import itself — so a lock carried by a shared profile takes effect without a second command. Hand-edit a profile's `version:` (or export/share/import the profile) to reproduce an exact build across machines. Sources whose files carry no version information (decided dynamically from the actual file data, not the source's advertised `versions` capability flag) keep the previous file-ID-based behavior instead.
 
 ### Exit Codes
 

@@ -56,10 +56,18 @@ func TestModRow_NoTrailingColumnDrift(t *testing.T) {
 // in the P picker and mod actions), it just doesn't get its own glyph here.
 // A plain pin-only mod still renders "pin", and a mod with neither renders
 // blank - exercising modFlags directly (not through modRow) for an exact
-// string match on the documented "%-3s %s" shape.
+// string match on the documented "%-3s %s" shape. The "lck *" row (#143
+// polish) pins the shape's documented two-slots-at-once case: the flag and
+// the updated-this-session marker are independent, so a locked mod brought
+// current this session fills both (m.lastUpdates is seeded with a matching
+// applied entry — Source+ID match AND Version == ToVersion, the two
+// conditions wasUpdatedThisSession requires).
 func TestModFlags_LockOutranksPin(t *testing.T) {
 	m, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
+	m.lastUpdates = &UpdatesView{Updates: []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", ToVersion: "5.3"},
+	}}
 
 	tests := []struct {
 		name string
@@ -68,6 +76,7 @@ func TestModFlags_LockOutranksPin(t *testing.T) {
 	}{
 		{"locked only", ModItem{Locked: true}, "lck  "},
 		{"locked and pinned - lock wins the slot", ModItem{Locked: true, UpdatePolicy: "pin"}, "lck  "},
+		{"locked and updated this session - both slots fill", ModItem{Locked: true, Source: "nexusmods", ID: "skyui", Version: "5.3"}, "lck *"},
 		{"pinned only", ModItem{UpdatePolicy: "pin"}, "pin  "},
 		{"neither", ModItem{}, "     "},
 	}

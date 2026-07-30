@@ -92,6 +92,33 @@ func TestRollbackKeyNoPreviousVersion(t *testing.T) {
 	require.Empty(t, rec.RollbackCalls)
 }
 
+// TestRollbackKeyLockedRefusesBeforeModal (#143 polish): a locked mod's
+// rollback is refused synchronously, on the status line, BEFORE the confirm
+// modal ever opens - item.Locked is already in hand, so making the user
+// confirm an action the core gate will then refuse is a pointless round
+// trip. Unlike the no-previous-version case (benign "nothing to do"),
+// this mirrors deleteSelectedProfile's active-profile refusal shape: the
+// row IS otherwise actionable, so statusIsError is true, and the message
+// points at the TUI's own L key rather than any CLI command.
+func TestRollbackKeyLockedRefusesBeforeModal(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = rollbackReadyModIndex
+	model.mods[rollbackReadyModIndex].Locked = true
+	model.mods[rollbackReadyModIndex].LockedVersion = "11"
+
+	updated, cmd := model.Update(keyRunes("<"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.action.pending, "a locked mod must never open the rollback confirm modal")
+	require.Equal(t, "SKSE Address Library is locked at v11 — unlock or move the lock (L) to roll back", model.action.status)
+	require.True(t, model.action.statusIsError, "refusing an otherwise-actionable row is a refusal, not a benign no-op")
+	require.Empty(t, rec.RollbackCalls)
+}
+
 // TestRollbackConfirmAppliesAndRefreshes proves confirming calls
 // ActionProvider.Rollback with the selected item, and that the standard
 // post-action refresh follows BOTH a successful and a failed outcome -
