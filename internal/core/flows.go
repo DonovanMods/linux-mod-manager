@@ -4006,6 +4006,30 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 	emit(DeployProgress{Phase: UpdateDownloadDone, ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID})
 
+	// #144 item 4: the superseded set - the installed mod's OLD file IDs
+	// whose FileIDReplacements were actually applied (their superseding new
+	// ID was downloaded, and the old ID itself was not re-selected). It only
+	// changes behavior in the degenerate same-version shape, where the old
+	// and new files share ONE version-keyed cache dir and the plain
+	// union-replace could never undeploy the superseded file's members - see
+	// Installer.ReplaceForUpdate. The compensation paths below pass the
+	// REVERSE set (the applied NEW ids): an update that failed to commit
+	// must restore the superseded members and remove the new file's sole
+	// members, not leave both deployed.
+	var supersededFileIDs, reverseSupersededIDs []string
+	if len(upd.FileIDReplacements) > 0 {
+		downloaded := make(map[string]bool, len(downloadedFileIDs))
+		for _, id := range downloadedFileIDs {
+			downloaded[id] = true
+		}
+		for _, fid := range mod.FileIDs {
+			if newID, ok := upd.FileIDReplacements[fid]; ok && newID != fid && downloaded[newID] && !downloaded[fid] {
+				supersededFileIDs = append(supersededFileIDs, fid)
+				reverseSupersededIDs = append(reverseSupersededIDs, newID)
+			}
+		}
+	}
+
 	// Task 6 item d (cancel-then-drain): checked between the download step
 	// above and the hook/deploy (Replace) steps below, at minimum - a
 	// cancelled ctx aborts here, before running any before_each hook or
@@ -4044,7 +4068,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		emit(evt)
 	}
 
-	if err := installer.Replace(ctx, game, &mod.Mod, newMod, profileName); err != nil {
+	if err := installer.ReplaceForUpdate(ctx, game, &mod.Mod, newMod, profileName, supersededFileIDs); err != nil {
 		return result, fmt.Errorf("deploying update: %w", err)
 	}
 
@@ -4066,7 +4090,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	if err := s.ApplyModUpdate(mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
-		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(ctx, game, newMod, &mod.Mod, profileName, reverseSupersededIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
 
@@ -4081,8 +4105,8 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	pm := s.NewProfileManager()
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
-		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName)      //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)                           //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(ctx, game, newMod, &mod.Mod, profileName, reverseSupersededIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
 

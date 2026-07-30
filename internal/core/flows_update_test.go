@@ -22,6 +22,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1412,11 +1413,222 @@ func TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-fileB.esp"))
 	assert.NoError(t, statErr, "the new file must be deployed")
 
-	// Deliberately NOT asserting that mod1-fileA.esp is undeployed. The cache
+	// Deliberately NOT asserting anything about mod1-fileA.esp here. The cache
 	// is keyed by version (#94/#96), so a file-only update - whose version
 	// string does not change - shares ONE cache directory between the old and
-	// new files, and Installer.Replace deploys whatever that directory holds.
-	// That is pre-existing behavior of the cache keying, identical on v1.25.0
-	// and independent of file selection; it is out of scope here. See §9 of
-	// the smoke-bug report.
+	// new files. This mod was seeded WITHOUT member manifests (the legacy
+	// pre-manifest cache shape), so Installer.Replace falls back to deploying
+	// the union - see §9 of the smoke-bug report for the original behavior,
+	// and TestApplyUpdate_SameVersionFileOnlyUpdate_UndeploysSupersededMember
+	// (#144 item 4) for the manifest-backed shape where the superseded file
+	// IS undeployed.
+}
+
+// --- #144 item 4: same-version cache sharing on file-only updates ---
+
+// seedSameVersionManifest stamps fileID's member manifest onto the seeded old
+// mod's cache entry, upgrading seedUpdatableMod's legacy (marker-less) seed to
+// the shape every real install has written since manifests were introduced.
+func seedSameVersionManifest(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, version, fileID string, members []string) {
+	t.Helper()
+	versionDir := svc.GetGameCache(game).ModPath(game.ID, sourceID, modID, version)
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, members))
+}
+
+// TestApplyUpdate_SameVersionFileOnlyUpdate_UndeploysSupersededMember flips
+// the stance TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies
+// deliberately declined: with member manifests on both sides, a file-only
+// update whose version string does not change (one SHARED cache dir - the
+// version-keyed cache cannot tell the old and new files apart) must undeploy
+// the superseded file's members instead of leaving the union deployed
+// (pre-existing bug, 9047992-era; #144 item 4).
+func TestApplyUpdate_SameVersionFileOnlyUpdate_UndeploysSupersededMember(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"fileA"}, map[string][]byte{"mod1-fileA.esp": []byte("A")})
+	seedSameVersionManifest(t, svc, game, "src", "mod1", "1.0", "fileA", []string{"mod1-fileA.esp"})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "fileA", Name: "Old Archive", FileName: "mod1-fileA.esp", Version: "1.0", Category: "MAIN"},
+			{ID: "fileB", Name: "Fixed Archive", FileName: "mod1-fileB.esp", Version: "1.0", IsPrimary: true, Category: "MAIN"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	mock.AddDownload("fileB", []byte("B-content"))
+
+	upd := domain.Update{
+		InstalledMod:       *old,
+		NewVersion:         "1.0",
+		FileIDReplacements: map[string]string{"fileA": "fileB"},
+	}
+	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Warnings)
+
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	assert.NoError(t, statErr, "the new file must be deployed")
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	assert.True(t, os.IsNotExist(statErr),
+		"the superseded file's member must be UNDEPLOYED despite the shared same-version cache dir")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"fileB"}, updated.FileIDs)
+}
+
+// TestApplyUpdate_SameVersionFileOnlyUpdate_SharedMemberSurvives: a member
+// shipped by BOTH the superseded file and its replacement (the new archive
+// overwrites it in the shared dir) is not solely owned and must stay
+// deployed. Downloading the replacement as a real ZIP also exercises the
+// DeployExtract capture path end to end: the manifest records EXTRACTED
+// member names, unrelated to the archive's own FileName.
+func TestApplyUpdate_SameVersionFileOnlyUpdate_SharedMemberSurvives(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"fileA"},
+		map[string][]byte{"shared.esp": []byte("shared"), "a-only.esp": []byte("a")})
+	seedSameVersionManifest(t, svc, game, "src", "mod1", "1.0", "fileA", []string{"shared.esp", "a-only.esp"})
+
+	zipB, err := os.ReadFile(createTestZip(t, t.TempDir(), map[string]string{"shared.esp": "shared-v2", "b-only.esp": "b"}))
+	require.NoError(t, err)
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "fileA", Name: "Old Archive", FileName: "mod1-fileA.zip", Version: "1.0", Category: "MAIN"},
+			{ID: "fileB", Name: "Fixed Archive", FileName: "mod1-fileB.zip", Version: "1.0", IsPrimary: true, Category: "MAIN"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	mock.AddDownload("fileB", zipB)
+
+	upd := domain.Update{
+		InstalledMod:       *old,
+		NewVersion:         "1.0",
+		FileIDReplacements: map[string]string{"fileA": "fileB"},
+	}
+	_, err = svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+
+	_, statErr := os.Lstat(filepath.Join(gameDir, "a-only.esp"))
+	assert.True(t, os.IsNotExist(statErr), "the superseded file's sole member must be undeployed")
+	sharedContent, err := os.ReadFile(filepath.Join(gameDir, "shared.esp"))
+	require.NoError(t, err, "a member also listed in the surviving file's manifest must stay deployed")
+	assert.Equal(t, "shared-v2", string(sharedContent), "the shared member carries the new file's content")
+	_, statErr = os.Stat(filepath.Join(gameDir, "b-only.esp"))
+	assert.NoError(t, statErr, "the new file's member must be deployed")
+}
+
+// TestApplyUpdate_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion is
+// the hard backward-compat rule for pre-manifest cache entries: the old
+// file's provenance is unrecorded (seedUpdatableMod writes no markers - the
+// exact on-disk shape of every cache entry made before manifests existed),
+// so nothing may be undeployed, nothing may error, and nothing may warn -
+// the historical union behavior, silently.
+func TestApplyUpdate_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"fileA"}, map[string][]byte{"mod1-fileA.esp": []byte("A")})
+	// Deliberately NO seedSameVersionManifest: legacy entries carry no
+	// manifest, and absence must never be guessed around.
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "fileA", Name: "Old Archive", FileName: "mod1-fileA.esp", Version: "1.0", Category: "MAIN"},
+			{ID: "fileB", Name: "Fixed Archive", FileName: "mod1-fileB.esp", Version: "1.0", IsPrimary: true, Category: "MAIN"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	mock.AddDownload("fileB", []byte("B-content"))
+
+	upd := domain.Update{
+		InstalledMod:       *old,
+		NewVersion:         "1.0",
+		FileIDReplacements: map[string]string{"fileA": "fileB"},
+	}
+	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err, "a legacy cache entry must never make the update fail")
+	assert.Empty(t, result.Warnings, "the fallback must be silent - no warning storm for every old cache")
+
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	assert.NoError(t, statErr, "without provenance nothing may be undeployed - union behavior preserved")
+	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	assert.NoError(t, statErr)
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"fileB"}, updated.FileIDs, "the record still advances")
+}
+
+// TestApplyUpdate_SameVersionFileOnlyUpdate_CompensatedFailureRestoresSuperseded
+// pins rollback fidelity (#144 item 4 point 5): when the update deploys but a
+// later write fails (here: UpsertMod, via a read-only profiles dir),
+// ApplyUpdate's best-effort reverse Replace must restore the superseded
+// member and remove the uncommitted new file's member - the compensation call
+// carries the NEW file IDs as its superseded set, so the shared-dir undeploy
+// runs in reverse.
+func TestApplyUpdate_SameVersionFileOnlyUpdate_CompensatedFailureRestoresSuperseded(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"fileA"}, map[string][]byte{"mod1-fileA.esp": []byte("A")})
+	seedSameVersionManifest(t, svc, game, "src", "mod1", "1.0", "fileA", []string{"mod1-fileA.esp"})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "fileA", Name: "Old Archive", FileName: "mod1-fileA.esp", Version: "1.0", Category: "MAIN"},
+			{ID: "fileB", Name: "Fixed Archive", FileName: "mod1-fileB.esp", Version: "1.0", IsPrimary: true, Category: "MAIN"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	mock.AddDownload("fileB", []byte("B-content"))
+
+	// Make the profile upsert - the LAST write in ApplyUpdate's sequence -
+	// fail deterministically (SaveProfile os.WriteFile-truncates the existing
+	// YAML in place, so the FILE must be unwritable, not its directory).
+	profilePath := filepath.Join(configDir, "games", "g1", "profiles", "default.yaml")
+	require.NoError(t, os.Chmod(profilePath, 0444))
+	t.Cleanup(func() { _ = os.Chmod(profilePath, 0644) })
+
+	upd := domain.Update{
+		InstalledMod:       *old,
+		NewVersion:         "1.0",
+		FileIDReplacements: map[string]string{"fileA": "fileB"},
+	}
+	_, err = svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "updating profile")
+
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	assert.NoError(t, statErr, "the compensated failure must NOT leave the superseded member undeployed")
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	assert.True(t, os.IsNotExist(statErr), "the uncommitted new file's member must be removed by the reverse Replace")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"fileA"}, updated.FileIDs, "RollbackModVersion must have restored the record")
+	assert.Equal(t, "1.0", updated.Version)
 }
