@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1304,3 +1305,55 @@ func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *te
 	assert.Equal(t, "1.0", ref.Version)
 	assert.True(t, ref.Locked)
 }
+
+// TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall closes review
+// finding F1 on #143: batchInstallMods must derive its file selection ONCE,
+// BEFORE the remove-previous-installation block, so a GetModFiles failure
+// skips the mod while its previous installation (here, a deployed lock
+// target) is still intact. The earlier shape fetched twice - a locked-ref
+// pre-check fetch and a post-uninstall fetch - so a transient failure of the
+// first fell through PAST the lock check, uninstalled the deployed lock
+// target, deleted its cache, and only then failed on the second fetch;
+// deriving once also removes the pre-check/selection TOCTOU window (a
+// version published between the two fetches deployed something the lock
+// check never judged).
+func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+
+	// Install v1.0 normally, then lock it.
+	mod := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"}
+	src.AddMod(mod, []domain.DownloadableFile{
+		{ID: "f1", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+	})
+	src.AddDownload("f1", []byte("v1 content"))
+	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.SetModLock("g1", "default", "test-src", "mod1", ""))
+
+	// The files endpoint now fails (transiently, as far as the user knows).
+	src.getModFilesErr = errBoomInstall
+	t.Cleanup(func() { src.getModFilesErr = nil })
+
+	latest := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", Author: "Someone", GameID: "g1"}
+	stdout, err := captureStdoutErr(t, func() error {
+		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
+	})
+	require.NoError(t, err, "batch semantics: a per-mod fetch failure skips, the run itself succeeds")
+	assert.Contains(t, stdout, "failed to get mod files", "the fetch failure must be reported")
+	assert.NotContains(t, stdout, "Removing previous installation",
+		"a fetch failure must skip BEFORE the previous installation is removed")
+
+	// The deployed lock target and its cache must be untouched.
+	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+	assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"),
+		"the lock target's cache entry must survive a fetch failure")
+	installed, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, dbErr)
+	assert.Equal(t, "1.0", installed.Version)
+}
+
+// errBoomInstall is a sentinel transient error for
+// TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall.
+var errBoomInstall = errors.New("boom: files endpoint unavailable")
