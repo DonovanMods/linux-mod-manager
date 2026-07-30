@@ -62,5 +62,5 @@ coverage.html
 
 # Other files
 *.local.md
-docs/plans
+docs/plans/*
 !docs/plans/archive
