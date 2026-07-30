@@ -1054,9 +1054,13 @@ func selectVersionedDeployFiles(files []domain.DownloadableFile, version string,
 // resolved - down to the one(s) to actually use: the stored-ID subset when
 // any stored ID is among them (so a mod installed from an OPTIONAL/extra
 // file of that version keeps that file rather than being silently moved to
-// the main one), else the version's primary file, else its first file.
-// matches must be non-empty. idSet may be nil (reads as all-false), which
-// simply skips the stored-ID preference.
+// the main one), else the version's primary file, else its best file by
+// installFileCategoryPriority (#144 item 5 - a version whose files are e.g.
+// {MISCELLANEOUS, OPTIONAL} with no primary picks the OPTIONAL, not
+// whichever the source happened to list first; ties keep first-listed, so
+// category-less listings behave exactly as before). matches must be
+// non-empty. idSet may be nil (reads as all-false), which simply skips the
+// stored-ID preference.
 //
 // Shared by selectVersionedDeployFiles (#96) and selectUpdateDeployFiles
 // (#143) specifically so the two cannot drift: both answer the same
@@ -1078,7 +1082,13 @@ func pickVersionMatch(matches []*domain.DownloadableFile, idSet map[string]bool)
 			return []*domain.DownloadableFile{m}
 		}
 	}
-	return []*domain.DownloadableFile{matches[0]}
+	best := 0
+	for i := 1; i < len(matches); i++ {
+		if installFileCategoryPriority(matches[i].Category) < installFileCategoryPriority(matches[best].Category) {
+			best = i
+		}
+	}
+	return []*domain.DownloadableFile{matches[best]}
 }
 
 // selectUpdateDeployFiles picks the file(s) ApplyUpdate should download to
@@ -1169,10 +1179,20 @@ func updateAmbiguousFileWarning(f *domain.DownloadableFile, installedVersion, ta
 // pairAmbiguousWithReplacement reports which entry of ambiguous the target-
 // version file replacement stands in for: the first one sharing its Category
 // (compared case-insensitively, like installFileCategoryPriority), else the
-// first entry, else -1 when there is nothing to pair. Category is the only
-// signal available - the candidates are label-identical by definition - and
-// sources do populate it (MAIN/OPTIONAL/UPDATE/...), so a new MAIN replaces
-// the stale MAIN and leaves an unchanged OPTIONAL alone.
+// first one sharing its IsPrimary flag, else the first entry, else -1 when
+// there is nothing to pair. The candidates are label-identical by
+// definition, so Category is the strongest signal when both sides carry a
+// matching one (a new MAIN replaces the stale MAIN and leaves an unchanged
+// OPTIONAL alone) - but it routinely decides nothing (#144): custom sources
+// (directory/manifest/api) never populate Category at all, and CurseForge's
+// vocabulary is release types (release/beta/alpha, from releaseTypeName)
+// that need not repeat across versions, so a populated category can still
+// match no ambiguous entry. IsPrimary is the secondary signal for both
+// shapes: a primary replacement stands in for the stale primary (the old
+// main) rather than consuming an unchanged extra by list order - and,
+// symmetrically, a non-primary replacement leaves a still-primary ambiguous
+// file to be retained-and-warned instead of silently displacing it. Only
+// when neither signal decides does list order remain.
 func pairAmbiguousWithReplacement(ambiguous []*domain.DownloadableFile, replacement *domain.DownloadableFile) int {
 	if len(ambiguous) == 0 {
 		return -1
@@ -1182,6 +1202,11 @@ func pairAmbiguousWithReplacement(ambiguous []*domain.DownloadableFile, replacem
 			if strings.ToUpper(a.Category) == want {
 				return i
 			}
+		}
+	}
+	for i, a := range ambiguous {
+		if a.IsPrimary == replacement.IsPrimary {
+			return i
 		}
 	}
 	return 0
@@ -1341,7 +1366,40 @@ func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, in
 		kept[m.ID] = true
 		added = true
 	}
-	if !added || domain.EffectiveInstalledVersion(targetVersion, repaired) == installedVersion {
+	// Two distinct failure shapes deserve distinct remedies (#144): when the
+	// repair found nothing to add, the user ALREADY holds every file the
+	// source offers under the target version, so the update-side "pick a
+	// different file" remedy would be misleading - there is no other file to
+	// download. That shape is a source-side labelling problem; the one
+	// user action that still resolves it is a reinstall that keeps only the
+	// wanted file ('lmm install --file'), which undeploys the stale one and
+	// re-stamps the record from what remains. Only when something WAS added
+	// (and the effective version still refuses to move) does the update-side
+	// reinstall/--file remedy make sense.
+	if !added {
+		// Make the strong "every file already installed" claim only when it
+		// is LOCALLY true (every target-version match among currentFileIDs) -
+		// not because resolveUpdateSelection's candidate-consumption
+		// invariant implies it. The guard exists to backstop that invariant,
+		// so its diagnosis must not assume it (PR #148 Copilot round; the
+		// unreachable-today shape is pinned by an in-package test).
+		curSet := make(map[string]bool, len(currentFileIDs))
+		for _, id := range currentFileIDs {
+			curSet[id] = true
+		}
+		allInstalled := true
+		for _, m := range matches {
+			if !curSet[m.ID] {
+				allInstalled = false
+				break
+			}
+		}
+		if allInstalled {
+			return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): every file the source offers under %q is already installed - likely a source-side file labelling quirk; if an old file is stale, reinstall keeping only the wanted file with 'lmm install --file'", targetVersion, strings.Join(currentFileIDs, ", "), targetVersion)
+		}
+		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): no file upstream advances it - reinstall the mod or use --file to pick one explicitly", targetVersion, strings.Join(currentFileIDs, ", "))
+	}
+	if domain.EffectiveInstalledVersion(targetVersion, repaired) == installedVersion {
 		return nil, fmt.Errorf("update to %q would re-install exactly what is already installed (file ID(s): %s): no file upstream advances it - reinstall the mod or use --file to pick one explicitly", targetVersion, strings.Join(currentFileIDs, ", "))
 	}
 	return repaired, nil

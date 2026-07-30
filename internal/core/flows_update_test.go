@@ -1138,6 +1138,231 @@ func TestApplyUpdate_LabelAmbiguousExtra_IsSurfacedAsAWarning(t *testing.T) {
 	assert.NotContains(t, joined, "main103", "the cleanly replaced file is not ambiguous and must not be warned about")
 }
 
+// TestApplyUpdate_CategoryLessAmbiguousPair_PrimaryBreaksTie covers #144
+// item 1, case (a): custom sources (directory/manifest/api) NEVER populate
+// DownloadableFile.Category, so the Category pairing that
+// TestApplyUpdate_LabelAmbiguousExtra_IsSurfacedAsAWarning relies on decides
+// nothing and pairing used to fall straight to list order - a coin flip on
+// which stored file the single target-version file replaces. With the
+// unchanged extra listed before the stale main (as here), list order consumed
+// the EXTRA and retained the stale main: old main pak deployed beside the new
+// one, exactly the double-deploy the round-3 Category pairing exists to
+// prevent. IsPrimary is the secondary signal (#144): custom sources DO set it
+// (directory always, manifest per-file via `primary:`, api for single-file
+// mods), so the primary replacement pairs with the primary ambiguous entry.
+func TestApplyUpdate_CategoryLessAmbiguousPair_PrimaryBreaksTie(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	// Stored order lists the extra FIRST so the pre-#144 list-order pairing
+	// provably consumes the wrong entry.
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0.1",
+		[]string{"extra101", "main101"},
+		map[string][]byte{"mod1-extra101.esp": []byte("extra101"), "mod1-main101.esp": []byte("main101")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "extra101", Name: "Extra 1.0.1", FileName: "mod1-extra101.esp", Version: "1.0.1"},
+			{ID: "main101", Name: "Main 1.0.1", FileName: "mod1-main101.esp", Version: "1.0.1", IsPrimary: true},
+			{ID: "main103", Name: "Main 1.0.3", FileName: "mod1-main103.esp", Version: "1.0.3", IsPrimary: true},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0.3", GameID: "g1"})
+	mock.AddDownload("main103", []byte("main103-content"))
+	mock.AddDownload("extra101", []byte("extra101"))
+	mock.AddDownload("main101", []byte("main101"))
+
+	upd := domain.Update{InstalledMod: *old, NewVersion: "1.0.3"}
+	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.3", updated.Version, "the record must still advance")
+	assert.ElementsMatch(t, []string{"main103", "extra101"}, updated.FileIDs,
+		"the primary target file must replace the stale primary, retaining the category-less extra")
+
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-main103.esp"))
+	assert.NoError(t, statErr, "the new main file must be deployed")
+	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-main101.esp"))
+	assert.True(t, os.IsNotExist(statErr), "the stale main must NOT be double-deployed beside the new one")
+	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-extra101.esp"))
+	assert.NoError(t, statErr, "the retained extra must stay deployed")
+
+	require.NotEmpty(t, result.Warnings, "the retained ambiguous file must still be surfaced")
+	joined := strings.Join(result.Warnings, "\n")
+	assert.Contains(t, joined, "extra101", "the warning must name the retained extra, not the replaced main")
+	assert.NotContains(t, joined, "main101", "the cleanly replaced stale main must not be warned about")
+}
+
+// TestApplyUpdate_NonMatchingCategoryAmbiguousPair_PrimaryBreaksTie covers
+// #144 item 1, case (b) - the reviewer-confirmed sibling of the category-less
+// case: Category can be POPULATED and still decide nothing, because nothing
+// guarantees the replacement's category appears among the ambiguous entries
+// at all. This fixture's vocabulary borrows CurseForge's release types
+// (release/beta/alpha, from releaseTypeName), which routinely shift across
+// versions - but note its FLAG pattern is manifest-like (two IsPrimary files
+// in one listing): real CurseForge marks only the globally-first file primary
+// (IsPrimary: i == 0), so there the IsPrimary loop finds no match and
+// behavior stays list order, unchanged. The fix's real-world winner for
+// case (b) is a manifest/directory source with per-file primary flags.
+// Pre-#144 the inner Category loop fell out to list order, same coin
+// flip as case (a); IsPrimary must break the tie here too.
+func TestApplyUpdate_NonMatchingCategoryAmbiguousPair_PrimaryBreaksTie(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0",
+		[]string{"extra-old", "main-old"},
+		map[string][]byte{"mod1-extra-old.esp": []byte("extra-old"), "mod1-main-old.esp": []byte("main-old")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "extra-old", Name: "Extra 1.0", FileName: "mod1-extra-old.esp", Version: "1.0", Category: "alpha"},
+			{ID: "main-old", Name: "Main 1.0", FileName: "mod1-main-old.esp", Version: "1.0", Category: "beta", IsPrimary: true},
+			{ID: "main-new", Name: "Main 2.0", FileName: "mod1-main-new.esp", Version: "2.0", Category: "release", IsPrimary: true},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+	mock.AddDownload("main-new", []byte("main-new-content"))
+	mock.AddDownload("extra-old", []byte("extra-old"))
+	mock.AddDownload("main-old", []byte("main-old"))
+
+	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
+	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.NoError(t, err)
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated.Version, "the record must still advance")
+	assert.ElementsMatch(t, []string{"main-new", "extra-old"}, updated.FileIDs,
+		"a populated-but-non-matching Category must not fall to list order: the primary pairing wins")
+
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-main-new.esp"))
+	assert.NoError(t, statErr, "the new main file must be deployed")
+	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-main-old.esp"))
+	assert.True(t, os.IsNotExist(statErr), "the stale main must NOT be double-deployed beside the new one")
+
+	require.NotEmpty(t, result.Warnings)
+	joined := strings.Join(result.Warnings, "\n")
+	assert.Contains(t, joined, "extra-old", "the warning must name the retained extra")
+	assert.NotContains(t, joined, "main-old", "the cleanly replaced stale main must not be warned about")
+}
+
+// TestApplyUpdate_NoOpGuard_NothingNewUnderTarget_ErrorsWithLabellingHint
+// covers #144 item 2: guardNoOpUpdateSelection's error branch had NO test -
+// a refactor could have silently neutered the backstop that stops the
+// re-install loop. This is the reviewer-probed reachable shape for its
+// "nothing to add" (!added) sub-case: the installed mod holds the old
+// primary (still labelled the installed version) AND the target version's
+// only file (an optional installed earlier); the update fires because the
+// mod-level version moved, but every file the source offers under the
+// target is already installed, the repair drops the old primary and finds
+// nothing new to add, and the record provably cannot advance. A loud error
+// is correct - silently proceeding is the infinite loop #142 fixed.
+//
+// The wording is the branch-specific one (#144): the user already holds
+// everything the source offers under the target, so "reinstall the mod or
+// use --file to pick one explicitly" would be misleading - there is nothing
+// else to pick. The error must instead point at the source's file labelling
+// offering nothing new. The error surfaces during selection, before any
+// download, hook, or write - the old deployment and records stay untouched.
+func TestApplyUpdate_NoOpGuard_NothingNewUnderTarget_ErrorsWithLabellingHint(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0",
+		[]string{"main-old", "opt-new"},
+		map[string][]byte{"mod1-main-old.esp": []byte("main-old"), "mod1-opt-new.esp": []byte("opt-new")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "main-old", Name: "Main 1.0", FileName: "mod1-main-old.esp", Version: "1.0", IsPrimary: true},
+			{ID: "opt-new", Name: "Optional 2.0", FileName: "mod1-opt-new.esp", Version: "2.0"},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+
+	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
+	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.Error(t, err, "a selection that provably cannot advance the record must fail loudly, not loop")
+	assert.Contains(t, err.Error(), `update to "2.0" would re-install exactly what is already installed`)
+	assert.Contains(t, err.Error(), "every file the source offers under \"2.0\" is already installed",
+		"the !added branch must say the source offers nothing new")
+	assert.Contains(t, err.Error(), "file labelling",
+		"the !added branch must point at the source-side labelling quirk")
+	assert.NotContains(t, err.Error(), "use --file to pick one explicitly",
+		"the update-side pick-another-file remedy belongs to the added-but-not-advancing branch only")
+	assert.Contains(t, err.Error(), "lmm install --file",
+		"the one honest remedy in this shape: reinstall keeping only the wanted file undeploys the stale one and advances the record")
+
+	// The error fires during selection - before any hook, download, or write -
+	// so the old version must remain fully installed and deployed.
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", updated.Version, "the record must be untouched")
+	assert.ElementsMatch(t, []string{"main-old", "opt-new"}, updated.FileIDs)
+	_, statErr := os.Stat(filepath.Join(gameDir, "mod1-main-old.esp"))
+	assert.NoError(t, statErr, "the old deployment must be untouched")
+}
+
+// TestApplyUpdate_NoOpGuard_RepairStillNotAdvancing_ErrorsWithFileHint is the
+// companion to the !added test above, pinning the guard's OTHER error
+// sub-case (#144 item 2): the repair DOES add a target-version file, but the
+// repaired selection's effective version still equals the installed one.
+// Reachable end-to-end as a same-version-string "update" with no
+// FileIDReplacements map: the source lists a second file under the very
+// version installed, the ambiguous classification re-selects the installed
+// primary (it IS the version's primary), and the repair drops it only to
+// re-add it as the version's best pick. Here the source genuinely does offer
+// another file (fileA), the user just has to choose it - so the established
+// "reinstall the mod or use --file to pick one explicitly" remedy stays.
+func TestApplyUpdate_NoOpGuard_RepairStillNotAdvancing_ErrorsWithFileHint(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0",
+		[]string{"fileB"}, map[string][]byte{"mod1-fileB.esp": []byte("B")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "fileA", Name: "Alt Archive", FileName: "mod1-fileA.esp", Version: "1.0"},
+			{ID: "fileB", Name: "Main Archive", FileName: "mod1-fileB.esp", Version: "1.0", IsPrimary: true},
+		},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+
+	upd := domain.Update{InstalledMod: *old, NewVersion: "1.0"}
+	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	require.Error(t, err, "re-selecting exactly the installed file must fail loudly, not loop")
+	assert.Contains(t, err.Error(), `update to "1.0" would re-install exactly what is already installed`)
+	assert.Contains(t, err.Error(), "reinstall the mod or use --file to pick one explicitly",
+		"when the source does offer other files, the pick-one-explicitly remedy stays")
+	assert.NotContains(t, err.Error(), "labelling",
+		"the labelling-quirk hint belongs to the nothing-new-to-add branch only")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", updated.Version)
+	assert.Equal(t, []string{"fileB"}, updated.FileIDs, "the record must be untouched")
+}
+
 // TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies is PR #142 review
 // round 3, Important: "the selection's effective version equals the installed
 // version" is NOT proof of a no-op.
