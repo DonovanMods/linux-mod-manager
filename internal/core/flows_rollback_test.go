@@ -422,6 +422,188 @@ func TestApplyRollbackCompensatesOnDBFailure(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "the previous version's file must be undeployed again")
 }
 
+// --- #150: same-version cache sharing on rollback ---
+
+// seedSameVersionRollbackReadyMod prepares an installed mod that has been
+// through a same-version file-only update (#144 item 4's degenerate shape:
+// the old file's member and its replacement's share ONE version-keyed cache
+// dir) and is rollback-ready: PreviousVersion == Version == "1.0",
+// PreviousFileIDs == {fileA}, FileIDs == {fileB}. The update is applied via
+// the same ReplaceForUpdate + ApplyModUpdate + UpsertMod sequence ApplyUpdate
+// itself performs. The withManifests flag picks between the two on-disk
+// shapes PR #149 distinguishes: per-file-ID member manifests (every install
+// made since) or a legacy entry with no recorded manifests (this seed writes
+// no markers at all; a pre-#149 entry's bare zero-byte completion markers
+// parse as not-recorded and fall back identically) - in which case the
+// seeding update itself already deployed the union, the exact pre-manifest
+// starting state.
+func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, withManifests bool) *domain.InstalledMod {
+	t.Helper()
+
+	const version = "1.0"
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", version, "mod1-fileA.esp", []byte("A")))
+	if withManifests {
+		seedSameVersionManifest(t, svc, game, "src", "mod1", version, "fileA", []string{"mod1-fileA.esp"})
+	}
+
+	oldMod := domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: version, GameID: game.ID}
+	im := &domain.InstalledMod{
+		Mod:          oldMod,
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		LinkMethod:   domain.LinkSymlink,
+		FileIDs:      []string{"fileA"},
+	}
+	require.NoError(t, svc.SaveInstalledMod(im))
+
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &oldMod, "default"))
+
+	pm := svc.NewProfileManager()
+	if _, err := pm.Get(game.ID, "default"); err != nil {
+		_, cerr := pm.Create(game.ID, "default")
+		require.NoError(t, cerr)
+	}
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: version, FileIDs: []string{"fileA"}}))
+
+	// The same-version file-only update: fileB's member lands in the SAME
+	// version dir, superseding fileA's.
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", version, "mod1-fileB.esp", []byte("B")))
+	if withManifests {
+		seedSameVersionManifest(t, svc, game, "src", "mod1", version, "fileB", []string{"mod1-fileB.esp"})
+	}
+	newMod := oldMod
+	require.NoError(t, installer.ReplaceForUpdate(context.Background(), game, &oldMod, &newMod, "default", []string{"fileA"}, []string{"fileB"}))
+	require.NoError(t, svc.ApplyModUpdate("src", "mod1", game.ID, "default", version, []string{"fileB"}))
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: version, FileIDs: []string{"fileB"}}))
+
+	updated, err := svc.GetInstalledMod("src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	require.Equal(t, version, updated.PreviousVersion, "seed must leave the row rollback-ready")
+	require.Equal(t, []string{"fileA"}, updated.PreviousFileIDs)
+	require.Equal(t, []string{"fileB"}, updated.FileIDs)
+	return updated
+}
+
+// TestApplyRollback_SameVersionFileOnlyUpdate_UndeploysRolledBackFromMember
+// is #150: rolling back a same-version file-only update lists old and new
+// caches from the SAME version-keyed dir, so a plain-union Replace would
+// leave the rolled-back-from file's member deployed alongside the restored
+// one. With member manifests on both sides, the rollback must narrow exactly
+// like the forward update does - transition current FileIDs ->
+// PreviousFileIDs - undeploying fileB's member and restoring fileA's.
+func TestApplyRollback_SameVersionFileOnlyUpdate_UndeploysRolledBackFromMember(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mod := seedSameVersionRollbackReadyMod(t, svc, game, true)
+
+	// Seed sanity: the update itself narrowed - only fileB's member deployed.
+	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	require.NoError(t, statErr)
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	require.True(t, os.IsNotExist(statErr))
+
+	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Warnings)
+	assert.Empty(t, result.Notes)
+	assert.Equal(t, "1.0", result.FromVersion)
+	assert.Equal(t, "1.0", result.ToVersion)
+
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	assert.NoError(t, statErr, "the restored file's member must be redeployed")
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	assert.True(t, os.IsNotExist(statErr),
+		"the rolled-back-from file's member must be UNDEPLOYED despite the shared same-version cache dir (#150)")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", updated.Version)
+	assert.Equal(t, []string{"fileA"}, updated.FileIDs)
+	assert.Equal(t, []string{"fileB"}, updated.PreviousFileIDs)
+
+	profile, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, []string{"fileA"}, profile.Mods[0].FileIDs)
+}
+
+// TestApplyRollback_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion
+// pins #149's hard backward-compat rule on the rollback path: a cache entry
+// with no recorded manifests (seeded here with no markers at all; a pre-#149
+// entry's bare zero-byte completion markers parse as not-recorded and fall
+// back the same way) must keep the historical union behavior
+// silently - nothing undeployed, nothing erroring, nothing warning.
+func TestApplyRollback_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mod := seedSameVersionRollbackReadyMod(t, svc, game, false)
+
+	// Seed sanity: without manifests the update already deployed the union.
+	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	require.NoError(t, statErr)
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	require.NoError(t, statErr)
+
+	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Warnings)
+	assert.Empty(t, result.Notes)
+
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	assert.NoError(t, statErr, "a legacy cache keeps the union deployed - never guess, never undeploy without positive provenance")
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	assert.NoError(t, statErr, "a legacy cache keeps the union deployed - never guess, never undeploy without positive provenance")
+
+	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"fileA"}, updated.FileIDs, "the DB swap must still restore the previous file IDs")
+}
+
+// TestApplyRollback_SameVersionFileOnlyUpdate_CompensationStaysNarrow: when
+// the DB version-swap fails after the rollback's narrowed replace already
+// ran, the compensating reverse replace must narrow too (the transition
+// swapped: PreviousFileIDs -> FileIDs), restoring exactly the pre-rollback
+// deployment - fileB's member alone, never the union. The symmetric
+// set-inequality gate guarantees the forward call and this compensation
+// answer the same way (see resolveSharedDirUpdate's doc comment).
+func TestApplyRollback_SameVersionFileOnlyUpdate_CompensationStaysNarrow(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mod := seedSameVersionRollbackReadyMod(t, svc, game, true)
+
+	installVersionBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	_, err = svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "updating database:")
+
+	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
+	assert.NoError(t, statErr, "the compensating replace must restore the current file's member")
+	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
+	assert.True(t, os.IsNotExist(statErr),
+		"the compensation must narrow too - the previous file's member must not stay deployed beside the restored current one")
+
+	updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, gerr)
+	assert.Equal(t, []string{"fileB"}, updated.FileIDs, "the blocked transaction must have left the row untouched")
+}
+
 // installVersionBlockingTrigger opens a second connection to the SQLite
 // file at dbPath and installs a trigger that makes any UPDATE touching
 // installed_mods.version fail - the same technique as installBlockingTrigger

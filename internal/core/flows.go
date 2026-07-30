@@ -4178,8 +4178,11 @@ type RollbackResult struct {
 // ApplyRollback rolls the installed mod identified by sourceID/modID back to
 // its PreviousVersion, following cmd/lmm/update.go's pre-extraction
 // doUpdateRollback ordering exactly: GetInstalledMod -> guard checks ->
-// hooks -> installer.Replace(current -> previous) -> RollbackModVersion (DB
-// swap, with a compensating reverse-Replace on failure) -> SetModLinkMethod
+// hooks -> installer.ReplaceForUpdate(current -> previous) - the extracted
+// CLI's plain Replace step, now carrying the reversed file-ID transition
+// (current FileIDs -> PreviousFileIDs) that narrows a same-version rollback
+// to the restored file's own members (#150) -> RollbackModVersion (DB
+// swap, with a compensating reverse-replace on failure) -> SetModLinkMethod
 // -> reload -> ProfileManager.UpsertMod (compensating BOTH the DB swap and
 // the Replace on failure). This is a behavior-preserving extraction - see the
 // task report for the full mapping. Unlike ApplyUpdate, there is no
@@ -4210,11 +4213,12 @@ type RollbackResult struct {
 // before the DB/profile writes below - see UpdateWarning's doc comment).
 //
 // A failure to write RollbackModVersion triggers a best-effort compensating
-// reverse Installer.Replace (redeploying the CURRENT version, undoing the
-// Replace this function just performed) before returning the error; a
+// reverse Installer.ReplaceForUpdate (redeploying the CURRENT version with
+// the file-ID transition swapped back, undoing the replace this function
+// just performed) before returning the error; a
 // failure to write ProfileManager.UpsertMod afterward compensates BOTH -
 // another RollbackModVersion (undoing the DB swap) AND another reverse
-// Replace - matching doUpdateRollback's own two, textually-near-identical
+// replace - matching doUpdateRollback's own two, textually-near-identical
 // compensation blocks exactly. A failure reloading the rolled-back mod
 // (the GetInstalledMod call between those two steps) is, however, NOT
 // compensated - matching doUpdateRollback's own verbatim behavior, a
@@ -4298,7 +4302,12 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		emit(evt)
 	}
 
-	if err := installer.Replace(ctx, game, &mod.Mod, &prevMod, profileName); err != nil {
+	// #150: the update path's file-ID transition, reversed - current FileIDs
+	// back to PreviousFileIDs - so a same-version file-only rollback (ONE
+	// shared cache dir) narrows to the restored file's members instead of
+	// deploying the union; see ReplaceForUpdate/resolveSharedDirUpdate. On a
+	// normal different-version rollback this behaves exactly like Replace.
+	if err := installer.ReplaceForUpdate(ctx, game, &mod.Mod, &prevMod, profileName, mod.FileIDs, mod.PreviousFileIDs); err != nil {
 		return result, fmt.Errorf("deploying previous version: %w", err)
 	}
 
@@ -4320,7 +4329,7 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 	}
 
 	if err := s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName); err != nil {
-		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(ctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
 
@@ -4344,8 +4353,8 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		Version:  rolledBackMod.Version,
 		FileIDs:  rolledBackMod.FileIDs,
 	}); err != nil {
-		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
-		_ = installer.Replace(ctx, game, &prevMod, &mod.Mod, profileName)    //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)                                         //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(ctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
 
