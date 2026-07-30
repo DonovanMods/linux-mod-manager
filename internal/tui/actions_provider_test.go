@@ -692,7 +692,10 @@ func TestPrototypeProviderActions_SetLock_WithVersion_MovesTarget(t *testing.T) 
 }
 
 // TestPrototypeProviderActions_AvailableVersions_ReturnsCannedList covers
-// the demo's canned lock-picker data source.
+// the demo's canned lock-picker data source: the exact
+// prototypeAvailableVersions list, in its canned newest-first order (#143
+// polish — NotEmpty alone would let the list's contents or order silently
+// drift from what the demo's picker actually shows).
 func TestPrototypeProviderActions_AvailableVersions_ReturnsCannedList(t *testing.T) {
 	t.Parallel()
 
@@ -700,7 +703,7 @@ func TestPrototypeProviderActions_AvailableVersions_ReturnsCannedList(t *testing
 
 	versions, err := actions.AvailableVersions(context.Background(), ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"})
 	require.NoError(t, err)
-	assert.NotEmpty(t, versions)
+	assert.Equal(t, []string{"1.2", "1.1", "1.0"}, versions)
 }
 
 func requireModByID(t *testing.T, mods []ModItem, id string) ModItem {
