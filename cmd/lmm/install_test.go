@@ -1249,3 +1249,58 @@ func TestBatchInstallMods_StampsSelectedFileVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the mod's latest version")
 }
+
+// TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall is
+// #143's guard for the CLI's OWN batch path (multi-select `lmm install`
+// results and resolved dependency lists route through batchInstallMods, not
+// core.ApplyInstall): re-installing a mod whose profile ref is LOCKED at a
+// version other than what the source would now serve must skip the mod
+// BEFORE its remove-previous-installation step - previously it uninstalled
+// the deployed lock target, deployed the new latest, and swallowed
+// UpsertMod's refusal behind a verbose-only warning, leaving a
+// deployed-but-unrecorded drift.
+func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+
+	// Install v1.0 normally, then lock it.
+	mod := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"}
+	src.AddMod(mod, []domain.DownloadableFile{
+		{ID: "f1", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+	})
+	src.AddDownload("f1", []byte("v1 content"))
+	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.SetModLock("g1", "default", "test-src", "mod1", ""))
+
+	// The source now serves v2.0 as its latest.
+	latest := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", Author: "Someone", GameID: "g1"}
+	src.AddMod(latest, []domain.DownloadableFile{
+		{ID: "f2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "2.0"},
+	})
+	src.AddDownload("f2", []byte("v2 content"))
+
+	servedBefore := src.served.Load()
+	stdout, err := captureStdoutErr(t, func() error {
+		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
+	})
+	require.NoError(t, err, "batch semantics: a locked mod skips, the run itself succeeds")
+	assert.Contains(t, stdout, "locked at v1.0", "the skip line must name the lock")
+	assert.Contains(t, stdout, "lmm mod unlock", "the skip line must carry the unlock remedy")
+	assert.Contains(t, stdout, "Failed: 1", "the summary must count the locked skip")
+	assert.NotContains(t, stdout, "Removing previous installation", "the deployed lock target must never be uninstalled")
+
+	// Zero side effects: still deployed, no new download, DB and ref intact.
+	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+	assert.Equal(t, servedBefore, src.served.Load(), "no download may be served for the refused install")
+	installed, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, dbErr)
+	assert.Equal(t, "1.0", installed.Version, "the DB row must stay at the locked version")
+	profile, pErr := pm.Get("g1", "default")
+	require.NoError(t, pErr)
+	ref := profile.FindRef("test-src", "mod1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.0", ref.Version)
+	assert.True(t, ref.Locked)
+}

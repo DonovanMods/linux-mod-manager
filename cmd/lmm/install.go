@@ -1018,6 +1018,33 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 
 		installer := service.GetInstaller(game)
 
+		// #143: a LOCKED profile ref converges only via explicit lock/unlock
+		// - skip BEFORE the remove-previous block below, so a locked
+		// reinstall-at-another-version never uninstalls the deployed lock
+		// target, and before any download/deploy. The extra GetModFiles here
+		// runs only for a locked ref (the selection below re-derives it for
+		// the normal path); any fetch/selection failure falls through to the
+		// normal path's own authoritative handling, with UpsertMod's
+		// ErrModLocked guard as the final backstop. Mirrors core's
+		// ApplyInstall gate (internal/core/flows.go lockedInstallRefusal)
+		// and names -s/-p in both remedies for the same copy-paste-resolves-
+		// against-the-wrong-target reason as lockedRefRefusalError.
+		if prof, err := pm.Get(game.ID, profileName); err == nil {
+			if ref := prof.FindRef(sourceID, mod.ID); ref != nil && ref.Locked {
+				if files, ferr := service.GetModFiles(ctx, sourceID, mod); ferr == nil {
+					if filtered := filterAndSortFiles(files, installShowArchived); len(filtered) > 0 {
+						would := domain.EffectiveInstalledVersion(mod.Version, []*domain.DownloadableFile{selectPrimaryFile(filtered)})
+						if would != ref.Version {
+							fmt.Printf("  Skipped: %s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'\n",
+								mod.Name, ref.Version, profileName, sourceID, profileName, mod.ID, sourceID, profileName, mod.ID)
+							failed = append(failed, mod.Name)
+							continue
+						}
+					}
+				}
+			}
+		}
+
 		// Remove previous installation if re-installing
 		if existingMod, err := service.GetInstalledMod(sourceID, mod.ID, game.ID, profileName); err == nil && existingMod != nil {
 			fmt.Printf("  Removing previous installation...\n")
