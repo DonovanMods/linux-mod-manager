@@ -1096,26 +1096,66 @@ func pickVersionMatch(matches []*domain.DownloadableFile, idSet map[string]bool)
 // guarantee - see the Versions capability comment in internal/source) -
 // this falls through to selectDeployFiles with allowFallback=true,
 // preserving #95's deliberate update-path fallback verbatim.
-func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion string, storedFileIDs []string) ([]*domain.DownloadableFile, bool, error) {
-	if targetVersion != "" {
-		var matches []*domain.DownloadableFile
-		for i := range files {
-			if files[i].Version == targetVersion {
-				matches = append(matches, &files[i])
-			}
-		}
-		if len(matches) > 0 {
-			var idSet map[string]bool
-			if len(storedFileIDs) > 0 {
-				idSet = make(map[string]bool, len(storedFileIDs))
-				for _, id := range storedFileIDs {
-					idSet[id] = true
-				}
-			}
-			return pickVersionMatch(matches, idSet), false, nil
+//
+// Two things deliberately switch the narrowing OFF entirely (PR #142
+// review), because in both the stored IDs are NOT stale guesses and
+// narrowing would silently drop files the mod is still using:
+//
+//   - hasReplacements: the update carries a FileIDReplacements mapping, so
+//     the source has stated exactly how this mod's files move. A hit names
+//     a NEW file by construction (it cannot be the stale anchor above) and
+//     a miss means "unchanged - retain the ORIGINAL id verbatim", this
+//     function's caller's documented contract (see ApplyUpdate). Neither is
+//     a guess, so both keep the pre-#143 selectDeployFiles resolution
+//     verbatim. This matters because a superseding file routinely carries
+//     its OWN label rather than the mod-level NewVersion (a patch moving
+//     1.3 -> 1.4 while the mod moves to 2.0), and an unchanged extra
+//     legitimately still reports the OLD version's label - a target-version
+//     match would discard the first and the second respectively.
+//   - installedVersion == "": with no recorded version there is no way to
+//     tell a stale anchor from a carry-over, so nothing is narrowed.
+//
+// Within the narrowing branch, a stored file that still resolves upstream
+// is carried over unless it is positively identified as the version being
+// moved away from (Version == installedVersion) - that one file is the
+// stale anchor, and replacing it with targetVersion's file is the entire
+// point. Everything else the mod had stays.
+func selectUpdateDeployFiles(files []domain.DownloadableFile, targetVersion, installedVersion string, storedFileIDs []string, hasReplacements bool) ([]*domain.DownloadableFile, bool, error) {
+	if hasReplacements || targetVersion == "" || installedVersion == "" {
+		return selectDeployFiles(files, storedFileIDs, true)
+	}
+
+	var matches []*domain.DownloadableFile
+	for i := range files {
+		if files[i].Version == targetVersion {
+			matches = append(matches, &files[i])
 		}
 	}
-	return selectDeployFiles(files, storedFileIDs, true)
+	if len(matches) == 0 {
+		return selectDeployFiles(files, storedFileIDs, true)
+	}
+
+	var idSet map[string]bool
+	if len(storedFileIDs) > 0 {
+		idSet = make(map[string]bool, len(storedFileIDs))
+		for _, id := range storedFileIDs {
+			idSet[id] = true
+		}
+	}
+	selected := pickVersionMatch(matches, idSet)
+
+	chosen := make(map[string]bool, len(selected))
+	for _, f := range selected {
+		chosen[f.ID] = true
+	}
+	for i := range files {
+		if !idSet[files[i].ID] || chosen[files[i].ID] || files[i].Version == installedVersion {
+			continue
+		}
+		selected = append(selected, &files[i])
+		chosen[files[i].ID] = true
+	}
+	return selected, false, nil
 }
 
 // selectDeployFiles picks the file(s) to (re)download for a cache-miss mod:
@@ -3539,7 +3579,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 			}
 		}
 	}
-	filesToDownload, _, err := selectUpdateDeployFiles(files, newVersion, effectiveFileIDs)
+	filesToDownload, _, err := selectUpdateDeployFiles(files, newVersion, mod.Version, effectiveFileIDs, len(upd.FileIDReplacements) > 0)
 	if err != nil {
 		return result, fmt.Errorf("selecting files to download: %w", err)
 	}

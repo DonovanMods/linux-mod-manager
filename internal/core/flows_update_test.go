@@ -292,6 +292,91 @@ func TestService_ApplyUpdate_FileIDReplacements(t *testing.T) {
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{"new-1", "old-2"}, updated.FileIDs, "the un-replaced ID must be retained verbatim, not dropped or defaulted to primary")
 	})
+
+	// PR #142 review, Important 1: the subtest above passes even with a
+	// version-narrowing selector, because its fixture files carry no Version
+	// labels at all - so the narrowing never engages and the contract is
+	// never actually exercised. This is the same case with labels present,
+	// which is the shape #143's selectUpdateDeployFiles has to get right:
+	// "old-2" is an unchanged extra that legitimately still reports the OLD
+	// version's label, and dropping it would silently un-deploy a file the
+	// mod is still using. Multi-FileIDs mods are a documented shape
+	// (docs/configuration.md), and #96 pins the same "keep the whole stored
+	// set" rule for the switch path.
+	t.Run("missing replacement retains the original file ID when files carry version labels", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+		old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1", "old-2"}, map[string][]byte{"mod1-old.esp": []byte("old")})
+
+		mock := &multiFileDownloadSource{
+			mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+			files: []domain.DownloadableFile{
+				{ID: "new-1", Name: "New File", FileName: "mod1-new.esp", Version: "2.0", IsPrimary: true},
+				{ID: "old-2", Name: "Unchanged File", FileName: "mod1-extra.esp", Version: "1.0"},
+			},
+		}
+		defer mock.Close()
+		svc.RegisterSource(mock)
+		mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+		mock.AddDownload("new-1", []byte("new-main"))
+		mock.AddDownload("old-2", []byte("unchanged-extra"))
+
+		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0", FileIDReplacements: map[string]string{"old-1": "new-1"}}
+		_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		require.NoError(t, err)
+
+		updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{"new-1", "old-2"}, updated.FileIDs,
+			"version labels must not turn the documented retain-verbatim rule into a silent drop")
+
+		_, statErr := os.Stat(filepath.Join(gameDir, "mod1-extra.esp"))
+		assert.NoError(t, statErr, "the retained file must still be deployed, not just recorded")
+	})
+
+	// PR #142 review, Important 2: an ID that came from a FileIDReplacements
+	// hit names a NEW file by construction - it cannot be the stale
+	// old-version anchor #143 targets - so the target-version narrowing must
+	// never discard it. Reachable on NexusMods, whose CheckUpdates sets
+	// NewVersion to the MOD-level version when the mod version moved and a
+	// file-update chain exists (internal/source/nexusmods), while a
+	// superseded optional/patch file keeps its own, different label.
+	t.Run("a superseded file wins over the target version's primary even when its own label differs", func(t *testing.T) {
+		svc := newFlowsTestService(t)
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+		old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.3", []string{"patch13"}, map[string][]byte{"mod1-patch13.esp": []byte("patch13")})
+
+		mock := &multiFileDownloadSource{
+			mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+			files: []domain.DownloadableFile{
+				{ID: "main20", Name: "Main", FileName: "mod1-main.esp", Version: "2.0", IsPrimary: true},
+				{ID: "patch14", Name: "Patch", FileName: "mod1-patch14.esp", Version: "1.4"},
+			},
+		}
+		defer mock.Close()
+		svc.RegisterSource(mock)
+		mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+		mock.AddDownload("main20", []byte("main-content"))
+		mock.AddDownload("patch14", []byte("patch14-content"))
+
+		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0", FileIDReplacements: map[string]string{"patch13": "patch14"}}
+		_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		require.NoError(t, err)
+
+		updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"patch14"}, updated.FileIDs,
+			"the explicit supersede mapping must outrank the target version's primary file")
+
+		_, statErr := os.Stat(filepath.Join(gameDir, "mod1-patch14.esp"))
+		assert.NoError(t, statErr, "the superseding file must be the one deployed")
+		_, statErr = os.Stat(filepath.Join(gameDir, "mod1-main.esp"))
+		assert.True(t, os.IsNotExist(statErr), "the unrelated main file must not be pulled in")
+	})
 }
 
 // TestService_ApplyUpdate_RollbackPreconditionPreserved is the mandatory

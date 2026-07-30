@@ -1299,6 +1299,10 @@ func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []stri
 		}
 		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", core.ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
 	}
+	// This "stored subset, else primary, else first" tail is the twin of
+	// internal/core/flows.go's pickVersionMatch, shared there by
+	// selectVersionedDeployFiles (#96) and selectUpdateDeployFiles (#143) -
+	// mirror any change to it here, and vice versa.
 	if len(storedFileIDs) > 0 {
 		var stored []*domain.DownloadableFile
 		for _, m := range matches {
