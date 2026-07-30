@@ -3873,7 +3873,9 @@ func lockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModRe
 // ApplyUpdate applies upd to the installed mod it references
 // (upd.InstalledMod), following cmd/lmm/update.go's pre-extraction
 // applyUpdate ordering exactly: GetMod (the new version) -> GetModFiles ->
-// resolve FileIDReplacements -> download -> hooks -> installer.Replace ->
+// resolve FileIDReplacements -> download -> hooks ->
+// installer.ReplaceForUpdate (Replace at extraction time; it has since
+// gained the file-ID transition for #144 item 4's same-version shape) ->
 // ApplyModUpdate -> SetModLinkMethod -> UpsertMod. This is a
 // behavior-preserving extraction - see the task report for the full mapping.
 //
@@ -3908,8 +3910,9 @@ func lockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModRe
 //
 // A failure to write ApplyModUpdate or UpsertMod triggers the same
 // best-effort compensating actions applyUpdate itself performed (a reverse
-// Installer.Replace to restore the old deployment, plus - for UpsertMod - a
-// RollbackModVersion to undo the DB version swap first); a failure to write
+// Installer.ReplaceForUpdate - the file-ID transition reversed - to restore
+// the old deployment, plus - for UpsertMod - a RollbackModVersion to undo
+// the DB version swap first); a failure to write
 // SetModLinkMethod is NOT rolled back, matching applyUpdate exactly (it only
 // ever produced a --verbose-gated Note).
 //
@@ -4044,7 +4047,16 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		emit(evt)
 	}
 
-	if err := installer.Replace(ctx, game, &mod.Mod, newMod, profileName); err != nil {
+	// #144 item 4: the mod's file-ID transition (installed set -> downloaded
+	// set) rides along so the degenerate same-version shape - old and new
+	// files sharing ONE version-keyed cache dir, where the plain union
+	// replace could never undeploy a superseded file's members - can narrow
+	// the deploy set to what the new IDs actually own. The compensation
+	// paths below pass the transition REVERSED: an update that failed to
+	// commit must restore the old IDs' members and remove the uncommitted
+	// new file's sole members, not leave both deployed. See
+	// Installer.ReplaceForUpdate / resolveSharedDirUpdate.
+	if err := installer.ReplaceForUpdate(ctx, game, &mod.Mod, newMod, profileName, mod.FileIDs, downloadedFileIDs); err != nil {
 		return result, fmt.Errorf("deploying update: %w", err)
 	}
 
@@ -4066,7 +4078,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	if err := s.ApplyModUpdate(mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
-		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(ctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
 
@@ -4081,8 +4093,8 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	pm := s.NewProfileManager()
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName) //nolint:errcheck // best-effort recovery on an already-erroring path
-		_ = installer.Replace(ctx, game, newMod, &mod.Mod, profileName)      //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)                                     //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(ctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
 
