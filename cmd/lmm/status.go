@@ -268,8 +268,8 @@ type statusGameDetailJSON struct {
 	// overrides existed read this key as the game's setting, so its meaning
 	// stays put and the profile-aware fields below are additive instead.
 	LinkMethod string `json:"link_method"`
-	// EffectiveLinkMethod is what deploys into the active profile actually
-	// use (profile > game > global) - the JSON twin of the text output's
+	// EffectiveLinkMethod is what a deploy into the active profile actually
+	// uses (profile > game > global) - the JSON twin of the text output's
 	// Link Method line. LinkMethodSource says which level won: "profile",
 	// "game", or "global". Both are always present; with no profile
 	// override they equal LinkMethod and its level.

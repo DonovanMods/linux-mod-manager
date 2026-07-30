@@ -432,7 +432,7 @@ Mods can be deployed using three methods:
 
 **Priority**: A profile-level `link_method` (in the profile's YAML) takes precedence over the per-game `link_method` in `games.yaml`, which takes precedence over `default_link_method` in `config.yaml`. If none is set, defaults to `symlink`. An explicit `--method` flag (e.g. `lmm deploy --method`) beats all three. See [Configuration reference](docs/configuration.md) for details, including an upgrade note for profiles saved before v1.14.1.
 
-`lmm status -g <game>` shows the effective method for the active profile, marked `(per-profile)`, `(per-game)`, or `(global default)`. In `--json` output, `link_method` reports the game-level resolution (game override or global default, unchanged for compatibility), while `effective_link_method` and `link_method_source` (`profile`, `game`, or `global`) report what deploys into the active profile actually use.
+`lmm status -g <game>` shows the effective method for the active profile, marked `(per-profile)`, `(per-game)`, or `(global default)`. In `--json` output, `link_method` reports the game-level resolution (game override or global default, unchanged for compatibility), while `effective_link_method` and `link_method_source` (`profile`, `game`, or `global`) report what a deploy into the active profile actually uses.
 
 ### Cache Path Priority
 
