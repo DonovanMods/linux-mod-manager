@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui/prototype"
@@ -816,7 +817,9 @@ func (p *prototypeProvider) AvailableVersions(_ context.Context, item ModItem) (
 	if p.findInstalledIndex(item.Source, item.ID) < 0 {
 		return nil, fmt.Errorf("mod not found: %s", item.ID)
 	}
-	return prototypeAvailableVersions, nil
+	// Defensive copy: the canned list is package-level shared state, and a
+	// caller mutating its result in place must not corrupt later calls.
+	return slices.Clone(prototypeAvailableVersions), nil
 }
 
 // PurgeProfile emits one fake progress tick per canned InstalledMods entry
