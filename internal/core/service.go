@@ -572,7 +572,11 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		if members, err = relativeFileMembers(localPath); err != nil {
 			return nil, fmt.Errorf("listing mod directory: %w", err)
 		}
-		if checksum, err = digestDirectoryMembers(localPath, members); err != nil {
+		// Digest the STAGED copies, not localPath: staging holds the exact
+		// bytes the commit below publishes, while the live source directory
+		// can change mid-ingest - hashing it here could persist a checksum
+		// for content that was never cached (review finding on #164).
+		if checksum, err = digestDirectoryMembers(stagePath, members); err != nil {
 			return nil, fmt.Errorf("fingerprinting mod directory: %w", err)
 		}
 	case game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(localPath):
@@ -631,7 +635,10 @@ func md5File(path string) (string, error) {
 
 // digestDirectoryMembers returns a deterministic hex MD5 fingerprint of a
 // directory ingest's member set: each member's root-relative slash path plus
-// the MD5 of its content, folded in sorted path order. Re-ingesting an
+// the MD5 of its content under root, folded in sorted path order. root is
+// the directory holding the bytes to fingerprint - for ingests, the STAGING
+// copy, so the stored value describes exactly what gets committed to the
+// cache even if the live source changes mid-ingest. Re-ingesting an
 // unchanged source directory reproduces the value bit-for-bit (#164: verify
 // --fix and reinstalls must converge on the stored value), while any member
 // edit, rename, addition, or removal changes it - a real drift fingerprint.
