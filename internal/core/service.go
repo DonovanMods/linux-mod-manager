@@ -2,8 +2,11 @@ package core
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -535,7 +538,15 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 
 // ingestLocalToCache copies a local mod (directory or archive) into the cache
 // using the same staging/commit flow as downloaded mods. Local ingests have no
-// download checksum, so DownloadModResult.Checksum is empty.
+// HTTP download checksum, so DownloadModResult.Checksum is computed from the
+// SOURCE instead (#164): the MD5 of the local file for file/archive ingests
+// (the same fingerprint the download path records for a fetched archive), or
+// a deterministic digest over the member set for directory ingests
+// (digestDirectoryMembers). Both are pure functions of the source content, so
+// a later re-ingest of an unchanged source reproduces the stored value and
+// install/verify --fix converge instead of looping on NO CHECKSUM. A
+// directory with no regular files yields an empty checksum - nothing to
+// fingerprint - and callers must report that honestly.
 func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, localPath string) (*DownloadModResult, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
@@ -549,6 +560,7 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
 	var members []string
+	var checksum string
 	switch {
 	case info.IsDir():
 		if err := copyDir(localPath, stagePath); err != nil {
@@ -559,6 +571,13 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		// members belong to other file IDs.
 		if members, err = relativeFileMembers(localPath); err != nil {
 			return nil, fmt.Errorf("listing mod directory: %w", err)
+		}
+		// Digest the STAGED copies, not localPath: staging holds the exact
+		// bytes the commit below publishes, while the live source directory
+		// can change mid-ingest - hashing it here could persist a checksum
+		// for content that was never cached (review finding on #164).
+		if checksum, err = digestDirectoryMembers(stagePath, members); err != nil {
+			return nil, fmt.Errorf("fingerprinting mod directory: %w", err)
 		}
 	case game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(localPath):
 		// file.FileName is the declared name for this mod file - use it so
@@ -575,9 +594,15 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
 		members = []string{destName}
+		if checksum, err = md5File(localPath); err != nil {
+			return nil, fmt.Errorf("hashing local mod file: %w", err)
+		}
 	default:
 		if members, err = s.extractIntoStaging(localPath, cachePath, stagePath); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
+		}
+		if checksum, err = md5File(localPath); err != nil {
+			return nil, fmt.Errorf("hashing local mod archive: %w", err)
 		}
 	}
 
@@ -589,7 +614,51 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 	if err != nil {
 		return nil, err
 	}
-	return &DownloadModResult{FilesExtracted: len(files)}, nil
+	return &DownloadModResult{FilesExtracted: len(files), Checksum: checksum}, nil
+}
+
+// md5File returns the hex MD5 of the file at path - the same fingerprint the
+// HTTP download path records for a fetched archive (Downloader), so local
+// file/archive ingests store values with identical semantics.
+func md5File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close() //nolint:errcheck
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// digestDirectoryMembers returns a deterministic hex MD5 fingerprint of a
+// directory ingest's member set: each member's root-relative slash path plus
+// the MD5 of its content under root, folded in sorted path order. root is
+// the directory holding the bytes to fingerprint - for ingests, the STAGING
+// copy, so the stored value describes exactly what gets committed to the
+// cache even if the live source changes mid-ingest. Re-ingesting an
+// unchanged source directory reproduces the value bit-for-bit (#164: verify
+// --fix and reinstalls must converge on the stored value), while any member
+// edit, rename, addition, or removal changes it - a real drift fingerprint.
+// An empty member set returns "": there is nothing to fingerprint, and
+// recording a meaningless constant would defeat the honesty guarantee.
+func digestDirectoryMembers(root string, members []string) (string, error) {
+	if len(members) == 0 {
+		return "", nil
+	}
+	sorted := append([]string(nil), members...)
+	sort.Strings(sorted)
+	h := md5.New()
+	for _, m := range sorted {
+		fileSum, err := md5File(filepath.Join(root, m))
+		if err != nil {
+			return "", fmt.Errorf("hashing member %s: %w", m, err)
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%s\n", filepath.ToSlash(m), fileSum) // hash.Hash writes never fail
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // prepareStaging computes the cache/staging paths for (game, mod) and readies

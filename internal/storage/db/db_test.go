@@ -508,6 +508,27 @@ func TestSaveFileChecksum(t *testing.T) {
 	checksum, err := database.GetFileChecksum("nexusmods", "12345", "skyrim-se", "default", "67890")
 	require.NoError(t, err)
 	assert.Equal(t, "a1b2c3d4e5f6", checksum)
+
+	// Re-saving the SAME value must stay a success: SQLite's changes()
+	// counts rows matched by the UPDATE even when the new value equals the
+	// old (unlike MySQL), so the RowsAffected guard added for #164 must not
+	// misread an idempotent re-save as "row missing".
+	err = database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "67890", "a1b2c3d4e5f6")
+	require.NoError(t, err, "idempotent same-value checksum re-save must not trip the 0-rows guard")
+}
+
+// TestSaveFileChecksum_NoMatchingRow_ReturnsError guards the latent defect
+// from #164: SaveFileChecksum is an UPDATE, and with no RowsAffected check a
+// write against a row that doesn't exist silently no-ops - the caller
+// believes the checksum was persisted when nothing happened.
+func TestSaveFileChecksum_NoMatchingRow_ReturnsError(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	err = database.SaveFileChecksum("nexusmods", "nonexistent", "skyrim-se", "default", "99999", "a1b2c3d4e5f6")
+	require.Error(t, err, "updating a nonexistent installed_mod_files row must fail loudly, not silently no-op")
+	assert.Contains(t, err.Error(), "no installed file row")
 }
 
 func TestGetFileChecksum_NotFound(t *testing.T) {

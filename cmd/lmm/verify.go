@@ -54,8 +54,12 @@ Each file is reported with one of:
     ? Unknown mod ID - SKIPPED          checksum row references a mod no longer installed
 
 Use --fix to re-download files that are MISSING or have NO CHECKSUM,
-storing a fresh checksum afterwards. FILE COUNT MISMATCH and SKIPPED
-are not repaired by --fix.
+storing a fresh checksum afterwards. "OK (checksum populated)" is only
+reported when a checksum was actually written; if the re-download
+succeeds but yields no checksum to store (e.g. a directory-source mod
+whose directory holds no regular files), the NO CHECKSUM warning remains
+with a note explaining why. FILE COUNT MISMATCH and SKIPPED are not
+repaired by --fix.
 
 verify also contacts each installed mod's source to check its recorded
 version against what the stored file ID(s) actually are upstream (issue
@@ -113,9 +117,10 @@ status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
 "version_unverifiable"; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
-redownload failure's reason, a file-count-check lookup failure, a --fix
-refusal on a locked record ("locked"), or a locked record's pending
-convergence detail - and is omitted otherwise. issues counts MISSING files
+redownload failure's reason, why a successful re-download stored no
+checksum, a file-count-check lookup failure, a --fix refusal on a locked
+record ("locked"), or a locked record's pending convergence detail - and
+is omitted otherwise. issues counts MISSING files
 and VERSION MISMATCH rows (a successful --fix repair of either decrements
 it back out; a locked VERSION MISMATCH stays counted since --fix refuses
 it); warnings counts everything else that isn't OK. Lock-pending-
@@ -476,7 +481,9 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			}
 			issues++
 			if verifyFix && mod.SourceID != domain.SourceLocal {
-				if err := redownloadModFile(cmd, svc, game, profile, mod, f.FileID); err != nil {
+				persisted, err := redownloadModFile(cmd, svc, game, profile, mod, f.FileID)
+				switch {
+				case err != nil:
 					if jsonOutput {
 						// audit Finding 7: the row was already appended
 						// above (Status "missing") - the failure reason
@@ -485,13 +492,27 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 					} else {
 						fmt.Printf("  Re-download failed: %v\n", err)
 					}
-				} else {
+				case persisted:
 					if !jsonOutput {
 						fmt.Printf("  %s\n", colorGreen("Re-downloaded OK"))
 					} else {
 						jsonFiles[len(jsonFiles)-1].Status = "ok"
 					}
 					issues--
+				default:
+					// The re-download restored the cache - the MISSING issue
+					// is genuinely repaired - but no checksum was available
+					// to store, so the row remains a NO CHECKSUM warning
+					// (#164: don't report "ok" for a write that never
+					// happened).
+					if jsonOutput {
+						jsonFiles[len(jsonFiles)-1].Status = "no_checksum"
+						jsonFiles[len(jsonFiles)-1].Note = "re-downloaded, but no checksum was available to store"
+					} else {
+						fmt.Printf("  Re-downloaded, but no checksum was available to store - NO CHECKSUM remains\n")
+					}
+					issues--
+					warnings++
 				}
 			}
 			continue
@@ -500,7 +521,9 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		// Check if checksum stored
 		if f.Checksum == "" {
 			if verifyFix && mod.SourceID != domain.SourceLocal {
-				if err := redownloadModFile(cmd, svc, game, profile, mod, f.FileID); err != nil {
+				persisted, err := redownloadModFile(cmd, svc, game, profile, mod, f.FileID)
+				switch {
+				case err != nil:
 					if jsonOutput {
 						// audit Finding 7: the failure reason must reach
 						// --json, not just the text-mode line below.
@@ -510,12 +533,24 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 						fmt.Printf("  Re-download to populate checksum failed: %v\n", err)
 					}
 					warnings++
-				} else {
+				case persisted:
 					if jsonOutput {
 						jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"})
 					} else {
 						fmt.Printf("%s %s (%s) - %s (checksum populated)\n", colorGreen("+"), mod.Name, f.FileID, colorGreen("OK"))
 					}
+				default:
+					// The download succeeded but produced no checksum to
+					// store - nothing was written, so the warning stands
+					// with an honest reason (#164: "checksum populated" was
+					// a lie here, and the summary lied with it).
+					if jsonOutput {
+						jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "re-downloaded, but no checksum was available to store"})
+					} else {
+						fmt.Printf("%s %s (%s) - NO CHECKSUM\n", colorYellow("?"), mod.Name, f.FileID)
+						fmt.Printf("  Re-downloaded, but no checksum was available to store\n")
+					}
+					warnings++
 				}
 				continue
 			}
@@ -1121,12 +1156,17 @@ func relinkDeployedRow(cmd *cobra.Command, svc *core.Service, game *domain.Game,
 	return nil, nil, undeployErr
 }
 
-// redownloadModFile re-downloads a single mod file and extracts to cache, then updates checksum in DB.
-func redownloadModFile(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, fileID string) error {
+// redownloadModFile re-downloads a single mod file and extracts it to the
+// cache, then updates the checksum in the DB. persisted reports whether a
+// checksum row was actually written: a download can succeed while yielding no
+// checksum to store (e.g. a directory-source mod whose directory holds no
+// regular files), and callers must not report "checksum populated" on the
+// strength of a nil error alone (#164) - only when persisted is true.
+func redownloadModFile(cmd *cobra.Command, svc *core.Service, game *domain.Game, profile string, mod *domain.InstalledMod, fileID string) (persisted bool, err error) {
 	ctx := cmd.Context()
 	files, err := svc.GetModFiles(ctx, mod.SourceID, sourceMappedMod(game, &mod.Mod))
 	if err != nil {
-		return fmt.Errorf("getting mod files: %w", err)
+		return false, fmt.Errorf("getting mod files: %w", err)
 	}
 	var downloadFile *domain.DownloadableFile
 	for i := range files {
@@ -1136,16 +1176,17 @@ func redownloadModFile(cmd *cobra.Command, svc *core.Service, game *domain.Game,
 		}
 	}
 	if downloadFile == nil {
-		return fmt.Errorf("file %s not found in mod", fileID)
+		return false, fmt.Errorf("file %s not found in mod", fileID)
 	}
 	result, err := svc.DownloadMod(ctx, mod.SourceID, game, &mod.Mod, downloadFile, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if result.Checksum != "" {
-		if err := svc.SaveFileChecksum(mod.SourceID, mod.ID, game.ID, profile, fileID, result.Checksum); err != nil {
-			return fmt.Errorf("saving checksum: %w", err)
-		}
+	if result.Checksum == "" {
+		return false, nil
 	}
-	return nil
+	if err := svc.SaveFileChecksum(mod.SourceID, mod.ID, game.ID, profile, fileID, result.Checksum); err != nil {
+		return false, fmt.Errorf("saving checksum: %w", err)
+	}
+	return true, nil
 }

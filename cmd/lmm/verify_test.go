@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -1740,6 +1741,222 @@ func TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected a mod1 file entry in JSON files: %+v", result.Files)
+}
+
+// --- doVerify --fix checksum persistence for directory sources (#164) ---
+//
+// setupDoVerifyDirectorySourceTest reproduces the live #164 state: a real
+// custom directory source (file ID "main", file:// download URL → local
+// ingest) with one installed mod whose installed_mod_files row has a NULL
+// checksum. memberFiles maps member-relative paths to contents; an empty map
+// yields a mod directory with no regular files (no content to fingerprint).
+// When ingest is true the mod is pre-ingested into the cache the same way
+// install did - on the broken build that stores content but never a checksum.
+func setupDoVerifyDirectorySourceTest(t *testing.T, modDirName string, memberFiles map[string]string, ingest bool) (*cobra.Command, *core.Service, *domain.Game, *domain.Mod) {
+	t.Helper()
+
+	root := t.TempDir()
+	modDir := filepath.Join(root, modDirName)
+	require.NoError(t, os.MkdirAll(modDir, 0755))
+	for name, content := range memberFiles {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(modDir, name)), 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(modDir, name), []byte(content), 0644))
+	}
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	src, err := custom.New(custom.SourceDefinition{
+		ID:        "my-mods",
+		Name:      "My Mods",
+		Type:      custom.TypeDirectory,
+		Directory: &custom.DirectoryConfig{Path: root},
+	})
+	require.NoError(t, err)
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "7dtd", Name: "7 Days to Die", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs:  map[string]string{"my-mods": ""}, // README-documented empty mapping for directory sources
+		DeployMode: domain.DeployExtract,
+	}
+
+	ctx := context.Background()
+	mod, err := svc.GetMod(ctx, "my-mods", game.ID, modDirName)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod: *mod, ProfileName: "default", Enabled: true, FileIDs: []string{"main"},
+	}))
+
+	if ingest {
+		files, err := svc.GetModFiles(ctx, "my-mods", mod)
+		require.NoError(t, err)
+		require.Len(t, files, 1)
+		_, err = svc.DownloadMod(ctx, "my-mods", game, mod, &files[0], nil)
+		require.NoError(t, err)
+	}
+
+	verifyProfile = "default"
+	t.Cleanup(func() { verifyProfile = "" })
+	verifyFix = true
+	t.Cleanup(func() { verifyFix = false })
+	oldNoColor := noColor
+	noColor = true
+	t.Cleanup(func() { noColor = oldNoColor })
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	return cmd, svc, game, mod
+}
+
+// storedChecksum returns the checksum recorded for (sourceID, modID, fileID)
+// in the given game/profile, failing the test if the row is absent.
+func storedChecksum(t *testing.T, svc *core.Service, gameID, profile, sourceID, modID, fileID string) string {
+	t.Helper()
+	files, err := svc.GetFilesWithChecksums(gameID, profile)
+	require.NoError(t, err)
+	for _, f := range files {
+		if f.SourceID == sourceID && f.ModID == modID && f.FileID == fileID {
+			return f.Checksum
+		}
+	}
+	t.Fatalf("no installed file row for %s/%s file %s in %+v", sourceID, modID, fileID, files)
+	return ""
+}
+
+// TestDoVerify_Fix_DirectorySource_PersistsChecksum_SecondRunClean is THE
+// #164 regression test: `verify --fix` on a directory-source mod (NULL
+// checksum) must actually persist a checksum - re-read from the DB, not
+// trusted from stdout - and a second verify run must come back clean instead
+// of warning NO CHECKSUM forever.
+func TestDoVerify_Fix_DirectorySource_PersistsChecksum_SecondRunClean(t *testing.T) {
+	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "BiggerBackpack",
+		map[string]string{"ModInfo.xml": `<?xml version="1.0"?><xml><Name value="BiggerBackpack"/><Version value="1.2.0"/></xml>`}, true)
+
+	require.Empty(t, storedChecksum(t, svc, game.ID, "default", "my-mods", "BiggerBackpack", "main"),
+		"fixture must start with a NULL checksum")
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "checksum populated")
+
+	assert.NotEmpty(t, storedChecksum(t, svc, game.ID, "default", "my-mods", "BiggerBackpack", "main"),
+		"--fix claimed 'checksum populated', so a checksum must actually be in the DB")
+
+	secondRun := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.NotContains(t, secondRun, "NO CHECKSUM", "the fix must converge - no permanent NO CHECKSUM loop")
+	assert.Contains(t, secondRun, "All files verified OK.")
+}
+
+// TestDoVerify_Fix_NoChecksum_NotPersisted_HonestWarning covers the honesty
+// half of #164 when there is genuinely no checksum to store (a directory mod
+// with no regular files): --fix must NOT claim "checksum populated" - the
+// NO CHECKSUM warning stays, with a note saying why, and is still counted.
+func TestDoVerify_Fix_NoChecksum_NotPersisted_HonestWarning(t *testing.T) {
+	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, true)
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "checksum populated", "no write happened - claiming success is the #164 lie")
+	assert.Contains(t, out, "NO CHECKSUM", "the warning must survive an unproductive --fix attempt")
+	assert.Contains(t, out, "no checksum was available", "the user must learn why --fix could not populate it")
+	// 2 warnings: the honest NO CHECKSUM one under test, plus the
+	// pre-existing FILE COUNT MISMATCH a fileless mod's empty cache entry
+	// legitimately draws from the file-count pre-pass.
+	assert.Contains(t, out, "2 warning(s)", "an unpersisted checksum must still be counted as a warning")
+}
+
+// TestDoVerify_Fix_NoChecksum_NotPersisted_JSONStaysNoChecksum is the --json
+// counterpart: status must stay "no_checksum" (not flip to "ok") with a note,
+// and the warnings counter must reflect it.
+func TestDoVerify_Fix_NoChecksum_NotPersisted_JSONStaysNoChecksum(t *testing.T) {
+	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, true)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "EmptyMod-1.0" && f.FileID == "main" {
+			found = true
+			assert.Equal(t, "no_checksum", f.Status, "no write happened, so the row must not claim ok")
+			assert.NotEmpty(t, f.Note, "the reason no checksum was stored must reach --json")
+		}
+	}
+	assert.True(t, found, "expected an EmptyMod-1.0 file entry in JSON files: %+v", result.Files)
+	// 2 warnings: the honest no_checksum one under test, plus the
+	// pre-existing file_count_mismatch a fileless mod's empty cache entry
+	// legitimately draws from the file-count pre-pass.
+	assert.Equal(t, 2, result.Warnings, "an unpersisted checksum must still be counted as a warning")
+}
+
+// TestDoVerify_Fix_Missing_NotPersisted_JSONStaysNoChecksum covers the
+// MISSING branch's honesty (#164, "one step removed"): the re-ingest restores
+// the cache (so the MISSING issue is genuinely resolved) but stores no
+// checksum, so the row must surface as no_checksum with a note - not "ok".
+func TestDoVerify_Fix_Missing_NotPersisted_JSONStaysNoChecksum(t *testing.T) {
+	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, false)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+
+	found := false
+	for _, f := range result.Files {
+		if f.ModID == "EmptyMod-1.0" && f.FileID == "main" {
+			found = true
+			assert.Equal(t, "no_checksum", f.Status, "cache was restored but no checksum stored - the row must say so, not claim ok")
+			assert.NotEmpty(t, f.Note, "the reason no checksum was stored must reach --json")
+		}
+	}
+	assert.True(t, found, "expected an EmptyMod-1.0 file entry in JSON files: %+v", result.Files)
+	assert.Equal(t, 0, result.Issues, "the MISSING issue itself was genuinely repaired")
+	assert.Equal(t, 1, result.Warnings, "the unpersisted checksum must still be counted as a warning")
+}
+
+// TestDoVerify_Fix_Missing_DirectorySource_RedownloadPersistsChecksum: the
+// MISSING branch's success path for a real directory mod - the re-ingest both
+// restores the cache AND persists a checksum, so the run repairs completely.
+func TestDoVerify_Fix_Missing_DirectorySource_RedownloadPersistsChecksum(t *testing.T) {
+	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "BiggerBackpack",
+		map[string]string{"ModInfo.xml": `<?xml version="1.0"?><xml><Name value="BiggerBackpack"/><Version value="1.2.0"/></xml>`}, false)
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "MISSING")
+	assert.Contains(t, out, "Re-downloaded OK")
+
+	assert.NotEmpty(t, storedChecksum(t, svc, game.ID, "default", "my-mods", "BiggerBackpack", "main"),
+		"a MISSING repair for a directory mod must persist the checksum too")
+
+	secondRun := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, secondRun, "All files verified OK.")
 }
 
 // --- doVerify lock-awareness (#97, Task 8) ---

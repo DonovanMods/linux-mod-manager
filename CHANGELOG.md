@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `lmm verify --fix` no longer reports "OK (checksum populated)" — and `--json` no longer flips the row to `"ok"` — for a repair that persisted nothing: success is only claimed when a checksum was actually written, and a re-download that yields no checksum to store keeps the NO CHECKSUM warning (counted in the summary) with an honest note saying why; the MISSING repair path gets the same honesty one step removed. The root cause is also fixed: local ingests now produce a checksum for the install/verify paths to record — the MD5 of the source file for file/archive ingests (matching the download path's MD5-of-archive), and a deterministic member-set digest (sorted relative path + content MD5 per member) for directory ingests, so re-ingesting an unchanged source reproduces the stored value and directory-source mods (file ID `main`) converge to a clean `verify` instead of warning NO CHECKSUM — and being redundantly re-copied into the cache — on every run, forever. Install-time recording benefits automatically, so newly installed directory-source mods start with checksums. Latent hardening: the checksum DB write now errors when it matches no installed-file row instead of silently no-opping (#164)
+
 ## [1.27.0] - 2026-07-30
 
 ### Added
