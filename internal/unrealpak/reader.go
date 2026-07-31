@@ -93,6 +93,51 @@ func (r *Reader) Files() []FileEntry {
 	return out
 }
 
+// ReadFile returns the bytes of the entry at mount-relative path.
+//
+// On-disk entry data is preceded by a full FPakEntry header — 53 bytes for a
+// stored entry (Offset, Size, UncompressedSize, CompressionMethodIndex, Hash,
+// Flags, CompressionBlockSize) — and the index's offset points at that header,
+// not the payload. The header is re-read and cross-checked rather than trusted:
+// its method and size must agree with the index, and its Hash must match the
+// payload's SHA1. Real paks satisfy all three (verified across a whole install),
+// so a disagreement means corruption or a layout this package misread.
+func (r *Reader) ReadFile(path string) ([]byte, error) {
+	for _, e := range r.entries {
+		if e.Path != path {
+			continue
+		}
+		// Compression is refused here rather than at index-parse time so that
+		// Files() can still enumerate real paks, most of whose entries are
+		// Oodle-compressed. No caller can obtain wrong bytes either way.
+		if e.method != 0 {
+			return nil, fmt.Errorf("unrealpak: %s: %w: compressed entry (method %d)",
+				path, ErrUnsupportedFormat, e.method)
+		}
+		hdr := make([]byte, storedHeaderSize)
+		if _, err := r.f.ReadAt(hdr, e.offset); err != nil {
+			return nil, fmt.Errorf("unrealpak: %s: reading entry header: %w", path, err)
+		}
+		if m := int32(binary.LittleEndian.Uint32(hdr[24:28])); m != 0 {
+			return nil, fmt.Errorf("unrealpak: %s: %w: compressed entry data (method %d)",
+				path, ErrUnsupportedFormat, m)
+		}
+		if size := int64(binary.LittleEndian.Uint64(hdr[8:16])); size != e.Size {
+			return nil, fmt.Errorf("unrealpak: %s: entry header size %d disagrees with index size %d",
+				path, size, e.Size)
+		}
+		buf := make([]byte, e.Size)
+		if _, err := r.f.ReadAt(buf, e.offset+storedHeaderSize); err != nil {
+			return nil, fmt.Errorf("unrealpak: reading %s: %w", path, err)
+		}
+		if sum := sha1.Sum(buf); !bytes.Equal(sum[:], hdr[28:48]) { //nolint:gosec
+			return nil, fmt.Errorf("unrealpak: %s: content hash mismatch", path)
+		}
+		return buf, nil
+	}
+	return nil, fmt.Errorf("unrealpak: %s: %w", path, os.ErrNotExist)
+}
+
 type footer struct {
 	version        int32
 	indexOffset    int64

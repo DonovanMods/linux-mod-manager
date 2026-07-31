@@ -187,3 +187,45 @@ func TestReader_Open_RejectsCorruptedDirectoryIndex(t *testing.T) {
 		t.Fatal("expected error for corrupted directory index, got nil")
 	}
 }
+
+func TestReader_ReadFile(t *testing.T) {
+	content := []byte(`{"hello":"world"}`)
+	path := writeMinimalPak(t, "Icarus/Content/Data/Test.json", content)
+
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close()
+
+	got, err := r.ReadFile("Icarus/Content/Data/Test.json")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("got %q, want %q", got, content)
+	}
+
+	if _, err := r.ReadFile("does/not/exist.json"); err == nil {
+		t.Error("expected error for missing file, got nil")
+	}
+}
+
+func TestReader_ReadFile_RejectsCompressedEntry(t *testing.T) {
+	const name = "Items/D_ItemsStatic.json"
+	path := writeMinimalPakMethod(t, name, []byte(`{"a":1}`), 1) // 1 = Oodle
+
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close()
+
+	// Enumeration must still work — the reader lists compressed entries.
+	if files := r.Files(); len(files) != 1 || files[0].Path != name {
+		t.Fatalf("Files() = %+v, want one entry named %q", files, name)
+	}
+	if _, err := r.ReadFile(name); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("ReadFile error = %v, want ErrUnsupportedFormat", err)
+	}
+}
