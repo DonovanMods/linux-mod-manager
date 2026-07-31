@@ -225,9 +225,11 @@ func parseManifest(body []byte) FileManifest {
 // despite a complete cache.
 //
 // LEGACY ENTRIES: a cache directory populated before markers existed (or by
-// `lmm import`, which writes cache entries directly) carries no markers and
-// therefore reads as incomplete. That costs exactly one redundant redownload,
-// which commits markers on the way through and makes every later check a hit.
+// an `lmm import` that could not resolve the archive against its source's
+// file listing - source-linked imports that do resolve stamp the marker at
+// import time, #139) carries no markers and therefore reads as incomplete.
+// That costs exactly one redundant redownload, which commits markers on the
+// way through and makes every later check a hit.
 //
 // An empty/nil fileIDs degrades to Exists - there is nothing left to verify
 // beyond the directory's presence. An unverifiable ID (blank, or carrying a

@@ -187,6 +187,75 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	}, nil
 }
 
+// matchImportedFile picks the source file an imported archive corresponds
+// to (#139): exact FileName match first, then - only when allowVersionFallback
+// is set (the --id archive path, where the user asserted the mod identity) -
+// the sole file carrying the imported version. Any ambiguity (several
+// candidates) resolves to nil rather than a guess: a marker stamped with the
+// wrong file ID is worse provenance than no marker at all. version "" and
+// the importer's "unknown" sentinel never version-match.
+func matchImportedFile(files []domain.DownloadableFile, archiveFilename, version string, allowVersionFallback bool) *domain.DownloadableFile {
+	var exact *domain.DownloadableFile
+	for i := range files {
+		if files[i].FileName != archiveFilename {
+			continue
+		}
+		if exact != nil {
+			return nil
+		}
+		exact = &files[i]
+	}
+	if exact != nil {
+		return exact
+	}
+	if !allowVersionFallback || version == "" || version == "unknown" {
+		return nil
+	}
+	var byVersion *domain.DownloadableFile
+	for i := range files {
+		if files[i].Version != version {
+			continue
+		}
+		if byVersion != nil {
+			return nil
+		}
+		byVersion = &files[i]
+	}
+	return byVersion
+}
+
+// ResolveImportedFile resolves the source file an imported archive
+// corresponds to (#139): sourceMod is the already-fetched source mod (the
+// import flow fetched it for metadata enrichment or scan matching), version
+// the version the import recorded locally. Matching follows
+// matchImportedFile's rules; a clean no-match or ambiguity is (nil, nil), an
+// error only reports a failed source listing - callers treat it as
+// non-fatal and keep the import marker-less.
+func (s *Service) ResolveImportedFile(ctx context.Context, sourceID string, sourceMod *domain.Mod, archiveFilename, version string, allowVersionFallback bool) (*domain.DownloadableFile, error) {
+	files, err := s.GetModFiles(ctx, sourceID, sourceMod)
+	if err != nil {
+		return nil, fmt.Errorf("listing source files: %w", err)
+	}
+	return matchImportedFile(files, archiveFilename, version, allowVersionFallback), nil
+}
+
+// MarkImportedFileComplete stamps fileID's completion marker - with the
+// entry's member manifest - onto mod's import-written cache entry (#139), so
+// the file-granular cache-first guards (Cache.HasFileIDs) recognize the
+// entry instead of forcing one redundant redownload, and provenance-based
+// undeploy narrowing can attribute its members. Import writes the cache
+// directly (no staging commit), so the marker is stamped after the fact;
+// the members are whatever the entry actually holds.
+func (s *Service) MarkImportedFileComplete(game *domain.Game, mod *domain.Mod, fileID string) error {
+	gameCache := s.GetGameCache(game)
+	members, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if err != nil {
+		return fmt.Errorf("listing cache members: %w", err)
+	}
+	versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	return cache.MarkFileCompleteWithMembers(versionDir, fileID, members)
+}
+
 // copyDir recursively copies a directory using streaming I/O to avoid loading
 // entire files into memory (important for large mod archives). It is the
 // cross-device-rename fallback in Import, so it must handle whatever an
@@ -318,6 +387,12 @@ type ScanResult struct {
 	MatchedSource  string      // a configured source's ID (any registered source, not just curseforge/nexusmods), or "local"
 	AlreadyTracked bool        // True if already in lmm database
 	Error          error       // Any error during processing
+
+	// ResolvedFile is the matched source's own file this scanned archive
+	// corresponds to (#139), when the import flow could resolve one (exact
+	// FileName match via ResolveImportedFile); nil otherwise. Set by the
+	// import flow after source matching, not by ScanModPath itself.
+	ResolvedFile *domain.DownloadableFile
 }
 
 // ScanOptions configures the scan operation
