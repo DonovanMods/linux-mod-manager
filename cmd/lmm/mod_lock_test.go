@@ -277,6 +277,58 @@ func TestDoModUnlock_ClearsMarkerLeavesVersionIntact(t *testing.T) {
 	assert.Equal(t, "2.0", profile.Mods[0].Version, "unlock must not touch Version")
 }
 
+// TestDoModUnlock_AlreadyUnlocked_IdempotentSuccess (#143 polish) pins
+// unlock-of-unlocked, verified safe by inspection: ClearModLock re-saves
+// Locked=false regardless of prior state, so the command succeeds with the
+// same "✓ ... unlocked" output as a real unlock, and the ref's Version is
+// untouched. Pinned so a future "refuse when not locked" change is a
+// deliberate contract break, not an accident.
+func TestDoModUnlock_AlreadyUnlocked_IdempotentSuccess(t *testing.T) {
+	svc, game, _ := setupDoModLockTest(t)
+	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
+
+	out := captureStdout(t, func() error {
+		return doModUnlock(svc, game, "a")
+	})
+
+	assert.Contains(t, out, "✓ Mod A unlocked (update policy: notify)")
+
+	profile, err := config.LoadProfile(configDir, game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.False(t, profile.Mods[0].Locked)
+	assert.Equal(t, "1.0", profile.Mods[0].Version, "an idempotent unlock must not touch Version")
+}
+
+// TestDoModLock_NoVersion_MissingFromProfile_Errors (#143 polish) pins the
+// no-version lock of a mod that has a DB row but no profile ref (DB and
+// profile diverged): the version-less branch's FindRef leaves target ""
+// by design, and SetModLock's own not-found error is what surfaces — the
+// command fails without inventing a locked ref, and the profile stays
+// untouched. Verified safe by inspection; pinned so the error path can't
+// silently regress into writing a lock with an empty target.
+func TestDoModLock_NoVersion_MissingFromProfile_Errors(t *testing.T) {
+	svc, game, _ := setupDoModLockTest(t)
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	err = doModLock(context.Background(), svc, game, "a", "")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `mod src:a not found in profile "default"`)
+
+	profile, perr := config.LoadProfile(configDir, game.ID, "default")
+	require.NoError(t, perr)
+	assert.Empty(t, profile.Mods, "a failed lock must not invent a profile ref")
+}
+
 // TestDoModLock_NotInstalled_ModNotFound guards (f): locking a mod that
 // isn't installed must fail at the same "mod not found: %s" idiom every
 // other mod subcommand uses (doModSetUpdate/doModEnable/doModDisable), not

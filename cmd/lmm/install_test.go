@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1165,6 +1166,109 @@ func TestDoInstall_VersionFlag_WithDependency_NamedModRecordedAtRequestedVersion
 	assert.Equal(t, "2.0", depInstalled.Version, "a dependency is untouched by --version - it installs at its own latest (#96 decision 6)")
 }
 
+// TestDoInstall_FileFlag_WithDependency_HonoredForNamedMod is #140 item 1's
+// CLI proof: --version X --file Y on a mod WITH a resolvable dependency
+// (doInstall's dependency branch -> core.ApplyInstall's BATCH path) must
+// install exactly the pinned file for the named mod - before the fix,
+// doInstallBatch never consulted --file at all, so the version pool's
+// auto-pick silently won (the #93 silent-flag class, --version's #96 fix
+// notwithstanding). The dependency is untouched, installing its own
+// auto-picked primary at latest.
+func TestDoInstall_FileFlag_WithDependency_HonoredForNamedMod(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	installYes = true // auto-confirm the "Install N mod(s)?" prompt
+
+	dep := &domain.Mod{ID: "dep1", SourceID: fake.id, Name: "Dep One", Version: "2.0", GameID: game.ID}
+	root := &domain.Mod{ID: "mod1", SourceID: fake.id, Name: "Mod One", Version: "1.5", Author: "Someone", GameID: game.ID,
+		Dependencies: []domain.ModReference{{SourceID: fake.id, ModID: "dep1"}}}
+	fake.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", Name: "Dep Main", FileName: "dep1.esp", IsPrimary: true}})
+	fake.AddDownload("dep-file", []byte("dep content"))
+	// v1.0's pool holds TWO files; the category sort auto-picks the OPTIONAL
+	// "8" (ARCHIVED sorts last), so pinning "9" proves --file beat the pick.
+	fake.AddMod(root, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old Main", FileName: "mod1.esp", Version: "1.0", Category: "ARCHIVED"},
+		{ID: "8", Name: "Old Patch", FileName: "mod1-patch.esp", Version: "1.0", Category: "OPTIONAL"},
+	})
+	fake.AddDownload("9", []byte("archived main content"))
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	installFileID = "9"
+	t.Cleanup(func() { installModID, installVersion, installFileID = "", "", "" })
+
+	require.NoError(t, doInstall(context.Background(), svc, game, nil))
+
+	primary, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"9"}, primary.FileIDs, "--file must pin the named mod's file even on the dependency (batch) path")
+	assert.Equal(t, "1.0", primary.Version)
+
+	depInstalled, err := svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dep-file"}, depInstalled.FileIDs, "a dependency is untouched by --file")
+}
+
+// TestDoInstall_FileFlag_OnlyCommasOrWhitespace_FailsFast pins the
+// degenerate---file guard (#140 review): a --file value that parses to ZERO
+// file IDs (only commas/whitespace) must fail fast, up front - before any
+// search/fetch - instead of silently degrading into "no --file at all"
+// (selectInstallFiles would return an empty selection with no error, and
+// the batch path's TargetFileIDs pin would silently vanish).
+func TestDoInstall_FileFlag_OnlyCommasOrWhitespace_FailsFast(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: fake.id, GameID: game.ID, Name: "Mod One", Version: "1.5", Author: "Someone"}
+	fake.AddMod(mod, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+	})
+
+	installModID = "mod1"
+	installFileID = " , "
+	t.Cleanup(func() { installModID, installFileID = "", "" })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--file")
+	assert.Contains(t, err.Error(), "no file IDs")
+
+	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	assert.Error(t, dbErr, "nothing may be installed off a no-op --file")
+}
+
+// TestDoInstall_FileFlag_WithDependency_UnknownFileAbortsWholeInstall proves
+// a --file ID outside the --version pool is fatal to the WHOLE
+// dependency-having install - loudly, before any mod is touched - matching
+// both the no-dependency path's wording and --version's own batch-abort
+// precedent, never a silent fallback to the auto-picked file.
+func TestDoInstall_FileFlag_WithDependency_UnknownFileAbortsWholeInstall(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	installYes = true
+
+	dep := &domain.Mod{ID: "dep1", SourceID: fake.id, Name: "Dep One", Version: "2.0", GameID: game.ID}
+	root := &domain.Mod{ID: "mod1", SourceID: fake.id, Name: "Mod One", Version: "1.5", Author: "Someone", GameID: game.ID,
+		Dependencies: []domain.ModReference{{SourceID: fake.id, ModID: "dep1"}}}
+	fake.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", Name: "Dep Main", FileName: "dep1.esp", IsPrimary: true}})
+	fake.AddDownload("dep-file", []byte("dep content"))
+	fake.AddMod(root, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old", FileName: "mod1.esp", Version: "1.0", Category: "ARCHIVED"},
+	})
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	installFileID = "10" // belongs to 1.5, not the 1.0 pool
+	t.Cleanup(func() { installModID, installVersion, installFileID = "", "", "" })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file ID 10 not found")
+
+	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	assert.Error(t, dbErr, "the named mod must not be installed")
+	_, dbErr = svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	assert.Error(t, dbErr, "no dependency may be installed - the file pin aborts before any mod is touched")
+}
+
 // TestDoInstall_VersionFlag_WithDependency_UnknownVersionAbortsWholeInstall
 // proves an unresolvable --version on a dependency-having install is fatal
 // to the WHOLE install (surfacing ErrVersionNotFound's message, same as the
@@ -1248,4 +1352,122 @@ func TestBatchInstallMods_StampsSelectedFileVersion(t *testing.T) {
 	installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the mod's latest version")
+}
+
+// TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall is
+// #143's guard for the CLI's OWN batch path (multi-select `lmm install`
+// results and resolved dependency lists route through batchInstallMods, not
+// core.ApplyInstall): re-installing a mod whose profile ref is LOCKED at a
+// version other than what the source would now serve must skip the mod
+// BEFORE its remove-previous-installation step - previously it uninstalled
+// the deployed lock target, deployed the new latest, and swallowed
+// UpsertMod's refusal behind a verbose-only warning, leaving a
+// deployed-but-unrecorded drift.
+func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+
+	// Install v1.0 normally, then lock it.
+	mod := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"}
+	src.AddMod(mod, []domain.DownloadableFile{
+		{ID: "f1", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+	})
+	src.AddDownload("f1", []byte("v1 content"))
+	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.SetModLock("g1", "default", "test-src", "mod1", ""))
+
+	// The source now serves v2.0 as its latest.
+	latest := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", Author: "Someone", GameID: "g1"}
+	src.AddMod(latest, []domain.DownloadableFile{
+		{ID: "f2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "2.0"},
+	})
+	src.AddDownload("f2", []byte("v2 content"))
+
+	servedBefore := src.served.Load()
+	stdout, err := captureStdoutErr(t, func() error {
+		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
+	})
+	require.NoError(t, err, "batch semantics: a locked mod skips, the run itself succeeds")
+	assert.Contains(t, stdout, "locked at v1.0", "the skip line must name the lock")
+	assert.Contains(t, stdout, "lmm mod unlock", "the skip line must carry the unlock remedy")
+	assert.Contains(t, stdout, "Failed: 1", "the summary must count the locked skip")
+	assert.NotContains(t, stdout, "Removing previous installation", "the deployed lock target must never be uninstalled")
+
+	// Zero side effects: still deployed, no new download, DB and ref intact.
+	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+	assert.Equal(t, servedBefore, src.served.Load(), "no download may be served for the refused install")
+	installed, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, dbErr)
+	assert.Equal(t, "1.0", installed.Version, "the DB row must stay at the locked version")
+	profile, pErr := pm.Get("g1", "default")
+	require.NoError(t, pErr)
+	ref := profile.FindRef("test-src", "mod1")
+	require.NotNil(t, ref)
+	assert.Equal(t, "1.0", ref.Version)
+	assert.True(t, ref.Locked)
+}
+
+// TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall closes review
+// finding F1 on #143: batchInstallMods must derive its file selection ONCE,
+// BEFORE the remove-previous-installation block, so a GetModFiles failure
+// skips the mod while its previous installation (here, a deployed lock
+// target) is still intact. The earlier shape fetched twice - a locked-ref
+// pre-check fetch and a post-uninstall fetch - so a transient failure of the
+// first fell through PAST the lock check, uninstalled the deployed lock
+// target, deleted its cache, and only then failed on the second fetch;
+// deriving once also removes the pre-check/selection TOCTOU window (a
+// version published between the two fetches deployed something the lock
+// check never judged).
+func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+
+	// Install v1.0 normally, then lock it.
+	mod := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"}
+	src.AddMod(mod, []domain.DownloadableFile{
+		{ID: "f1", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+	})
+	src.AddDownload("f1", []byte("v1 content"))
+	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.SetModLock("g1", "default", "test-src", "mod1", ""))
+
+	// The files endpoint now fails (transiently, as far as the user knows).
+	src.getModFilesErr = errBoomInstall
+	t.Cleanup(func() { src.getModFilesErr = nil })
+
+	latest := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", Author: "Someone", GameID: "g1"}
+	stdout, err := captureStdoutErr(t, func() error {
+		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
+	})
+	require.NoError(t, err, "batch semantics: a per-mod fetch failure skips, the run itself succeeds")
+	assert.Contains(t, stdout, "failed to get mod files", "the fetch failure must be reported")
+	assert.NotContains(t, stdout, "Removing previous installation",
+		"a fetch failure must skip BEFORE the previous installation is removed")
+
+	// The deployed lock target and its cache must be untouched.
+	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
+	assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"),
+		"the lock target's cache entry must survive a fetch failure")
+	installed, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	require.NoError(t, dbErr)
+	assert.Equal(t, "1.0", installed.Version)
+}
+
+// errBoomInstall is a sentinel transient error for
+// TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall.
+var errBoomInstall = errors.New("boom: files endpoint unavailable")
+
+// TestInstallFileIDList_DedupesPreservingOrder pins --file parsing (#140
+// review): duplicate IDs collapse to their first occurrence, in order -
+// otherwise a `--file 9,9` propagates into plan.Files/TargetFileIDs and
+// fails SaveInstalledMod's PK-constrained installed_mod_files INSERT only
+// after download and deploy.
+func TestInstallFileIDList_DedupesPreservingOrder(t *testing.T) {
+	installFileID = " 9, 8 ,9,8"
+	t.Cleanup(func() { installFileID = "" })
+	assert.Equal(t, []string{"9", "8"}, installFileIDList())
 }

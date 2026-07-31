@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.26.0" "User Commands"
+.TH "LMM" "1" "Jul 2026" "lmm 1.27.0" "User Commands"
 
 .SH NAME
 lmm-mod-edit - Edit mod details (name, version, author, source, ID)
@@ -26,6 +26,13 @@ version, summary, URL) is fetched from it automatically and applied to
 any field you didn't explicitly override with --name/--author/--version.
 Re-linking moves the mod to its new source:id in the database and
 profile - it is not merely a display change.
+
+.PP
+A locked mod (see 'lmm mod lock') refuses --version (other than the
+locked version itself) and re-linking: move the lock to the desired
+version first, or unlock (re-linking always requires an unlock, since
+it would replace the locked profile entry). Metadata-only edits
+(--name/--author) are always allowed.
 
 .PP
 Examples:

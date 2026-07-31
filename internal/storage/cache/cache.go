@@ -64,19 +64,24 @@ func isReserved(name string) bool {
 	return strings.HasPrefix(name, ReservedPrefix)
 }
 
-// verifiableFileID reports whether a source file ID can be round-tripped
+// VerifiableFileID reports whether a source file ID can be round-tripped
 // through a marker filename. A blank ID has nothing to name, and one carrying
 // a path separator would place (or look for) the marker outside the version
 // directory entirely. Both are refused rather than sanitized: two distinct
 // IDs sanitizing to the same marker would let one file's completion vouch for
 // another's.
-func verifiableFileID(fileID string) bool {
+func VerifiableFileID(fileID string) bool {
 	return fileID != "" && !strings.ContainsAny(fileID, `/\`+"\x00")
 }
 
 // MarkFileComplete writes the zero-byte completion marker for fileID into
 // versionDir, recording that this source file's content has been fully
 // committed to that cache entry. It is the write side of HasFileIDs.
+//
+// A bare (zero-byte) marker vouches for completion but records no member
+// manifest - FileManifests reports it as Recorded=false. Production commits
+// go through MarkFileCompleteWithMembers instead; this remains the legacy
+// shape every pre-manifest cache entry already has on disk.
 //
 // versionDir is a raw directory path rather than a cache key because the
 // marker is written into the STAGING directory just before it is swapped into
@@ -85,22 +90,120 @@ func verifiableFileID(fileID string) bool {
 // rename - a marker can never appear without its content.
 //
 // An unverifiable fileID (blank, or carrying a path separator - see
-// verifiableFileID) is skipped rather than rejected: HasFileIDs refuses those
+// VerifiableFileID) is skipped rather than rejected: HasFileIDs refuses those
 // same IDs, so the entry simply reads as incomplete and costs a redundant
 // re-download, which is the safe direction and never a write outside
 // versionDir.
 func MarkFileComplete(versionDir, fileID string) error {
-	if !verifiableFileID(fileID) {
+	return writeFileMarker(versionDir, fileID, nil)
+}
+
+// manifestHeader is the first line of a marker body that carries a member
+// manifest. Its presence is what distinguishes "recorded an empty member set"
+// (header only) from a legacy bare marker (empty body, no manifest at all) -
+// the absence-vs-empty distinction FileManifests' consumers depend on.
+const manifestHeader = "lmm-manifest/1"
+
+// MarkFileCompleteWithMembers is MarkFileComplete plus provenance: the marker
+// body records WHICH versionDir-relative members this file ID contributed
+// (slash-separated, one per line, under the manifestHeader line), so the
+// same-version update path can later undeploy members owned solely by a
+// superseded file (#144 item 4). Read back via FileManifests.
+//
+// A member name a line-oriented body cannot represent faithfully (embedded
+// newline/carriage return) degrades the WHOLE write to a bare legacy marker:
+// completion is still vouched for, but no manifest is recorded, so consumers
+// fall back to today's union behavior rather than ever trusting a corrupted
+// member list.
+func MarkFileCompleteWithMembers(versionDir, fileID string, members []string) error {
+	lines := make([]string, 0, len(members)+1)
+	lines = append(lines, manifestHeader)
+	for _, m := range members {
+		if m == "" {
+			continue
+		}
+		if strings.ContainsAny(m, "\n\r") {
+			return writeFileMarker(versionDir, fileID, nil)
+		}
+		lines = append(lines, filepath.ToSlash(m))
+	}
+	return writeFileMarker(versionDir, fileID, []byte(strings.Join(lines, "\n")+"\n"))
+}
+
+// writeFileMarker writes fileID's completion marker with the given body (nil
+// for a bare legacy marker). See MarkFileComplete for the skip-unverifiable
+// contract.
+func writeFileMarker(versionDir, fileID string, body []byte) error {
+	if !VerifiableFileID(fileID) {
 		return nil
 	}
 	if err := os.MkdirAll(versionDir, 0755); err != nil {
 		return fmt.Errorf("creating cache dir for file marker: %w", err)
 	}
 	path := filepath.Join(versionDir, fileMarkerPrefix+fileID)
-	if err := os.WriteFile(path, nil, 0644); err != nil {
+	if err := os.WriteFile(path, body, 0644); err != nil {
 		return fmt.Errorf("writing cache file marker: %w", err)
 	}
 	return nil
+}
+
+// FileManifest is one completion marker's recorded member manifest.
+type FileManifest struct {
+	// Members holds the version-dir-relative paths (OS separators) this file
+	// ID contributed to the cache entry. Meaningful only when Recorded.
+	Members []string
+	// Recorded is false for a legacy bare marker: the file's completion is
+	// vouched for, but WHICH members it contributed was never written down.
+	// Consumers must treat that as unknown provenance - never as "none".
+	Recorded bool
+}
+
+// FileManifests reads every completion marker in the version directory and
+// returns each file ID's manifest. A directory (or entry) with no markers
+// returns an empty map, never an error. A marker whose body is empty or
+// carries an unrecognized header parses as Recorded=false - the safe,
+// union-fallback direction - so pre-manifest entries and any future format
+// revision both degrade silently rather than misreport provenance.
+func (c *Cache) FileManifests(gameID, sourceID, modID, version string) (map[string]FileManifest, error) {
+	versionDir := c.ModPath(gameID, sourceID, modID, version)
+	entries, err := os.ReadDir(versionDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]FileManifest{}, nil
+		}
+		return nil, fmt.Errorf("reading cache markers: %w", err)
+	}
+
+	manifests := make(map[string]FileManifest)
+	for _, entry := range entries {
+		fileID, ok := strings.CutPrefix(entry.Name(), fileMarkerPrefix)
+		if !ok || entry.IsDir() || !VerifiableFileID(fileID) {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(versionDir, entry.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("reading cache marker %s: %w", entry.Name(), err)
+		}
+		manifests[fileID] = parseManifest(body)
+	}
+	return manifests, nil
+}
+
+// parseManifest decodes a marker body into its FileManifest. Anything that
+// isn't a well-formed manifestHeader body reads as a bare marker.
+func parseManifest(body []byte) FileManifest {
+	lines := strings.Split(strings.TrimRight(string(body), "\n"), "\n")
+	if len(lines) == 0 || lines[0] != manifestHeader {
+		return FileManifest{}
+	}
+	var members []string
+	for _, line := range lines[1:] {
+		if line == "" {
+			continue
+		}
+		members = append(members, filepath.FromSlash(line))
+	}
+	return FileManifest{Members: members, Recorded: true}
 }
 
 // HasFileIDs reports whether every named source file has been fully committed
@@ -122,9 +225,11 @@ func MarkFileComplete(versionDir, fileID string) error {
 // despite a complete cache.
 //
 // LEGACY ENTRIES: a cache directory populated before markers existed (or by
-// `lmm import`, which writes cache entries directly) carries no markers and
-// therefore reads as incomplete. That costs exactly one redundant redownload,
-// which commits markers on the way through and makes every later check a hit.
+// an `lmm import` that could not resolve the archive against its source's
+// file listing - source-linked imports that do resolve stamp the marker at
+// import time, #139) carries no markers and therefore reads as incomplete.
+// That costs exactly one redundant redownload, which commits markers on the
+// way through and makes every later check a hit.
 //
 // An empty/nil fileIDs degrades to Exists - there is nothing left to verify
 // beyond the directory's presence. An unverifiable ID (blank, or carrying a
@@ -135,7 +240,7 @@ func (c *Cache) HasFileIDs(gameID, sourceID, modID, version string, fileIDs []st
 	}
 	versionDir := c.ModPath(gameID, sourceID, modID, version)
 	for _, id := range fileIDs {
-		if !verifiableFileID(id) {
+		if !VerifiableFileID(id) {
 			return false
 		}
 		if _, err := os.Stat(filepath.Join(versionDir, fileMarkerPrefix+id)); err != nil {

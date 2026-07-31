@@ -75,15 +75,15 @@ games:
 
 Profiles are stored under `~/.config/lmm/games/<game-id>/profiles/<name>.yaml`.
 
-| Option        | Type   | Description                                                                                                             |
-| ------------- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `name`        | string | Profile name                                                                                                            |
-| `game_id`     | string | Game this profile belongs to                                                                                            |
-| `mods`        | list   | Mod references (source_id, mod_id, version, file_ids) in load order                                                     |
-| `link_method` | string | Optional override (symlink, hardlink, copy). **Parsed and round-tripped through export/import, but currently has no effect at deploy time** ([#81](https://github.com/DonovanMods/linux-mod-manager/issues/81)) — effective precedence today is game-level `link_method` (`games.yaml`) then global `default_link_method` (`config.yaml`); see `internal/core/service.go`'s `GetGameLinkMethod`. |
-| `is_default`  | bool   | Whether this is the default profile for the game                                                                        |
-| `hooks`       | object | Optional profile-level hook overrides (same structure as game hooks)                                                    |
-| `overrides`   | map    | Optional config overrides: path (relative to game install) → file content (INI tweaks, etc.). Applied on switch/deploy. |
+| Option        | Type   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`        | string | Profile name                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `game_id`     | string | Game this profile belongs to                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `mods`        | list   | Mod references (source_id, mod_id, version, file_ids) in load order                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `link_method` | string | Optional override (symlink, hardlink, copy). Wins over the game-level `link_method` (`games.yaml`) and the global `default_link_method` (`config.yaml`) for every deploy into this profile; only an explicit CLI `--method` flag beats it ([#81](https://github.com/DonovanMods/linux-mod-manager/issues/81)). **Upgrade note:** profiles saved before v1.14.1 may carry an unintended `link_method: symlink` line (a save bug wrote it into every profile); it now takes effect and will override a per-game `hardlink`/`copy` setup. If `lmm status <game>` shows an unexpected `(per-profile)` method, delete that line from the profile file. |
+| `is_default`  | bool   | Whether this is the default profile for the game                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `hooks`       | object | Optional profile-level hook overrides (same structure as game hooks)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `overrides`   | map    | Optional config overrides: path (relative to game install) → file content (INI tweaks, etc.). Applied on switch/deploy.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ### Portable export format
 
@@ -93,7 +93,7 @@ Exported YAML includes:
 
 - **name**, **game_id** – Profile identifier and game.
 - **mods** – List of mod references in load order; each has `source_id`, `mod_id`, optional `version`, optional `file_ids`.
-- **link_method** – Optional: symlink, hardlink, or copy. Preserved through export/import, but currently has no effect at deploy time ([#81](https://github.com/DonovanMods/linux-mod-manager/issues/81)) — see the Profile files table above.
+- **link_method** – Optional: symlink, hardlink, or copy. Preserved through export/import and honored at deploy time as the profile-level override (profile > game > global; see the Profile files table above).
 - **overrides** – Optional map of relative paths (under game install) to file contents (e.g. INI tweaks). Applied when switching to the profile or deploying.
 
 Import preserves load order, link method, and overrides; missing mods can be installed when you switch to or apply the profile.
@@ -123,16 +123,16 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 
 ## File locations
 
-| Path                                            | Description                                            |
-| ----------------------------------------------- | ------------------------------------------------------ |
-| `~/.config/lmm/config.yaml`                     | Global config                                          |
-| `~/.config/lmm/games.yaml`                      | Game definitions                                       |
-| `~/.config/lmm/steam-games.yaml`                | Optional: Steam games for `game detect` (add/override) |
+| Path                                            | Description                                                             |
+| ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `~/.config/lmm/config.yaml`                     | Global config                                                           |
+| `~/.config/lmm/games.yaml`                      | Game definitions                                                        |
+| `~/.config/lmm/steam-games.yaml`                | Optional: Steam games for `game detect` (add/override)                  |
 | `~/.config/lmm/sources/*.yaml`                  | Custom source definitions (see [Custom Sources](#custom-sources) below) |
-| `~/.config/lmm/games/<game-id>/profiles/*.yaml` | Per-game profiles                                      |
-| `~/.local/share/lmm/lmm.db`                     | SQLite database (metadata, tokens)                     |
-| `~/.local/share/lmm/cache/`                     | Mod file cache (or `cache_path` override)              |
-| `~/.local/share/lmm/downloads/`                 | Staging area for in-flight downloads and archive extraction |
+| `~/.config/lmm/games/<game-id>/profiles/*.yaml` | Per-game profiles                                                       |
+| `~/.local/share/lmm/lmm.db`                     | SQLite database (metadata, tokens)                                      |
+| `~/.local/share/lmm/cache/`                     | Mod file cache (or `cache_path` override)                               |
+| `~/.local/share/lmm/downloads/`                 | Staging area for in-flight downloads and archive extraction             |
 
 ## Custom Sources
 

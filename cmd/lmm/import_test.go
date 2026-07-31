@@ -60,6 +60,8 @@ type fakeMatchSource struct {
 	searchMods []domain.Mod // returned verbatim by Search, regardless of query
 	searchErr  error
 	mods       map[string]*domain.Mod
+	files      []domain.DownloadableFile // returned verbatim by GetModFiles
+	filesErr   error
 }
 
 func newFakeMatchSource(id string) *fakeMatchSource {
@@ -93,7 +95,10 @@ func (s *fakeMatchSource) GetDependencies(ctx context.Context, mod *domain.Mod) 
 	return nil, nil
 }
 func (s *fakeMatchSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
-	return nil, nil
+	if s.filesErr != nil {
+		return nil, s.filesErr
+	}
+	return s.files, nil
 }
 func (s *fakeMatchSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	return "", nil
@@ -420,4 +425,131 @@ func createTestArchive(t *testing.T, path string, files map[string]string) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, w.Close())
+}
+
+// --- #139 item 2: import stamps completion markers with resolved file IDs ---
+//
+// Import's direct cache writers used to bypass MarkFileComplete entirely, so
+// an import-written entry always failed the file-granular cache-first guard
+// (Cache.HasFileIDs) once and ate one redundant redownload. The issue's
+// premise that "import knows the file ID at write time" doesn't hold - no
+// import path ever sees a source file ID - so source-linked imports now
+// RESOLVE it: GetModFiles on the already-fetched source mod, exact FileName
+// match first (version-match fallback only on the explicit --id path), then
+// stamp the manifest-bearing marker and record the FileIDs on the DB row and
+// profile ref. Unresolvable/offline/local imports keep today's marker-less
+// behavior.
+
+// TestDoImport_ArchiveWithID_ResolvesFileIDAndStampsMarker is the archive-mode
+// happy path: --id import resolves the archive to the source's file by exact
+// FileName, adopts its version, stamps the completion marker (with the member
+// manifest) and records the FileIDs on the DB row and profile ref.
+func TestDoImport_ArchiveWithID_ResolvesFileIDAndStampsMarker(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	src := newFakeMatchSource("acme-source")
+	src.mods["999"] = &domain.Mod{ID: "999", SourceID: "acme-source", Name: "Acme Mod", Version: "2.0", GameID: "g1"}
+	src.files = []domain.DownloadableFile{
+		{ID: "55", FileName: "mymod.zip", Version: "2.0", IsPrimary: true},
+		{ID: "56", FileName: "other.zip", Version: "1.0"},
+	}
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"acme-source": "g1"}
+
+	archivePath := filepath.Join(t.TempDir(), "mymod.zip")
+	createTestArchive(t, archivePath, map[string]string{"mymod.esp": "data"})
+
+	importModID = "999"
+
+	_, err := captureStdoutErr(t, func() error {
+		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
+	})
+	require.NoError(t, err)
+
+	installed, err := svc.GetInstalledMod("acme-source", "999", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"55"}, installed.FileIDs,
+		"the resolved source file ID must be recorded on the DB row")
+
+	gameCache := svc.GetGameCache(game)
+	assert.True(t, gameCache.HasFileIDs("g1", "acme-source", "999", "2.0", []string{"55"}),
+		"the import-written cache entry must carry the resolved file's completion marker")
+
+	manifests, err := gameCache.FileManifests("g1", "acme-source", "999", "2.0")
+	require.NoError(t, err)
+	require.Contains(t, manifests, "55")
+	assert.True(t, manifests["55"].Recorded, "the marker must carry a recorded member manifest")
+	assert.Equal(t, []string{"mymod.esp"}, manifests["55"].Members)
+
+	prof, err := svc.NewProfileManager().Get("g1", "default")
+	require.NoError(t, err)
+	require.Len(t, prof.Mods, 1)
+	assert.Equal(t, []string{"55"}, prof.Mods[0].FileIDs,
+		"the resolved source file ID must be recorded on the profile ref")
+}
+
+// TestDoImport_ArchiveWithID_FileListingFails_DegradesToMarkerless pins
+// guardrail 1: a failed GetModFiles (offline, source hiccup) must not fail
+// the import - it degrades to today's marker-less, empty-FileIDs behavior.
+func TestDoImport_ArchiveWithID_FileListingFails_DegradesToMarkerless(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	src := newFakeMatchSource("acme-source")
+	src.mods["999"] = &domain.Mod{ID: "999", SourceID: "acme-source", Name: "Acme Mod", Version: "2.0", GameID: "g1"}
+	src.filesErr = errors.New("source offline")
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"acme-source": "g1"}
+
+	archivePath := filepath.Join(t.TempDir(), "mymod.zip")
+	createTestArchive(t, archivePath, map[string]string{"mymod.esp": "data"})
+
+	importModID = "999"
+
+	_, err := captureStdoutErr(t, func() error {
+		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
+	})
+	require.NoError(t, err, "a failed source file listing must not fail the import")
+
+	installed, err := svc.GetInstalledMod("acme-source", "999", "g1", "default")
+	require.NoError(t, err)
+	assert.Empty(t, installed.FileIDs, "no resolved file means no recorded FileIDs")
+}
+
+// TestRunImportScan_MatchedSource_ResolvesFileIDAndStampsMarker is the scan-mode
+// twin: a scan import whose source match resolves the file by exact FileName
+// stamps the marker on the cache entry it writes (copy mode) and records the
+// FileIDs, while keeping the manual-download semantics scan imports always had.
+func TestRunImportScan_MatchedSource_ResolvesFileIDAndStampsMarker(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	// tryMatchSources resolves sources via SourcesForGame, which consults the
+	// service's own game registry - the game must actually be registered.
+	require.NoError(t, svc.AddGame(game))
+	game.DeployMode = domain.DeployCopy
+	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "AcmeMod-1.0.zip"), []byte("payload"), 0644))
+
+	src := newFakeMatchSource("acme-source")
+	src.searchMods = []domain.Mod{{ID: "42", SourceID: "acme-source", Name: "AcmeMod", GameID: "g1"}}
+	src.files = []domain.DownloadableFile{
+		{ID: "77", FileName: "AcmeMod-1.0.zip", Version: "1.0"},
+		{ID: "78", FileName: "AcmeMod-2.0.zip", Version: "2.0"},
+	}
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"acme-source": "g1"}
+
+	importSkipMatch = false
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	_, err := captureStdoutErr(t, func() error {
+		return runImportScan(cmd, game, svc, "default")
+	})
+	require.NoError(t, err)
+
+	installed, err := svc.GetInstalledMod("acme-source", "42", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"77"}, installed.FileIDs,
+		"the resolved source file ID must be recorded on the DB row")
+	assert.True(t, installed.ManualDownload,
+		"scan imports keep their manual-download semantics regardless of file resolution")
+
+	assert.True(t, svc.GetGameCache(game).HasFileIDs("g1", "acme-source", "42", installed.Version, []string{"77"}),
+		"the scan-written cache entry must carry the resolved file's completion marker")
 }

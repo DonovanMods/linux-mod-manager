@@ -219,12 +219,19 @@ func TestLockFetchFailureShowsStatusNoPicker(t *testing.T) {
 	require.Nil(t, model.picker)
 }
 
-// TestLockFetchErrorNamesPinningForNotSupported proves a source's
-// version-listing failure (coreProvider.AvailableVersions already maps
-// source.ErrNotSupported through mapNetworkError naming "pin it instead (P)"
-// - service_core.go) reaches the status line unchanged, so the TUI dispatch
-// layer doesn't lose or reword that fallback guidance.
-func TestLockFetchErrorNamesPinningForNotSupported(t *testing.T) {
+// TestLockFetchErrorReachesStatusLineVerbatim is a PASS-THROUGH test of the
+// TUI dispatch layer only (#143 polish rename — the old name,
+// TestLockFetchErrorNamesPinningForNotSupported, read as if it exercised the
+// ErrNotSupported→"pin it instead (P)" mapping; it never did): the provider
+// error here is hand-fed, and the contract proven is that
+// resolveVersionsFetchFailed renders whatever AvailableVersions returned on
+// the status line verbatim, without losing or rewording it. The actual
+// mapping contract — coreProvider.AvailableVersions turning
+// source.ErrNotSupported into that "pin it instead (P)" wording via
+// mapNetworkError — lives in
+// TestCoreProviderActions_AvailableVersions_MapsNotSupportedError
+// (service_core_test.go).
+func TestLockFetchErrorReachesStatusLineVerbatim(t *testing.T) {
 	t.Parallel()
 
 	rec := &recordingActions{AvailableVersionsErr: errors.New("listing versions for SkyUI: nexusmods does not support version resolution — pin it instead (P)")}
@@ -239,7 +246,8 @@ func TestLockFetchErrorNamesPinningForNotSupported(t *testing.T) {
 	model = updated.(Model)
 
 	require.True(t, model.action.statusIsError)
-	require.Contains(t, model.action.status, "pin it instead (P)")
+	require.Equal(t, "listing versions for SkyUI: nexusmods does not support version resolution — pin it instead (P)", model.action.status,
+		"the fed error must reach the status line verbatim — this test owns pass-through, not the error's wording")
 }
 
 // TestLockFetchEmptyVersionsUnlockedShowsStatusNoPicker covers PR #142
@@ -377,6 +385,38 @@ func TestLockPickerRowsNotesAndPreselectionWhenLocked(t *testing.T) {
 	require.Equal(t, 2, model.picker.selected, "the locked target must start pre-selected")
 	require.Equal(t, "unlock", model.picker.options[3].Label)
 	require.Empty(t, model.picker.options[3].Note)
+}
+
+// TestLockPickerVanishedLockTargetPreselectsUnlock (#143 polish): when the
+// locked version no longer appears in the source's list (the file was
+// removed/archived upstream), the picker used to silently pre-select index 0
+// — the newest version, with nothing marked — which read as if the lock
+// pointed there. It must instead pre-select the trailing unlock row and note
+// on it that the locked version is no longer listed, so the vanished target
+// is signalled rather than silently papered over.
+func TestLockPickerVanishedLockTargetPreselectsUnlock(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{AvailableVersionsOut: []string{"5.3", "5.2", "5.1"}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = 0
+	model.mods[0].Locked = true
+	model.mods[0].LockedVersion = "4.9" // vanished: not in the fetched list
+	require.Equal(t, "5.2", model.mods[0].Version)
+
+	updated, cmd := model.Update(keyRunes("L"))
+	model = updated.(Model)
+	msg := cmd()
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.picker)
+	require.Len(t, model.picker.options, 4, "3 versions plus a trailing unlock option")
+	require.Equal(t, "installed", model.picker.options[1].Note, "the installed note must still land")
+	require.Equal(t, "unlock", model.picker.options[3].Label)
+	require.Equal(t, "locked v4.9 no longer listed", model.picker.options[3].Note)
+	require.Equal(t, 3, model.picker.selected, "the unlock row must start pre-selected when the lock target vanished")
 }
 
 // TestLockPickerRowNotesCombineWhenLockedAtInstalledVersion covers the case

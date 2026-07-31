@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.26.0" "User Commands"
+.TH "LMM" "1" "Jul 2026" "lmm 1.27.0" "User Commands"
 
 .SH NAME
 lmm-update - Check for or apply mod updates
@@ -32,7 +32,9 @@ exits non-zero rather than silently claiming success.
   - Bulk check (no mod ID): {game_id, profile, updates: [...], skipped:
     {pinned, local}, error?}. error is present when the check itself
     failed partway through; updates/skipped still reflect whatever was
-    learned first.
+    learned first. A locked mod's updates[] entry carries "locked": true
+    (omitted when unlocked): the update is reported but will not be
+    applied until the lock moves or clears.
   - Single mod (a mod ID given) or 'update rollback': {mod_id, name,
     from_version, to_version, changelog, status, reason}. status is one
     of "updated", "up_to_date", "skipped", "available" (--dry-run), or

@@ -590,6 +590,78 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 		"both files' markers must survive a multi-file download")
 }
 
+// TestService_DownloadMod_RecordsMemberManifests covers #144 item 4's capture
+// side: commitStagedCacheWithMarker is the single choke point where staged
+// content becomes cache content, and it must record WHICH members each file ID
+// contributed (cache.FileManifests) so the same-version update path can later
+// undeploy a superseded file's members with positive provenance.
+//
+// Three shapes, all through the real DownloadMod flow:
+//   - DeployExtract (the default): the manifest holds the archive's EXTRACTED
+//     member names, which bear no relation to DownloadableFile.FileName.
+//   - Overwrite attribution: a member shipped by BOTH files (file2's archive
+//     overwrites file1's shared.txt in the shared staging dir) must appear in
+//     BOTH manifests - a staging-dir before/after diff would miss it, and the
+//     "shared member survives" rule depends on it.
+//   - Copy mode fallback (non-archive file): the manifest is the single
+//     stored FileName.
+func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	mock := newMockSourceWithDownloads("test")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
+
+	zip1, err := os.ReadFile(createTestZip(t, t.TempDir(), map[string]string{"shared.txt": "from file1", "one.txt": "1"}))
+	require.NoError(t, err)
+	zip2, err := os.ReadFile(createTestZip(t, t.TempDir(), map[string]string{"shared.txt": "from file2", "two.txt": "2"}))
+	require.NoError(t, err)
+	mock.AddDownload("file1", zip1)
+	mock.AddDownload("file2", zip2)
+	mock.AddDownload("file3", []byte("loose plugin bytes"))
+
+	ctx := context.Background()
+	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
+	require.NoError(t, err)
+	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file2", FileName: "file2.zip"}, nil)
+	require.NoError(t, err)
+	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file3", FileName: "loose.esp"}, nil)
+	require.NoError(t, err)
+
+	manifests, err := svc.GetGameCache(game).FileManifests("testgame", "test", "123", "1.0.0")
+	require.NoError(t, err)
+	require.Len(t, manifests, 3)
+
+	m1 := manifests["file1"]
+	require.True(t, m1.Recorded, "an extract-mode commit must record its manifest")
+	assert.ElementsMatch(t, []string{"shared.txt", "one.txt"}, m1.Members,
+		"the manifest holds extracted member names, not the archive's FileName")
+
+	m2 := manifests["file2"]
+	require.True(t, m2.Recorded)
+	assert.ElementsMatch(t, []string{"shared.txt", "two.txt"}, m2.Members,
+		"a member OVERWRITTEN in the shared staging dir must still be attributed to the overwriting file")
+
+	m3 := manifests["file3"]
+	require.True(t, m3.Recorded, "a copy-mode (non-archive) commit must record its manifest")
+	assert.Equal(t, []string{"loose.esp"}, m3.Members)
+
+	// The overwrite landed: file2 won the shared member's content.
+	content, err := os.ReadFile(svc.GetGameCache(game).GetFilePath("testgame", "test", "123", "1.0.0", "shared.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "from file2", string(content))
+}
+
 // TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected is the
 // integration-level guard for the #96 round 2 review finding, reproducing its
 // probe exactly: an archive downloaded for file1 that smuggles in a member

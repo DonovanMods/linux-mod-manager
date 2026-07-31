@@ -2,12 +2,15 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
@@ -194,7 +197,9 @@ func (m Model) showDeployedFiles() (tea.Model, tea.Cmd) {
 // profile IS a valid row the user could otherwise act on), this is a benign
 // "nothing to do" outcome for the selected row - mirroring
 // purgeProfilePrompt's own "no mods installed" short-circuit - so
-// statusIsError is false here, not true.
+// statusIsError is false here, not true. A locked mod is refused
+// synchronously too (#143), but as an actual refusal (statusIsError true,
+// pointing at the TUI's own L key) - see the inline comment.
 //
 // Otherwise, opens the standard y/n confirmation modal titled with both
 // versions so the user can see exactly what's about to change, then calls
@@ -210,6 +215,16 @@ func (m Model) rollbackSelectedMod() (Model, tea.Cmd) {
 	if item.PreviousVersion == "" {
 		m.action.status = "no previous version to roll back to"
 		m.action.statusIsError = false
+		return m, nil
+	}
+	// #143 polish: item.Locked is already in hand, so refuse here instead of
+	// opening a confirm modal for an action the core gate (ApplyRollback)
+	// would then refuse anyway. This one IS deleteSelectedProfile's refusal
+	// shape (statusIsError true): the row is otherwise actionable, and the
+	// remedy named is the TUI's own L key, not a CLI command.
+	if item.Locked {
+		m.action.status = fmt.Sprintf("%s is locked at v%s — unlock or move the lock (L) to roll back", item.Name, item.LockedVersion)
+		m.action.statusIsError = true
 		return m, nil
 	}
 
@@ -578,7 +593,10 @@ func (m Model) editSelectedModLock() (Model, tea.Cmd) {
 // the locked target when item.Locked, else the installed version - index 0
 // (with nothing marked) when neither is found in versions, mirroring
 // editSelectedModPolicy's own "never guesses" fallback for an unmatched
-// current value.
+// current value. A locked item whose lock target is absent from versions is
+// the one case the caller overrides that fallback (#143): the vanished
+// target is signalled on the trailing unlock row instead - see
+// resolveVersionsFetched.
 //
 // versions is read only, never mutated or reordered here - per
 // ActionProvider.AvailableVersions' own doc comment, a caller that needs to
@@ -656,7 +674,17 @@ func (m Model) resolveVersionsFetched(msg versionsFetchedMsg) (Model, tea.Cmd) {
 	unlockIdx := -1
 	if item.Locked {
 		unlockIdx = len(options)
-		options = append(options, pickerOption{Label: "unlock"})
+		unlockOption := pickerOption{Label: "unlock"}
+		// #143 polish: when the locked version vanished from the source's
+		// list (removed/archived upstream), lockPickerOptions fell back to
+		// index 0 - the newest version, with nothing marked - which read as
+		// if the lock pointed there. Pre-select the unlock row and say why,
+		// so the vanished target is signalled rather than papered over.
+		if !slices.Contains(versions, item.LockedVersion) {
+			unlockOption.Note = fmt.Sprintf("locked v%s no longer listed", item.LockedVersion)
+			selected = unlockIdx
+		}
+		options = append(options, unlockOption)
 	}
 
 	picker := pendingPicker{
@@ -1412,12 +1440,18 @@ func (m Model) resolveCheckUpdatesFailure(msg checkUpdatesFailedMsg) (Model, tea
 // modal's detail lines: one "<name> <from> → <to>" line per update (the
 // machinery's own "+N more" collapsing, actionModalView, applies here
 // exactly like switchDetailLines' per-mod lines when the list is long),
-// plus a trailing warning-count line when CheckUpdates surfaced any
-// per-source diagnostics alongside the updates it did resolve.
+// a trailing "[locked@<version>]" marker - the CLI bulk table's own
+// wording (#143) - on rows the apply below will refuse, plus a trailing
+// warning-count line when CheckUpdates surfaced any per-source
+// diagnostics alongside the updates it did resolve.
 func updateDetailLines(view UpdatesView) []string {
 	lines := make([]string, 0, len(view.Updates)+1)
 	for _, u := range view.Updates {
-		lines = append(lines, fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion))
+		line := fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion)
+		if u.Locked {
+			line += fmt.Sprintf(" [locked@%s]", u.LockedVersion)
+		}
+		lines = append(lines, line)
 	}
 	if len(view.Warnings) > 0 {
 		lines = append(lines, fmt.Sprintf("%d warning(s) during check", len(view.Warnings)))
@@ -1499,8 +1533,21 @@ func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updat
 		}
 		outcome, err := actions.ApplyUpdate(ctx, u, progress)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: %s", u.Name, singleLine(err.Error())))
-			resultLines = append(resultLines, fmt.Sprintf("✗ %s: %s", u.Name, singleLine(err.Error())))
+			failure := singleLine(err.Error())
+			// #143 polish: the core lock gate's refusal names CLI remedy
+			// commands ('lmm mod lock ...') that mean nothing inside the
+			// TUI - reword it for the TUI's own L key. Keyed off the error,
+			// not u.Locked, so a lock raced in after CheckUpdates still gets
+			// the TUI wording (falling back to a version-less message when
+			// the stale UpdateItem carries no LockedVersion).
+			if errors.Is(err, core.ErrModLocked) {
+				failure = "locked — unlock or move the lock (L) to update"
+				if u.LockedVersion != "" {
+					failure = fmt.Sprintf("locked at v%s — unlock or move the lock (L) to update", u.LockedVersion)
+				}
+			}
+			warnings = append(warnings, fmt.Sprintf("%s: %s", u.Name, failure))
+			resultLines = append(resultLines, fmt.Sprintf("✗ %s: %s", u.Name, failure))
 			continue
 		}
 		applied++

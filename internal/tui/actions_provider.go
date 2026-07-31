@@ -271,6 +271,15 @@ type UpdateItem struct {
 	// the overlay renders "no changelog available" rather than an empty
 	// panel.
 	Changelog string
+	// Locked/LockedVersion project the profile ref's lock state onto the
+	// update row (#143): a locked mod is still checked and reported ("locked
+	// but informed", the same contract as the CLI's bulk table), but
+	// ApplyUpdate will refuse it, so the batch-apply modal marks the row up
+	// front instead of letting the refusal surprise the user after confirm.
+	// LockedVersion follows ModItem.LockedVersion's "empty whenever Locked
+	// is false" contract.
+	Locked        bool
+	LockedVersion string
 }
 
 // UpdatesView is CheckUpdates' result: the available updates plus any
@@ -702,6 +711,10 @@ func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error)
 			Source: mod.Source, ID: mod.ID, Name: mod.Name,
 			FromVersion: mod.Version, ToVersion: mod.AvailableVersion,
 			Changelog: mod.Changelog,
+			// #143: same lock-state projection coreProvider.CheckUpdates
+			// makes from the profile YAML, from the canned in-memory flags -
+			// so an L-key lock shows up in the demo's batch modal too.
+			Locked: mod.Locked, LockedVersion: mod.LockedVersion,
 		})
 	}
 	return view, nil

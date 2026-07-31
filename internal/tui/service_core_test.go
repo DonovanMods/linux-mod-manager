@@ -1923,6 +1923,40 @@ func TestCoreProviderActions_CheckUpdates_OneUpdateAndOneErroringSourceSurfacesW
 	assert.Contains(t, view.Warnings[0], "flaky")
 }
 
+// TestCoreProviderActions_CheckUpdates_PopulatesLockState (#143 polish):
+// coreProvider.CheckUpdates must join the profile YAML's lock state onto the
+// UpdateItems it reports — same "locked but informed" projection Overview
+// does for ModItem — so the batch-apply modal can mark locked rows up front.
+// The unlocked sibling proves the default stays false/empty.
+func TestCoreProviderActions_CheckUpdates_PopulatesLockState(t *testing.T) {
+	actions, svc, game := newCoreActionsFixture(t)
+
+	seedActionMod(t, svc, game, "src", "modL", "Mod L", "1.0", true, nil)
+	seedActionMod(t, svc, game, "src", "modU", "Mod U", "1.0", true, nil)
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "modL", "1.0")
+	seedActionProfileMod(t, svc, game.ID, "default", "src", "modU", "1.0")
+	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "modL", "1.0"))
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+	netSrc.updates = []domain.Update{
+		{InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: "modL", SourceID: "src", Name: "Mod L", Version: "1.0"}}, NewVersion: "1.1"},
+		{InstalledMod: domain.InstalledMod{Mod: domain.Mod{ID: "modU", SourceID: "src", Name: "Mod U", Version: "1.0"}}, NewVersion: "1.1"},
+	}
+
+	view, err := actions.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	require.Len(t, view.Updates, 2)
+	byID := map[string]tui.UpdateItem{}
+	for _, u := range view.Updates {
+		byID[u.ID] = u
+	}
+	assert.True(t, byID["modL"].Locked, "the locked ref's update must carry Locked")
+	assert.Equal(t, "1.0", byID["modL"].LockedVersion)
+	assert.False(t, byID["modU"].Locked)
+	assert.Empty(t, byID["modU"].LockedVersion)
+}
+
 // TestCoreProviderCheckUpdatesPopulatesChangelog guards Phase 6b Task 7's
 // UpdateItem.Changelog wiring: coreProvider.CheckUpdates must run the
 // source's raw HTML changelog through core.CleanChangelog before it ever
@@ -2479,6 +2513,10 @@ func TestCoreProviderActions_AvailableVersions_ListsDistinctVersions(t *testing.
 // the ErrNotSupported degrade (a source whose files carry no version info
 // at all): mapNetworkError's capability-gap wording, naming "version
 // resolution" and pointing at the pin (P) fallback per task-6-brief.md.
+// This test OWNS that mapping contract (#143 polish) — the dispatch-layer
+// sibling, TestLockFetchErrorReachesStatusLineVerbatim
+// (lock_picker_test.go), only proves an AvailableVersions error string
+// reaches the status line unchanged, with the error hand-fed.
 func TestCoreProviderActions_AvailableVersions_MapsNotSupportedError(t *testing.T) {
 	actions, svc, game := newCoreActionsFixture(t)
 	netSrc := newNetSource(t, "src")
@@ -2757,6 +2795,31 @@ func TestCoreProviderActions_ApplyImport_ForceOverwritesExisting(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, saved.Mods, 1)
 	assert.Equal(t, "new-mod", saved.Mods[0].ModID, "the overwrite must replace the existing profile's mod list")
+}
+
+// TestCoreProviderActions_ApplyImport_FailureDetailsInWarnings guards #131:
+// a per-mod install failure during import must survive into the completed
+// ActionOutcome's Warnings (via core's ProfileImportResult.Warnings), not
+// just the transient ImportModFailed live-progress line the completion
+// message replaces - mirroring ApplyProfileSwitch's installFailures
+// fold-in. The fixture registers no sources, so a profile referencing one
+// fails its fetch and exercises exactly the fail() path.
+func TestCoreProviderActions_ApplyImport_FailureDetailsInWarnings(t *testing.T) {
+	actions, _, game := newCoreActionsFixture(t)
+
+	profile := &domain.Profile{
+		Name: "failing-import", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "ghost-src", ModID: "ghost-mod", Version: "1.0"}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	outcome, err := actions.ApplyImport(context.Background(), data, nil)
+	require.NoError(t, err)
+	assert.Contains(t, outcome.Message, "1 failed")
+	require.NotEmpty(t, outcome.Warnings, "the per-mod failure must be folded into the outcome's Warnings")
+	assert.Contains(t, outcome.Warnings[0], "ghost-src:ghost-mod")
+	assert.Contains(t, outcome.Warnings[0], "failed to fetch mod")
 }
 
 // TestCoreProviderReorderModsRejectsIncompleteOrDuplicate mirrors the

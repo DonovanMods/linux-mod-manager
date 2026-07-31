@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -413,8 +414,13 @@ func TestProfileManager_UpsertMod(t *testing.T) {
 	assert.Equal(t, "67890", profile.Mods[1].ModID)
 }
 
-// TestProfileManager_UpsertMod_PreservesLockedMarker guards that Locked survives
-// an in-place update (when a mod already exists, it gets updated but Locked is preserved).
+// TestProfileManager_UpsertMod_PreservesLockedMarker guards that Locked
+// survives a legitimate in-place update: a SAME-version upsert (a FileIDs
+// refresh / reinstall repair) must succeed, update FileIDs, and preserve the
+// marker even when the incoming ref carries the zero value for Locked (as
+// every install/update-built ref does). A version MOVE on a locked ref is a
+// refusal instead - see
+// TestProfileManager_UpsertMod_LockedRefRefusesVersionMove (#143).
 func TestProfileManager_UpsertMod_PreservesLockedMarker(t *testing.T) {
 	dir := t.TempDir()
 
@@ -434,6 +440,7 @@ func TestProfileManager_UpsertMod_PreservesLockedMarker(t *testing.T) {
 		SourceID: "nexusmods",
 		ModID:    "12345",
 		Version:  "1.0.0",
+		FileIDs:  []string{"100"},
 		Locked:   true,
 	}
 	err = pm.UpsertMod("skyrim-se", "test", lockedModRef)
@@ -444,12 +451,14 @@ func TestProfileManager_UpsertMod_PreservesLockedMarker(t *testing.T) {
 	require.Len(t, profile.Mods, 1)
 	assert.True(t, profile.Mods[0].Locked, "locked marker should be set")
 
-	// Now upsert the same mod with updated version but without Locked flag
-	// (fresh/zero-value ref, as would come from an update operation)
+	// Now upsert the same mod at the SAME version with fresh FileIDs and
+	// without the Locked flag (fresh/zero-value ref, as install/update
+	// operations build them) - a reinstall/repair, which stays legitimate.
 	updatedModRef := domain.ModReference{
 		SourceID: "nexusmods",
 		ModID:    "12345",
-		Version:  "2.0.0",
+		Version:  "1.0.0",
+		FileIDs:  []string{"101"},
 		Locked:   false,
 	}
 	err = pm.UpsertMod("skyrim-se", "test", updatedModRef)
@@ -458,8 +467,63 @@ func TestProfileManager_UpsertMod_PreservesLockedMarker(t *testing.T) {
 	profile, err = pm.Get("skyrim-se", "test")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
-	assert.Equal(t, "2.0.0", profile.Mods[0].Version, "version should be updated")
+	assert.Equal(t, "1.0.0", profile.Mods[0].Version, "version stays at the locked version")
+	assert.Equal(t, []string{"101"}, profile.Mods[0].FileIDs, "FileIDs should be refreshed")
 	assert.True(t, profile.Mods[0].Locked, "locked marker should be preserved despite zero-value in input")
+}
+
+// TestProfileManager_UpsertMod_LockedRefRefusesVersionMove is #143's core
+// guard: UpsertMod on a LOCKED ref with a DIFFERENT Version must refuse with
+// an error wrapping core.ErrModLocked and leave the profile untouched - the
+// record IS the lock's target, and only explicit lock/unlock may move it.
+// Without this guard, `lmm install --version <Y>` on a locked mod silently
+// moved the lock target while leaving locked:true.
+func TestProfileManager_UpsertMod_LockedRefRefusesVersionMove(t *testing.T) {
+	dir := t.TempDir()
+
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.Create("skyrim-se", "test")
+	require.NoError(t, err)
+
+	err = pm.UpsertMod("skyrim-se", "test", domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "1.0.0",
+		FileIDs:  []string{"100"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, pm.SetModLock("skyrim-se", "test", "nexusmods", "12345", ""))
+
+	err = pm.UpsertMod("skyrim-se", "test", domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "2.0.0",
+		FileIDs:  []string{"200"},
+	})
+	require.Error(t, err, "a locked ref's version must not move via UpsertMod")
+	assert.True(t, errors.Is(err, core.ErrModLocked), "the refusal must wrap core.ErrModLocked, got: %v", err)
+	assert.Contains(t, err.Error(), "nexusmods:12345", "the refusal must name the mod")
+	assert.Contains(t, err.Error(), "1.0.0", "the refusal must name the locked version")
+	assert.Contains(t, err.Error(), "test", "the refusal must name the profile")
+	assert.Contains(t, err.Error(), "lmm mod lock -s nexusmods -p test 12345",
+		"the remedy must carry -s/-p so a copy-paste can never act on the wrong source/profile (the LockedRefRefusalError precedent)")
+	assert.Contains(t, err.Error(), "lmm mod unlock -s nexusmods -p test 12345",
+		"the unlock remedy must carry -s/-p for the same reason")
+
+	// The profile must NOT have been rewritten.
+	profile, err := pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "1.0.0", profile.Mods[0].Version, "the locked version must be untouched")
+	assert.Equal(t, []string{"100"}, profile.Mods[0].FileIDs, "FileIDs must be untouched on a refused upsert")
+	assert.True(t, profile.Mods[0].Locked, "the lock marker must be untouched")
 }
 
 // TestProfileManager_ReorderMods_PreservesLockedMarker guards that Locked survives

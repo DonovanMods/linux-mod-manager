@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.26.0" "User Commands"
+.TH "LMM" "1" "Jul 2026" "lmm 1.27.0" "User Commands"
 
 .SH NAME
 lmm-update-rollback - Rollback a mod to its previous version
@@ -19,7 +19,8 @@ mod ID is installed from more than one source in the profile, use
 
 .PP
 --json prints the single-mod document (see 'lmm update --help') with
-status "rolled_back".
+status "rolled_back", or status "skipped" with reason "locked" when the
+mod is locked (unlock or move the lock to roll back).
 
 .PP
 Examples:
