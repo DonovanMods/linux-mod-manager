@@ -68,7 +68,7 @@ the version of the file that was actually downloaded and deployed):
                                          report upstream
     ? NAME - VERSION UNVERIFIABLE       none of the recorded file ID(s)
                                          are listed by the source anymore
-                                         (reinstall to refresh)
+                                         (reinstall or 'lmm update')
 
 Mods installed from a local source, mods requiring manual download, and
 mods with no recorded file IDs are skipped silently - there is nothing
@@ -329,7 +329,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			if jsonOutput {
 				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: "", Status: "version_unverifiable"})
 			} else {
-				fmt.Printf("%s %s - VERSION UNVERIFIABLE (recorded file ID(s) no longer found upstream; reinstall to refresh the recorded version)\n", colorYellow("?"), mod.Name)
+				fmt.Printf("%s %s - VERSION UNVERIFIABLE (recorded file ID(s) no longer found upstream; reinstall the mod or run 'lmm update' to adopt the current version)\n", colorYellow("?"), mod.Name)
 			}
 			warnings++
 			continue

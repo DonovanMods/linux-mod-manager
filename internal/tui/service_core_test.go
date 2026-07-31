@@ -2797,6 +2797,31 @@ func TestCoreProviderActions_ApplyImport_ForceOverwritesExisting(t *testing.T) {
 	assert.Equal(t, "new-mod", saved.Mods[0].ModID, "the overwrite must replace the existing profile's mod list")
 }
 
+// TestCoreProviderActions_ApplyImport_FailureDetailsInWarnings guards #131:
+// a per-mod install failure during import must survive into the completed
+// ActionOutcome's Warnings (via core's ProfileImportResult.Warnings), not
+// just the transient ImportModFailed live-progress line the completion
+// message replaces - mirroring ApplyProfileSwitch's installFailures
+// fold-in. The fixture registers no sources, so a profile referencing one
+// fails its fetch and exercises exactly the fail() path.
+func TestCoreProviderActions_ApplyImport_FailureDetailsInWarnings(t *testing.T) {
+	actions, _, game := newCoreActionsFixture(t)
+
+	profile := &domain.Profile{
+		Name: "failing-import", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "ghost-src", ModID: "ghost-mod", Version: "1.0"}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	outcome, err := actions.ApplyImport(context.Background(), data, nil)
+	require.NoError(t, err)
+	assert.Contains(t, outcome.Message, "1 failed")
+	require.NotEmpty(t, outcome.Warnings, "the per-mod failure must be folded into the outcome's Warnings")
+	assert.Contains(t, outcome.Warnings[0], "ghost-src:ghost-mod")
+	assert.Contains(t, outcome.Warnings[0], "failed to fetch mod")
+}
+
 // TestCoreProviderReorderModsRejectsIncompleteOrDuplicate mirrors the
 // prototype-side permutation guard (Copilot PR #73 round 6): orderedKeys
 // missing an installed mod, or naming one twice, must error without

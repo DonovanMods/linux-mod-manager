@@ -316,6 +316,14 @@ func TestApplyImportPartialFailure(t *testing.T) {
 	assert.Equal(t, 1, result.Failed)
 	assert.Contains(t, failedEvt.Detail, "failed to fetch mod")
 
+	// #131: the failure must ALSO land in result.Warnings ("source:mod:
+	// reason", one entry per failed mod) - the live ImportModFailed event is
+	// transient, and an outcome-driven caller (the TUI) needs the reason to
+	// survive into the completed result.
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "src:bad-mod")
+	assert.Contains(t, result.Warnings[0], "failed to fetch mod")
+
 	_, err = svc.GetInstalledMod("src", "good-mod", "g1", "target")
 	assert.NoError(t, err, "the loop must continue past the bad ref and still install the good one")
 	_, err = svc.GetInstalledMod("src", "bad-mod", "g1", "target")
@@ -372,6 +380,13 @@ func TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T)
 	assert.Equal(t, 1, result.Failed)
 	assert.Contains(t, failedEvt.Detail, "no longer available upstream")
 	assert.Contains(t, failedEvt.Detail, "stale-id")
+
+	// #131: the stored-files-gone reason carries a remediation hint the user
+	// must be able to READ after the run - it has to survive into
+	// result.Warnings, not just the transient ImportModFailed event.
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "src:bad-mod")
+	assert.Contains(t, result.Warnings[0], "no longer available upstream")
 
 	_, err = svc.GetInstalledMod("src", "good-mod", "g1", "target")
 	assert.NoError(t, err, "the loop must continue past the bad ref and still install the good one")

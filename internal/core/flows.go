@@ -4777,13 +4777,19 @@ type ProfileImportOptions struct {
 //     convention; a caller wanting byte-identical pre-extraction output
 //     should print each entry to stdout ONLY under --verbose, e.g.
 //     `fmt.Printf("    %s\n", n)` (4-space indent).
-//   - Warnings is currently always empty - doProfileImport never printed an
-//     unconditional stderr warning anywhere in its own body - but is kept
-//     for parity with every other flow's result shape and future-proofing.
+//   - Warnings holds one "source:mod: reason" entry per failed mod (#131),
+//     appended at the same point Failed is bumped - so an outcome-driven
+//     caller (the TUI folds these into its completion message's Warnings,
+//     mirroring ApplyProfileSwitch's installFailures) keeps the reason and
+//     any remediation hint it carries (e.g. #95's stored-files-gone message)
+//     after the live progress line is gone.
 //
 // Every Notes entry is ALSO reported via the progress callback at the exact
 // point it is appended (ImportNote - see its DeployPhase doc comment), with
-// Detail equal to the slice entry verbatim.
+// Detail equal to the slice entry verbatim; likewise every Warnings entry
+// has a corresponding ImportModFailed event with Detail equal to the bare
+// reason - a live-printing caller (the CLI) must NOT batch-print Warnings
+// afterward or it would double-report every failure.
 //
 // On error (a failed save), the returned result carries any diagnostics
 // accumulated before the failure (none, today, since the save is the very
@@ -4860,6 +4866,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 
 		fail := func(reason string) {
 			result.Failed++
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s:%s: %s", ref.SourceID, ref.ModID, reason))
 			evt := base
 			evt.Phase, evt.Detail = ImportModFailed, reason
 			emit(evt)
