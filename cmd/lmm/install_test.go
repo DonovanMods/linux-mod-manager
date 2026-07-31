@@ -1166,6 +1166,109 @@ func TestDoInstall_VersionFlag_WithDependency_NamedModRecordedAtRequestedVersion
 	assert.Equal(t, "2.0", depInstalled.Version, "a dependency is untouched by --version - it installs at its own latest (#96 decision 6)")
 }
 
+// TestDoInstall_FileFlag_WithDependency_HonoredForNamedMod is #140 item 1's
+// CLI proof: --version X --file Y on a mod WITH a resolvable dependency
+// (doInstall's dependency branch -> core.ApplyInstall's BATCH path) must
+// install exactly the pinned file for the named mod - before the fix,
+// doInstallBatch never consulted --file at all, so the version pool's
+// auto-pick silently won (the #93 silent-flag class, --version's #96 fix
+// notwithstanding). The dependency is untouched, installing its own
+// auto-picked primary at latest.
+func TestDoInstall_FileFlag_WithDependency_HonoredForNamedMod(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	installYes = true // auto-confirm the "Install N mod(s)?" prompt
+
+	dep := &domain.Mod{ID: "dep1", SourceID: fake.id, Name: "Dep One", Version: "2.0", GameID: game.ID}
+	root := &domain.Mod{ID: "mod1", SourceID: fake.id, Name: "Mod One", Version: "1.5", Author: "Someone", GameID: game.ID,
+		Dependencies: []domain.ModReference{{SourceID: fake.id, ModID: "dep1"}}}
+	fake.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", Name: "Dep Main", FileName: "dep1.esp", IsPrimary: true}})
+	fake.AddDownload("dep-file", []byte("dep content"))
+	// v1.0's pool holds TWO files; the category sort auto-picks the OPTIONAL
+	// "8" (ARCHIVED sorts last), so pinning "9" proves --file beat the pick.
+	fake.AddMod(root, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old Main", FileName: "mod1.esp", Version: "1.0", Category: "ARCHIVED"},
+		{ID: "8", Name: "Old Patch", FileName: "mod1-patch.esp", Version: "1.0", Category: "OPTIONAL"},
+	})
+	fake.AddDownload("9", []byte("archived main content"))
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	installFileID = "9"
+	t.Cleanup(func() { installModID, installVersion, installFileID = "", "", "" })
+
+	require.NoError(t, doInstall(context.Background(), svc, game, nil))
+
+	primary, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"9"}, primary.FileIDs, "--file must pin the named mod's file even on the dependency (batch) path")
+	assert.Equal(t, "1.0", primary.Version)
+
+	depInstalled, err := svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dep-file"}, depInstalled.FileIDs, "a dependency is untouched by --file")
+}
+
+// TestDoInstall_FileFlag_OnlyCommasOrWhitespace_FailsFast pins the
+// degenerate---file guard (#140 review): a --file value that parses to ZERO
+// file IDs (only commas/whitespace) must fail fast, up front - before any
+// search/fetch - instead of silently degrading into "no --file at all"
+// (selectInstallFiles would return an empty selection with no error, and
+// the batch path's TargetFileIDs pin would silently vanish).
+func TestDoInstall_FileFlag_OnlyCommasOrWhitespace_FailsFast(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	mod := &domain.Mod{ID: "mod1", SourceID: fake.id, GameID: game.ID, Name: "Mod One", Version: "1.5", Author: "Someone"}
+	fake.AddMod(mod, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+	})
+
+	installModID = "mod1"
+	installFileID = " , "
+	t.Cleanup(func() { installModID, installFileID = "", "" })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--file")
+	assert.Contains(t, err.Error(), "no file IDs")
+
+	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	assert.Error(t, dbErr, "nothing may be installed off a no-op --file")
+}
+
+// TestDoInstall_FileFlag_WithDependency_UnknownFileAbortsWholeInstall proves
+// a --file ID outside the --version pool is fatal to the WHOLE
+// dependency-having install - loudly, before any mod is touched - matching
+// both the no-dependency path's wording and --version's own batch-abort
+// precedent, never a silent fallback to the auto-picked file.
+func TestDoInstall_FileFlag_WithDependency_UnknownFileAbortsWholeInstall(t *testing.T) {
+	svc, game, fake := setupDoInstallTest(t)
+	installYes = true
+
+	dep := &domain.Mod{ID: "dep1", SourceID: fake.id, Name: "Dep One", Version: "2.0", GameID: game.ID}
+	root := &domain.Mod{ID: "mod1", SourceID: fake.id, Name: "Mod One", Version: "1.5", Author: "Someone", GameID: game.ID,
+		Dependencies: []domain.ModReference{{SourceID: fake.id, ModID: "dep1"}}}
+	fake.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", Name: "Dep Main", FileName: "dep1.esp", IsPrimary: true}})
+	fake.AddDownload("dep-file", []byte("dep content"))
+	fake.AddMod(root, []domain.DownloadableFile{
+		{ID: "10", Name: "Main", FileName: "mod1.zip", Version: "1.5", IsPrimary: true, Category: "MAIN"},
+		{ID: "9", Name: "Old", FileName: "mod1.esp", Version: "1.0", Category: "ARCHIVED"},
+	})
+
+	installModID = "mod1"
+	installVersion = "1.0"
+	installFileID = "10" // belongs to 1.5, not the 1.0 pool
+	t.Cleanup(func() { installModID, installVersion, installFileID = "", "", "" })
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file ID 10 not found")
+
+	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	assert.Error(t, dbErr, "the named mod must not be installed")
+	_, dbErr = svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	assert.Error(t, dbErr, "no dependency may be installed - the file pin aborts before any mod is touched")
+}
+
 // TestDoInstall_VersionFlag_WithDependency_UnknownVersionAbortsWholeInstall
 // proves an unresolvable --version on a dependency-having install is fatal
 // to the WHOLE install (surfacing ErrVersionNotFound's message, same as the
@@ -1357,3 +1460,14 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 // errBoomInstall is a sentinel transient error for
 // TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall.
 var errBoomInstall = errors.New("boom: files endpoint unavailable")
+
+// TestInstallFileIDList_DedupesPreservingOrder pins --file parsing (#140
+// review): duplicate IDs collapse to their first occurrence, in order -
+// otherwise a `--file 9,9` propagates into plan.Files/TargetFileIDs and
+// fails SaveInstalledMod's PK-constrained installed_mod_files INSERT only
+// after download and deploy.
+func TestInstallFileIDList_DedupesPreservingOrder(t *testing.T) {
+	installFileID = " 9, 8 ,9,8"
+	t.Cleanup(func() { installFileID = "" })
+	assert.Equal(t, []string{"9", "8"}, installFileIDList())
+}

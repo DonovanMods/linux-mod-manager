@@ -2856,27 +2856,47 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID strin
 type InstallOptions struct {
 	// TargetVersion, when non-empty, pins the exact version to install for
 	// plan.Mod ONLY (#96 decision 6: batch dependencies always install at
-	// latest, untouched by this field). It matters exclusively to the BATCH
-	// (Dependencies-present) path: the STRICT path never reads it here at
-	// all - doInstall (cmd/lmm/install.go) already resolves --version
-	// CLI-side via core.ResolveVersionFiles before ApplyInstall is ever
-	// called, and applyInstallPrimary installs exactly plan.Files as a
-	// result. The BATCH path's own per-mod file selection
-	// (applyInstallBatchMod) never consults plan.Files for any mod - it
-	// always re-derives its own selection via GetModFiles - so without this
-	// field --version was silently ignored for the primary whenever the
-	// named mod had resolvable dependencies (#93's "flag lies" class,
-	// found again during #96 review).
+	// latest, untouched by this field). Honored on BOTH paths (#140 item 2
+	// closed the STRICT gap - previously it was documented-inert there and
+	// the CLI compensated by overriding plan.Files, a "flag lies" trap for
+	// any other core caller, e.g. a TUI version picker):
 	//
-	// Resolved ONCE, up front, before ApplyInstall's BATCH loop touches ANY
-	// mod (dependency or primary) - not lazily when the loop reaches the
-	// primary's turn. A version that doesn't resolve is fatal to the WHOLE
-	// install and returned immediately, with zero dependencies installed:
-	// the user explicitly asked for this version, so a quiet per-mod
-	// "Failed: 1 (X)" summary line is not loud enough, and installing
-	// dependencies for a primary that is about to fail to install at all
-	// would leave a confusing half-applied state.
+	//   - STRICT (no-deps): resolved by resolveStrictInstallFiles at the
+	//     very top of ApplyInstall - before the #143 lock gate, any hook,
+	//     or any side effect - overwriting plan.Files with the version's
+	//     matches (TargetFileIDs' picks within them, else the primary-or-
+	//     first heuristic). A plan.Files selection that already sits
+	//     entirely inside TargetVersion is kept VERBATIM (no refetch): that
+	//     is how the CLI's interactive/--file sub-selection, applied to
+	//     plan.Files before this is called, survives unclobbered.
+	//   - BATCH (Dependencies-present): the per-mod selection
+	//     (applyInstallBatchMod) never consults plan.Files, so the
+	//     primary's selection is resolved from this field up front - see
+	//     below (#93's silent---version class, found again in #96 review).
+	//
+	// Resolved ONCE, up front, before any mod (dependency or primary) is
+	// touched - not lazily when the loop reaches the primary's turn. A
+	// version that doesn't resolve is fatal to the WHOLE install and
+	// returned immediately, with zero dependencies installed: the user
+	// explicitly asked for this version, so a quiet per-mod "Failed: 1 (X)"
+	// summary line is not loud enough, and installing dependencies for a
+	// primary that is about to fail to install at all would leave a
+	// confusing half-applied state.
 	TargetVersion string
+
+	// TargetFileIDs, when non-empty, pins the exact file selection for
+	// plan.Mod ONLY - the core-side counterpart of the CLI's --file flag
+	// (#140, same silent-flag family as #93/#96: previously --file was
+	// silently ignored whenever the named mod had resolvable dependencies).
+	// Each ID must resolve within the primary's candidate pool - the
+	// TargetVersion matches when TargetVersion is also set, else the
+	// plan.ShowArchived-filtered list - and ANY miss is fatal to the WHOLE
+	// install, up front (BATCH path: zero dependencies installed, the #96
+	// TargetVersion loudness precedent). Dependencies are never affected:
+	// they always auto-select their own primary file at latest. Empty means
+	// no pin - the BATCH path auto-selects from the pool, the STRICT path
+	// installs plan.Files.
+	TargetFileIDs []string
 
 	// SkipVerify mirrors doInstall's --skip-verify: when true, a downloaded
 	// file's checksum is neither saved (SaveFileChecksum) nor reported via
@@ -3146,21 +3166,24 @@ func (s *Service) lockedInstallRefusal(ctx context.Context, plan *InstallPlan, o
 // for plan.Mod - mirroring each path's own later derivation exactly, without
 // side effects - solely so lockedInstallRefusal can compare it against a
 // locked ref. ok is false when the derivation fails (no files, unresolvable
-// TargetVersion, source error); the caller must then let the flow proceed to
-// its own authoritative handling of that failure rather than refusing on a
-// version this couldn't determine.
+// TargetVersion/TargetFileIDs, source error); the caller must then let the
+// flow proceed to its own authoritative handling of that failure rather than
+// refusing on a version this couldn't determine.
 //
 //   - STRICT (no dependencies): applyInstallPrimary installs exactly
-//     plan.Files (the CLI applies --version/--file overrides to the plan
-//     before ApplyInstall), so the would-be version is plan.Files' effective
-//     version - the same domain.EffectiveInstalledVersion stamp (#94)
-//     applyInstallPrimary itself performs.
-//   - BATCH: applyInstallBatchMod never consults plan.Files - it re-derives
-//     the primary's selection from GetModFiles, honoring opts.TargetVersion
-//     via ResolveVersionFiles (see ApplyInstall's own #96 pre-resolution)
-//     and plan.ShowArchived via filterAndSortInstallFiles otherwise. The
-//     GetModFiles network read here happens ONLY when the ref is locked
-//     (lockedInstallRefusal checks the lock first).
+//     plan.Files - by the time lockedInstallRefusal runs, ApplyInstall's own
+//     resolveStrictInstallFiles call has already folded opts.TargetVersion/
+//     TargetFileIDs into plan.Files (#140; the CLI's interactive/--file
+//     sub-selection was applied to the plan even earlier) - so the would-be
+//     version is plan.Files' effective version, the same
+//     domain.EffectiveInstalledVersion stamp (#94) applyInstallPrimary
+//     itself performs.
+//   - BATCH: applyInstallBatchMod never consults plan.Files - the primary's
+//     selection is re-derived here exactly as ApplyInstall's own #96/#140
+//     pre-resolution derives it (resolveInstallCandidatePool +
+//     selectInstallTargetFiles). The GetModFiles network read here happens
+//     ONLY when the ref is locked (lockedInstallRefusal checks the lock
+//     first).
 func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *InstallPlan, opts InstallOptions) (version string, ok bool) {
 	if len(plan.Dependencies) == 0 {
 		if len(plan.Files) == 0 {
@@ -3174,23 +3197,155 @@ func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *Install
 	}
 
 	primary := plan.Mod // local, addressable copy - distinct from plan.Mod
-	files, err := s.GetModFiles(ctx, primary.SourceID, &primary)
+	pool, err := s.resolveInstallCandidatePool(ctx, primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
 	if err != nil {
 		return "", false
+	}
+	selected, err := selectInstallTargetFiles(pool, opts.TargetFileIDs)
+	if err != nil {
+		return "", false
+	}
+	refs := make([]*domain.DownloadableFile, len(selected))
+	for i := range selected {
+		refs[i] = &selected[i]
+	}
+	return domain.EffectiveInstalledVersion(primary.Version, refs), true
+}
+
+// resolveInstallCandidatePool fetches mod's downloadable files and narrows
+// them to the pool an explicit file pin (or the auto-pick heuristic) may
+// select from: targetVersion's exact matches when targetVersion is non-empty
+// (resolved against the RAW list - a version pin usually names an archived
+// file, #96), else the showArchived-filtered, category-sorted list. Shared
+// by ApplyInstall's up-front primary resolution on both paths (#140) and the
+// #143 lock gate's dry-run derivation, so the gate can never judge a
+// different selection than the install performs.
+func (s *Service) resolveInstallCandidatePool(ctx context.Context, sourceID string, mod *domain.Mod, showArchived bool, targetVersion string) ([]domain.DownloadableFile, error) {
+	files, err := s.GetModFiles(ctx, sourceID, mod)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mod files: %w", err)
+	}
+	if targetVersion != "" {
+		return ResolveVersionFiles(sourceID, files, targetVersion)
+	}
+	return filterAndSortInstallFiles(files, showArchived), nil
+}
+
+// selectInstallTargetFiles applies targetFileIDs to pool (every ID must
+// resolve - see resolveTargetFiles), or falls back to the primary-or-first
+// heuristic (selectDeployFiles) when no IDs are pinned - the single
+// selection rule behind ApplyInstall's TargetVersion/TargetFileIDs handling
+// on both paths (#140).
+func selectInstallTargetFiles(pool []domain.DownloadableFile, targetFileIDs []string) ([]domain.DownloadableFile, error) {
+	if len(targetFileIDs) > 0 {
+		return resolveTargetFiles(pool, targetFileIDs)
+	}
+	selected, _, err := selectDeployFiles(pool, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.DownloadableFile, len(selected))
+	for i := range selected {
+		out[i] = *selected[i]
+	}
+	return out, nil
+}
+
+// resolveTargetFiles returns the pool entries matching ids, in ids order,
+// with duplicate ids collapsed to their first occurrence (a repeated pin is
+// the same request twice, and letting it through would fail
+// SaveInstalledMod's PK-constrained installed_mod_files INSERT only after
+// download and deploy). EVERY id must match - any miss fails with the CLI
+// selectInstallFiles' historical wording ("file ID %s not found"), never a
+// silent partial selection (#95's silent-fallback class). Unlike
+// selectDeployFiles' storedFileIDs matching, which tolerates misses by
+// design (stored IDs go stale when sources prune files), these ids are an
+// explicit, present-tense user request.
+func resolveTargetFiles(pool []domain.DownloadableFile, ids []string) ([]domain.DownloadableFile, error) {
+	seen := make(map[string]bool, len(ids))
+	out := make([]domain.DownloadableFile, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		found := false
+		for i := range pool {
+			if pool[i].ID == id {
+				out = append(out, pool[i])
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("file ID %s not found", id)
+		}
+	}
+	return out, nil
+}
+
+// installSelectionSatisfiesTargets reports whether files (a caller-supplied
+// plan.Files selection) already honors opts' TargetVersion/TargetFileIDs
+// pins: non-empty, every file at exactly TargetVersion (when set), and the
+// file-ID set exactly TargetFileIDs' (when set). resolveStrictInstallFiles
+// keeps a satisfying selection VERBATIM - and skips the GetModFiles refetch
+// entirely - so the CLI's interactive/--file sub-selection (applied to
+// plan.Files from the same version pool before ApplyInstall runs) survives,
+// while a stale default (e.g. PlanInstall's latest-primary pick under a
+// TargetVersion naming an older version) is re-resolved in core (#140).
+func installSelectionSatisfiesTargets(files []domain.DownloadableFile, opts InstallOptions) bool {
+	if len(files) == 0 {
+		return false
 	}
 	if opts.TargetVersion != "" {
-		files, err = ResolveVersionFiles(primary.SourceID, files, opts.TargetVersion)
-		if err != nil {
-			return "", false
+		for _, f := range files {
+			if f.Version != opts.TargetVersion {
+				return false
+			}
 		}
-	} else {
-		files = filterAndSortInstallFiles(files, plan.ShowArchived)
 	}
-	selected, _, err := selectDeployFiles(files, nil, false)
+	if len(opts.TargetFileIDs) > 0 {
+		want := make(map[string]bool, len(opts.TargetFileIDs))
+		for _, id := range opts.TargetFileIDs {
+			want[id] = true
+		}
+		got := make(map[string]bool, len(files))
+		for _, f := range files {
+			if !want[f.ID] {
+				return false
+			}
+			got[f.ID] = true
+		}
+		if len(got) != len(want) {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveStrictInstallFiles computes the STRICT (no-deps) path's final
+// plan.Files selection under opts' TargetVersion/TargetFileIDs pins (#140
+// item 2: previously TargetVersion was inert here and only a CLI-side
+// plan.Files override made --version real, a trap for any other core
+// caller). Returns (nil, nil) when there is nothing to do - no pins set, or
+// plan.Files already satisfies them (kept verbatim, no refetch - see
+// installSelectionSatisfiesTargets); otherwise fetches the candidate pool
+// and returns the pinned (or auto-picked) selection. Any resolution failure
+// is fatal to the install: the user explicitly asked for this version/file,
+// so silently installing something else is never acceptable (#93).
+func (s *Service) resolveStrictInstallFiles(ctx context.Context, plan *InstallPlan, opts InstallOptions) ([]domain.DownloadableFile, error) {
+	if opts.TargetVersion == "" && len(opts.TargetFileIDs) == 0 {
+		return nil, nil
+	}
+	if installSelectionSatisfiesTargets(plan.Files, opts) {
+		return nil, nil
+	}
+	primary := plan.Mod // local, addressable copy - distinct from plan.Mod
+	pool, err := s.resolveInstallCandidatePool(ctx, plan.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
 	if err != nil {
-		return "", false
+		return nil, err
 	}
-	return domain.EffectiveInstalledVersion(primary.Version, selected), true
+	return selectInstallTargetFiles(pool, opts.TargetFileIDs)
 }
 
 // ApplyInstall executes a plan produced by PlanInstall, gated on
@@ -3202,19 +3357,24 @@ func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *Install
 //   - Empty: the STRICT (no-deps) path - only plan.Mod installs, via
 //     applyInstallPrimary's doInstall-derived single-mod mechanics
 //     (Force-gated hooks, Install-or-Replace, SaveFileChecksum;
-//     interactive/--file selection is the CALLER's job, applied to
-//     plan.Files before this is ever called - but the blocking conflict
-//     prompt is NOT: it fires INSIDE applyInstallPrimary itself, post-
-//     download/pre-deploy, via opts.ConfirmConflicts - see that field's doc
-//     comment for why a caller-side, plan.Conflicts-driven prompt can never
-//     detect an uncached mod's conflicts, the C1 review finding this
-//     restores fidelity for).
+//     INTERACTIVE selection is the CALLER's job, applied to plan.Files
+//     before this is ever called, while opts.TargetVersion/TargetFileIDs
+//     pins are folded into plan.Files HERE, up front, when the caller's
+//     selection doesn't already satisfy them (#140 - see
+//     resolveStrictInstallFiles) - but the blocking conflict prompt is NOT:
+//     it fires INSIDE applyInstallPrimary itself, post-download/pre-deploy,
+//     via opts.ConfirmConflicts - see that field's doc comment for why a
+//     caller-side, plan.Conflicts-driven prompt can never detect an
+//     uncached mod's conflicts, the C1 review finding this restores
+//     fidelity for).
 //   - Non-empty: the BATCH path - plan.Dependencies (in plan order) THEN
 //     plan.Mod all install via applyInstallBatchMod, IDENTICALLY, matching
 //     batchInstallMods' own "every mod in the list is treated the same"
 //     design byte-for-byte - the primary is NOT special-cased here at all
 //     (no Replace, no interactive selection, no blocking conflict prompt -
-//     see applyInstallBatchMod's own doc comment).
+//     see applyInstallBatchMod's own doc comment; its ONE divergence is the
+//     up-front opts.TargetVersion/TargetFileIDs pre-resolution, #96/#140,
+//     which pins the primary's file selection only).
 //
 // install.before_all runs once, before any mod is touched, in EITHER path
 // (matching both doInstall's own single-mod code and batchInstallMods,
@@ -3240,6 +3400,24 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 
 	if err := ctx.Err(); err != nil {
 		return result, err
+	}
+
+	// #140: fold opts.TargetVersion/TargetFileIDs into the STRICT path's
+	// plan.Files up front, BEFORE the #143 lock gate below judges the
+	// would-be version and before any hook or side effect - a caller-
+	// supplied selection that already satisfies the pins is kept verbatim
+	// (see resolveStrictInstallFiles). An unresolvable pin is fatal here,
+	// with zero side effects, mirroring the BATCH path's own #96 up-front
+	// abort. The BATCH path resolves the same pins inside its own branch
+	// below (applyInstallBatchMod never consults plan.Files).
+	if len(plan.Dependencies) == 0 {
+		strictFiles, err := s.resolveStrictInstallFiles(ctx, plan, opts)
+		if err != nil {
+			return result, err
+		}
+		if strictFiles != nil {
+			plan.Files = strictFiles
+		}
 	}
 
 	// #143: refuse up front - before any hook, download, deploy, or DB/
@@ -3288,22 +3466,23 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		primary := plan.Mod // local, addressable copy - distinct from plan.Mod
 		mods = append(mods, &primary)
 
-		// #96: opts.TargetVersion pins the PRIMARY only (see its doc
-		// comment) - resolved here, once, before any mod in mods is
-		// touched, so an unresolvable version aborts the whole install
-		// with zero side effects rather than surfacing as a per-mod
-		// "Failed" line after dependencies already installed.
-		// primaryOverrideFiles is passed to applyInstallBatchMod ONLY for
-		// the primary's own iteration (the last entry in mods, by
-		// construction above); every dependency iteration gets nil and
-		// re-derives its own selection exactly as before.
+		// #96/#140: opts.TargetVersion/TargetFileIDs pin the PRIMARY only
+		// (see their doc comments) - resolved here, once, to the FINAL
+		// file selection, before any mod in mods is touched, so an
+		// unresolvable version or file ID aborts the whole install with
+		// zero side effects rather than surfacing as a per-mod "Failed"
+		// line after dependencies already installed. primaryOverrideFiles
+		// is passed to applyInstallBatchMod ONLY for the primary's own
+		// iteration (the last entry in mods, by construction above); every
+		// dependency iteration gets nil and re-derives its own selection
+		// exactly as before.
 		var primaryOverrideFiles []domain.DownloadableFile
-		if opts.TargetVersion != "" {
-			files, err := s.GetModFiles(ctx, primary.SourceID, &primary)
+		if opts.TargetVersion != "" || len(opts.TargetFileIDs) > 0 {
+			pool, err := s.resolveInstallCandidatePool(ctx, primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
 			if err != nil {
-				return result, fmt.Errorf("failed to get mod files: %w", err)
+				return result, err
 			}
-			primaryOverrideFiles, err = ResolveVersionFiles(primary.SourceID, files, opts.TargetVersion)
+			primaryOverrideFiles, err = selectInstallTargetFiles(pool, opts.TargetFileIDs)
 			if err != nil {
 				return result, err
 			}
@@ -3359,20 +3538,23 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 // never Force-gated, never fatal to the overall ApplyInstall call, primary
 // included. No Replace/reinstall-cache-transaction (an existing same-key
 // install is uninstalled+cache-deleted first, then a fresh Install always),
-// no interactive/--file file selection (always the filtered list's
-// primary-or-first file, re-resolved here - plan.Files is never consulted),
+// no interactive selection (the filtered list's primary-or-first file,
+// re-resolved here - plan.Files is never consulted; the primary's
+// --version/--file pins arrive pre-resolved via overrideFiles, #96/#140),
 // a non-blocking inline conflict warning (never a blocking prompt). Returns
 // the install.after_each warning event to defer (nil if none), matching
 // ApplyInstall's deferredWarnings convention.
 //
-// overrideFiles, when non-nil, is used verbatim as the candidate file list
-// INSTEAD of the usual GetModFiles + filterAndSortInstallFiles derivation -
-// exclusively how ApplyInstall's #96 opts.TargetVersion pin reaches the
-// PRIMARY's iteration (already resolved via ResolveVersionFiles before the
-// loop started; see ApplyInstall's own comment). Every dependency iteration
-// always passes nil here and re-derives its own selection exactly as
-// before - decision 6, dependencies install at latest regardless of
-// TargetVersion.
+// overrideFiles, when non-nil, is the FINAL file selection - every entry
+// downloads and is recorded, in order, with no further sub-selection -
+// exclusively how ApplyInstall's #96/#140 opts.TargetVersion/TargetFileIDs
+// pins reach the PRIMARY's iteration (already resolved to exact files
+// before the loop started; see ApplyInstall's own comment). This is the one
+// place the BATCH path installs more than one file per mod (--file can name
+// several); the no-override derivation below always selects exactly one.
+// Every dependency iteration passes nil here and re-derives its own
+// selection exactly as before - decision 6, dependencies install at latest
+// regardless of the primary's pins.
 func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress), overrideFiles []domain.DownloadableFile) *DeployProgress {
 	base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name, ModVersion: mod.Version, ModID: mod.ID, SourceID: mod.SourceID}
 	skip := func(label, reason string) {
@@ -3407,31 +3589,32 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	// its own F1 reorder): the #143 lock check must judge the selected
 	// version before anything is removed, and a fetch/selection failure now
 	// skips this mod while its previous installation is still intact.
-	var files []domain.DownloadableFile
+	var selected []*domain.DownloadableFile
 	if overrideFiles != nil {
-		// #96: the primary's --version-resolved selection, already fetched
-		// and matched by ApplyInstall before the loop started - see this
-		// function's own doc comment.
-		files = overrideFiles
+		// #96/#140: the primary's --version/--file-resolved FINAL selection,
+		// already fetched and matched by ApplyInstall before the loop
+		// started - see this function's own doc comment.
+		selected = make([]*domain.DownloadableFile, len(overrideFiles))
+		for i := range overrideFiles {
+			selected[i] = &overrideFiles[i]
+		}
 	} else {
-		var err error
-		files, err = s.GetModFiles(ctx, mod.SourceID, mod)
+		files, err := s.GetModFiles(ctx, mod.SourceID, mod)
 		if err != nil {
 			skip("Error", fmt.Sprintf("failed to get mod files: %v", err))
 			return nil
 		}
 		files = filterAndSortInstallFiles(files, plan.ShowArchived)
+		if len(files) == 0 {
+			skip("Error", "no downloadable files available")
+			return nil
+		}
+		selected, _, err = selectDeployFiles(files, nil, false)
+		if err != nil {
+			skip("Error", err.Error())
+			return nil
+		}
 	}
-	if len(files) == 0 {
-		skip("Error", "no downloadable files available")
-		return nil
-	}
-	selected, _, err := selectDeployFiles(files, nil, false)
-	if err != nil {
-		skip("Error", err.Error())
-		return nil
-	}
-	file := selected[0]
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selected) // #94
 
 	// #143: a LOCKED profile ref converges only via explicit lock/unlock -
@@ -3475,36 +3658,51 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		}
 	}
 
-	fileEvt := base
-	fileEvt.Phase, fileEvt.File = InstallDepFileSelected, file
-	emit(fileEvt)
+	// #140: overrideFiles may pin several files (--file A,B) - download and
+	// record EVERY selected file, in order, matching the STRICT path's own
+	// plan.Files loop. The nil-override derivation above always selects
+	// exactly one file, so dependencies and unpinned primaries keep
+	// batchInstallMods' historical single-file mechanics (and event stream)
+	// unchanged.
+	fileIDs := make([]string, 0, len(selected))
+	var checksums []fileChecksum
+	filesExtracted := 0
+	for _, file := range selected {
+		fileEvt := base
+		fileEvt.Phase, fileEvt.File = InstallDepFileSelected, file
+		emit(fileEvt)
 
-	progressFn := func(p DownloadProgress) {
-		if p.TotalBytes > 0 {
-			dl := base
-			dl.Phase, dl.Percent = InstallDepDownloading, p.Percentage
-			emit(dl)
+		progressFn := func(p DownloadProgress) {
+			if p.TotalBytes > 0 {
+				dl := base
+				dl.Phase, dl.Percent = InstallDepDownloading, p.Percentage
+				emit(dl)
+			}
 		}
-	}
-	downloadResult, err := s.DownloadMod(ctx, mod.SourceID, game, mod, file, progressFn)
+		downloadResult, err := s.DownloadMod(ctx, mod.SourceID, game, mod, file, progressFn)
 
-	// Unconditional (success OR failure alike), mirroring batchInstallMods'
-	// own `fmt.Println()` immediately after the download call returns -
-	// see InstallDepDownloadDone's doc comment for why this precedes the
-	// failure branch's own InstallDepSkipped event.
-	done := base
-	done.Phase = InstallDepDownloadDone
-	emit(done)
+		// Unconditional (success OR failure alike), mirroring batchInstallMods'
+		// own `fmt.Println()` immediately after the download call returns -
+		// see InstallDepDownloadDone's doc comment for why this precedes the
+		// failure branch's own InstallDepSkipped event.
+		done := base
+		done.Phase = InstallDepDownloadDone
+		emit(done)
 
-	if err != nil {
-		skip("Error", fmt.Sprintf("download failed: %v", err))
-		return nil
-	}
+		if err != nil {
+			skip("Error", fmt.Sprintf("download failed: %v", err))
+			return nil
+		}
 
-	if !opts.SkipVerify && downloadResult.Checksum != "" {
-		evt := base
-		evt.Phase, evt.Detail = InstallChecksumComputed, downloadResult.Checksum
-		emit(evt)
+		if !opts.SkipVerify && downloadResult.Checksum != "" {
+			evt := base
+			evt.Phase, evt.Detail = InstallChecksumComputed, downloadResult.Checksum
+			emit(evt)
+			checksums = append(checksums, fileChecksum{fileID: file.ID, checksum: downloadResult.Checksum})
+		}
+
+		filesExtracted += downloadResult.FilesExtracted
+		fileIDs = append(fileIDs, file.ID)
 	}
 
 	if !opts.Force {
@@ -3527,7 +3725,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		Enabled:      true,
 		Deployed:     true,
 		LinkMethod:   linkMethod,
-		FileIDs:      []string{file.ID},
+		FileIDs:      fileIDs,
 	}
 	installedMod.Mod.GameID = game.ID
 	if err := s.SaveInstalledMod(installedMod); err != nil {
@@ -3535,8 +3733,8 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		return nil
 	}
 
-	if !opts.SkipVerify && downloadResult.Checksum != "" {
-		if err := s.SaveFileChecksum(mod.SourceID, mod.ID, game.ID, plan.Profile, file.ID, downloadResult.Checksum); err != nil {
+	for _, cs := range checksums {
+		if err := s.SaveFileChecksum(mod.SourceID, mod.ID, game.ID, plan.Profile, cs.fileID, cs.checksum); err != nil {
 			msg := fmt.Sprintf("failed to save checksum: %v", err)
 			result.Warnings = append(result.Warnings, msg)
 			evt := base
@@ -3552,7 +3750,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		evt.Phase, evt.Detail = InstallNote, msg
 		emit(evt)
 	}
-	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: []string{file.ID}}
+	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
 	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
@@ -3563,7 +3761,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 
 	result.Installed = append(result.Installed, mod.Name)
 	installedEvt := base
-	installedEvt.Phase, installedEvt.FilesExtracted = InstallDepInstalled, downloadResult.FilesExtracted
+	installedEvt.Phase, installedEvt.FilesExtracted = InstallDepInstalled, filesExtracted
 	emit(installedEvt)
 
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
