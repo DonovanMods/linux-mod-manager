@@ -553,7 +553,21 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		return nil, fmt.Errorf("local mod path: %w", err)
 	}
 
-	cachePath, stagePath, err := prepareStaging(gameCache, game, mod)
+	// #166: a directory ingest REPLACES the cache entry instead of overlaying
+	// it, so it stages UNSEEDED - seeding from the existing entry would let
+	// members deleted from the source survive every re-ingest (verify --fix,
+	// a re-download into a retained entry) and stay deployed indefinitely,
+	// since copyDir below overlays without deleting. Safe because directory
+	// sources declare exactly ONE synthetic file ID ("main" - see
+	// custom.Directory.GetModFiles), so the seed can never carry sibling
+	// files' members or markers worth preserving. File/archive ingests keep
+	// the seed: their sources may serve multiple file IDs into one entry.
+	var cachePath, stagePath string
+	if info.IsDir() {
+		cachePath, stagePath, err = prepareUnseededStaging(gameCache, game, mod)
+	} else {
+		cachePath, stagePath, err = prepareStaging(gameCache, game, mod)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -566,11 +580,15 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		if err := copyDir(localPath, stagePath); err != nil {
 			return nil, fmt.Errorf("copying mod directory: %w", err)
 		}
-		// Attribute the SOURCE directory's own files, not stagePath's:
-		// prepareStaging seeds stagePath with the existing cache entry, whose
-		// members belong to other file IDs.
-		if members, err = relativeFileMembers(localPath); err != nil {
-			return nil, fmt.Errorf("listing mod directory: %w", err)
+		// Attribute the STAGED copies, not localPath's own listing: staging
+		// holds exactly what the commit below publishes (it was cleared
+		// above, so every file in it is this ingest's), and copyDir
+		// DEREFERENCES in-root symlinks into regular files that a walk of
+		// the source would skip - those files are cached, listed, and
+		// deployed (cache.ListFiles), so the manifest and digest must cover
+		// them too or the member-set views drift apart (#166).
+		if members, err = relativeFileMembers(stagePath); err != nil {
+			return nil, fmt.Errorf("listing staged mod directory: %w", err)
 		}
 		// Digest the STAGED copies, not localPath: staging holds the exact
 		// bytes the commit below publishes, while the live source directory
@@ -685,10 +703,9 @@ func digestDirectoryMembers(root string, members []string) (string, error) {
 // defer was armed BEFORE the copy step (see
 // TestPrepareStagingCleansPartialStagingOnCopyFailure).
 func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
-	cachePath = gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
-	stagePath = cachePath + ".staging"
-	if err := os.RemoveAll(stagePath); err != nil {
-		return "", "", fmt.Errorf("clearing staging cache: %w", err)
+	cachePath, stagePath, err = prepareUnseededStaging(gameCache, game, mod)
+	if err != nil {
+		return "", "", err
 	}
 	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 		if err := copyDir(cachePath, stagePath); err != nil {
@@ -701,6 +718,23 @@ func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) 
 			_ = os.RemoveAll(stagePath)
 			return "", "", fmt.Errorf("staging existing cache: %w", err)
 		}
+	}
+	return cachePath, stagePath, nil
+}
+
+// prepareUnseededStaging is prepareStaging WITHOUT the existing-entry seed:
+// it computes the cache/staging paths and clears any stale staging directory,
+// but leaves stagePath absent even when a cache entry already exists - the
+// commit then REPLACES the entry outright instead of layering onto it.
+// Directory ingests use this (#166): their single synthetic file ID owns the
+// whole entry, so seeding could only resurrect members the source no longer
+// has. Same caller contract as prepareStaging: on nil error stagePath does
+// not exist yet and the caller owns its cleanup.
+func prepareUnseededStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
+	cachePath = gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	stagePath = cachePath + ".staging"
+	if err := os.RemoveAll(stagePath); err != nil {
+		return "", "", fmt.Errorf("clearing staging cache: %w", err)
 	}
 	return cachePath, stagePath, nil
 }
@@ -729,7 +763,9 @@ func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) 
 //
 // prepareStaging seeds stagePath from the existing cache entry when one is
 // present, and copyDir copies dotfiles, so markers written by a mod's earlier
-// files survive into every later file's commit.
+// files survive into every later file's commit. (Directory ingests stage
+// UNSEEDED instead - prepareUnseededStaging, #166 - their single synthetic
+// file ID means there are no earlier files' markers to carry forward.)
 func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []string) error {
 	if err := cache.MarkFileCompleteWithMembers(stagePath, fileID, members); err != nil {
 		return err
@@ -795,14 +831,23 @@ func (s *Service) extractIntoStaging(archivePath, cachePath, stagePath string) (
 
 // relativeFileMembers lists root-relative paths of the regular files under
 // root - the member manifest for a directory ingest, matching cache.ListFiles
-// semantics (directories and symlinks excluded).
+// semantics exactly: directories and symlinks are excluded, and so are lmm's
+// own reserved (cache.ReservedPrefix) bookkeeping entries, which ListFiles
+// never serves to deploy/undeploy and the manifest must therefore never
+// attribute either.
 func relativeFileMembers(root string) ([]string, error) {
 	var members []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !d.Type().IsRegular() {
+		if d.IsDir() {
+			if path != root && strings.HasPrefix(d.Name(), cache.ReservedPrefix) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() || strings.HasPrefix(d.Name(), cache.ReservedPrefix) {
 			return nil
 		}
 		rel, err := filepath.Rel(root, path)

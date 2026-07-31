@@ -101,6 +101,89 @@ func TestIngestLocalToCacheDirectory_EmptyMemberSet_NoChecksum(t *testing.T) {
 	assert.Empty(t, result.Checksum, "an empty member set has nothing to fingerprint - no digest")
 }
 
+// TestIngestLocalToCacheDirectory_ReingestDropsRemovedMembers is THE #166
+// regression test: re-ingesting a directory source into an EXISTING cache
+// entry for the same (source, mod, version) must REPLACE the entry, not
+// overlay it - a member deleted from the source directory must disappear
+// from the committed cache, from the "main" marker's member manifest, and
+// from the digest, which must land on exactly the value a fresh ingest of
+// the shrunk source produces (so verify --fix / reinstalls converge).
+func TestIngestLocalToCacheDirectory_ReingestDropsRemovedMembers(t *testing.T) {
+	svc, gameCache := newLocalIngestService(t)
+
+	modDir := filepath.Join(t.TempDir(), "BiggerBackpack")
+	require.NoError(t, os.MkdirAll(filepath.Join(modDir, "Config"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(modDir, "ModInfo.xml"), []byte("<xml/>"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(modDir, "Config", "items.xml"), []byte("<items/>"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(modDir, "stale.txt"), []byte("to be removed"), 0644))
+
+	game := &domain.Game{ID: "7dtd", DeployMode: domain.DeployExtract}
+	mod := &domain.Mod{ID: "BiggerBackpack", SourceID: "my-mods", Version: "1.2.0"}
+	file := &domain.DownloadableFile{ID: "main", FileName: "BiggerBackpack"}
+
+	first, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	require.NoError(t, err)
+	require.Equal(t, 3, first.FilesExtracted)
+
+	require.NoError(t, os.Remove(filepath.Join(modDir, "stale.txt")))
+
+	second, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	require.NoError(t, err)
+	assert.Equal(t, 2, second.FilesExtracted, "the removed member must not be counted after re-ingest")
+
+	files, err := gameCache.ListFiles("7dtd", "my-mods", "BiggerBackpack", "1.2.0")
+	require.NoError(t, err)
+	assert.NotContains(t, files, "stale.txt", "a member deleted from the source must not survive re-ingest in the committed cache")
+	assert.Len(t, files, 2)
+
+	manifests, err := gameCache.FileManifests("7dtd", "my-mods", "BiggerBackpack", "1.2.0")
+	require.NoError(t, err)
+	require.True(t, manifests["main"].Recorded)
+	assert.NotContains(t, manifests["main"].Members, "stale.txt", "the marker manifest must not attribute the removed member")
+
+	// The digest must converge on what a FRESH ingest of the shrunk source
+	// produces - the symmetry verify --fix and reinstalls depend on (#164).
+	freshCache := cache.New(t.TempDir())
+	fresh, err := svc.ingestLocalToCache(freshCache, game, mod, file, modDir)
+	require.NoError(t, err)
+	assert.Equal(t, fresh.Checksum, second.Checksum,
+		"re-ingest over an existing entry must produce the same digest as a fresh ingest of the same source")
+}
+
+// TestIngestLocalToCacheDirectory_MembersIncludeDereferencedSymlinks pins the
+// member-set consistency half of #166: copyDir DEREFERENCES in-root symlinks
+// into regular files, so the cached (and therefore deployed - ListFiles)
+// view includes them. The marker manifest and digest must attribute those
+// same files, not silently skip them the way a walk of the SOURCE directory
+// (whose entries are still symlinks) would.
+func TestIngestLocalToCacheDirectory_MembersIncludeDereferencedSymlinks(t *testing.T) {
+	svc, gameCache := newLocalIngestService(t)
+
+	modDir := filepath.Join(t.TempDir(), "LinkedMod")
+	require.NoError(t, os.MkdirAll(filepath.Join(modDir, "data"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(modDir, "data", "real.txt"), []byte("real"), 0644))
+	require.NoError(t, os.Symlink(filepath.Join(modDir, "data", "real.txt"), filepath.Join(modDir, "alias.txt")))
+
+	game := &domain.Game{ID: "7dtd", DeployMode: domain.DeployExtract}
+	mod := &domain.Mod{ID: "LinkedMod", SourceID: "my-mods", Version: "1.0"}
+	file := &domain.DownloadableFile{ID: "main", FileName: "LinkedMod"}
+
+	result, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	require.NoError(t, err)
+
+	files, err := gameCache.ListFiles("7dtd", "my-mods", "LinkedMod", "1.0")
+	require.NoError(t, err)
+	require.Contains(t, files, "alias.txt", "copyDir materializes the symlink as a regular cached file")
+
+	manifests, err := gameCache.FileManifests("7dtd", "my-mods", "LinkedMod", "1.0")
+	require.NoError(t, err)
+	require.True(t, manifests["main"].Recorded)
+	assert.Contains(t, manifests["main"].Members, "alias.txt",
+		"the manifest must attribute every cached member, dereferenced symlinks included")
+	assert.Equal(t, 2, result.FilesExtracted)
+	assert.NotEmpty(t, result.Checksum)
+}
+
 func TestIngestLocalToCacheArchiveCopyMode(t *testing.T) {
 	svc, gameCache := newLocalIngestService(t)
 

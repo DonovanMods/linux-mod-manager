@@ -1752,7 +1752,7 @@ func TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure(t *testing.T) {
 // yields a mod directory with no regular files (no content to fingerprint).
 // When ingest is true the mod is pre-ingested into the cache the same way
 // install did - on the broken build that stores content but never a checksum.
-func setupDoVerifyDirectorySourceTest(t *testing.T, modDirName string, memberFiles map[string]string, ingest bool) (*cobra.Command, *core.Service, *domain.Game, *domain.Mod) {
+func setupDoVerifyDirectorySourceTest(t *testing.T, modDirName string, memberFiles map[string]string, ingest bool) (*cobra.Command, *core.Service, *domain.Game, *domain.Mod, string) {
 	t.Helper()
 
 	root := t.TempDir()
@@ -1811,7 +1811,7 @@ func setupDoVerifyDirectorySourceTest(t *testing.T, modDirName string, memberFil
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	return cmd, svc, game, mod
+	return cmd, svc, game, mod, modDir
 }
 
 // storedChecksum returns the checksum recorded for (sourceID, modID, fileID)
@@ -1835,7 +1835,7 @@ func storedChecksum(t *testing.T, svc *core.Service, gameID, profile, sourceID, 
 // trusted from stdout - and a second verify run must come back clean instead
 // of warning NO CHECKSUM forever.
 func TestDoVerify_Fix_DirectorySource_PersistsChecksum_SecondRunClean(t *testing.T) {
-	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "BiggerBackpack",
+	cmd, svc, game, _, _ := setupDoVerifyDirectorySourceTest(t, "BiggerBackpack",
 		map[string]string{"ModInfo.xml": `<?xml version="1.0"?><xml><Name value="BiggerBackpack"/><Version value="1.2.0"/></xml>`}, true)
 
 	require.Empty(t, storedChecksum(t, svc, game.ID, "default", "my-mods", "BiggerBackpack", "main"),
@@ -1856,12 +1856,47 @@ func TestDoVerify_Fix_DirectorySource_PersistsChecksum_SecondRunClean(t *testing
 	assert.Contains(t, secondRun, "All files verified OK.")
 }
 
+// TestDoVerify_Fix_DirectorySource_ReingestDropsRemovedMember is the #166
+// regression at the verify --fix level: the fix's re-ingest lands on an
+// EXISTING cache entry for the same (source, mod, version), and a member
+// deleted from the source directory in the meantime must NOT survive it -
+// the committed cache must shrink with the source, the refreshed digest must
+// be persisted, and a second run must be clean.
+func TestDoVerify_Fix_DirectorySource_ReingestDropsRemovedMember(t *testing.T) {
+	cmd, svc, game, _, modDir := setupDoVerifyDirectorySourceTest(t, "BiggerBackpack",
+		map[string]string{
+			"ModInfo.xml": `<?xml version="1.0"?><xml><Name value="BiggerBackpack"/><Version value="1.2.0"/></xml>`,
+			"stale.txt":   "to be removed",
+		}, true)
+
+	gameCache := svc.GetGameCache(game)
+	files, err := gameCache.ListFiles(game.ID, "my-mods", "BiggerBackpack", "1.2.0")
+	require.NoError(t, err)
+	require.Contains(t, files, "stale.txt", "fixture: the member must be in the cache before the source shrinks")
+
+	require.NoError(t, os.Remove(filepath.Join(modDir, "stale.txt")))
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "checksum populated")
+
+	files, err = gameCache.ListFiles(game.ID, "my-mods", "BiggerBackpack", "1.2.0")
+	require.NoError(t, err)
+	assert.NotContains(t, files, "stale.txt", "#166: the re-ingest must drop the member deleted from the source")
+
+	secondRun := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, secondRun, "All files verified OK.")
+}
+
 // TestDoVerify_Fix_NoChecksum_NotPersisted_HonestWarning covers the honesty
 // half of #164 when there is genuinely no checksum to store (a directory mod
 // with no regular files): --fix must NOT claim "checksum populated" - the
 // NO CHECKSUM warning stays, with a note saying why, and is still counted.
 func TestDoVerify_Fix_NoChecksum_NotPersisted_HonestWarning(t *testing.T) {
-	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, true)
+	cmd, svc, game, _, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, true)
 
 	out := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
@@ -1880,7 +1915,7 @@ func TestDoVerify_Fix_NoChecksum_NotPersisted_HonestWarning(t *testing.T) {
 // counterpart: status must stay "no_checksum" (not flip to "ok") with a note,
 // and the warnings counter must reflect it.
 func TestDoVerify_Fix_NoChecksum_NotPersisted_JSONStaysNoChecksum(t *testing.T) {
-	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, true)
+	cmd, svc, game, _, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, true)
 
 	oldJSON := jsonOutput
 	jsonOutput = true
@@ -1912,7 +1947,7 @@ func TestDoVerify_Fix_NoChecksum_NotPersisted_JSONStaysNoChecksum(t *testing.T) 
 // the cache (so the MISSING issue is genuinely resolved) but stores no
 // checksum, so the row must surface as no_checksum with a note - not "ok".
 func TestDoVerify_Fix_Missing_NotPersisted_JSONStaysNoChecksum(t *testing.T) {
-	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, false)
+	cmd, svc, game, _, _ := setupDoVerifyDirectorySourceTest(t, "EmptyMod-1.0", nil, false)
 
 	oldJSON := jsonOutput
 	jsonOutput = true
@@ -1941,7 +1976,7 @@ func TestDoVerify_Fix_Missing_NotPersisted_JSONStaysNoChecksum(t *testing.T) {
 // MISSING branch's success path for a real directory mod - the re-ingest both
 // restores the cache AND persists a checksum, so the run repairs completely.
 func TestDoVerify_Fix_Missing_DirectorySource_RedownloadPersistsChecksum(t *testing.T) {
-	cmd, svc, game, _ := setupDoVerifyDirectorySourceTest(t, "BiggerBackpack",
+	cmd, svc, game, _, _ := setupDoVerifyDirectorySourceTest(t, "BiggerBackpack",
 		map[string]string{"ModInfo.xml": `<?xml version="1.0"?><xml><Name value="BiggerBackpack"/><Version value="1.2.0"/></xml>`}, false)
 
 	out := captureStdout(t, func() error {
