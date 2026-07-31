@@ -1,0 +1,209 @@
+package icarus
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
+	"path"
+	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
+)
+
+// gameID is fixed: the Firestore database this source reads is Icarus-only.
+const gameID = "icarus"
+
+// Icarus is a ModSource backed by the public, unauthenticated Firestore REST
+// API described in docs/plans/2026-07-29-icarus-exmod-pak-research.md.
+type Icarus struct {
+	firestore *firestoreClient
+}
+
+// New constructs an Icarus source. projectID is the Firestore project ID
+// (from the Firebase console) — passed explicitly rather than hard-coded so
+// tests can point at an httptest server and so the real value lives in one
+// place at the call site (Task 9), not buried in this package.
+func New(httpClient *http.Client, projectID string) *Icarus {
+	return &Icarus{firestore: newFirestoreClient(projectID, httpClient)}
+}
+
+var (
+	_ source.ModSource          = (*Icarus)(nil)
+	_ source.CapabilityReporter = (*Icarus)(nil)
+)
+
+func (s *Icarus) ID() string   { return "icarus" }
+func (s *Icarus) Name() string { return "Icarus (Project Daedalus)" }
+
+// AuthURL/ExchangeToken: unsupported — Firestore reads here are public.
+func (s *Icarus) AuthURL() string { return "" }
+func (s *Icarus) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
+	return nil, fmt.Errorf("source %q: authentication: %w", s.ID(), source.ErrNotSupported)
+}
+
+// GetDependencies: the modinfo.json v2 schema has no dependency field.
+func (s *Icarus) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
+	return nil, fmt.Errorf("source %q: dependencies: %w", s.ID(), source.ErrNotSupported)
+}
+
+func (s *Icarus) Capabilities() source.Capabilities {
+	return source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: false}
+}
+
+func (s *Icarus) TypeLabel() string { return "built-in" }
+
+// Search fetches the whole mods collection and filters client-side — this
+// catalog has no server-side query support to speak of, matching
+// project_daedalus's own ModsController#find_mods approach.
+func (s *Icarus) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
+	docs, err := s.firestore.listCollection(ctx, "mods")
+	if err != nil {
+		return source.SearchResult{}, fmt.Errorf("source %q: searching: %w", s.ID(), err)
+	}
+
+	var mods []domain.Mod
+	q := strings.ToLower(query.Query)
+	for _, d := range docs {
+		m := mapDoc(d)
+		if q == "" || strings.Contains(strings.ToLower(m.Name), q) ||
+			strings.Contains(strings.ToLower(m.Author), q) ||
+			strings.Contains(strings.ToLower(m.Description), q) {
+			mods = append(mods, m)
+		}
+	}
+
+	pageSize := query.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	page := query.Page
+	if page < 0 {
+		page = 0
+	}
+	start := page * pageSize
+	if start > len(mods) {
+		start = len(mods)
+	}
+	end := start + pageSize
+	if end > len(mods) {
+		end = len(mods)
+	}
+
+	return source.SearchResult{Mods: mods[start:end], TotalCount: len(mods), Page: page, PageSize: pageSize}, nil
+}
+
+func (s *Icarus) GetMod(ctx context.Context, queryGameID, modID string) (*domain.Mod, error) {
+	doc, err := s.firestore.getDocument(ctx, "mods", modID)
+	if err != nil {
+		return nil, fmt.Errorf("source %q: fetching mod %s: %w", s.ID(), modID, err)
+	}
+	m := mapDoc(*doc)
+	return &m, nil
+}
+
+// GetModFiles returns the mod's downloadable files (pak and/or exmodz — see
+// modinfo.json v2 schema). A single file is marked primary, matching the
+// existing custom.API convention.
+func (s *Icarus) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	doc, err := s.firestore.getDocument(ctx, "mods", mod.ID)
+	if err != nil {
+		return nil, fmt.Errorf("source %q: listing files for %s: %w", s.ID(), mod.ID, err)
+	}
+	filesField, _ := doc.Fields["files"].(map[string]any)
+	var out []domain.DownloadableFile
+	for _, kind := range []string{"pak", "exmodz"} {
+		rawURL, ok := filesField[kind].(string)
+		if !ok || rawURL == "" {
+			continue
+		}
+		out = append(out, domain.DownloadableFile{
+			ID:       kind,
+			Name:     kind,
+			FileName: fileNameFromURL(rawURL, kind),
+			Category: strings.ToUpper(kind),
+		})
+	}
+	if len(out) == 1 {
+		out[0].IsPrimary = true
+	}
+	return out, nil
+}
+
+// GetDownloadURL re-fetches the mod document and returns the stored URL for
+// fileID ("pak" or "exmodz") directly — no signing, matching a static-URL
+// catalog rather than an OAuth-gated one.
+func (s *Icarus) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	doc, err := s.firestore.getDocument(ctx, "mods", mod.ID)
+	if err != nil {
+		return "", fmt.Errorf("source %q: download URL for %s: %w", s.ID(), fileID, err)
+	}
+	filesField, _ := doc.Fields["files"].(map[string]any)
+	rawURL, ok := filesField[fileID].(string)
+	if !ok || rawURL == "" {
+		return "", fmt.Errorf("source %q: file %s: no download URL", s.ID(), fileID)
+	}
+	return rawURL, nil
+}
+
+// CheckUpdates compares each installed mod's stored version against the
+// catalog's current version string (semantic-ish, per modinfo.json's
+// "recommended" versioning note — not guaranteed strictly semver, so this
+// uses domain.IsNewerVersion the same way custom.API does).
+func (s *Icarus) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	var updates []domain.Update
+	var errs []error
+	for _, inst := range installed {
+		select {
+		case <-ctx.Done():
+			return updates, ctx.Err()
+		default:
+		}
+		current, err := s.GetMod(ctx, gameID, inst.ID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if domain.IsNewerVersion(inst.Version, current.Version) {
+			updates = append(updates, domain.Update{InstalledMod: inst, NewVersion: current.Version})
+		}
+	}
+	if len(errs) > 0 {
+		return updates, fmt.Errorf("source %q: %d update check(s) failed: %v", s.ID(), len(errs), errs[0])
+	}
+	return updates, nil
+}
+
+// mapDoc converts a decoded Firestore document into domain.Mod per the
+// modinfo.json v2 schema (docs/plans/2026-07-29-icarus-exmod-pak-research.md).
+func mapDoc(d firestoreDoc) domain.Mod {
+	str := func(key string) string {
+		s, _ := d.Fields[key].(string)
+		return s
+	}
+	return domain.Mod{
+		ID:          d.ID,
+		SourceID:    "icarus",
+		GameID:      gameID,
+		Name:        str("name"),
+		Author:      str("author"),
+		Version:     str("version"),
+		Category:    str("compatibility"), // Icarus week-build string, e.g. "w57"
+		Description: str("description"),
+		PictureURL:  str("imageURL"),
+		SourceURL:   str("readmeURL"),
+	}
+}
+
+func fileNameFromURL(rawURL, fallbackExt string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Path == "" {
+		return fallbackExt
+	}
+	base := path.Base(u.Path)
+	if base == "." || base == "/" {
+		return fallbackExt
+	}
+	return base
+}
