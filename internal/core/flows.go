@@ -1815,6 +1815,34 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	done.Phase = DeployDownloadDone
 	emit(done)
 
+	// #139: a successful heal must outlive this deploy - persist the resolved
+	// FileIDs onto the DB row (via the targeted SetModFileIDs setter, never a
+	// full-row save, which would wipe fields this flow didn't load) so
+	// `profile export` emits the live IDs and the next cache miss resolves
+	// them directly instead of re-healing. Failure is a note, not a skip: the
+	// download itself succeeded and the deploy should proceed (the same
+	// non-fatal idiom as DeployProfile's SetModLinkMethod/SetModDeployed).
+	// The write is skipped when the resolved set equals the stored one (no
+	// heal happened - the stored IDs were simply redownloaded): SetModFileIDs
+	// rewrites the installed_mod_files rows, and rewriting an unchanged set
+	// would silently drop their recorded checksums.
+	if sameFileIDSet(filesToDownload, mod.FileIDs) {
+		return false
+	}
+	healedIDs := make([]string, 0, len(filesToDownload))
+	for _, f := range filesToDownload {
+		healedIDs = append(healedIDs, f.ID)
+	}
+	if err := s.SetModFileIDs(mod.SourceID, mod.ID, game.ID, mod.ProfileName, healedIDs); err != nil {
+		msg := fmt.Sprintf("Warning: could not persist healed file IDs for %s: %v", mod.Name, err)
+		result.Notes = append(result.Notes, msg)
+		evt := base
+		evt.Phase, evt.Detail = DeployNote, msg
+		emit(evt)
+	} else {
+		mod.FileIDs = healedIDs
+	}
+
 	return false
 }
 

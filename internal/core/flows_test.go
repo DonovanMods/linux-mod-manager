@@ -1374,6 +1374,87 @@ func TestService_DeployProfile_StoredIDsGone_HealsToRecordedVersion(t *testing.T
 	assert.True(t, os.IsNotExist(err), "the source's current primary (1.5) file must not be deployed via fallback")
 }
 
+// TestService_DeployProfile_StoredIDsGone_HealPersistsFileIDs is #139 item 1:
+// a successful redeployFromSource heal must persist the healed FileIDs onto
+// the DB row (via the targeted SetModFileIDs setter - never a full-row save),
+// so `profile export` emits the live IDs instead of the dead ones and later
+// cache misses resolve from the stored IDs' fast path instead of re-healing.
+func TestService_DeployProfile_StoredIDsGone_HealPersistsFileIDs(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	// DB row pinned at 1.0 with dead FileIDs; nothing in the cache, forcing
+	// redeployFromSource to heal by version match (file "9").
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"999"},
+	}))
+	seedProfileWithMod(t, svc, "g1", "default", "src", "mod1", "1.0")
+
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.Deployed)
+
+	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"9"}, installed.FileIDs,
+		"a successful heal must persist the healed FileIDs, not keep the dead ones")
+
+	data, err := svc.NewProfileManager().Export("g1", "default")
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "999",
+		"profile export must no longer emit the dead FileIDs after a heal")
+	assert.Contains(t, string(data), "9",
+		"profile export must emit the healed FileID")
+}
+
+// TestService_DeployProfile_CacheMissRedownload_SameIDsPreserveChecksums is
+// #139 item 1's checksum guard (the PR #128 SaveInstalledMod lesson applied
+// to SetModFileIDs): when a cache-miss redownload resolves to the SAME stored
+// FileIDs (no heal happened), the persist step must not rewrite the
+// installed_mod_files rows - a blind delete+reinsert would silently drop
+// their recorded checksums.
+func TestService_DeployProfile_CacheMissRedownload_SameIDsPreserveChecksums(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	// DB row whose stored FileIDs still match the source's 1.0 file ("9"),
+	// with a recorded checksum; nothing in the cache, forcing a redownload
+	// that resolves to the very same IDs.
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"9"},
+	}))
+	require.NoError(t, svc.SaveFileChecksum("src", "mod1", "g1", "default", "9", "abc123"))
+	seedProfileWithMod(t, svc, "g1", "default", "src", "mod1", "1.0")
+
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Deployed)
+
+	files, err := svc.GetFilesWithChecksums("g1", "default")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "9", files[0].FileID)
+	assert.Equal(t, "abc123", files[0].Checksum,
+		"an unchanged FileIDs set must keep its recorded checksum through a cache-miss redownload")
+}
+
 // TestService_DeployProfile_HookOrder proves install.before_all ->
 // install.before_each -> (deploy) -> install.after_each -> install.after_all
 // ordering, mirroring TestService_UninstallMod_HookOrder.
