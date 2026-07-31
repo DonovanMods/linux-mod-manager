@@ -508,6 +508,13 @@ func TestSaveFileChecksum(t *testing.T) {
 	checksum, err := database.GetFileChecksum("nexusmods", "12345", "skyrim-se", "default", "67890")
 	require.NoError(t, err)
 	assert.Equal(t, "a1b2c3d4e5f6", checksum)
+
+	// Re-saving the SAME value must stay a success: SQLite's changes()
+	// counts rows matched by the UPDATE even when the new value equals the
+	// old (unlike MySQL), so the RowsAffected guard added for #164 must not
+	// misread an idempotent re-save as "row missing".
+	err = database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "67890", "a1b2c3d4e5f6")
+	require.NoError(t, err, "idempotent same-value checksum re-save must not trip the 0-rows guard")
 }
 
 // TestSaveFileChecksum_NoMatchingRow_ReturnsError guards the latent defect
