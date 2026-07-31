@@ -132,6 +132,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	preEnrichID := result.Mod.ID
 
 	// Enrich with source metadata when --id was provided
+	var resolvedFile *domain.DownloadableFile
 	if importModID != "" && importSource != "" && importSource != domain.SourceLocal {
 		sourceGameID, ok := game.SourceIDs[importSource]
 		if !ok {
@@ -151,6 +152,25 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 				if mod.Version != "" && result.Mod.Version == "unknown" {
 					result.Mod.Version = mod.Version
 				}
+
+				// #139: resolve which of the source's files this archive is
+				// (exact filename first, else the sole file at the imported
+				// version - the user asserted the mod identity via --id), so
+				// the cache entry can be marker-stamped and the row records
+				// real FileIDs. Non-fatal: an offline/failed listing keeps
+				// today's marker-less import.
+				file, ferr := service.ResolveImportedFile(ctx, importSource, mod, filepath.Base(archivePath), result.Mod.Version, true)
+				if ferr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not resolve source file for archive: %v\n", ferr)
+				} else if file != nil {
+					resolvedFile = file
+					// The matched file's own version is authoritative - adopt
+					// it so the cache entry, DB row, and marker all agree with
+					// what future source-side resolutions will report.
+					if file.Version != "" && file.Version != result.Mod.Version {
+						result.Mod.Version = file.Version
+					}
+				}
 			}
 		}
 	}
@@ -165,6 +185,19 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 			if err := os.Rename(oldPath, newPath); err != nil && verbose {
 				fmt.Printf("Warning: could not rename cache entry: %v\n", err)
 			}
+		}
+	}
+
+	// #139: stamp the resolved file's completion marker onto the (final,
+	// post-rename) cache entry. Non-fatal, and the FileIDs are recorded on
+	// the row/ref below even if stamping fails - the row's file identity is
+	// resolved either way; a missing marker only costs the one redundant
+	// redownload today's imports always pay.
+	importedFileIDs := []string{}
+	if resolvedFile != nil {
+		importedFileIDs = []string{resolvedFile.ID}
+		if err := service.MarkImportedFileComplete(game, result.Mod, resolvedFile.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not mark cache entry complete: %v\n", err)
 		}
 	}
 
@@ -288,7 +321,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		Enabled:      true,
 		Deployed:     true,
 		LinkMethod:   linkMethod,
-		FileIDs:      []string{}, // Local imports don't have file IDs
+		FileIDs:      importedFileIDs, // empty unless resolved against the source (#139)
 	}
 
 	if err := service.SaveInstalledMod(installedMod); err != nil {
@@ -314,7 +347,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		SourceID: result.Mod.SourceID,
 		ModID:    result.Mod.ID,
 		Version:  result.Mod.Version,
-		FileIDs:  []string{},
+		FileIDs:  importedFileIDs,
 	}
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		if verbose {
@@ -492,6 +525,19 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 				untracked[i].Mod.GameID = matched.GameID
 				untracked[i].MatchedSource = matched.SourceID
 				fmt.Printf("  ✓ %s -> %s (%s #%s)\n", untracked[i].FileName, matched.Name, matched.SourceID, matched.ID)
+
+				// #139: resolve which of the matched source's files this is.
+				// Exact FileName match only - a name-search match is not
+				// strong enough evidence for a version-based guess. Non-fatal:
+				// failure keeps the marker-less import.
+				file, ferr := service.ResolveImportedFile(ctx, matched.SourceID, matched, untracked[i].FileName, untracked[i].Mod.Version, false)
+				if ferr != nil {
+					if verbose {
+						fmt.Printf("  %s: could not resolve source file: %v\n", untracked[i].FileName, ferr)
+					}
+				} else if file != nil {
+					untracked[i].ResolvedFile = file
+				}
 			} else {
 				fmt.Printf("  ○ %s -> local (no match)\n", untracked[i].FileName)
 			}
@@ -622,6 +668,13 @@ func tryMatchSources(ctx context.Context, service *core.Service, game *domain.Ga
 
 // importExistingMod registers an already-deployed mod in lmm
 func importExistingMod(ctx context.Context, service *core.Service, game *domain.Game, r core.ScanResult, profileName string, linkMethod domain.LinkMethod) error {
+	// #139: an exact-filename source match carries the file's own version -
+	// adopt it before the cache write so the entry, DB row, and marker all
+	// agree with what future source-side resolutions will report.
+	if r.ResolvedFile != nil && r.ResolvedFile.Version != "" {
+		r.Mod.Version = r.ResolvedFile.Version
+	}
+
 	// For deploy_mode: copy, create cache entry by copying the file
 	if game.DeployMode == domain.DeployCopy {
 		gameCache := service.GetGameCache(game)
@@ -637,6 +690,23 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 		if err := copyFileStreaming(r.FilePath, destPath); err != nil {
 			return fmt.Errorf("copying to cache: %w", err)
 		}
+
+		// #139: stamp the resolved file's completion marker onto the entry
+		// just written. Non-fatal - a missing marker only costs the one
+		// redundant redownload marker-less imports always paid.
+		if r.ResolvedFile != nil {
+			if err := service.MarkImportedFileComplete(game, r.Mod, r.ResolvedFile.ID); err != nil && verbose {
+				fmt.Printf("    Warning: could not mark cache entry complete: %v\n", err)
+			}
+		}
+	}
+
+	// FileIDs are recorded whenever the source file was resolved - even in
+	// extract mode, where no cache entry is written: the row's file identity
+	// is real either way (#139).
+	fileIDs := []string{}
+	if r.ResolvedFile != nil {
+		fileIDs = []string{r.ResolvedFile.ID}
 	}
 
 	// Save to database
@@ -648,7 +718,7 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 		Deployed:       true,
 		LinkMethod:     linkMethod,
 		ManualDownload: true, // Scanned mods require manual download
-		FileIDs:        []string{},
+		FileIDs:        fileIDs,
 	}
 
 	if err := service.SaveInstalledMod(installedMod); err != nil {
@@ -661,7 +731,7 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 		SourceID: r.Mod.SourceID,
 		ModID:    r.Mod.ID,
 		Version:  r.Mod.Version,
-		FileIDs:  []string{},
+		FileIDs:  fileIDs,
 	}
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		// Non-fatal
