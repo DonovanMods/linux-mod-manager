@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.1] - 2026-07-30
+
+### Fixed
+
+- Re-ingesting a directory-source mod into an existing cache entry for the same (source, mod, version) — `verify --fix`'s checksum repair, or any install that re-downloads into a retained entry — no longer keeps files that were deleted from the source directory: the ingest now replaces the cache entry outright instead of overlaying the source onto a copy of the old entry, so removed members disappear from the committed cache (and from what gets deployed) instead of persisting indefinitely. Safe because directory sources serve exactly one synthetic file (`main`) per mod, so there are never sibling-file members to preserve. The `main` marker's member manifest and the member-set digest are now derived from the staged copy that actually gets committed, which also folds in-root symlinks (materialized as regular files by the ingest's dereferencing copy) into the manifest/digest consistently with what is cached and deployed — previously such files were cached but unattributed. Note: for sources containing in-root symlinks, the stored digest changes shape once (the next re-ingest records the new value and converges) (#166)
+- `lmm verify --fix` no longer reports "OK (checksum populated)" — and `--json` no longer flips the row to `"ok"` — for a repair that persisted nothing: success is only claimed when a checksum was actually written, and a re-download that yields no checksum to store keeps the NO CHECKSUM warning (counted in the summary) with an honest note saying why; the MISSING repair path gets the same honesty one step removed. The root cause is also fixed: local ingests now produce a checksum for the install/verify paths to record — the MD5 of the source file for file/archive ingests (matching the download path's MD5-of-archive), and a deterministic member-set digest (sorted relative path + content MD5 per member) for directory ingests, so re-ingesting an unchanged source reproduces the stored value and directory-source mods (file ID `main`) converge to a clean `verify` instead of warning NO CHECKSUM — and being redundantly re-copied into the cache — on every run, forever. Install-time recording benefits automatically, so newly installed directory-source mods start with checksums. Latent hardening: the checksum DB write now errors when it matches no installed-file row instead of silently no-opping (#164)
+
 ## [1.27.0] - 2026-07-30
 
 ### Added
@@ -1149,7 +1156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.1...HEAD
+[1.27.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.0...v1.27.1
 [1.27.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.25.0...v1.26.0
 [1.25.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.24.1...v1.25.0
