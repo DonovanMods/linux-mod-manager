@@ -29,8 +29,12 @@ X NAME (FILE) - MISSING             version not present in cache
 
 .PP
 Use --fix to re-download files that are MISSING or have NO CHECKSUM,
-storing a fresh checksum afterwards. FILE COUNT MISMATCH and SKIPPED
-are not repaired by --fix.
+storing a fresh checksum afterwards. "OK (checksum populated)" is only
+reported when a checksum was actually written; if the re-download
+succeeds but yields no checksum to store (e.g. a directory-source mod
+whose directory holds no regular files), the NO CHECKSUM warning remains
+with a note explaining why. FILE COUNT MISMATCH and SKIPPED are not
+repaired by --fix.
 
 .PP
 verify also contacts each installed mod's source to check its recorded
@@ -95,9 +99,10 @@ status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
 "version_unverifiable"; note adds detail where there's something extra to
 say - a blocked cache rename, sibling-repair results, a --fix repair or
-redownload failure's reason, a file-count-check lookup failure, a --fix
-refusal on a locked record ("locked"), or a locked record's pending
-convergence detail - and is omitted otherwise. issues counts MISSING files
+redownload failure's reason, why a successful re-download stored no
+checksum, a file-count-check lookup failure, a --fix refusal on a locked
+record ("locked"), or a locked record's pending convergence detail - and
+is omitted otherwise. issues counts MISSING files
 and VERSION MISMATCH rows (a successful --fix repair of either decrements
 it back out; a locked VERSION MISMATCH stays counted since --fix refuses
 it); warnings counts everything else that isn't OK. Lock-pending-

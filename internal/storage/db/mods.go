@@ -554,14 +554,25 @@ type FileWithChecksum struct {
 	Checksum string
 }
 
-// SaveFileChecksum stores the MD5 checksum for a downloaded file
+// SaveFileChecksum stores the MD5 checksum for a downloaded file. The target
+// installed_mod_files row must already exist: an UPDATE matching no row would
+// otherwise succeed as a silent no-op while the caller believes the checksum
+// was persisted (#164), so 0 affected rows is an error.
 func (d *DB) SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, checksum string) error {
-	_, err := d.Exec(`
+	res, err := d.Exec(`
 		UPDATE installed_mod_files SET checksum = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ? AND file_id = ?
 	`, checksum, sourceID, modID, gameID, profileName, fileID)
 	if err != nil {
 		return fmt.Errorf("saving file checksum: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("saving file checksum: rows affected: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("saving file checksum: no installed file row for %s/%s file %s (game %s, profile %s)",
+			sourceID, modID, fileID, gameID, profileName)
 	}
 	return nil
 }

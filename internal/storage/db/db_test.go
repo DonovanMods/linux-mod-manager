@@ -510,6 +510,20 @@ func TestSaveFileChecksum(t *testing.T) {
 	assert.Equal(t, "a1b2c3d4e5f6", checksum)
 }
 
+// TestSaveFileChecksum_NoMatchingRow_ReturnsError guards the latent defect
+// from #164: SaveFileChecksum is an UPDATE, and with no RowsAffected check a
+// write against a row that doesn't exist silently no-ops - the caller
+// believes the checksum was persisted when nothing happened.
+func TestSaveFileChecksum_NoMatchingRow_ReturnsError(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	err = database.SaveFileChecksum("nexusmods", "nonexistent", "skyrim-se", "default", "99999", "a1b2c3d4e5f6")
+	require.Error(t, err, "updating a nonexistent installed_mod_files row must fail loudly, not silently no-op")
+	assert.Contains(t, err.Error(), "no installed file row")
+}
+
 func TestGetFileChecksum_NotFound(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)
