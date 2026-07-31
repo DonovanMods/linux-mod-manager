@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-07-30
+
 ### Added
 
 - Bulk `lmm update --json` now marks a locked mod's `updates[]` entry with `"locked": true` (omitted when unlocked), the JSON sibling of the table's `[locked@<version>]` POLICY marker, so a JSON consumer can tell that a reported update will not be applied — even under auto policy or `--all` — until the lock moves or clears. Additive JSON-contract change (#143)
@@ -1147,7 +1149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.26.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.0...HEAD
+[1.27.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.25.0...v1.26.0
 [1.25.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.24.1...v1.25.0
 [1.24.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.24.0...v1.24.1
