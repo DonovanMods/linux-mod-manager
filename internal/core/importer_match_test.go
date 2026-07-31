@@ -41,6 +41,20 @@ func TestMatchImportedFile(t *testing.T) {
 		{"unknown version never falls back", files, "renamed.zip", "unknown", true, ""},
 		{"empty version never falls back", files, "renamed.zip", "", true, ""},
 		{"no files resolves nothing", nil, "mod.zip", "1.0", true, ""},
+		// An ID the cache layer cannot round-trip through a marker filename
+		// (blank, or carrying a path separator) is no candidate at all:
+		// stamping it would silently no-op and HasFileIDs could never verify
+		// it, so recording it buys nothing. Other candidates still resolve.
+		{"blank-ID exact match is no candidate", []domain.DownloadableFile{
+			{ID: "", FileName: "mod.zip", Version: "1.0"},
+		}, "mod.zip", "", true, ""},
+		{"separator-ID version match is no candidate", []domain.DownloadableFile{
+			{ID: "a/b", FileName: "other.zip", Version: "1.0"},
+		}, "mod.zip", "1.0", true, ""},
+		{"unverifiable exact match still falls back to a clean version match", []domain.DownloadableFile{
+			{ID: "", FileName: "mod.zip", Version: "2.0"},
+			{ID: "30", FileName: "other.zip", Version: "1.0"},
+		}, "mod.zip", "1.0", true, "30"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

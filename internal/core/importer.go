@@ -193,11 +193,15 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 // the sole file carrying the imported version. Any ambiguity (several
 // candidates) resolves to nil rather than a guess: a marker stamped with the
 // wrong file ID is worse provenance than no marker at all. version "" and
-// the importer's "unknown" sentinel never version-match.
+// the importer's "unknown" sentinel never version-match. A file whose ID the
+// cache layer cannot round-trip through a marker filename
+// (cache.VerifiableFileID) is no candidate at all: stamping it would
+// silently no-op and HasFileIDs could never verify it, so recording it buys
+// nothing.
 func matchImportedFile(files []domain.DownloadableFile, archiveFilename, version string, allowVersionFallback bool) *domain.DownloadableFile {
 	var exact *domain.DownloadableFile
 	for i := range files {
-		if files[i].FileName != archiveFilename {
+		if files[i].FileName != archiveFilename || !cache.VerifiableFileID(files[i].ID) {
 			continue
 		}
 		if exact != nil {
@@ -213,7 +217,7 @@ func matchImportedFile(files []domain.DownloadableFile, archiveFilename, version
 	}
 	var byVersion *domain.DownloadableFile
 	for i := range files {
-		if files[i].Version != version {
+		if files[i].Version != version || !cache.VerifiableFileID(files[i].ID) {
 			continue
 		}
 		if byVersion != nil {
