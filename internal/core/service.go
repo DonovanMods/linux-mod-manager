@@ -728,8 +728,9 @@ func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) 
 // commit then REPLACES the entry outright instead of layering onto it.
 // Directory ingests use this (#166): their single synthetic file ID owns the
 // whole entry, so seeding could only resurrect members the source no longer
-// has. Same caller contract as prepareStaging: on nil error stagePath does
-// not exist yet and the caller owns its cleanup.
+// has. Caller contract: as with prepareStaging, the CALLER owns stagePath's
+// cleanup (defer os.RemoveAll immediately after) - but unlike prepareStaging,
+// on a nil error stagePath NEVER exists yet; the first writer creates it.
 func prepareUnseededStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
 	cachePath = gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
 	stagePath = cachePath + ".staging"
