@@ -1592,6 +1592,29 @@ func TestDoVerify_VersionUnverifiable_WithModFilter_ChecksumRowsAlwaysExist(t *t
 	assert.NotContains(t, out, "No files found for mod", "checksum rows for mod1 exist (same installed_mod_files table backs both FileIDs and the checksum listing) - the main loop's checked++ must have fired")
 }
 
+// TestDoVerify_VersionUnverifiable_HintMentionsUpdateRemedy pins the #131
+// rider: VERSION UNVERIFIABLE and #95's stored-files-gone deploy error fire
+// on the same underlying condition (recorded file IDs no longer offered
+// upstream), so verify's hint must offer the same remedies - reinstall OR
+// 'lmm update' - not just "reinstall to refresh".
+func TestDoVerify_VersionUnverifiable_HintMentionsUpdateRemedy(t *testing.T) {
+	cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+		{ID: "3", Name: "Some Other File", FileName: "mod1-other.esp", IsPrimary: true, Category: "MAIN", Version: "2.0"},
+	})
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, []string{"mod1"})
+	})
+
+	assert.Contains(t, out, "VERSION UNVERIFIABLE")
+	assert.Contains(t, out, "reinstall the mod or run 'lmm update' to adopt the current version",
+		"verify's hint must match #95's deploy-error remedies for the same condition")
+}
+
 // setupDoVerifyRedownloadTest builds a minimal fixture for the MISSING/NO
 // CHECKSUM --fix repair paths: a real fakeInstallSource-backed service and
 // an installed mod1/file "2", WITHOUT registering any download content for
