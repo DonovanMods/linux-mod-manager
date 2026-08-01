@@ -91,11 +91,36 @@ func normalizeZipName(name string) string {
 	return strings.ReplaceAll(name, `\`, "/")
 }
 
+// maxZipEntrySize caps a single .EXMODZ entry's declared (and actual)
+// decompressed size, mirroring #136's dump-tar cap (maxTarEntrySize): the
+// largest real Icarus base data table is 7.3 MB, and .EXMODZ manifests and
+// bundled UE assets are smaller still in every real sample seen. 64 MiB
+// leaves generous headroom while refusing to trust an unbounded or lying
+// UncompressedSize64 in a third-party, user-downloaded zip archive.
+const maxZipEntrySize = 64 << 20
+
 func readZipFile(f *zip.File) ([]byte, error) {
+	if f.UncompressedSize64 > maxZipEntrySize {
+		return nil, fmt.Errorf("icarus: zip entry %s declares a %d-byte uncompressed size, "+
+			"exceeding the %d-byte per-entry cap", f.Name, f.UncompressedSize64, uint64(maxZipEntrySize))
+	}
 	rc, err := f.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close() //nolint:errcheck
-	return io.ReadAll(rc)
+	// The cap above only guards an honest-but-large size field; a header
+	// that LIES by understating the real decompressed size must not be able
+	// to drive an unbounded read either, so the read itself is bounded one
+	// byte past what was declared — enough to detect an overrun without
+	// reading further than necessary to prove it.
+	data, err := io.ReadAll(io.LimitReader(rc, int64(f.UncompressedSize64)+1))
+	if err != nil {
+		return nil, err
+	}
+	if uint64(len(data)) > f.UncompressedSize64 {
+		return nil, fmt.Errorf("icarus: zip entry %s decompresses past its declared %d-byte size",
+			f.Name, f.UncompressedSize64)
+	}
+	return data, nil
 }
