@@ -17,10 +17,11 @@ import (
 // and Zlib-compressed entries are readable; any other compression method is a
 // loud ErrUnsupportedFormat.
 type Reader struct {
-	f        *os.File
-	entries  []readerEntry
-	fileSize int64                         // total size of the underlying file, for validateAllocSize
-	methods  [maxCompressionMethods]string // this pak's own CompressionMethods table
+	f          *os.File
+	entries    []readerEntry
+	fileSize   int64                         // total size of the underlying file, for validateAllocSize
+	methods    [maxCompressionMethods]string // this pak's own CompressionMethods table
+	mountPoint string                        // this pak's own primary-index MountPoint (see Writer's WithMountPoint)
 }
 
 type readerEntry struct {
@@ -64,13 +65,13 @@ func Open(path string) (*Reader, error) {
 		return nil, fmt.Errorf("unrealpak: %s: primary index: %w", path, err)
 	}
 
-	entries, err := parseIndex(f, indexBuf, fileSize)
+	mountPoint, entries, err := parseIndex(f, indexBuf, fileSize)
 	if err != nil {
 		f.Close() //nolint:errcheck
 		return nil, fmt.Errorf("unrealpak: %s: parsing index: %w", path, err)
 	}
 
-	return &Reader{f: f, entries: entries, fileSize: fileSize, methods: ft.methods}, nil
+	return &Reader{f: f, entries: entries, fileSize: fileSize, methods: ft.methods, mountPoint: mountPoint}, nil
 }
 
 // methodName resolves a 1-based CompressionMethodIndex against this pak's own
@@ -127,6 +128,13 @@ func readRegion(r io.ReaderAt, offset, size, fileSize int64, want [20]byte) ([]b
 
 // Close releases the underlying file handle.
 func (r *Reader) Close() error { return r.f.Close() }
+
+// MountPoint returns this pak's primary-index MountPoint string — where the
+// engine roots Files' mount-relative paths once the pak is mounted. Real
+// paks vary this: Icarus's own data.pak declares an absolute cook-machine
+// path, while mod paks conventionally declare a relative "../../../..."
+// form (see Writer's WithMountPoint, #178).
+func (r *Reader) MountPoint() string { return r.mountPoint }
 
 // Files returns every file this pak's index describes.
 func (r *Reader) Files() []FileEntry {
@@ -359,50 +367,50 @@ func readFooter(r io.ReaderAt, fileSize int64) (footer, error) {
 // index (hash -> record offset) and a full directory index
 // (directory -> file -> record offset). Enumeration uses the directory index,
 // which is the only one that carries real path strings.
-func parseIndex(f io.ReaderAt, index []byte, fileSize int64) ([]readerEntry, error) {
+func parseIndex(f io.ReaderAt, index []byte, fileSize int64) (string, []readerEntry, error) {
 	c := &cursor{b: index}
-	c.fstring() // MountPoint: recorded for the engine's benefit, unused here
+	mountPoint := c.fstring()
 	numEntries := c.i32()
 	seed := c.u64()
 	_ = seed // only the writer needs the seed; enumeration goes via the directory index
 
 	pathHash, err := readSubIndexRef(c, "path hash index")
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	fullDir, err := readSubIndexRef(c, "full directory index")
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	encoded := c.bytes(int(c.i32())) // EncodedPakEntriesSize, then the blob
 	if nonEncoded := c.i32(); nonEncoded != 0 {
-		return nil, fmt.Errorf("%w: %d non-encoded index entries", ErrUnsupportedFormat, nonEncoded)
+		return "", nil, fmt.Errorf("%w: %d non-encoded index entries", ErrUnsupportedFormat, nonEncoded)
 	}
 	if c.err != nil {
-		return nil, fmt.Errorf("primary index: %w", c.err)
+		return "", nil, fmt.Errorf("primary index: %w", c.err)
 	}
 
 	// Verify the path-hash index's hash even though enumeration does not use
 	// it: it is part of the format's integrity chain, and a pak whose
 	// sub-index hashes don't hold is not one to trust.
 	if _, err := readRegion(f, pathHash.offset, pathHash.size, fileSize, pathHash.hash); err != nil {
-		return nil, fmt.Errorf("path hash index: %w", err)
+		return "", nil, fmt.Errorf("path hash index: %w", err)
 	}
 	dirBuf, err := readRegion(f, fullDir.offset, fullDir.size, fileSize, fullDir.hash)
 	if err != nil {
-		return nil, fmt.Errorf("full directory index: %w", err)
+		return "", nil, fmt.Errorf("full directory index: %w", err)
 	}
 
 	entries, err := parseDirectoryIndex(dirBuf, encoded)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	if int32(len(entries)) != numEntries {
-		return nil, fmt.Errorf("directory index lists %d files, index header says %d",
+		return "", nil, fmt.Errorf("directory index lists %d files, index header says %d",
 			len(entries), numEntries)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	return entries, nil
+	return mountPoint, entries, nil
 }
 
 type subIndexRef struct {

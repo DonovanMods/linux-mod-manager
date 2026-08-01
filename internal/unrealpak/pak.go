@@ -105,11 +105,13 @@ func hashPath(mountRelative string, seed uint64) uint64 {
 	return h
 }
 
-// defaultMountPoint is the mount point Writer stamps into the primary index.
-// Icarus's own data.pak uses an absolute cook-machine path
-// ("C:/BA/work/.../Temp/Data/"); "../../../" is the conventional relative form
-// used by its pakchunks. Confirming which one a _P.pak needs to override
-// Content/Data/data.pak in-game is a post-plan validation item.
+// defaultMountPoint is the mount point Writer stamps into the primary index
+// when the caller doesn't override it via WithMountPoint. It is the bare
+// UE4 convention ("../../../", relative to <UProject>/Binaries/Win64/"),
+// deliberately game-agnostic — this package has no opinion on any specific
+// game's directory layout. A caller writing paks for a real game (see
+// internal/source/icarus's Writer usage, #178) supplies the mount point its
+// own game's mod loader actually expects.
 const defaultMountPoint = "../../../"
 
 // writeFString writes a length-prefixed ANSI Unreal FString (length includes
@@ -151,11 +153,11 @@ func storedEntryHeader(size int64, content []byte) []byte {
 // sub-index offsets it records point past its own end, but its length does not
 // depend on their values (they are fixed-width int64), so a first pass with
 // zero offsets measures it and a second pass writes the real ones.
-func buildPrimaryIndex(numEntries int32, seed uint64,
+func buildPrimaryIndex(mountPoint string, numEntries int32, seed uint64,
 	phiOffset, phiSize int64, phiHash [20]byte,
 	fdiOffset, fdiSize int64, fdiHash [20]byte, encoded []byte) []byte {
 	var b bytes.Buffer
-	writeFString(&b, defaultMountPoint)
+	writeFString(&b, mountPoint)
 	binary.Write(&b, binary.LittleEndian, numEntries) //nolint:errcheck
 	binary.Write(&b, binary.LittleEndian, seed)       //nolint:errcheck // PathHashSeed
 	binary.Write(&b, binary.LittleEndian, int32(1))   //nolint:errcheck // bHasPathHashIndex

@@ -100,6 +100,60 @@ func TestWriter_AddFile_AfterClose_Errors(t *testing.T) {
 	}
 }
 
+// TestWriter_Create_DefaultMountPoint pins that Create with no options
+// preserves every prior caller's behavior exactly: the written pak's
+// MountPoint is the package's own defaultMountPoint.
+func TestWriter_Create_DefaultMountPoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.pak")
+	w, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := w.AddFile("x.json", []byte("{}")); err != nil {
+		t.Fatalf("AddFile: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+	if got := r.MountPoint(); got != defaultMountPoint {
+		t.Errorf("MountPoint = %q, want default %q", got, defaultMountPoint)
+	}
+}
+
+// TestWriter_Create_WithMountPoint pins that WithMountPoint overrides the
+// stamped mount point — this package stays game-agnostic (#178), so a
+// caller like internal/source/icarus supplies its own game's mount point
+// through this seam rather than this package hard-coding one.
+func TestWriter_Create_WithMountPoint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.pak")
+	const custom = "../../../Icarus/Content/"
+	w, err := Create(path, WithMountPoint(custom))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := w.AddFile("data/x.json", []byte("{}")); err != nil {
+		t.Fatalf("AddFile: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+	if got := r.MountPoint(); got != custom {
+		t.Errorf("MountPoint = %q, want %q", got, custom)
+	}
+}
+
 // checkEncodedLocationFits is tested directly on the boundary rather than by
 // constructing a >2 GiB encoded-index fixture, which would be impractically
 // slow and memory-hungry for a unit test.

@@ -85,10 +85,10 @@ func buildFixturePak(mountPath string, content []byte, method int32) []byte {
 	fdiHash := sha1.Sum(fdi.Bytes()) //nolint:gosec
 
 	indexOffset := int64(data.Len())
-	sizing := buildPrimaryIndex(1, fixtureSeed, 0, 0, phiHash, 0, 0, fdiHash, encoded.Bytes())
+	sizing := buildPrimaryIndex(defaultMountPoint, 1, fixtureSeed, 0, 0, phiHash, 0, 0, fdiHash, encoded.Bytes())
 	phiOffset := indexOffset + int64(len(sizing))
 	fdiOffset := phiOffset + int64(phi.Len())
-	index := buildPrimaryIndex(1, fixtureSeed,
+	index := buildPrimaryIndex(defaultMountPoint, 1, fixtureSeed,
 		phiOffset, int64(phi.Len()), phiHash,
 		fdiOffset, int64(fdi.Len()), fdiHash, encoded.Bytes())
 	indexHash := sha1.Sum(index) //nolint:gosec

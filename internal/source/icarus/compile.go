@@ -23,6 +23,13 @@ import (
 // There is no ctx parameter: every step is local file I/O over a ~2 MB pak,
 // with no network call and no long-running loop to cancel. The
 // source.Compiler interface still takes one, for implementations that need it.
+//
+// The compiled pak's mount point and table-entry paths (icarusContentMountPoint,
+// icarusDataTablePrefix below) are Icarus-specific and deliberately live here
+// rather than in internal/unrealpak, which stays game-agnostic — see
+// unrealpak.Writer's WithMountPoint. They are not guessed: both were
+// confirmed against two real, working prebuilt Icarus mod paks (#178; see
+// docs/plans/2026-08-01-icarus-zlib-pivot.md's pak-divergence-report.md).
 func Compile(basePakPath, exmodzPath, outputPakPath string) (err error) {
 	exmodzData, err := os.ReadFile(exmodzPath)
 	if err != nil {
@@ -39,7 +46,7 @@ func Compile(basePakPath, exmodzPath, outputPakPath string) (err error) {
 	}
 	defer base.Close() //nolint:errcheck
 
-	out, err := unrealpak.Create(outputPakPath)
+	out, err := unrealpak.Create(outputPakPath, unrealpak.WithMountPoint(icarusContentMountPoint))
 	if err != nil {
 		return fmt.Errorf("icarus: creating %s: %w", outputPakPath, err)
 	}
@@ -84,8 +91,9 @@ func Compile(basePakPath, exmodzPath, outputPakPath string) (err error) {
 		if err != nil {
 			return err
 		}
-		if err := out.AddFile(mountPath, patched); err != nil {
-			return fmt.Errorf("icarus: writing patched %s: %w", mountPath, err)
+		tablePath := icarusDataTablePrefix + mountPath
+		if err := out.AddFile(tablePath, patched); err != nil {
+			return fmt.Errorf("icarus: writing patched %s: %w", tablePath, err)
 		}
 	}
 
@@ -94,6 +102,11 @@ func Compile(basePakPath, exmodzPath, outputPakPath string) (err error) {
 		if err != nil {
 			return err
 		}
+		// No icarusDataTablePrefix here: bundled assets are content packages,
+		// not JSON data-table overrides. They need only icarusContentMountPoint
+		// (via the Writer's mount point) to land under Icarus/Content/ at
+		// their own namespace path — confirmed against a real asset-only
+		// prebuilt mod pak (TurretVariants; see pak-divergence-report.md).
 		if err := out.AddFile(safePath, data); err != nil {
 			return fmt.Errorf("icarus: writing bundled asset %s: %w", safePath, err)
 		}
@@ -104,6 +117,26 @@ func Compile(basePakPath, exmodzPath, outputPakPath string) (err error) {
 	}
 	return nil
 }
+
+// icarusContentMountPoint is the mount point a compiled _P.pak must declare
+// for Icarus's own data-table mod loader to find it. "../../../" (this
+// package's own default — see unrealpak.defaultMountPoint) resolves to the
+// Steam install's outer game folder; real Icarus mods redescend from there
+// with a literal "Icarus/Content/" — the game's UProject-root folder name is
+// itself "Icarus" (confirmed both by real prebuilt mods' own mount strings
+// and by data.pak's own on-disk nesting: .../Icarus/Icarus/Content/Data/data.pak).
+// Confirmed against two independent real, working prebuilt mod paks
+// (FloofLevelCap, Intreeg's 4XP) — see pak-divergence-report.md.
+const icarusContentMountPoint = "../../../Icarus/Content/"
+
+// icarusDataTablePrefix is prepended to a patched base table's own
+// mount-relative path (as read from data.pak, e.g. "Experience/D_ExperienceEvents.json")
+// before it is written into the compiled pak. Real prebuilt mods land their
+// table overrides at "Icarus/Content/data/<same-path>" — confirmed
+// byte-for-byte against FloofLevelCap.pak and Intreeg's 4XP.pak. It must NOT
+// be applied to bundled assets (see the asset loop below): a single pak
+// can't correctly address both classes with the same prefix.
+const icarusDataTablePrefix = "data/"
 
 // endOfModSentinel is a known .EXMOD ecosystem terminator row: real-world
 // manifests end their Rows array with {"CurrentFile":"EndOfMod"} and no
