@@ -104,7 +104,7 @@ func TestDoUpdate_JSON_ReportsRecompileNeeded(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 	err := doUpdate(context.Background(), svc, game, nil)
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)
@@ -154,7 +154,7 @@ func TestApplySingleUpdate_Recompile_JSON(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 	err = applySingleUpdate(context.Background(), svc, game, mod, "default")
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)

@@ -31,7 +31,7 @@ func TestDoVerify_StaleCompile_ReportedAsWarning(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 	err := doVerify(cmd, svc, game, nil)
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)
@@ -58,7 +58,7 @@ func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 	err := doVerify(cmd, svc, game, nil)
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)
