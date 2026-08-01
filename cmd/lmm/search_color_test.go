@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -89,7 +90,13 @@ func TestDoSearch_InstalledMarker_PlainWhenColorDisabled(t *testing.T) {
 	assert.Contains(t, out, "[installed]")
 }
 
-func TestDoSearch_InstalledMarker_GreenWhenTTY_AlignmentUnaffected(t *testing.T) {
+// TestDoSearch_InstalledRow_GreenWhenTTY_AlignmentUnaffected guards #193's
+// richer palette: an installed mod's ENTIRE row is now tinted green (whole-
+// row, via printTable's rowColor), not just the trailing [installed] marker
+// - #112's cell-only accent read as too subtle in smoke feedback. Still
+// safe under the tabwriter alignment constraint since whole-row tinting
+// wraps an already-flushed line, same as the header accent.
+func TestDoSearch_InstalledRow_GreenWhenTTY_AlignmentUnaffected(t *testing.T) {
 	svc, game := setupSearchColorTest(t)
 	resetColorFlags(t)
 
@@ -103,7 +110,13 @@ func TestDoSearch_InstalledMarker_GreenWhenTTY_AlignmentUnaffected(t *testing.T)
 		return doSearch(context.Background(), svc, game, []string{"query"})
 	})
 
-	assert.Contains(t, colored, ansiGreen+"[installed]"+ansiReset)
-	assert.Contains(t, colored, ansiBold, "header line should be bolded")
+	installedRow := rowFor(colored, "Installed Mod")
+	notInstalledRow := rowFor(colored, "Not Installed Mod")
+	require.NotEmpty(t, installedRow)
+	require.NotEmpty(t, notInstalledRow)
+	assert.True(t, strings.HasPrefix(installedRow, ansiGreen), "the whole installed row should be green-tinted")
+	assert.NotContains(t, notInstalledRow, "\x1b[", "a not-installed row should not be tinted")
+	assert.Contains(t, colored, ansiBold, "header line should be accented")
+	assert.Contains(t, colored, ansiCyan, "header line should be accented")
 	assert.Equal(t, plain, stripANSI(colored), "color must not change the visible text or alignment")
 }

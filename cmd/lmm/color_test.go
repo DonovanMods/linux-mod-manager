@@ -90,6 +90,8 @@ func TestColorHelpers_NoOpWhenColorDisabled(t *testing.T) {
 	assert.Equal(t, "text", colorYellow("text"))
 	assert.Equal(t, "text", colorBold("text"))
 	assert.Equal(t, "text", colorDim("text"))
+	assert.Equal(t, "text", colorCyan("text"))
+	assert.Equal(t, "text", colorHeader("text"))
 }
 
 func TestColorHelpers_WrapWhenColorEnabled(t *testing.T) {
@@ -101,6 +103,21 @@ func TestColorHelpers_WrapWhenColorEnabled(t *testing.T) {
 	assert.Equal(t, ansiYellow+"text"+ansiReset, colorYellow("text"))
 	assert.Equal(t, ansiBold+"text"+ansiReset, colorBold("text"))
 	assert.Equal(t, ansiDim+"text"+ansiReset, colorDim("text"))
+	assert.Equal(t, ansiCyan+"text"+ansiReset, colorCyan("text"))
+}
+
+// TestColorHeader_IsBoldAndCyan guards #193's richer header accent: bold
+// alone read as nearly plain in smoke feedback, so a table/section header is
+// now bold+cyan together, not bold-only.
+func TestColorHeader_IsBoldAndCyan(t *testing.T) {
+	resetColorFlags(t)
+	withColorCapableStdout(t, true)
+
+	got := colorHeader("text")
+	assert.Contains(t, got, ansiBold)
+	assert.Contains(t, got, ansiCyan)
+	assert.Contains(t, got, "text")
+	assert.Equal(t, "text", stripANSI(got))
 }
 
 // TestPrintTable_ColorNeverShiftsColumnAlignment guards the exact regression
@@ -143,7 +160,8 @@ func TestPrintTable_ColorNeverShiftsColumnAlignment(t *testing.T) {
 
 	stripped := stripANSI(coloredOut.String())
 	assert.Equal(t, plainOut.String(), stripped, "color must not change the visible text or alignment")
-	assert.Contains(t, coloredOut.String(), ansiBold, "header line should be bolded when color is enabled")
+	assert.Contains(t, coloredOut.String(), ansiBold, "header line should be bold+cyan when color is enabled")
+	assert.Contains(t, coloredOut.String(), ansiCyan, "header line should be bold+cyan when color is enabled")
 	assert.Contains(t, coloredOut.String(), ansiGreen)
 	assert.Contains(t, coloredOut.String(), ansiRed)
 }

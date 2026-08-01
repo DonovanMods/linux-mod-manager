@@ -127,6 +127,7 @@ const (
 	ansiGreen  = "\033[32m"
 	ansiRed    = "\033[31m"
 	ansiYellow = "\033[33m"
+	ansiCyan   = "\033[36m"
 	ansiBold   = "\033[1m"
 	ansiDim    = "\033[2m"
 )
@@ -173,10 +174,33 @@ func colorDim(s string) string {
 	return ansiDim + s + ansiReset
 }
 
+// colorCyan returns s with cyan ANSI when color is enabled, otherwise s.
+// The palette's fourth accent, used for "key field" values (a version
+// number, a link method, an active profile name) that deserve a visual
+// anchor without implying good/bad the way green/yellow/red do.
+func colorCyan(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiCyan + s + ansiReset
+}
+
+// colorHeader returns s bold+cyan when color is enabled, otherwise s - the
+// accent for a table header or section title. #193: bold alone read as
+// nearly plain in smoke feedback, so headers now carry both bold and a
+// color, not bold-only.
+func colorHeader(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiBold + ansiCyan + s + ansiReset
+}
+
 // printTable writes a fully-flushed text/tabwriter table (buf) to os.Stdout,
-// bolding the header line and applying rowColor's per-row wrapper (nil for
-// no tint) when color is enabled. headerLines is the number of leading
-// lines to skip when indexing data rows (2: header + dashed separator).
+// accenting the header line (bold+cyan, via colorHeader) and applying
+// rowColor's per-row wrapper (nil for no tint) when color is enabled.
+// headerLines is the number of leading lines to skip when indexing data
+// rows (2: header + dashed separator).
 //
 // Color is applied ONLY to buf's already-rendered, already-padded text -
 // never to a cell before it reaches the tabwriter. text/tabwriter computes
@@ -200,7 +224,7 @@ func printTableTo(out io.Writer, buf *bytes.Buffer, headerLines int, rowColor fu
 	}
 	lines := strings.Split(text, "\n")
 	if colorEnabled() {
-		lines[0] = colorBold(lines[0])
+		lines[0] = colorHeader(lines[0])
 		if rowColor != nil {
 			for i := headerLines; i < len(lines); i++ {
 				if fn := rowColor(i - headerLines); fn != nil {

@@ -198,10 +198,12 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	}
 
 	// Row tinting only makes sense next to the columns it explains: ENABLED
-	// and DEPLOYED are verbose-only, so an anomaly (disabled, or enabled but
-	// not yet deployed) would be an unexplained color in the non-verbose
-	// table. Enabled+deployed - the common, unremarkable case - stays
-	// untinted (accent, not christmas tree).
+	// and DEPLOYED are verbose-only, so a tint would be unexplained color in
+	// the non-verbose table. #193: the common, healthy case (enabled+
+	// deployed) gets a green tint too - #112's original "only flag
+	// anomalies" choice left the common case looking nearly plain in smoke
+	// feedback. Yellow (undeployed) and dim (disabled) still flag the
+	// anomalies.
 	var rowColor func(int) func(string) string
 	if verbose {
 		rowColor = func(i int) func(string) string {
@@ -214,7 +216,7 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 			case !mods[i].Deployed:
 				return colorYellow
 			default:
-				return nil
+				return colorGreen
 			}
 		}
 	}
