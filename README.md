@@ -426,12 +426,12 @@ games:
     name: "Icarus"
     install_path: "/path/to/Steam/steamapps/common/Icarus"
     mod_path: "/path/to/Steam/steamapps/common/Icarus/Icarus/Content/Paks/mods"
-    deploy_mode: compile
     sources:
       icarus: "icarus"
+    deploy_mode: compile
 ```
 
-Steam auto-detection (`lmm game detect`) does not yet know about Icarus (App ID `1149460`, confirmed during the research spike) — add this entry to `games.yaml` by hand for now; auto-detection is a separate, smaller follow-up not covered by this plan.
+Steam auto-detection (`lmm game detect`) knows about Icarus (App ID `1149460`) and generates an equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
 
 ### Deployment Methods
 
