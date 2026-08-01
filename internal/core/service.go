@@ -499,6 +499,33 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		return nil, err
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
+
+	if game.DeployMode == domain.DeployCompile && isExmodzFile(file.FileName) {
+		compiler, ok := src.(source.Compiler)
+		if !ok {
+			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement Compiler", src.ID(), game.ID)
+		}
+		basePakPath, err := resolveBasePak(game)
+		if err != nil {
+			return nil, err
+		}
+		// Unlike copyFileStreaming (which mkdirs its destination itself),
+		// Compile writes via unrealpak.Create - a bare os.Create - so
+		// stagePath must exist before it's called.
+		if err := os.MkdirAll(stagePath, 0755); err != nil {
+			return nil, fmt.Errorf("preparing compile staging: %w", err)
+		}
+		destName := compiledFileName(file.FileName)
+		destPath := filepath.Join(stagePath, destName)
+		if err := compiler.Compile(ctx, basePakPath, archivePath, destPath); err != nil {
+			return nil, fmt.Errorf("compiling mod: %w", err)
+		}
+		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{destName}); err != nil {
+			return nil, err
+		}
+		return &DownloadModResult{FilesExtracted: 1, Checksum: downloadResult.Checksum}, nil
+	}
+
 	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(archivePath) {
 		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
 		// Or not an archive - just copy to cache. copyFileStreaming mkdirs
@@ -891,6 +918,46 @@ func commitStagedCache(cachePath, stagePath string) error {
 		return fmt.Errorf("removing old cache backup: %w", err)
 	}
 	return nil
+}
+
+// isExmodzFile reports whether fileName is a compile-eligible archive
+// (case-insensitive ".exmodz" suffix). DeployCompile games can also serve
+// plain, already-built ".pak" files (icarus.GetModFiles enumerates "pak"
+// before "exmodz") - those must NOT be routed through Compile, which expects
+// an .exmodz diff (#136 review, Task 13 fix round 1): a prebuilt pak falls
+// through to the pre-compile extract/copy logic unchanged, exactly as if
+// DeployMode were not DeployCompile at all.
+func isExmodzFile(fileName string) bool {
+	return strings.HasSuffix(strings.ToLower(fileName), ".exmodz")
+}
+
+// resolveBasePak locates the currently-installed game's base pak for
+// DeployCompile sources. v1 scope: Icarus only, one known pak filename
+// pattern — extend this if a second DeployCompile-using game is ever added
+// rather than generalizing speculatively now. The relative path below is
+// Task 1's empirically-confirmed finding (docs/plans/icarus-pak-format-findings.md),
+// recorded before this function was written, not an assumption made here: the
+// JSON data tables live in Content/Data/data.pak, NOT in the Content/Paks
+// pakchunks, which carry only cooked .uasset/.uexp assets and no JSON at all.
+//
+// This pak is also the direct source of base table *content* (#175): Compile
+// reads each patched table straight out of it via internal/unrealpak, so a
+// compile is always week-correct by construction (there's no separate dump
+// to go stale relative to the install) and works entirely offline.
+func resolveBasePak(game *domain.Game) (string, error) {
+	candidate := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
+	if _, err := os.Stat(candidate); err != nil {
+		return "", fmt.Errorf("locating base pak for %q: %w", game.ID, err)
+	}
+	return candidate, nil
+}
+
+// compiledFileName turns a downloaded source filename into the cached
+// output's name: same base name, .pak extension, matching Icarus's "_P.pak"
+// override convention.
+func compiledFileName(sourceFileName string) string {
+	base := strings.TrimSuffix(sourceFileName, filepath.Ext(sourceFileName))
+	return base + "_P.pak"
 }
 
 // GetGame retrieves a game by ID

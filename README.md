@@ -421,7 +421,17 @@ games:
       nexusmods: "starfield"
     link_method: copy # This game requires file copies instead of symlinks
     cache_path: /mnt/fast-ssd/starfield-mods # Store this game's mods on fast storage
+
+  icarus:
+    name: "Icarus"
+    install_path: "/path/to/Steam/steamapps/common/Icarus"
+    mod_path: "/path/to/Steam/steamapps/common/Icarus/Icarus/Content/Paks/mods"
+    sources:
+      icarus: "icarus"
+    deploy_mode: compile
 ```
+
+Steam auto-detection (`lmm game detect`) knows about Icarus (App ID `1149460`) and generates an equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
 
 ### Deployment Methods
 
@@ -1087,7 +1097,7 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 - [x] Automatic dependency installation (opt out with `--no-deps`)
 - [x] Interactive TUI (Bubble Tea) - see the Terminal UI section above
 - [x] CurseForge integration
-- [ ] Additional first-party built-in sources beyond NexusMods/CurseForge
+- [x] Additional first-party built-in sources beyond NexusMods/CurseForge (Icarus)
 - [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
 - [ ] Backup and restore
 

@@ -17,6 +17,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/icarus"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
@@ -283,12 +284,19 @@ func initService() (*core.Service, error) {
 	return svc, nil
 }
 
+// icarusFirestoreProjectID is Project Daedalus's Firebase project ID, from
+// the Firebase console. It is public information (Firestore reads are
+// unauthenticated by design, per the research spike) — this constant is the
+// one place it needs to be substituted with the real value.
+const icarusFirestoreProjectID = "projectdaedalus-fb09f"
+
 // builtinSourceFactories constructs each built-in source keyless — the
 // unified pipeline resolves and applies API keys post-construction via
 // registerSource's SetAPIKey seam, the same path custom sources use.
 var builtinSourceFactories = []func() source.ModSource{
 	func() source.ModSource { return nexusmods.New(nil, "") },
 	func() source.ModSource { return curseforge.New(nil, "") },
+	func() source.ModSource { return icarus.New(nil, icarusFirestoreProjectID) },
 }
 
 // registerSources registers all available mod sources with the service
