@@ -72,7 +72,10 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 		return nil, fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 
-	installer := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return nil, err
+	}
 	if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
 		return nil, fmt.Errorf("failed to deploy mod: %w", err)
 	}
@@ -141,7 +144,10 @@ func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName
 	}
 
 	result := &DisableResult{}
-	installer := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return nil, err
+	}
 	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 		// Non-fatal — see doc comment. Historical "Warning: " prefix baked
 		// into the text itself, matching UninstallResult's own convention.
@@ -247,7 +253,10 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err))
 	}
 
-	installer := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return result, err
+	}
 	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 		// Non-fatal - files may have been manually removed. Always
 		// recorded; the historical "Warning: " prefix is baked into the
@@ -1642,7 +1651,11 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 	if opts.LinkMethod != nil {
 		linkMethod = *opts.LinkMethod
 	} else {
-		linkMethod = s.GetEffectiveLinkMethod(game, profileName)
+		method, err := s.GetEffectiveLinkMethod(game, profileName)
+		if err != nil {
+			return result, err
+		}
+		linkMethod = method
 	}
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
@@ -1961,7 +1974,10 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		spec.emit(DeployProgress{Phase: DeployBeforeAllForced, Detail: msg})
 	}
 
-	installer := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return err
+	}
 	spec.emit(DeployProgress{Phase: DeployPurging, Total: len(mods)})
 
 	// deferredWarnings holds uninstall.after_each (per mod, in loop order)
@@ -2377,8 +2393,14 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// link methods - the disable loop undeploys the FROM profile's
 	// deployments (which were made with plan.From's method), while the
 	// enable and install loops deploy into plan.To.
-	fromInstaller := s.GetInstallerForProfile(game, plan.From)
-	toInstaller := s.GetInstallerForProfile(game, plan.To)
+	fromInstaller, err := s.GetInstallerForProfile(game, plan.From)
+	if err != nil {
+		return result, err
+	}
+	toInstaller, err := s.GetInstallerForProfile(game, plan.To)
+	if err != nil {
+		return result, err
+	}
 	pm := s.NewProfileManager()
 
 	totalDisable := len(plan.ToDisable)
@@ -2830,9 +2852,16 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	// Conflict detection mirrors confirmInstallConflicts exactly: ANY
 	// GetConflicts error - including "mod not in cache" for a mod PlanInstall
 	// has (by construction) never downloaded - degrades to "no conflicts
-	// detected", never fails the plan. See Conflicts' doc comment.
-	if conflicts, err := s.GetInstallerForProfile(game, profileName).GetConflicts(ctx, game, mod, profileName); err == nil {
-		plan.Conflicts = conflicts
+	// detected", never fails the plan. See Conflicts' doc comment. Extended
+	// (#189) to GetInstallerForProfile's own error (e.g. an invalid
+	// profile link_method): this is a read-only preview, not a deploy, so
+	// the existing "never fails the plan" policy still applies - the
+	// installer's resolution simply doesn't get to say whether this
+	// specific plan conflicts with anything already on disk.
+	if installer, err := s.GetInstallerForProfile(game, profileName); err == nil {
+		if conflicts, err := installer.GetConflicts(ctx, game, mod, profileName); err == nil {
+			plan.Conflicts = conflicts
+		}
 	}
 
 	return plan, nil
@@ -3523,7 +3552,10 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		emit(DeployProgress{Phase: InstallBeforeAllForced, Detail: msg})
 	}
 
-	linkMethod := s.GetEffectiveLinkMethod(game, plan.Profile)
+	linkMethod, err := s.GetEffectiveLinkMethod(game, plan.Profile)
+	if err != nil {
+		return result, err
+	}
 	pm := s.NewProfileManager()
 
 	// deferredWarnings holds every install.after_each (BATCH path: every mod
@@ -4326,7 +4358,10 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		emit(evt)
 	}
 
-	linkMethod := s.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := s.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return result, err
+	}
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
@@ -4567,7 +4602,10 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		emit(evt)
 	}
 
-	linkMethod := s.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := s.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return result, err
+	}
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
 	prevMod := mod.Mod
@@ -4898,7 +4936,10 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		return result, nil
 	}
 
-	installer := s.GetInstallerForProfile(game, profile.Name)
+	installer, err := s.GetInstallerForProfile(game, profile.Name)
+	if err != nil {
+		return result, err
+	}
 	total := len(toDownload)
 	emit(DeployProgress{Phase: ImportInstalling, Total: total})
 

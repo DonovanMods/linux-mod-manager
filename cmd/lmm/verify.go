@@ -1132,9 +1132,15 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 // SUCCESSFUL install, likewise non-fatal: the deployment itself is fixed,
 // only the recorded method is stale, and failing the whole repair over it
 // would misreport a fixed deployment as broken. installErr and recordErr
-// are mutually exclusive.
+// are mutually exclusive. A GetEffectiveLinkMethod failure (#189: an invalid
+// profile link_method) is reported as installErr too - it happens before
+// anything is touched, same as any other reason no method could be
+// resolved to install with.
 func relinkDeployedRow(cmd *cobra.Command, svc *core.Service, game *domain.Game, profileName string, mod *domain.InstalledMod) (installErr, recordErr, undeployErr error) {
-	method := svc.GetEffectiveLinkMethod(game, profileName)
+	method, err := svc.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return err, nil, nil
+	}
 	installer := svc.NewInstallerWithLinker(game, svc.GetLinker(method))
 	// Undeploy-then-install, the same shape DeployProfile uses
 	// (internal/core/flows.go) and for the same reason: dst still holds

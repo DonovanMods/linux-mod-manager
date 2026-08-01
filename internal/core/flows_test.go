@@ -1156,9 +1156,35 @@ func TestService_GetEffectiveLinkMethod_Precedence(t *testing.T) {
 				}
 			}
 
-			assert.Equal(t, tc.expectedMethod, svc.GetEffectiveLinkMethod(game, "default"))
+			method, err := svc.GetEffectiveLinkMethod(game, "default")
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectedMethod, method)
 		})
 	}
+}
+
+// TestService_GetEffectiveLinkMethod_InvalidLinkMethodSurfaces pins #189: a
+// hand-edited profile with an unrecognized link_method must surface as an
+// error naming domain.ErrInvalidLinkMethod, not silently degrade to the
+// game/global default the way a missing profile file does (the precedence
+// test above). Without the fix, GetEffectiveLinkMethod would return the
+// game's LinkHardlink with no error - the exact silent-misbehavior #172's
+// fail-loud contract exists to prevent, one layer deeper on the deploy path.
+func TestService_GetEffectiveLinkMethod_InvalidLinkMethodSurfaces(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkHardlink, LinkMethodExplicit: true}
+
+	_, err := svc.NewProfileManager().Create("g1", "default")
+	require.NoError(t, err)
+	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
+	data, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(profilePath, append(data, []byte("link_method: bogus\n")...), 0644))
+
+	_, err = svc.GetEffectiveLinkMethod(game, "default")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidLinkMethod)
 }
 
 func linkMethodPtr(m domain.LinkMethod) *domain.LinkMethod {
@@ -1212,6 +1238,36 @@ func TestService_DeployProfile_CLIMethodOverrideBeatsProfileLinkMethod(t *testin
 	info, err := os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	require.NoError(t, err)
 	assert.NotEqual(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "--method symlink must beat the profile's copy")
+}
+
+// TestService_DeployProfile_InvalidProfileLinkMethodFailsLoud is #189's
+// deploy-path-level proof, one layer up from
+// TestService_GetEffectiveLinkMethod_InvalidLinkMethodSurfaces: a profile
+// with a hand-edited, unrecognized link_method must VISIBLY fail the deploy
+// rather than silently deploying with the game's method. Before the fix,
+// this would have deployed 1 mod with a real symlink at gameDir/plugin.esp;
+// after, DeployProfile errors and nothing is written.
+func TestService_DeployProfile_InvalidProfileLinkMethodFailsLoud(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
+	data, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(profilePath, append(data, []byte("link_method: bogus\n")...), 0644))
+
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidLinkMethod)
+	if result != nil {
+		assert.Zero(t, result.Deployed, "an invalid link_method must deploy nothing, not fall back to the game's method")
+	}
+	_, statErr := os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	assert.True(t, os.IsNotExist(statErr), "no file may be deployed when the effective link method can't be resolved")
 }
 
 // TestService_DeployProfile_PurgeRemovesFilesFirstAndPreservesEnabledSet

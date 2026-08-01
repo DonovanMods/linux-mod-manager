@@ -1022,7 +1022,10 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		}
 	}
 
-	linkMethod := service.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := service.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return err
+	}
 
 	// Set up hooks
 	hookRunner := getHookRunner(service)
