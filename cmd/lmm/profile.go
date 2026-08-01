@@ -995,7 +995,10 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		}
 	}
 
-	installer := service.GetInstallerForProfile(game, profileName)
+	installer, err := service.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return err
+	}
 
 	// Disable mods
 	for _, im := range toDisable {
