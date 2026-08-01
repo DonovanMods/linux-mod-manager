@@ -128,6 +128,7 @@ func TestService_EnableMod_DeploysDisabledMod(t *testing.T) {
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, mod.Enabled)
+	assert.True(t, mod.Deployed, "#183: enabling a mod must also record it as deployed")
 }
 
 func TestService_EnableMod_AlreadyEnabledIsNoop(t *testing.T) {
@@ -214,9 +215,12 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 	})
 
 	// Deploy the files first so there's something to undeploy (mirrors an
-	// install that happened earlier).
+	// install that happened earlier), and record the DB's deployed flag to
+	// match — seedInstalledMod doesn't set it, so this mirrors the real
+	// precondition DisableMod actually sees for a genuinely-deployed mod.
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, svc.SetModDeployed("src", "1", "g1", "default", true))
 
 	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
@@ -232,6 +236,7 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled)
+	assert.False(t, mod.Deployed, "#183: disabling a mod must also clear the deployed flag")
 }
 
 func TestService_DisableMod_AlreadyDisabledIsNoop(t *testing.T) {
@@ -297,6 +302,73 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled, "DB should still flip to disabled even when undeploy is best-effort")
+	assert.False(t, mod.Deployed, "#183: the deployed flag must still clear to record intent, even when the undeploy itself was best-effort")
+}
+
+// TestService_DisableMod_SetModDeployedFailure_NonFatalNote pins the #183
+// fix's own failure-handling decision: a SetModDeployed(false) failure is
+// non-fatal, recorded as a Note, exactly like DisableMod's existing
+// Uninstall-failure handling and like PurgeProfile's own SetModDeployed
+// call (see TestService_PurgeProfile_SetModDeployedFailure_NonFatalNote) —
+// not escalated to a hard error the way SetModEnabled's own failure still
+// is. installBlockingTrigger blocks only the "deployed" column, so
+// SetModEnabled (a different column) still succeeds.
+func TestService_DisableMod_SetModDeployedFailure_NonFatalNote(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	installSeededMod(t, svc, game, "1")
+	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "a SetModDeployed failure must not fail DisableMod")
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	require.NotEmpty(t, result.Notes)
+	assert.Contains(t, strings.Join(result.Notes, "\n"), "could not mark as not deployed",
+		"Notes = %v, want one mentioning the SetModDeployed failure", result.Notes)
+
+	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "SetModEnabled touches a different column and must still succeed")
+}
+
+// TestService_EnableMod_SetModDeployedFailure_NonFatalNote is
+// TestService_DisableMod_SetModDeployedFailure_NonFatalNote's mirror for
+// the enable path.
+func TestService_EnableMod_SetModDeployedFailure_NonFatalNote(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{"plugin.esp": []byte("data")})
+	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "a SetModDeployed failure must not fail EnableMod")
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	require.NotEmpty(t, result.Notes)
+	assert.Contains(t, strings.Join(result.Notes, "\n"), "could not mark as deployed",
+		"Notes = %v, want one mentioning the SetModDeployed failure", result.Notes)
+
+	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.True(t, mod.Enabled, "SetModEnabled touches a different column and must still succeed")
 }
 
 // --- UninstallMod ---
