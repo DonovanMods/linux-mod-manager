@@ -20,16 +20,17 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 
 ### Game options
 
-| Option         | Type   | Required | Description                                                |
-| -------------- | ------ | -------- | ---------------------------------------------------------- |
-| `name`         | string | yes      | Display name                                               |
-| `install_path` | string | yes      | Game installation directory (supports `~`)                 |
-| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)           |
-| `sources`      | map    | yes      | Source ID to game ID mapping (see below)                   |
-| `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy` |
-| `cache_path`   | string | no       | Per-game cache directory override                          |
-| `hooks`        | object | no       | Scripts to run around install/uninstall (see below)        |
-| `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default) or `copy`  |
+| Option           | Type   | Required | Description                                                                                      |
+| ---------------- | ------ | -------- | ------------------------------------------------------------------------------------------------ |
+| `name`           | string | yes      | Display name                                                                                     |
+| `install_path`   | string | yes      | Game installation directory (supports `~`)                                                       |
+| `mod_path`       | string | yes      | Directory where mods are deployed (supports `~`)                                                 |
+| `sources`        | map    | yes      | Source ID to game ID mapping (see below)                                                         |
+| `link_method`    | string | no       | Override global link method: `symlink`, `hardlink`, `copy`                                       |
+| `cache_path`     | string | no       | Per-game cache directory override                                                                |
+| `hooks`          | object | no       | Scripts to run around install/uninstall (see below)                                              |
+| `deploy_mode`    | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile`                            |
+| `data_dump_path` | string | no       | Compile-mode only: local unpacked data.pak JSON tree, used instead of the hosted base-table dump |
 
 ### Hooks (games.yaml)
 
@@ -57,6 +58,7 @@ The `deploy_mode` option controls how downloaded mod archives are handled:
 
 - **`extract`** (default): Archives are extracted to the mod path. Use for games where mods are loose files (e.g., Skyrim, Fallout).
 - **`copy`**: Archives are copied as-is to the mod path without extraction. Use for games that expect mod files to remain as archives (e.g., Minecraft `.jar` files, some Unity games).
+- **`compile`**: The downloaded file is compiled into a new artifact before caching (currently Icarus only: an `.exmodz` diff is applied to the game's base data tables to produce a deployable `_P.pak`). Only sources that implement compiling support this mode. Optional `data_dump_path` points compilation at your own unpacked `data.pak` JSON tree instead of the hosted community dump; it must match the installed game version, and a mismatch is a hard error.
 
 Example:
 

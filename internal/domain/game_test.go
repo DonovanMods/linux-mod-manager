@@ -58,6 +58,7 @@ func TestDeployMode_String(t *testing.T) {
 	}{
 		{"extract", DeployExtract, "extract"},
 		{"copy", DeployCopy, "copy"},
+		{"compile", DeployCompile, "compile"},
 		// Unlike LinkMethod.String, the default branch here also returns
 		// "extract" rather than "unknown" for out-of-range values.
 		{"unknown value falls back to extract", DeployMode(99), "extract"},
@@ -77,6 +78,7 @@ func TestParseDeployMode(t *testing.T) {
 		want  DeployMode
 	}{
 		{"copy", "copy", DeployCopy},
+		{"compile", "compile", DeployCompile},
 		{"extract explicit", "extract", DeployExtract},
 		{"empty defaults to extract", "", DeployExtract},
 		{"unknown defaults to extract", "bogus", DeployExtract},

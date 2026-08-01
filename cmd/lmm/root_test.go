@@ -48,7 +48,7 @@ func TestRegisterSources_BuiltinStillAuthenticatesWithEnvAndToken(t *testing.T) 
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	require.NoError(t, svc.SaveSourceToken("nexusmods", "stored-db-key"))
 
-	registerSources(svc, t.TempDir())
+	registerSources(svc, t.TempDir(), t.TempDir())
 
 	src, err := svc.GetSource("nexusmods")
 	require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
 			mockAuthSource: mockAuthSource{id: "precedence-src", name: "Precedence Src"},
 			envKey:         envVar,
 		}
-		registerSource(svc, mock)
+		registerSource(svc, mock, t.TempDir())
 
 		assert.Equal(t, "env-value", mock.apiKey, "env var must take precedence over a stored DB token")
 	})
@@ -115,10 +115,40 @@ func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
 			mockAuthSource: mockAuthSource{id: "precedence-src", name: "Precedence Src"},
 			envKey:         envVar,
 		}
-		registerSource(svc, mock)
+		registerSource(svc, mock, t.TempDir())
 
 		assert.Equal(t, "token-value", mock.apiKey, "stored token must apply when no env var is set")
 	})
+}
+
+// recordingDataDirSource is a mockAuthSource that also implements the
+// optional SetDataDir(string) setter (icarus.Icarus, #136 Task 13), so
+// TestRegisterSource_WiresDataDir can pin that registerSource calls it with
+// the resolved data directory - the same optional-setter pattern SetAPIKey
+// already uses, just for a different capability.
+type recordingDataDirSource struct {
+	mockAuthSource
+	dataDir string
+}
+
+func (r *recordingDataDirSource) SetDataDir(dataDir string) { r.dataDir = dataDir }
+
+// TestRegisterSource_WiresDataDir pins that registerSource calls SetDataDir
+// on a source that implements it, passing through the exact dataDir it was
+// given - the seam icarus.Icarus.SetDataDir relies on to ever get a working
+// dumps store outside of a test that constructs Icarus directly.
+func TestRegisterSource_WiresDataDir(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	mock := &recordingDataDirSource{mockAuthSource: mockAuthSource{id: "data-dir-src", name: "Data Dir Src"}}
+	wantDataDir := t.TempDir()
+	registerSource(svc, mock, wantDataDir)
+
+	assert.Equal(t, wantDataDir, mock.dataDir, "registerSource must pass its dataDir through to SetDataDir")
 }
 
 // TestRegisterSources_DerivedEnvKeyForCustom pins that a custom source with
@@ -150,7 +180,7 @@ manifest:
 `)
 	t.Setenv("LMM_MY_CUSTOM_API_KEY", "custom-env-key")
 
-	registerSources(svc, cfgDir)
+	registerSources(svc, cfgDir, t.TempDir())
 
 	src, err := svc.GetSource("my-custom")
 	require.NoError(t, err)
@@ -184,12 +214,24 @@ directory:
 	customSourceWarnOut = &warnBuf
 	t.Cleanup(func() { customSourceWarnOut = nil })
 
-	registerSources(svc, cfgDir)
+	registerSources(svc, cfgDir, t.TempDir())
 
 	src, err := svc.GetSource("nexusmods")
 	require.NoError(t, err)
 	assert.Equal(t, "Nexus Mods", src.Name(), "built-in nexusmods must win; the custom definition should be skipped")
 	assert.Contains(t, warnBuf.String(), `warning: skipping source "nexusmods": id already in use`)
+}
+
+func TestBuiltinSourceFactories_IncludesIcarus(t *testing.T) {
+	found := false
+	for _, factory := range builtinSourceFactories {
+		if factory().ID() == "icarus" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("builtinSourceFactories should include the icarus source")
+	}
 }
 
 func TestInitService_RegistersSources(t *testing.T) {
@@ -318,7 +360,7 @@ directory:
   path: /this/path/should/not/exist/lmm-test-fixture
 `) // construction-failure branch: Validate passes, NewDirectory's os.Stat fails
 
-	registerCustomSources(svc, cfgDir)
+	registerCustomSources(svc, cfgDir, t.TempDir())
 
 	sources := svc.ListSources()
 	byID := make(map[string]source.ModSource, len(sources))
