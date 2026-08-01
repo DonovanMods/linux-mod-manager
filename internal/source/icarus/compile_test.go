@@ -194,6 +194,38 @@ func TestCompile_UnsafeAssetPath_Errors(t *testing.T) {
 	if !strings.Contains(err.Error(), "../evil.uasset") {
 		t.Errorf("error %q should name the offending asset path", err)
 	}
+	if _, statErr := os.Stat(outputPath); statErr == nil {
+		t.Error("no partial output pak should exist after an unsafe-asset-path failure")
+	}
+}
+
+// A failure that happens after unrealpak.Create(outputPakPath) has already
+// created the file on disk (here: an unresolvable row, mid row-loop) must
+// not leave a partial/incomplete pak behind — a stray partial _P.pak is a
+// hazard (it could be picked up and deployed) and contradicts the
+// fail-loud-and-clean philosophy. See task-12-report.md "plan delta" (fix
+// round 1).
+func TestCompile_MidCompileFailure_LeavesNoOutputFile(t *testing.T) {
+	baseTables := map[string][]byte{
+		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200}}`),
+	}
+	basePak := writeTestBasePak(t, baseTables)
+	dumps := testDumpStore(t, baseTables)
+	// CurrentFile has no matching base-pak file: resolveCurrentFile fails
+	// inside the row loop, after out has already been created.
+	manifest := `{"name":"X","Rows":[{"CurrentFile":"AI-D_Nonexistent.json","File_Items":[{"Name":"Mount_Bear","X":1}]}]}`
+	exmodzPath := writeTestExmodzFile(t, manifest, nil)
+	outputPath := filepath.Join(t.TempDir(), "out.pak")
+
+	err := Compile(context.Background(), dumps, basePak, "", exmodzPath, outputPath)
+	if err == nil {
+		t.Fatal("expected an error for an unresolvable row, got nil")
+	}
+	if _, statErr := os.Stat(outputPath); statErr == nil {
+		t.Error("no partial output pak should exist after a mid-compile failure")
+	} else if !os.IsNotExist(statErr) {
+		t.Errorf("unexpected error stat-ing output path: %v", statErr)
+	}
 }
 
 func TestMatchMountPath(t *testing.T) {

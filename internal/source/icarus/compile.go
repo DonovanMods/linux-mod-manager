@@ -27,7 +27,7 @@ import (
 // localDumpDir is the game's optional data_dump_path: when set, base tables
 // are read from that directory instead of being fetched. It is validated
 // identically, so a stale local directory fails just as loudly.
-func Compile(ctx context.Context, dumps *DumpStore, basePakPath, localDumpDir, exmodzPath, outputPakPath string) error {
+func Compile(ctx context.Context, dumps *DumpStore, basePakPath, localDumpDir, exmodzPath, outputPakPath string) (err error) {
 	exmodzData, err := os.ReadFile(exmodzPath)
 	if err != nil {
 		return fmt.Errorf("icarus: reading %s: %w", exmodzPath, err)
@@ -54,6 +54,21 @@ func Compile(ctx context.Context, dumps *DumpStore, basePakPath, localDumpDir, e
 	if err != nil {
 		return fmt.Errorf("icarus: creating %s: %w", outputPakPath, err)
 	}
+	// unrealpak.Create opens the file eagerly, so any error from here on
+	// leaves a partial/incomplete pak at outputPakPath unless removed — a
+	// hazard, since it could be picked up and deployed. unrealpak.Writer has
+	// no way to abort without finalizing (Close always serializes and writes
+	// whatever was buffered), so removing the file is the only way to keep
+	// the fail-loud-and-clean contract on this path; the success path
+	// (err == nil here) is untouched.
+	defer func() {
+		if err == nil {
+			return
+		}
+		if rmErr := os.Remove(outputPakPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			err = fmt.Errorf("%w (additionally, removing partial output %s failed: %v)", err, outputPakPath, rmErr)
+		}
+	}()
 
 	for _, row := range bundle.Diff.Rows {
 		if row.CurrentFile == endOfModSentinel {
