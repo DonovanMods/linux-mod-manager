@@ -22,15 +22,22 @@ func (m LinkMethod) String() string {
 	}
 }
 
-// ParseLinkMethod converts a string to LinkMethod
-func ParseLinkMethod(s string) LinkMethod {
+// ParseLinkMethod converts a string to LinkMethod. An empty string is not
+// yet set and returns the default (symlink) with ok=true, so configs that
+// never set link_method keep working unchanged. Any other unrecognized
+// string returns ok=false so the caller can fail loud (naming the field,
+// offending value, and owning game/profile) instead of silently defaulting
+// (#172).
+func ParseLinkMethod(s string) (method LinkMethod, ok bool) {
 	switch s {
+	case "", "symlink":
+		return LinkSymlink, true
 	case "hardlink":
-		return LinkHardlink
+		return LinkHardlink, true
 	case "copy":
-		return LinkCopy
+		return LinkCopy, true
 	default:
-		return LinkSymlink
+		return LinkSymlink, false
 	}
 }
 
@@ -67,12 +74,16 @@ func (m DeployMode) String() string {
 	}
 }
 
-// ParseDeployMode converts a string to DeployMode
-func ParseDeployMode(s string) DeployMode {
+// ParseDeployMode converts a string to DeployMode. Mirrors ParseLinkMethod's
+// fail-loud contract: empty keeps the default (extract) with ok=true; any
+// other unrecognized string returns ok=false (#172).
+func ParseDeployMode(s string) (mode DeployMode, ok bool) {
 	switch s {
+	case "", "extract":
+		return DeployExtract, true
 	case "copy":
-		return DeployCopy
+		return DeployCopy, true
 	default:
-		return DeployExtract
+		return DeployExtract, false
 	}
 }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- An unrecognized, non-empty `link_method` (`games.yaml`, profile files, imported profiles) or `deploy_mode` (`games.yaml`) is now a load-time error naming the field, the offending value, the owning game/profile, and the valid options — instead of silently falling back to the default (`symlink`/`extract`). **Breaking for configs that were already silently misbehaving:** a typo like `deploy_mode: compil` previously ran as `extract` with no warning; it now refuses to load until fixed. An empty/absent value is unaffected and keeps today's default exactly (#172)
+
 ## [1.27.1] - 2026-07-30
 
 ### Fixed
