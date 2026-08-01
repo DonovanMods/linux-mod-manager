@@ -192,6 +192,18 @@ directory:
 	assert.Contains(t, warnBuf.String(), `warning: skipping source "nexusmods": id already in use`)
 }
 
+func TestBuiltinSourceFactories_IncludesIcarus(t *testing.T) {
+	found := false
+	for _, factory := range builtinSourceFactories {
+		if factory().ID() == "icarus" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("builtinSourceFactories should include the icarus source")
+	}
+}
+
 func TestInitService_RegistersSources(t *testing.T) {
 	// Use temp directories to avoid polluting real config
 	configDir = t.TempDir()

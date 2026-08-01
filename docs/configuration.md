@@ -20,16 +20,16 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 
 ### Game options
 
-| Option         | Type   | Required | Description                                                |
-| -------------- | ------ | -------- | ---------------------------------------------------------- |
-| `name`         | string | yes      | Display name                                               |
-| `install_path` | string | yes      | Game installation directory (supports `~`)                 |
-| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)           |
-| `sources`      | map    | yes      | Source ID to game ID mapping (see below)                   |
-| `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy` |
-| `cache_path`   | string | no       | Per-game cache directory override                          |
-| `hooks`        | object | no       | Scripts to run around install/uninstall (see below)        |
-| `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default) or `copy`  |
+| Option         | Type   | Required | Description                                                           |
+| -------------- | ------ | -------- | --------------------------------------------------------------------- |
+| `name`         | string | yes      | Display name                                                          |
+| `install_path` | string | yes      | Game installation directory (supports `~`)                            |
+| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)                      |
+| `sources`      | map    | yes      | Source ID to game ID mapping (see below)                              |
+| `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy`            |
+| `cache_path`   | string | no       | Per-game cache directory override                                     |
+| `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                   |
+| `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
 
 ### Hooks (games.yaml)
 
@@ -57,6 +57,7 @@ The `deploy_mode` option controls how downloaded mod archives are handled:
 
 - **`extract`** (default): Archives are extracted to the mod path. Use for games where mods are loose files (e.g., Skyrim, Fallout).
 - **`copy`**: Archives are copied as-is to the mod path without extraction. Use for games that expect mod files to remain as archives (e.g., Minecraft `.jar` files, some Unity games).
+- **`compile`**: The downloaded file is compiled into a new artifact before caching (currently Icarus only: an `.exmodz` diff is applied to the game's base data tables to produce a deployable `_P.pak`). Only sources that implement compiling support this mode. The base data tables are read directly from the installed game's own `data.pak`, so a compile always matches the installed game version and needs no network access.
 
 Example:
 
@@ -104,7 +105,7 @@ Used by `lmm game detect` to know which Steam games are moddable. The app ships 
 
 **`~/.config/lmm/steam-games.yaml`**
 
-Format: Steam App ID (string) as key, then `slug`, `name`, `nexus_id`, `mod_path` (relative to game install, empty for game root). Example:
+Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative to game install, empty for game root), optional `nexus_id` (omit for a game with no NexusMods presence), and two more optional fields, `deploy_mode` and `sources`, that pass straight through to the generated `games.yaml` entry's own `deploy_mode`/`sources` (omit both for the default `{nexusmods: <nexus_id>}` sources map and `extract` deploy mode every entry got before these existed). Example:
 
 ```yaml
 "489830":
@@ -117,6 +118,13 @@ Format: Steam App ID (string) as key, then `slug`, `name`, `nexus_id`, `mod_path
   name: My Game
   nexus_id: mygame
   mod_path: ""
+"7654321":
+  slug: my-compile-game
+  name: My Compile-Mode Game
+  mod_path: Mods
+  deploy_mode: compile
+  sources:
+    mysource: my-compile-game
 ```
 
 Entries here are merged with the built-in list (overrides win). No rebuild needed to support more games.

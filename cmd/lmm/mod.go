@@ -405,11 +405,10 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 		// accumulated before the fatal error alongside it (mirrors
 		// UninstallMod's own convention - see uninstall.go's
 		// printUninstallDiagnostics); print them now, or they'd otherwise be
-		// lost even though they already happened. result is nil on every
-		// EnableMod error path today, but is guarded here anyway, for parity
-		// with doModDisable below and because EnableResult.Notes is kept
-		// specifically so a future EnableMod diagnostic wouldn't need
-		// another signature change (see its doc comment in flows.go).
+		// lost even though they already happened (e.g. a SetModDeployed
+		// failure Note recorded, then a later SetModEnabled failure, #183).
+		// result is nil only when EnableMod failed before it could allocate
+		// the result struct, exactly like doModDisable below.
 		if result != nil {
 			printModNotes(result.Notes)
 		}
