@@ -459,3 +459,69 @@ func TestAPISearchNegativePageClamped(t *testing.T) {
 	assert.Contains(t, gotPath, "page=1")
 	assert.Contains(t, gotPath, "skip=0")
 }
+
+// TestAPISearchCategoryAndTagsPlaceholders pins {category}/{tags} substitution
+// (#120): tags join with a comma (the issue leaves the delimiter open; comma
+// is the documented convention), both are URL-escaped, and an endpoint whose
+// template omits the placeholders is completely unaffected — the values are
+// computed but never appear in the request, matching today's behavior for
+// existing definitions.
+func TestAPISearchCategoryAndTagsPlaceholders(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		query    source.SearchQuery
+		wantPath string
+	}{
+		{
+			name:     "category set",
+			path:     "/mods?q={query}&category={category}",
+			query:    source.SearchQuery{Query: "x", Category: "armor"},
+			wantPath: "/mods?q=x&category=armor",
+		},
+		{
+			name:     "category unset substitutes empty",
+			path:     "/mods?q={query}&category={category}",
+			query:    source.SearchQuery{Query: "x"},
+			wantPath: "/mods?q=x&category=",
+		},
+		{
+			name:     "multi-tag joins with comma and escapes",
+			path:     "/mods?q={query}&tags={tags}",
+			query:    source.SearchQuery{Query: "x", Tags: []string{"quality of life", "combat"}},
+			wantPath: "/mods?q=x&tags=quality+of+life%2Ccombat",
+		},
+		{
+			name:     "tags unset substitutes empty",
+			path:     "/mods?q={query}&tags={tags}",
+			query:    source.SearchQuery{Query: "x"},
+			wantPath: "/mods?q=x&tags=",
+		},
+		{
+			name:     "endpoint without placeholders is unchanged",
+			path:     "/mods?q={query}&page={page}",
+			query:    source.SearchQuery{Query: "x", Category: "armor", Tags: []string{"a", "b"}},
+			wantPath: "/mods?q=x&page=1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.String()
+				_, _ = w.Write([]byte(`{"results": []}`))
+			}))
+			defer srv.Close()
+
+			def := apiDef(srv.URL)
+			def.API.Endpoints.Search = &EndpointConfig{Path: tt.path, List: "results"}
+			a, err := NewAPI(def)
+			require.NoError(t, err)
+
+			_, err = a.Search(context.Background(), tt.query)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPath, gotPath)
+		})
+	}
+}
