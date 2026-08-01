@@ -53,6 +53,24 @@ X NAME - VERSION MISMATCH (recorded X, source reports Y)
 .EE
 
 .PP
+For a compile-deploy game (e.g. Icarus), verify also compares each
+compiled mod's recorded base-pak fingerprint against the game's live base
+pak (#196, "the Friday problem" - a weekly base pak refresh silently
+reverts a compiled mod's patched tables, with nothing to notice
+otherwise):
+
+.EX
+? NAME - RECOMPILE NEEDED           the game's base pak has changed
+                                     since this mod was compiled; run
+                                     'lmm update' to recompile it
+.EE
+
+.PP
+This check is entirely local (no source contacted) and applies to every
+compiled mod regardless of source, including local imports. --fix does
+not repair it - use 'lmm update' (or 'lmm update --all').
+
+.PP
 Mods installed from a local source, mods requiring manual download, and
 mods with no recorded file IDs are skipped silently - there is nothing
 to check against. If the source can't be reached, the mod is reported
@@ -96,9 +114,10 @@ OK case - this is never counted in issues or warnings.
 .PP
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
-"no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
-"version_unverifiable"; note adds detail where there's something extra to
-say - a blocked cache rename, sibling-repair results, a --fix repair or
+"no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
+"version_unverifiable", or "stale_compile"; note adds detail where
+there's something extra to say - a blocked cache rename, sibling-repair
+results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
 record ("locked"), or a locked record's pending convergence detail - and
