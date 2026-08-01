@@ -254,6 +254,34 @@ func TestService_DisableMod_AlreadyDisabledIsNoop(t *testing.T) {
 	assert.False(t, result.Changed)
 }
 
+// TestService_DisableMod_AlreadyDisabledSelfHealsStaleDeployedFlag pins
+// #183's self-heal follow-up: a mod disabled before the #183 fix shipped
+// (or otherwise drifted) can be stuck at enabled=false, deployed=true
+// forever, since nothing else clears the flag once a mod is already
+// disabled. Calling DisableMod again on it must converge deployed to
+// false, still succeed, and still report Changed=false (the enabled
+// status itself didn't change).
+func TestService_DisableMod_AlreadyDisabledSelfHealsStaleDeployedFlag(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
+	require.NoError(t, svc.SetModDeployed("src", "1", "g1", "default", true),
+		"simulate a pre-#183 disable that left the stale deployed=true flag behind")
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "self-healing the stale flag must still report success")
+	require.NotNil(t, result)
+	assert.False(t, result.Changed, "enabled status itself didn't change")
+
+	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Deployed, "#183: re-disabling an already-disabled mod must self-heal a stale deployed=true")
+}
+
 func TestService_DisableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}

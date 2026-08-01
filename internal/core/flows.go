@@ -94,7 +94,10 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 // entry is kept so the mod can be re-enabled later without downloading again
 // — and marks it disabled (and not-deployed, #183) in the database. Returns
 // a result with Changed false — not an error — if the mod was already
-// disabled.
+// disabled. That already-disabled path still self-heals a stale
+// deployed=true left behind by a pre-#183 disable (or any other drift):
+// it clears the flag, non-fatally, before returning, so calling disable
+// again converges deployed state even when enabled was already false.
 //
 // Undeploy failures are treated as non-fatal: the game files may already
 // have been removed manually, and refusing to record the user's intent to
@@ -122,7 +125,19 @@ func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName
 	}
 
 	if !mod.Enabled {
-		return &DisableResult{}, nil
+		// Self-heal (#183): a mod disabled before this fix shipped can be
+		// stuck with enabled=false but deployed=true forever, since nothing
+		// else clears the flag once the mod is already disabled. Clear it
+		// here too, under the same non-fatal Note convention as the
+		// already-enabled path below, so disable converges the flag even
+		// when called on an already-disabled mod.
+		result := &DisableResult{}
+		if mod.Deployed {
+			if err := s.SetModDeployed(sourceID, modID, game.ID, profileName, false); err != nil {
+				result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as not deployed: %v", err))
+			}
+		}
+		return result, nil
 	}
 
 	result := &DisableResult{}
