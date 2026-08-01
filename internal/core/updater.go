@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 )
 
 // Updater checks for and applies mod updates
@@ -240,4 +243,173 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, insta
 	}
 
 	return updates, checkErr
+}
+
+// ApplyRecompile recompiles mod IN PLACE at its CURRENT version against
+// game's live base pak (#196: a base data.pak refresh left its already-
+// deployed compile(s) patching stale tables - "the Friday problem").
+// Every compiled entry recorded for mod (cache.BaseIndexHashes) is
+// recompiled, not just the ones CheckBaseStaleness found mismatched - a
+// mod's compiled files always share one base pak, so a partial refresh
+// would leave the entry internally inconsistent for no benefit.
+//
+// Recompiles from each file's retained .exmodz (offline) when present;
+// falls back to re-downloading it from mod's source when the retained copy
+// is missing AND a real fileID/source connection exists (a download-
+// compiled entry). An import-compiled entry has no such connection (Import
+// resolves no real source file ID - see stageCompileFingerprint) and a
+// domain.SourceLocal mod has no source at all either way: for both, a
+// missing retained source fails loud naming the fix (re-import/re-add the
+// mod) rather than guessing.
+//
+// Locked mods are refused outright before any work happens - mirrors
+// ApplyUpdate's own lock gate exactly (lock-wins: recompiling still
+// rewrites the mod's deployed FILES even though its Version doesn't move,
+// which is exactly what a lock forbids). Pinned mods ARE recompiled -
+// pinning fixes the mod's VERSION, not the base pak (#196 design point 3);
+// callers must not route a pinned mod through this gate at all.
+//
+// The cache update is staged and committed atomically (this package's own
+// staging/commit pattern - prepareStaging + commitStagedCache), so a
+// mid-recompile failure never touches the existing good entry. Redeploy
+// reuses Installer.ReplaceForUpdate with the mod's OWN file IDs on both
+// sides of the transition: with nothing IDs-wise changing, it degrades to
+// its historical union-replace behavior, which simply re-links/re-copies
+// every current member - exactly what refreshes a non-symlink deployment's
+// stale on-disk bytes (a symlink deployment already reflects the new cache
+// content once the atomic swap above lands, so this step is a correctness
+// no-op for it, not a wasted one).
+func (s *Service) ApplyRecompile(ctx context.Context, game *domain.Game, profileName string, mod domain.InstalledMod, progress func(DeployProgress)) (result *UpdateApplyResult, err error) {
+	result = &UpdateApplyResult{}
+	emit := func(p DeployProgress) {
+		if progress != nil {
+			progress(p)
+		}
+	}
+	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
+
+	if prof, perr := s.NewProfileManager().Get(game.ID, profileName); perr == nil {
+		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
+			return result, LockedRefRefusalError(mod.Mod, profileName, ref)
+		}
+	}
+
+	basePakPath, err := resolveBasePak(game)
+	if err != nil {
+		return result, err
+	}
+
+	gameCache := s.GetGameCache(game)
+	hashes, err := gameCache.BaseIndexHashes(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if err != nil {
+		return result, fmt.Errorf("reading compile fingerprints: %w", err)
+	}
+	if len(hashes) == 0 {
+		return result, fmt.Errorf("%s has no compiled entries to recompile", mod.Name)
+	}
+
+	compiler, err := s.compilerSourceForGame(game.ID)
+	if err != nil {
+		return result, err
+	}
+
+	manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if err != nil {
+		return result, fmt.Errorf("reading cache manifests: %w", err)
+	}
+
+	cacheModRef := &domain.Mod{ID: mod.ID, SourceID: mod.SourceID, Version: mod.Version, GameID: game.ID}
+	cachePath, stagePath, err := prepareStaging(gameCache, game, cacheModRef)
+	if err != nil {
+		return result, err
+	}
+	defer os.RemoveAll(stagePath) //nolint:errcheck
+	if err := os.MkdirAll(stagePath, 0755); err != nil {
+		return result, fmt.Errorf("preparing recompile staging: %w", err)
+	}
+
+	// Lazily fetched: the common path (retained source present for every
+	// compiled file) never needs the source's file listing at all.
+	var sourceFiles []domain.DownloadableFile
+	var sourceFilesErr error
+	getSourceFiles := func() ([]domain.DownloadableFile, error) {
+		if sourceFiles == nil && sourceFilesErr == nil {
+			sourceFiles, sourceFilesErr = s.GetModFiles(ctx, mod.SourceID, &mod.Mod)
+		}
+		return sourceFiles, sourceFilesErr
+	}
+
+	for fileID := range hashes {
+		// destName is the compiled output's own filename: for a download-
+		// compiled entry it's the recorded manifest member; for an import-
+		// compiled entry (no manifest - see importer.go's compile branch)
+		// fileID already IS that name (stageCompileFingerprint's doc
+		// comment), so the fallback is exact, not a guess.
+		destName := fileID
+		if m, ok := manifests[fileID]; ok && m.Recorded && len(m.Members) == 1 {
+			destName = m.Members[0]
+		}
+
+		retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
+		sourcePath := retainedPath
+		if _, statErr := os.Stat(retainedPath); statErr != nil {
+			if mod.SourceID == domain.SourceLocal {
+				return result, fmt.Errorf("%s: retained compile source for %q is missing and this mod has no remote source to re-download from - re-import the .exmodz to restore it", mod.Name, fileID)
+			}
+			files, ferr := getSourceFiles()
+			if ferr != nil {
+				return result, fmt.Errorf("%s: retained compile source for %q is missing; fetching source files: %w", mod.Name, fileID, ferr)
+			}
+			var match *domain.DownloadableFile
+			for i := range files {
+				if files[i].ID == fileID {
+					match = &files[i]
+					break
+				}
+			}
+			if match == nil {
+				return result, fmt.Errorf("%s: retained compile source for %q is missing and no matching source file was found to re-download", mod.Name, fileID)
+			}
+			url, uerr := s.GetDownloadURL(ctx, mod.SourceID, &mod.Mod, match.ID)
+			if uerr != nil {
+				return result, fmt.Errorf("%s: re-downloading compile source: %w", mod.Name, uerr)
+			}
+			tempDir, terr := newStagingDir(s.stagingRoot(), "lmm-recompile-*")
+			if terr != nil {
+				return result, terr
+			}
+			defer os.RemoveAll(tempDir) //nolint:errcheck
+			dlPath := filepath.Join(tempDir, match.FileName)
+			evt := base
+			evt.Phase, evt.Detail = UpdateNote, fmt.Sprintf("retained compile source missing for %s - re-downloading", destName)
+			emit(evt)
+			if _, derr := s.downloader.DownloadWithHeaders(ctx, url, dlPath, nil, nil); derr != nil {
+				return result, fmt.Errorf("%s: re-downloading compile source: %w", mod.Name, derr)
+			}
+			sourcePath = dlPath
+		}
+
+		outPath := filepath.Join(stagePath, destName)
+		if cerr := compiler.Compile(ctx, basePakPath, sourcePath, outPath); cerr != nil {
+			return result, fmt.Errorf("recompiling %s: %w", destName, cerr)
+		}
+		if ferr := stageCompileFingerprint(stagePath, fileID, basePakPath, sourcePath); ferr != nil {
+			return result, ferr
+		}
+		result.Applied = append(result.Applied, destName)
+	}
+
+	if err := commitStagedCache(cachePath, stagePath); err != nil {
+		return result, err
+	}
+
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return result, fmt.Errorf("recompiled %s but could not redeploy: %w", mod.Name, err)
+	}
+	if err := installer.ReplaceForUpdate(ctx, game, &mod.Mod, &mod.Mod, profileName, mod.FileIDs, mod.FileIDs); err != nil {
+		return result, fmt.Errorf("recompiled %s but redeploying failed: %w", mod.Name, err)
+	}
+
+	return result, nil
 }
