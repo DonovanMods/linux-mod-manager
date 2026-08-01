@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -19,6 +21,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 )
 
@@ -91,16 +94,32 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (NO_COLOR env is also honored)")
 }
 
-// colorEnabled returns true if colored output should be used (respects --no-color and NO_COLOR env).
-// NO_COLOR: if set (any value), color is disabled per https://no-color.org
+// stdoutColorCapable reports whether the live os.Stdout is a color-capable
+// terminal (not a pipe, redirect, or non-interactive runner). A function
+// var, not a direct termenv.ColorProfile() call, so it re-resolves the
+// CURRENT os.Stdout on every call - tests that swap os.Stdout for an
+// os.Pipe (see captureStdout) get a truthful "not a terminal" answer for
+// free, and tests that need to simulate an interactive TTY can override
+// this var directly instead of faking a pty.
+var stdoutColorCapable = func() bool {
+	return termenv.NewOutput(os.Stdout).ColorProfile() != termenv.Ascii
+}
+
+// colorEnabled returns true if colored output should be used: respects
+// --no-color and NO_COLOR env (https://no-color.org) first, then falls back
+// to TTY detection so piped/redirected output stays plain without an
+// explicit opt-out.
 func colorEnabled() bool {
 	if noColor {
 		return false
 	}
-	if os.Getenv("NO_COLOR") != "" {
+	// Presence-only per https://no-color.org: NO_COLOR disables color when
+	// set to ANY value, including the empty string - os.Getenv can't tell
+	// "unset" from "set to empty", so this must use os.LookupEnv.
+	if _, set := os.LookupEnv("NO_COLOR"); set {
 		return false
 	}
-	return true
+	return stdoutColorCapable()
 }
 
 const (
@@ -108,6 +127,8 @@ const (
 	ansiGreen  = "\033[32m"
 	ansiRed    = "\033[31m"
 	ansiYellow = "\033[33m"
+	ansiBold   = "\033[1m"
+	ansiDim    = "\033[2m"
 )
 
 // colorGreen returns s with green ANSI when color is enabled, otherwise s.
@@ -132,6 +153,64 @@ func colorYellow(s string) string {
 		return s
 	}
 	return ansiYellow + s + ansiReset
+}
+
+// colorBold returns s with bold ANSI when color is enabled, otherwise s.
+func colorBold(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiBold + s + ansiReset
+}
+
+// colorDim returns s with faint/dim ANSI when color is enabled, otherwise s.
+// Used for negative-but-routine states (e.g. a disabled mod row) where a
+// loud red would overstate the severity - accent, not alarm.
+func colorDim(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiDim + s + ansiReset
+}
+
+// printTable writes a fully-flushed text/tabwriter table (buf) to os.Stdout,
+// bolding the header line and applying rowColor's per-row wrapper (nil for
+// no tint) when color is enabled. headerLines is the number of leading
+// lines to skip when indexing data rows (2: header + dashed separator).
+//
+// Color is applied ONLY to buf's already-rendered, already-padded text -
+// never to a cell before it reaches the tabwriter. text/tabwriter computes
+// column padding from raw byte length, so an ANSI-wrapped cell fed into it
+// would inflate that cell's measured width and misalign every column after
+// it (verified empirically). Wrapping an already-flushed line's start/end
+// is safe: those bytes are invisible to the terminal and never shift where
+// the real characters land. Do not colorize interior cell values before
+// Fprintf-ing them into a tabwriter.Writer - use whole-row tinting (via
+// rowColor) or, for a table's genuinely last column (nothing pads after it
+// per tabwriter's own behavior), inline coloring of that one column instead.
+func printTable(buf *bytes.Buffer, headerLines int, rowColor func(dataRowIndex int) func(string) string) error {
+	return printTableTo(os.Stdout, buf, headerLines, rowColor)
+}
+
+// printTableTo is printTable's testable seam: same contract, explicit writer.
+func printTableTo(out io.Writer, buf *bytes.Buffer, headerLines int, rowColor func(dataRowIndex int) func(string) string) error {
+	text := strings.TrimSuffix(buf.String(), "\n")
+	if text == "" {
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	if colorEnabled() {
+		lines[0] = colorBold(lines[0])
+		if rowColor != nil {
+			for i := headerLines; i < len(lines); i++ {
+				if fn := rowColor(i - headerLines); fn != nil {
+					lines[i] = fn(lines[i])
+				}
+			}
+		}
+	}
+	_, err := fmt.Fprintln(out, strings.Join(lines, "\n"))
+	return err
 }
 
 // Execute runs the root command. Exit codes: 0 = success, 1 = error, 2 = user cancelled.
@@ -161,7 +240,7 @@ func reportError(err error) {
 	if jsonOutput {
 		fmt.Printf(`{"error":%q}`+"\n", err.Error())
 	} else {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s %v\n", colorRed("Error:"), err)
 	}
 }
 

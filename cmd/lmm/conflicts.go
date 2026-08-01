@@ -148,7 +148,7 @@ func doConflicts(ctx context.Context, svc *core.Service, game *domain.Game) erro
 		fmt.Println()
 		winner := c.LoadOrderWinner.Name
 		if c.Stale {
-			winner += " (stale — redeploy to apply)"
+			winner += " " + colorYellow("(stale — redeploy to apply)")
 		}
 		fmt.Printf("    Winner: %s\n", winner)
 		fmt.Println()

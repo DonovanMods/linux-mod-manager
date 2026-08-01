@@ -230,7 +230,7 @@ func doModSetUpdate(service *core.Service, game *domain.Game, modID string) erro
 		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
-	fmt.Printf("✓ %s update policy: %s", mod.Name, policyStr)
+	fmt.Printf("%s %s update policy: %s", colorGreen("✓"), mod.Name, policyStr)
 	if modSetPin {
 		fmt.Printf(" (v%s)", mod.Version)
 	}
@@ -327,7 +327,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		return err
 	}
 
-	fmt.Printf("✓ %s locked at v%s\n", mod.Name, target)
+	fmt.Printf("%s %s locked at v%s\n", colorGreen("✓"), mod.Name, target)
 	// Locking is a metadata write, not a deploy (design decision): when the
 	// target differs from what is actually installed, the game directory
 	// won't match the lock until convergence, so say so.
@@ -370,7 +370,7 @@ func doModUnlock(service *core.Service, game *domain.Game, modID string) error {
 		return err
 	}
 
-	fmt.Printf("✓ %s unlocked (update policy: %s)\n", mod.Name, policyToString(mod.UpdatePolicy))
+	fmt.Printf("%s %s unlocked (update policy: %s)\n", colorGreen("✓"), mod.Name, policyToString(mod.UpdatePolicy))
 	return nil
 }
 
@@ -421,7 +421,7 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 		return nil
 	}
 
-	fmt.Printf("✓ Enabled: %s\n", mod.Name)
+	fmt.Printf("%s Enabled: %s\n", colorGreen("✓"), mod.Name)
 	return nil
 }
 
@@ -472,7 +472,7 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 		return nil
 	}
 
-	fmt.Printf("✓ Disabled: %s (files removed from game, kept in cache)\n", mod.Name)
+	fmt.Printf("%s Disabled: %s (files removed from game, kept in cache)\n", colorGreen("✓"), mod.Name)
 	return nil
 }
 
@@ -630,7 +630,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	// Human-readable output
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("%s\n", mod.Name)
+	fmt.Printf("%s\n", colorBold(mod.Name))
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
 	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, mod.Version, mod.Author)
 	if mod.Category != "" {
@@ -667,7 +667,11 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	if installedInfo != nil {
 		fmt.Println()
 		fmt.Printf("Installed: v%s (profile: %s)\n", installedInfo.Version, installedInfo.Profile)
-		fmt.Printf("  Update policy: %s\n", installedInfo.UpdatePolicy)
+		policyDisplay := installedInfo.UpdatePolicy
+		if policyDisplay == "pinned" {
+			policyDisplay = colorYellow(policyDisplay)
+		}
+		fmt.Printf("  Update policy: %s\n", policyDisplay)
 		if installedInfo.Locked {
 			lockLine := "locked at v" + installedInfo.LockedVersion
 			// Locking is a metadata write, not a deploy (same #97 design
@@ -677,7 +681,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			if installedInfo.LockedVersion != installedInfo.Version {
 				lockLine += " — run 'lmm profile apply' to converge"
 			}
-			fmt.Printf("  Lock: %s\n", lockLine)
+			fmt.Printf("  Lock: %s\n", colorYellow(lockLine))
 		} else {
 			fmt.Println("  Lock: none")
 		}
