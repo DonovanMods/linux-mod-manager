@@ -20,48 +20,75 @@ type ExmodzBundle struct {
 // bundled assets. The manifest lives at "Extracted Mods/<name>.EXMOD" in
 // every sample seen so far; this looks for any "*.EXMOD" file under an
 // "Extracted Mods/" prefix rather than hard-coding the mod name, since that
-// varies per mod.
+// varies per mod. Matching (both the manifest's prefix/suffix and the asset
+// extensions below) is done on the entry name with backslashes normalized to
+// forward slashes and case folded — some .EXMODZ producers are Windows tools
+// and zip entry casing is not guaranteed — but stored asset keys keep their
+// original case, only the slash direction is normalized.
 func ParseExmodz(zipData []byte) (*ExmodzBundle, error) {
 	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
 		return nil, fmt.Errorf("icarus: opening .EXMODZ: %w", err)
 	}
 
-	bundle := &ExmodzBundle{Assets: make(map[string][]byte)}
-	var manifestPath string
+	var manifests []*zip.File
 	for _, f := range zr.File {
-		if strings.HasPrefix(f.Name, "Extracted Mods/") && strings.HasSuffix(f.Name, ".EXMOD") {
-			manifestPath = f.Name
-			data, err := readZipFile(f)
-			if err != nil {
-				return nil, fmt.Errorf("icarus: reading %s: %w", f.Name, err)
-			}
-			bundle.Diff, err = ParseExmod(data)
-			if err != nil {
-				return nil, err
-			}
-			continue
+		lower := strings.ToLower(normalizeZipName(f.Name))
+		if strings.HasPrefix(lower, "extracted mods/") && strings.HasSuffix(lower, ".exmod") {
+			manifests = append(manifests, f)
 		}
 	}
-	if manifestPath == "" {
+	switch len(manifests) {
+	case 0:
 		return nil, fmt.Errorf("icarus: .EXMODZ has no Extracted Mods/*.EXMOD manifest")
+	case 1:
+		// exactly one candidate — proceed below
+	default:
+		names := make([]string, len(manifests))
+		for i, f := range manifests {
+			names[i] = f.Name
+		}
+		return nil, fmt.Errorf("icarus: .EXMODZ has %d ambiguous Extracted Mods/*.EXMOD manifests: %v",
+			len(manifests), names)
 	}
+	manifestFile := manifests[0]
+	manifestPath := manifestFile.Name // original (un-normalized) name, used only to exclude this entry below
+
+	manifestData, err := readZipFile(manifestFile)
+	if err != nil {
+		return nil, fmt.Errorf("icarus: reading %s: %w", manifestPath, err)
+	}
+	diff, err := ParseExmod(manifestData)
+	if err != nil {
+		return nil, err
+	}
+	bundle := &ExmodzBundle{Diff: diff, Assets: make(map[string][]byte)}
 
 	for _, f := range zr.File {
 		if f.Name == manifestPath || f.FileInfo().IsDir() {
 			continue
 		}
-		if !strings.HasSuffix(f.Name, ".uasset") && !strings.HasSuffix(f.Name, ".uexp") {
+		normalized := normalizeZipName(f.Name)
+		lower := strings.ToLower(normalized)
+		if !strings.HasSuffix(lower, ".uasset") && !strings.HasSuffix(lower, ".uexp") {
 			continue // skip readme/image/other non-asset files — never placed into the output pak
 		}
 		data, err := readZipFile(f)
 		if err != nil {
 			return nil, fmt.Errorf("icarus: reading asset %s: %w", f.Name, err)
 		}
-		bundle.Assets[f.Name] = data
+		bundle.Assets[normalized] = data
 	}
 
 	return bundle, nil
+}
+
+// normalizeZipName converts a zip entry's backslashes to forward slashes.
+// Zip is a forward-slash format, but some Windows-built .EXMODZ archives
+// store entries with backslashes anyway; this makes matching and asset keys
+// consistent regardless of which the producing tool used.
+func normalizeZipName(name string) string {
+	return strings.ReplaceAll(name, `\`, "/")
 }
 
 func readZipFile(f *zip.File) ([]byte, error) {

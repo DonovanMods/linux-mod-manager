@@ -27,7 +27,7 @@ func testDumpStore(t *testing.T, files map[string][]byte) *DumpStore {
 		_, _ = w.Write(tarGz(t, "IcarusData-test", entries))
 	}))
 	t.Cleanup(srv.Close)
-	store := newDumpStore(t.TempDir(), srv.Client())
+	store := newDumpStore(srv.Client())
 	store.treeURL = srv.URL
 	return store
 }

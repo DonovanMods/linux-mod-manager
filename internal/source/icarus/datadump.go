@@ -90,15 +90,17 @@ func (d *Dump) Table(rel string) ([]byte, bool) {
 	return b, ok
 }
 
-// DumpStore fetches and caches base-table dumps.
+// DumpStore fetches base-table dumps (hosted, or from a local directory
+// override — see DumpForBuild). It does not cache to disk: every call that
+// doesn't supply a localDumpDir re-fetches the tree over the network. Adding
+// caching is a real, tracked follow-up, not implemented here (YAGNI).
 type DumpStore struct {
-	cacheDir   string
 	httpClient *http.Client
 	treeURL    string // overridable in tests
 }
 
-func newDumpStore(cacheDir string, httpClient *http.Client) *DumpStore {
-	return &DumpStore{cacheDir: cacheDir, httpClient: httpClient, treeURL: defaultDumpTreeURL}
+func newDumpStore(httpClient *http.Client) *DumpStore {
+	return &DumpStore{httpClient: httpClient, treeURL: defaultDumpTreeURL}
 }
 
 // DumpForBuild loads the base data tables and returns them only if they match

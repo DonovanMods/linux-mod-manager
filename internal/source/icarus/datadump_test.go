@@ -148,7 +148,7 @@ func TestDumpStore_DumpForBuild_AcceptsMatchingDump(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := newDumpStore(t.TempDir(), srv.Client())
+	store := newDumpStore(srv.Client())
 	store.treeURL = srv.URL // test seam
 
 	dump, err := store.DumpForBuild(context.Background(), pak, "")
@@ -174,7 +174,7 @@ func TestDumpStore_DumpForBuild_RejectsWrongWeek(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := newDumpStore(t.TempDir(), srv.Client())
+	store := newDumpStore(srv.Client())
 	store.treeURL = srv.URL
 
 	_, err := store.DumpForBuild(context.Background(), pak, "")
@@ -215,7 +215,7 @@ func TestDumpStore_DumpForBuild_LocalDirOverridesFetch(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	store := newDumpStore(t.TempDir(), srv.Client())
+	store := newDumpStore(srv.Client())
 	store.treeURL = srv.URL
 
 	dump, err := store.DumpForBuild(context.Background(), pak, local)
@@ -239,7 +239,7 @@ func TestDumpStore_DumpForBuild_LocalDirAlreadyCRLF(t *testing.T) {
 	pak := writeTestBasePak(t, map[string][]byte{rel: []byte(shipped)})
 	local := writeLocalDump(t, map[string]string{rel: shipped})
 
-	store := newDumpStore(t.TempDir(), http.DefaultClient)
+	store := newDumpStore(http.DefaultClient)
 	store.treeURL = "http://127.0.0.1:0/never-used"
 
 	if _, err := store.DumpForBuild(context.Background(), pak, local); err != nil {
@@ -254,7 +254,7 @@ func TestDumpStore_DumpForBuild_LocalDirWrongWeek_Rejected(t *testing.T) {
 	pak := writeTestBasePak(t, map[string][]byte{rel: []byte("{\r\n    \"Rows\": [1]\r\n}")})
 	local := writeLocalDump(t, map[string]string{rel: "{\n    \"Rows\": []\n}"})
 
-	store := newDumpStore(t.TempDir(), http.DefaultClient)
+	store := newDumpStore(http.DefaultClient)
 	store.treeURL = "http://127.0.0.1:0/never-used"
 
 	_, err := store.DumpForBuild(context.Background(), pak, local)
@@ -271,7 +271,7 @@ func TestDumpStore_DumpForBuild_LocalDirWrongWeek_Rejected(t *testing.T) {
 
 func TestDumpStore_DumpForBuild_LocalDirEmpty_IsActionable(t *testing.T) {
 	pak := writeTestBasePak(t, map[string][]byte{"a/B.json": []byte("{}")})
-	store := newDumpStore(t.TempDir(), http.DefaultClient)
+	store := newDumpStore(http.DefaultClient)
 
 	_, err := store.DumpForBuild(context.Background(), pak, t.TempDir())
 	if err == nil {
@@ -285,7 +285,7 @@ func TestDumpStore_DumpForBuild_NetworkFailure_IsActionable(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := newDumpStore(t.TempDir(), srv.Client())
+	store := newDumpStore(srv.Client())
 	store.treeURL = srv.URL
 
 	pak := writeTestBasePak(t, map[string][]byte{"a/B.json": []byte("{}")})
@@ -324,7 +324,7 @@ func TestDumpStore_DumpForBuild_RejectsOversizedTarEntry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := newDumpStore(t.TempDir(), srv.Client())
+	store := newDumpStore(srv.Client())
 	store.treeURL = srv.URL
 
 	pak := writeTestBasePak(t, map[string][]byte{"a/B.json": []byte("{}")})

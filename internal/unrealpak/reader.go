@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -66,14 +67,18 @@ func Open(path string) (*Reader, error) {
 }
 
 // validateAllocSize checks a length field read from pak data before it is
-// used to size a make([]byte, ...) allocation: it must be non-negative and
+// used to size a make([]byte, ...) allocation: it must be non-negative,
 // cannot exceed the pak file's own size — no genuine region or payload can be
-// larger than the file that contains it. A field outside that range is
-// corruption or a layout this package doesn't understand, never something to
-// allocate for (a 64-bit size field with its top bit set becomes negative
-// once cast to int64, which is exactly the case this exists to catch).
+// larger than the file that contains it — and cannot exceed math.MaxInt,
+// since the caller immediately casts the result to int (a no-op check on a
+// 64-bit build, where int is 64 bits, but load-bearing on a 32-bit one,
+// where a size that passed the fileSize check could still overflow int and
+// wrap negative on the cast). A field outside that range is corruption or a
+// layout this package doesn't understand, never something to allocate for (a
+// 64-bit size field with its top bit set becomes negative once cast to
+// int64, which is exactly the case the negative check exists to catch).
 func validateAllocSize(size, fileSize int64) (int, error) {
-	if size < 0 || size > fileSize {
+	if size < 0 || size > fileSize || size > math.MaxInt {
 		return 0, fmt.Errorf("%w: size field %d is invalid for a %d-byte pak", ErrUnsupportedFormat, size, fileSize)
 	}
 	return int(size), nil

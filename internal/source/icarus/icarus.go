@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -31,15 +30,21 @@ func New(httpClient *http.Client, projectID string) *Icarus {
 	return &Icarus{firestore: newFirestoreClient(projectID, httpClient)}
 }
 
-// SetDataDir wires the base-table dump store's cache directory once the
-// service's data directory is known. This is a post-construction setter
-// rather than a New parameter because Task 8 froze New(httpClient, projectID)
-// at exactly those two params — Task 9's call site already depends on that
-// signature — so the data dir arrives the same way API keys do: an optional
-// setter the registration pipeline calls when present (cmd/lmm/root.go's
-// registerSource, mirroring its existing SetAPIKey wiring).
+// SetDataDir constructs the base-table dump store once the service's data
+// directory is known, gating Compile on it having been called at all (see
+// TestIcarus_Compile_WithoutDataDir_FailsLoudly) — DumpStore itself has no
+// current use for dataDir's value (it fetches on demand rather than caching
+// to disk, see DumpStore's doc comment), so the parameter exists only to
+// satisfy the shared `interface{ SetDataDir(string) }` duck-typed contract
+// cmd/lmm/root.go's registerSource calls uniformly across sources. This is a
+// post-construction setter rather than a New parameter because Task 8 froze
+// New(httpClient, projectID) at exactly those two params — Task 9's call
+// site already depends on that signature — so the data dir arrives the same
+// way API keys do: an optional setter the registration pipeline calls when
+// present (mirroring its existing SetAPIKey wiring).
 func (s *Icarus) SetDataDir(dataDir string) {
-	s.dumps = newDumpStore(filepath.Join(dataDir, "icarus", "datadump"), s.firestore.httpClient)
+	_ = dataDir // unused: see doc comment above
+	s.dumps = newDumpStore(s.firestore.httpClient)
 }
 
 var (

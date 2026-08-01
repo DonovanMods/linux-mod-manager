@@ -5,6 +5,7 @@ import (
 	"crypto/sha1" //nolint:gosec // pak format uses SHA1, not our choice
 	"encoding/binary"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,6 +243,15 @@ func TestValidateAllocSize(t *testing.T) {
 		{"valid, exactly file size", 1000, 1000, false, 1000},
 		{"negative (e.g. a 64-bit field with its top bit set, cast to int64)", -1, 1000, true, 0},
 		{"exceeds file size", 1001, 1000, true, 0},
+		// math.MaxInt itself must still be accepted (inclusive boundary, not
+		// an off-by-one) -- guards the int(size) cast that follows against
+		// overflow on a 32-bit build, where int is narrower than int64. On a
+		// 64-bit build (this test's normal target) math.MaxInt == MaxInt64,
+		// so size can never actually exceed it: size is itself int64, and
+		// there is no larger int64 value to construct a "just past the
+		// boundary" case with. The check is a genuine no-op here and only
+		// load-bearing on 32-bit -- see validateAllocSize's doc comment.
+		{"exactly math.MaxInt is still valid (boundary, not exceeded)", math.MaxInt, math.MaxInt, false, math.MaxInt},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
