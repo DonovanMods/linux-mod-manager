@@ -76,7 +76,7 @@ func TestCompile_AppliesDiffAndBundlesAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening compiled output: %v", err)
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck
 
 	patched, err := r.ReadFile("AI/D_AIGrowth.json")
 	if err != nil {
@@ -118,7 +118,7 @@ func TestCompile_SkipsEndOfModSentinelRow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening compiled output: %v", err)
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck
 	patched, err := r.ReadFile("AI/D_AIGrowth.json")
 	if err != nil {
 		t.Fatalf("ReadFile patched data table: %v", err)

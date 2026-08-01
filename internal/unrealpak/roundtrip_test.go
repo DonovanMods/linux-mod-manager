@@ -33,7 +33,7 @@ func TestRoundTrip_WriteThenRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck
 
 	got := r.Files()
 	if len(got) != len(files) {

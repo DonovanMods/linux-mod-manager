@@ -41,7 +41,7 @@ func Compile(ctx context.Context, dumps *DumpStore, basePakPath, localDumpDir, e
 	if err != nil {
 		return fmt.Errorf("icarus: opening base pak %s: %w", basePakPath, err)
 	}
-	defer base.Close()
+	defer base.Close() //nolint:errcheck
 
 	// Loaded and validated before anything is written, so a week mismatch or
 	// an offline machine fails before a half-built pak exists on disk.

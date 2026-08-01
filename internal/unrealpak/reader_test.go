@@ -109,7 +109,7 @@ func TestReader_Open_ListsFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck
 
 	files := r.Files()
 	if len(files) != 1 {
@@ -131,7 +131,7 @@ func TestReader_Open_RootLevelFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck
 
 	files := r.Files()
 	if len(files) != 1 || files[0].Path != "x.json" {
@@ -196,7 +196,7 @@ func TestReader_ReadFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck
 
 	got, err := r.ReadFile("Icarus/Content/Data/Test.json")
 	if err != nil {
@@ -219,7 +219,7 @@ func TestReader_ReadFile_RejectsCompressedEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer r.Close()
+	defer r.Close() //nolint:errcheck
 
 	// Enumeration must still work — the reader lists compressed entries.
 	if files := r.Files(); len(files) != 1 || files[0].Path != name {
