@@ -37,7 +37,7 @@ func writeTestExmodzFile(t *testing.T, manifestJSON string, assets map[string][]
 // the original brief's fixtures assumed. See task-12-report.md "plan delta".
 func TestCompile_AppliesDiffAndBundlesAssets(t *testing.T) {
 	baseTables := map[string][]byte{
-		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200}}`),
+		"AI/D_AIGrowth.json": []byte(`{"Rows":[{"Name":"Mount_Bear","BaseMovementSpeed":200}]}`),
 	}
 	basePak := writeTestBasePak(t, baseTables)
 	manifest := `{"name":"Bear Mount","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseMovementSpeed":235}]}]}`
@@ -78,7 +78,7 @@ func TestCompile_AppliesDiffAndBundlesAssets(t *testing.T) {
 // data table (it has none).
 func TestCompile_SkipsEndOfModSentinelRow(t *testing.T) {
 	baseTables := map[string][]byte{
-		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200}}`),
+		"AI/D_AIGrowth.json": []byte(`{"Rows":[{"Name":"Mount_Bear","BaseMovementSpeed":200}]}`),
 	}
 	basePak := writeTestBasePak(t, baseTables)
 	manifest := `{"name":"X","Rows":[` +
@@ -130,7 +130,7 @@ func TestCompile_RowWithoutFileItems_Errors(t *testing.T) {
 // the pak's own bytes, not any other source.
 func TestCompile_PatchesTheBasePaksOwnTable(t *testing.T) {
 	basePak := writeTestBasePak(t, map[string][]byte{
-		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200,"OnlyInPak":true}}`),
+		"AI/D_AIGrowth.json": []byte(`{"Rows":[{"Name":"Mount_Bear","BaseMovementSpeed":200,"OnlyInPak":true}]}`),
 	})
 	manifest := `{"name":"X","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseMovementSpeed":235}]}]}`
 	exmodzPath := writeTestExmodzFile(t, manifest, nil)
