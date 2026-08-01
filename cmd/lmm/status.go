@@ -239,7 +239,7 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 		// active profile's resolution (profile > game > global, #155).
 		method, err := service.GetEffectiveLinkMethod(game, defaultProfile.Name)
 		if err != nil {
-			return fmt.Errorf("resolving effective link method: %w", err)
+			return err
 		}
 		out.EffectiveLinkMethod = method.String()
 		if defaultProfile.LinkMethodExplicit {
