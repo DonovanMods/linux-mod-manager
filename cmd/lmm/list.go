@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -146,7 +147,8 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	}
 	fmt.Println()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	header := "ID\tNAME\tVERSION\tAUTHOR"
 	sep := "--\t----\t-------\t------"
 	if verbose {
@@ -193,6 +195,31 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
+	}
+
+	// Row tinting only makes sense next to the columns it explains: ENABLED
+	// and DEPLOYED are verbose-only, so an anomaly (disabled, or enabled but
+	// not yet deployed) would be an unexplained color in the non-verbose
+	// table. Enabled+deployed - the common, unremarkable case - stays
+	// untinted (accent, not christmas tree).
+	var rowColor func(int) func(string) string
+	if verbose {
+		rowColor = func(i int) func(string) string {
+			if i < 0 || i >= len(mods) {
+				return nil
+			}
+			switch {
+			case !mods[i].Enabled:
+				return colorDim
+			case !mods[i].Deployed:
+				return colorYellow
+			default:
+				return nil
+			}
+		}
+	}
+	if err := printTable(&buf, 2, rowColor); err != nil {
+		return fmt.Errorf("writing table: %w", err)
 	}
 
 	return nil

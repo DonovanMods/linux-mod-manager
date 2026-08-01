@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -280,7 +281,8 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Print results
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\tSOURCE\t"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
@@ -291,7 +293,12 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	for _, mod := range mods {
 		installedMark := ""
 		if installedKeys[domain.ModKey(mod.SourceID, mod.ID)] {
-			installedMark = "[installed]"
+			// Safe to color inline here specifically because it's the LAST
+			// column: text/tabwriter never pads after the final cell, so
+			// this cell's byte length (inflated by ANSI codes) can't
+			// corrupt any other column's alignment. Do not do this for an
+			// interior column - see printTable's doc comment.
+			installedMark = colorGreen("[installed]")
 		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			mod.ID,
@@ -306,6 +313,9 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
+	}
+	if err := printTable(&buf, 2, nil); err != nil {
+		return fmt.Errorf("writing table: %w", err)
 	}
 
 	if verbose {

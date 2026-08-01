@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.27.1] - 2026-07-30
+### Added
+
+- CLI output is now colorized by default when stdout is a terminal, extending the existing `colorGreen`/`colorRed`/`colorYellow` accent mechanism (previously only used by `deploy`/`verify`) across `list`, `status`, `search`, `update`, `conflicts`, and `mod show`: table headers are bolded; a disabled mod's row in `lmm list -v` is dimmed and an enabled-but-undeployed row is accented yellow; `search`'s `[installed]` marker and `update`'s POLICY column color per row; `conflicts`' stale winner suffix, `mod show`'s pinned policy and lock line, and the `Enabled`/`Disabled` counts in `lmm status -g <game>` are accented; and the existing `✓`/`✗` success/failure markers extend to `update` and `mod`'s confirmation lines. Detection is TTY-aware (piped/redirected output stays plain) and layers on top of the existing `--no-color` flag and `NO_COLOR` env var, which continue to work unchanged; `--json` output is never colored. Table color is applied only to already-tabwriter-padded text (bolded headers, whole-row tints, or a table's genuinely last column) — never to interior cell values before they reach `text/tabwriter`, which pads columns by raw byte length and would misalign them (#112)
 
 ### Fixed
 

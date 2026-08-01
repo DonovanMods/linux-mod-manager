@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -398,7 +399,8 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Display available updates with policy
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintf(w, "MOD\tCURRENT\tAVAILABLE\tPOLICY\n"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
@@ -428,6 +430,17 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 				autoUpdates = append(autoUpdates, update)
 			}
 		}
+		// Safe to color inline here specifically because POLICY is the
+		// LAST column - text/tabwriter never pads after the final cell, so
+		// this cell's inflated byte length can't misalign any column after
+		// it (see printTable's doc comment; do not do this for an interior
+		// column).
+		switch {
+		case isLocked:
+			policyStr = colorYellow(policyStr)
+		case strings.HasSuffix(policyStr, " ✓"):
+			policyStr = colorGreen(policyStr)
+		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			truncate(update.InstalledMod.Name, 40),
 			update.InstalledMod.Version,
@@ -440,8 +453,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
 	}
+	if err := printTable(&buf, 2, nil); err != nil {
+		return fmt.Errorf("writing table: %w", err)
+	}
 
-	fmt.Printf("\n%d update(s) available.\n", len(updates))
+	fmt.Printf("\n%s\n", colorYellow(fmt.Sprintf("%d update(s) available.", len(updates))))
 	if skips := core.CountUpdateSkips(installed); skips.Total() > 0 {
 		fmt.Println()
 		printSkipped(skips)
@@ -486,9 +502,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		fmt.Printf("\nApplying %d auto-update(s)...\n", len(autoUpdates))
 		for _, update := range autoUpdates {
 			if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
-				fmt.Printf("  ✗ %s: %v\n", update.InstalledMod.Name, err)
+				fmt.Printf("  %s %s: %v\n", colorRed("✗"), update.InstalledMod.Name, err)
 			} else {
-				fmt.Printf("  ✓ %s %s → %s\n", update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
+				fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
 			}
 		}
 	}
@@ -512,9 +528,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Printf("\nApplying %d remaining update(s)...\n", len(notifyUpdates))
 			for _, update := range notifyUpdates {
 				if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
-					fmt.Printf("  ✗ %s: %v\n", update.InstalledMod.Name, err)
+					fmt.Printf("  %s %s: %v\n", colorRed("✗"), update.InstalledMod.Name, err)
 				} else {
-					fmt.Printf("  ✓ %s %s → %s\n", update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
+					fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
 				}
 			}
 		}
@@ -655,7 +671,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		})
 	}
 
-	fmt.Printf("\n✓ Updated: %s %s → %s\n", mod.Name, oldVersion, newVersion)
+	fmt.Printf("\n%s Updated: %s %s → %s\n", colorGreen("✓"), mod.Name, oldVersion, newVersion)
 	fmt.Println("  Previous version preserved for rollback")
 	return nil
 }
@@ -803,7 +819,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		})
 	}
 
-	fmt.Printf("\n✓ Rolled back: %s %s → %s\n", result.ModName, result.FromVersion, result.ToVersion)
+	fmt.Printf("\n%s Rolled back: %s %s → %s\n", colorGreen("✓"), result.ModName, result.FromVersion, result.ToVersion)
 	return nil
 }
 

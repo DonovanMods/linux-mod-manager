@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
@@ -72,7 +74,8 @@ func doStatus(service *core.Service) error {
 	fmt.Println("Configured Games:")
 	fmt.Println()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 
 	if verbose {
 		if _, err := fmt.Fprintln(w, "GAME\tID\tPATH\tLINK\tPROFILES\tMODS†"); err != nil {
@@ -139,6 +142,9 @@ func doStatus(service *core.Service) error {
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
+	}
+	if err := printTable(&buf, 2, nil); err != nil {
+		return fmt.Errorf("writing table: %w", err)
 	}
 
 	fmt.Println()
@@ -375,7 +381,9 @@ func showGameStatus(service *core.Service, gameID string) error {
 			}
 		}
 		if len(mods) > 0 {
-			fmt.Printf("  Enabled: %d, Disabled: %d\n", enabled, disabled)
+			// Disabled is a routine, expected state (not an error), so it's
+			// dimmed rather than red - accent, not alarm.
+			fmt.Printf("  Enabled: %s, Disabled: %s\n", colorGreen(strconv.Itoa(enabled)), colorDim(strconv.Itoa(disabled)))
 		}
 
 		lastDeploy, err := service.GetLastDeployTime(gameID, defaultProfile.Name)
