@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `lmm mod disable` undeployed a mod's files and cleared `enabled`, but never cleared `deployed` — `lmm list -v` kept showing DEPLOYED yes after disable. The disable flow now clears `deployed` unconditionally after the undeploy attempt, even when the undeploy itself only partially succeeds (already a non-fatal, Note-reported condition), so the flag always reflects disable-intent rather than lagging behind a best-effort file cleanup. The symmetric enable path had the same gap — enabling a disabled mod re-deployed its files without ever setting `deployed` back to true — and is fixed the same way. Both `SetModDeployed` calls follow the same non-fatal Note convention already used by `DeployProfile`/`PurgeProfile` for this same setter: a failure to record the flag doesn't block the primary enable/disable outcome (#183)
+
 ## [1.27.1] - 2026-07-30
 
 ### Fixed
