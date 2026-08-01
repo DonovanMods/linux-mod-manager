@@ -665,6 +665,8 @@ api:
 | `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)                                                                        | `search`                                         |
 | `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)                                                                         | `search`                                         |
 | `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs                                         | `search`                                         |
+| `{category}`  | The search query's category filter (source-specific ID or name), empty when unset                                                        | `search`                                         |
+| `{tags}`      | The search query's tag filters, comma-joined, empty when unset                                                                           | `search`                                         |
 | `{mod_id}`    | The mod ID                                                                                                                               | `get_mod`, `mod_files`, `download_url`           |
 | `{file_id}`   | The file ID                                                                                                                              | `download_url`                                   |
 

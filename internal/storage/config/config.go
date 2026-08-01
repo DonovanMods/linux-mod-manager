@@ -44,7 +44,12 @@ func Load(configDir string) (*Config, error) {
 
 	// Convert string to LinkMethod
 	if cfg.LinkMethodStr != "" {
-		cfg.DefaultLinkMethod = domain.ParseLinkMethod(cfg.LinkMethodStr)
+		method, ok := domain.ParseLinkMethod(cfg.LinkMethodStr)
+		if !ok {
+			return nil, fmt.Errorf("%w: config.yaml: default_link_method %q (valid: %s)",
+				domain.ErrInvalidLinkMethod, cfg.LinkMethodStr, domain.ValidLinkMethods)
+		}
+		cfg.DefaultLinkMethod = method
 	}
 
 	// Expand ~ in cache path

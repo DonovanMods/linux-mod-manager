@@ -39,6 +39,28 @@ keybindings: standard
 	assert.Equal(t, "standard", cfg.Keybindings)
 }
 
+// TestLoadConfig_RejectsUnknownDefaultLinkMethod pins #172's fail-loud
+// contract: a non-empty, unrecognized default_link_method is a load-time
+// error naming the field, offending value, and valid options, instead of
+// silently defaulting to symlink.
+func TestLoadConfig_RejectsUnknownDefaultLinkMethod(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+
+	content := "default_link_method: bogus\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(content), 0644))
+
+	_, err := config.Load(dir)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidLinkMethod)
+	assert.Contains(t, err.Error(), "default_link_method")
+	assert.Contains(t, err.Error(), "bogus")
+	assert.Contains(t, err.Error(), "symlink")
+	assert.Contains(t, err.Error(), "hardlink")
+	assert.Contains(t, err.Error(), "copy")
+}
+
 func TestLoadGames_Empty(t *testing.T) {
 	dir := t.TempDir()
 	games, err := config.LoadGames(dir)
@@ -72,6 +94,64 @@ games:
 	assert.Equal(t, "/games/skyrim", game.InstallPath)
 	assert.Equal(t, "/games/skyrim/Data", game.ModPath)
 	assert.Equal(t, "skyrimspecialedition", game.SourceIDs["nexusmods"])
+}
+
+// TestLoadGames_RejectsUnknownLinkMethod and TestLoadGames_RejectsUnknownDeployMode
+// pin #172's fail-loud contract for games.yaml: a non-empty, unrecognized
+// value is a load-time error naming the field, offending value, the game ID,
+// and valid options, instead of silently defaulting.
+func TestLoadGames_RejectsUnknownLinkMethod(t *testing.T) {
+	dir := t.TempDir()
+	gamesPath := filepath.Join(dir, "games.yaml")
+
+	content := `
+games:
+  skyrim-se:
+    name: Skyrim Special Edition
+    install_path: /games/skyrim
+    mod_path: /games/skyrim/Data
+    sources:
+      nexusmods: skyrimspecialedition
+    link_method: bogus
+`
+	require.NoError(t, os.WriteFile(gamesPath, []byte(content), 0644))
+
+	_, err := config.LoadGames(dir)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidLinkMethod)
+	assert.Contains(t, err.Error(), "skyrim-se")
+	assert.Contains(t, err.Error(), "link_method")
+	assert.Contains(t, err.Error(), "bogus")
+}
+
+func TestLoadGames_RejectsUnknownDeployMode(t *testing.T) {
+	dir := t.TempDir()
+	gamesPath := filepath.Join(dir, "games.yaml")
+
+	content := `
+games:
+  skyrim-se:
+    name: Skyrim Special Edition
+    install_path: /games/skyrim
+    mod_path: /games/skyrim/Data
+    sources:
+      nexusmods: skyrimspecialedition
+    deploy_mode: compil
+`
+	require.NoError(t, os.WriteFile(gamesPath, []byte(content), 0644))
+
+	_, err := config.LoadGames(dir)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidDeployMode)
+	assert.Contains(t, err.Error(), "skyrim-se")
+	assert.Contains(t, err.Error(), "deploy_mode")
+	assert.Contains(t, err.Error(), "compil")
+	// Review #172 round 1: the valid-options list had gone stale (pre-rebase
+	// "extract, copy" only) and silently dropped "compile" after the Icarus
+	// epic merge added it as a real DeployMode value.
+	assert.Contains(t, err.Error(), "compile", "valid-options list must include compile")
 }
 
 func TestSaveGame(t *testing.T) {
@@ -127,6 +207,28 @@ link_method: symlink
 	assert.Equal(t, "skyrim-se", profile.GameID)
 	require.Len(t, profile.Mods, 2)
 	assert.Equal(t, "12345", profile.Mods[0].ModID)
+}
+
+// TestLoadProfile_RejectsUnknownLinkMethod pins #172's fail-loud contract
+// for profile-level link_method: a non-empty, unrecognized value is a
+// load-time error naming the field, offending value, the profile/game, and
+// valid options.
+func TestLoadProfile_RejectsUnknownLinkMethod(t *testing.T) {
+	dir := t.TempDir()
+	profileDir := filepath.Join(dir, "games", "skyrim-se", "profiles")
+	require.NoError(t, os.MkdirAll(profileDir, 0755))
+
+	content := "name: default\ngame_id: skyrim-se\nlink_method: bogus\n"
+	require.NoError(t, os.WriteFile(filepath.Join(profileDir, "default.yaml"), []byte(content), 0644))
+
+	_, err := config.LoadProfile(dir, "skyrim-se", "default")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidLinkMethod)
+	assert.Contains(t, err.Error(), "default")
+	assert.Contains(t, err.Error(), "skyrim-se")
+	assert.Contains(t, err.Error(), "link_method")
+	assert.Contains(t, err.Error(), "bogus")
 }
 
 func TestSaveProfile(t *testing.T) {

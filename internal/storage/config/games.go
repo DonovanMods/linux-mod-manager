@@ -87,16 +87,26 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 	}
 	games := make(map[string]*domain.Game)
 	for id, cfg := range gamesFile.Games {
+		linkMethod, ok := domain.ParseLinkMethod(cfg.LinkMethod)
+		if !ok {
+			return nil, fmt.Errorf("%w: games.yaml: game %q: link_method %q (valid: %s)",
+				domain.ErrInvalidLinkMethod, id, cfg.LinkMethod, domain.ValidLinkMethods)
+		}
+		deployMode, ok := domain.ParseDeployMode(cfg.DeployMode)
+		if !ok {
+			return nil, fmt.Errorf("%w: games.yaml: game %q: deploy_mode %q (valid: %s)",
+				domain.ErrInvalidDeployMode, id, cfg.DeployMode, domain.ValidDeployModes)
+		}
 		games[id] = &domain.Game{
 			ID:                 id,
 			Name:               cfg.Name,
 			InstallPath:        ExpandPath(cfg.InstallPath),
 			ModPath:            ExpandPath(cfg.ModPath),
 			SourceIDs:          cfg.Sources,
-			LinkMethod:         domain.ParseLinkMethod(cfg.LinkMethod),
+			LinkMethod:         linkMethod,
 			LinkMethodExplicit: cfg.LinkMethod != "",
 			CachePath:          ExpandPath(cfg.CachePath),
-			DeployMode:         domain.ParseDeployMode(cfg.DeployMode),
+			DeployMode:         deployMode,
 			Hooks: domain.GameHooks{
 				Install: domain.HookConfig{
 					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),

@@ -199,7 +199,9 @@ var (
 
 // Search implements source.ModSource by executing the search endpoint
 // template and mapping the results (design §4). An undefined search endpoint
-// is an unsupported capability.
+// is an unsupported capability. {category} and {tags} (comma-joined) feed
+// from query.Category/.Tags (#120); a template that omits them behaves
+// exactly as before — the values are computed but never substituted in.
 func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
 	ep := a.endpoints.Search
 	if ep == nil {
@@ -221,6 +223,8 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 		"page":      strconv.Itoa(page + a.pageStart),
 		"page_size": strconv.Itoa(pageSize),
 		"offset":    strconv.Itoa(page * pageSize),
+		"category":  query.Category,
+		"tags":      strings.Join(query.Tags, ","),
 	}
 
 	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))

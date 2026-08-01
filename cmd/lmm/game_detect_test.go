@@ -66,10 +66,30 @@ func TestGameFromDetected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := gameFromDetected(tt.in)
+			got, err := gameFromDetected(tt.in)
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// TestGameFromDetected_RejectsUnknownDeployMode pins #172's fail-loud
+// contract for the known-games schema's deploy_mode (steam-games.yaml,
+// built-in or user override): a non-empty, unrecognized value is a load-time
+// error naming the field, the offending value, and the game, instead of
+// silently defaulting to extract.
+func TestGameFromDetected_RejectsUnknownDeployMode(t *testing.T) {
+	_, err := gameFromDetected(steam.DetectedGame{
+		Slug:       "icarus",
+		Name:       "Icarus",
+		DeployMode: "compil",
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidDeployMode)
+	assert.Contains(t, err.Error(), "icarus")
+	assert.Contains(t, err.Error(), "deploy_mode")
+	assert.Contains(t, err.Error(), "compil")
 }
 
 // TestGameFromDetected_Icarus_ProducesReadmeEquivalentValues proves the
@@ -88,7 +108,9 @@ func TestGameFromDetected_Icarus_ProducesReadmeEquivalentValues(t *testing.T) {
 		DeployMode:  "compile",
 		Sources:     map[string]string{"icarus": "icarus"},
 	}
-	require.NoError(t, config.SaveGame(dir, gameFromDetected(detected)))
+	game, err := gameFromDetected(detected)
+	require.NoError(t, err)
+	require.NoError(t, config.SaveGame(dir, game))
 
 	data, err := os.ReadFile(filepath.Join(dir, "games.yaml"))
 	require.NoError(t, err)
