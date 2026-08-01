@@ -75,14 +75,20 @@ func Open(path string) (*Reader, error) {
 }
 
 // methodName resolves a 1-based CompressionMethodIndex against this pak's own
-// footer table. An index with no corresponding name yields "", which no
-// supported method matches, so it falls through to the unsupported-format
-// error rather than being silently treated as stored.
+// footer table. An out-of-range index yields "", which no supported method
+// matches, so it falls through to the unsupported-format error rather than
+// being silently treated as stored. An in-range but blank slot - a valid
+// table position the pak simply never named - yields a descriptive
+// placeholder ("unnamed method N") instead of "", so that same refusal names
+// the actual slot rather than an unhelpfully empty string.
 func (r *Reader) methodName(method int32) string {
 	if method < 1 || int(method) > len(r.methods) {
 		return ""
 	}
-	return r.methods[method-1]
+	if name := r.methods[method-1]; name != "" {
+		return name
+	}
+	return fmt.Sprintf("unnamed method %d", method)
 }
 
 // validateAllocSize checks a length field read from pak data before it is

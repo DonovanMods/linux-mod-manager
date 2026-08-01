@@ -234,6 +234,10 @@ func TestReadFile_ZlibMultiBlock(t *testing.T) {
 }
 
 // An index with no name in the table is unsupported, never silently stored.
+// The refusal must also be actionable (#190 item 2): a blank table slot
+// used to render as a bare `compression method "" (index 3)`, which names
+// nothing a reader could act on - it must instead name the slot itself
+// (e.g. "unnamed method 3").
 func TestReadFile_UnnamedMethodIndex_IsUnsupported(t *testing.T) {
 	p := writeMethodPak(t, []string{"Zlib"}, []zlibFixture{
 		{path: "x/Y.json", blocks: [][]byte{[]byte("{}")}, method: 3},
@@ -245,8 +249,12 @@ func TestReadFile_UnnamedMethodIndex_IsUnsupported(t *testing.T) {
 	}
 	defer r.Close() //nolint:errcheck
 
-	if _, err := r.ReadFile("x/Y.json"); !errors.Is(err, ErrUnsupportedFormat) {
+	_, err = r.ReadFile("x/Y.json")
+	if !errors.Is(err, ErrUnsupportedFormat) {
 		t.Fatalf("err = %v, want ErrUnsupportedFormat", err)
+	}
+	if !strings.Contains(err.Error(), "unnamed method 3") {
+		t.Errorf("err = %q, want it to name the blank slot (e.g. %q)", err, "unnamed method 3")
 	}
 }
 
