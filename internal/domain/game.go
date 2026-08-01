@@ -61,6 +61,7 @@ type DeployMode int
 const (
 	DeployExtract DeployMode = iota // Default: extract archives to mod path
 	DeployCopy                      // Copy files as-is (for games like Hytale where .zip IS the mod)
+	DeployCompile                   // Compile downloaded file into a new artifact before caching (Icarus .exmodz -> .pak)
 )
 
 func (m DeployMode) String() string {
@@ -69,6 +70,8 @@ func (m DeployMode) String() string {
 		return "extract"
 	case DeployCopy:
 		return "copy"
+	case DeployCompile:
+		return "compile"
 	default:
 		return "extract"
 	}
@@ -83,6 +86,8 @@ func ParseDeployMode(s string) (mode DeployMode, ok bool) {
 		return DeployExtract, true
 	case "copy":
 		return DeployCopy, true
+	case "compile":
+		return DeployCompile, true
 	default:
 		return DeployExtract, false
 	}

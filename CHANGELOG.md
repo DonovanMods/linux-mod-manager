@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Icarus built-in mod source** (`internal/source/icarus`): a public, unauthenticated Firestore-backed catalog (Project Daedalus) — `lmm search`/`install`/`update` work against it like NexusMods/CurseForge. A `.exmodz` mod file now compiles into a deployable `_P.pak` at download time via a new, game-agnostic `internal/unrealpak` PAK reader/writer and the new `deploy_mode: compile` game setting; a plain `.pak` file from the same catalog is unaffected and deploys through the existing extract/copy pipeline unchanged. Base data tables are read directly from the installed game's own `data.pak`, so a compile always matches the installed game version and works entirely offline; `internal/unrealpak` reads both the stored and the Zlib-compressed entries that pak contains, using only the standard library (#136, #175)
+- `lmm game detect` now recognizes Icarus (Steam App ID `1149460`) and generates a complete `games.yaml` entry for it (`deploy_mode: compile`, `sources: {icarus: icarus}`) — no more hand-editing `games.yaml` to get started. The known-games schema (`steam-games.yaml`, built-in or your own override) gained two optional fields, `deploy_mode` and `sources`, generalizing detection beyond NexusMods-only games; every existing entry is unaffected (#177)
+
 ### Changed
 
 - An unrecognized, non-empty `link_method` (`games.yaml`, profile files, imported profiles) or `deploy_mode` (`games.yaml`) is now a load-time error naming the field, the offending value, the owning game/profile, and the valid options — instead of silently falling back to the default (`symlink`/`extract`). **Breaking for configs that were already silently misbehaving:** a typo like `deploy_mode: compil` previously ran as `extract` with no warning; it now refuses to load until fixed. An empty/absent value is unaffected and keeps today's default exactly (#172)
+
+### Fixed
+
+- `lmm mod disable` undeployed a mod's files and cleared `enabled`, but never cleared `deployed` — `lmm list -v` kept showing DEPLOYED yes after disable. The disable flow now clears `deployed` unconditionally after the undeploy attempt, even when the undeploy itself only partially succeeds (already a non-fatal, Note-reported condition), so the flag always reflects disable-intent rather than lagging behind a best-effort file cleanup. The symmetric enable path had the same gap — enabling a disabled mod re-deployed its files without ever setting `deployed` back to true — and is fixed the same way. Both `SetModDeployed` calls follow the same non-fatal Note convention already used by `DeployProfile`/`PurgeProfile` for this same setter: a failure to record the flag doesn't block the primary enable/disable outcome (#183)
 
 ## [1.27.1] - 2026-07-30
 

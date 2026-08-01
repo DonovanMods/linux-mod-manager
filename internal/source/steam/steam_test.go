@@ -260,3 +260,35 @@ func TestDetectGames_DedupsSameGameAcrossLibraries(t *testing.T) {
 	assert.Empty(t, warnings)
 	require.Len(t, games, 1, "the same slug found in a second library must be deduped")
 }
+
+// TestDetectGames_IcarusEntry_IncludesDeployModeAndSources pins #177: a
+// detected Icarus install carries the new DeployMode/Sources fields through
+// from the known-games entry, and its ModPath is joined exactly like every
+// other detected game's (installPath + the known entry's relative mod_path,
+// here "Icarus/Content/Paks/mods" — matching the README's hand-written
+// example, which this detection path now generates instead of requiring by
+// hand).
+func TestDetectGames_IcarusEntry_IncludesDeployModeAndSources(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("STEAM_ROOT", "")
+
+	steamapps := filepath.Join(home, ".steam", "steam", "steamapps")
+	installDir := filepath.Join(steamapps, "common", "Icarus")
+	require.NoError(t, os.MkdirAll(installDir, 0755))
+	writeAppManifest(t, steamapps, "1149460", "Icarus")
+
+	games, warnings, err := DetectGames(t.TempDir())
+	require.NoError(t, err)
+	assert.Empty(t, warnings)
+	require.Len(t, games, 1)
+	g := games[0]
+	assert.Equal(t, "1149460", g.SteamAppID)
+	assert.Equal(t, "icarus", g.Slug)
+	assert.Equal(t, "Icarus", g.Name)
+	assert.Equal(t, installDir, g.InstallPath)
+	assert.Equal(t, filepath.Join(installDir, "Icarus", "Content", "Paks", "mods"), g.ModPath)
+	assert.Equal(t, "", g.NexusID)
+	assert.Equal(t, "compile", g.DeployMode)
+	assert.Equal(t, map[string]string{"icarus": "icarus"}, g.Sources)
+}
