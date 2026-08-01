@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -105,6 +106,19 @@ func (s *Icarus) Search(ctx context.Context, query source.SearchQuery) (source.S
 			mods = append(mods, m)
 		}
 	}
+
+	// Firestore's listCollection order is not guaranteed stable across runs,
+	// so the same page could otherwise return different mods on different
+	// requests. Sort deterministically before slicing, matching the custom
+	// api/manifest/directory sources' name-based ordering convention
+	// (internal/source/custom/search.go), with an ID tiebreak for the rare
+	// case of two mods sharing a name.
+	sort.SliceStable(mods, func(i, j int) bool {
+		if mods[i].Name != mods[j].Name {
+			return mods[i].Name < mods[j].Name
+		}
+		return mods[i].ID < mods[j].ID
+	})
 
 	pageSize := query.PageSize
 	if pageSize <= 0 {
