@@ -2,6 +2,8 @@
 
 lmm uses YAML configuration files under `~/.config/lmm/` (or the directory set with `--config`).
 
+`link_method` and `deploy_mode` fields (in `config.yaml`, `games.yaml`, and profile files) are validated at load time: leaving one unset keeps its documented default, but a value that doesn't exactly match one of the listed options — a typo like `deploy_mode: compil` — is a load-time error naming the field, the offending value, and the valid options, not a silent fallback.
+
 ## config.yaml
 
 Global application settings. Optional; defaults apply if the file is missing.
