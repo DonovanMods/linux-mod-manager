@@ -3,6 +3,7 @@ package icarus
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -76,6 +77,58 @@ func TestIcarus_Search_FiltersClientSide(t *testing.T) {
 		if all.Mods[i].Name != want {
 			t.Errorf("Search(\"\") order[%d] = %q, want %q (deterministic, alphabetical by Name)", i, all.Mods[i].Name, want)
 		}
+	}
+}
+
+// A huge user-supplied Page overflows the page*pageSize multiplication
+// (int wraps to a negative value), which previously produced a negative
+// slice start and panicked instead of just clamping to an empty page past
+// the end of the result set (#136 PR #181 review).
+func TestIcarus_Search_HugePage_ClampsInsteadOfPanicking(t *testing.T) {
+	srv := httptest.NewServer(modsListHandler([]map[string]any{
+		{"id": "abc", "fields": map[string]any{"name": map[string]any{"stringValue": "Bear Mount"}}},
+	}))
+	defer srv.Close()
+
+	src := New(srv.Client(), "test-project")
+	src.firestore.baseURL = srv.URL
+
+	result, err := src.Search(context.Background(), source.SearchQuery{Page: math.MaxInt, PageSize: 20})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.Mods) != 0 {
+		t.Errorf("Mods = %+v, want empty (page far beyond the 1-mod result set)", result.Mods)
+	}
+	if result.TotalCount != 1 {
+		t.Errorf("TotalCount = %d, want 1", result.TotalCount)
+	}
+}
+
+// The same overflow class hits start+pageSize (computing "end") once start
+// is non-zero: page*pageSize (1*MaxInt) doesn't itself overflow, and gets
+// clamped down to the small, valid len(mods) — but THAT small start plus a
+// huge PageSize wraps the addition negative, and the existing
+// "end > len(mods)" clamp can't catch an end that's gone negative (Page: 0
+// can't exercise this: 0+anything never overflows).
+func TestIcarus_Search_HugePageSize_ClampsInsteadOfPanicking(t *testing.T) {
+	srv := httptest.NewServer(modsListHandler([]map[string]any{
+		{"id": "abc", "fields": map[string]any{"name": map[string]any{"stringValue": "Bear Mount"}}},
+	}))
+	defer srv.Close()
+
+	src := New(srv.Client(), "test-project")
+	src.firestore.baseURL = srv.URL
+
+	result, err := src.Search(context.Background(), source.SearchQuery{Page: 1, PageSize: math.MaxInt})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.Mods) != 0 {
+		t.Errorf("Mods = %+v, want empty (page 1 is past the 1-mod result set)", result.Mods)
+	}
+	if result.TotalCount != 1 {
+		t.Errorf("TotalCount = %d, want 1", result.TotalCount)
 	}
 }
 
