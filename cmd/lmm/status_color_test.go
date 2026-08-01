@@ -9,9 +9,12 @@ import (
 
 // TestShowGameStatus_EnabledDisabledCounts_PlainWhenColorDisabled is the
 // byte-stability guard: with color off (the default), the Enabled/Disabled
-// summary line must carry no ANSI escapes.
+// summary line must carry no ANSI escapes. resetColorFlags undoes
+// setupDoDeployTest's noColor=true so this proves the real TTY-detection
+// gate keeps piped output plain, not the --no-color flag.
 func TestShowGameStatus_EnabledDisabledCounts_PlainWhenColorDisabled(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
+	resetColorFlags(t)
 	require.NoError(t, svc.AddGame(game))
 	seedDeployableMod(t, svc, game, "1", "Enabled Mod", "a.esp")
 	seedModWithState(t, svc, game, "2", "Disabled Mod", false, false)
@@ -111,9 +114,12 @@ func TestShowGameStatus_RicherValues_ColoredWhenTTY(t *testing.T) {
 }
 
 // TestShowGameStatus_RicherValues_PlainWhenColorDisabled is the byte-
-// stability guard for the new value accents above.
+// stability guard for the new value accents above. resetColorFlags undoes
+// setupDoDeployTest's noColor=true so this proves the real TTY-detection
+// gate keeps piped output plain, not the --no-color flag.
 func TestShowGameStatus_RicherValues_PlainWhenColorDisabled(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
+	resetColorFlags(t)
 	require.NoError(t, svc.AddGame(game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
 	require.NoError(t, svc.NewProfileManager().SetDefault(game.ID, "default"))

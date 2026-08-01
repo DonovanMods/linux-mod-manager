@@ -61,9 +61,13 @@ func rowFor(out, name string) string {
 // guard: with color off (the default for piped/non-TTY output, and every
 // test that doesn't force stdoutColorCapable), `lmm list -v` output must
 // carry no ANSI escapes at all, regardless of each mod's enabled/deployed
-// state.
+// state. resetColorFlags undoes setupDoDeployTest's noColor=true so this
+// proves the real TTY-detection gate keeps piped output plain, not the
+// --no-color flag - captureStdout's os.Pipe swap gives stdoutColorCapable()
+// a genuine non-TTY answer without any test-seam override.
 func TestList_Verbose_PlainWhenColorDisabled(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
+	resetColorFlags(t)
 	seedModWithState(t, svc, game, "a", "Enabled Deployed", true, true)
 	seedModWithState(t, svc, game, "b", "Disabled Mod", false, false)
 	seedModWithState(t, svc, game, "c", "Enabled Undeployed", true, false)
@@ -132,8 +136,14 @@ func TestList_Verbose_ColorNeverBreaksAlignment(t *testing.T) {
 
 // TestList_NonVerbose_PlainWhenColorDisabled mirrors
 // TestList_Verbose_PlainWhenColorDisabled for the non-verbose path.
+// resetColorFlags undoes setupDoDeployTest's noColor=true (review finding on
+// PR #195: without it, this only proved --no-color suppresses color, not
+// that the TTY-detection gate itself keeps piped output plain - a color
+// leak into non-TTY output with noColor=false would have slipped through
+// undetected).
 func TestList_NonVerbose_PlainWhenColorDisabled(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
+	resetColorFlags(t)
 	seedModWithState(t, svc, game, "a", "Enabled Deployed", true, true)
 	seedModWithState(t, svc, game, "b", "Disabled Mod", false, false)
 	seedModWithState(t, svc, game, "c", "Enabled Undeployed", true, false)
