@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Custom `api` sources' `search` endpoint gains `{category}`/`{tags}` path placeholders, fed from `SearchQuery.Category`/`.Tags` (URL-escaped; multiple tags comma-joined) — previously these were silently dropped with no way for a declarative source to express category/tag filtering. A definition whose `search` path omits the new placeholders is unaffected: the values are computed but never substituted in, matching today's behavior exactly (#120)
+
 ## [1.27.1] - 2026-07-30
 
 ### Fixed
