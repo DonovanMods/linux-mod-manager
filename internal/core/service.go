@@ -165,6 +165,38 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 	return srcs, nil
 }
 
+// compilerSourceForGame resolves the sole Compiler-capable source
+// registered for gameID (#173). The download path pins its Compiler check
+// to the specific source a file was downloaded from (DownloadModToCache's
+// src.(source.Compiler) check); Importer.Import has no such per-archive
+// source to key off of, so it resolves against every source the game maps
+// in its registry instead — matching resolveBasePak's v1 scope of "Icarus
+// only", at most one of a game's configured sources implements Compiler
+// today. Zero is the expected failure when the game (or its Compiler
+// source) isn't configured; more than one is treated as ambiguous rather
+// than picking arbitrarily — both fail loud instead of letting an .exmodz
+// import silently skip compilation.
+func (s *Service) compilerSourceForGame(gameID string) (source.Compiler, error) {
+	srcs, err := s.SourcesForGame(gameID)
+	if err != nil {
+		return nil, err
+	}
+	var compilers []source.Compiler
+	for _, src := range srcs {
+		if c, ok := src.(source.Compiler); ok {
+			compilers = append(compilers, c)
+		}
+	}
+	switch len(compilers) {
+	case 0:
+		return nil, fmt.Errorf("game %q requires DeployCompile but has no compiler-capable source configured (map a source implementing source.Compiler in the game's sources)", gameID)
+	case 1:
+		return compilers[0], nil
+	default:
+		return nil, fmt.Errorf("game %q has multiple compiler-capable sources configured; ambiguous compile source", gameID)
+	}
+}
+
 // SourceWarning reports a per-source failure during an aggregate operation.
 type SourceWarning struct {
 	SourceID string
