@@ -196,6 +196,29 @@ func colorHeader(s string) string {
 	return ansiBold + ansiCyan + s + ansiReset
 }
 
+// modRowColor returns the row-tint color function for a mod's
+// enabled/deployed state: dim for disabled (a routine, expected state - not
+// an error), yellow for enabled-but-not-yet-deployed (drift worth noticing),
+// green for enabled+deployed (the common, healthy case - #193: originally
+// left untinted, which read as nearly plain in smoke feedback).
+//
+// The single shared decision for any command that lists mod rows keyed on
+// this state - do not reimplement this switch inline in a second call site;
+// a mod's health must render identically everywhere it's shown, independent
+// of which columns that particular view happens to display (#193 round 2:
+// list -v and plain list colored inconsistently because the decision only
+// existed inline in the verbose branch).
+func modRowColor(enabled, deployed bool) func(string) string {
+	switch {
+	case !enabled:
+		return colorDim
+	case !deployed:
+		return colorYellow
+	default:
+		return colorGreen
+	}
+}
+
 // printTable writes a fully-flushed text/tabwriter table (buf) to os.Stdout,
 // accenting the header line (bold+cyan, via colorHeader) and applying
 // rowColor's per-row wrapper (nil for no tint) when color is enabled.
