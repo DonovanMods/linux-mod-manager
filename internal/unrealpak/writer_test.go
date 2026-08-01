@@ -3,6 +3,7 @@ package unrealpak
 import (
 	"bytes"
 	"encoding/binary"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,5 +97,20 @@ func TestWriter_AddFile_AfterClose_Errors(t *testing.T) {
 	}
 	if err := w.AddFile("x.json", []byte("{}")); err == nil {
 		t.Error("expected error adding file after Close, got nil")
+	}
+}
+
+// checkEncodedLocationFits is tested directly on the boundary rather than by
+// constructing a >2 GiB encoded-index fixture, which would be impractically
+// slow and memory-hungry for a unit test.
+func TestCheckEncodedLocationFits(t *testing.T) {
+	if err := checkEncodedLocationFits(0); err != nil {
+		t.Errorf("checkEncodedLocationFits(0): %v", err)
+	}
+	if err := checkEncodedLocationFits(math.MaxInt32); err != nil {
+		t.Errorf("checkEncodedLocationFits(MaxInt32): %v", err)
+	}
+	if err := checkEncodedLocationFits(math.MaxInt32 + 1); err == nil {
+		t.Error("checkEncodedLocationFits(MaxInt32+1) = nil, want error")
 	}
 }

@@ -295,6 +295,48 @@ func TestDumpStore_DumpForBuild_NetworkFailure_IsActionable(t *testing.T) {
 	}
 }
 
+// A tar entry whose declared header size exceeds the per-table cap must be
+// rejected before any content is read — guards against a network-fetched,
+// third-party archive with a corrupt or lying size field driving an
+// unbounded allocation. The fixture never writes real content matching the
+// declared size (impractical at 64+ MiB): tw.WriteHeader alone already
+// produces a header a tar.Reader can parse, and the cap fires on hdr.Size
+// alone, before fetchTree ever attempts to read the entry's body.
+func TestDumpStore_DumpForBuild_RejectsOversizedTarEntry(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	hdr := &tar.Header{
+		Name: "IcarusData-test/Huge/D_Huge.json",
+		Mode: 0o644,
+		Size: maxTarEntrySize + 1,
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately not calling tw.Close() or writing the declared body.
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(buf.Bytes())
+	}))
+	defer srv.Close()
+
+	store := newDumpStore(t.TempDir(), srv.Client())
+	store.treeURL = srv.URL
+
+	pak := writeTestBasePak(t, map[string][]byte{"a/B.json": []byte("{}")})
+	_, err := store.DumpForBuild(context.Background(), pak, "")
+	if err == nil {
+		t.Fatal("expected an error for an oversized tar entry, got nil")
+	}
+	if !strings.Contains(err.Error(), "Huge/D_Huge.json") {
+		t.Errorf("error %q should name the offending entry", err)
+	}
+}
+
 // A base pak entry that fails to read for a reason OTHER than
 // unrealpak.ErrUnsupportedFormat (corruption, a truncated payload, an I/O
 // error) must fail validateDump loudly, not be silently folded into the

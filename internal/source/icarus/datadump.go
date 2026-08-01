@@ -31,6 +31,12 @@ const defaultDumpTreeURL = "https://codeload.github.com/GODOFMINECRAFT4/IcarusDa
 // grow while refusing to stream an unbounded body into memory.
 const maxDumpBytes = 256 << 20
 
+// maxTarEntrySize caps a single table's decompressed size. The largest real
+// table (Items/D_ItemsStatic.json, per the base pak) is 7.3 MB; 64 MiB leaves
+// generous headroom while refusing to trust an unbounded or lying size field
+// in a tar header from a third-party, network-fetched archive.
+const maxTarEntrySize = 64 << 20
+
 // Build identifies the installed game, read from Icarus/Config/version.json.
 // Note this carries no week number — nothing in the install does. Week
 // agreement is established by content comparison, not by this value.
@@ -216,7 +222,11 @@ func (s *DumpStore) fetchTree(ctx context.Context, url string) (*Dump, error) {
 		if rel == "" || strings.HasPrefix(rel, "data/") {
 			continue
 		}
-		body, err := io.ReadAll(tr)
+		if hdr.Size > maxTarEntrySize {
+			return nil, fmt.Errorf("icarus: base-table dump entry %s declares a %d-byte size, "+
+				"exceeding the %d-byte per-table cap", rel, hdr.Size, maxTarEntrySize)
+		}
+		body, err := io.ReadAll(io.LimitReader(tr, hdr.Size))
 		if err != nil {
 			return nil, fmt.Errorf("icarus: reading %s from base-table dump: %w", rel, err)
 		}

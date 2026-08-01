@@ -85,6 +85,34 @@ func TestIcarus_GetModFiles_ReturnsExmodzAndPak(t *testing.T) {
 	}
 }
 
+// The fallback must always be a dotted name (never a bare "exmodz"/"pak"),
+// or isExmodzFile's ".exmodz" suffix check and compiledFileName's
+// filepath.Ext-based rename in Service would both silently misroute the
+// download instead of failing loudly (#136 review round 2).
+func TestFileNameFromURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		rawURL      string
+		fallbackExt string
+		want        string
+	}{
+		{"basename with extension is used as-is", "https://x/mods/Bear_Mount.exmodz", "exmodz", "Bear_Mount.exmodz"},
+		{"basename without an extension gets fallbackExt appended", "https://x/mods/Bear_Mount", "exmodz", "Bear_Mount.exmodz"},
+		{"root path falls back to a dotted name", "https://x/", "pak", "mod.pak"},
+		{"empty path falls back to a dotted name", "https://x", "pak", "mod.pak"},
+		{"a path of exactly '..' falls back to a dotted name", "https://x/mods/..", "exmodz", "mod.exmodz"},
+		{"an unparseable URL falls back to a dotted name", "://not a url", "pak", "mod.pak"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := fileNameFromURL(tt.rawURL, tt.fallbackExt)
+			if got != tt.want {
+				t.Errorf("fileNameFromURL(%q, %q) = %q, want %q", tt.rawURL, tt.fallbackExt, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestIcarus_Compile_WithoutDataDir_FailsLoudly pins that a source
 // constructed via New but never wired with SetDataDir (e.g. a registration
 // path that forgets the optional-setter call) fails loudly instead of

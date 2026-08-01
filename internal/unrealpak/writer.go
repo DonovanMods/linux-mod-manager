@@ -67,6 +67,20 @@ func (w *Writer) AddFile(mountPath string, data []byte) error {
 	return nil
 }
 
+// checkEncodedLocationFits validates that encodedLen — the offset the next
+// entry's record is about to be stored at within the encoded index blob —
+// still fits the int32 location field the format stores in the path-hash and
+// full directory indexes. Extracted from Close so the boundary can be tested
+// without constructing a >2 GiB fixture: encoded.Len() growing past
+// math.MaxInt32 would otherwise silently wrap (even go negative) when cast to
+// int32, corrupting every location recorded from that point on.
+func checkEncodedLocationFits(encodedLen int) error {
+	if encodedLen > math.MaxInt32 {
+		return fmt.Errorf("encoded index exceeds the 32-bit location field this writer emits (%d bytes)", encodedLen)
+	}
+	return nil
+}
+
 // Close assembles the data section and all three index structures, writes them
 // with the footer, and closes the file.
 func (w *Writer) Close() error {
@@ -90,6 +104,10 @@ func (w *Writer) Close() error {
 		data.Write(storedEntryHeader(size, file.data))
 		data.Write(file.data)
 
+		if err := checkEncodedLocationFits(encoded.Len()); err != nil {
+			w.f.Close() //nolint:errcheck
+			return fmt.Errorf("unrealpak: %s: %w", file.path, err)
+		}
 		locations[file.path] = int32(encoded.Len())
 		// The 12-byte stored record: offset/uncompressed-size/size all
 		// 32-bit-safe, method 0, no compression blocks.

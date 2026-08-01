@@ -223,14 +223,27 @@ func mapDoc(d firestoreDoc) domain.Mod {
 	}
 }
 
+// fileNameFromURL derives a download's file name from its URL, falling back
+// to a synthesized "mod.<fallbackExt>" name (never a bare, dot-less
+// fallbackExt) when the URL yields nothing usable. A dot-less fallback would
+// silently defeat both isExmodzFile's case-insensitive ".exmodz" suffix
+// check and compiledFileName's filepath.Ext-based rename in Service — a
+// downloaded file named e.g. "exmodz" would never route through Compile.
+// A parsed basename that exists but carries no extension of its own gets
+// fallbackExt appended rather than being discarded outright, preserving
+// whatever real name the URL offered.
 func fileNameFromURL(rawURL, fallbackExt string) string {
+	fallback := "mod." + fallbackExt
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Path == "" {
-		return fallbackExt
+		return fallback
 	}
 	base := path.Base(u.Path)
-	if base == "." || base == "/" {
-		return fallbackExt
+	if base == "." || base == "/" || base == ".." {
+		return fallback
+	}
+	if path.Ext(base) == "" {
+		return base + "." + fallbackExt
 	}
 	return base
 }
