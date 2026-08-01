@@ -113,7 +113,10 @@ func colorEnabled() bool {
 	if noColor {
 		return false
 	}
-	if os.Getenv("NO_COLOR") != "" {
+	// Presence-only per https://no-color.org: NO_COLOR disables color when
+	// set to ANY value, including the empty string - os.Getenv can't tell
+	// "unset" from "set to empty", so this must use os.LookupEnv.
+	if _, set := os.LookupEnv("NO_COLOR"); set {
 		return false
 	}
 	return stdoutColorCapable()

@@ -69,6 +69,18 @@ func TestColorEnabled_NoColorEnvWinsOverTTY(t *testing.T) {
 	assert.False(t, colorEnabled(), "NO_COLOR must disable color even on a real TTY")
 }
 
+// TestColorEnabled_EmptyNoColorEnvStillDisables guards the no-color.org spec:
+// NO_COLOR disables color when PRESENT, regardless of value - including the
+// empty string. os.Getenv can't distinguish "unset" from "set to empty", so
+// colorEnabled must use os.LookupEnv instead.
+func TestColorEnabled_EmptyNoColorEnvStillDisables(t *testing.T) {
+	resetColorFlags(t)
+	withColorCapableStdout(t, true)
+	require.NoError(t, os.Setenv("NO_COLOR", ""))
+
+	assert.False(t, colorEnabled(), "NO_COLOR set to the empty string must still disable color (presence-only semantics)")
+}
+
 func TestColorHelpers_NoOpWhenColorDisabled(t *testing.T) {
 	resetColorFlags(t)
 	withColorCapableStdout(t, false)
