@@ -242,8 +242,11 @@ func registerSources(svc *core.Service, cfgDir, dataDir string) {
 // wins, warning on customSourceWarnWriter) → API-key resolution (env var via
 // envKeyFor, falling back to the stored DB token) → SetAPIKey when the
 // source accepts one → SetDataDir when the source accepts one (Icarus's
-// Compile needs a cache directory for the base-table dump store, #136 Task
-// 13 — New itself can't take it since Task 8/9 froze its 2-arg signature) →
+// Compile is gated on SetDataDir having been called at all: that call
+// constructs the base-table dump store. dataDir's value itself is currently
+// unused there — that store fetches on demand rather than caching to disk,
+// #136 review round 3 — SetDataDir just fulfils the shared interface. New
+// itself can't take dataDir since Task 8/9 froze its 2-arg signature) →
 // RegisterSource.
 func registerSource(svc *core.Service, src source.ModSource, dataDir string) {
 	id := src.ID()
