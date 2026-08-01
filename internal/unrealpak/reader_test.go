@@ -124,6 +124,57 @@ func TestReader_Open_ListsFiles(t *testing.T) {
 	}
 }
 
+// IndexHash must be deterministic (same pak layout -> same hash) and must
+// change when the pak's layout changes (#196: it's the staleness signal a
+// base data.pak refresh is detected by). It must also never be all-zero -
+// that would mean the footer's indexHash field was never actually captured.
+//
+// The primary index records each entry's path/offset/size, not its payload
+// bytes - a same-length content edit that happens to leave every offset and
+// size unchanged would NOT move IndexHash (this is the footer's own
+// documented shape, not a gap in this method: see #196's design note that
+// this is "cheap" specifically because it never reads payload data). B's
+// content is a different LENGTH than A's so the size field actually differs,
+// which is what a real pak rebuild's added/changed/removed rows always do.
+func TestReader_IndexHash(t *testing.T) {
+	pathA := writeMinimalPak(t, "Icarus/Content/Data/Test.json", []byte(`{"a":1}`))
+	pathA2 := writeMinimalPak(t, "Icarus/Content/Data/Test.json", []byte(`{"a":1}`))
+	pathB := writeMinimalPak(t, "Icarus/Content/Data/Test.json", []byte(`{"a":22222}`))
+
+	rA, err := Open(pathA)
+	if err != nil {
+		t.Fatalf("Open A: %v", err)
+	}
+	defer rA.Close() //nolint:errcheck
+	rA2, err := Open(pathA2)
+	if err != nil {
+		t.Fatalf("Open A2: %v", err)
+	}
+	defer rA2.Close() //nolint:errcheck
+	rB, err := Open(pathB)
+	if err != nil {
+		t.Fatalf("Open B: %v", err)
+	}
+	defer rB.Close() //nolint:errcheck
+
+	hashA := rA.IndexHash()
+	hashA2 := rA2.IndexHash()
+	hashB := rB.IndexHash()
+
+	if len(hashA) != 40 {
+		t.Fatalf("IndexHash length = %d, want 40 (20-byte SHA1 hex)", len(hashA))
+	}
+	if hashA == strings.Repeat("0", 40) {
+		t.Fatal("IndexHash is all-zero - footer indexHash was never captured")
+	}
+	if hashA != hashA2 {
+		t.Errorf("identical pak content produced different IndexHash: %q vs %q", hashA, hashA2)
+	}
+	if hashA == hashB {
+		t.Errorf("different pak content produced the same IndexHash: %q", hashA)
+	}
+}
+
 // A root-level file is keyed under the "/" directory in the directory index;
 // Files must report it without the leading slash, matching what hashPath uses.
 func TestReader_Open_RootLevelFile(t *testing.T) {

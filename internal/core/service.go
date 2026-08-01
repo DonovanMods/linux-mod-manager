@@ -21,6 +21,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -552,6 +553,9 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		if err := compiler.Compile(ctx, basePakPath, archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("compiling mod: %w", err)
 		}
+		if err := stageCompileFingerprint(stagePath, file.ID, basePakPath, archivePath); err != nil {
+			return nil, err
+		}
 		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{destName}); err != nil {
 			return nil, err
 		}
@@ -990,6 +994,44 @@ func resolveBasePak(game *domain.Game) (string, error) {
 func compiledFileName(sourceFileName string) string {
 	base := strings.TrimSuffix(sourceFileName, filepath.Ext(sourceFileName))
 	return base + "_P.pak"
+}
+
+// basePakIndexHash opens basePakPath and returns its footer IndexHash
+// (#196) - cheap (footer + primary-index region only; unrealpak.Open never
+// reads a pak's actual file payloads), matching the base pak Compile itself
+// already opens to read patched tables from, so this adds no new I/O
+// pattern to the compile path.
+func basePakIndexHash(basePakPath string) (string, error) {
+	r, err := unrealpak.Open(basePakPath)
+	if err != nil {
+		return "", fmt.Errorf("reading base pak for compile fingerprint: %w", err)
+	}
+	defer r.Close() //nolint:errcheck
+	return r.IndexHash(), nil
+}
+
+// stageCompileFingerprint stages fileID's #196 compile fingerprint into
+// stagePath: the base pak's IndexHash (cache.MarkBaseIndexHash) and a copy
+// of the original .exmodz (cache.RetainedSourceName), so a later staleness
+// check can detect the base pak changing, and a later recompile can run
+// offline. Both land in the SAME atomic commit as the compiled pak - see
+// commitStagedCache/commitStagedCacheWithMarker - so a partial write here
+// can never separate a compiled pak from its fingerprint or retained
+// source. Called by both compile sites (download: DownloadModToCache;
+// import: Importer.Import) after Compile succeeds, before the commit.
+func stageCompileFingerprint(stagePath, fileID, basePakPath, sourceFilePath string) error {
+	indexHash, err := basePakIndexHash(basePakPath)
+	if err != nil {
+		return err
+	}
+	if err := cache.MarkBaseIndexHash(stagePath, fileID, indexHash); err != nil {
+		return err
+	}
+	retainedPath := filepath.Join(stagePath, cache.RetainedSourceName(fileID))
+	if err := copyFileStreaming(sourceFilePath, retainedPath); err != nil {
+		return fmt.Errorf("retaining compile source: %w", err)
+	}
+	return nil
 }
 
 // GetGame retrieves a game by ID

@@ -147,3 +147,97 @@ func CompareVersions(v1, v2 string) int {
 func IsNewerVersion(currentVersion, newVersion string) bool {
 	return domain.IsNewerVersion(currentVersion, newVersion)
 }
+
+// CheckBaseStaleness scans installed for DeployCompile mods whose compiled
+// artifact no longer matches game's live base data.pak IndexHash (#196,
+// "the Friday problem": a weekly base-pak refresh silently reverts the
+// tables a compiled mod patches, and nothing before #196 ever noticed).
+// This is entirely local/offline - unlike Updater.CheckUpdates it never
+// contacts a source, so it runs for EVERY installed mod regardless of
+// UpdatePolicy or SourceID, including pinned and domain.SourceLocal mods
+// (pinning fixes the mod version, not the base pak; a pure local import has
+// no remote to check version-wise but can still go stale against the base
+// pak - see #196 design point 3).
+//
+// Only entries carrying the #196 fingerprint (cache.BaseIndexHashes)
+// participate: a missing fingerprint is treated as "not a compiled entry we
+// can reason about", not "stale" - a game whose DeployMode is DeployCompile
+// can still legitimately serve prebuilt, never-compiled .pak files (see
+// isExmodzFile's doc comment), and there is no local signal to tell those
+// apart from a compiled entry that merely predates #196. (Design point 4's
+// literal "missing fingerprint = always stale" was deliberately narrowed
+// during #196 review to avoid exactly that false positive - see the PR
+// description.) Any mod actually compiled under #196 always carries the
+// fingerprint by construction (stageCompileFingerprint writes it in the
+// SAME atomic commit as the compiled pak), so this narrowing costs nothing
+// for anything compiled going forward.
+func (s *Service) CheckBaseStaleness(game *domain.Game, installed []domain.InstalledMod) ([]domain.Update, error) {
+	if game.DeployMode != domain.DeployCompile {
+		return nil, nil
+	}
+	basePakPath, err := resolveBasePak(game)
+	if err != nil {
+		// No installed base pak to compare against: nothing to report this
+		// pass, not an error - matches CheckUpdates' own per-source
+		// tolerance for a signal that simply isn't available right now.
+		return nil, nil //nolint:nilerr
+	}
+	liveHash, err := basePakIndexHash(basePakPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading base pak for staleness check: %w", err)
+	}
+
+	gameCache := s.GetGameCache(game)
+	var stale []domain.Update
+	for _, mod := range installed {
+		hashes, err := gameCache.BaseIndexHashes(game.ID, mod.SourceID, mod.ID, mod.Version)
+		if err != nil {
+			continue // unreadable bookkeeping: silently skip, matching FileManifests' own tolerance
+		}
+		for _, recorded := range hashes {
+			if recorded != liveHash {
+				stale = append(stale, domain.Update{InstalledMod: mod, NewVersion: mod.Version, RecompileNeeded: true})
+				break
+			}
+		}
+	}
+	return stale, nil
+}
+
+// CheckGameUpdates is the single seam CLI and TUI both check updates
+// through (#196): it combines Updater.CheckUpdates' remote version checks
+// with CheckBaseStaleness' local base-pak staleness scan, so "does this mod
+// need attention" means the same thing in both interfaces. A mod that
+// already has a real version update available is not separately reported
+// as stale even if it is: applying that update recompiles it fresh against
+// the CURRENT base pak as a normal side effect of the compile step, so
+// there is nothing left to flag once the real update lands.
+//
+// Errors from either half are tolerated the same way CheckUpdates already
+// tolerates a single source failing: whatever updates were found are still
+// returned, with the first non-nil error surfaced (checkErr takes priority
+// as the richer, multi-source diagnostic when both fail).
+func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod) ([]domain.Update, error) {
+	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, installed)
+
+	stale, staleErr := s.CheckBaseStaleness(game, installed)
+	if staleErr != nil && checkErr == nil {
+		checkErr = staleErr
+	}
+
+	if len(stale) > 0 {
+		reported := make(map[string]bool, len(updates))
+		for _, u := range updates {
+			reported[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)] = true
+		}
+		for _, u := range stale {
+			key := domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)
+			if !reported[key] {
+				updates = append(updates, u)
+				reported[key] = true
+			}
+		}
+	}
+
+	return updates, checkErr
+}

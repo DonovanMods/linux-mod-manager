@@ -7,9 +7,21 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// writeFakeBasePak writes a real, minimal but VALID pak at path (#196: the
+// compile branch now opens the base pak itself to read its footer IndexHash
+// as a compile fingerprint, so a bare byte-stub file no longer parses).
+func writeFakeBasePak(t *testing.T, path string) {
+	t.Helper()
+	w, err := unrealpak.Create(path)
+	require.NoError(t, err)
+	require.NoError(t, w.AddFile("Data/D_Fixture.json", []byte(`{"fixture":true}`)))
+	require.NoError(t, w.Close())
+}
 
 // compilerInstallSource wraps fakeInstallSource with a source.Compiler
 // implementation, so `lmm install` can drive a real DeployCompile game
@@ -46,7 +58,7 @@ func TestDoInstall_DeployCompile_AnnouncesCompiling(t *testing.T) {
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
-	require.NoError(t, os.WriteFile(basePak, []byte("fake-base-pak"), 0o644))
+	writeFakeBasePak(t, basePak)
 
 	compiler := &compilerInstallSource{fakeInstallSource: src}
 	// Re-register under the same ID so doInstall's resolved source is the

@@ -11,8 +11,22 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"github.com/stretchr/testify/require"
 )
+
+// writeFakeBasePak writes a real, minimal but VALID pak at path (#196: the
+// compile branch now opens the base pak itself to read its footer IndexHash
+// as a compile fingerprint, so a bare byte-stub file - fine when only the
+// fake compiler ever touched this path - no longer parses). One tiny table
+// entry is enough; its content is never asserted on by these tests.
+func writeFakeBasePak(t *testing.T, path string) {
+	t.Helper()
+	w, err := unrealpak.Create(path)
+	require.NoError(t, err)
+	require.NoError(t, w.AddFile("Data/D_Fixture.json", []byte(`{"fixture":true}`)))
+	require.NoError(t, w.Close())
+}
 
 // fakeCompilerSource is a minimal ModSource that also implements
 // source.Compiler, standing in for internal/source/icarus.Icarus (Tasks
@@ -76,7 +90,7 @@ func TestDownloadMod_DeployCompile_InvokesCompiler(t *testing.T) {
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
-	require.NoError(t, os.WriteFile(basePak, []byte("fake-base-pak"), 0o644))
+	writeFakeBasePak(t, basePak)
 
 	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
 	svc, err := core.NewService(cfg)
@@ -123,7 +137,7 @@ func newCompileTestGame(t *testing.T, dlBody string) (*core.Service, *fakeCompil
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
-	require.NoError(t, os.WriteFile(basePak, []byte("fake-base-pak"), 0o644))
+	writeFakeBasePak(t, basePak)
 
 	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
 	svc, err := core.NewService(cfg)

@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"crypto/sha1" //nolint:gosec // pak format uses SHA1, not our choice
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -22,6 +23,7 @@ type Reader struct {
 	fileSize   int64                         // total size of the underlying file, for validateAllocSize
 	methods    [maxCompressionMethods]string // this pak's own CompressionMethods table
 	mountPoint string                        // this pak's own primary-index MountPoint (see Writer's WithMountPoint)
+	indexHash  [20]byte                      // this pak's own footer-recorded primary-index SHA1 (see IndexHash)
 }
 
 type readerEntry struct {
@@ -71,7 +73,7 @@ func Open(path string) (*Reader, error) {
 		return nil, fmt.Errorf("unrealpak: %s: parsing index: %w", path, err)
 	}
 
-	return &Reader{f: f, entries: entries, fileSize: fileSize, methods: ft.methods, mountPoint: mountPoint}, nil
+	return &Reader{f: f, entries: entries, fileSize: fileSize, methods: ft.methods, mountPoint: mountPoint, indexHash: ft.indexHash}, nil
 }
 
 // methodName resolves a 1-based CompressionMethodIndex against this pak's own
@@ -141,6 +143,15 @@ func (r *Reader) Close() error { return r.f.Close() }
 // path, while mod paks conventionally declare a relative "../../../..."
 // form (see Writer's WithMountPoint, #178).
 func (r *Reader) MountPoint() string { return r.mountPoint }
+
+// IndexHash returns the pak's footer-recorded primary-index SHA1 as a
+// lowercase hex string — a cheap, stable fingerprint of the pak's content
+// (Open already reads and verifies this region; IndexHash reads no further
+// bytes and never hashes the pak's actual file payloads). Any content or
+// layout change to the pak changes its primary index and therefore this
+// hash, making it a reliable "has this pak changed" signal without the cost
+// of hashing the whole (often multi-gigabyte) file.
+func (r *Reader) IndexHash() string { return hex.EncodeToString(r.indexHash[:]) }
 
 // Files returns every file this pak's index describes.
 func (r *Reader) Files() []FileEntry {

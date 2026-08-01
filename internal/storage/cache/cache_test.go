@@ -3,6 +3,7 @@ package cache_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
@@ -473,4 +474,87 @@ func TestCache_MarkFileCompleteWithMembers_UnverifiableIDs(t *testing.T) {
 	entries, err := os.ReadDir(modPath)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "an unverifiable file ID must not produce a marker")
+}
+
+// TestCache_BaseIndexHashes_RoundTrip mirrors TestCache_FileManifests_RoundTrip
+// for the #196 base-pak fingerprint marker: write two, read them back keyed
+// by fileID, and confirm a mod with none reports an empty map.
+func TestCache_BaseIndexHashes_RoundTrip(t *testing.T) {
+	c := cache.New(t.TempDir())
+	versionDir := c.ModPath("g", "src", "mod", "1.0")
+
+	require.NoError(t, cache.MarkBaseIndexHash(versionDir, "file-a", "aaaa1111"))
+	require.NoError(t, cache.MarkBaseIndexHash(versionDir, "file-b", "bbbb2222"))
+
+	hashes, err := c.BaseIndexHashes("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"file-a": "aaaa1111", "file-b": "bbbb2222"}, hashes)
+
+	none, err := c.BaseIndexHashes("g", "src", "other-mod", "1.0")
+	require.NoError(t, err)
+	assert.Empty(t, none, "a version dir with no base-index markers reports an empty map, not an error")
+}
+
+// TestCache_BaseIndexHashes_ExcludedFromContentEnumerators pins that base
+// index markers are reserved bookkeeping (ReservedPrefix), never mod
+// content: they must never be deployed, sized, or counted, exactly like
+// completion markers (TestCache_ManifestMarkersStayReservedAndComplete).
+func TestCache_BaseIndexHashes_ExcludedFromContentEnumerators(t *testing.T) {
+	c := cache.New(t.TempDir())
+
+	require.NoError(t, c.Store("g", "src", "mod", "1.0", "Bear_Mount_P.pak", []byte("12345")))
+	require.NoError(t, cache.MarkBaseIndexHash(c.ModPath("g", "src", "mod", "1.0"), "file-a", "aaaa1111"))
+
+	files, err := c.ListFiles("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bear_Mount_P.pak"}, files, "base index markers must never be listed as content")
+
+	size, err := c.Size("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), size, "base index marker bytes must not count toward cache size")
+}
+
+// TestCache_MarkBaseIndexHash_UnverifiableIDs mirrors
+// TestCache_MarkFileCompleteWithMembers_UnverifiableIDs: an unverifiable
+// file ID is skipped rather than producing a marker.
+func TestCache_MarkBaseIndexHash_UnverifiableIDs(t *testing.T) {
+	c := cache.New(t.TempDir())
+	modPath := c.ModPath("g", "src", "mod", "1.0")
+	require.NoError(t, os.MkdirAll(modPath, 0755))
+
+	require.NoError(t, cache.MarkBaseIndexHash(modPath, "", "aaaa1111"))
+	require.NoError(t, cache.MarkBaseIndexHash(modPath, "../escape", "aaaa1111"))
+
+	entries, err := os.ReadDir(modPath)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "an unverifiable file ID must not produce a base index marker")
+}
+
+// TestCache_RetainedSourceName_IsReservedAndExcludedFromContent pins that a
+// retained compile source (#196) written under RetainedSourceName is
+// reserved bookkeeping, not a deployment member - it must never be listed,
+// sized, or deployed, even though its content is a real, non-empty file
+// (unlike a marker, which is metadata).
+func TestCache_RetainedSourceName_IsReservedAndExcludedFromContent(t *testing.T) {
+	name := cache.RetainedSourceName("file-a")
+	require.True(t, strings.HasPrefix(name, cache.ReservedPrefix),
+		"retained source name must live under the reserved namespace")
+
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("g", "src", "mod", "1.0", "Bear_Mount_P.pak", []byte("compiled")))
+	require.NoError(t, c.Store("g", "src", "mod", "1.0", name, []byte("original exmodz bytes")))
+
+	files, err := c.ListFiles("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bear_Mount_P.pak"}, files, "a retained source must never be listed as deployable content")
+
+	size, err := c.Size("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, int64(len("compiled")), size, "a retained source's bytes must not count toward cache size")
+}
+
+// TestCache_RetainedSourceName_UniquePerFileID guards against two compiled
+// files in the same mod entry colliding on their retained source's name.
+func TestCache_RetainedSourceName_UniquePerFileID(t *testing.T) {
+	assert.NotEqual(t, cache.RetainedSourceName("file-a"), cache.RetainedSourceName("file-b"))
 }
