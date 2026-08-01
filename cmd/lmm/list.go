@@ -197,28 +197,19 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 		return fmt.Errorf("flushing output: %w", err)
 	}
 
-	// Row tinting only makes sense next to the columns it explains: ENABLED
-	// and DEPLOYED are verbose-only, so a tint would be unexplained color in
-	// the non-verbose table. #193: the common, healthy case (enabled+
-	// deployed) gets a green tint too - #112's original "only flag
-	// anomalies" choice left the common case looking nearly plain in smoke
-	// feedback. Yellow (undeployed) and dim (disabled) still flag the
-	// anomalies.
-	var rowColor func(int) func(string) string
-	if verbose {
-		rowColor = func(i int) func(string) string {
-			if i < 0 || i >= len(mods) {
-				return nil
-			}
-			switch {
-			case !mods[i].Enabled:
-				return colorDim
-			case !mods[i].Deployed:
-				return colorYellow
-			default:
-				return colorGreen
-			}
+	// Row tinting reflects each mod's actual enabled/deployed state
+	// regardless of --verbose: the non-verbose table doesn't SHOW the
+	// ENABLED/DEPLOYED columns, but the mod's health is exactly as real
+	// there as in the verbose table, and a user comparing `lmm list` against
+	// `lmm list -v` should see the identical color for the identical mod
+	// (#193 round 2 - the row-tint decision had only ever been wired up on
+	// the verbose branch, so plain `lmm list` stayed uncolored while `-v`
+	// wasn't).
+	rowColor := func(i int) func(string) string {
+		if i < 0 || i >= len(mods) {
+			return nil
 		}
+		return modRowColor(mods[i].Enabled, mods[i].Deployed)
 	}
 	if err := printTable(&buf, 2, rowColor); err != nil {
 		return fmt.Errorf("writing table: %w", err)

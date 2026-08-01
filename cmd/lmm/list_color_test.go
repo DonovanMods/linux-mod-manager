@@ -6,9 +6,25 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// listNonVerbose runs doList without --verbose and returns stdout - the
+// non-verbose counterpart to pin_visibility_test.go's listVerbose, for
+// tests guarding that row tinting is identical on both paths (#193 round 2:
+// it had only landed on the verbose branch).
+func listNonVerbose(t *testing.T, svc *core.Service, game *domain.Game) string {
+	t.Helper()
+	oldVerbose, oldJSON := verbose, jsonOutput
+	verbose, jsonOutput = false, false
+	t.Cleanup(func() { verbose, jsonOutput = oldVerbose, oldJSON })
+
+	return captureStdout(t, func() error {
+		return doList(&cobra.Command{}, svc, game)
+	})
+}
 
 // seedModWithState installs modID/name with an explicit enabled/deployed
 // combination (seedDeployableMod always seeds Enabled: true, Deployed:
@@ -110,6 +126,73 @@ func TestList_Verbose_ColorNeverBreaksAlignment(t *testing.T) {
 
 	withColorCapableStdout(t, true)
 	colored := listVerbose(t, svc, game, false)
+
+	assert.Equal(t, plain, stripANSI(colored))
+}
+
+// TestList_NonVerbose_PlainWhenColorDisabled mirrors
+// TestList_Verbose_PlainWhenColorDisabled for the non-verbose path.
+func TestList_NonVerbose_PlainWhenColorDisabled(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedModWithState(t, svc, game, "a", "Enabled Deployed", true, true)
+	seedModWithState(t, svc, game, "b", "Disabled Mod", false, false)
+	seedModWithState(t, svc, game, "c", "Enabled Undeployed", true, false)
+
+	out := listNonVerbose(t, svc, game)
+
+	assert.NotContains(t, out, "\x1b[", "plain output must never contain ANSI escapes")
+	assert.Contains(t, out, "Disabled Mod")
+	assert.Contains(t, out, "Enabled Undeployed")
+}
+
+// TestList_NonVerbose_RowTinting is the round-2 regression guard: smoke
+// feedback found `lmm list` (no -v) and `lmm list -v` colored
+// INCONSISTENTLY, because the row-tint decision only ever ran on the
+// verbose branch. Plain `lmm list` doesn't show the ENABLED/DEPLOYED
+// columns, but the mods themselves are still enabled/deployed or not, so
+// the same row-tint rules must apply identically here.
+func TestList_NonVerbose_RowTinting(t *testing.T) {
+	tests := []struct {
+		name     string
+		enabled  bool
+		deployed bool
+		wantANSI string
+	}{
+		{name: "disabled mod row is dimmed", enabled: false, deployed: false, wantANSI: ansiDim},
+		{name: "enabled but undeployed row is yellow", enabled: true, deployed: false, wantANSI: ansiYellow},
+		{name: "enabled and deployed row is green", enabled: true, deployed: true, wantANSI: ansiGreen},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, game := setupDoDeployTest(t)
+			resetColorFlags(t)
+			seedModWithState(t, svc, game, "x", "Target Mod", tt.enabled, tt.deployed)
+
+			withColorCapableStdout(t, true)
+			out := listNonVerbose(t, svc, game)
+
+			row := rowFor(out, "Target Mod")
+			require.NotEmpty(t, row)
+			assert.Contains(t, row, tt.wantANSI)
+		})
+	}
+}
+
+// TestList_NonVerbose_ColorNeverBreaksAlignment mirrors
+// TestList_Verbose_ColorNeverBreaksAlignment for the non-verbose table.
+func TestList_NonVerbose_ColorNeverBreaksAlignment(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	resetColorFlags(t)
+	seedModWithState(t, svc, game, "a", "Enabled Deployed", true, true)
+	seedModWithState(t, svc, game, "b", "Disabled Mod", false, false)
+	seedModWithState(t, svc, game, "c", "Enabled Undeployed", true, false)
+
+	withColorCapableStdout(t, false)
+	plain := listNonVerbose(t, svc, game)
+
+	withColorCapableStdout(t, true)
+	colored := listNonVerbose(t, svc, game)
 
 	assert.Equal(t, plain, stripANSI(colored))
 }
