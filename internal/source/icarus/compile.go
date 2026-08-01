@@ -60,11 +60,15 @@ func Compile(ctx context.Context, dumps *DumpStore, basePakPath, localDumpDir, e
 	// no way to abort without finalizing (Close always serializes and writes
 	// whatever was buffered), so removing the file is the only way to keep
 	// the fail-loud-and-clean contract on this path; the success path
-	// (err == nil here) is untouched.
+	// (err == nil here) is untouched. The writer is closed (best-effort,
+	// error ignored — whatever it wrote is about to be deleted anyway)
+	// before the remove so the fd never leaks and the remove itself works on
+	// platforms (Windows) that refuse to delete a still-open file.
 	defer func() {
 		if err == nil {
 			return
 		}
+		_ = out.Close() //nolint:errcheck
 		if rmErr := os.Remove(outputPakPath); rmErr != nil && !os.IsNotExist(rmErr) {
 			err = fmt.Errorf("%w (additionally, removing partial output %s failed: %v)", err, outputPakPath, rmErr)
 		}

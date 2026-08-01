@@ -13,8 +13,9 @@ import (
 
 // Reader provides read access to an uncompressed, unencrypted UE4-range pak.
 type Reader struct {
-	f       *os.File
-	entries []readerEntry
+	f        *os.File
+	entries  []readerEntry
+	fileSize int64 // total size of the underlying file, for validateAllocSize
 }
 
 type readerEntry struct {
@@ -37,7 +38,9 @@ func Open(path string) (*Reader, error) {
 		return nil, fmt.Errorf("unrealpak: stat %s: %w", path, err)
 	}
 
-	ft, err := readFooter(f, info.Size())
+	fileSize := info.Size()
+
+	ft, err := readFooter(f, fileSize)
 	if err != nil {
 		f.Close() //nolint:errcheck
 		return nil, err
@@ -47,19 +50,33 @@ func Open(path string) (*Reader, error) {
 		return nil, fmt.Errorf("unrealpak: %s: %w: encrypted index", path, ErrUnsupportedFormat)
 	}
 
-	indexBuf, err := readRegion(f, ft.indexOffset, ft.indexSize, ft.indexHash)
+	indexBuf, err := readRegion(f, ft.indexOffset, ft.indexSize, fileSize, ft.indexHash)
 	if err != nil {
 		f.Close() //nolint:errcheck
 		return nil, fmt.Errorf("unrealpak: %s: primary index: %w", path, err)
 	}
 
-	entries, err := parseIndex(f, indexBuf)
+	entries, err := parseIndex(f, indexBuf, fileSize)
 	if err != nil {
 		f.Close() //nolint:errcheck
 		return nil, fmt.Errorf("unrealpak: %s: parsing index: %w", path, err)
 	}
 
-	return &Reader{f: f, entries: entries}, nil
+	return &Reader{f: f, entries: entries, fileSize: fileSize}, nil
+}
+
+// validateAllocSize checks a length field read from pak data before it is
+// used to size a make([]byte, ...) allocation: it must be non-negative and
+// cannot exceed the pak file's own size — no genuine region or payload can be
+// larger than the file that contains it. A field outside that range is
+// corruption or a layout this package doesn't understand, never something to
+// allocate for (a 64-bit size field with its top bit set becomes negative
+// once cast to int64, which is exactly the case this exists to catch).
+func validateAllocSize(size, fileSize int64) (int, error) {
+	if size < 0 || size > fileSize {
+		return 0, fmt.Errorf("%w: size field %d is invalid for a %d-byte pak", ErrUnsupportedFormat, size, fileSize)
+	}
+	return int(size), nil
 }
 
 // readRegion reads size bytes at offset and verifies them against want. Every
@@ -67,11 +84,15 @@ func Open(path string) (*Reader, error) {
 // primary index, and the primary index covers each sub-index. All three gates
 // are enforced — a mismatch is corruption or an unrecognized layout, never
 // something to parse through.
-func readRegion(r io.ReaderAt, offset, size int64, want [20]byte) ([]byte, error) {
-	if offset < 0 || size < 0 {
-		return nil, fmt.Errorf("%w: negative region offset/size", ErrUnsupportedFormat)
+func readRegion(r io.ReaderAt, offset, size, fileSize int64, want [20]byte) ([]byte, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("%w: negative region offset", ErrUnsupportedFormat)
 	}
-	buf := make([]byte, size)
+	n, err := validateAllocSize(size, fileSize)
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, n)
 	if _, err := r.ReadAt(buf, offset); err != nil {
 		return nil, fmt.Errorf("reading region at %d: %w", offset, err)
 	}
@@ -126,7 +147,11 @@ func (r *Reader) ReadFile(path string) ([]byte, error) {
 			return nil, fmt.Errorf("unrealpak: %s: entry header size %d disagrees with index size %d",
 				path, size, e.Size)
 		}
-		buf := make([]byte, e.Size)
+		n, err := validateAllocSize(e.Size, r.fileSize)
+		if err != nil {
+			return nil, fmt.Errorf("unrealpak: %s: %w", path, err)
+		}
+		buf := make([]byte, n)
 		if _, err := r.f.ReadAt(buf, e.offset+storedHeaderSize); err != nil {
 			return nil, fmt.Errorf("unrealpak: reading %s: %w", path, err)
 		}
@@ -190,7 +215,7 @@ func readFooter(r io.ReaderAt, fileSize int64) (footer, error) {
 // index (hash -> record offset) and a full directory index
 // (directory -> file -> record offset). Enumeration uses the directory index,
 // which is the only one that carries real path strings.
-func parseIndex(f io.ReaderAt, index []byte) ([]readerEntry, error) {
+func parseIndex(f io.ReaderAt, index []byte, fileSize int64) ([]readerEntry, error) {
 	c := &cursor{b: index}
 	c.fstring() // MountPoint: recorded for the engine's benefit, unused here
 	numEntries := c.i32()
@@ -216,10 +241,10 @@ func parseIndex(f io.ReaderAt, index []byte) ([]readerEntry, error) {
 	// Verify the path-hash index's hash even though enumeration does not use
 	// it: it is part of the format's integrity chain, and a pak whose
 	// sub-index hashes don't hold is not one to trust.
-	if _, err := readRegion(f, pathHash.offset, pathHash.size, pathHash.hash); err != nil {
+	if _, err := readRegion(f, pathHash.offset, pathHash.size, fileSize, pathHash.hash); err != nil {
 		return nil, fmt.Errorf("path hash index: %w", err)
 	}
-	dirBuf, err := readRegion(f, fullDir.offset, fullDir.size, fullDir.hash)
+	dirBuf, err := readRegion(f, fullDir.offset, fullDir.size, fileSize, fullDir.hash)
 	if err != nil {
 		return nil, fmt.Errorf("full directory index: %w", err)
 	}
@@ -351,7 +376,10 @@ type cursor struct {
 
 func (c *cursor) take(n int) []byte {
 	if c.err != nil {
-		return make([]byte, n)
+		// A corrupted length field can make n negative even on this
+		// already-failed path; make([]byte, negative) panics, so clamp here
+		// too rather than only on the fresh-error branch below.
+		return make([]byte, max(n, 0))
 	}
 	if n < 0 || c.pos+n > len(c.b) {
 		c.err = io.ErrUnexpectedEOF

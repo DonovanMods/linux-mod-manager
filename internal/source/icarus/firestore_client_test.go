@@ -51,6 +51,48 @@ func TestFirestoreClient_ListCollection_Paginates(t *testing.T) {
 	}
 }
 
+// nextPageToken is opaque server-issued data, not guaranteed URL-safe as-is;
+// listCollection must query-escape it before appending it to the request URL
+// rather than concatenating it raw. Round-trips a token containing
+// characters ("&", "=", "+", "/", "?") that would corrupt the query string
+// if not escaped, and asserts the mock server decodes it back to the exact
+// original value.
+func TestFirestoreClient_ListCollection_EscapesPageToken(t *testing.T) {
+	const rawToken = "page&two=x+y/z?w"
+	pages := []map[string]any{
+		{
+			"documents": []map[string]any{
+				{"name": "projects/p/databases/(default)/documents/mods/abc", "fields": map[string]any{}},
+			},
+			"nextPageToken": rawToken,
+		},
+		{
+			"documents": []map[string]any{},
+		},
+	}
+	callCount := 0
+	var gotPageToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if callCount == 1 {
+			gotPageToken = r.URL.Query().Get("pageToken")
+		}
+		page := pages[callCount]
+		callCount++
+		json.NewEncoder(w).Encode(page) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	c := newFirestoreClient("test-project", srv.Client())
+	c.baseURL = srv.URL
+
+	if _, err := c.listCollection(context.Background(), "mods"); err != nil {
+		t.Fatalf("listCollection: %v", err)
+	}
+	if gotPageToken != rawToken {
+		t.Errorf("server decoded pageToken = %q, want %q (round-trip through query-escaping)", gotPageToken, rawToken)
+	}
+}
+
 func TestFirestoreClient_GetDocument_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

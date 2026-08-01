@@ -229,3 +229,120 @@ func TestReader_ReadFile_RejectsCompressedEntry(t *testing.T) {
 		t.Fatalf("ReadFile error = %v, want ErrUnsupportedFormat", err)
 	}
 }
+
+func TestValidateAllocSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		size     int64
+		fileSize int64
+		wantErr  bool
+		want     int
+	}{
+		{"valid, well within file", 10, 1000, false, 10},
+		{"valid, exactly file size", 1000, 1000, false, 1000},
+		{"negative (e.g. a 64-bit field with its top bit set, cast to int64)", -1, 1000, true, 0},
+		{"exceeds file size", 1001, 1000, true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := validateAllocSize(tt.size, tt.fileSize)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("validateAllocSize(%d, %d) = %d, nil; want error", tt.size, tt.fileSize, got)
+				}
+				if !errors.Is(err, ErrUnsupportedFormat) {
+					t.Errorf("error = %v, want ErrUnsupportedFormat", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateAllocSize(%d, %d): %v", tt.size, tt.fileSize, err)
+			}
+			if got != tt.want {
+				t.Errorf("validateAllocSize(%d, %d) = %d, want %d", tt.size, tt.fileSize, got, tt.want)
+			}
+		})
+	}
+}
+
+// readRegion must reject an invalid size (or offset) before ever attempting
+// to read — a corrupted size field must not drive an unbounded allocation or
+// even a spurious I/O attempt. panicReaderAt fails the test if readRegion
+// reaches the ReadAt call at all.
+type readerAtFunc func([]byte, int64) (int, error)
+
+func (f readerAtFunc) ReadAt(p []byte, off int64) (int, error) { return f(p, off) }
+
+func TestReadRegion_RejectsInvalidSizeOrOffsetBeforeReading(t *testing.T) {
+	panicReader := readerAtFunc(func(p []byte, off int64) (int, error) {
+		panic("readRegion must not read when offset/size is invalid")
+	})
+	var want [20]byte
+
+	if _, err := readRegion(panicReader, 0, -1, 1000, want); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Errorf("negative size: error = %v, want ErrUnsupportedFormat", err)
+	}
+	if _, err := readRegion(panicReader, 0, 2000, 1000, want); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Errorf("oversized size: error = %v, want ErrUnsupportedFormat", err)
+	}
+	if _, err := readRegion(panicReader, -1, 10, 1000, want); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Errorf("negative offset: error = %v, want ErrUnsupportedFormat", err)
+	}
+}
+
+// ReadFile must reject a corrupted entry-size field before allocating the
+// payload buffer, whether the corruption makes the field negative (a 64-bit
+// UncompressedSize with its top bit set, cast to int64) or merely larger
+// than the file that supposedly contains it. Constructed directly against a
+// Reader/readerEntry rather than through a full on-disk fixture: the
+// interesting case is an internally-consistent header+index pair that still
+// disagrees with reality, not a hash-gated corruption (which a different,
+// already-tested path already catches).
+func TestReader_ReadFile_RejectsInvalidSizeField(t *testing.T) {
+	tests := []struct {
+		name     string
+		size     int64
+		fileSize int64
+	}{
+		{"negative size", -1, 1000},
+		{"size exceeding the file it's claimed to live in", 1 << 40, 1000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hdr := storedEntryHeader(tt.size, []byte("irrelevant")) // payload is never read: the guard fires first
+			pakPath := filepath.Join(t.TempDir(), "test.pak")
+			if err := os.WriteFile(pakPath, hdr, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.Open(pakPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close() //nolint:errcheck
+
+			r := &Reader{
+				f:        f,
+				fileSize: tt.fileSize,
+				entries: []readerEntry{
+					{FileEntry: FileEntry{Path: "x.json", Size: tt.size}, offset: 0, method: 0},
+				},
+			}
+
+			if _, err := r.ReadFile("x.json"); !errors.Is(err, ErrUnsupportedFormat) {
+				t.Fatalf("ReadFile error = %v, want ErrUnsupportedFormat", err)
+			}
+		})
+	}
+}
+
+// A cursor that has already latched an error must not panic when asked to
+// take a negative length (reachable via a corrupted length field parsed
+// earlier in the same structure, e.g. fstring's negative-length check
+// latches c.err and later cursor calls in the same parse can still run).
+func TestCursor_Take_ClampsNegativeLengthOnErrLatchedPath(t *testing.T) {
+	c := &cursor{b: []byte{1, 2, 3}, err: errors.New("boom")}
+	got := c.take(-5) // must not panic
+	if len(got) != 0 {
+		t.Errorf("take(-5) on an err-latched cursor = %v, want empty", got)
+	}
+}

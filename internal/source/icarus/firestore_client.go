@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -42,9 +43,9 @@ func (c *firestoreClient) listCollection(ctx context.Context, collection string)
 	var all []firestoreDoc
 	pageToken := ""
 	for {
-		url := fmt.Sprintf("%s/%s?pageSize=200", c.documentsURL(), collection)
+		reqURL := fmt.Sprintf("%s/%s?pageSize=200", c.documentsURL(), collection)
 		if pageToken != "" {
-			url += "&pageToken=" + pageToken
+			reqURL += "&pageToken=" + url.QueryEscape(pageToken)
 		}
 		var page struct {
 			Documents []struct {
@@ -53,7 +54,7 @@ func (c *firestoreClient) listCollection(ctx context.Context, collection string)
 			} `json:"documents"`
 			NextPageToken string `json:"nextPageToken"`
 		}
-		if err := c.getJSON(ctx, url, &page); err != nil {
+		if err := c.getJSON(ctx, reqURL, &page); err != nil {
 			return nil, fmt.Errorf("listing %s: %w", collection, err)
 		}
 		for _, d := range page.Documents {
