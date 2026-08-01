@@ -266,8 +266,8 @@ func gameFromDetected(g steam.DetectedGame) (*domain.Game, error) {
 	}
 	deployMode, ok := domain.ParseDeployMode(g.DeployMode)
 	if !ok {
-		return nil, fmt.Errorf("%w: steam-games.yaml: game %q: deploy_mode %q (valid: extract, copy, compile)",
-			domain.ErrInvalidDeployMode, g.Slug, g.DeployMode)
+		return nil, fmt.Errorf("%w: steam-games.yaml: game %q: deploy_mode %q (valid: %s)",
+			domain.ErrInvalidDeployMode, g.Slug, g.DeployMode, domain.ValidDeployModes)
 	}
 	return &domain.Game{
 		ID:          g.Slug,

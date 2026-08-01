@@ -89,13 +89,13 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 	for id, cfg := range gamesFile.Games {
 		linkMethod, ok := domain.ParseLinkMethod(cfg.LinkMethod)
 		if !ok {
-			return nil, fmt.Errorf("%w: games.yaml: game %q: link_method %q (valid: symlink, hardlink, copy)",
-				domain.ErrInvalidLinkMethod, id, cfg.LinkMethod)
+			return nil, fmt.Errorf("%w: games.yaml: game %q: link_method %q (valid: %s)",
+				domain.ErrInvalidLinkMethod, id, cfg.LinkMethod, domain.ValidLinkMethods)
 		}
 		deployMode, ok := domain.ParseDeployMode(cfg.DeployMode)
 		if !ok {
-			return nil, fmt.Errorf("%w: games.yaml: game %q: deploy_mode %q (valid: extract, copy)",
-				domain.ErrInvalidDeployMode, id, cfg.DeployMode)
+			return nil, fmt.Errorf("%w: games.yaml: game %q: deploy_mode %q (valid: %s)",
+				domain.ErrInvalidDeployMode, id, cfg.DeployMode, domain.ValidDeployModes)
 		}
 		games[id] = &domain.Game{
 			ID:                 id,

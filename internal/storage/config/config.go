@@ -46,8 +46,8 @@ func Load(configDir string) (*Config, error) {
 	if cfg.LinkMethodStr != "" {
 		method, ok := domain.ParseLinkMethod(cfg.LinkMethodStr)
 		if !ok {
-			return nil, fmt.Errorf("%w: config.yaml: default_link_method %q (valid: symlink, hardlink, copy)",
-				domain.ErrInvalidLinkMethod, cfg.LinkMethodStr)
+			return nil, fmt.Errorf("%w: config.yaml: default_link_method %q (valid: %s)",
+				domain.ErrInvalidLinkMethod, cfg.LinkMethodStr, domain.ValidLinkMethods)
 		}
 		cfg.DefaultLinkMethod = method
 	}

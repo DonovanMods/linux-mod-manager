@@ -137,8 +137,8 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 
 	linkMethod, ok := domain.ParseLinkMethod(cfg.LinkMethod)
 	if !ok {
-		return nil, fmt.Errorf("%w: profile %q (game %q): link_method %q (valid: symlink, hardlink, copy)",
-			domain.ErrInvalidLinkMethod, profileName, gameID, cfg.LinkMethod)
+		return nil, fmt.Errorf("%w: profile %q (game %q): link_method %q (valid: %s)",
+			domain.ErrInvalidLinkMethod, profileName, gameID, cfg.LinkMethod, domain.ValidLinkMethods)
 	}
 
 	profile := &domain.Profile{
@@ -302,8 +302,8 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 
 	linkMethod, ok := domain.ParseLinkMethod(exported.LinkMethod)
 	if !ok {
-		return nil, fmt.Errorf("%w: imported profile %q (game %q): link_method %q (valid: symlink, hardlink, copy)",
-			domain.ErrInvalidLinkMethod, exported.Name, exported.GameID, exported.LinkMethod)
+		return nil, fmt.Errorf("%w: imported profile %q (game %q): link_method %q (valid: %s)",
+			domain.ErrInvalidLinkMethod, exported.Name, exported.GameID, exported.LinkMethod, domain.ValidLinkMethods)
 	}
 
 	p := &domain.Profile{

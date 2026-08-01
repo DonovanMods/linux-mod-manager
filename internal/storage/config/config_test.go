@@ -148,6 +148,10 @@ games:
 	assert.Contains(t, err.Error(), "skyrim-se")
 	assert.Contains(t, err.Error(), "deploy_mode")
 	assert.Contains(t, err.Error(), "compil")
+	// Review #172 round 1: the valid-options list had gone stale (pre-rebase
+	// "extract, copy" only) and silently dropped "compile" after the Icarus
+	// epic merge added it as a real DeployMode value.
+	assert.Contains(t, err.Error(), "compile", "valid-options list must include compile")
 }
 
 func TestSaveGame(t *testing.T) {
