@@ -17,6 +17,14 @@ type zlibFixture struct {
 	path   string
 	blocks [][]byte // each block's PLAINTEXT; each is deflated independently
 	method int32    // 1-based index into the methods table below
+	// declaredUncompressed, when non-zero, overrides the UncompressedSize
+	// this fixture declares in both its on-disk header and its encoded
+	// index record, independent of the real sum of block plaintext lengths
+	// — for fixtures that need to lie about their size (decompression-bomb
+	// and size-cap regression tests) without needing real gigabytes of
+	// content. Zero means "use the real sum," which every genuine fixture
+	// in this file has anyway (none declares a real zero-length entry).
+	declaredUncompressed int64
 }
 
 // writeMethodPak hand-builds a version-11 pak whose footer declares methods and
@@ -53,6 +61,9 @@ func writeMethodPak(t *testing.T, methods []string, fixtures []zlibFixture) stri
 			payload.Write(zbuf.Bytes())
 			spans = append(spans, span{start, hdrSize + int64(payload.Len())})
 			uncompressed += int64(len(plain))
+		}
+		if fx.declaredUncompressed != 0 {
+			uncompressed = fx.declaredUncompressed
 		}
 		size := int64(payload.Len())
 		sum := sha1.Sum(payload.Bytes()) //nolint:gosec
@@ -263,5 +274,97 @@ func TestReadFile_ZlibCorruptPayload_FailsHashGate(t *testing.T) {
 
 	if _, err := r.ReadFile("c/D.json"); err == nil {
 		t.Fatal("expected an error for a corrupted compressed payload, got nil")
+	}
+}
+
+// A block that decompresses to more bytes than the entry's own declared
+// UncompressedSize (a lying header, or an over-inflating compression bomb)
+// must be caught mid-decompress, not silently truncated or allowed to
+// over-allocate — #175 final review ledger item 1. The real block content
+// is genuinely 1000 bytes; the fixture just declares (and the index/header
+// therefore both agree on) a 5-byte size, which is what readZlib actually
+// checks against as it reads.
+func TestReadFile_ZlibBlockExceedsDeclaredSize_Errors(t *testing.T) {
+	huge := bytes.Repeat([]byte("A"), 1000)
+	p := writeMethodPak(t, []string{"Zlib"}, []zlibFixture{
+		{path: "bomb/D.json", blocks: [][]byte{huge}, method: 1, declaredUncompressed: 5},
+	})
+
+	r, err := Open(p)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+
+	_, err = r.ReadFile("bomb/D.json")
+	if err == nil {
+		t.Fatal("expected an error for a block decompressing past the declared uncompressed size, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds the declared uncompressed size") {
+		t.Errorf("error %q should name the size mismatch", err)
+	}
+}
+
+// An entry declaring an UncompressedSize over maxUncompressedEntrySize must
+// be refused before any decompression is attempted — #175 final review
+// ledger item 2. The real block content is tiny; only the declared size
+// needs to be oversized; the cap check runs before the block loop ever
+// touches the payload, so no gigabytes of real content are needed.
+func TestReadFile_ZlibUncompressedSizeExceedsCap_IsUnsupported(t *testing.T) {
+	body := []byte("tiny")
+	p := writeMethodPak(t, []string{"Zlib"}, []zlibFixture{
+		{path: "big/Huge.json", blocks: [][]byte{body}, method: 1, declaredUncompressed: maxUncompressedEntrySize + 1},
+	})
+
+	r, err := Open(p)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+
+	_, err = r.ReadFile("big/Huge.json")
+	if !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("err = %v, want ErrUnsupportedFormat", err)
+	}
+	if !strings.Contains(err.Error(), "exceeds the") {
+		t.Errorf("error %q should name the cap", err)
+	}
+}
+
+// A block whose (start, end) span falls outside the entry's own payload
+// region must be refused, never sliced out of range — #175 final review
+// ledger item 3. Corrupts the single block's "end" field (at header byte
+// offset 60, per readZlib's hdr[60+i*16:68+i*16] for i=0) to 0, which is
+// less than "start" (== hdrSize == compressedHeaderSize(1), unaffected by
+// this edit), tripping the end < start bounds check — independent of the
+// SHA1 hash gate, since only the header's block-span table is touched, not
+// the actual compressed payload bytes the hash covers.
+func TestReadFile_ZlibBlockSpanOutsidePayload_Errors(t *testing.T) {
+	p := writeMethodPak(t, []string{"Zlib"}, []zlibFixture{
+		{path: "c/D.json", blocks: [][]byte{[]byte("hello world")}, method: 1},
+	})
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 60; i < 68; i++ {
+		raw[i] = 0
+	}
+	if err := os.WriteFile(p, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Open(p)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+
+	_, err = r.ReadFile("c/D.json")
+	if err == nil {
+		t.Fatal("expected an error for a block span outside the entry's payload, got nil")
+	}
+	if !strings.Contains(err.Error(), "outside the entry's payload") {
+		t.Errorf("error %q should name the bounds violation", err)
 	}
 }

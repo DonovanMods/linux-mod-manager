@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -104,6 +105,126 @@ func TestIcarus_GetModFiles_ReturnsExmodzAndPak(t *testing.T) {
 	}
 	if !files[0].IsPrimary {
 		t.Error("single file should be marked primary")
+	}
+}
+
+// TestIcarus_GetMod pins the happy path: a single Firestore document maps
+// through mapDoc into the domain.Mod fields Search/GetModFiles callers
+// expect. GetMod's queryGameID parameter is deliberately not exercised here
+// (tracked/accepted elsewhere, per this sweep's scope).
+func TestIcarus_GetMod(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"name": "projects/p/databases/(default)/documents/mods/abc",
+			"fields": map[string]any{
+				"name":    map[string]any{"stringValue": "Bear Mount"},
+				"author":  map[string]any{"stringValue": "Jimk72"},
+				"version": map[string]any{"stringValue": "3.3"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	src := New(srv.Client(), "test-project")
+	src.firestore.baseURL = srv.URL
+
+	mod, err := src.GetMod(context.Background(), "icarus", "abc")
+	if err != nil {
+		t.Fatalf("GetMod: %v", err)
+	}
+	if mod.ID != "abc" || mod.Name != "Bear Mount" || mod.Author != "Jimk72" || mod.Version != "3.3" {
+		t.Errorf("GetMod = %+v, want ID=abc Name=Bear Mount Author=Jimk72 Version=3.3", mod)
+	}
+	if mod.GameID != "icarus" {
+		t.Errorf("GameID = %q, want icarus", mod.GameID)
+	}
+}
+
+// TestIcarus_GetDownloadURL table-drives both the success path (fileID
+// present, either "pak" or "exmodz") and the not-found error path.
+func TestIcarus_GetDownloadURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"name": "projects/p/databases/(default)/documents/mods/abc",
+			"fields": map[string]any{
+				"files": map[string]any{"mapValue": map[string]any{"fields": map[string]any{
+					"pak":    map[string]any{"stringValue": "https://x/bear.pak"},
+					"exmodz": map[string]any{"stringValue": "https://x/bear.exmodz"},
+				}}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	src := New(srv.Client(), "test-project")
+	src.firestore.baseURL = srv.URL
+	mod := &domain.Mod{ID: "abc", GameID: "icarus"}
+
+	tests := []struct {
+		name    string
+		fileID  string
+		want    string
+		wantErr bool
+	}{
+		{name: "pak file ID resolves", fileID: "pak", want: "https://x/bear.pak"},
+		{name: "exmodz file ID resolves", fileID: "exmodz", want: "https://x/bear.exmodz"},
+		{name: "unrecognized file ID errors", fileID: "nope", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := src.GetDownloadURL(context.Background(), mod, tt.fileID)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("GetDownloadURL(%q) = %q, nil; want an error", tt.fileID, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetDownloadURL(%q): %v", tt.fileID, err)
+			}
+			if got != tt.want {
+				t.Errorf("GetDownloadURL(%q) = %q, want %q", tt.fileID, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIcarus_CheckUpdates drives two installed mods against a per-ID
+// catalog: one whose stored version is behind the catalog's (an update is
+// expected) and one that already matches (no update).
+func TestIcarus_CheckUpdates(t *testing.T) {
+	catalog := map[string]map[string]any{
+		"abc": {"name": map[string]any{"stringValue": "Bear Mount"}, "version": map[string]any{"stringValue": "3.3"}},
+		"def": {"name": map[string]any{"stringValue": "Wolf Pack"}, "version": map[string]any{"stringValue": "1.0"}},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := path.Base(r.URL.Path)
+		fields, ok := catalog[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"name":   "projects/p/databases/(default)/documents/mods/" + id,
+			"fields": fields,
+		})
+	}))
+	defer srv.Close()
+
+	src := New(srv.Client(), "test-project")
+	src.firestore.baseURL = srv.URL
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "abc", Version: "3.2"}}, // catalog has 3.3: newer, update expected
+		{Mod: domain.Mod{ID: "def", Version: "1.0"}}, // catalog has 1.0: same, no update
+	}
+
+	updates, err := src.CheckUpdates(context.Background(), installed)
+	if err != nil {
+		t.Fatalf("CheckUpdates: %v", err)
+	}
+	if len(updates) != 1 || updates[0].InstalledMod.ID != "abc" || updates[0].NewVersion != "3.3" {
+		t.Fatalf("updates = %+v, want exactly one update for abc -> 3.3", updates)
 	}
 }
 
