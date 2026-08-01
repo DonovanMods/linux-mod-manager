@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -279,6 +280,27 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, insta
 // stale on-disk bytes (a symlink deployment already reflects the new cache
 // content once the atomic swap above lands, so this step is a correctness
 // no-op for it, not a wasted one).
+//
+// ClassifyRetainedSourceStatError interprets os.Stat's error on a retained
+// compile source path (#196 review): only a genuine "not exist" means
+// missing (ok=true, err=nil) and falls through to the redownload/local-
+// fails-loud logic below. Any OTHER stat error - permission denied, an I/O
+// error, ... - is NOT "missing": folding it into the same code path would
+// misreport a real filesystem problem as "re-import to restore it" or
+// silently trigger a redownload the retained file didn't actually warrant.
+// Such an error is returned instead, wrapped with %w so callers/tests can
+// still errors.Is/As through to the original. Exported so it can be unit
+// tested directly (deps/cache.go-style: this is a pure classifier, not a
+// filesystem operation).
+func ClassifyRetainedSourceStatError(statErr error) (missing bool, err error) {
+	if statErr == nil {
+		return false, nil
+	}
+	if errors.Is(statErr, fs.ErrNotExist) {
+		return true, nil
+	}
+	return false, statErr
+}
 func (s *Service) ApplyRecompile(ctx context.Context, game *domain.Game, profileName string, mod domain.InstalledMod, progress func(DeployProgress)) (result *UpdateApplyResult, err error) {
 	result = &UpdateApplyResult{}
 	emit := func(p DeployProgress) {
@@ -352,7 +374,12 @@ func (s *Service) ApplyRecompile(ctx context.Context, game *domain.Game, profile
 
 		retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
 		sourcePath := retainedPath
-		if _, statErr := os.Stat(retainedPath); statErr != nil {
+		_, statErr := os.Stat(retainedPath)
+		missing, statErr := ClassifyRetainedSourceStatError(statErr)
+		if statErr != nil {
+			return result, fmt.Errorf("%s: checking retained compile source for %q: %w", mod.Name, fileID, statErr)
+		}
+		if missing {
 			if mod.SourceID == domain.SourceLocal {
 				return result, fmt.Errorf("%s: retained compile source for %q is missing and this mod has no remote source to re-download from - re-import the .exmodz to restore it", mod.Name, fileID)
 			}
@@ -379,7 +406,15 @@ func (s *Service) ApplyRecompile(ctx context.Context, game *domain.Game, profile
 				return result, terr
 			}
 			defer os.RemoveAll(tempDir) //nolint:errcheck
-			dlPath := filepath.Join(tempDir, match.FileName)
+			// filepath.Base: match.FileName is source-controlled (a
+			// DownloadableFile from mod.SourceID's own listing) and must
+			// not be trusted as a path component verbatim - an entry like
+			// "../../evil.exmodz" would otherwise escape tempDir (#196
+			// review). Same sanitization idiom already used elsewhere in
+			// this package for a source-derived name (importer.go's
+			// filepath.Base(archivePath), service.go's
+			// filepath.Base(localPath) fallback).
+			dlPath := filepath.Join(tempDir, filepath.Base(match.FileName))
 			evt := base
 			evt.Phase, evt.Detail = UpdateNote, fmt.Sprintf("retained compile source missing for %s - re-downloading", destName)
 			emit(evt)
