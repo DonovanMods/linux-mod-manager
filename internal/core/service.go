@@ -500,7 +500,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
-	if game.DeployMode == domain.DeployCompile {
+	if game.DeployMode == domain.DeployCompile && isExmodzFile(file.FileName) {
 		compiler, ok := src.(source.Compiler)
 		if !ok {
 			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement Compiler", src.ID(), game.ID)
@@ -918,6 +918,17 @@ func commitStagedCache(cachePath, stagePath string) error {
 		return fmt.Errorf("removing old cache backup: %w", err)
 	}
 	return nil
+}
+
+// isExmodzFile reports whether fileName is a compile-eligible archive
+// (case-insensitive ".exmodz" suffix). DeployCompile games can also serve
+// plain, already-built ".pak" files (icarus.GetModFiles enumerates "pak"
+// before "exmodz") - those must NOT be routed through Compile, which expects
+// an .exmodz diff (#136 review, Task 13 fix round 1): a prebuilt pak falls
+// through to the pre-compile extract/copy logic unchanged, exactly as if
+// DeployMode were not DeployCompile at all.
+func isExmodzFile(fileName string) bool {
+	return strings.HasSuffix(strings.ToLower(fileName), ".exmodz")
 }
 
 // resolveBasePak locates the currently-installed game's base pak for
