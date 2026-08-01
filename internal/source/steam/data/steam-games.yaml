@@ -2,9 +2,9 @@
 # Add or override entries in ~/.config/lmm/steam-games.yaml without rebuilding.
 # Keys are Steam App IDs (strings). mod_path is relative to game install (empty = game root).
 # nexus_id is optional (omit for games with no NexusMods presence, e.g. Icarus).
-# deploy_mode and sources are optional, generated-games.yaml passthroughs
-# (games.yaml's deploy_mode/sources: see docs/configuration.md); omit both to
-# get today's default shape ({nexusmods: <nexus_id>}, deploy_mode extract).
+# deploy_mode and sources are optional passthroughs to the generated
+# games.yaml entry's own deploy_mode/sources (see docs/configuration.md);
+# omit both to get today's default shape ({nexusmods: <nexus_id>}, deploy_mode extract).
 "489830":
   slug: skyrim-se
   name: Skyrim Special Edition

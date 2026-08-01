@@ -72,11 +72,13 @@ func TestGameFromDetected(t *testing.T) {
 	}
 }
 
-// TestGameFromDetected_Icarus_ProducesReadmeEquivalentGamesYAML proves the
+// TestGameFromDetected_Icarus_ProducesReadmeEquivalentValues proves the
 // #177 acceptance criterion directly: saving a detected Icarus produces a
-// games.yaml block equivalent to the README's hand-written example (the one
-// users no longer need to type themselves).
-func TestGameFromDetected_Icarus_ProducesReadmeEquivalentGamesYAML(t *testing.T) {
+// games.yaml entry whose values match the README's hand-written example
+// (the one users no longer need to type themselves) — this asserts the
+// parsed field values, not the YAML's byte-for-byte formatting, since only
+// the values are actually part of the contract.
+func TestGameFromDetected_Icarus_ProducesReadmeEquivalentValues(t *testing.T) {
 	dir := t.TempDir()
 	detected := steam.DetectedGame{
 		Slug:        "icarus",
