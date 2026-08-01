@@ -142,3 +142,19 @@ func CapabilitiesOf(src ModSource) Capabilities {
 type DownloadHeaderProvider interface {
 	DownloadHeaders(fileURL string) map[string]string
 }
+
+// Compiler is implemented by sources whose downloaded files need
+// transforming into a different artifact before deployment (Icarus's
+// .exmodz -> .pak). Service consults it, when DeployMode is DeployCompile,
+// after downloading but before committing the file to cache — the result
+// replaces the downloaded file in cache, so everything downstream (Install,
+// the linker) treats it exactly like a DeployCopy file.
+//
+// basePakPath and baseDataPath are both resolved by the caller from the game's
+// config: basePakPath from game.InstallPath, baseDataPath from the game's
+// optional data_dump_path ("" when unset — see Step 6b). sourceFilePath is the
+// just-downloaded file; outputPath is where the compiled result must be
+// written.
+type Compiler interface {
+	Compile(ctx context.Context, basePakPath, baseDataPath, sourceFilePath, outputPath string) error
+}

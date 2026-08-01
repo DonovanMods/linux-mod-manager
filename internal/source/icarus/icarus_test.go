@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -81,5 +82,32 @@ func TestIcarus_GetModFiles_ReturnsExmodzAndPak(t *testing.T) {
 	}
 	if !files[0].IsPrimary {
 		t.Error("single file should be marked primary")
+	}
+}
+
+// TestIcarus_Compile_WithoutDataDir_FailsLoudly pins that a source
+// constructed via New but never wired with SetDataDir (e.g. a registration
+// path that forgets the optional-setter call) fails loudly instead of
+// panicking on a nil dumps store.
+func TestIcarus_Compile_WithoutDataDir_FailsLoudly(t *testing.T) {
+	src := New(nil, "test-project")
+
+	err := src.Compile(context.Background(), "/base.pak", "", "/mod.exmodz", "/out.pak")
+	if err == nil {
+		t.Fatal("Compile: expected an error when SetDataDir was never called")
+	}
+	if !strings.Contains(err.Error(), "SetDataDir") {
+		t.Errorf("Compile error = %q, want it to mention SetDataDir", err.Error())
+	}
+}
+
+// TestIcarus_SetDataDir_ConstructsDumpStore pins that SetDataDir wires a
+// non-nil dumps store, so a real registration call unblocks Compile.
+func TestIcarus_SetDataDir_ConstructsDumpStore(t *testing.T) {
+	src := New(nil, "test-project")
+	src.SetDataDir(t.TempDir())
+
+	if src.dumps == nil {
+		t.Fatal("SetDataDir: dumps store still nil")
 	}
 }

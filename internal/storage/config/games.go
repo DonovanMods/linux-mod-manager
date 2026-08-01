@@ -49,14 +49,15 @@ type GameHooksYAML struct {
 
 // GameConfig is the YAML representation of a game
 type GameConfig struct {
-	Name        string            `yaml:"name"`
-	InstallPath string            `yaml:"install_path"`
-	ModPath     string            `yaml:"mod_path"`
-	Sources     map[string]string `yaml:"sources"`
-	LinkMethod  string            `yaml:"link_method,omitempty"`
-	CachePath   string            `yaml:"cache_path,omitempty"`
-	Hooks       GameHooksYAML     `yaml:"hooks,omitempty"`
-	DeployMode  string            `yaml:"deploy_mode,omitempty"`
+	Name         string            `yaml:"name"`
+	InstallPath  string            `yaml:"install_path"`
+	ModPath      string            `yaml:"mod_path"`
+	Sources      map[string]string `yaml:"sources"`
+	LinkMethod   string            `yaml:"link_method,omitempty"`
+	CachePath    string            `yaml:"cache_path,omitempty"`
+	Hooks        GameHooksYAML     `yaml:"hooks,omitempty"`
+	DeployMode   string            `yaml:"deploy_mode,omitempty"`
+	BaseDataPath string            `yaml:"data_dump_path,omitempty"`
 }
 
 // GamesFile is the top-level games.yaml structure
@@ -97,6 +98,7 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 			LinkMethodExplicit: cfg.LinkMethod != "",
 			CachePath:          ExpandPath(cfg.CachePath),
 			DeployMode:         domain.ParseDeployMode(cfg.DeployMode),
+			BaseDataPath:       ExpandPath(cfg.BaseDataPath),
 			Hooks: domain.GameHooks{
 				Install: domain.HookConfig{
 					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),
@@ -134,11 +136,12 @@ func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 
 	for id, game := range games {
 		cfg := GameConfig{
-			Name:        game.Name,
-			InstallPath: game.InstallPath,
-			ModPath:     game.ModPath,
-			Sources:     game.SourceIDs,
-			CachePath:   game.CachePath,
+			Name:         game.Name,
+			InstallPath:  game.InstallPath,
+			ModPath:      game.ModPath,
+			Sources:      game.SourceIDs,
+			CachePath:    game.CachePath,
+			BaseDataPath: game.BaseDataPath,
 			Hooks: GameHooksYAML{
 				Install: HookConfigYAML{
 					BeforeAll:  game.Hooks.Install.BeforeAll,

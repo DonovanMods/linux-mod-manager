@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -19,6 +20,7 @@ const gameID = "icarus"
 // API described in docs/plans/2026-07-29-icarus-exmod-pak-research.md.
 type Icarus struct {
 	firestore *firestoreClient
+	dumps     *DumpStore // nil until SetDataDir is called
 }
 
 // New constructs an Icarus source. projectID is the Firestore project ID
@@ -29,10 +31,35 @@ func New(httpClient *http.Client, projectID string) *Icarus {
 	return &Icarus{firestore: newFirestoreClient(projectID, httpClient)}
 }
 
+// SetDataDir wires the base-table dump store's cache directory once the
+// service's data directory is known. This is a post-construction setter
+// rather than a New parameter because Task 8 froze New(httpClient, projectID)
+// at exactly those two params — Task 9's call site already depends on that
+// signature — so the data dir arrives the same way API keys do: an optional
+// setter the registration pipeline calls when present (cmd/lmm/root.go's
+// registerSource, mirroring its existing SetAPIKey wiring).
+func (s *Icarus) SetDataDir(dataDir string) {
+	s.dumps = newDumpStore(filepath.Join(dataDir, "icarus", "datadump"), s.firestore.httpClient)
+}
+
 var (
 	_ source.ModSource          = (*Icarus)(nil)
 	_ source.CapabilityReporter = (*Icarus)(nil)
+	_ source.Compiler           = (*Icarus)(nil)
 )
+
+// Compile implements source.Compiler by delegating to the package-level
+// Compile function (Task 12) — basePakPath/baseDataPath/sourceFilePath/
+// outputPath map directly onto Compile's basePakPath/localDumpDir/exmodzPath/
+// outputPakPath parameters. The base-table dump store (Task 12a) is supplied
+// from the source itself; the per-game dump-directory override arrives as
+// baseDataPath, since only the caller has the game's config.
+func (s *Icarus) Compile(ctx context.Context, basePakPath, baseDataPath, sourceFilePath, outputPath string) error {
+	if s.dumps == nil {
+		return fmt.Errorf("source %q: not initialized with a data directory (SetDataDir was never called)", s.ID())
+	}
+	return Compile(ctx, s.dumps, basePakPath, baseDataPath, sourceFilePath, outputPath)
+}
 
 func (s *Icarus) ID() string   { return "icarus" }
 func (s *Icarus) Name() string { return "Icarus (Project Daedalus)" }
