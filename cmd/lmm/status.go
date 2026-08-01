@@ -237,7 +237,11 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 	if defaultProfile, err := pm.GetDefault(gameID); err == nil {
 		// Mirror the text twin (showGameStatus): the effective method is the
 		// active profile's resolution (profile > game > global, #155).
-		out.EffectiveLinkMethod = service.GetEffectiveLinkMethod(game, defaultProfile.Name).String()
+		method, err := service.GetEffectiveLinkMethod(game, defaultProfile.Name)
+		if err != nil {
+			return err
+		}
+		out.EffectiveLinkMethod = method.String()
 		if defaultProfile.LinkMethodExplicit {
 			out.LinkMethodSource = "profile"
 		}

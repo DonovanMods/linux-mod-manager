@@ -1073,13 +1073,26 @@ func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
 // global default (#81). A missing or unreadable profile degrades to the
 // game-level resolution rather than erroring - callers resolving a method are
 // deploying, not validating, and the profile's absence is diagnosed elsewhere.
-// The CLI --method override sits above all of these and is applied by callers
+// An invalid link_method value in an otherwise-loadable profile is different:
+// #172 made that a fail-loud load-time error at every explicit LoadProfile
+// call site, and degrading here would deploy with the wrong method with
+// nothing telling the caller anything was wrong - so that one LoadProfile
+// failure mode (errors.Is domain.ErrInvalidLinkMethod) is returned as an
+// error instead of folding into the silent-degrade path (#189). The CLI
+// --method override sits above all of these and is applied by callers
 // (see DeployOptions.LinkMethod).
-func (s *Service) GetEffectiveLinkMethod(game *domain.Game, profileName string) domain.LinkMethod {
-	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil && profile.LinkMethodExplicit {
-		return profile.LinkMethod
+func (s *Service) GetEffectiveLinkMethod(game *domain.Game, profileName string) (domain.LinkMethod, error) {
+	profile, err := config.LoadProfile(s.configDir, game.ID, profileName)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidLinkMethod) {
+			return 0, fmt.Errorf("resolving effective link method: %w", err)
+		}
+		return s.GetGameLinkMethod(game), nil
 	}
-	return s.GetGameLinkMethod(game)
+	if profile.LinkMethodExplicit {
+		return profile.LinkMethod, nil
+	}
+	return s.GetGameLinkMethod(game), nil
 }
 
 // GetInstaller returns an Installer configured for the given game
@@ -1089,9 +1102,14 @@ func (s *Service) GetInstaller(game *domain.Game) *Installer {
 
 // GetInstallerForProfile returns an Installer whose linker honors
 // profileName's effective link method (GetEffectiveLinkMethod) - the
-// profile-aware companion to GetInstaller.
-func (s *Service) GetInstallerForProfile(game *domain.Game, profileName string) *Installer {
-	return s.NewInstallerWithLinker(game, s.GetLinker(s.GetEffectiveLinkMethod(game, profileName)))
+// profile-aware companion to GetInstaller. Propagates GetEffectiveLinkMethod's
+// new error case (#189) rather than swallowing it.
+func (s *Service) GetInstallerForProfile(game *domain.Game, profileName string) (*Installer, error) {
+	method, err := s.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return nil, err
+	}
+	return s.NewInstallerWithLinker(game, s.GetLinker(method)), nil
 }
 
 // NewInstallerWithLinker returns an Installer for the given game using a

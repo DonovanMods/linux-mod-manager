@@ -93,7 +93,11 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if linkMethodOverride != nil {
 		methodName = linkMethodOverride.String()
 	} else {
-		methodName = service.GetEffectiveLinkMethod(game, profileName).String()
+		method, err := service.GetEffectiveLinkMethod(game, profileName)
+		if err != nil {
+			return err
+		}
+		methodName = method.String()
 	}
 
 	opts := core.DeployOptions{
