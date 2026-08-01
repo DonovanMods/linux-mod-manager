@@ -144,6 +144,27 @@ func TestFindSteamRoots_STEAMROOTEnv_NonexistentPathSkipped(t *testing.T) {
 	assert.Empty(t, FindSteamRoots())
 }
 
+// TestFindSteamRoots_SymlinkedDuplicate_ReturnsOnlyOne guards #190 item 3:
+// on many real Linux Steam installs, ~/.steam/steam is a symlink to
+// ~/.local/share/Steam - both candidate paths exist and both pass FindSteamRoots'
+// existence check, but they are the SAME real directory. Returning both
+// made DetectGames scan (and warn about) that one real library twice. Since
+// the two roots resolve to the same real path, only the first (".steam/steam",
+// this package's own priority order) should survive.
+func TestFindSteamRoots_SymlinkedDuplicate_ReturnsOnlyOne(t *testing.T) {
+	home := t.TempDir()
+	realSteam := filepath.Join(home, ".local", "share", "Steam")
+	require.NoError(t, os.MkdirAll(realSteam, 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".steam"), 0755))
+	require.NoError(t, os.Symlink(realSteam, filepath.Join(home, ".steam", "steam")))
+	t.Setenv("HOME", home)
+	t.Setenv("STEAM_ROOT", "")
+
+	roots := FindSteamRoots()
+	assert.Equal(t, []string{filepath.Join(home, ".steam", "steam")}, roots,
+		"a symlinked duplicate of an already-listed root must not appear twice")
+}
+
 // --- DetectGames (steam.go), against a fabricated library tree ---
 
 // writeAppManifest writes a minimal appmanifest_<appid>.acf into steamapps.
@@ -221,6 +242,34 @@ func TestDetectGames_MissingInstallDir_Warns(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, games)
 	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "install dir missing")
+}
+
+// TestDetectGames_SymlinkedDuplicateRoot_WarnsOnce is the end-to-end guard
+// for #190 item 3 at the reported symptom's own level: `lmm game detect`
+// printed each stale-library warning twice against a real Linux install
+// where ~/.steam/steam symlinks to ~/.local/share/Steam - both roots exist,
+// so DetectGames' library scan (and every warning it produces) used to run
+// twice against the identical, real directory. FindSteamRoots' resolved-path
+// dedup means the second, symlinked root never reaches the scan at all.
+func TestDetectGames_SymlinkedDuplicateRoot_WarnsOnce(t *testing.T) {
+	home := t.TempDir()
+	realSteam := filepath.Join(home, ".local", "share", "Steam")
+	steamapps := filepath.Join(realSteam, "steamapps")
+	require.NoError(t, os.MkdirAll(steamapps, 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(home, ".steam"), 0755))
+	require.NoError(t, os.Symlink(realSteam, filepath.Join(home, ".steam", "steam")))
+	t.Setenv("HOME", home)
+	t.Setenv("STEAM_ROOT", "")
+
+	// Deliberately no steamapps/common/<installdir> directory - the same
+	// "stale library" shape TestDetectGames_MissingInstallDir_Warns uses.
+	writeAppManifest(t, steamapps, "489830", "Skyrim Special Edition")
+
+	games, warnings, err := DetectGames(t.TempDir())
+	require.NoError(t, err)
+	assert.Empty(t, games)
+	require.Len(t, warnings, 1, "a symlinked duplicate root must not double every warning: got %v", warnings)
 	assert.Contains(t, warnings[0], "install dir missing")
 }
 

@@ -20,6 +20,14 @@ type DetectedGame struct {
 }
 
 // FindSteamRoots returns candidate Steam installation roots in search order.
+// On many real Linux installs ~/.steam/steam is a symlink to
+// ~/.local/share/Steam (or the reverse) - both paths exist and both pass the
+// existence check below, but they are the same real directory. Scanning both
+// would run DetectGames' whole library scan twice against identical data,
+// duplicating every warning it produces (and doing twice the redundant
+// work). Resolved-path dedup keeps only the first candidate (this list's own
+// priority order) whenever a later one turns out to be the same real
+// directory as one already kept.
 func FindSteamRoots() []string {
 	home, _ := os.UserHomeDir()
 	candidates := []string{
@@ -30,6 +38,7 @@ func FindSteamRoots() []string {
 		candidates = append([]string{p}, candidates...)
 	}
 	var out []string
+	seenReal := make(map[string]bool)
 	for _, p := range candidates {
 		if p == "" {
 			continue
@@ -38,6 +47,18 @@ func FindSteamRoots() []string {
 		if err != nil || !info.IsDir() {
 			continue
 		}
+		// realPath falls back to p itself if it can't be resolved (e.g. a
+		// permission error mid-resolution) - the existence check above
+		// already confirmed p is a real, statable directory, so it is
+		// never silently dropped.
+		realPath, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			realPath = p
+		}
+		if seenReal[realPath] {
+			continue
+		}
+		seenReal[realPath] = true
 		out = append(out, p)
 	}
 	return out
