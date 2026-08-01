@@ -1,7 +1,6 @@
 package icarus
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path"
@@ -14,20 +13,17 @@ import (
 // tables, bundles in any pre-built assets the .EXMODZ carries, and writes the
 // result as a new pak at outputPakPath ready to deploy as-is.
 //
-// The base tables come from the community per-week dump (Task 12a), not from
-// basePakPath: 258 of the 298 tables in a real data.pak are Oodle-compressed
-// and cannot be read with the stdlib. basePakPath is still opened, for two
-// things it alone can answer — which tables the installed game actually has
-// (so a bare, hyphen-flattened CurrentFile resolves to a real mount path),
-// and whether the dump
-// is for the installed week (DumpForBuild byte-checks it against the tables
-// the pak stores uncompressed). A dump that does not match fails the whole
-// compile; see Task 12a.
+// Base tables are read directly out of basePakPath — the installed game's own
+// Content/Data/data.pak — so they are always week-correct by construction and
+// the whole operation is offline. That pak stores 40 tables uncompressed and
+// compresses the other 258 with Zlib, all of which internal/unrealpak reads
+// with the standard library (#175). basePakPath is also what resolves a bare,
+// hyphen-flattened CurrentFile to a real mount path.
 //
-// localDumpDir is the game's optional data_dump_path: when set, base tables
-// are read from that directory instead of being fetched. It is validated
-// identically, so a stale local directory fails just as loudly.
-func Compile(ctx context.Context, dumps *DumpStore, basePakPath, localDumpDir, exmodzPath, outputPakPath string) (err error) {
+// There is no ctx parameter: every step is local file I/O over a ~2 MB pak,
+// with no network call and no long-running loop to cancel. The
+// source.Compiler interface still takes one, for implementations that need it.
+func Compile(basePakPath, exmodzPath, outputPakPath string) (err error) {
 	exmodzData, err := os.ReadFile(exmodzPath)
 	if err != nil {
 		return fmt.Errorf("icarus: reading %s: %w", exmodzPath, err)
@@ -42,13 +38,6 @@ func Compile(ctx context.Context, dumps *DumpStore, basePakPath, localDumpDir, e
 		return fmt.Errorf("icarus: opening base pak %s: %w", basePakPath, err)
 	}
 	defer base.Close() //nolint:errcheck
-
-	// Loaded and validated before anything is written, so a week mismatch or
-	// an offline machine fails before a half-built pak exists on disk.
-	dump, err := dumps.DumpForBuild(ctx, basePakPath, localDumpDir)
-	if err != nil {
-		return err
-	}
 
 	out, err := unrealpak.Create(outputPakPath)
 	if err != nil {
@@ -87,10 +76,9 @@ func Compile(ctx context.Context, dumps *DumpStore, basePakPath, localDumpDir, e
 		if err != nil {
 			return err
 		}
-		baseData, ok := dump.Table(mountPath)
-		if !ok {
-			return fmt.Errorf("icarus: base data table %s is present in the installed game "+
-				"but missing from the base-table dump", mountPath)
+		baseData, err := base.ReadFile(mountPath)
+		if err != nil {
+			return fmt.Errorf("icarus: reading base data table %s: %w", mountPath, err)
 		}
 		patched, err := ApplyRowPatch(baseData, row)
 		if err != nil {

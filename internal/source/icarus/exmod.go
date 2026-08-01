@@ -22,10 +22,11 @@ type ExmodRow struct {
 	FileItems   []ExmodFileItem
 }
 
-// ExmodFileItem overrides fields on the base row named Name. Fields holds
-// every key from the source JSON except "Name" itself, generically — the
-// real schema nests arbitrary game-data shapes here (see package doc
-// comment), so this deliberately does not enumerate them.
+// ExmodFileItem upserts fields on the base row named Name — patching it if
+// it already exists, adding it as a new row otherwise (see ApplyRowPatch).
+// Fields holds every key from the source JSON except "Name" itself,
+// generically — the real schema nests arbitrary game-data shapes here (see
+// package doc comment), so this deliberately does not enumerate them.
 type ExmodFileItem struct {
 	Name   string
 	Fields map[string]any
@@ -68,26 +69,77 @@ func ParseExmod(data []byte) (*ExmodDiff, error) {
 	return diff, nil
 }
 
-// ApplyRowPatch merges row's named-row field overrides into baseJSON (a base
-// game data-table file keyed by row name, e.g. {"Mount_Bear": {...}, ...})
-// and returns the patched document. Fails loudly (no silent fallback, repo
-// precedent #95) if a targeted row name doesn't exist in the base — that
-// means either the base version is stale relative to the mod, or the exmod
-// targets a file this function was called with by mistake.
+// ApplyRowPatch applies row's File_Items to baseJSON, a real Icarus
+// DataTable JSON export — the standard Unreal Engine shape
+// {"RowStruct": "...", "Defaults": {...}, "Rows": [{"Name": "...", ...fields}, ...]},
+// confirmed against a real installed data.pak (task-7-report.md); not the
+// flat {name: {fields}} map this function originally assumed, which never
+// matched real game data and was only ever exercised against synthetic
+// fixtures.
+//
+// Each File_Item is an upsert, not a strict patch: if its Name matches an
+// existing entry in Rows, that row's fields are shallow-merged with the
+// item's fields (item fields win, everything else on the row survives
+// untouched); if no row has that Name, the item is appended to Rows
+// verbatim as a brand-new row. This matches what real .EXMOD content
+// actually does — most rows patch existing base stats, but a
+// content-adding mod (e.g. a new mountable species) introduces rows the
+// base game doesn't have yet, and erroring on that (the original
+// patch-only design) made every such mod uncompilable. All other top-level
+// keys on the base document (RowStruct, Defaults, and anything else) pass
+// through re-serialization unchanged, since only doc["Rows"] is ever
+// modified. Output is deterministic: encoding/json sorts map keys.
 func ApplyRowPatch(baseJSON []byte, row ExmodRow) ([]byte, error) {
-	var doc map[string]map[string]any
+	var doc map[string]any
 	if err := json.Unmarshal(baseJSON, &doc); err != nil {
 		return nil, fmt.Errorf("icarus: parsing base data table %s: %w", row.CurrentFile, err)
 	}
-	for _, item := range row.FileItems {
-		target, ok := doc[item.Name]
-		if !ok {
-			return nil, fmt.Errorf("icarus: %s: row %q not found in base data table", row.CurrentFile, item.Name)
-		}
-		for k, v := range item.Fields {
-			target[k] = v
-		}
-		doc[item.Name] = target
+	rawRows, ok := doc["Rows"]
+	if !ok {
+		return nil, fmt.Errorf("icarus: base data table %s: no top-level %q array", row.CurrentFile, "Rows")
 	}
+	rowsSlice, ok := rawRows.([]any)
+	if !ok {
+		return nil, fmt.Errorf("icarus: base data table %s: %q is not an array", row.CurrentFile, "Rows")
+	}
+	rows := make([]map[string]any, len(rowsSlice))
+	for i, r := range rowsSlice {
+		m, ok := r.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("icarus: base data table %s: Rows[%d] is not an object", row.CurrentFile, i)
+		}
+		rows[i] = m
+	}
+
+	byName := make(map[string]int, len(rows))
+	for i, r := range rows {
+		if name, ok := r["Name"].(string); ok {
+			byName[name] = i
+		}
+	}
+
+	for _, item := range row.FileItems {
+		if idx, ok := byName[item.Name]; ok {
+			target := rows[idx]
+			for k, v := range item.Fields {
+				target[k] = v
+			}
+			continue
+		}
+		newRow := make(map[string]any, len(item.Fields)+1)
+		newRow["Name"] = item.Name
+		for k, v := range item.Fields {
+			newRow[k] = v
+		}
+		rows = append(rows, newRow)
+		byName[item.Name] = len(rows) - 1
+	}
+
+	newRows := make([]any, len(rows))
+	for i, r := range rows {
+		newRows[i] = r
+	}
+	doc["Rows"] = newRows
+
 	return json.Marshal(doc)
 }

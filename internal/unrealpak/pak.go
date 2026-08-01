@@ -45,6 +45,30 @@ const writeVersion int32 = 11
 // those and refuses to read their payloads.
 const storedHeaderSize = 53
 
+// The footer's CompressionMethods table: 5 fixed-width, NUL-padded name slots
+// starting at byte 61. An entry's CompressionMethodIndex is 1-based into it
+// (0 means "stored", naming no slot).
+const (
+	maxCompressionMethods     = 5
+	compressionMethodNameSize = 32
+	compressionMethodsOffset  = 61
+)
+
+// zlibMethodName is the CompressionMethods entry this package can decompress.
+// Matched case-insensitively: the name is free-form text written by whatever
+// cooked the pak.
+const zlibMethodName = "Zlib"
+
+// maxUncompressedEntrySize caps a single entry's decompressed size.
+//
+// This deliberately does NOT reuse validateAllocSize's "cannot exceed the pak
+// file's own size" rule, which holds for on-disk regions but is simply false
+// for decompressed output: Icarus's Items/D_ItemsStatic.json expands to
+// 7,304,687 bytes inside a 2,458,743-byte pak. A fixed ceiling is the right
+// shape of bound here — it stops a malicious or corrupt UncompressedSize from
+// driving an unbounded allocation without rejecting legitimate compression.
+const maxUncompressedEntrySize = 512 << 20
+
 // FileEntry describes one file inside a pak, as returned by Reader.Files.
 type FileEntry struct {
 	Path string // Mount-relative path, e.g. "Icarus/Content/Data/AI-D_AIGrowth.json"

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Icarus built-in mod source** (`internal/source/icarus`): a public, unauthenticated Firestore-backed catalog (Project Daedalus) — `lmm search`/`install`/`update` work against it like NexusMods/CurseForge. A `.exmodz` mod file now compiles into a deployable `_P.pak` at download time via a new, game-agnostic `internal/unrealpak` PAK reader/writer and the new `deploy_mode: compile` game setting; a plain `.pak` file from the same catalog is unaffected and deploys through the existing extract/copy pipeline unchanged. An optional per-game `data_dump_path` points compilation at your own unpacked `data.pak` JSON tree instead of fetching the hosted community base-table dump — both are `games.yaml`-only settings, with no new CLI flag or TUI screen (#136)
+- **Icarus built-in mod source** (`internal/source/icarus`): a public, unauthenticated Firestore-backed catalog (Project Daedalus) — `lmm search`/`install`/`update` work against it like NexusMods/CurseForge. A `.exmodz` mod file now compiles into a deployable `_P.pak` at download time via a new, game-agnostic `internal/unrealpak` PAK reader/writer and the new `deploy_mode: compile` game setting; a plain `.pak` file from the same catalog is unaffected and deploys through the existing extract/copy pipeline unchanged. Base data tables are read directly from the installed game's own `data.pak`, so a compile always matches the installed game version and works entirely offline; `internal/unrealpak` reads both the stored and the Zlib-compressed entries that pak contains, using only the standard library (#136, #175)
 
 ## [1.27.1] - 2026-07-30
 

@@ -20,7 +20,6 @@ const gameID = "icarus"
 // API described in docs/plans/2026-07-29-icarus-exmod-pak-research.md.
 type Icarus struct {
 	firestore *firestoreClient
-	dumps     *DumpStore // nil until SetDataDir is called
 }
 
 // New constructs an Icarus source. projectID is the Firestore project ID
@@ -31,23 +30,6 @@ func New(httpClient *http.Client, projectID string) *Icarus {
 	return &Icarus{firestore: newFirestoreClient(projectID, httpClient)}
 }
 
-// SetDataDir constructs the base-table dump store once the service's data
-// directory is known, gating Compile on it having been called at all (see
-// TestIcarus_Compile_WithoutDataDir_FailsLoudly) — DumpStore itself has no
-// current use for dataDir's value (it fetches on demand rather than caching
-// to disk, see DumpStore's doc comment), so the parameter exists only to
-// satisfy the shared `interface{ SetDataDir(string) }` duck-typed contract
-// cmd/lmm/root.go's registerSource calls uniformly across sources. This is a
-// post-construction setter rather than a New parameter because Task 8 froze
-// New(httpClient, projectID) at exactly those two params — Task 9's call
-// site already depends on that signature — so the data dir arrives the same
-// way API keys do: an optional setter the registration pipeline calls when
-// present (mirroring its existing SetAPIKey wiring).
-func (s *Icarus) SetDataDir(dataDir string) {
-	_ = dataDir // unused: see doc comment above
-	s.dumps = newDumpStore(s.firestore.httpClient)
-}
-
 var (
 	_ source.ModSource          = (*Icarus)(nil)
 	_ source.CapabilityReporter = (*Icarus)(nil)
@@ -55,16 +37,10 @@ var (
 )
 
 // Compile implements source.Compiler by delegating to the package-level
-// Compile function (Task 12) — basePakPath/baseDataPath/sourceFilePath/
-// outputPath map directly onto Compile's basePakPath/localDumpDir/exmodzPath/
-// outputPakPath parameters. The base-table dump store (Task 12a) is supplied
-// from the source itself; the per-game dump-directory override arrives as
-// baseDataPath, since only the caller has the game's config.
-func (s *Icarus) Compile(ctx context.Context, basePakPath, baseDataPath, sourceFilePath, outputPath string) error {
-	if s.dumps == nil {
-		return fmt.Errorf("source %q: not initialized with a data directory (SetDataDir was never called)", s.ID())
-	}
-	return Compile(ctx, s.dumps, basePakPath, baseDataPath, sourceFilePath, outputPath)
+// Compile function. ctx is unused: compiling is pure local file I/O against
+// the installed game's own pak (#175), with nothing to cancel.
+func (s *Icarus) Compile(_ context.Context, basePakPath, sourceFilePath, outputPath string) error {
+	return Compile(basePakPath, sourceFilePath, outputPath)
 }
 
 func (s *Icarus) ID() string   { return "icarus" }

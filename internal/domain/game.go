@@ -46,9 +46,6 @@ type Game struct {
 	CachePath          string            // Optional: custom cache path for this game's mods
 	Hooks              GameHooks         // Optional: hooks for install/uninstall operations
 	DeployMode         DeployMode        // How to handle downloaded files (extract vs copy)
-	// BaseDataPath is optional: a directory holding an unpacked data.pak JSON
-	// tree, used instead of fetching the hosted base-table dump (compile games only)
-	BaseDataPath string
 }
 
 // DeployMode determines how downloaded mod archives are handled

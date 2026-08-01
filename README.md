@@ -427,8 +427,6 @@ games:
     install_path: "/path/to/Steam/steamapps/common/Icarus"
     mod_path: "/path/to/Steam/steamapps/common/Icarus/Icarus/Content/Paks/mods"
     deploy_mode: compile
-    # data_dump_path: ~/icarus-data-dump # Optional: compile from your own
-    # unpacked data.pak JSON tree instead of the hosted community dump
     sources:
       icarus: "icarus"
 ```

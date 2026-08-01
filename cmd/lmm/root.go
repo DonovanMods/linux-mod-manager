@@ -203,7 +203,7 @@ func initService() (*core.Service, error) {
 	}
 
 	// Register mod sources
-	registerSources(svc, cfg.ConfigDir, cfg.DataDir)
+	registerSources(svc, cfg.ConfigDir)
 
 	return svc, nil
 }
@@ -226,29 +226,21 @@ var builtinSourceFactories = []func() source.ModSource{
 // registerSources registers all available mod sources with the service
 // through one ordered pipeline: built-ins first (so the collision rule's
 // "first wins" preserves their identity against a same-id custom
-// definition), then user-defined sources from <configDir>/sources/. dataDir
-// is threaded through to registerSource for DeployCompile sources (#136
-// Task 13) that need it wired via the SetDataDir optional setter.
-func registerSources(svc *core.Service, cfgDir, dataDir string) {
+// definition), then user-defined sources from <configDir>/sources/.
+func registerSources(svc *core.Service, cfgDir string) {
 	for _, factory := range builtinSourceFactories {
-		registerSource(svc, factory(), dataDir)
+		registerSource(svc, factory())
 	}
 
-	registerCustomSources(svc, cfgDir, dataDir)
+	registerCustomSources(svc, cfgDir)
 }
 
 // registerSource runs src through the shared registration steps used for
 // both built-in and custom sources: collision check (first registration
 // wins, warning on customSourceWarnWriter) → API-key resolution (env var via
 // envKeyFor, falling back to the stored DB token) → SetAPIKey when the
-// source accepts one → SetDataDir when the source accepts one (Icarus's
-// Compile is gated on SetDataDir having been called at all: that call
-// constructs the base-table dump store. dataDir's value itself is currently
-// unused there — that store fetches on demand rather than caching to disk,
-// #136 review round 3 — SetDataDir just fulfils the shared interface. New
-// itself can't take dataDir since Task 8/9 froze its 2-arg signature) →
-// RegisterSource.
-func registerSource(svc *core.Service, src source.ModSource, dataDir string) {
+// source accepts one → RegisterSource.
+func registerSource(svc *core.Service, src source.ModSource) {
 	id := src.ID()
 	// Custom sources are constructed (custom.New) by the caller before this
 	// runs; a definition that both collides with an existing ID AND fails to
@@ -266,9 +258,6 @@ func registerSource(svc *core.Service, src source.ModSource, dataDir string) {
 		if key := getSourceAPIKey(svc, id, envKeyFor(src)); key != "" {
 			setter.SetAPIKey(key)
 		}
-	}
-	if setter, ok := src.(interface{ SetDataDir(string) }); ok {
-		setter.SetDataDir(dataDir)
 	}
 	svc.RegisterSource(src)
 }
@@ -306,7 +295,7 @@ func customSourceWarnWriter() io.Writer {
 // registerCustomSources loads user-defined source definitions and registers
 // the valid ones. Broken definitions warn (via customSourceWarnWriter, normally
 // os.Stderr) and are skipped — a bad file must never prevent lmm from starting.
-func registerCustomSources(svc *core.Service, cfgDir, dataDir string) {
+func registerCustomSources(svc *core.Service, cfgDir string) {
 	defs, loadErrs, err := config.LoadSourceDefinitions(cfgDir)
 	if err != nil {
 		fmt.Fprintf(customSourceWarnWriter(), "warning: loading custom sources: %v\n", err)
@@ -321,7 +310,7 @@ func registerCustomSources(svc *core.Service, cfgDir, dataDir string) {
 			fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: %v\n", def.ID, err)
 			continue
 		}
-		registerSource(svc, src, dataDir)
+		registerSource(svc, src)
 	}
 }
 

@@ -517,7 +517,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		}
 		destName := compiledFileName(file.FileName)
 		destPath := filepath.Join(stagePath, destName)
-		if err := compiler.Compile(ctx, basePakPath, game.BaseDataPath, archivePath, destPath); err != nil {
+		if err := compiler.Compile(ctx, basePakPath, archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("compiling mod: %w", err)
 		}
 		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{destName}); err != nil {
