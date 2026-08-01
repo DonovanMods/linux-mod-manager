@@ -2,6 +2,7 @@ package unrealpak
 
 import (
 	"bytes"
+	"compress/zlib"
 	"crypto/sha1" //nolint:gosec // pak format uses SHA1, not our choice
 	"encoding/binary"
 	"fmt"
@@ -25,8 +26,11 @@ type Reader struct {
 type readerEntry struct {
 	FileEntry
 	offset int64 // absolute offset of the entry's on-disk header
-	method int32 // CompressionMethodIndex; 0 = stored. Non-zero entries are
-	// enumerated but their payloads cannot be read (see ReadFile, Task 3).
+	method int32 // CompressionMethodIndex; 0 = stored, else a 1-based index
+	// into the pak footer's CompressionMethods table.
+	size int64 // on-disk size: compressed for a compressed entry, and equal
+	// to FileEntry.Size (the uncompressed size) for a stored one.
+	blocks int // compression block count; 0 for a stored entry.
 }
 
 // Open parses path's footer and index. It does not read file contents —
@@ -136,50 +140,162 @@ func (r *Reader) Files() []FileEntry {
 // ReadFile returns the bytes of the entry at mount-relative path.
 //
 // On-disk entry data is preceded by a full FPakEntry header — 53 bytes for a
-// stored entry (Offset, Size, UncompressedSize, CompressionMethodIndex, Hash,
-// Flags, CompressionBlockSize) — and the index's offset points at that header,
-// not the payload. The header is re-read and cross-checked rather than trusted:
-// its method and size must agree with the index, and its Hash must match the
-// payload's SHA1. Real paks satisfy all three (verified across a whole install),
-// so a disagreement means corruption or a layout this package misread.
+// stored entry, plus a block table for a compressed one — and the index's
+// offset points at that header, not the payload. The header is re-read and
+// cross-checked rather than trusted: its method and sizes must agree with the
+// index, and its Hash must match the on-disk payload's SHA1. Real paks satisfy
+// all of this (verified across a whole install), so a disagreement means
+// corruption or a layout this package misread.
 func (r *Reader) ReadFile(path string) ([]byte, error) {
 	for _, e := range r.entries {
 		if e.Path != path {
 			continue
 		}
-		// Compression is refused here rather than at index-parse time so that
-		// Files() can still enumerate real paks, most of whose entries are
-		// Oodle-compressed. No caller can obtain wrong bytes either way.
-		if e.method != 0 {
-			return nil, fmt.Errorf("unrealpak: %s: %w: compressed entry (method %d)",
-				path, ErrUnsupportedFormat, e.method)
+		if e.method == 0 {
+			return r.readStored(path, e)
 		}
-		hdr := make([]byte, storedHeaderSize)
-		if _, err := r.f.ReadAt(hdr, e.offset); err != nil {
-			return nil, fmt.Errorf("unrealpak: %s: reading entry header: %w", path, err)
+		name := r.methodName(e.method)
+		if strings.EqualFold(name, zlibMethodName) {
+			return r.readZlib(path, e)
 		}
-		if m := int32(binary.LittleEndian.Uint32(hdr[24:28])); m != 0 {
-			return nil, fmt.Errorf("unrealpak: %s: %w: compressed entry data (method %d)",
-				path, ErrUnsupportedFormat, m)
-		}
-		if size := int64(binary.LittleEndian.Uint64(hdr[8:16])); size != e.Size {
-			return nil, fmt.Errorf("unrealpak: %s: entry header size %d disagrees with index size %d",
-				path, size, e.Size)
-		}
-		n, err := validateAllocSize(e.Size, r.fileSize)
-		if err != nil {
-			return nil, fmt.Errorf("unrealpak: %s: %w", path, err)
-		}
-		buf := make([]byte, n)
-		if _, err := r.f.ReadAt(buf, e.offset+storedHeaderSize); err != nil {
-			return nil, fmt.Errorf("unrealpak: reading %s: %w", path, err)
-		}
-		if sum := sha1.Sum(buf); !bytes.Equal(sum[:], hdr[28:48]) { //nolint:gosec
-			return nil, fmt.Errorf("unrealpak: %s: content hash mismatch", path)
-		}
-		return buf, nil
+		// Oodle and anything else this package cannot decode stay a hard
+		// error. Refusing here rather than at index-parse time keeps Files()
+		// able to enumerate a pak whose entries we cannot all read.
+		return nil, fmt.Errorf("unrealpak: %s: %w: compression method %q (index %d)",
+			path, ErrUnsupportedFormat, name, e.method)
 	}
 	return nil, fmt.Errorf("unrealpak: %s: %w", path, os.ErrNotExist)
+}
+
+// readStored reads an uncompressed entry: a 53-byte header then the payload.
+func (r *Reader) readStored(path string, e readerEntry) ([]byte, error) {
+	hdr := make([]byte, storedHeaderSize)
+	if _, err := r.f.ReadAt(hdr, e.offset); err != nil {
+		return nil, fmt.Errorf("unrealpak: %s: reading entry header: %w", path, err)
+	}
+	if m := int32(binary.LittleEndian.Uint32(hdr[24:28])); m != 0 {
+		return nil, fmt.Errorf("unrealpak: %s: %w: compressed entry data (method %d)",
+			path, ErrUnsupportedFormat, m)
+	}
+	if size := int64(binary.LittleEndian.Uint64(hdr[8:16])); size != e.Size {
+		return nil, fmt.Errorf("unrealpak: %s: entry header size %d disagrees with index size %d",
+			path, size, e.Size)
+	}
+	n, err := validateAllocSize(e.Size, r.fileSize)
+	if err != nil {
+		return nil, fmt.Errorf("unrealpak: %s: %w", path, err)
+	}
+	buf := make([]byte, n)
+	if _, err := r.f.ReadAt(buf, e.offset+storedHeaderSize); err != nil {
+		return nil, fmt.Errorf("unrealpak: reading %s: %w", path, err)
+	}
+	if sum := sha1.Sum(buf); !bytes.Equal(sum[:], hdr[28:48]) { //nolint:gosec
+		return nil, fmt.Errorf("unrealpak: %s: content hash mismatch", path)
+	}
+	return buf, nil
+}
+
+// compressedHeaderSize is the on-disk size of a compressed entry's FPakEntry
+// header: the 53-byte stored shape plus a BlockCount(4) and a 16-byte
+// (CompressedStart, CompressedEnd) pair per block, inserted between Hash and
+// Flags.
+func compressedHeaderSize(blocks int) int64 {
+	return storedHeaderSize + 4 + 16*int64(blocks)
+}
+
+// readZlib reads and reassembles a Zlib-compressed entry.
+//
+// The entry's payload is split into independently-deflated blocks. The
+// authoritative block table lives in the entry's own on-disk header as
+// (CompressedStart, CompressedEnd) pairs measured from the entry offset — the
+// index's optional block-size list is omitted for a lone unencrypted block, so
+// it cannot be relied on. The blocks tile the payload region contiguously and
+// their lengths sum to Size; the header Hash covers those on-disk (compressed)
+// bytes, not the decompressed result.
+//
+// This procedure was validated by reconstructing all 298 tables of the real
+// Icarus data.pak — 40 stored plus 258 Zlib — byte-for-byte.
+// See docs/plans/icarus-quickbms-spike-findings.md.
+func (r *Reader) readZlib(path string, e readerEntry) ([]byte, error) {
+	if e.blocks <= 0 {
+		return nil, fmt.Errorf("unrealpak: %s: %w: compressed entry declares %d compression blocks",
+			path, ErrUnsupportedFormat, e.blocks)
+	}
+	hdrSize := compressedHeaderSize(e.blocks)
+	hn, err := validateAllocSize(hdrSize, r.fileSize)
+	if err != nil {
+		return nil, fmt.Errorf("unrealpak: %s: entry header: %w", path, err)
+	}
+	hdr := make([]byte, hn)
+	if _, err := r.f.ReadAt(hdr, e.offset); err != nil {
+		return nil, fmt.Errorf("unrealpak: %s: reading entry header: %w", path, err)
+	}
+	if m := int32(binary.LittleEndian.Uint32(hdr[24:28])); m != e.method {
+		return nil, fmt.Errorf("unrealpak: %s: entry header method %d disagrees with index method %d",
+			path, m, e.method)
+	}
+	if size := int64(binary.LittleEndian.Uint64(hdr[8:16])); size != e.size {
+		return nil, fmt.Errorf("unrealpak: %s: entry header size %d disagrees with index size %d",
+			path, size, e.size)
+	}
+	if usize := int64(binary.LittleEndian.Uint64(hdr[16:24])); usize != e.Size {
+		return nil, fmt.Errorf("unrealpak: %s: entry header uncompressed size %d disagrees with index size %d",
+			path, usize, e.Size)
+	}
+	if nb := int64(int32(binary.LittleEndian.Uint32(hdr[48:52]))); nb != int64(e.blocks) {
+		return nil, fmt.Errorf("unrealpak: %s: entry header block count %d disagrees with index count %d",
+			path, nb, e.blocks)
+	}
+
+	pn, err := validateAllocSize(e.size, r.fileSize)
+	if err != nil {
+		return nil, fmt.Errorf("unrealpak: %s: %w", path, err)
+	}
+	payload := make([]byte, pn)
+	if _, err := r.f.ReadAt(payload, e.offset+hdrSize); err != nil {
+		return nil, fmt.Errorf("unrealpak: reading %s: %w", path, err)
+	}
+	if sum := sha1.Sum(payload); !bytes.Equal(sum[:], hdr[28:48]) { //nolint:gosec
+		return nil, fmt.Errorf("unrealpak: %s: content hash mismatch", path)
+	}
+
+	if e.Size < 0 || e.Size > maxUncompressedEntrySize {
+		return nil, fmt.Errorf("unrealpak: %s: %w: uncompressed size %d exceeds the %d-byte cap",
+			path, ErrUnsupportedFormat, e.Size, int64(maxUncompressedEntrySize))
+	}
+	out := make([]byte, 0, e.Size)
+	for i := 0; i < e.blocks; i++ {
+		start := int64(binary.LittleEndian.Uint64(hdr[52+i*16 : 60+i*16]))
+		end := int64(binary.LittleEndian.Uint64(hdr[60+i*16 : 68+i*16]))
+		// Block bounds are relative to the entry offset and must land inside
+		// the payload region that follows the header.
+		if start < hdrSize || end < start || end > hdrSize+e.size {
+			return nil, fmt.Errorf("unrealpak: %s: block %d spans [%d,%d), outside the entry's payload",
+				path, i, start, end)
+		}
+		zr, err := zlib.NewReader(bytes.NewReader(payload[start-hdrSize : end-hdrSize]))
+		if err != nil {
+			return nil, fmt.Errorf("unrealpak: %s: block %d: %w", path, i, err)
+		}
+		// Read at most one byte more than the declared size still allows, so a
+		// lying UncompressedSize cannot drive an unbounded read.
+		remaining := e.Size - int64(len(out))
+		chunk, err := io.ReadAll(io.LimitReader(zr, remaining+1))
+		zr.Close() //nolint:errcheck // read-only decompressor
+		if err != nil {
+			return nil, fmt.Errorf("unrealpak: %s: decompressing block %d: %w", path, i, err)
+		}
+		if int64(len(chunk)) > remaining {
+			return nil, fmt.Errorf("unrealpak: %s: decompressed output exceeds the declared uncompressed size %d",
+				path, e.Size)
+		}
+		out = append(out, chunk...)
+	}
+	if int64(len(out)) != e.Size {
+		return nil, fmt.Errorf("unrealpak: %s: decompressed %d bytes, header declares %d",
+			path, len(out), e.Size)
+	}
+	return out, nil
 }
 
 type footer struct {
@@ -374,8 +490,9 @@ func decodeEntry(b []byte, at int) (readerEntry, error) {
 	}
 	offset := read(flags&(1<<31) != 0)
 	uncompressed := read(flags&(1<<30) != 0)
+	size := uncompressed // a stored entry does not serialize Size; it equals UncompressedSize
 	if method != 0 {
-		read(flags&(1<<29) != 0) // Size on disk; unused, we refuse to read these payloads
+		size = read(flags&(1<<29) != 0)
 	}
 	if blockCount > 0 && (blockCount > 1 || encrypted) {
 		c.bytes(4 * blockCount)
@@ -390,6 +507,8 @@ func decodeEntry(b []byte, at int) (readerEntry, error) {
 		FileEntry: FileEntry{Size: uncompressed},
 		offset:    offset,
 		method:    method,
+		size:      size,
+		blocks:    blockCount,
 	}, nil
 }
 

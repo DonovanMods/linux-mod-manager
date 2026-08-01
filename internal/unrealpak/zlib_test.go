@@ -171,3 +171,97 @@ func TestReadFile_MethodIndexResolvedAgainstThisPaksTable(t *testing.T) {
 		t.Errorf("ReadFile = %q, want %q", got, body)
 	}
 }
+
+func TestReadFile_ZlibSingleBlock(t *testing.T) {
+	body := []byte("{\r\n    \"Rows\": [1,2,3]\r\n}")
+	p := writeMethodPak(t, []string{"Zlib"}, []zlibFixture{
+		{path: "Factions/D_Factions.json", blocks: [][]byte{body}, method: 1},
+	})
+
+	r, err := Open(p)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+
+	got, err := r.ReadFile("Factions/D_Factions.json")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("ReadFile = %q, want %q", got, body)
+	}
+	if files := r.Files(); len(files) != 1 || files[0].Size != int64(len(body)) {
+		t.Errorf("Files() = %+v, want one entry sized %d", files, len(body))
+	}
+}
+
+// Multi-block reassembly is the case the block table exists for: the blocks
+// must be concatenated in order.
+func TestReadFile_ZlibMultiBlock(t *testing.T) {
+	b1 := bytes.Repeat([]byte("alpha "), 400)
+	b2 := bytes.Repeat([]byte("beta "), 400)
+	b3 := []byte("tail")
+	want := append(append(append([]byte{}, b1...), b2...), b3...)
+	p := writeMethodPak(t, []string{"Zlib"}, []zlibFixture{
+		{path: "Items/D_ItemsStatic.json", blocks: [][]byte{b1, b2, b3}, method: 1},
+	})
+
+	r, err := Open(p)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+
+	got, err := r.ReadFile("Items/D_ItemsStatic.json")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("ReadFile returned %d bytes, want %d (block reassembly)", len(got), len(want))
+	}
+}
+
+// An index with no name in the table is unsupported, never silently stored.
+func TestReadFile_UnnamedMethodIndex_IsUnsupported(t *testing.T) {
+	p := writeMethodPak(t, []string{"Zlib"}, []zlibFixture{
+		{path: "x/Y.json", blocks: [][]byte{[]byte("{}")}, method: 3},
+	})
+
+	r, err := Open(p)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+
+	if _, err := r.ReadFile("x/Y.json"); !errors.Is(err, ErrUnsupportedFormat) {
+		t.Fatalf("err = %v, want ErrUnsupportedFormat", err)
+	}
+}
+
+// A corrupted compressed payload must fail the entry's SHA1 gate.
+func TestReadFile_ZlibCorruptPayload_FailsHashGate(t *testing.T) {
+	p := writeMethodPak(t, []string{"Zlib"}, []zlibFixture{
+		{path: "c/D.json", blocks: [][]byte{bytes.Repeat([]byte("x"), 200)}, method: 1},
+	})
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Flip a byte inside the first entry's compressed payload (just past its
+	// single-block header).
+	raw[compressedHeaderSize(1)+2] ^= 0xFF
+	if err := os.WriteFile(p, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Open(p)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+
+	if _, err := r.ReadFile("c/D.json"); err == nil {
+		t.Fatal("expected an error for a corrupted compressed payload, got nil")
+	}
+}
