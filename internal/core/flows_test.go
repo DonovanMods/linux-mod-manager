@@ -284,6 +284,8 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, svc.SetModDeployed("src", "1", "g1", "default", true),
+		"seed Deployed=true so the post-disable assertion below actually proves a transition")
 
 	// Corrupt the deployed file into a plain file (not a symlink) so the
 	// symlink linker's Undeploy fails deterministically ("not a symlink").
