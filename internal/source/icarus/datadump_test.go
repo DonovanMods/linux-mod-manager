@@ -15,6 +15,48 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 )
 
+// testStoredHeaderSize mirrors unrealpak's unexported storedHeaderSize (the
+// 53-byte FPakEntry header preceding a stored file's payload). Duplicated
+// here because these fixture-corruption helpers need to reach into pak bytes
+// unrealpak itself does not expose, the same way reader_test.go pokes at raw
+// offsets from inside package unrealpak.
+const testStoredHeaderSize = 53
+
+// corruptFirstEntryPayload flips the first byte of the alphabetically-first
+// entry's payload (which the Writer always places at file offset
+// testStoredHeaderSize, since entries are packed with no gap starting at 0).
+// This breaks the entry's stored SHA1 without touching its header, producing
+// a genuinely unexpected ReadFile error distinct from ErrUnsupportedFormat.
+func corruptFirstEntryPayload(t *testing.T, pakPath string) {
+	t.Helper()
+	data, err := os.ReadFile(pakPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[testStoredHeaderSize] ^= 0xFF
+	if err := os.WriteFile(pakPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// corruptFirstEntryCompressionMethod patches the alphabetically-first entry's
+// on-disk header CompressionMethodIndex field (bytes 24:28 of the 53-byte
+// header at file offset 0) to a nonzero value. This simulates the
+// compression-refusal ReadFile takes for real Oodle-compressed entries
+// without needing the Writer to emit actual compressed data, which it never
+// does (it only ever produces stored, method-0 entries).
+func corruptFirstEntryCompressionMethod(t *testing.T, pakPath string) {
+	t.Helper()
+	data, err := os.ReadFile(pakPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[24] = 1
+	if err := os.WriteFile(pakPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // writeTestBasePak builds a stored, unencrypted version-11 pak holding one
 // entry per (mount-relative path, content) pair, via the Task 4 Writer. It
 // stands in for Task 12's identically-named helper, which does not exist yet
@@ -250,5 +292,49 @@ func TestDumpStore_DumpForBuild_NetworkFailure_IsActionable(t *testing.T) {
 	_, err := store.DumpForBuild(context.Background(), pak, "")
 	if err == nil {
 		t.Fatal("expected an error when the dump host fails, got nil")
+	}
+}
+
+// A base pak entry that fails to read for a reason OTHER than
+// unrealpak.ErrUnsupportedFormat (corruption, a truncated payload, an I/O
+// error) must fail validateDump loudly, not be silently folded into the
+// "not our gate" skip that Oodle-compressed entries get.
+func TestValidateDump_CorruptedStoredEntry_FailsLoudly(t *testing.T) {
+	const rel = "a/B.json"
+	pak := writeTestBasePak(t, map[string][]byte{rel: []byte("{\r\n}")})
+	corruptFirstEntryPayload(t, pak)
+
+	dump := &Dump{tables: map[string][]byte{rel: []byte("{\r\n}")}}
+	err := validateDump(dump, pak)
+	if err == nil {
+		t.Fatal("expected an error for a corrupted stored entry, got nil")
+	}
+	if strings.Contains(err.Error(), "different game week") {
+		t.Errorf("error %q should report the read failure, not the mismatch/wrong-week message "+
+			"(a corrupted entry is not evidence of a stale dump)", err)
+	}
+	if !strings.Contains(err.Error(), rel) {
+		t.Errorf("error %q should name the unreadable table (%s)", err, rel)
+	}
+}
+
+// An entry that refuses with unrealpak.ErrUnsupportedFormat (the real-world
+// case: Oodle compression) must still be skipped, not treated as a
+// validateDump failure — it is excluded from the check, not a reason to
+// reject the dump.
+func TestValidateDump_SkipsUnsupportedFormatEntry_NotAnError(t *testing.T) {
+	const compressedRel = "a/Apple.json" // sorts first -> lands at file offset 0
+	const okRel = "z/Zebra.json"
+	okShipped := []byte("{\r\n    \"Rows\": []\r\n}")
+
+	pak := writeTestBasePak(t, map[string][]byte{
+		compressedRel: []byte("{\r\n}"),
+		okRel:         okShipped,
+	})
+	corruptFirstEntryCompressionMethod(t, pak)
+
+	dump := &Dump{tables: map[string][]byte{okRel: okShipped}}
+	if err := validateDump(dump, pak); err != nil {
+		t.Fatalf("validateDump with one ErrUnsupportedFormat entry and one matching entry: %v", err)
 	}
 }

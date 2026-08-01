@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -254,7 +255,14 @@ func validateDump(dump *Dump, basePakPath string) error {
 	for _, f := range pak.Files() {
 		shipped, err := pak.ReadFile(f.Path)
 		if err != nil {
-			continue // Oodle-compressed: not readable here, and not our gate
+			if errors.Is(err, unrealpak.ErrUnsupportedFormat) {
+				continue // Oodle-compressed (or similar): not readable here, and not our gate
+			}
+			// Any other ReadFile failure — corruption, a truncated payload, an
+			// I/O error — is not an expected skip. Silently excluding it here
+			// would quietly narrow what this gate actually verified, exactly
+			// the "no silent fallbacks" failure this function exists to prevent.
+			return fmt.Errorf("icarus: validating base pak %s: reading %s: %w", basePakPath, f.Path, err)
 		}
 		checked++
 		got, ok := dump.Table(f.Path)
