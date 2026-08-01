@@ -238,6 +238,38 @@ func TestIngestLocalToCacheArchiveCopyModeUsesDeclaredFileName(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "cached file must NOT be named after localPath's basename when file.FileName is declared")
 }
 
+// TestIngestLocalToCacheArchiveCopyMode_TraversalFileNameSanitized is the
+// ingestLocalToCache sibling of the #196 review traversal fix: file.FileName
+// is SOURCE-CONTROLLED (any custom directory/manifest/api ModSource can
+// declare it) and must never be trusted as a path component verbatim - an
+// entry like "../evil.zip" must not let the cached file land outside the
+// mod's own cache version directory.
+func TestIngestLocalToCacheArchiveCopyMode_TraversalFileNameSanitized(t *testing.T) {
+	svc, gameCache := newLocalIngestService(t)
+
+	tempFile := filepath.Join(t.TempDir(), "tmp-download-xyz.bin")
+	require.NoError(t, os.WriteFile(tempFile, []byte("zipbytes"), 0644))
+
+	game := &domain.Game{ID: "hytale", DeployMode: domain.DeployCopy}
+	mod := &domain.Mod{ID: "coolmod-2.0", SourceID: "my-mods", Version: "2.0"}
+	file := &domain.DownloadableFile{ID: "main", FileName: "../evil-traversal.zip"}
+
+	result, err := svc.ingestLocalToCache(gameCache, game, mod, file, tempFile)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.FilesExtracted)
+
+	sanitizedPath := gameCache.GetFilePath("hytale", "my-mods", "coolmod-2.0", "2.0", "evil-traversal.zip")
+	_, err = os.Stat(sanitizedPath)
+	assert.NoError(t, err, "the cached file must land under the sanitized (Base'd) name inside the version directory")
+
+	// The version directory's PARENT (my-mods-coolmod-2.0/) is exactly one
+	// level up from the "2.0" version dir the unsanitized "../evil-*.zip"
+	// would have climbed into.
+	escapedPath := filepath.Join(gameCache.ModPath("hytale", "my-mods", "coolmod-2.0", "2.0"), "..", "evil-traversal.zip")
+	_, err = os.Stat(escapedPath)
+	assert.True(t, os.IsNotExist(err), "a traversal filename must never write outside the mod's own cache version directory")
+}
+
 // TestPrepareStagingCleansPartialStagingOnCopyFailure is a regression test
 // for a reviewer-caught behavior break in the #52 item 11 extraction:
 // pre-refactor, the caller armed `defer os.RemoveAll(stagePath)` BEFORE the

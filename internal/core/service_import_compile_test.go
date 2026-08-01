@@ -61,7 +61,7 @@ func newImportCompileTestGame(t *testing.T) (*core.Service, *fakeCompilerSource,
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
-	require.NoError(t, os.WriteFile(basePak, []byte("fake-base-pak"), 0o644))
+	writeFakeBasePak(t, basePak)
 
 	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
 	svc, err := core.NewService(cfg)
@@ -199,7 +199,7 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
-	require.NoError(t, os.WriteFile(basePak, []byte("fake-base-pak"), 0o644))
+	writeFakeBasePak(t, basePak)
 
 	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
 	svc, err := core.NewService(cfg)
@@ -268,7 +268,7 @@ func TestImportMod_DeployCompile_CompileFailureLeavesNoPartialArtifact(t *testin
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
-	require.NoError(t, os.WriteFile(basePak, []byte("fake-base-pak"), 0o644))
+	writeFakeBasePak(t, basePak)
 
 	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
 	svc, err := core.NewService(cfg)
@@ -337,7 +337,7 @@ func TestImportMod_DeployCompile_ReimportSurvivesStagingFailure(t *testing.T) {
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
-	require.NoError(t, os.WriteFile(basePak, []byte("fake-base-pak"), 0o644))
+	writeFakeBasePak(t, basePak)
 
 	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
 	svc, err := core.NewService(cfg)

@@ -21,6 +21,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -509,8 +510,15 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		}
 	}()
 
-	// Download the file
-	archivePath := filepath.Join(tempDir, file.FileName)
+	// Download the file. safeFileName sanitizes file.FileName - a
+	// SOURCE-CONTROLLED value (NexusMods/CurseForge/Icarus/a custom source's
+	// own declared filename) - before it is ever used as a path component:
+	// an entry like "../../evil" would otherwise let a malicious or buggy
+	// source escape tempDir/stagePath (#196 review). Used for every
+	// path-construction use of the filename below; file.FileName itself is
+	// left untouched for display purposes (the SHA256 mismatch message).
+	safeFileName := filepath.Base(file.FileName)
+	archivePath := filepath.Join(tempDir, safeFileName)
 	var headers map[string]string
 	if hp, ok := src.(source.DownloadHeaderProvider); ok {
 		headers = hp.DownloadHeaders(url)
@@ -532,7 +540,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
-	if game.DeployMode == domain.DeployCompile && isExmodzFile(file.FileName) {
+	if game.DeployMode == domain.DeployCompile && isExmodzFile(safeFileName) {
 		compiler, ok := src.(source.Compiler)
 		if !ok {
 			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement Compiler", src.ID(), game.ID)
@@ -547,10 +555,17 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		if err := os.MkdirAll(stagePath, 0755); err != nil {
 			return nil, fmt.Errorf("preparing compile staging: %w", err)
 		}
-		destName := compiledFileName(file.FileName)
+		// filepath.Base again: compiledFileName only trims a suffix/adds
+		// one - it does not strip directory components, so a traversal
+		// payload in safeFileName's stem would otherwise survive into
+		// destName unsanitized.
+		destName := filepath.Base(compiledFileName(safeFileName))
 		destPath := filepath.Join(stagePath, destName)
 		if err := compiler.Compile(ctx, basePakPath, archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("compiling mod: %w", err)
+		}
+		if err := stageCompileFingerprint(stagePath, file.ID, basePakPath, archivePath); err != nil {
+			return nil, err
 		}
 		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{destName}); err != nil {
 			return nil, err
@@ -562,11 +577,11 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
 		// Or not an archive - just copy to cache. copyFileStreaming mkdirs
 		// stagePath itself (importer.go), so no MkdirAll needed here.
-		destPath := filepath.Join(stagePath, file.FileName)
+		destPath := filepath.Join(stagePath, safeFileName)
 		if err := copyFileStreaming(archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
-		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{file.FileName}); err != nil {
+		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{safeFileName}); err != nil {
 			return nil, err
 		}
 		return &DownloadModResult{
@@ -662,11 +677,14 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		// item 12); localPath's own basename is often just a temp file name
 		// and falls back only when the caller left FileName unset.
 		// copyFileStreaming mkdirs stagePath itself (importer.go), so no
-		// MkdirAll needed here.
+		// MkdirAll needed here. filepath.Base sanitizes whichever name was
+		// chosen: file.FileName is SOURCE-CONTROLLED (#196 review) and must
+		// not be trusted as a path component verbatim (e.g. "../../evil").
 		destName := file.FileName
 		if destName == "" {
 			destName = filepath.Base(localPath)
 		}
+		destName = filepath.Base(destName)
 		if err := copyFileStreaming(localPath, filepath.Join(stagePath, destName)); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
@@ -990,6 +1008,44 @@ func resolveBasePak(game *domain.Game) (string, error) {
 func compiledFileName(sourceFileName string) string {
 	base := strings.TrimSuffix(sourceFileName, filepath.Ext(sourceFileName))
 	return base + "_P.pak"
+}
+
+// basePakIndexHash opens basePakPath and returns its footer IndexHash
+// (#196) - cheap (footer + primary-index region only; unrealpak.Open never
+// reads a pak's actual file payloads), matching the base pak Compile itself
+// already opens to read patched tables from, so this adds no new I/O
+// pattern to the compile path.
+func basePakIndexHash(basePakPath string) (string, error) {
+	r, err := unrealpak.Open(basePakPath)
+	if err != nil {
+		return "", fmt.Errorf("reading base pak for compile fingerprint: %w", err)
+	}
+	defer r.Close() //nolint:errcheck
+	return r.IndexHash(), nil
+}
+
+// stageCompileFingerprint stages fileID's #196 compile fingerprint into
+// stagePath: the base pak's IndexHash (cache.MarkBaseIndexHash) and a copy
+// of the original .exmodz (cache.RetainedSourceName), so a later staleness
+// check can detect the base pak changing, and a later recompile can run
+// offline. Both land in the SAME atomic commit as the compiled pak - see
+// commitStagedCache/commitStagedCacheWithMarker - so a partial write here
+// can never separate a compiled pak from its fingerprint or retained
+// source. Called by both compile sites (download: DownloadModToCache;
+// import: Importer.Import) after Compile succeeds, before the commit.
+func stageCompileFingerprint(stagePath, fileID, basePakPath, sourceFilePath string) error {
+	indexHash, err := basePakIndexHash(basePakPath)
+	if err != nil {
+		return err
+	}
+	if err := cache.MarkBaseIndexHash(stagePath, fileID, indexHash); err != nil {
+		return err
+	}
+	retainedPath := filepath.Join(stagePath, cache.RetainedSourceName(fileID))
+	if err := copyFileStreaming(sourceFilePath, retainedPath); err != nil {
+		return fmt.Errorf("retaining compile source: %w", err)
+	}
+	return nil
 }
 
 // GetGame retrieves a game by ID

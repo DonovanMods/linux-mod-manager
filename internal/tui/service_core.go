@@ -1423,7 +1423,7 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 		return UpdatesView{}, fmt.Errorf("loading installed mods for %s/%s: %w", game.ID, profile, err)
 	}
 
-	updates, checkErr := p.svc.NewUpdater().CheckUpdates(ctx, game, installed)
+	updates, checkErr := p.svc.CheckGameUpdates(ctx, game, installed)
 
 	// #143: join the profile YAML's lock state onto the update rows - the
 	// same projection (and the same nil-safe "an unreadable profile leaves
@@ -1446,6 +1446,7 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 			FromVersion: u.InstalledMod.Version, ToVersion: u.NewVersion,
 			Changelog: core.CleanChangelog(u.Changelog),
 			Locked:    isLocked, LockedVersion: lockedVersion,
+			RecompileNeeded: u.RecompileNeeded,
 		})
 	}
 	if skipped := updateSkipWarning(core.CountUpdateSkips(installed)); skipped != "" {
@@ -1464,12 +1465,16 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 
 // ApplyUpdate applies u with the SAME hook configuration cmd/lmm/update.go's
 // applyUpdate passes (Force=false, its default). u is re-checked via
-// CheckUpdates for just this one mod first - mirroring
+// CheckGameUpdates for just this one mod first - mirroring
 // cmd/lmm/update.go's applySingleUpdate, which does the same before calling
 // applyUpdate - rather than reconstructing a bare domain.Update from u's own
 // fields: UpdateItem carries no FileIDReplacements (see its doc comment),
 // and a real update may need that superseded-file-ID mapping to install
-// correctly; only a fresh CheckUpdates call can supply it.
+// correctly; only a fresh check call can supply it.
+//
+// #196: a RecompileNeeded row (NewVersion == the mod's current version - a
+// base-pak staleness signal, not a real update) is routed to
+// Service.ApplyRecompile instead, which has no hooks/options to configure.
 func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
 	game := p.currentGame()
 	profile := p.currentProfile()
@@ -1478,7 +1483,7 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 		return ActionOutcome{}, fmt.Errorf("getting installed mod %s: %w", u.Name, err)
 	}
 
-	updates, err := p.svc.NewUpdater().CheckUpdates(ctx, game, []domain.InstalledMod{*mod})
+	updates, err := p.svc.CheckGameUpdates(ctx, game, []domain.InstalledMod{*mod})
 	if err != nil {
 		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("checking update for %s", u.Name), u.Source, err)
 	}
@@ -1487,6 +1492,21 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 	}
 	upd := updates[0]
 
+	adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
+		return updateProgressLine(u.Name, p)
+	})
+
+	if upd.RecompileNeeded {
+		result, err := p.svc.ApplyRecompile(ctx, game, profile, upd.InstalledMod, adapter)
+		if err != nil {
+			return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("recompiling %s", u.Name), u.Source, err)
+		}
+		return ActionOutcome{
+			Message:  fmt.Sprintf("Recompiled %q (base pak updated)", u.Name),
+			Warnings: mergeDiagnostics(result.Warnings, result.Notes),
+		}, nil
+	}
+
 	opts := core.UpdateOptions{
 		Hooks:       p.resolvedHooks(game, profile),
 		HookRunner:  p.hookRunner(),
@@ -1494,9 +1514,6 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 		Force:       false,
 	}
 
-	adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
-		return updateProgressLine(u.Name, p)
-	})
 	result, err := p.svc.ApplyUpdate(ctx, game, profile, upd, opts, adapter)
 	if err != nil {
 		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("updating %s", u.Name), u.Source, err)

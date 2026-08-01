@@ -1447,7 +1447,7 @@ func (m Model) resolveCheckUpdatesFailure(msg checkUpdatesFailedMsg) (Model, tea
 func updateDetailLines(view UpdatesView) []string {
 	lines := make([]string, 0, len(view.Updates)+1)
 	for _, u := range view.Updates {
-		line := fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion)
+		line := fmt.Sprintf("%s %s", u.Name, u.VersionLabel())
 		if u.Locked {
 			line += fmt.Sprintf(" [locked@%s]", u.LockedVersion)
 		}
@@ -1552,7 +1552,7 @@ func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updat
 		}
 		applied++
 		warnings = append(warnings, outcome.Warnings...)
-		resultLines = append(resultLines, fmt.Sprintf("✓ %s %s → %s", u.Name, u.FromVersion, u.ToVersion))
+		resultLines = append(resultLines, fmt.Sprintf("✓ %s %s", u.Name, u.VersionLabel()))
 	}
 	return ActionOutcome{
 		Message:     fmt.Sprintf("Applied %d update(s)", applied),

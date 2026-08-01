@@ -250,6 +250,84 @@ func (c *Cache) HasFileIDs(gameID, sourceID, modID, version string, fileIDs []st
 	return true
 }
 
+// baseIndexHashPrefix names a compiled file's base-pak fingerprint marker
+// (#196, "the Friday problem"): the game's base data.pak footer IndexHash at
+// the moment the file was compiled, so a later staleness check can detect
+// the base pak changing underneath a compiled mod without re-hashing
+// anything. Reserved (ReservedPrefix) so ListFiles/Size/deploy skip it like
+// every other lmm bookkeeping entry.
+const baseIndexHashPrefix = ReservedPrefix + "basehash-"
+
+// MarkBaseIndexHash records fileID's compiled-against base pak IndexHash
+// (hex-encoded) into versionDir - written into the STAGING directory
+// alongside the compile's own completion marker and retained source, just
+// before the atomic commit that publishes all three together (mirrors
+// MarkFileCompleteWithMembers; see internal/core's stageCompileFingerprint).
+// An unverifiable fileID is skipped, matching writeFileMarker's contract.
+func MarkBaseIndexHash(versionDir, fileID, indexHash string) error {
+	if !VerifiableFileID(fileID) {
+		return nil
+	}
+	if err := os.MkdirAll(versionDir, 0755); err != nil {
+		return fmt.Errorf("creating cache dir for base index marker: %w", err)
+	}
+	path := filepath.Join(versionDir, baseIndexHashPrefix+fileID)
+	if err := os.WriteFile(path, []byte(indexHash), 0644); err != nil {
+		return fmt.Errorf("writing base index marker: %w", err)
+	}
+	return nil
+}
+
+// BaseIndexHashes reads every recorded base-pak fingerprint marker in the
+// (gameID, sourceID, modID, version) cache entry, keyed by the compiled
+// file's own fileID - mirroring FileManifests' directory-walk style so
+// staleness detection (#196) works uniformly regardless of how a fileID was
+// assigned (a download's real DownloadableFile.ID, or an import's synthetic
+// one - see internal/core's stageCompileFingerprint). A directory with no
+// compiled entries - including one with no markers at all - returns an
+// empty map, never an error.
+func (c *Cache) BaseIndexHashes(gameID, sourceID, modID, version string) (map[string]string, error) {
+	versionDir := c.ModPath(gameID, sourceID, modID, version)
+	entries, err := os.ReadDir(versionDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("reading base index markers: %w", err)
+	}
+
+	hashes := make(map[string]string)
+	for _, entry := range entries {
+		fileID, ok := strings.CutPrefix(entry.Name(), baseIndexHashPrefix)
+		if !ok || entry.IsDir() || !VerifiableFileID(fileID) {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(versionDir, entry.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("reading base index marker %s: %w", entry.Name(), err)
+		}
+		hashes[fileID] = string(body)
+	}
+	return hashes, nil
+}
+
+// retainedSourcePrefix names a compiled file's retained source archive
+// (#196): the original .exmodz kept beside the compiled pak so a later
+// recompile - the base pak changed, not the mod - can run offline instead
+// of re-downloading. Reserved (ReservedPrefix) so ListFiles/Size/deploy skip
+// it like every other lmm bookkeeping entry: it is cache-internal
+// provenance, never a deployment member.
+const retainedSourcePrefix = ReservedPrefix + "source-"
+
+// RetainedSourceName returns the reserved on-disk filename for fileID's
+// retained compile source. It is a pure naming function - like
+// GetFilePath, callers join it against a staging or cache directory
+// themselves and read/write/copy the actual bytes with ordinary file I/O
+// (see internal/core's stageCompileFingerprint and recompile-apply path).
+func RetainedSourceName(fileID string) string {
+	return retainedSourcePrefix + fileID
+}
+
 // Store saves a file to the cache
 func (c *Cache) Store(gameID, sourceID, modID, version, relativePath string, content []byte) error {
 	modPath := c.ModPath(gameID, sourceID, modID, version)

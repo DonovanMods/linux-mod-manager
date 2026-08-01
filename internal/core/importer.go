@@ -169,6 +169,17 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		if err := copyFileStreaming(compiledPath, filepath.Join(stagePath, destName)); err != nil {
 			return nil, fmt.Errorf("staging compiled mod: %w", err)
 		}
+		// #196: stage the compile fingerprint (base pak IndexHash) and
+		// retained source keyed by destName - Import has no real source
+		// file ID the way a download does (DownloadableFile.ID is resolved
+		// later, outside Import, only when --id was given), so the compiled
+		// output's own filename is the stable per-entry key instead. A
+		// re-import of the same archive name replaces this entry outright
+		// (prepareUnseededStaging), so destName never collides across
+		// generations of the same mod.
+		if err := stageCompileFingerprint(stagePath, destName, basePakPath, archivePath); err != nil {
+			return nil, err
+		}
 		if err := commitStagedCache(cachePath, stagePath); err != nil {
 			return nil, err
 		}

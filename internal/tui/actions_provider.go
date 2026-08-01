@@ -280,6 +280,26 @@ type UpdateItem struct {
 	// is false" contract.
 	Locked        bool
 	LockedVersion string
+	// RecompileNeeded marks a #196 base-pak staleness row: a DeployCompile
+	// mod whose deployed compile no longer matches the game's live base
+	// pak. ToVersion equals FromVersion in this case - the mod itself
+	// hasn't changed, only the base pak has - and ApplyUpdate routes such a
+	// row to Service.ApplyRecompile instead of Service.ApplyUpdate.
+	RecompileNeeded bool
+}
+
+// VersionLabel renders u's version change for display: the normal
+// "<from> → <to>" arrow for a real update, or "(base pak updated)" for a
+// #196 RecompileNeeded row, where FromVersion == ToVersion and an arrow
+// would misleadingly read as a no-op. Used everywhere an UpdateItem's
+// version change is shown - the apply-updates modal, its result lines, and
+// the changelog picker/overlay - so all of them read sanely for a
+// staleness row without duplicating this branch four times.
+func (u UpdateItem) VersionLabel() string {
+	if u.RecompileNeeded {
+		return "(base pak updated)"
+	}
+	return fmt.Sprintf("%s → %s", u.FromVersion, u.ToVersion)
 }
 
 // UpdatesView is CheckUpdates' result: the available updates plus any

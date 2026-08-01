@@ -33,7 +33,7 @@ type verifyFileJSON struct {
 	ModID   string `json:"mod_id"`
 	ModName string `json:"mod_name"`
 	FileID  string `json:"file_id"`
-	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable
+	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile
 	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, or a file-count-check lookup failure - omitted when there's nothing extra to add
 }
 
@@ -73,6 +73,20 @@ the version of the file that was actually downloaded and deployed):
     ? NAME - VERSION UNVERIFIABLE       none of the recorded file ID(s)
                                          are listed by the source anymore
                                          (reinstall or 'lmm update')
+
+For a compile-deploy game (e.g. Icarus), verify also compares each
+compiled mod's recorded base-pak fingerprint against the game's live base
+pak (#196, "the Friday problem" - a weekly base pak refresh silently
+reverts a compiled mod's patched tables, with nothing to notice
+otherwise):
+
+    ? NAME - RECOMPILE NEEDED           the game's base pak has changed
+                                         since this mod was compiled; run
+                                         'lmm update' to recompile it
+
+This check is entirely local (no source contacted) and applies to every
+compiled mod regardless of source, including local imports. --fix does
+not repair it - use 'lmm update' (or 'lmm update --all').
 
 Mods installed from a local source, mods requiring manual download, and
 mods with no recorded file IDs are skipped silently - there is nothing
@@ -114,9 +128,10 @@ OK case - this is never counted in issues or warnings.
 
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
-"no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
-"version_unverifiable"; note adds detail where there's something extra to
-say - a blocked cache rename, sibling-repair results, a --fix repair or
+"no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
+"version_unverifiable", or "stale_compile"; note adds detail where
+there's something extra to say - a blocked cache rename, sibling-repair
+results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
 record ("locked"), or a locked record's pending convergence detail - and
@@ -289,6 +304,42 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	installedMods, err := svc.GetInstalledMods(game.ID, profile)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
+	}
+
+	// Base-pak staleness check (#196): for a DeployCompile game, compare
+	// each compiled mod's recorded base-pak fingerprint against the game's
+	// live base pak. Entirely local/offline - unlike the version-record
+	// check below, this is NOT skipped for local-source or manual-download
+	// mods (there is no source dependency at all; see
+	// Service.CheckBaseStaleness's own doc comment).
+	if game.DeployMode == domain.DeployCompile {
+		staleCheckSet := installedMods
+		if modFilter != "" {
+			staleCheckSet = nil
+			for i := range installedMods {
+				if installedMods[i].ID == modFilter {
+					staleCheckSet = append(staleCheckSet, installedMods[i])
+				}
+			}
+		}
+		stale, serr := svc.CheckBaseStaleness(game, staleCheckSet)
+		if serr != nil {
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{Status: "skipped", Note: fmt.Sprintf("could not check base pak staleness: %v", serr)})
+			} else {
+				fmt.Printf("%s could not check base pak staleness: %v\n", colorYellow("?"), serr)
+			}
+			warnings++
+		}
+		checked += len(staleCheckSet)
+		for _, u := range stale {
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: u.InstalledMod.ID, ModName: u.InstalledMod.Name, Status: "stale_compile"})
+			} else {
+				fmt.Printf("%s %s - RECOMPILE NEEDED (base pak updated - run 'lmm update' to fix)\n", colorYellow("?"), u.InstalledMod.Name)
+			}
+			warnings++
+		}
 	}
 	for i := range installedMods {
 		mod := &installedMods[i]

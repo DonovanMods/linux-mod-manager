@@ -119,6 +119,14 @@ type Update struct {
 	NewVersion         string
 	Changelog          string
 	FileIDReplacements map[string]string // Old file ID -> new file ID when a file was superseded (e.g. NexusMods FileUpdates)
+	// RecompileNeeded marks a DeployCompile mod whose deployed compile no
+	// longer matches the game's live base data.pak (#196, "the Friday
+	// problem": a weekly base-pak refresh silently reverts the tables a
+	// compiled mod patches, with nothing before #196 to notice). NewVersion
+	// equals InstalledMod.Version in this case - the mod itself hasn't
+	// changed, only the base pak has - so callers must not treat NewVersion
+	// as a real version bump when this is set.
+	RecompileNeeded bool
 }
 
 // ModKey returns a unique lookup key for a mod: "sourceID:modID".
