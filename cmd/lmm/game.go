@@ -227,7 +227,7 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 		g := games[n-1]
 		game, err := gameFromDetected(g)
 		if err != nil {
-			return err
+			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
 		}
 		if err := config.SaveGame(svcCfg.ConfigDir, game); err != nil {
 			return fmt.Errorf("saving game %s: %w", g.Slug, err)

@@ -26,7 +26,7 @@ var (
 	// what's wrong and how to fix it (#172).
 	ErrInvalidLinkMethod = errors.New("invalid link method")
 	// ErrInvalidDeployMode is ErrInvalidLinkMethod's counterpart for
-	// deploy_mode (extract, copy) (#172).
+	// deploy_mode; see ValidDeployModes for the recognized names (#172).
 	ErrInvalidDeployMode = errors.New("invalid deploy mode")
 	ErrDependencyLoop    = errors.New("circular dependency detected")
 	ErrAuthRequired      = errors.New("authentication required")
