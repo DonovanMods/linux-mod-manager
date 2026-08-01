@@ -3,9 +3,6 @@ package icarus
 import (
 	"archive/zip"
 	"bytes"
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,24 +10,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 )
-
-// testDumpStore serves a dump containing exactly files, so validateDump agrees
-// it matches the base pak built from the same map. Reuses tarGz from
-// datadump_test.go (same package).
-func testDumpStore(t *testing.T, files map[string][]byte) *DumpStore {
-	t.Helper()
-	entries := make(map[string]string, len(files))
-	for name, data := range files {
-		entries[name] = string(data)
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(tarGz(t, "IcarusData-test", entries))
-	}))
-	t.Cleanup(srv.Close)
-	store := newDumpStore(srv.Client())
-	store.treeURL = srv.URL
-	return store
-}
 
 func writeTestExmodzFile(t *testing.T, manifestJSON string, assets map[string][]byte) string {
 	t.Helper()
@@ -61,14 +40,13 @@ func TestCompile_AppliesDiffAndBundlesAssets(t *testing.T) {
 		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200}}`),
 	}
 	basePak := writeTestBasePak(t, baseTables)
-	dumps := testDumpStore(t, baseTables)
 	manifest := `{"name":"Bear Mount","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseMovementSpeed":235}]}]}`
 	exmodzPath := writeTestExmodzFile(t, manifest, map[string][]byte{
 		"Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.uasset": []byte("fake-asset"),
 	})
 	outputPath := filepath.Join(t.TempDir(), "Bear_Mount_P.pak")
 
-	if err := Compile(context.Background(), dumps, basePak, "", exmodzPath, outputPath); err != nil {
+	if err := Compile(basePak, exmodzPath, outputPath); err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
 
@@ -103,14 +81,13 @@ func TestCompile_SkipsEndOfModSentinelRow(t *testing.T) {
 		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200}}`),
 	}
 	basePak := writeTestBasePak(t, baseTables)
-	dumps := testDumpStore(t, baseTables)
 	manifest := `{"name":"X","Rows":[` +
 		`{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseMovementSpeed":235}]},` +
 		`{"CurrentFile":"EndOfMod"}]}`
 	exmodzPath := writeTestExmodzFile(t, manifest, nil)
 	outputPath := filepath.Join(t.TempDir(), "out.pak")
 
-	if err := Compile(context.Background(), dumps, basePak, "", exmodzPath, outputPath); err != nil {
+	if err := Compile(basePak, exmodzPath, outputPath); err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
 
@@ -135,12 +112,11 @@ func TestCompile_RowWithoutFileItems_Errors(t *testing.T) {
 		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200}}`),
 	}
 	basePak := writeTestBasePak(t, baseTables)
-	dumps := testDumpStore(t, baseTables)
 	manifest := `{"name":"X","Rows":[{"CurrentFile":"AI-D_AIGrowth.json"}]}`
 	exmodzPath := writeTestExmodzFile(t, manifest, nil)
 	outputPath := filepath.Join(t.TempDir(), "out.pak")
 
-	err := Compile(context.Background(), dumps, basePak, "", exmodzPath, outputPath)
+	err := Compile(basePak, exmodzPath, outputPath)
 	if err == nil {
 		t.Fatal("expected an error for a non-sentinel row with no File_Items, got nil")
 	}
@@ -149,25 +125,55 @@ func TestCompile_RowWithoutFileItems_Errors(t *testing.T) {
 	}
 }
 
-// A stale dump must stop the compile before any output pak is written — this
-// is the live case today, where the newest dump lags the installed game.
-func TestCompile_DumpWeekMismatch_FailsBeforeWriting(t *testing.T) {
+// The base table Compile patches must come from the installed pak itself —
+// that is the whole point of the #175 pivot — so a row's output has to reflect
+// the pak's own bytes, not any other source.
+func TestCompile_PatchesTheBasePaksOwnTable(t *testing.T) {
 	basePak := writeTestBasePak(t, map[string][]byte{
-		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200}}`),
-	})
-	dumps := testDumpStore(t, map[string][]byte{ // different week's content
-		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":150}}`),
+		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200,"OnlyInPak":true}}`),
 	})
 	manifest := `{"name":"X","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseMovementSpeed":235}]}]}`
 	exmodzPath := writeTestExmodzFile(t, manifest, nil)
 	outputPath := filepath.Join(t.TempDir(), "out.pak")
 
-	err := Compile(context.Background(), dumps, basePak, "", exmodzPath, outputPath)
-	if err == nil {
-		t.Fatal("expected an error when the dump is for a different game week, got nil")
+	if err := Compile(basePak, exmodzPath, outputPath); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	r, err := unrealpak.Open(outputPath)
+	if err != nil {
+		t.Fatalf("opening compiled output: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+	got, err := r.ReadFile("AI/D_AIGrowth.json")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	// The patched field changed...
+	if !bytes.Contains(got, []byte(`"BaseMovementSpeed":235`)) {
+		t.Errorf("patched table = %s, want BaseMovementSpeed 235", got)
+	}
+	// ...and a field only the base pak carried survived, proving the base
+	// content was read from the pak rather than synthesized.
+	if !bytes.Contains(got, []byte(`"OnlyInPak":true`)) {
+		t.Errorf("patched table = %s, want the base pak's OnlyInPak field preserved", got)
+	}
+}
+
+// A CurrentFile with no matching entry in the base pak fails before any output
+// pak is written.
+func TestCompile_UnknownBaseTable_LeavesNoOutputFile(t *testing.T) {
+	basePak := writeTestBasePak(t, map[string][]byte{
+		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{}}`),
+	})
+	manifest := `{"name":"X","Rows":[{"CurrentFile":"AI-D_NotInPak.json","File_Items":[{"Name":"X","V":1}]}]}`
+	exmodzPath := writeTestExmodzFile(t, manifest, nil)
+	outputPath := filepath.Join(t.TempDir(), "out.pak")
+
+	if err := Compile(basePak, exmodzPath, outputPath); err == nil {
+		t.Fatal("expected an error for a CurrentFile absent from the base pak, got nil")
 	}
 	if _, statErr := os.Stat(outputPath); statErr == nil {
-		t.Error("no output pak should exist after a week-mismatch failure")
+		t.Error("no output pak should exist after a failed compile")
 	}
 }
 
@@ -180,14 +186,13 @@ func TestCompile_UnsafeAssetPath_Errors(t *testing.T) {
 		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200}}`),
 	}
 	basePak := writeTestBasePak(t, baseTables)
-	dumps := testDumpStore(t, baseTables)
 	manifest := `{"name":"X","Rows":[]}`
 	exmodzPath := writeTestExmodzFile(t, manifest, map[string][]byte{
 		"../evil.uasset": []byte("payload"),
 	})
 	outputPath := filepath.Join(t.TempDir(), "out.pak")
 
-	err := Compile(context.Background(), dumps, basePak, "", exmodzPath, outputPath)
+	err := Compile(basePak, exmodzPath, outputPath)
 	if err == nil {
 		t.Fatal("expected an error for an asset path escaping the mod's own namespace, got nil")
 	}
@@ -210,14 +215,13 @@ func TestCompile_MidCompileFailure_LeavesNoOutputFile(t *testing.T) {
 		"AI/D_AIGrowth.json": []byte(`{"Mount_Bear":{"BaseMovementSpeed":200}}`),
 	}
 	basePak := writeTestBasePak(t, baseTables)
-	dumps := testDumpStore(t, baseTables)
 	// CurrentFile has no matching base-pak file: resolveCurrentFile fails
 	// inside the row loop, after out has already been created.
 	manifest := `{"name":"X","Rows":[{"CurrentFile":"AI-D_Nonexistent.json","File_Items":[{"Name":"Mount_Bear","X":1}]}]}`
 	exmodzPath := writeTestExmodzFile(t, manifest, nil)
 	outputPath := filepath.Join(t.TempDir(), "out.pak")
 
-	err := Compile(context.Background(), dumps, basePak, "", exmodzPath, outputPath)
+	err := Compile(basePak, exmodzPath, outputPath)
 	if err == nil {
 		t.Fatal("expected an error for an unresolvable row, got nil")
 	}

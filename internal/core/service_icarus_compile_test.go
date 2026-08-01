@@ -53,7 +53,7 @@ func (s *fakeCompilerSource) CheckUpdates(ctx context.Context, installed []domai
 // through unchanged — this test only asserts Service invoked it with the
 // right arguments and used its output, not that it performs real PAK
 // compilation (Task 12 covers that).
-func (s *fakeCompilerSource) Compile(ctx context.Context, basePakPath, baseDataPath, sourceFilePath, outputPath string) error {
+func (s *fakeCompilerSource) Compile(ctx context.Context, basePakPath, sourceFilePath, outputPath string) error {
 	s.compileCalls++
 	data, err := os.ReadFile(sourceFilePath)
 	if err != nil {
