@@ -321,13 +321,41 @@ func walkEntries(modPath string, includeReserved bool) ([]string, error) {
 	return files, nil
 }
 
-// Delete removes a cached mod version
+// Delete removes a cached mod version, then removes the mod's per-mod
+// container directory (ModPath's parent - the "<source>-<modID>" directory
+// version subdirectories live under) if this was its last remaining
+// version. The container has no meaning once nothing is left under it, so
+// leaving it behind after every version is gone is just litter (#190 item
+// 4). A container that still holds another version, or that never existed,
+// is left alone either way - never an error.
 func (c *Cache) Delete(gameID, sourceID, modID, version string) error {
 	modPath := c.ModPath(gameID, sourceID, modID, version)
 	if err := os.RemoveAll(modPath); err != nil {
 		return fmt.Errorf("deleting cached mod: %w", err)
 	}
+	if err := removeIfEmpty(filepath.Dir(modPath)); err != nil {
+		return fmt.Errorf("removing empty mod cache directory: %w", err)
+	}
 	return nil
+}
+
+// removeIfEmpty removes dir if it exists and holds no entries. A dir that
+// doesn't exist, or still has content, is left untouched - both are normal,
+// not errors. No locking: this package has no concurrent-write story today
+// (single Service, sequential cache mutations), so this is a plain
+// read-then-remove, same as every other cache directory operation here.
+func removeIfEmpty(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if len(entries) > 0 {
+		return nil
+	}
+	return os.Remove(dir)
 }
 
 // GetFilePath returns the full path to a cached file
