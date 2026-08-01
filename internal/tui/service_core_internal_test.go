@@ -47,3 +47,14 @@ func TestSwitchProgressLine_UnhandledPhaseStillDrops(t *testing.T) {
 	_, ok := switchProgressLine(core.DeployProgress{Phase: core.SwitchDisableNote})
 	assert.False(t, ok)
 }
+
+// TestInstallProgressLine_RendersCompiling guards #190 item 1's TUI parity:
+// the TUI drives the exact same core.ApplyInstall/DeployProgress path as the
+// CLI (installProgressLine's own doc comment), so InstallCompiling must
+// compose a status line here too, not silently fall to the default case.
+func TestInstallProgressLine_RendersCompiling(t *testing.T) {
+	line, ok := installProgressLine("Bear Mount", core.DeployProgress{Phase: core.InstallCompiling})
+	assert.True(t, ok, "InstallCompiling must compose a visible progress line, not be dropped")
+	assert.Contains(t, line.Line, "Bear Mount")
+	assert.Contains(t, line.Line, "compiling")
+}

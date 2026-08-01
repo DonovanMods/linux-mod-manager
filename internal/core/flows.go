@@ -677,10 +677,23 @@ const (
 	// succeeds). Detail carries the full (untruncated) checksum either
 	// way; the CLI applies its own truncateChecksum.
 	InstallChecksumComputed
+	// InstallCompiling fires instead of InstallExtracting, once per file,
+	// when a DeployCompile game's ".exmodz" file was actually compiled
+	// (#190 item 1) - the generic "Extracting to cache..." wording is
+	// misleading for a compile step, which never extracts anything. File
+	// identifies the source file (for displayFileLabel); Detail carries the
+	// compiled output filename (e.g. "Bear_Mount_P.pak"), so the CLI can
+	// announce "Compiling <source> → <output>..." without core owning the
+	// exact sentence. The BATCH path never prints this (it has no
+	// DeployCompile support and no equivalent status line at all).
+	InstallCompiling
 	// InstallExtracting mirrors doInstall's unconditional "Extracting to
 	// cache..." status line, fired once after the STRICT-path primary's
-	// download(s) finish, before Install/Replace. The BATCH path never
-	// prints this (batchInstallMods had no equivalent status line).
+	// download(s) finish, before Install/Replace - unless every downloaded
+	// file was compiled instead (InstallCompiling fires in that case, one
+	// event per compiled file, and this is skipped entirely). The BATCH
+	// path never prints this (batchInstallMods had no equivalent status
+	// line).
 	InstallExtracting
 	// InstallDeploying mirrors "Deploying to game directory...", fired once
 	// right before the STRICT-path primary's Install/Replace. The BATCH
@@ -3956,6 +3969,13 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 
 	var downloadedFileIDs []string
 	var checksums []fileChecksum
+	// compiledFiles accumulates every file this loop actually compiled (game
+	// DeployCompile + a ".exmodz" file - the same condition
+	// DownloadModToCache itself gates on), re-derived here rather than read
+	// back from DownloadModToCache's result since flows.go already has
+	// everything the condition needs. Drives the InstallCompiling
+	// announcement below in place of the generic InstallExtracting one.
+	var compiledFiles []*domain.DownloadableFile
 	filesTotal := len(plan.Files)
 	for i := range plan.Files {
 		file := &plan.Files[i]
@@ -3997,9 +4017,26 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 
 		result.FilesDeployed += downloadResult.FilesExtracted
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
+
+		if game.DeployMode == domain.DeployCompile && isExmodzFile(file.FileName) {
+			compiledFiles = append(compiledFiles, file)
+		}
 	}
 
-	emit(DeployProgress{Phase: InstallExtracting, ModName: mod.Name, ModID: mod.ID})
+	// A compiled file was never "extracted" - announce the compile step by
+	// name instead of the generic message, which is actively misleading
+	// here (#190 item 1). Only fires for files that actually compiled, so
+	// every non-DeployCompile (or non-exmodz) install keeps today's exact
+	// "Extracting to cache..." text unchanged.
+	if len(compiledFiles) > 0 {
+		for _, cf := range compiledFiles {
+			evt := base
+			evt.Phase, evt.File, evt.Detail = InstallCompiling, cf, compiledFileName(cf.FileName)
+			emit(evt)
+		}
+	} else {
+		emit(DeployProgress{Phase: InstallExtracting, ModName: mod.Name, ModID: mod.ID})
+	}
 
 	// Conflict confirmation restored to doInstall's ORIGINAL position (C1
 	// review finding): AFTER the primary is downloaded/extracted to cache,

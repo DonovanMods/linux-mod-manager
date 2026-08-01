@@ -1146,6 +1146,8 @@ func installProgressLine(modName string, p core.DeployProgress) (ActionProgress,
 		return ActionProgress{Line: fmt.Sprintf("Installing %s: %.0f%%", modName, p.Percent), Percent: p.Percent}, true
 	case core.InstallDepDownloading:
 		return ActionProgress{Line: fmt.Sprintf("Installing %s: %.0f%%", p.ModName, p.Percent), Percent: p.Percent}, true
+	case core.InstallCompiling:
+		return ActionProgress{Line: fmt.Sprintf("Installing %s: compiling", modName), Percent: -1}, true
 	case core.InstallExtracting:
 		return ActionProgress{Line: fmt.Sprintf("Installing %s: extracting", modName), Percent: -1}, true
 	case core.InstallDeploying:
