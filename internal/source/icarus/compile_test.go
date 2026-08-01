@@ -56,7 +56,7 @@ func TestCompile_AppliesDiffAndBundlesAssets(t *testing.T) {
 	}
 	defer r.Close() //nolint:errcheck
 
-	patched, err := r.ReadFile("AI/D_AIGrowth.json")
+	patched, err := r.ReadFile("data/AI/D_AIGrowth.json")
 	if err != nil {
 		t.Fatalf("ReadFile patched data table: %v", err)
 	}
@@ -70,6 +70,49 @@ func TestCompile_AppliesDiffAndBundlesAssets(t *testing.T) {
 	}
 	if string(asset) != "fake-asset" {
 		t.Errorf("bundled asset content = %q", asset)
+	}
+}
+
+// TestCompile_MountsAtTheGamesDataLoaderPath pins #178: the compiled pak's
+// MountPoint and patched-table entry paths must land where Icarus's own
+// data-table mod loader actually looks (confirmed against two real prebuilt
+// mod paks — see pak-divergence-report.md), not at the bare base-pak-relative
+// path Compile previously wrote (which mounted fine but had no effect).
+// Bundled assets keep their own unprefixed path; only table entries get the
+// "data/" prefix — a single pak can't correctly address both classes with
+// the same prefix, since assets need the mount point alone to reach
+// Icarus/Content/, while tables additionally need "data/" beneath that.
+func TestCompile_MountsAtTheGamesDataLoaderPath(t *testing.T) {
+	basePak := writeTestBasePak(t, map[string][]byte{
+		"AI/D_AIGrowth.json": []byte(`{"Rows":[{"Name":"Mount_Bear","BaseMovementSpeed":200}]}`),
+	})
+	manifest := `{"name":"X","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseMovementSpeed":235}]}]}`
+	exmodzPath := writeTestExmodzFile(t, manifest, map[string][]byte{
+		"Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.uasset": []byte("fake-asset"),
+	})
+	outputPath := filepath.Join(t.TempDir(), "out.pak")
+
+	if err := Compile(basePak, exmodzPath, outputPath); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	r, err := unrealpak.Open(outputPath)
+	if err != nil {
+		t.Fatalf("opening compiled output: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+
+	const wantMount = "../../../Icarus/Content/"
+	if got := r.MountPoint(); got != wantMount {
+		t.Errorf("MountPoint = %q, want %q", got, wantMount)
+	}
+	if _, err := r.ReadFile("data/AI/D_AIGrowth.json"); err != nil {
+		t.Errorf("patched table must live at the data/-prefixed path: %v", err)
+	}
+	if _, err := r.ReadFile("AI/D_AIGrowth.json"); err == nil {
+		t.Error("patched table must NOT also exist at the unprefixed path")
+	}
+	if _, err := r.ReadFile("Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.uasset"); err != nil {
+		t.Errorf("bundled asset must keep its own unprefixed path: %v", err)
 	}
 }
 
@@ -96,7 +139,7 @@ func TestCompile_SkipsEndOfModSentinelRow(t *testing.T) {
 		t.Fatalf("opening compiled output: %v", err)
 	}
 	defer r.Close() //nolint:errcheck
-	patched, err := r.ReadFile("AI/D_AIGrowth.json")
+	patched, err := r.ReadFile("data/AI/D_AIGrowth.json")
 	if err != nil {
 		t.Fatalf("ReadFile patched data table: %v", err)
 	}
@@ -144,7 +187,7 @@ func TestCompile_PatchesTheBasePaksOwnTable(t *testing.T) {
 		t.Fatalf("opening compiled output: %v", err)
 	}
 	defer r.Close() //nolint:errcheck
-	got, err := r.ReadFile("AI/D_AIGrowth.json")
+	got, err := r.ReadFile("data/AI/D_AIGrowth.json")
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}

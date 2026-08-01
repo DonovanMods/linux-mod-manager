@@ -28,10 +28,11 @@ const writerSeed uint64 = 0x9E3779B97F4A7C15
 // round-trip test able to assert on bytes and keeps compiled paks stable across
 // recompiles.
 type Writer struct {
-	f      *os.File
-	closed bool
-	files  []writerFile
-	seen   map[string]bool
+	f          *os.File
+	closed     bool
+	files      []writerFile
+	seen       map[string]bool
+	mountPoint string
 }
 
 type writerFile struct {
@@ -39,13 +40,34 @@ type writerFile struct {
 	data []byte
 }
 
+// Option configures a Writer at construction time (see Create). The set is
+// deliberately tiny and additive: new options can be introduced without
+// breaking existing Create(path) call sites, since opts is variadic.
+type Option func(*Writer)
+
+// WithMountPoint overrides the mount point Writer stamps into the primary
+// index (see defaultMountPoint). This package stays game-agnostic — it has
+// no built-in notion of any specific game's directory layout — so a caller
+// that knows what its target game's mod loader expects (e.g.
+// internal/source/icarus, #178) supplies it here rather than this package
+// guessing or hard-coding one game's convention.
+func WithMountPoint(mountPoint string) Option {
+	return func(w *Writer) { w.mountPoint = mountPoint }
+}
+
 // Create opens path for writing. Call AddFile for each entry, then Close.
-func Create(path string) (*Writer, error) {
+// With no options, the written pak uses defaultMountPoint, matching every
+// existing caller's prior behavior exactly.
+func Create(path string, opts ...Option) (*Writer, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, fmt.Errorf("unrealpak: creating %s: %w", path, err)
 	}
-	return &Writer{f: f, seen: make(map[string]bool)}, nil
+	w := &Writer{f: f, seen: make(map[string]bool), mountPoint: defaultMountPoint}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w, nil
 }
 
 // AddFile records one entry. Nothing reaches disk until Close.
@@ -157,10 +179,10 @@ func (w *Writer) Close() error {
 	fdiHash := sha1.Sum(fdi.Bytes()) //nolint:gosec
 	count := int32(len(w.files))
 	indexOffset := int64(data.Len())
-	sizing := buildPrimaryIndex(count, writerSeed, 0, 0, phiHash, 0, 0, fdiHash, encoded.Bytes())
+	sizing := buildPrimaryIndex(w.mountPoint, count, writerSeed, 0, 0, phiHash, 0, 0, fdiHash, encoded.Bytes())
 	phiOffset := indexOffset + int64(len(sizing))
 	fdiOffset := phiOffset + int64(phi.Len())
-	index := buildPrimaryIndex(count, writerSeed,
+	index := buildPrimaryIndex(w.mountPoint, count, writerSeed,
 		phiOffset, int64(phi.Len()), phiHash,
 		fdiOffset, int64(fdi.Len()), fdiHash, encoded.Bytes())
 	indexHash := sha1.Sum(index) //nolint:gosec
