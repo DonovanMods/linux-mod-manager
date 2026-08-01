@@ -174,6 +174,30 @@ func TestParseExmodz_NoManifest_Errors(t *testing.T) {
 	}
 }
 
+// A present-but-malformed manifest (invalid JSON) must fail loudly, wrapped
+// with the manifest's own path — Task 11 review noted this path returned
+// ParseExmod's error unwrapped, unlike every other error path in this file.
+func TestParseExmodz_MalformedManifest_Errors(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("Extracted Mods/Bad.EXMOD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write([]byte("{not valid json")) //nolint:errcheck
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ParseExmodz(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected an error for a malformed manifest, got nil")
+	}
+	if !strings.Contains(err.Error(), "Bad.EXMOD") {
+		t.Errorf("error %q should name the manifest that failed to parse", err)
+	}
+}
+
 // An entry (manifest or asset) declaring an uncompressed size over the
 // per-entry cap must be rejected before any content is read — guards
 // against a user-downloaded, third-party .EXMODZ with a corrupt or lying

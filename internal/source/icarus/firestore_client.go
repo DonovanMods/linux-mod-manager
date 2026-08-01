@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -92,6 +93,12 @@ func (c *firestoreClient) getJSON(ctx context.Context, url string, out any) erro
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
+		// Drain before Close so the underlying connection stays eligible for
+		// reuse — net/http only pools an HTTP/1.x connection once its body
+		// has been read to EOF; returning immediately here left whatever the
+		// server sent (however small) unread, forcing the transport to
+		// close the connection instead of reusing it for the next request.
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)

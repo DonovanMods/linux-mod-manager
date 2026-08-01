@@ -60,7 +60,7 @@ func ParseExmodz(zipData []byte) (*ExmodzBundle, error) {
 	}
 	diff, err := ParseExmod(manifestData)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("icarus: %s: %w", manifestPath, err)
 	}
 	bundle := &ExmodzBundle{Diff: diff, Assets: make(map[string][]byte)}
 
