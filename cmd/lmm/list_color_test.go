@@ -59,17 +59,21 @@ func TestList_Verbose_PlainWhenColorDisabled(t *testing.T) {
 	assert.Contains(t, out, "Enabled Undeployed")
 }
 
+// TestList_Verbose_RowTinting guards #193's richer palette: the common,
+// healthy case (enabled+deployed) must now be visibly colored too (green),
+// not left untinted - #112's original "only flag anomalies" choice read as
+// nearly plain in smoke feedback. Yellow (undeployed) and dim (disabled)
+// are unchanged.
 func TestList_Verbose_RowTinting(t *testing.T) {
 	tests := []struct {
-		name           string
-		enabled        bool
-		deployed       bool
-		wantANSI       string
-		wantNoOtherFor []string
+		name     string
+		enabled  bool
+		deployed bool
+		wantANSI string
 	}{
 		{name: "disabled mod row is dimmed", enabled: false, deployed: false, wantANSI: ansiDim},
 		{name: "enabled but undeployed row is yellow", enabled: true, deployed: false, wantANSI: ansiYellow},
-		{name: "enabled and deployed row is untinted", enabled: true, deployed: true, wantANSI: ""},
+		{name: "enabled and deployed row is green", enabled: true, deployed: true, wantANSI: ansiGreen},
 	}
 
 	for _, tt := range tests {
@@ -85,11 +89,7 @@ func TestList_Verbose_RowTinting(t *testing.T) {
 
 			row := rowFor(out, "Target Mod")
 			require.NotEmpty(t, row)
-			if tt.wantANSI == "" {
-				assert.NotContains(t, row, "\x1b[", "an enabled+deployed row should not be tinted")
-			} else {
-				assert.Contains(t, row, tt.wantANSI)
-			}
+			assert.Contains(t, row, tt.wantANSI)
 		})
 	}
 }

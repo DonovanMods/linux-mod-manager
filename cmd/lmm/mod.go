@@ -630,9 +630,9 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	// Human-readable output
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("%s\n", colorBold(mod.Name))
+	fmt.Printf("%s\n", colorHeader(mod.Name))
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, mod.Version, mod.Author)
+	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, colorCyan(mod.Version), mod.Author)
 	if mod.Category != "" {
 		fmt.Printf("Category: %s\n", mod.Category)
 	}
@@ -666,10 +666,16 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	if installedInfo != nil {
 		fmt.Println()
-		fmt.Printf("Installed: v%s (profile: %s)\n", installedInfo.Version, installedInfo.Profile)
+		fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)
 		policyDisplay := installedInfo.UpdatePolicy
-		if policyDisplay == "pinned" {
+		switch policyDisplay {
+		case "pinned":
 			policyDisplay = colorYellow(policyDisplay)
+		case "auto":
+			// Auto is a positive, hands-off state - green, matching #193's
+			// "colored values, not just the odd count" (notify, the
+			// default, stays plain - there's nothing notable to flag).
+			policyDisplay = colorGreen(policyDisplay)
 		}
 		fmt.Printf("  Update policy: %s\n", policyDisplay)
 		if installedInfo.Locked {
