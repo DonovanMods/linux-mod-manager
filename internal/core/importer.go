@@ -116,7 +116,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		// source pinned to check for source.Compiler, so it resolves the
 		// game's mapped compiler-capable source from the registry instead.
 		if i.resolveCompiler == nil {
-			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but no compiler-capable source is configured for this game", game.ID, filename)
+			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not Service.NewImporter) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
 		}
 		compiler, err := i.resolveCompiler(game.ID)
 		if err != nil {
@@ -134,7 +134,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			}
 		}
 
-		// Compile into a staging dir first so a mid-compile failure never
+		// Compile into a scratch dir first so a mid-compile failure never
 		// leaves a partial/uncompiled artifact in the cache (mirrors #136
 		// review's fix for the download path's compile branch).
 		tempDir, err := newStagingDir(i.stagingRoot, "lmm-import-compile-*")
@@ -149,16 +149,28 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			return nil, fmt.Errorf("compiling mod: %w", err)
 		}
 
-		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
-		// Remove existing cache if present (re-import case)
-		if err := os.RemoveAll(cachePath); err != nil {
-			return nil, fmt.Errorf("removing existing cache for re-import: %w", err)
+		// Stage the compiled artifact and commit it atomically (#173 review:
+		// mirrors Service.DownloadModToCache's compile branch). cachePath is
+		// never touched until commitStagedCache's single backup-then-rename
+		// swap, so a failure staging the artifact (or committing it) leaves
+		// any existing cache entry exactly as it was — unlike the previous
+		// remove-existing-then-copy sequence, which destroyed the prior
+		// entry before the copy that could still fail.
+		cacheMod := &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID}
+		cachePath, stagePath, err := prepareUnseededStaging(i.cache, game, cacheMod)
+		if err != nil {
+			return nil, err
 		}
-		if err := os.MkdirAll(cachePath, 0755); err != nil {
-			return nil, fmt.Errorf("creating cache directory: %w", err)
+		defer os.RemoveAll(stagePath) //nolint:errcheck
+
+		if err := os.MkdirAll(stagePath, 0755); err != nil {
+			return nil, fmt.Errorf("preparing cache staging: %w", err)
 		}
-		if err := copyFileStreaming(compiledPath, filepath.Join(cachePath, destName)); err != nil {
-			return nil, fmt.Errorf("moving compiled mod to cache: %w", err)
+		if err := copyFileStreaming(compiledPath, filepath.Join(stagePath, destName)); err != nil {
+			return nil, fmt.Errorf("staging compiled mod: %w", err)
+		}
+		if err := commitStagedCache(cachePath, stagePath); err != nil {
+			return nil, err
 		}
 		fileCount = 1
 	} else if game.DeployMode == domain.DeployCopy {

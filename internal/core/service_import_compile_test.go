@@ -26,6 +26,29 @@ func (s *failingCompilerSource) Compile(ctx context.Context, basePakPath, source
 	return fmt.Errorf("boom: compile always fails")
 }
 
+// raceCompilerSource wraps fakeCompilerSource and, when sabotage is set,
+// writes its declared output and then immediately removes it before
+// returning success - deterministically reproducing "compile reported
+// success, but the artifact is gone by the time it must be staged into the
+// cache" without any OS-specific permission tricks. This is the shape of
+// the #173 review defect: the compile step itself succeeds, but the
+// subsequent step that gets the artifact into the cache can still fail.
+type raceCompilerSource struct {
+	*fakeCompilerSource
+	sabotage bool
+}
+
+func (s *raceCompilerSource) Compile(ctx context.Context, basePakPath, sourceFilePath, outputPath string) error {
+	s.compileCalls++
+	if err := os.WriteFile(outputPath, []byte("new-content"), 0o644); err != nil {
+		return err
+	}
+	if s.sabotage {
+		return os.Remove(outputPath)
+	}
+	return nil
+}
+
 // newImportCompileTestGame builds a DeployCompile game with a registered,
 // game-mapped compiler source and an installed base pak - the setup #173's
 // import path needs to resolve a Compiler the same way
@@ -295,5 +318,74 @@ func TestImportMod_DeployCompile_StandaloneImporterFailsLoud(t *testing.T) {
 	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.Contains(t, err.Error(), "compiler")
+	// The message must name the actual cause - a standalone Importer with
+	// no service context, not "no compiler-capable source configured" (a
+	// different failure covered by TestImportMod_DeployCompile_NoCompilerSourceFailsLoud).
+	require.Contains(t, err.Error(), "without service context")
+	require.Contains(t, err.Error(), "core.NewImporter")
+}
+
+// TestImportMod_DeployCompile_ReimportSurvivesStagingFailure pins the #173
+// review defect: the compile branch used to os.RemoveAll(cachePath) and
+// then copy the compiled artifact into place, so a failure in that copy
+// step destroyed a pre-existing good cache entry before ever writing its
+// replacement. It now stages the compiled artifact into an isolated
+// directory and commits it to cachePath atomically (commitStagedCache,
+// mirroring the download path) - cachePath is never touched by a failed
+// staging attempt, so a pre-existing entry must survive.
+func TestImportMod_DeployCompile_ReimportSurvivesStagingFailure(t *testing.T) {
+	installDir := t.TempDir()
+	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	require.NoError(t, os.WriteFile(basePak, []byte("fake-base-pak"), 0o644))
+
+	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	src := &raceCompilerSource{fakeCompilerSource: &fakeCompilerSource{}}
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID:          "icarus",
+		InstallPath: installDir,
+		ModPath:     t.TempDir(),
+		DeployMode:  domain.DeployCompile,
+		SourceIDs:   map[string]string{"fake-compiler": "external-icarus-id"},
+	}
+	require.NoError(t, svc.AddGame(game))
+
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "Bear_Mount.exmodz")
+	require.NoError(t, os.WriteFile(archivePath, []byte("good-exmodz-bytes"), 0o644))
+
+	opts := core.ImportOptions{SourceID: "fake-compiler", ModID: "bear-mount"}
+	importer := svc.NewImporter(game)
+
+	// First import succeeds and leaves a good cache entry.
+	result1, err := importer.Import(context.Background(), archivePath, game, opts)
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+	files, err := gameCache.ListFiles(game.ID, result1.Mod.SourceID, result1.Mod.ID, result1.Mod.Version)
+	require.NoError(t, err)
+	require.Equal(t, []string{"Bear_Mount_P.pak"}, files)
+
+	filePath := gameCache.GetFilePath(game.ID, result1.Mod.SourceID, result1.Mod.ID, result1.Mod.Version, files[0])
+	origData, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	require.Equal(t, "new-content", string(origData))
+
+	// Re-import the same archive; the compiler's declared output vanishes
+	// before it can be staged, so this import must fail...
+	src.sabotage = true
+	result2, err := importer.Import(context.Background(), archivePath, game, opts)
+	require.Error(t, err)
+	require.Nil(t, result2)
+
+	// ...and the prior good entry must still be exactly what it was.
+	survivingData, err := os.ReadFile(filePath)
+	require.NoError(t, err, "the prior good cache entry must survive a failed re-import")
+	require.Equal(t, "new-content", string(survivingData))
 }
