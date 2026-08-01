@@ -940,10 +940,10 @@ func isExmodzFile(fileName string) bool {
 // JSON data tables live in Content/Data/data.pak, NOT in the Content/Paks
 // pakchunks, which carry only cooked .uasset/.uexp assets and no JSON at all.
 //
-// Since rev3 this pak is no longer the source of base table *content* (that
-// comes from the hosted dump — Task 12a); it is still required, because it is
-// the only authority on which tables the installed game has and on which game
-// week is installed. Its parent directory also locates Icarus/Config/version.json.
+// This pak is also the direct source of base table *content* (#175): Compile
+// reads each patched table straight out of it via internal/unrealpak, so a
+// compile is always week-correct by construction (there's no separate dump
+// to go stale relative to the install) and works entirely offline.
 func resolveBasePak(game *domain.Game) (string, error) {
 	candidate := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
 	if _, err := os.Stat(candidate); err != nil {

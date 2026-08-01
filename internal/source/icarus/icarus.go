@@ -3,6 +3,7 @@ package icarus
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -104,13 +105,27 @@ func (s *Icarus) Search(ctx context.Context, query source.SearchQuery) (source.S
 	if page < 0 {
 		page = 0
 	}
-	start := page * pageSize
-	if start > len(mods) {
-		start = len(mods)
+	// Both page*pageSize (below) and start+pageSize (for end, further down)
+	// can overflow int for a huge user-supplied Page or PageSize, wrapping
+	// negative instead of landing somewhere past len(mods) — the pre-fix
+	// "start > len(mods)"/"end > len(mods)" clamps never catch a NEGATIVE
+	// value, so a wrapped result panicked the slice below instead of just
+	// clamping to an empty page. Both operations are guarded before they
+	// run rather than trusted to land in range; pageSize > 0 is guaranteed
+	// by the clamp above, so both divisions here are always safe.
+	start := len(mods)
+	if page <= math.MaxInt/pageSize {
+		start = page * pageSize
+		if start > len(mods) {
+			start = len(mods)
+		}
 	}
-	end := start + pageSize
-	if end > len(mods) {
-		end = len(mods)
+	end := len(mods)
+	if pageSize <= math.MaxInt-start {
+		end = start + pageSize
+		if end > len(mods) {
+			end = len(mods)
+		}
 	}
 
 	return source.SearchResult{Mods: mods[start:end], TotalCount: len(mods), Page: page, PageSize: pageSize}, nil

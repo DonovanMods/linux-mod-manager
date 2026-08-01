@@ -3,6 +3,7 @@ package icarus
 import (
 	"archive/zip"
 	"bytes"
+	"hash/crc32"
 	"strings"
 	"testing"
 )
@@ -170,5 +171,112 @@ func TestParseExmodz_NoManifest_Errors(t *testing.T) {
 
 	if _, err := ParseExmodz(buf.Bytes()); err == nil {
 		t.Error("expected error when no .EXMOD manifest is present, got nil")
+	}
+}
+
+// A present-but-malformed manifest (invalid JSON) must fail loudly, wrapped
+// with the manifest's own path — Task 11 review noted this path returned
+// ParseExmod's error unwrapped, unlike every other error path in this file.
+func TestParseExmodz_MalformedManifest_Errors(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("Extracted Mods/Bad.EXMOD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write([]byte("{not valid json")) //nolint:errcheck
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ParseExmodz(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected an error for a malformed manifest, got nil")
+	}
+	if !strings.Contains(err.Error(), "Bad.EXMOD") {
+		t.Errorf("error %q should name the manifest that failed to parse", err)
+	}
+}
+
+// An entry (manifest or asset) declaring an uncompressed size over the
+// per-entry cap must be rejected before any content is read — guards
+// against a user-downloaded, third-party .EXMODZ with a corrupt or lying
+// size field driving an unbounded allocation, mirroring #136's dump-tar
+// cap. zw.CreateRaw writes the caller-declared size fields verbatim (unlike
+// zw.Create/CreateHeader, which recompute them from what's actually
+// written), so the fixture never needs 64+ real MiB of content.
+func TestParseExmodz_RejectsOversizedAssetDeclaredSize(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	w, err := zw.Create("Extracted Mods/X.EXMOD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write([]byte(`{"name":"X","Rows":[]}`)) //nolint:errcheck
+
+	content := []byte("tiny")
+	rawW, err := zw.CreateRaw(&zip.FileHeader{
+		Name:               "Bear_Mount/huge.uasset",
+		Method:             zip.Store,
+		UncompressedSize64: maxZipEntrySize + 1,
+		CompressedSize64:   uint64(len(content)),
+		CRC32:              crc32.ChecksumIEEE(content),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawW.Write(content) //nolint:errcheck
+
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ParseExmodz(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected an error for an asset declaring an oversized uncompressed size, got nil")
+	}
+	if !strings.Contains(err.Error(), "Bear_Mount/huge.uasset") {
+		t.Errorf("error %q should name the offending entry", err)
+	}
+}
+
+// An entry whose declared size is UNDER the cap (so the pre-check passes)
+// but whose actual decompressed content exceeds that declared size must
+// still be caught — the read itself has to be bounded, not just the
+// pre-check, so a lying-but-small header can't drive an unbounded read.
+func TestParseExmodz_RejectsLyingAssetDeclaredSize(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	w, err := zw.Create("Extracted Mods/X.EXMOD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write([]byte(`{"name":"X","Rows":[]}`)) //nolint:errcheck
+
+	content := []byte("hello world") // 11 real bytes
+	rawW, err := zw.CreateRaw(&zip.FileHeader{
+		Name:               "Bear_Mount/lying.uasset",
+		Method:             zip.Store,
+		UncompressedSize64: 3, // lies: declares far less than the 11 real bytes
+		CompressedSize64:   uint64(len(content)),
+		CRC32:              crc32.ChecksumIEEE(content),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawW.Write(content) //nolint:errcheck
+
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ParseExmodz(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected an error for an asset whose real content exceeds its declared uncompressed size, got nil")
+	}
+	if !strings.Contains(err.Error(), "Bear_Mount/lying.uasset") {
+		t.Errorf("error %q should name the offending entry", err)
 	}
 }

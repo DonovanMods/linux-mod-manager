@@ -3,6 +3,7 @@ package icarus
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -105,5 +106,112 @@ func TestFirestoreClient_GetDocument_NotFound(t *testing.T) {
 	_, err := c.getDocument(context.Background(), "mods", "missing")
 	if err == nil {
 		t.Fatal("expected error for 404, got nil")
+	}
+}
+
+func TestFirestoreClient_GetDocument_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		doc := map[string]any{
+			"name":   "projects/p/databases/(default)/documents/mods/abc",
+			"fields": map[string]any{"name": map[string]any{"stringValue": "Bear Mount"}},
+		}
+		json.NewEncoder(w).Encode(doc) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	c := newFirestoreClient("test-project", srv.Client())
+	c.baseURL = srv.URL
+
+	doc, err := c.getDocument(context.Background(), "mods", "abc")
+	if err != nil {
+		t.Fatalf("getDocument: %v", err)
+	}
+	if doc.ID != "abc" {
+		t.Errorf("doc.ID = %q, want abc", doc.ID)
+	}
+	if doc.Fields["name"] != "Bear Mount" {
+		t.Errorf("doc.Fields[name] = %v, want Bear Mount", doc.Fields["name"])
+	}
+}
+
+// newFirestoreClient(id, nil) must fall back to http.DefaultClient rather
+// than leaving httpClient nil (which would panic the first time getJSON
+// called c.httpClient.Do).
+func TestNewFirestoreClient_NilHTTPClient_FallsBackToDefault(t *testing.T) {
+	c := newFirestoreClient("test-project", nil)
+	if c.httpClient != http.DefaultClient {
+		t.Errorf("httpClient = %v, want http.DefaultClient", c.httpClient)
+	}
+}
+
+// trackingBody wraps a response body to record whether it was read all the
+// way to io.EOF (drained) and whether Close was called, independent of real
+// TCP connection pooling — the property getJSON's error path needs to
+// guarantee is "drain, then close," not any particular transport behavior.
+type trackingBody struct {
+	rc        io.ReadCloser
+	readToEOF bool
+	closed    bool
+}
+
+func (b *trackingBody) Read(p []byte) (int, error) {
+	n, err := b.rc.Read(p)
+	if err == io.EOF {
+		b.readToEOF = true
+	}
+	return n, err
+}
+
+func (b *trackingBody) Close() error {
+	b.closed = true
+	return b.rc.Close()
+}
+
+// drainTrackingTransport substitutes every response's body with a
+// trackingBody, recording the last one seen so a test can inspect it after
+// the request completes.
+type drainTrackingTransport struct {
+	base    http.RoundTripper
+	tracked *trackingBody
+}
+
+func (t *drainTrackingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return resp, err
+	}
+	t.tracked = &trackingBody{rc: resp.Body}
+	resp.Body = t.tracked
+	return resp, nil
+}
+
+// getJSON's non-200 error path must drain the response body to EOF before
+// closing it — an early return without draining leaves bytes unread on the
+// wire, which forces net/http's transport to close the underlying
+// connection instead of pooling it for reuse (connection-reuse hygiene).
+func TestFirestoreClient_GetJSON_DrainsBodyBeforeCloseOnErrorPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"nope, and some padding so there is real body to drain"}`)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	transport := &drainTrackingTransport{base: http.DefaultTransport}
+	client := &http.Client{Transport: transport}
+	c := newFirestoreClient("test-project", client)
+	c.baseURL = srv.URL
+
+	err := c.getJSON(context.Background(), srv.URL, &struct{}{})
+	if err == nil {
+		t.Fatal("expected an error for a non-200 response, got nil")
+	}
+	if transport.tracked == nil {
+		t.Fatal("transport never saw a request")
+	}
+	if !transport.tracked.readToEOF {
+		t.Error("response body was not drained to EOF before Close on the error path")
+	}
+	if !transport.tracked.closed {
+		t.Error("response body was not closed")
 	}
 }
