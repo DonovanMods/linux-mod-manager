@@ -105,7 +105,7 @@ Used by `lmm game detect` to know which Steam games are moddable. The app ships 
 
 **`~/.config/lmm/steam-games.yaml`**
 
-Format: Steam App ID (string) as key, then `slug`, `name`, `nexus_id`, `mod_path` (relative to game install, empty for game root). Example:
+Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative to game install, empty for game root), optional `nexus_id` (omit for a game with no NexusMods presence), and two more optional fields, `deploy_mode` and `sources`, that pass straight through to the generated `games.yaml` entry's own `deploy_mode`/`sources` (omit both for the default `{nexusmods: <nexus_id>}` sources map and `extract` deploy mode every entry got before these existed). Example:
 
 ```yaml
 "489830":
@@ -118,6 +118,13 @@ Format: Steam App ID (string) as key, then `slug`, `name`, `nexus_id`, `mod_path
   name: My Game
   nexus_id: mygame
   mod_path: ""
+"7654321":
+  slug: my-compile-game
+  name: My Compile-Mode Game
+  mod_path: Mods
+  deploy_mode: compile
+  sources:
+    mysource: my-compile-game
 ```
 
 Entries here are merged with the built-in list (overrides win). No rebuild needed to support more games.

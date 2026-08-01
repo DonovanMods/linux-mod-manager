@@ -1,6 +1,10 @@
 # Steam App ID -> lmm game info for "lmm game detect".
 # Add or override entries in ~/.config/lmm/steam-games.yaml without rebuilding.
 # Keys are Steam App IDs (strings). mod_path is relative to game install (empty = game root).
+# nexus_id is optional (omit for games with no NexusMods presence, e.g. Icarus).
+# deploy_mode and sources are optional, generated-games.yaml passthroughs
+# (games.yaml's deploy_mode/sources: see docs/configuration.md); omit both to
+# get today's default shape ({nexusmods: <nexus_id>}, deploy_mode extract).
 "489830":
   slug: skyrim-se
   name: Skyrim Special Edition
@@ -61,3 +65,10 @@
   name: "Call of Duty: Black Ops 6"
   nexus_id: callofdutyblackops6
   mod_path: ""
+"1149460":
+  slug: icarus
+  name: Icarus
+  mod_path: Icarus/Content/Paks/mods
+  deploy_mode: compile
+  sources:
+    icarus: icarus

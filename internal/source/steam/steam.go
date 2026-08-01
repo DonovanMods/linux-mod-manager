@@ -9,12 +9,14 @@ import (
 
 // DetectedGame is a Steam game found on disk that lmm knows how to configure.
 type DetectedGame struct {
-	SteamAppID  string // Steam App ID
-	Slug        string // lmm game ID (from known games list)
-	Name        string // Display name
-	InstallPath string // Absolute path to game install (e.g. .../common/Skyrim Special Edition)
-	ModPath     string // Absolute path to mod directory (InstallPath + ModPath relative)
-	NexusID     string // NexusMods game domain ID
+	SteamAppID  string            // Steam App ID
+	Slug        string            // lmm game ID (from known games list)
+	Name        string            // Display name
+	InstallPath string            // Absolute path to game install (e.g. .../common/Skyrim Special Edition)
+	ModPath     string            // Absolute path to mod directory (InstallPath + ModPath relative)
+	NexusID     string            // NexusMods game domain ID. Optional: "" for games with no NexusMods presence (#177).
+	DeployMode  string            // games.yaml's deploy_mode string, passed through from GameInfo.DeployMode. Optional: "" means the default (extract).
+	Sources     map[string]string // games.yaml's sources map, passed through from GameInfo.Sources. Optional: nil means "derive {nexusmods: NexusID}".
 }
 
 // FindSteamRoots returns candidate Steam installation roots in search order.
@@ -141,6 +143,8 @@ func DetectGames(configDir string) (games []DetectedGame, warnings []string, err
 					InstallPath: installPath,
 					ModPath:     modPath,
 					NexusID:     info.NexusID,
+					DeployMode:  info.DeployMode,
+					Sources:     info.Sources,
 				})
 			}
 		}
