@@ -12,11 +12,14 @@ import (
 	"strings"
 )
 
-// Reader provides read access to an uncompressed, unencrypted UE4-range pak.
+// Reader provides read access to an unencrypted UE4-range pak. Stored entries
+// and Zlib-compressed entries are readable; any other compression method is a
+// loud ErrUnsupportedFormat.
 type Reader struct {
 	f        *os.File
 	entries  []readerEntry
-	fileSize int64 // total size of the underlying file, for validateAllocSize
+	fileSize int64                         // total size of the underlying file, for validateAllocSize
+	methods  [maxCompressionMethods]string // this pak's own CompressionMethods table
 }
 
 type readerEntry struct {
@@ -63,7 +66,18 @@ func Open(path string) (*Reader, error) {
 		return nil, fmt.Errorf("unrealpak: %s: parsing index: %w", path, err)
 	}
 
-	return &Reader{f: f, entries: entries, fileSize: fileSize}, nil
+	return &Reader{f: f, entries: entries, fileSize: fileSize, methods: ft.methods}, nil
+}
+
+// methodName resolves a 1-based CompressionMethodIndex against this pak's own
+// footer table. An index with no corresponding name yields "", which no
+// supported method matches, so it falls through to the unsupported-format
+// error rather than being silently treated as stored.
+func (r *Reader) methodName(method int32) string {
+	if method < 1 || int(method) > len(r.methods) {
+		return ""
+	}
+	return r.methods[method-1]
 }
 
 // validateAllocSize checks a length field read from pak data before it is
@@ -174,6 +188,7 @@ type footer struct {
 	indexSize      int64
 	indexHash      [20]byte
 	encryptedIndex bool
+	methods        [maxCompressionMethods]string
 }
 
 // readFooter parses the single 221-byte footer shape this package supports.
@@ -206,9 +221,17 @@ func readFooter(r io.ReaderAt, fileSize int64) (footer, error) {
 		return footer{}, fmt.Errorf("%w: pak version %d (this package requires >= %d)",
 			ErrUnsupportedFormat, ft.version, minVersion)
 	}
-	// The trailing CompressionMethods name table is intentionally left
-	// unparsed: entries carry a method *index*, and this package only ever
-	// reads payloads whose index is 0 (stored), which needs no name.
+	// The trailing CompressionMethods table names each compression method this
+	// pak uses; entries reference them by 1-based index. It MUST be read from
+	// this pak's own footer rather than assumed: Icarus's data.pak declares
+	// ["Zlib"] (so index 1 means Zlib) while its pakchunks declare
+	// ["Oodle","Zlib"] (so index 1 means Oodle). Assuming one pak's table
+	// applies to another is exactly the mislabel that sent #136 chasing an
+	// Oodle blocker that data.pak never had.
+	for i := range ft.methods {
+		slot := buf[compressionMethodsOffset+i*compressionMethodNameSize : compressionMethodsOffset+(i+1)*compressionMethodNameSize]
+		ft.methods[i] = string(bytes.TrimRight(slot, "\x00"))
+	}
 	return ft, nil
 }
 
