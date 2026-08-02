@@ -731,14 +731,16 @@ const (
 	// way; the CLI applies its own truncateChecksum.
 	InstallChecksumComputed
 	// InstallCompiling fires instead of InstallExtracting, once per file,
-	// when a DeployCompile game's ".exmodz" file was actually compiled
-	// (#190 item 1) - the generic "Extracting to cache..." wording is
-	// misleading for a compile step, which never extracts anything. File
-	// identifies the source file (for displayFileLabel); Detail carries the
-	// compiled output filename (e.g. "Bear_Mount_P.pak"), so the CLI can
-	// announce "Compiling <source> → <output>..." without core owning the
-	// exact sentence. The BATCH path never prints this (it has no
-	// DeployCompile support and no equivalent status line at all).
+	// when a DeployCompile game's ".exmodz" file was validated and retained
+	// for a later merge (#190 item 1; #197: ingest no longer compiles a
+	// per-mod pak - the real merge happens once, batched across the whole
+	// profile, via Service.syncMergedPak) - the generic "Extracting to
+	// cache..." wording is misleading here either way, since nothing is
+	// extracted. File identifies the source file (for displayFileLabel);
+	// Detail is unset (there is no per-file compiled output filename left
+	// to announce under the merged-only model). The BATCH path never
+	// prints this (it has no DeployCompile support and no equivalent
+	// status line at all).
 	InstallCompiling
 	// InstallExtracting mirrors doInstall's unconditional "Extracting to
 	// cache..." status line, fired once after the STRICT-path primary's
@@ -4101,15 +4103,19 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 	}
 
-	// A compiled file was never "extracted" - announce the compile step by
-	// name instead of the generic message, which is actively misleading
-	// here (#190 item 1). Only fires for files that actually compiled, so
-	// every non-DeployCompile (or non-exmodz) install keeps today's exact
-	// "Extracting to cache..." text unchanged.
+	// A retained-for-merge file was never "extracted" - announce the step
+	// by name instead of the generic message, which is actively misleading
+	// here (#190 item 1). Only fires for files that actually go through
+	// ingest's validate+retain branch, so every non-DeployCompile (or
+	// non-exmodz) install keeps today's exact "Extracting to cache..." text
+	// unchanged. #197: this no longer compiles a per-mod pak - the merge
+	// happens later, batched across the whole profile, via
+	// Service.syncMergedPak - so there is no compiled output filename left
+	// to announce (Detail is unset).
 	if len(compiledFiles) > 0 {
 		for _, cf := range compiledFiles {
 			evt := base
-			evt.Phase, evt.File, evt.Detail = InstallCompiling, cf, compiledFileName(cf.FileName)
+			evt.Phase, evt.File = InstallCompiling, cf
 			emit(evt)
 		}
 	} else {

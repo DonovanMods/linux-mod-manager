@@ -306,37 +306,30 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
 
-	// Base-pak staleness check (#196): for a DeployCompile game, compare
-	// each compiled mod's recorded base-pak fingerprint against the game's
-	// live base pak. Entirely local/offline - unlike the version-record
-	// check below, this is NOT skipped for local-source or manual-download
-	// mods (there is no source dependency at all; see
-	// Service.CheckBaseStaleness's own doc comment).
+	// Merged-pak staleness check (#197, generalizing #196's per-mod
+	// version): for a DeployCompile game, compare the profile's merged
+	// pak's recorded fingerprint against the game's CURRENT enabled-mod
+	// set/order/versions/base pak. Entirely local/offline. modFilter has no
+	// effect here - the merged pak is profile-scoped, not per-mod, so
+	// `lmm verify <mod-id>` still checks it (a single mod's own version
+	// mismatch and the profile's overall merge staleness are independent
+	// facts).
 	if game.DeployMode == domain.DeployCompile {
-		staleCheckSet := installedMods
-		if modFilter != "" {
-			staleCheckSet = nil
-			for i := range installedMods {
-				if installedMods[i].ID == modFilter {
-					staleCheckSet = append(staleCheckSet, installedMods[i])
-				}
-			}
-		}
-		stale, serr := svc.CheckBaseStaleness(game, staleCheckSet)
+		staleUpd, serr := svc.CheckMergedPakStaleness(game, profile)
 		if serr != nil {
 			if jsonOutput {
-				jsonFiles = append(jsonFiles, verifyFileJSON{Status: "skipped", Note: fmt.Sprintf("could not check base pak staleness: %v", serr)})
+				jsonFiles = append(jsonFiles, verifyFileJSON{Status: "skipped", Note: fmt.Sprintf("could not check merged pak staleness: %v", serr)})
 			} else {
-				fmt.Printf("%s could not check base pak staleness: %v\n", colorYellow("?"), serr)
+				fmt.Printf("%s could not check merged pak staleness: %v\n", colorYellow("?"), serr)
 			}
 			warnings++
 		}
-		checked += len(staleCheckSet)
-		for _, u := range stale {
+		checked++
+		if staleUpd != nil {
 			if jsonOutput {
-				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: u.InstalledMod.ID, ModName: u.InstalledMod.Name, Status: "stale_compile"})
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile"})
 			} else {
-				fmt.Printf("%s %s - RECOMPILE NEEDED (base pak updated - run 'lmm update' to fix)\n", colorYellow("?"), u.InstalledMod.Name)
+				fmt.Printf("%s %s - RECOMPILE NEEDED (base pak updated - run 'lmm update' to fix)\n", colorYellow("?"), staleUpd.InstalledMod.Name)
 			}
 			warnings++
 		}

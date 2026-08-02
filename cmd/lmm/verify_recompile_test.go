@@ -73,6 +73,8 @@ func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found, "expected a stale_compile row")
-	assert.Equal(t, "bear-mount", found.ModID)
+	// #197: a merged-pak staleness row's identity is the SYNTHETIC
+	// merged-pak mod, not the contributing "bear-mount" mod.
+	assert.Equal(t, "merged-pak", found.ModID)
 	assert.GreaterOrEqual(t, out.Warnings, 1)
 }

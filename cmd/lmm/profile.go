@@ -742,8 +742,6 @@ func doProfileReorder(service *core.Service, game *domain.Game, args []string) e
 		return fmt.Errorf("loading profile: %w", err)
 	}
 
-	pm := getProfileManager(service)
-
 	if len(args) == 0 {
 		// Show current load order
 		if len(profile.Mods) == 0 {

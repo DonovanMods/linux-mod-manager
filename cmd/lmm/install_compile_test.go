@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,35 +24,51 @@ func writeFakeBasePak(t *testing.T, path string) {
 	require.NoError(t, w.Close())
 }
 
-// compilerInstallSource wraps fakeInstallSource with a source.Compiler
+// compilerInstallSource wraps fakeInstallSource with a source.MergeCompiler
 // implementation, so `lmm install` can drive a real DeployCompile game
 // end-to-end through the CLI's exact console-output path (mirrors
 // internal/core/service_icarus_compile_test.go's fakeCompilerSource, at the
 // CLI layer instead of core's).
 type compilerInstallSource struct {
 	*fakeInstallSource
-	compileCalls int
+	validateCalls int
+	compileCalls  int
 }
 
-// Compile copies the downloaded source file through unchanged - this test
-// only asserts the CLI announces the compile step and uses its output, not
-// that real PAK compilation happens (internal/unrealpak's own tests cover
-// that).
-func (s *compilerInstallSource) Compile(ctx context.Context, basePakPath, sourceFilePath, outputPath string) error {
+// ValidateSource confirms the archive exists - this test only asserts the
+// CLI announces the retain step, not that real .exmodz parsing happens
+// (internal/source/icarus's own tests cover that).
+func (s *compilerInstallSource) ValidateSource(sourceFilePath string) error {
+	s.validateCalls++
+	_, err := os.Stat(sourceFilePath)
+	return err
+}
+
+// MergeCompile concatenates every source's bytes - enough for tests to
+// prove a merge/regen actually happened and used the retained content,
+// without needing a real base pak table to patch (mirrors
+// internal/core/service_icarus_compile_test.go's fakeCompilerSource).
+func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
 	s.compileCalls++
-	data, err := os.ReadFile(sourceFilePath)
-	if err != nil {
-		return err
+	var out []byte
+	for _, src := range sources {
+		data, err := os.ReadFile(src.ExmodzPath)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, data...)
 	}
-	return os.WriteFile(outputPath, data, 0o644)
+	return nil, os.WriteFile(outputPath, out, 0o644)
 }
 
-// TestDoInstall_DeployCompile_AnnouncesCompiling guards #190 item 1: an
-// install that compiles a .exmodz file must announce the compile step by
-// name, not the generic "Extracting to cache..." line the plain
-// extract/copy path uses (which is actively misleading here - compiling
-// isn't extracting).
-func TestDoInstall_DeployCompile_AnnouncesCompiling(t *testing.T) {
+// TestDoInstall_DeployCompile_AnnouncesRetaining guards #190 item 1: an
+// install that ingests an ".exmodz" file must announce the retain-for-merge
+// step by name, not the generic "Extracting to cache..." line the plain
+// extract/copy path uses (which is actively misleading here - nothing is
+// extracted). #197: ingest validates+retains only, so this test's premise
+// changed from "announces compiling" to "announces retaining" - the actual
+// merge is batched across the whole profile and happens later.
+func TestDoInstall_DeployCompile_AnnouncesRetaining(t *testing.T) {
 	svc, game, src := setupDoInstallTest(t)
 	game.DeployMode = domain.DeployCompile
 	game.InstallPath = t.TempDir()
@@ -62,7 +79,7 @@ func TestDoInstall_DeployCompile_AnnouncesCompiling(t *testing.T) {
 
 	compiler := &compilerInstallSource{fakeInstallSource: src}
 	// Re-register under the same ID so doInstall's resolved source is the
-	// compiler-capable wrapper, not the plain fake registered by
+	// merge-compiler-capable wrapper, not the plain fake registered by
 	// setupDoInstallTest.
 	svc.RegisterSource(compiler)
 
@@ -74,7 +91,7 @@ func TestDoInstall_DeployCompile_AnnouncesCompiling(t *testing.T) {
 		return doInstall(context.Background(), svc, game, nil)
 	})
 
-	assert.Equal(t, 1, compiler.compileCalls)
-	assert.Contains(t, out, "Compiling Bear_Mount.exmodz → Bear_Mount_P.pak...\n")
-	assert.NotContains(t, out, "Extracting to cache...", "compiling isn't extracting - the generic message must not also print")
+	assert.Equal(t, 1, compiler.validateCalls)
+	assert.Contains(t, out, "Retaining Bear_Mount.exmodz for merge...\n")
+	assert.NotContains(t, out, "Extracting to cache...", "retaining isn't extracting - the generic message must not also print")
 }
