@@ -103,9 +103,13 @@ func (c *firestoreClient) getJSON(ctx context.Context, url string, out any) erro
 		// Firestore permission error, a quota message, and a malformed
 		// request all look identical without the URL and body.
 		const errBodySnippetCap = 512
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, errBodySnippetCap))
+		snippetBytes, _ := io.ReadAll(io.LimitReader(resp.Body, errBodySnippetCap))
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return fmt.Errorf("icarus: GET %s: HTTP %d: %s", url, resp.StatusCode, strings.TrimSpace(string(snippet)))
+		snippet := strings.TrimSpace(string(snippetBytes))
+		if snippet == "" {
+			return fmt.Errorf("icarus: GET %s: HTTP %d", url, resp.StatusCode)
+		}
+		return fmt.Errorf("icarus: GET %s: HTTP %d: %s", url, resp.StatusCode, snippet)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

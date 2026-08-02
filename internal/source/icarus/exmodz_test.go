@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"hash/crc32"
+	"math"
 	"strings"
 	"testing"
 )
@@ -330,5 +331,62 @@ func TestParseExmodz_RejectsOversizedTotalAssetsSize(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "EXMODZ") {
 		t.Errorf("error %q should name the archive", err)
+	}
+}
+
+// TestParseExmodz_TotalAssetsSizeAccumulationIsOverflowSafe guards a
+// Copilot round-2 release-review finding on #204: totalDeclaredSize +=
+// f.UncompressedSize64 summed attacker-controlled declared sizes with no
+// per-entry gate, so two entries whose declared sizes overflow a uint64 sum
+// wrap the total to a value far below the 256 MiB cap - the total-cap check
+// meant to reject the whole bundle before any asset is read silently
+// passes, and the bundle only fails afterward (if at all) via the
+// UNRELATED per-entry cap inside readZipFile, once assets are actually
+// being opened. The fix must reject against the remaining cap headroom
+// BEFORE adding each declared size, so the total-cap error - not the
+// per-entry one - fires first, without ever calling readZipFile.
+func TestParseExmodz_TotalAssetsSizeAccumulationIsOverflowSafe(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	w, err := zw.Create("Extracted Mods/X.EXMOD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write([]byte(`{"name":"X","Rows":[]}`)) //nolint:errcheck
+
+	content := []byte("tiny")
+	crc := crc32.ChecksumIEEE(content)
+	// The sum of these two declared sizes overflows uint64 and wraps to 49
+	// (math.MaxUint64-50 + 100 == math.MaxUint64+50, mod 2^64), even though
+	// the first entry alone already dwarfs the 256 MiB total cap.
+	sizes := []uint64{math.MaxUint64 - 50, 100}
+	for i, size := range sizes {
+		rawW, err := zw.CreateRaw(&zip.FileHeader{
+			Name:               fmt.Sprintf("Bear_Mount/huge%d.uasset", i),
+			Method:             zip.Store,
+			UncompressedSize64: size,
+			CompressedSize64:   uint64(len(content)),
+			CRC32:              crc,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rawW.Write(content) //nolint:errcheck
+	}
+
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ParseExmodz(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected an error for a declared-size sum that overflows uint64, got nil")
+	}
+	if !strings.Contains(err.Error(), "total cap") {
+		t.Errorf("error %q should name the total cap - an overflowed sum must not slip past it undetected", err)
+	}
+	if strings.Contains(err.Error(), "per-entry cap") {
+		t.Errorf("error %q fired from the per-entry check, meaning uint64 overflow bypassed the total-cap check", err)
 	}
 }

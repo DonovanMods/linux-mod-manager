@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -263,5 +264,31 @@ func TestFirestoreClient_GetJSON_ErrorBodySnippetIsCapped(t *testing.T) {
 	}
 	if len(err.Error()) >= bodySize {
 		t.Errorf("error message is %d bytes - the response body snippet must be capped, not echoed in full", len(err.Error()))
+	}
+}
+
+// TestFirestoreClient_GetJSON_ErrorOmitsBodyClauseWhenSnippetIsEmpty guards
+// a Copilot round-2 release-review finding on #204: a non-200 response with
+// no body (or a whitespace-only one) left the ": %s" clause in the error
+// message with nothing after the trailing colon (e.g. "icarus: GET
+// http://...: HTTP 403: "). The body clause must be omitted entirely when
+// the trimmed snippet is empty, not rendered with a dangling colon.
+func TestFirestoreClient_GetJSON_ErrorOmitsBodyClauseWhenSnippetIsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := newFirestoreClient("test-project", srv.Client())
+	err := c.getJSON(context.Background(), srv.URL, &struct{}{})
+	if err == nil {
+		t.Fatal("expected an error for a 403 response, got nil")
+	}
+	if strings.HasSuffix(err.Error(), ":") || strings.HasSuffix(err.Error(), ": ") {
+		t.Errorf("error %q has a dangling colon with no body snippet after it", err.Error())
+	}
+	want := fmt.Sprintf("icarus: GET %s: HTTP 403", srv.URL)
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 }

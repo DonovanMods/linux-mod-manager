@@ -79,12 +79,19 @@ func ParseExmodz(zipData []byte) (*ExmodzBundle, error) {
 		if !strings.HasSuffix(lower, ".uasset") && !strings.HasSuffix(lower, ".uexp") {
 			continue // skip readme/image/other non-asset files — never placed into the output pak
 		}
+		// Checked against the remaining cap headroom BEFORE adding, not by
+		// summing first and comparing after: a declared size is
+		// attacker-controlled and `totalDeclaredSize += f.UncompressedSize64`
+		// can overflow a uint64, wrapping the running total to a value that
+		// falsely passes the cap check (#204 release review round 2).
+		// totalDeclaredSize <= maxZipTotalAssetsSize is an invariant of every
+		// prior iteration, so this subtraction never underflows.
+		if f.UncompressedSize64 > maxZipTotalAssetsSize-totalDeclaredSize {
+			return nil, fmt.Errorf("icarus: .EXMODZ bundled assets declare a combined uncompressed size "+
+				"exceeding the %d-byte total cap", uint64(maxZipTotalAssetsSize))
+		}
 		assetFiles = append(assetFiles, f)
 		totalDeclaredSize += f.UncompressedSize64
-	}
-	if totalDeclaredSize > maxZipTotalAssetsSize {
-		return nil, fmt.Errorf("icarus: .EXMODZ bundled assets declare a combined %d-byte uncompressed size, "+
-			"exceeding the %d-byte total cap", totalDeclaredSize, uint64(maxZipTotalAssetsSize))
 	}
 
 	bundle := &ExmodzBundle{Diff: diff, Assets: make(map[string][]byte)}

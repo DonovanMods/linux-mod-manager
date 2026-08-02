@@ -270,7 +270,7 @@ func gameFromDetected(g steam.DetectedGame) (*domain.Game, error) {
 			domain.ErrInvalidDeployMode, g.Slug, g.DeployMode, domain.ValidDeployModes)
 	}
 	sources := g.Sources
-	if sources == nil {
+	if len(sources) == 0 {
 		if g.NexusID == "" {
 			return nil, fmt.Errorf("game %q: known-games entry has no sources and no nexus_id - set at least one", g.Slug)
 		}

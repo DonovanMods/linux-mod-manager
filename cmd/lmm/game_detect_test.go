@@ -129,6 +129,21 @@ func TestGameFromDetected_RequiresSourcesOrNexusID(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{"icarus": "icarus"}, game.SourceIDs)
 	})
+
+	// #204 round-2 review: YAML unmarshaling an explicit `sources: {}` line
+	// produces map[string]string{} (empty, non-nil), which the original
+	// `sources == nil` check let slide through, still landing at
+	// {"nexusmods": ""} when NexusID is also unset. Empty must be treated
+	// identically to nil.
+	t.Run("empty-but-non-nil Sources map fails the same as nil", func(t *testing.T) {
+		_, err := gameFromDetected(steam.DetectedGame{
+			Slug:    "empty-sources-game",
+			Name:    "Empty Sources Game",
+			Sources: map[string]string{},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "empty-sources-game")
+	})
 }
 
 // TestGameFromDetected_Icarus_ProducesReadmeEquivalentValues proves the
