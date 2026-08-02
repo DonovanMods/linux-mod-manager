@@ -28,6 +28,17 @@ type ImportResult struct {
 	FilesExtracted int
 	LinkedSource   string // "nexusmods", "local", etc.
 	AutoDetected   bool   // true if source/ID was parsed from filename
+	// RetainedFileID is the identity Import used to key a retained compile
+	// source (cache.RetainedSourceName) - only set for the DeployCompile
+	// ".exmodz" branch, where it is the archive's own filename (Import has
+	// no other stable identity to retain under; see that branch's own doc
+	// comment). Callers MUST fold this into the InstalledMod/ModReference's
+	// FileIDs (#197 C1 fix): enabledExmodzSources walks FileIDs to find each
+	// mod's retained source, and a row whose FileIDs never includes this
+	// value is invisible to every future merge - silently, forever, since
+	// it is also excluded from the staleness fingerprint on both sides of
+	// the comparison. Empty for every other deploy mode.
+	RetainedFileID string
 }
 
 // Importer handles importing mods from local archive files
@@ -105,6 +116,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 	var modName string
 	var fileCount int
+	var retainedFileID string
 
 	// Handle based on game's deploy mode
 	if game.DeployMode == domain.DeployCompile && isExmodzFile(filename) {
@@ -150,6 +162,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			return nil, err
 		}
 		fileCount = 0
+		retainedFileID = filename
 	} else if game.DeployMode == domain.DeployCopy {
 		// Copy mode: just copy the file as-is to cache (don't extract)
 		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
@@ -238,6 +251,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		FilesExtracted: fileCount,
 		LinkedSource:   sourceID,
 		AutoDetected:   autoDetected,
+		RetainedFileID: retainedFileID,
 	}, nil
 }
 

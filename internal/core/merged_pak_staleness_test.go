@@ -13,7 +13,7 @@ import (
 func TestCheckMergedPakStaleness_NotStaleWhenUnchanged(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
 	upd, err := svc.CheckMergedPakStaleness(game, "default")
@@ -24,7 +24,7 @@ func TestCheckMergedPakStaleness_NotStaleWhenUnchanged(t *testing.T) {
 func TestCheckMergedPakStaleness_StaleAfterModEnable(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolf-mount", "1.0", "exmodz-file", []byte("wolf-bytes"))
@@ -57,7 +57,7 @@ func TestCheckMergedPakStaleness_NonCompileGame_Nil(t *testing.T) {
 func TestApplyMergedPakRegen_Regenerates(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolf-mount", "1.0", "exmodz-file", []byte("wolf-bytes"))
 

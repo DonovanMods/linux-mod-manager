@@ -31,7 +31,7 @@ func TestEnableMod_SyncsMergedPak(t *testing.T) {
 func TestDisableMod_SyncsMergedPak_RemovesWhenLastModDisabled(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
 	_, err = os.Stat(deployedPath)
@@ -49,7 +49,7 @@ func TestDisableMod_SyncsMergedPak_RemovesWhenLastModDisabled(t *testing.T) {
 func TestUninstallMod_SyncsMergedPak_RemovesWhenLastModUninstalled(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
 
@@ -110,7 +110,7 @@ func TestReorderProfileMods_SyncsMergedPak(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-a", []byte("A"))
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolf-mount", "1.0", "exmodz-b", []byte("B"))
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
 	before, err := os.ReadFile(deployedPath)
@@ -124,7 +124,7 @@ func TestReorderProfileMods_SyncsMergedPak(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	after, err := os.ReadFile(deployedPath)
 	require.NoError(t, err)

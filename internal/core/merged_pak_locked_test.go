@@ -19,7 +19,7 @@ func TestLockedMod_DiffStillParticipatesInMerge(t *testing.T) {
 	pm := svc.NewProfileManager()
 	require.NoError(t, pm.SetModLock(game.ID, "default", "fake-compiler", "bear-mount", ""))
 
-	warnings, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err, "a locked mod must not block the merge")
 	require.Empty(t, warnings)
 
@@ -37,12 +37,12 @@ func TestLockedMod_DoesNotBlockAnotherModsChangeFromReachingTheMerge(t *testing.
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 	pm := svc.NewProfileManager()
 	require.NoError(t, pm.SetModLock(game.ID, "default", "fake-compiler", "bear-mount", ""))
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolf-mount", "1.0", "exmodz-file", []byte("wolf-bytes"))
 
-	warnings, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err, "a lock on one mod must never block ANOTHER mod's change from reaching the merged pak")
 	require.Empty(t, warnings)
 

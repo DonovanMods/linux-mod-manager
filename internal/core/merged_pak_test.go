@@ -127,7 +127,7 @@ func TestSyncMergedPak_GeneratesAndDeploys(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-exmodz-bytes"))
 
-	warnings, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 
@@ -144,7 +144,7 @@ func TestSyncMergedPak_NoOpWhenUnchanged(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-exmodz-bytes"))
 
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
 	srcRaw, err := svc.GetSource("fake-compiler")
@@ -153,7 +153,7 @@ func TestSyncMergedPak_NoOpWhenUnchanged(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 1, src.compileCalls)
 
-	_, err = svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Equal(t, 1, src.compileCalls, "an unchanged fingerprint must not trigger a second merge")
 }
@@ -164,12 +164,12 @@ func TestSyncMergedPak_RegeneratesOnModEnable(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolf-mount", "1.0", "exmodz-file", []byte("wolf-bytes"))
 
-	warnings, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 
@@ -192,7 +192,7 @@ func TestSyncMergedPak_ZeroEnabledMods_UninstallsExistingPak(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
 	_, err = os.Stat(deployedPath)
@@ -200,7 +200,7 @@ func TestSyncMergedPak_ZeroEnabledMods_UninstallsExistingPak(t *testing.T) {
 
 	require.NoError(t, svc.SetModEnabled("fake-compiler", "bear-mount", game.ID, "default", false))
 
-	_, err = svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
 	_, err = os.Stat(deployedPath)
@@ -214,13 +214,13 @@ func TestSyncMergedPak_RegeneratesOnBaseHashChange(t *testing.T) {
 	svc, game, basePak := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 
-	_, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
 	// Rewrite the base pak with different content - a new IndexHash.
 	writeFakeBasePakWithTable(t, basePak, map[string][]byte{"AI/D_Other.json": []byte(`{"Rows":[{"Name":"x","V":1}]}`)})
 
-	_, err = svc.SyncMergedPakForTest(context.Background(), game, "default")
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
 	srcRaw, err := svc.GetSource("fake-compiler")
@@ -238,7 +238,7 @@ func TestSyncMergedPak_NonCompileGame_NoOp(t *testing.T) {
 	game := &domain.Game{ID: "skyrim-se", ModPath: t.TempDir(), DeployMode: domain.DeployExtract}
 	require.NoError(t, svc.AddGame(game))
 
-	warnings, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 }
@@ -254,7 +254,7 @@ func TestSyncMergedPak_AssetCollisionWarningSurfaces(t *testing.T) {
 	src.mergeWarnings = []string{"asset collision: fixture warning"}
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 
-	warnings, err := svc.SyncMergedPakForTest(context.Background(), game, "default")
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Equal(t, []string{"asset collision: fixture warning"}, warnings)
 }

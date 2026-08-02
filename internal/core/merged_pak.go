@@ -240,10 +240,13 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	return warnings, nil
 }
 
-// SyncMergedPakForTest exposes syncMergedPak to external (core_test
-// package) tests - see enabledExmodzSources/EnabledExmodzSourcesForTest's
-// identical rationale.
-func (s *Service) SyncMergedPakForTest(ctx context.Context, game *domain.Game, profileName string) ([]string, error) {
+// SyncMergedPak exposes syncMergedPak as the public entry point every
+// mutation flow that can change a merged pak's inputs (enabled-mod set,
+// load order, mod version, base pak) must call after the mutation is
+// durable (#197 fix wave: rollback, purge, and both import paths were
+// found missing this call). Safe to call unconditionally - it no-ops for a
+// non-DeployCompile game and is a cheap fast-path when nothing changed.
+func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileName string) ([]string, error) {
 	return s.syncMergedPak(ctx, game, profileName)
 }
 

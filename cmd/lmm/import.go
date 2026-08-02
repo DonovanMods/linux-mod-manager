@@ -200,6 +200,26 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 			fmt.Fprintf(os.Stderr, "Warning: could not mark cache entry complete: %v\n", err)
 		}
 	}
+	// #197 C1 fix: a DeployCompile ".exmodz" import retains its source under
+	// RetainedFileID (the archive's own filename - Import's only stable
+	// identity), which is NEVER resolvedFile.ID (a real source file ID, or
+	// nothing at all without --id). Without folding it into FileIDs too,
+	// enabledExmodzSources can never find this mod's retained source - it
+	// silently never participates in any merge, forever, and is invisible
+	// to update/verify since it's excluded from both sides of the
+	// staleness fingerprint as well.
+	if result.RetainedFileID != "" {
+		found := false
+		for _, id := range importedFileIDs {
+			if id == result.RetainedFileID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			importedFileIDs = append(importedFileIDs, result.RetainedFileID)
+		}
+	}
 
 	// Show detection results
 	fmt.Printf("\nMod: %s\n", result.Mod.Name)
@@ -355,6 +375,18 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		if verbose {
 			fmt.Printf("  Warning: could not update profile: %v\n", err)
+		}
+	}
+
+	// #197 I3/C1 fix: a DeployCompile ".exmodz" import deploys zero files of
+	// its own (validate+retain only) - without this, the imported mod's
+	// content never reaches the game directory until some OTHER flow
+	// happens to sync the merged pak.
+	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
+	} else {
+		for _, w := range syncWarnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 	}
 
