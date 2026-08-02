@@ -1147,7 +1147,7 @@ func installProgressLine(modName string, p core.DeployProgress) (ActionProgress,
 	case core.InstallDepDownloading:
 		return ActionProgress{Line: fmt.Sprintf("Installing %s: %.0f%%", p.ModName, p.Percent), Percent: p.Percent}, true
 	case core.InstallCompiling:
-		return ActionProgress{Line: fmt.Sprintf("Installing %s: compiling", modName), Percent: -1}, true
+		return ActionProgress{Line: fmt.Sprintf("Installing %s: retaining", modName), Percent: -1}, true
 	case core.InstallExtracting:
 		return ActionProgress{Line: fmt.Sprintf("Installing %s: extracting", modName), Percent: -1}, true
 	case core.InstallDeploying:
@@ -1423,7 +1423,7 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 		return UpdatesView{}, fmt.Errorf("loading installed mods for %s/%s: %w", game.ID, profile, err)
 	}
 
-	updates, checkErr := p.svc.CheckGameUpdates(ctx, game, installed)
+	updates, checkErr := p.svc.CheckGameUpdates(ctx, game, profile, installed)
 
 	// #143: join the profile YAML's lock state onto the update rows - the
 	// same projection (and the same nil-safe "an unreadable profile leaves
@@ -1472,18 +1472,39 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 // and a real update may need that superseded-file-ID mapping to install
 // correctly; only a fresh check call can supply it.
 //
-// #196: a RecompileNeeded row (NewVersion == the mod's current version - a
-// base-pak staleness signal, not a real update) is routed to
-// Service.ApplyRecompile instead, which has no hooks/options to configure.
+// #196/#197: a RecompileNeeded row (NewVersion == the mod's current
+// version - a merged-pak staleness signal, not a real update) is routed to
+// Service.ApplyMergedPakRegen instead, which has no hooks/options to
+// configure. This check MUST happen before GetInstalledMod below: a
+// RecompileNeeded row's u.Source/u.ID identify the SYNTHETIC merged-pak
+// row (domain.SourceMerged/"merged-pak"), which has no real
+// installed_mods DB row - GetInstalledMod would fail loud for it. (Caught
+// while wiring this task: the original draft called GetInstalledMod
+// unconditionally first, which broke exactly this case.)
 func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
 	game := p.currentGame()
 	profile := p.currentProfile()
+
+	if u.RecompileNeeded {
+		adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
+			return updateProgressLine(u.Name, p)
+		})
+		result, err := p.svc.ApplyMergedPakRegen(ctx, game, profile, adapter)
+		if err != nil {
+			return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("recompiling %s", u.Name), u.Source, err)
+		}
+		return ActionOutcome{
+			Message:  fmt.Sprintf("Recompiled %q (base pak updated)", u.Name),
+			Warnings: mergeDiagnostics(result.Warnings, result.Notes),
+		}, nil
+	}
+
 	mod, err := p.svc.GetInstalledMod(u.Source, u.ID, game.ID, profile)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("getting installed mod %s: %w", u.Name, err)
 	}
 
-	updates, err := p.svc.CheckGameUpdates(ctx, game, []domain.InstalledMod{*mod})
+	updates, err := p.svc.CheckGameUpdates(ctx, game, profile, []domain.InstalledMod{*mod})
 	if err != nil {
 		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("checking update for %s", u.Name), u.Source, err)
 	}
@@ -1495,17 +1516,6 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 	adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
 		return updateProgressLine(u.Name, p)
 	})
-
-	if upd.RecompileNeeded {
-		result, err := p.svc.ApplyRecompile(ctx, game, profile, upd.InstalledMod, adapter)
-		if err != nil {
-			return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("recompiling %s", u.Name), u.Source, err)
-		}
-		return ActionOutcome{
-			Message:  fmt.Sprintf("Recompiled %q (base pak updated)", u.Name),
-			Warnings: mergeDiagnostics(result.Warnings, result.Notes),
-		}, nil
-	}
 
 	opts := core.UpdateOptions{
 		Hooks:       p.resolvedHooks(game, profile),
