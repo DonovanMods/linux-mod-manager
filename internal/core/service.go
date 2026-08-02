@@ -998,14 +998,6 @@ func resolveBasePak(game *domain.Game) (string, error) {
 	return candidate, nil
 }
 
-// compiledFileName turns a downloaded source filename into the cached
-// output's name: same base name, .pak extension, matching Icarus's "_P.pak"
-// override convention.
-func compiledFileName(sourceFileName string) string {
-	base := strings.TrimSuffix(sourceFileName, filepath.Ext(sourceFileName))
-	return base + "_P.pak"
-}
-
 // basePakIndexHash opens basePakPath and returns its footer IndexHash
 // (#196) - cheap (footer + primary-index region only; unrealpak.Open never
 // reads a pak's actual file payloads), matching the base pak Compile itself
@@ -1018,30 +1010,6 @@ func basePakIndexHash(basePakPath string) (string, error) {
 	}
 	defer r.Close() //nolint:errcheck
 	return r.IndexHash(), nil
-}
-
-// stageCompileFingerprint stages fileID's #196 compile fingerprint into
-// stagePath: the base pak's IndexHash (cache.MarkBaseIndexHash) and a copy
-// of the original .exmodz (cache.RetainedSourceName), so a later staleness
-// check can detect the base pak changing, and a later recompile can run
-// offline. Both land in the SAME atomic commit as the compiled pak - see
-// commitStagedCache/commitStagedCacheWithMarker - so a partial write here
-// can never separate a compiled pak from its fingerprint or retained
-// source. Called by both compile sites (download: DownloadModToCache;
-// import: Importer.Import) after Compile succeeds, before the commit.
-func stageCompileFingerprint(stagePath, fileID, basePakPath, sourceFilePath string) error {
-	indexHash, err := basePakIndexHash(basePakPath)
-	if err != nil {
-		return err
-	}
-	if err := cache.MarkBaseIndexHash(stagePath, fileID, indexHash); err != nil {
-		return err
-	}
-	retainedPath := filepath.Join(stagePath, cache.RetainedSourceName(fileID))
-	if err := copyFileStreaming(sourceFilePath, retainedPath); err != nil {
-		return fmt.Errorf("retaining compile source: %w", err)
-	}
-	return nil
 }
 
 // GetGame retrieves a game by ID
