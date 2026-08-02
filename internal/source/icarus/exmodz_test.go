@@ -3,6 +3,7 @@ package icarus
 import (
 	"archive/zip"
 	"bytes"
+	"fmt"
 	"hash/crc32"
 	"strings"
 	"testing"
@@ -278,5 +279,56 @@ func TestParseExmodz_RejectsLyingAssetDeclaredSize(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Bear_Mount/lying.uasset") {
 		t.Errorf("error %q should name the offending entry", err)
+	}
+}
+
+// TestParseExmodz_RejectsOversizedTotalAssetsSize guards a Copilot release-
+// review finding on #203: the per-entry cap (maxZipEntrySize, 64 MiB) alone
+// lets an archive with MANY entries, each individually under that cap,
+// still declare an unbounded total - e.g. five entries at 60 MiB apiece sum
+// to 300 MiB despite no single entry tripping the per-entry check. A total
+// cap across every bundled asset closes that gap. zw.CreateRaw declares the
+// size fields verbatim, so the fixture never needs real hundreds of MiB of
+// content, and the check must fire against the DECLARED sizes before any
+// asset is read - the fixture's real content is just a few bytes.
+func TestParseExmodz_RejectsOversizedTotalAssetsSize(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	w, err := zw.Create("Extracted Mods/X.EXMOD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write([]byte(`{"name":"X","Rows":[]}`)) //nolint:errcheck
+
+	// 5 entries * 60 MiB declared = 300 MiB, over the 256 MiB total cap,
+	// while each individual entry (60 MiB) stays under the 64 MiB per-entry
+	// cap.
+	const perEntryDeclared = 60 << 20
+	content := []byte("tiny")
+	for i := 0; i < 5; i++ {
+		rawW, err := zw.CreateRaw(&zip.FileHeader{
+			Name:               fmt.Sprintf("Bear_Mount/asset%d.uasset", i),
+			Method:             zip.Store,
+			UncompressedSize64: perEntryDeclared,
+			CompressedSize64:   uint64(len(content)),
+			CRC32:              crc32.ChecksumIEEE(content),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rawW.Write(content) //nolint:errcheck
+	}
+
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = ParseExmodz(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected an error for bundled assets whose combined declared size exceeds the total cap, got nil")
+	}
+	if !strings.Contains(err.Error(), "EXMODZ") {
+		t.Errorf("error %q should name the archive", err)
 	}
 }

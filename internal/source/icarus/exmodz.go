@@ -62,22 +62,38 @@ func ParseExmodz(zipData []byte) (*ExmodzBundle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("icarus: %s: %w", manifestPath, err)
 	}
-	bundle := &ExmodzBundle{Diff: diff, Assets: make(map[string][]byte)}
-
+	// Collect the asset entries first and sum their DECLARED sizes before
+	// reading any of them: the per-entry cap alone lets an archive with many
+	// entries, each individually under it, still declare an unbounded total
+	// (e.g. five 60 MiB entries sum to 300 MiB despite none tripping the
+	// 64 MiB per-entry check on its own). Checking the declared-size total
+	// up front refuses a pathological archive before any asset content is
+	// read into memory at all.
+	var assetFiles []*zip.File
+	var totalDeclaredSize uint64
 	for _, f := range zr.File {
 		if f.Name == manifestPath || f.FileInfo().IsDir() {
 			continue
 		}
-		normalized := normalizeZipName(f.Name)
-		lower := strings.ToLower(normalized)
+		lower := strings.ToLower(normalizeZipName(f.Name))
 		if !strings.HasSuffix(lower, ".uasset") && !strings.HasSuffix(lower, ".uexp") {
 			continue // skip readme/image/other non-asset files — never placed into the output pak
 		}
+		assetFiles = append(assetFiles, f)
+		totalDeclaredSize += f.UncompressedSize64
+	}
+	if totalDeclaredSize > maxZipTotalAssetsSize {
+		return nil, fmt.Errorf("icarus: .EXMODZ bundled assets declare a combined %d-byte uncompressed size, "+
+			"exceeding the %d-byte total cap", totalDeclaredSize, uint64(maxZipTotalAssetsSize))
+	}
+
+	bundle := &ExmodzBundle{Diff: diff, Assets: make(map[string][]byte)}
+	for _, f := range assetFiles {
 		data, err := readZipFile(f)
 		if err != nil {
 			return nil, fmt.Errorf("icarus: reading asset %s: %w", f.Name, err)
 		}
-		bundle.Assets[normalized] = data
+		bundle.Assets[normalizeZipName(f.Name)] = data
 	}
 
 	return bundle, nil
@@ -98,6 +114,14 @@ func normalizeZipName(name string) string {
 // leaves generous headroom while refusing to trust an unbounded or lying
 // UncompressedSize64 in a third-party, user-downloaded zip archive.
 const maxZipEntrySize = 64 << 20
+
+// maxZipTotalAssetsSize caps the COMBINED declared uncompressed size of
+// every bundled asset in a single .EXMODZ - the per-entry cap alone doesn't
+// bound an archive with many entries each individually under it (#203
+// release review). A real bundle's assets are a handful of small UE files;
+// 256 MiB leaves generous headroom while still refusing to trust an
+// archive that declares an unbounded total.
+const maxZipTotalAssetsSize = 256 << 20
 
 func readZipFile(f *zip.File) ([]byte, error) {
 	if f.UncompressedSize64 > maxZipEntrySize {
