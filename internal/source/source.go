@@ -143,16 +143,31 @@ type DownloadHeaderProvider interface {
 	DownloadHeaders(fileURL string) map[string]string
 }
 
-// Compiler is implemented by sources whose downloaded files need
-// transforming into a different artifact before deployment (Icarus's
-// .exmodz -> .pak). Service consults it, when DeployMode is DeployCompile,
-// after downloading but before committing the file to cache — the result
-// replaces the downloaded file in cache, so everything downstream (Install,
-// the linker) treats it exactly like a DeployCopy file.
-//
-// basePakPath is resolved by the caller from game.InstallPath; sourceFilePath
-// is the just-downloaded file; outputPath is where the compiled result must be
-// written.
-type Compiler interface {
-	Compile(ctx context.Context, basePakPath, sourceFilePath, outputPath string) error
+// MergeCompiler is implemented by sources whose compile-eligible files must
+// be merged across every enabled mod into ONE profile-level artifact rather
+// than compiled per-mod (#197: Icarus's cross-mod table merge - a whole-pak
+// last-wins deploy would silently drop one mod's table rows whenever two
+// mods patch the same table). Replaces #196's Compiler interface, which
+// this source no longer implements: there is no more per-mod compiled
+// artifact to produce.
+type MergeCompiler interface {
+	// ValidateSource parses/validates sourceFilePath (the retained,
+	// not-yet-merged source archive) without compiling anything - called at
+	// ingest time (download/import) so a malformed archive fails loud
+	// immediately rather than at the next merge.
+	ValidateSource(sourceFilePath string) error
+
+	// MergeCompile applies every entry in sources, in order (profile load
+	// order), against basePakPath's tables, and writes the merged result to
+	// outputPakPath. Returns non-fatal warnings (e.g. same-path asset
+	// collisions - last-applied wins) alongside a nil error; a nil error
+	// with warnings is still a fully-written, deployable pak.
+	MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) (warnings []string, err error)
+}
+
+// MergeSource identifies one mod's contribution to a merge, in the order it
+// must be applied (profile load order).
+type MergeSource struct {
+	ModRef     string // "sourceID:modID" - identity used in collision warnings
+	ExmodzPath string // the retained source archive to read
 }
