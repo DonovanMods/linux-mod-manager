@@ -8,6 +8,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,6 +76,97 @@ func TestDeployProfile_SyncsMergedPak(t *testing.T) {
 	data, err := os.ReadFile(deployedPath)
 	require.NoError(t, err)
 	require.Equal(t, "bear-bytes", string(data))
+}
+
+// TestApplyRollback_SyncsMergedPak proves a rollback (a version + FileIDs
+// change - a documented regeneration trigger) reaches the merged pak
+// (#197 I1 fix - previously missed, so a rolled-back mod's stale diff
+// stayed deployed until an unrelated flow happened to sync it).
+func TestApplyRollback_SyncsMergedPak(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "bear-mount", "1.0", cache.RetainedSourceName("exmodz-v1"), []byte("v1-bytes")))
+	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "bear-mount", "2.0", cache.RetainedSourceName("exmodz-v2"), []byte("v2-bytes")))
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:             domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", Name: "bear-mount", Version: "2.0", GameID: game.ID},
+		ProfileName:     "default",
+		Enabled:         true,
+		FileIDs:         []string{"exmodz-v2"},
+		PreviousVersion: "1.0",
+		PreviousFileIDs: []string{"exmodz-v1"},
+		UpdatePolicy:    domain.UpdateNotify,
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "bear-mount", Version: "2.0", FileIDs: []string{"exmodz-v2"}}))
+
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	before, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	require.Equal(t, "v2-bytes", string(before))
+
+	_, err = svc.ApplyRollback(context.Background(), game, "default", "fake-compiler", "bear-mount", core.RollbackOptions{}, nil)
+	require.NoError(t, err)
+
+	after, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	require.Equal(t, "v1-bytes", string(after), "ApplyRollback must sync the merged pak to reflect the rolled-back version")
+}
+
+// TestPurgeProfile_UndeploysMergedPak_KeepsCacheWithoutUninstall proves a
+// plain `lmm purge` (no --uninstall) removes the deployed merged pak even
+// though the purge loop's own per-mod Installer.Uninstall calls are no-ops
+// for exmodz mods (zero deployment members of their own, #197 I2 fix) -
+// and that the cache entry survives, matching purge's "keep records,
+// redeploy later" contract for real mods.
+func TestPurgeProfile_UndeploysMergedPak_KeepsCacheWithoutUninstall(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	_, err = os.Stat(deployedPath)
+	require.NoError(t, err, "precondition: the merged pak must exist before purging")
+
+	mod, err := svc.GetInstalledMod("fake-compiler", "bear-mount", game.ID, "default")
+	require.NoError(t, err)
+
+	_, err = svc.PurgeProfile(context.Background(), game, "default", []domain.InstalledMod{*mod}, core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+
+	_, err = os.Stat(deployedPath)
+	require.True(t, os.IsNotExist(err), "purge must undeploy the merged pak, not just no-op per-mod")
+
+	gameCache := svc.GetGameCache(game)
+	require.True(t, gameCache.Exists(game.ID, domain.SourceMerged, "merged-pak", "merged"),
+		"a plain purge (no --uninstall) must keep the merged pak's cache entry, mirroring real-mod purge semantics")
+}
+
+// TestPurgeProfile_Uninstall_DeletesMergedPakCacheToo proves `lmm purge
+// --uninstall` also clears the merged pak's cache entry, matching every
+// real mod's full removal.
+func TestPurgeProfile_Uninstall_DeletesMergedPakCacheToo(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+
+	mod, err := svc.GetInstalledMod("fake-compiler", "bear-mount", game.ID, "default")
+	require.NoError(t, err)
+
+	_, err = svc.PurgeProfile(context.Background(), game, "default", []domain.InstalledMod{*mod}, core.PurgeOptions{Uninstall: true}, nil)
+	require.NoError(t, err)
+
+	_, err = os.Stat(deployedPath)
+	require.True(t, os.IsNotExist(err))
+
+	gameCache := svc.GetGameCache(game)
+	require.False(t, gameCache.Exists(game.ID, domain.SourceMerged, "merged-pak", "merged"),
+		"--uninstall must also clear the merged pak's cache entry")
 }
 
 // TestApplyProfileSwitch_SyncsMergedPakForToProfile proves switching TO a

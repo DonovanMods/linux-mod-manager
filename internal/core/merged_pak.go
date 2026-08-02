@@ -376,3 +376,43 @@ func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 	}
 	return result, nil
 }
+
+// PurgeMergedPak explicitly undeploys game+profileName's merged pak (#197
+// I2 fix). `lmm purge`'s own contract is "remove ALL deployed mod files...
+// resetting the game directory back to its pre-modded state" - but exmodz
+// mods deploy EXCLUSIVELY through this one shared artifact, never their
+// own per-mod cache entry (Task 2/3), so purgeMods' per-real-mod
+// Installer.Uninstall loop is a no-op for every one of them. Nor can this
+// be left to syncMergedPak's own fingerprint-diffing: a plain (non-
+// --uninstall) purge intentionally leaves each mod's Enabled bit
+// untouched (only Deployed flips), so the merge INPUTS never change and
+// syncMergedPak's fast path would silently do nothing, leaving the pak
+// deployed - the exact regression this fixes.
+//
+// deleteCache mirrors purge's own --uninstall distinction for real mods:
+// false (plain purge) undeploys the FILE but keeps the cache entry and
+// fingerprint, so a later `lmm deploy` redeploys the identical merged pak
+// without recomputing anything (relies on syncMergedPak's fast path also
+// confirming the deployed artifact still exists - #197 I5's fix); true
+// (--uninstall) also clears the cache entry, matching every real mod's
+// full removal.
+func (s *Service) PurgeMergedPak(ctx context.Context, game *domain.Game, profileName string, deleteCache bool) error {
+	if game.DeployMode != domain.DeployCompile {
+		return nil
+	}
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return err
+	}
+	syntheticMod := &domain.Mod{ID: mergedPakModID, SourceID: domain.SourceMerged, Version: mergedPakVersion, GameID: game.ID}
+	if err := installer.Uninstall(ctx, game, syntheticMod, profileName); err != nil {
+		return fmt.Errorf("removing merged pak: %w", err)
+	}
+	if deleteCache {
+		gameCache := s.GetGameCache(game)
+		if err := gameCache.Delete(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion); err != nil {
+			return fmt.Errorf("clearing merged pak cache entry: %w", err)
+		}
+	}
+	return nil
+}

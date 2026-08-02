@@ -2239,7 +2239,17 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 		skipped:  &result.Skipped,
 		purged:   &result.Purged,
 	})
-	return result, err
+	if err != nil {
+		return result, err
+	}
+
+	// #197 I2 fix: see PurgeMergedPak's own doc comment - exmodz mods have
+	// no per-mod deployment for the loop above to have already undeployed.
+	if perr := s.PurgeMergedPak(ctx, game, profileName, opts.Uninstall); perr != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not remove merged pak: %v", perr))
+	}
+
+	return result, nil
 }
 
 // SwitchPlan is the pure, displayable diff between the currently-active
@@ -4805,6 +4815,18 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)                                         //nolint:errcheck // best-effort recovery on an already-erroring path
 		_ = installer.ReplaceForUpdate(ctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
+	}
+
+	// #197 I1 fix: a rollback changes the mod's Version (and possibly its
+	// FileIDs), both regeneration triggers - without this, the merged pak
+	// keeps the rolled-away-from version's diff until some OTHER flow
+	// happens to sync it.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+	} else {
+		for _, w := range syncWarnings {
+			result.Notes = append(result.Notes, "Warning: "+w)
+		}
 	}
 
 	return result, nil
