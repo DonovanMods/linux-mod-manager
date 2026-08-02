@@ -323,9 +323,16 @@ const retainedSourcePrefix = ReservedPrefix + "source-"
 // retained compile source. It is a pure naming function - like
 // GetFilePath, callers join it against a staging or cache directory
 // themselves and read/write/copy the actual bytes with ordinary file I/O
-// (see internal/core's stageCompileFingerprint and recompile-apply path).
+// (see internal/core's ingest/merge paths).
+//
+// fileID is Base'd first (#197 hardening): it is source-controlled (a
+// ModSource's own DownloadableFile.ID, or - for an import - the archive's
+// own filename) exactly like the FileName fields #196's review already
+// found needed filepath.Base sanitization at their own join sites - a
+// fileID containing "../" must not be able to escape the staging/cache
+// directory this name gets joined against downstream.
 func RetainedSourceName(fileID string) string {
-	return retainedSourcePrefix + fileID
+	return retainedSourcePrefix + filepath.Base(fileID)
 }
 
 // mergeFingerprintMarkerName names the single JSON fingerprint marker a

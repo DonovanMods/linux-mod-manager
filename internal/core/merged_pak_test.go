@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -25,6 +26,13 @@ func TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *te
 
 	seedMod := func(sourceID, modID, version string, fileIDs []string, enabled bool) {
 		for _, fileID := range fileIDs {
+			// Only an "exmodz"-named fileID gets a retained source, mirroring
+			// the real ingest shape (Task 2/3): a plain .pak fileID is never
+			// retained, so enabledExmodzSources must skip it via the
+			// os.Stat check, not just by naming convention.
+			if !strings.Contains(fileID, "exmodz") {
+				continue
+			}
 			require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), []byte("exmodz-"+modID+"-"+fileID)))
 		}
 		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{

@@ -166,9 +166,9 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		return nil, nil
 	}
 
-	sources, err := s.enabledExmodzSources(game, profileName)
+	current, sources, err := s.currentMergedFingerprint(game, profileName)
 	if err != nil {
-		return nil, fmt.Errorf("listing enabled exmodz mods: %w", err)
+		return nil, err
 	}
 
 	gameCache := s.GetGameCache(game)
@@ -192,38 +192,6 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	basePakPath, err := resolveBasePak(game)
 	if err != nil {
 		return nil, err
-	}
-	liveHash, err := basePakIndexHash(basePakPath)
-	if err != nil {
-		return nil, fmt.Errorf("reading base pak for merge fingerprint: %w", err)
-	}
-
-	current := MergedFingerprint{BaseIndexHash: liveHash}
-	for _, src := range sources {
-		sum, herr := md5File(src.ExmodzPath)
-		if herr != nil {
-			return nil, fmt.Errorf("hashing %s: %w", src.ExmodzPath, herr)
-		}
-		sourceID, modID, _ := strings.Cut(src.ModRef, ":")
-		current.Mods = append(current.Mods, MergedFingerprintEntry{
-			SourceID: sourceID, ModID: modID, Checksum: sum,
-		})
-	}
-	// Version is not carried on source.MergeSource (it only needs ModRef +
-	// ExmodzPath for the merge itself) - resolved separately here so
-	// enabledExmodzSources' own signature stays minimal. Re-fetching the
-	// installed mods once more is cheap (small profiles) and keeps
-	// enabledExmodzSources' contract focused on ONE job.
-	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
-	if err != nil {
-		return nil, fmt.Errorf("loading profile mods: %w", err)
-	}
-	versionByRef := make(map[string]string, len(mods))
-	for _, m := range mods {
-		versionByRef[m.SourceID+":"+m.ID] = m.Version
-	}
-	for i, src := range sources {
-		current.Mods[i].Version = versionByRef[src.ModRef]
 	}
 
 	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
@@ -293,4 +261,115 @@ func readMergedFingerprint(cachePath string) (fp MergedFingerprint, ok bool) {
 		return MergedFingerprint{}, false
 	}
 	return fp, true
+}
+
+// currentMergedFingerprint computes what game+profileName's merged pak
+// SHOULD look like right now: the live base pak's IndexHash plus every
+// currently-enabled exmodz mod's identity/version/content checksum, in
+// profile load order. Returns a nil sources/zero-value fingerprint (not an
+// error) when there is nothing to merge - callers distinguish "nothing to
+// do" from "failed to compute" via the returned slice's length, exactly
+// like syncMergedPak's own zero-sources branch does.
+func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string) (MergedFingerprint, []source.MergeSource, error) {
+	sources, err := s.enabledExmodzSources(game, profileName)
+	if err != nil {
+		return MergedFingerprint{}, nil, fmt.Errorf("listing enabled exmodz mods: %w", err)
+	}
+	if len(sources) == 0 {
+		return MergedFingerprint{}, sources, nil
+	}
+
+	basePakPath, err := resolveBasePak(game)
+	if err != nil {
+		return MergedFingerprint{}, sources, err
+	}
+	liveHash, err := basePakIndexHash(basePakPath)
+	if err != nil {
+		return MergedFingerprint{}, sources, fmt.Errorf("reading base pak for merge fingerprint: %w", err)
+	}
+
+	current := MergedFingerprint{BaseIndexHash: liveHash}
+	for _, src := range sources {
+		sum, herr := md5File(src.ExmodzPath)
+		if herr != nil {
+			return MergedFingerprint{}, sources, fmt.Errorf("hashing %s: %w", src.ExmodzPath, herr)
+		}
+		sourceID, modID, _ := strings.Cut(src.ModRef, ":")
+		current.Mods = append(current.Mods, MergedFingerprintEntry{SourceID: sourceID, ModID: modID, Checksum: sum})
+	}
+
+	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+	if err != nil {
+		return MergedFingerprint{}, sources, fmt.Errorf("loading profile mods: %w", err)
+	}
+	versionByRef := make(map[string]string, len(mods))
+	for _, m := range mods {
+		versionByRef[m.SourceID+":"+m.ID] = m.Version
+	}
+	for i, src := range sources {
+		current.Mods[i].Version = versionByRef[src.ModRef]
+	}
+
+	return current, sources, nil
+}
+
+// CheckMergedPakStaleness reports whether game+profileName's merged pak no
+// longer matches the current enabled-mod set/order/versions/base pak
+// (#197, generalizing #196's per-mod CheckBaseStaleness to the merged
+// model). Returns nil, nil - not an error - when the merged pak is
+// up to date, when there is nothing to merge (zero enabled exmodz mods),
+// or when game is not a DeployCompile game.
+func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string) (*domain.Update, error) {
+	if game.DeployMode != domain.DeployCompile {
+		return nil, nil
+	}
+
+	current, sources, err := s.currentMergedFingerprint(game, profileName)
+	if err != nil {
+		return nil, err
+	}
+	if len(sources) == 0 {
+		return nil, nil
+	}
+
+	gameCache := s.GetGameCache(game)
+	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	stored, ok := readMergedFingerprint(cachePath)
+	if ok {
+		if eq, eqErr := mergedFingerprintsEqual(current, stored); eqErr == nil && eq {
+			return nil, nil
+		}
+	}
+
+	return &domain.Update{
+		InstalledMod: domain.InstalledMod{
+			Mod: domain.Mod{
+				ID: mergedPakModID, SourceID: domain.SourceMerged,
+				Name: "Icarus Merged Pak", Version: mergedPakVersion, GameID: game.ID,
+			},
+		},
+		NewVersion:      mergedPakVersion,
+		RecompileNeeded: true,
+	}, nil
+}
+
+// ApplyMergedPakRegen regenerates game+profileName's merged pak (#197 -
+// replaces #196's per-mod ApplyRecompile). No lock gate: a locked mod's
+// retained exmodz still participates in every re-merge (design decision 3
+// - locking pins THAT mod's own version, it does not freeze the whole
+// merged pak or exclude the mod's diff; reading a locked mod's retained
+// source to feed the merge is not "touching" it in the sense a lock
+// protects against).
+func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, progress func(DeployProgress)) (*UpdateApplyResult, error) {
+	result := &UpdateApplyResult{}
+	warnings, err := s.syncMergedPak(ctx, game, profileName)
+	if err != nil {
+		return result, err
+	}
+	result.Warnings = warnings
+	result.Applied = []string{mergedPakFileName}
+	if progress != nil {
+		progress(DeployProgress{Phase: UpdateDownloadDone})
+	}
+	return result, nil
 }
