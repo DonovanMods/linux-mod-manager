@@ -195,9 +195,26 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	}
 
 	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	deployedPath := filepath.Join(game.ModPath, mergedPakFileName)
 	if stored, ok := readMergedFingerprint(cachePath); ok {
 		if eq, eqErr := mergedFingerprintsEqual(current, stored); eqErr == nil && eq {
-			return nil, nil // fast path: nothing changed
+			// #197 I5 fix: an unchanged fingerprint alone doesn't guarantee
+			// the pak is actually deployed - a PRIOR call's Install could
+			// have failed AFTER the fingerprint was already committed
+			// (wedging detection forever, since nothing here would ever
+			// notice), or a purge could have deliberately undeployed just
+			// the file while keeping the cache entry (#197 I2). Confirm
+			// the artifact is really on disk before trusting the fast
+			// path; if it's missing, redeploy the EXISTING cache content
+			// (self-healing) rather than re-merging - the inputs haven't
+			// changed, so there is nothing new to compute.
+			if _, statErr := os.Stat(deployedPath); statErr == nil {
+				return nil, nil // fast path: nothing changed, and it's actually deployed
+			}
+			if err := installer.Install(ctx, game, syntheticMod, profileName); err != nil {
+				return nil, fmt.Errorf("redeploying merged pak: %w", err)
+			}
+			return nil, nil
 		}
 	}
 
@@ -340,7 +357,16 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 	stored, ok := readMergedFingerprint(cachePath)
 	if ok {
 		if eq, eqErr := mergedFingerprintsEqual(current, stored); eqErr == nil && eq {
-			return nil, nil
+			// #197 I5 fix: mirrors syncMergedPak's identical fast-path
+			// check - a matching fingerprint alone doesn't prove the pak
+			// is actually deployed (a prior failed Install, or a purge
+			// that intentionally kept the cache entry, #197 I2). Without
+			// this, `lmm update`/`lmm verify` would report "up to date"
+			// for a profile whose game directory doesn't actually hold
+			// the merged pak at all - the exact wedge this fix closes.
+			if _, statErr := os.Stat(filepath.Join(game.ModPath, mergedPakFileName)); statErr == nil {
+				return nil, nil
+			}
 		}
 	}
 

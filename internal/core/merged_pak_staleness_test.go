@@ -93,3 +93,65 @@ func TestApplyMergedPakRegen_LockedModDiffStillParticipates(t *testing.T) {
 	require.Contains(t, string(data), "locked-bear-bytes", "the locked mod's diff must still be included in the merge")
 	require.Contains(t, string(data), "wolf-bytes")
 }
+
+// TestSyncMergedPak_FailedDeployLeg_SelfHeals is the #197 I5 regression
+// test: the fingerprint is committed to the cache entry BEFORE
+// installer.Install runs - if Install fails (or, equivalently here, the
+// deployed file is removed by some external actor after a successful
+// sync, e.g. a purge that intentionally keeps the cache entry, #197 I2),
+// a matching fingerprint alone used to make every LATER syncMergedPak
+// call fast-path "nothing changed" forever, even though the game
+// directory doesn't actually hold the merged pak. This proves a
+// subsequent sync notices the missing artifact and redeploys it WITHOUT
+// re-merging (the inputs never changed - src.compileCalls must stay at 1).
+func TestSyncMergedPak_FailedDeployLeg_SelfHeals(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
+
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	_, err = os.Stat(deployedPath)
+	require.NoError(t, err, "precondition: the merged pak must be deployed")
+
+	// Simulate the deployed artifact vanishing without the cache
+	// entry/fingerprint changing (a failed Install that left a partial
+	// deploy is the same observable state - see #197 I2's purge test for
+	// the other real-world path into this state).
+	require.NoError(t, os.Remove(deployedPath))
+
+	srcRaw, err := svc.GetSource("fake-compiler")
+	require.NoError(t, err)
+	src, ok := srcRaw.(*fakeCompilerSource)
+	require.True(t, ok)
+	require.Equal(t, 1, src.compileCalls, "precondition: exactly one merge so far")
+
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	_, err = os.Stat(deployedPath)
+	require.NoError(t, err, "a later sync must notice the missing artifact and redeploy it")
+	require.Equal(t, 1, src.compileCalls, "redeploying an unchanged fingerprint must NOT trigger another merge")
+}
+
+// TestCheckMergedPakStaleness_MissingArtifact_ReportsStale is
+// TestSyncMergedPak_FailedDeployLeg_SelfHeals's CHECK-side twin: `lmm
+// update`/`lmm verify` call CheckMergedPakStaleness, not syncMergedPak
+// directly, so it needs the identical artifact-existence confirmation -
+// otherwise a wedged (fingerprint matches, file missing) profile would
+// report "up to date" forever, invisible to the one safety net meant to
+// catch exactly this.
+func TestCheckMergedPakStaleness_MissingArtifact_ReportsStale(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	require.NoError(t, os.Remove(deployedPath))
+
+	upd, err := svc.CheckMergedPakStaleness(game, "default")
+	require.NoError(t, err)
+	require.NotNil(t, upd, "a missing deployed artifact must be reported stale even though the fingerprint hasn't changed")
+	require.True(t, upd.RecompileNeeded)
+}
