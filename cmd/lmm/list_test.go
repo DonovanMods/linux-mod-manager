@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -33,6 +34,16 @@ func TestListCmd_Structure(t *testing.T) {
 	// Check flags
 	assert.NotNil(t, listCmd.Flags().Lookup("profile"))
 	assert.NotNil(t, listCmd.Flags().Lookup("profiles"))
+}
+
+// TestListCmd_DocMentionsLoadOrder guards #201: the help text must describe
+// the mod ordering it actually shows (the profile's load order, which
+// decides merge precedence) rather than staying silent about it or, worse,
+// claiming the old install order.
+func TestListCmd_DocMentionsLoadOrder(t *testing.T) {
+	assert.Contains(t, listCmd.Long, "load order")
+	assert.NotContains(t, strings.ToLower(listCmd.Long), "install order",
+		"list must not claim install order - it shows profile load order")
 }
 
 func TestStatusCmd_Structure(t *testing.T) {

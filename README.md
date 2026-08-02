@@ -433,6 +433,8 @@ games:
 
 Steam auto-detection (`lmm game detect`) knows about Icarus (App ID `1149460`) and generates an equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
 
+**Merge precedence**: with more than one `compile`-mode mod installed (currently Icarus only), the profile's load order — the same order `lmm list` displays and `lmm profile reorder` changes — decides how conflicting changes resolve. Mods are merged in load order, so a mod later in the list is applied later and wins conflicting _fields_ on a shared data-table row; it's a per-field upsert, not a whole-row overwrite, so untouched fields from earlier mods still survive. Bundled asset files can't compose that way — a same-path collision between two mods is whole-file last-wins, and installing or updating a colliding mod prints a warning naming both. Either way, the bottom of the load order has final say, and `lmm profile reorder` regenerates the merged pak immediately, so a reorder's effect on precedence is visible right away rather than at the next deploy.
+
 ### Deployment Methods
 
 Mods can be deployed using three methods:

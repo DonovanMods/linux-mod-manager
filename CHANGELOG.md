@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `lmm list` now displays mods in the profile's load order (the same order `lmm profile reorder` sets and the TUI's mod list already showed) instead of DB install order (`installed_at`) — the visible order is now the order that actually decides merge precedence for a `deploy_mode: compile` game. A mod installed but missing from the load order is still shown, never silently dropped, placed first (lowest priority). README and `docs/configuration.md` gain a "Merge precedence" paragraph explaining that later-in-load-order mods win conflicting table-row _fields_ (a per-field upsert; untouched fields from earlier mods survive) while bundled assets are whole-file last-wins with a warning, and that `lmm profile reorder` regenerates the merged pak immediately (#201)
 - An unrecognized, non-empty `link_method` (`games.yaml`, profile files, imported profiles) or `deploy_mode` (`games.yaml`; also `lmm game detect`'s `steam-games.yaml`) is now a load-time error naming the field, the offending value, the owning game/profile, and the valid options — instead of silently falling back to the default (`symlink`/`extract`). **Breaking for configs that were already silently misbehaving:** a typo like `deploy_mode: compil` previously ran as `extract` with no warning; it now refuses to load until fixed. An empty/absent value is unaffected and keeps today's default exactly (#172)
 
 ### Fixed
