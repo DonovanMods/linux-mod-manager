@@ -49,13 +49,13 @@ func TestList_DisplaysProfileLoadOrder_NotInstallOrder(t *testing.T) {
 	t.Run("non-verbose", func(t *testing.T) {
 		out := listNonVerbose(t, svc, game)
 		idx := modOrder(t, out, "Mod B", "Mod A")
-		assert.Less(t, idx[0], idx[1], "Mod B (later in load order) must print before Mod A")
+		assert.Less(t, idx[0], idx[1], "profile load order is [Mod B, Mod A] (Mod A is last - final say); the listing must follow that array order, not install order (which was A then B)")
 	})
 
 	t.Run("verbose", func(t *testing.T) {
 		out := listVerbose(t, svc, game, false)
 		idx := modOrder(t, out, "Mod B", "Mod A")
-		assert.Less(t, idx[0], idx[1], "Mod B (later in load order) must print before Mod A")
+		assert.Less(t, idx[0], idx[1], "profile load order is [Mod B, Mod A] (Mod A is last - final say); the listing must follow that array order, not install order (which was A then B)")
 	})
 
 	t.Run("json", func(t *testing.T) {

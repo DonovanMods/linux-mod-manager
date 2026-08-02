@@ -15,9 +15,11 @@ List all mods installed in the specified game and profile.
 .PP
 Mods are printed in the profile's load order (see 'lmm profile reorder')
 - the same order that decides merge precedence for a compiled/merged pak:
-a mod later in the load order is merged later and wins conflicting rows.
-A mod installed but missing from the load order is still shown (never
-silently dropped), placed first since it has no claim to the final say.
+a mod later in the load order is merged later and wins conflicting
+fields on a shared data-table row (untouched fields from earlier mods
+still survive). A mod installed but missing from the load order is
+still shown (never silently dropped), placed first since it has no
+claim to the final say.
 
 .PP
 Use --profiles to list profile names for the game instead of mods.
