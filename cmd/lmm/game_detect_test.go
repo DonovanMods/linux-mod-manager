@@ -92,6 +92,60 @@ func TestGameFromDetected_RejectsUnknownDeployMode(t *testing.T) {
 	assert.Contains(t, err.Error(), "compil")
 }
 
+// TestGameFromDetected_RequiresSourcesOrNexusID guards a Copilot release-
+// review finding on #203: a known-games entry with neither Sources NOR a
+// non-empty NexusID used to silently produce {"nexusmods": ""} - a garbage
+// source mapping (an empty NexusMods game ID) that would propagate into
+// games.yaml unnoticed. This is a misconfigured known-games entry (every
+// legitimate one sets at least one of the two), so it must fail loud,
+// naming the game, instead. Both legs: the failing case, and the two
+// success cases (Sources-only, NexusID-only) that must remain unaffected.
+func TestGameFromDetected_RequiresSourcesOrNexusID(t *testing.T) {
+	t.Run("neither Sources nor NexusID fails loud", func(t *testing.T) {
+		_, err := gameFromDetected(steam.DetectedGame{
+			Slug: "misconfigured-game",
+			Name: "Misconfigured Game",
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "misconfigured-game")
+	})
+
+	t.Run("NexusID alone is sufficient", func(t *testing.T) {
+		game, err := gameFromDetected(steam.DetectedGame{
+			Slug:    "skyrim-se",
+			Name:    "Skyrim Special Edition",
+			NexusID: "skyrimspecialedition",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, game.SourceIDs)
+	})
+
+	t.Run("Sources alone is sufficient", func(t *testing.T) {
+		game, err := gameFromDetected(steam.DetectedGame{
+			Slug:    "icarus",
+			Name:    "Icarus",
+			Sources: map[string]string{"icarus": "icarus"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"icarus": "icarus"}, game.SourceIDs)
+	})
+
+	// #204 round-2 review: YAML unmarshaling an explicit `sources: {}` line
+	// produces map[string]string{} (empty, non-nil), which the original
+	// `sources == nil` check let slide through, still landing at
+	// {"nexusmods": ""} when NexusID is also unset. Empty must be treated
+	// identically to nil.
+	t.Run("empty-but-non-nil Sources map fails the same as nil", func(t *testing.T) {
+		_, err := gameFromDetected(steam.DetectedGame{
+			Slug:    "empty-sources-game",
+			Name:    "Empty Sources Game",
+			Sources: map[string]string{},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "empty-sources-game")
+	})
+}
+
 // TestGameFromDetected_Icarus_ProducesReadmeEquivalentValues proves the
 // #177 acceptance criterion directly: saving a detected Icarus produces a
 // games.yaml entry whose values match the README's hand-written example

@@ -145,7 +145,78 @@ func TestCoreProviderActions_CheckUpdates_ReportsRecompileNeeded(t *testing.T) {
 	require.Equal(t, "merged-pak", u.ID)
 	require.True(t, u.RecompileNeeded)
 	require.Equal(t, u.FromVersion, u.ToVersion, "a staleness row has no real version change")
+	require.Equal(t, "base pak updated", u.RecompileReason, "a never-before-synced profile's reason is the fingerprint-mismatch default")
 	require.Equal(t, "(base pak updated)", u.VersionLabel())
+}
+
+// TestCoreProviderActions_CheckUpdates_ReportsNotDeployedReason guards a
+// #203 release-review finding: the TUI used to hardcode "(base pak
+// updated)" for every staleness row, even when the real cause (the
+// fingerprint still matches; the artifact is just missing from the game
+// directory - core.CheckMergedPakStaleness's own "not deployed" case,
+// internal/core/merged_pak.go) is different. After a real sync/deploy, the
+// merged pak is removed WITHOUT anything else changing - the fingerprint
+// still matches, so the distinct "not deployed" reason must surface, not
+// the generic mismatch wording `lmm verify` would never use here either.
+func TestCoreProviderActions_CheckUpdates_ReportsNotDeployedReason(t *testing.T) {
+	actions, _, deployedPath := newRecompileActionsFixture(t)
+
+	view, err := actions.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	require.Len(t, view.Updates, 1)
+	_, err = actions.ApplyUpdate(context.Background(), view.Updates[0], nil)
+	require.NoError(t, err)
+	require.FileExists(t, deployedPath, "precondition: the merged pak must be deployed")
+
+	require.NoError(t, os.Remove(deployedPath))
+
+	view, err = actions.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	require.Len(t, view.Updates, 1)
+	u := view.Updates[0]
+	require.True(t, u.RecompileNeeded)
+	require.Equal(t, "not deployed", u.RecompileReason)
+	require.Equal(t, "(not deployed)", u.VersionLabel())
+}
+
+// TestUpdateItem_VersionLabel is a pure unit test over VersionLabel's own
+// branches, independent of any real staleness fixture: the normal arrow
+// case, both real RecompileReason values core.CheckMergedPakStaleness can
+// produce, and the defensive empty-reason fallback (core always sets one
+// alongside RecompileNeeded, but VersionLabel must not render a bare "()"
+// if some future caller ever leaves it unset).
+func TestUpdateItem_VersionLabel(t *testing.T) {
+	tests := []struct {
+		name string
+		item tui.UpdateItem
+		want string
+	}{
+		{
+			name: "normal update shows the version arrow",
+			item: tui.UpdateItem{FromVersion: "1.0", ToVersion: "2.0"},
+			want: "1.0 → 2.0",
+		},
+		{
+			name: "recompile needed: base pak updated",
+			item: tui.UpdateItem{RecompileNeeded: true, RecompileReason: "base pak updated"},
+			want: "(base pak updated)",
+		},
+		{
+			name: "recompile needed: not deployed",
+			item: tui.UpdateItem{RecompileNeeded: true, RecompileReason: "not deployed"},
+			want: "(not deployed)",
+		},
+		{
+			name: "recompile needed: empty reason falls back to base pak updated",
+			item: tui.UpdateItem{RecompileNeeded: true},
+			want: "(base pak updated)",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, tt.item.VersionLabel())
+		})
+	}
 }
 
 // TestCoreProviderActions_ApplyUpdate_Recompile_AppliesAndRedeploys proves

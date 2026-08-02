@@ -288,18 +288,34 @@ type UpdateItem struct {
 	// installed mod - and ApplyUpdate routes such a row to
 	// Service.ApplyMergedPakRegen instead of Service.ApplyUpdate.
 	RecompileNeeded bool
+	// RecompileReason is domain.Update's own distinct staleness reason
+	// ("base pak updated" - the fingerprint changed - or "not deployed" -
+	// the fingerprint still matches but the artifact is missing from the
+	// game directory), meaningful only when RecompileNeeded is true. #203
+	// release review: the TUI used to hardcode "(base pak updated)" for
+	// every staleness row regardless of the real cause, unlike `lmm verify`
+	// (cmd/lmm/verify.go), which already names the distinct reason.
+	RecompileReason string
 }
 
 // VersionLabel renders u's version change for display: the normal
-// "<from> → <to>" arrow for a real update, or "(base pak updated)" for a
-// #197 RecompileNeeded row, where FromVersion == ToVersion and an arrow
-// would misleadingly read as a no-op. Used everywhere an UpdateItem's
-// version change is shown - the apply-updates modal, its result lines, and
-// the changelog picker/overlay - so all of them read sanely for a
-// staleness row without duplicating this branch four times.
+// "<from> → <to>" arrow for a real update, or "(<reason>)" for a #197
+// RecompileNeeded row, where FromVersion == ToVersion and an arrow would
+// misleadingly read as a no-op - RecompileReason names the actual cause
+// ("base pak updated" or "not deployed"), matching what `lmm verify`
+// already shows; an empty RecompileReason (defensive - core always sets
+// one alongside RecompileNeeded) falls back to "base pak updated" rather
+// than rendering an empty "()". Used everywhere an UpdateItem's version
+// change is shown - the apply-updates modal, its result lines, and the
+// changelog picker/overlay - so all of them read sanely for a staleness
+// row without duplicating this branch four times.
 func (u UpdateItem) VersionLabel() string {
 	if u.RecompileNeeded {
-		return "(base pak updated)"
+		reason := u.RecompileReason
+		if reason == "" {
+			reason = "base pak updated"
+		}
+		return fmt.Sprintf("(%s)", reason)
 	}
 	return fmt.Sprintf("%s → %s", u.FromVersion, u.ToVersion)
 }

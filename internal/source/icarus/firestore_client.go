@@ -93,13 +93,23 @@ func (c *firestoreClient) getJSON(ctx context.Context, url string, out any) erro
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
-		// Drain before Close so the underlying connection stays eligible for
-		// reuse — net/http only pools an HTTP/1.x connection once its body
-		// has been read to EOF; returning immediately here left whatever the
-		// server sent (however small) unread, forcing the transport to
-		// close the connection instead of reusing it for the next request.
+		// Read a capped snippet for the error message, then keep draining
+		// to EOF before Close so the underlying connection stays eligible
+		// for reuse — net/http only pools an HTTP/1.x connection once its
+		// body has been read to EOF; returning immediately here left
+		// whatever the server sent unread, forcing the transport to close
+		// the connection instead of reusing it for the next request. A bare
+		// "HTTP %d" left a 403 (or any other failure) undiagnosable: a
+		// Firestore permission error, a quota message, and a malformed
+		// request all look identical without the URL and body.
+		const errBodySnippetCap = 512
+		snippetBytes, _ := io.ReadAll(io.LimitReader(resp.Body, errBodySnippetCap))
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		snippet := strings.TrimSpace(string(snippetBytes))
+		if snippet == "" {
+			return fmt.Errorf("icarus: GET %s: HTTP %d", url, resp.StatusCode)
+		}
+		return fmt.Errorf("icarus: GET %s: HTTP %d: %s", url, resp.StatusCode, snippet)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

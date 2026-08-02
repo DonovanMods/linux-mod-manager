@@ -1454,6 +1454,7 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 			Changelog: core.CleanChangelog(u.Changelog),
 			Locked:    isLocked, LockedVersion: lockedVersion,
 			RecompileNeeded: u.RecompileNeeded,
+			RecompileReason: u.RecompileReason,
 		})
 	}
 	if skipped := updateSkipWarning(core.CountUpdateSkips(installed)); skipped != "" {

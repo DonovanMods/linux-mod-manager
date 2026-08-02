@@ -254,20 +254,27 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 // wins outright; otherwise this derives the single-entry {nexusmods:
 // g.NexusID} map every detected game produced before Sources existed, so
 // every pre-#177 known game generates byte-for-byte the same games.yaml
-// block it always has. g.DeployMode goes through domain.ParseDeployMode,
-// which already treats "" as DeployExtract (today's default); an
-// unrecognized non-empty value in the known-games schema (steam-games.yaml,
-// built-in or user override) is a load-time error rather than a silent
-// fallback (#172).
+// block it always has. A known-games entry setting NEITHER is
+// misconfigured - every legitimate entry sets at least one - and used to
+// silently produce {"nexusmods": ""}, a garbage source mapping that would
+// propagate into games.yaml unnoticed; that is now a fail-loud error naming
+// the game instead (#203 release review). g.DeployMode goes through
+// domain.ParseDeployMode, which already treats "" as DeployExtract (today's
+// default); an unrecognized non-empty value in the known-games schema
+// (steam-games.yaml, built-in or user override) is a load-time error rather
+// than a silent fallback (#172).
 func gameFromDetected(g steam.DetectedGame) (*domain.Game, error) {
-	sources := g.Sources
-	if sources == nil {
-		sources = map[string]string{"nexusmods": g.NexusID}
-	}
 	deployMode, ok := domain.ParseDeployMode(g.DeployMode)
 	if !ok {
 		return nil, fmt.Errorf("%w: steam-games.yaml: game %q: deploy_mode %q (valid: %s)",
 			domain.ErrInvalidDeployMode, g.Slug, g.DeployMode, domain.ValidDeployModes)
+	}
+	sources := g.Sources
+	if len(sources) == 0 {
+		if g.NexusID == "" {
+			return nil, fmt.Errorf("game %q: known-games entry has no sources and no nexus_id - set at least one", g.Slug)
+		}
+		sources = map[string]string{"nexusmods": g.NexusID}
 	}
 	return &domain.Game{
 		ID:          g.Slug,
