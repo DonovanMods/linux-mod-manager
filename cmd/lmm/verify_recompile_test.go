@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -118,4 +119,39 @@ func TestDoVerify_HealthyExmodzMod_NoFileCountMismatch(t *testing.T) {
 		assert.NotEqual(t, "file_count_mismatch", f.Status,
 			"a healthy exmodz mod (validate+retain only, zero deployment members by design) must never report file_count_mismatch")
 	}
+}
+
+// TestDoVerify_Fix_SyncsMergedPak is the #197 postsmoke regression test
+// for doVerify: --fix can repair a VERSION MISMATCH (moves the cache dir
+// and the recorded version) or redownload a file whose upstream content
+// changed - both are merge-fingerprint inputs with no other seam to catch
+// them. This proves `lmm verify --fix` reaches the merged pak at all: a
+// deployed pak that goes missing (mirrors #197 I5's self-heal scenario -
+// a failed prior deploy, or a purge that intentionally kept the cache
+// entry) must be redeployed by a --fix run, even though nothing else was
+// broken to repair.
+func TestDoVerify_Fix_SyncsMergedPak(t *testing.T) {
+	svc, game, _, _ := setupDoUpdateRecompileTest(t)
+	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	_, err = os.Stat(deployedPath)
+	require.NoError(t, err, "precondition: the merged pak must be deployed")
+	require.NoError(t, os.Remove(deployedPath))
+
+	verifyProfile = "default"
+	verifyFix = true
+	t.Cleanup(func() { verifyProfile = ""; verifyFix = false })
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	_ = captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	_, err = os.Stat(deployedPath)
+	require.NoError(t, err, "lmm verify --fix must sync the merged pak, redeploying it when missing")
 }

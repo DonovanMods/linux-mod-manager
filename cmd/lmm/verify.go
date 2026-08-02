@@ -645,6 +645,22 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		}
 	}
 
+	// #197 postsmoke seam-audit fix: --fix can repair a VERSION MISMATCH
+	// (repairModVersion moves the cache dir and the recorded version) or
+	// redownload a file whose content has since changed upstream
+	// (redownloadModFile) - both are merge-fingerprint inputs with no
+	// other seam to catch them. No-op when --fix wasn't passed (nothing
+	// mutated) or the game isn't DeployCompile (SyncMergedPak's own guard).
+	if verifyFix {
+		if syncWarnings, syncErr := svc.SyncMergedPak(cmd.Context(), game, profile); syncErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
+		} else {
+			for _, w := range syncWarnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
+	}
+
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
