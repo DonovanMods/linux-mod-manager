@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -162,6 +163,21 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// hasRetainedSource reports whether any of fileIDs has a retained compile
+// source (cache.RetainedSourceName) on disk for sourceID/modID/version -
+// the signal that a cache entry is a DeployCompile ".exmodz" validate+
+// retain-only entry (#197 I4), which deploys zero files of its own by
+// design and must not be flagged as a FILE COUNT MISMATCH.
+func hasRetainedSource(gameCache *cache.Cache, gameID, sourceID, modID, version string, fileIDs []string) bool {
+	for _, fileID := range fileIDs {
+		retainedPath := gameCache.GetFilePath(gameID, sourceID, modID, version, cache.RetainedSourceName(fileID))
+		if _, err := os.Stat(retainedPath); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []string) error {
 	profile, err := resolveProfile(svc, game.ID, verifyProfile)
 	if err != nil {
@@ -245,6 +261,20 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			continue
 		}
 		if modFilter != "" && mod.ID != modFilter {
+			continue
+		}
+		// #197 I4 fix: a DeployCompile game's ".exmodz" mod is ingested as
+		// validate+retain ONLY (Task 2/3) - it has zero deployment members
+		// of its own by design (the shared merged pak, checked separately
+		// above, is what actually deploys), so ListFiles == 0 here is
+		// correct, healthy state, not a mismatch. Detected by checking
+		// whether any of the mod's own FileIDs has a retained source on
+		// disk - that is the one signal that distinguishes "this entry
+		// deploys nothing on purpose" from a genuinely corrupted/emptied
+		// cache entry (which the check below must still catch for every
+		// OTHER deploy mode, and even for a compile-mode game's own plain
+		// prebuilt ".pak" mods, which still deploy normally).
+		if game.DeployMode == domain.DeployCompile && hasRetainedSource(gameCache, game.ID, mod.SourceID, mod.ID, mod.Version, mod.FileIDs) {
 			continue
 		}
 		cacheExists := gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version)
