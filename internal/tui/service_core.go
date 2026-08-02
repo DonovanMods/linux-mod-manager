@@ -975,7 +975,7 @@ func (p *coreProvider) ReorderMods(_ context.Context, orderedKeys []string) (Act
 		})
 	}
 
-	if err := pm.ReorderMods(game.ID, profileName, mods); err != nil {
+	if err := p.svc.ReorderProfileMods(game.ID, profileName, mods); err != nil {
 		return ActionOutcome{}, fmt.Errorf("reordering profile %s: %w", profileName, err)
 	}
 	return ActionOutcome{Message: "load order updated"}, nil
