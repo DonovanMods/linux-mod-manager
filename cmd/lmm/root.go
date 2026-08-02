@@ -41,6 +41,12 @@ var ErrReported = errors.New("already reported")
 var (
 	version = "1.28.0"
 
+	// buildDescribe is injected at build time via -ldflags -X (see the
+	// Makefile's `build` target) with `git describe --tags --dirty`.
+	// Empty for builds made without that ldflags (plain `go build`/`go
+	// test`), which display identically to a clean release build.
+	buildDescribe = ""
+
 	// Global flags
 	configDir  string
 	dataDir    string
@@ -78,9 +84,23 @@ FILES
                           cache/ (downloaded and extracted mod files), and
                           downloads/ (staging area for in-flight downloads
                           and archive extraction). Override with --data.`,
-	Version:       version,
+	Version:       computeDisplayVersion(version, buildDescribe),
 	SilenceUsage:  true, // Runtime errors should not print usage
 	SilenceErrors: true, // We handle error output in Execute()
+}
+
+// computeDisplayVersion returns the version string shown to the user for
+// `--version`: ver unadorned when buildDescribe is empty (no ldflags, e.g.
+// `go build`/`go test`) or matches "v"+ver exactly (a clean build of the
+// release tag itself), otherwise ver with buildDescribe's git-describe
+// provenance appended - a "-dirty" suffix from `git describe --dirty`
+// passes through inside that unchanged. JSON surfaces must keep emitting
+// the static `version` var, not this - only human-facing display uses it.
+func computeDisplayVersion(ver, describe string) string {
+	if describe == "" || describe == "v"+ver {
+		return ver
+	}
+	return fmt.Sprintf("%s (dev: %s)", ver, describe)
 }
 
 func init() {
