@@ -39,6 +39,7 @@ type fakeCompilerSource struct {
 	downloadURL   string
 	compileCalls  int
 	validateCalls int
+	mergeWarnings []string
 }
 
 func (s *fakeCompilerSource) ID() string      { return "fake-compiler" }
@@ -90,13 +91,26 @@ func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath strin
 		}
 		out = append(out, data...)
 	}
-	return nil, os.WriteFile(outputPath, out, 0o644)
+	return s.mergeWarnings, os.WriteFile(outputPath, out, 0o644)
 }
 
 var (
 	_ source.ModSource     = (*fakeCompilerSource)(nil)
 	_ source.MergeCompiler = (*fakeCompilerSource)(nil)
 )
+
+// writeFakeBasePakWithTable is writeFakeBasePak's table-content-controlling
+// variant - needed to simulate a base pak refresh (a new IndexHash) for
+// staleness tests.
+func writeFakeBasePakWithTable(t *testing.T, path string, tables map[string][]byte) {
+	t.Helper()
+	w, err := unrealpak.Create(path)
+	require.NoError(t, err)
+	for mountPath, data := range tables {
+		require.NoError(t, w.AddFile(mountPath, data))
+	}
+	require.NoError(t, w.Close())
+}
 
 // failingValidateCompilerSource wraps fakeCompilerSource and always fails
 // ValidateSource - simulates a corrupt/malformed downloaded .exmodz.

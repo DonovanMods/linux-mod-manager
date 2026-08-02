@@ -328,6 +328,22 @@ func RetainedSourceName(fileID string) string {
 	return retainedSourcePrefix + fileID
 }
 
+// mergeFingerprintMarkerName names the single JSON fingerprint marker a
+// merged-pak cache entry carries (#197): what base pak and which
+// (source, mod, version, exmodz-checksum) tuples, in order, the pak was
+// last built from - so a later staleness check can compare without
+// re-deriving the merge. Reserved (ReservedPrefix) so ListFiles/Size/deploy
+// skip it like every other lmm bookkeeping entry.
+const mergeFingerprintMarkerName = ReservedPrefix + "merge-fingerprint"
+
+// MergeFingerprintPath returns the reserved on-disk path for versionDir's
+// merge-fingerprint marker. Pure naming, like RetainedSourceName - callers
+// (internal/core, which owns the MergedFingerprint type and its JSON
+// encoding) read/write the actual bytes with ordinary file I/O.
+func MergeFingerprintPath(versionDir string) string {
+	return filepath.Join(versionDir, mergeFingerprintMarkerName)
+}
+
 // Store saves a file to the cache
 func (c *Cache) Store(gameID, sourceID, modID, version, relativePath string, content []byte) error {
 	modPath := c.ModPath(gameID, sourceID, modID, version)

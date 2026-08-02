@@ -558,3 +558,27 @@ func TestCache_RetainedSourceName_IsReservedAndExcludedFromContent(t *testing.T)
 func TestCache_RetainedSourceName_UniquePerFileID(t *testing.T) {
 	assert.NotEqual(t, cache.RetainedSourceName("file-a"), cache.RetainedSourceName("file-b"))
 }
+
+// TestCache_MergeFingerprintPath_IsReserved pins that the merged pak's
+// fingerprint marker (#197) lives under the reserved namespace, like every
+// other lmm bookkeeping file.
+func TestCache_MergeFingerprintPath_IsReserved(t *testing.T) {
+	path := cache.MergeFingerprintPath("/some/version/dir")
+	if !strings.HasPrefix(filepath.Base(path), cache.ReservedPrefix) {
+		t.Errorf("MergeFingerprintPath = %q, want a reserved-prefixed basename", path)
+	}
+}
+
+// TestCache_MergeFingerprintPath_ExcludedFromContent proves the fingerprint
+// marker is never listed as deployable content, matching every other
+// reserved marker's ListFiles exclusion.
+func TestCache_MergeFingerprintPath_ExcludedFromContent(t *testing.T) {
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("g", "lmm-merged", "merged-pak", "merged", "zzz_LMM_Merged_P.pak", []byte("pak-bytes")))
+	versionDir := c.ModPath("g", "lmm-merged", "merged-pak", "merged")
+	require.NoError(t, os.WriteFile(cache.MergeFingerprintPath(versionDir), []byte(`{"BaseIndexHash":"abc"}`), 0o644))
+
+	files, err := c.ListFiles("g", "lmm-merged", "merged-pak", "merged")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"zzz_LMM_Merged_P.pak"}, files, "the fingerprint marker must never be listed as deployable content")
+}
