@@ -1213,6 +1213,23 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 
 	printHookWarnings(hookErrors)
 
+	// #197 postsmoke fix (root cause): this whole function is a bespoke
+	// reimplementation of install/deploy that never went through
+	// Service.ApplyInstall, the ONLY seam that used to sync the merged pak
+	// - a DeployCompile game's ".exmodz" mod deploys zero files of its own
+	// (validate+retain only, Task 2/3), so a multi-select install left the
+	// merged pak generated in cache but NEVER DEPLOYED, with nothing to
+	// warn the user. Sync failures are printed unconditionally (not
+	// --verbose-gated): if this had failed loudly the first time, the user
+	// would have noticed immediately instead of silently missing content.
+	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
+	} else {
+		for _, w := range syncWarnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+
 	// Summary
 	fmt.Printf("\n--- Summary ---\n")
 	fmt.Printf("Installed: %d\n", len(installed))

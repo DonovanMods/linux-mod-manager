@@ -96,3 +96,48 @@ func TestDoInstall_DeployCompile_AnnouncesRetaining(t *testing.T) {
 	assert.Contains(t, out, "Retaining Bear_Mount.exmodz for merge...\n")
 	assert.NotContains(t, out, "Extracting to cache...", "retaining isn't extracting - the generic message must not also print")
 }
+
+// TestBatchInstallMods_DeployCompile_DeploysMergedPak is the #197
+// postsmoke regression test: a real user's multi-select install of two
+// ".exmodz" mods (the search flow's `len(selectedMods) > 1` branch, doInstall
+// -> installMultipleMods -> batchInstallMods) generated the merged pak in
+// CACHE but never DEPLOYED it - batchInstallMods is a bespoke
+// reimplementation of install/deploy that never went through
+// Service.ApplyInstall, the only seam that used to sync the merged pak.
+// This drives the REAL production batchInstallMods (not a reimplementation
+// or a mock) with two DIFFERENT exmodz mods and proves the merged pak is
+// actually deployed on disk afterward, containing BOTH mods' content -
+// exactly the class of test whose absence let this ship.
+func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	game.DeployMode = domain.DeployCompile
+	game.InstallPath = t.TempDir()
+
+	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
+
+	compiler := &compilerInstallSource{fakeInstallSource: src}
+	svc.RegisterSource(compiler)
+	// SyncMergedPak resolves the game's configured sources (mergeCompilerSourceForGame
+	// -> SourcesForGame), which requires the game to be registered - the
+	// production CLI always has this via withGameService's svc.GetGame,
+	// unlike this fixture's bare *domain.Game construction.
+	require.NoError(t, svc.AddGame(game))
+
+	bearMod := &domain.Mod{ID: "bear-mount", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"}
+	wolfMod := &domain.Mod{ID: "wolf-mount", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
+	src.AddMod(bearMod, []domain.DownloadableFile{{ID: "bear-exmodz", Name: "Bear Mount", FileName: "Bear_Mount.exmodz", IsPrimary: true, Category: "MAIN"}})
+	src.AddMod(wolfMod, []domain.DownloadableFile{{ID: "wolf-exmodz", Name: "Wolf Mount", FileName: "Wolf_Mount.exmodz", IsPrimary: true, Category: "MAIN"}})
+	src.AddDownload("bear-exmodz", []byte("bear-bytes"))
+	src.AddDownload("wolf-exmodz", []byte("wolf-bytes"))
+
+	err := batchInstallMods(context.Background(), svc, game, []*domain.Mod{bearMod, wolfMod}, "default")
+	require.NoError(t, err)
+
+	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	data, readErr := os.ReadFile(deployedPath)
+	require.NoError(t, readErr, "batchInstallMods must sync the merged pak - both mods deploy zero files of their own")
+	assert.Contains(t, string(data), "bear-bytes")
+	assert.Contains(t, string(data), "wolf-bytes")
+}
