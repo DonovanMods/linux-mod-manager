@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-08-02
+
 ### Added
 
 - CLI output is now colorized by default when stdout is a terminal, extending the existing `colorGreen`/`colorRed`/`colorYellow` accent mechanism (previously only used by `deploy`/`verify`) with a full 4-color palette (green/yellow/red/cyan, plus bold/dim) across `list`, `status`, `search`, `update`, `conflicts`, and `mod show`. Table headers are bold+cyan. `lmm list` tints the whole row identically with or without `-v` (the row-tint decision is a single shared helper keyed on the mod's actual state, not the display flag): green for the common enabled+deployed case, yellow for enabled-but-undeployed, dim for disabled. `search` tints an installed mod's whole row green; `update`'s POLICY column colors per row. `status`/`mod show` color their values, not just the odd count: `lmm status -g <game>`'s active profile and per-profile "(active)" marker are green, mod/profile counts are cyan, Link Method is cyan, Last Deploy is green (or dim when never deployed); `mod show`'s Version fields are cyan and its Update policy is colored per state (green for auto, yellow for pinned); `conflicts`' stale winner suffix is yellow; and the existing `✓`/`✗` success/failure markers extend to `update` and `mod`'s confirmation lines. Detection is TTY-aware (piped/redirected output stays plain) and layers on top of the existing `--no-color` flag and `NO_COLOR` env var (presence-only per no-color.org), which continue to work unchanged; `--json` output is never colored. Table color is applied only to already-tabwriter-padded text (accented headers, whole-row tints, or a table's genuinely last column) — never to interior cell values before they reach `text/tabwriter`, which pads columns by raw byte length and would misalign them (#112, #193)
@@ -1180,7 +1182,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.28.0...HEAD
+[1.28.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.1...v1.28.0
 [1.27.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.0...v1.27.1
 [1.27.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.26.0...v1.27.0
 [1.26.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.25.0...v1.26.0
