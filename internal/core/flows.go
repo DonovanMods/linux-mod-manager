@@ -5236,5 +5236,21 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		emit(installedEvt)
 	}
 
+	// #197 I3 fix: profile import deploys mods (installer.Install above) the
+	// same way ApplyInstall/DeployProfile do - without this, an imported
+	// profile's exmodz mods (zero per-mod deployment members of their own,
+	// Task 2/3) put NO content in the game directory at all until some
+	// OTHER flow happens to sync the merged pak.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profile.Name); syncErr != nil {
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: ImportNote, Detail: msg})
+	} else {
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: ImportNote, Detail: w})
+		}
+	}
+
 	return result, nil
 }

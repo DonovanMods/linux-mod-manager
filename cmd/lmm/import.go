@@ -778,6 +778,18 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 		}
 	}
 
+	// #197 I3 fix: mirrors doImport's archive-mode tail - a scanned mod is a
+	// mod-set change for whatever profile it's registered into.
+	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
+		if verbose {
+			fmt.Printf("    Warning: could not sync merged pak: %v\n", syncErr)
+		}
+	} else {
+		for _, w := range syncWarnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+
 	return nil
 }
 
