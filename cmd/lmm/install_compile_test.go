@@ -33,6 +33,7 @@ type compilerInstallSource struct {
 	*fakeInstallSource
 	validateCalls int
 	compileCalls  int
+	mergeWarnings []string
 }
 
 // ValidateSource confirms the archive exists - this test only asserts the
@@ -58,7 +59,7 @@ func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath st
 		}
 		out = append(out, data...)
 	}
-	return nil, os.WriteFile(outputPath, out, 0o644)
+	return s.mergeWarnings, os.WriteFile(outputPath, out, 0o644)
 }
 
 // TestDoInstall_DeployCompile_AnnouncesRetaining guards #190 item 1: an

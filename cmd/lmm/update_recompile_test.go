@@ -161,3 +161,31 @@ func TestApplySingleUpdate_Recompile_JSON(t *testing.T) {
 	assert.Equal(t, "3.3", out.FromVersion)
 	assert.Equal(t, "3.3", out.ToVersion)
 }
+
+// TestApplySingleUpdate_Recompile_PrintsMergeWarnings is the #197 M4
+// regression test: ApplyMergedPakRegen's merge warnings (e.g. an
+// asset-path collision - "a loud warning" per the CHANGELOG) travel
+// through result.Warnings, not a progress event (ApplyMergedPakRegen only
+// ever emits UpdateDownloadDone) - applyRecompile used to watch for
+// UpdateWarning/UpdateNote progress phases that never fire, silently
+// dropping every merge warning on `lmm update`'s apply path.
+func TestApplySingleUpdate_Recompile_PrintsMergeWarnings(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	compiler.mergeWarnings = []string{"asset collision: fixture warning"}
+
+	mod, err := svc.GetInstalledMod("fake-compiler", "bear-mount", "icarus", "default")
+	require.NoError(t, err)
+
+	oldStderr := os.Stderr
+	r, w, pipeErr := os.Pipe()
+	require.NoError(t, pipeErr)
+	os.Stderr = w
+	err = applySingleUpdate(context.Background(), svc, game, mod, "default")
+	_ = w.Close()
+	os.Stderr = oldStderr
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	assert.Contains(t, buf.String(), "asset collision: fixture warning", "a merge warning must reach the CLI, not be silently dropped")
+}

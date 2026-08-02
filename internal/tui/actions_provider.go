@@ -280,17 +280,19 @@ type UpdateItem struct {
 	// is false" contract.
 	Locked        bool
 	LockedVersion string
-	// RecompileNeeded marks a #196 base-pak staleness row: a DeployCompile
-	// mod whose deployed compile no longer matches the game's live base
-	// pak. ToVersion equals FromVersion in this case - the mod itself
-	// hasn't changed, only the base pak has - and ApplyUpdate routes such a
-	// row to Service.ApplyRecompile instead of Service.ApplyUpdate.
+	// RecompileNeeded marks a #197 merged-pak staleness row (generalizing
+	// #196's per-mod version): the profile's merged pak no longer matches
+	// its recorded fingerprint (enabled-mod set, load order, a mod's
+	// version, or the base pak changed). ToVersion equals FromVersion in
+	// this case - u itself is the SYNTHETIC merged-pak row, not a real
+	// installed mod - and ApplyUpdate routes such a row to
+	// Service.ApplyMergedPakRegen instead of Service.ApplyUpdate.
 	RecompileNeeded bool
 }
 
 // VersionLabel renders u's version change for display: the normal
 // "<from> → <to>" arrow for a real update, or "(base pak updated)" for a
-// #196 RecompileNeeded row, where FromVersion == ToVersion and an arrow
+// #197 RecompileNeeded row, where FromVersion == ToVersion and an arrow
 // would misleadingly read as a no-op. Used everywhere an UpdateItem's
 // version change is shown - the apply-updates modal, its result lines, and
 // the changelog picker/overlay - so all of them read sanely for a

@@ -804,18 +804,19 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 // phases ApplyMergedPakRegen emits - it runs no hooks and downloads
 // nothing worth a progress bar).
 func applyRecompile(ctx context.Context, service *core.Service, game *domain.Game, profileName string) error {
-	progress := func(p core.DeployProgress) {
-		switch p.Phase {
-		case core.UpdateWarning:
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
-		case core.UpdateNote:
-			if verbose && !jsonOutput {
-				fmt.Printf("  %s\n", p.Detail)
-			}
+	result, err := service.ApplyMergedPakRegen(ctx, game, profileName, nil)
+	// #197 M4 fix: ApplyMergedPakRegen never emits UpdateWarning/UpdateNote
+	// progress events (only UpdateDownloadDone) - its merge warnings (e.g.
+	// an asset-path collision, "a loud warning" per the CHANGELOG) travel
+	// through result.Warnings instead. A progress callback watching for
+	// those phases would silently never fire; print result.Warnings
+	// directly so `lmm update`'s apply path surfaces them the same way
+	// DeployProfile/the TUI already do.
+	if result != nil {
+		for _, w := range result.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 	}
-
-	_, err := service.ApplyMergedPakRegen(ctx, game, profileName, progress)
 	return err
 }
 
