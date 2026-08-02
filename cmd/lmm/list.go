@@ -48,6 +48,12 @@ var listCmd = &cobra.Command{
 	Short: "List installed mods",
 	Long: `List all mods installed in the specified game and profile.
 
+Mods are printed in the profile's load order (see 'lmm profile reorder')
+- the same order that decides merge precedence for a compiled/merged pak:
+a mod later in the load order is merged later and wins conflicting rows.
+A mod installed but missing from the load order is still shown (never
+silently dropped), placed first since it has no claim to the final say.
+
 Use --profiles to list profile names for the game instead of mods.
 
 Examples:
@@ -101,6 +107,20 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 			}
 		}
 	}
+
+	// #201: display the profile's load order - the order that actually
+	// decides merge precedence (later = merged later = wins) - not
+	// installed_at (GetInstalledMods' own DB order), which has no
+	// relationship to it. core.OrderByProfile, not the deploy-only
+	// GetInstalledModsInProfileOrder seam: that one deliberately OMITS a
+	// mod absent from the profile's load order (correct for deploy - an
+	// untracked mod must never silently deploy), which would make such a
+	// mod vanish from a listing instead of just being placed first (lowest
+	// priority, since it has no claim to "final say"). OrderByProfile is
+	// the same never-omitting seam the TUI's mod list already uses
+	// (internal/tui/service_core.go's Overview) - reusing it here keeps the
+	// CLI and TUI in agreement on what "the load order" looks like.
+	mods = core.OrderByProfile(profileYAML, mods)
 
 	if jsonOutput {
 		out := listJSONOutput{GameID: game.ID, Profile: profileName, Mods: make([]listModJSON, len(mods))}
