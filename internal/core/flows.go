@@ -3249,6 +3249,16 @@ type InstallResult struct {
 	// never printed a file count, only Installed/Failed - see Failed).
 	FilesDeployed int
 
+	// MergedPakSyncFailed is true when this call's own end-of-install
+	// syncMergedPak attempt returned a hard error (#197 postsmoke review
+	// fix - Copilot flagged that a DeployCompile zero-file mod's success
+	// line unconditionally claimed "merged pak updated" even when the
+	// non-fatal sync failed, contradicting the loud Warning already on
+	// stderr). False when the sync succeeded, including when it returned
+	// its own non-fatal merge warnings - those still leave the pak
+	// deployed. Always false for a non-DeployCompile game.
+	MergedPakSyncFailed bool
+
 	Warnings []string
 	Notes    []string
 }
@@ -3765,6 +3775,7 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.Profile); syncErr != nil {
 		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
 		result.Warnings = append(result.Warnings, msg)
+		result.MergedPakSyncFailed = true
 		emit(DeployProgress{Phase: InstallWarning, Detail: msg})
 	} else {
 		for _, w := range syncWarnings {

@@ -87,8 +87,9 @@ otherwise):
                                          update --all' to fix it
 
 This check is entirely local (no source contacted) and applies to every
-compiled mod regardless of source, including local imports. --fix does
-not repair it - use 'lmm update' (or 'lmm update --all').
+compiled mod regardless of source, including local imports. Use --fix to
+repair it: it resyncs the profile's merged pak (recompiling and
+redeploying it if needed), the same repair 'lmm update --all' applies.
 
 Mods installed from a local source, mods requiring manual download, and
 mods with no recorded file IDs are skipped silently - there is nothing

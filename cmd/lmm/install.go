@@ -649,11 +649,17 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// files of its own by design (validate+retain only - it participates
 	// in the profile's shared merged pak instead, synced separately
 	// above) - "Files deployed: 0" read as a failure, not the correct,
-	// expected outcome it actually is.
-	if game.DeployMode == domain.DeployCompile && result.FilesDeployed == 0 {
-		fmt.Println("  Installed (merged pak updated)")
-	} else {
+	// expected outcome it actually is. Copilot review (#200): that sync is
+	// non-fatal, so this line unconditionally claimed "merged pak updated"
+	// even when it had just failed loudly on stderr above - thread the
+	// actual outcome instead of asserting success either way.
+	switch {
+	case game.DeployMode != domain.DeployCompile || result.FilesDeployed != 0:
 		fmt.Printf("  Files deployed: %d\n", result.FilesDeployed)
+	case result.MergedPakSyncFailed:
+		fmt.Println("  Installed; merged pak sync FAILED — see warning above")
+	default:
+		fmt.Println("  Installed (merged pak updated)")
 	}
 	fmt.Printf("  Added to profile: %s\n", profileName)
 
@@ -697,6 +703,15 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		Force:         installForce,
 	}
 
+	// pendingCompileDeps buffers the display names of DeployCompile
+	// zero-file dependencies as InstallDepInstalled events arrive live -
+	// their "merged pak updated" claim can't be verified until the SINGLE
+	// end-of-batch sync (inside ApplyInstall) actually runs, which happens
+	// after every per-dep event has already streamed. Printed once
+	// ApplyInstall returns with the real outcome (#197 postsmoke Copilot
+	// review fix, #200).
+	var pendingCompileDeps []string
+
 	// progress prints every diagnostic and status line at its exact point
 	// of occurrence, driven entirely by core.ApplyInstall's BATCH-path
 	// progress events - reproducing batchInstallMods' console output
@@ -731,9 +746,13 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		case core.InstallDepInstalled:
 			// #197 postsmoke UX fix: see the single-mod path's identical
 			// fix above - a DeployCompile ".exmodz" dependency deploys
-			// zero files of its own by design.
+			// zero files of its own by design. The "merged pak updated"
+			// half of that claim can't be printed yet (see
+			// pendingCompileDeps above) - deferred until ApplyInstall
+			// returns and the batch's one sync attempt is known to have
+			// succeeded or failed.
 			if game.DeployMode == domain.DeployCompile && p.FilesExtracted == 0 {
-				fmt.Println("  ✓ Installed (merged pak updated)")
+				pendingCompileDeps = append(pendingCompileDeps, p.ModName)
 			} else {
 				fmt.Printf("  ✓ Installed (%d files)\n", p.FilesExtracted)
 			}
@@ -760,6 +779,17 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		// explicitly requested" - surfaced before any dependency is
 		// touched, so nothing has been installed yet on this path either.
 		return err
+	}
+
+	// The batch's one merged-pak sync attempt (inside ApplyInstall) has
+	// now happened - print the deferred per-dependency completion lines
+	// pendingCompileDeps buffered above, with the outcome finally known.
+	for _, name := range pendingCompileDeps {
+		if result.MergedPakSyncFailed {
+			fmt.Printf("  ✓ %s: installed; merged pak sync FAILED — see warning above\n", name)
+		} else {
+			fmt.Printf("  ✓ %s: Installed (merged pak updated)\n", name)
+		}
 	}
 
 	fmt.Printf("\n--- Summary ---\n")
@@ -1060,6 +1090,11 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 
 	var installed, failed []string
 	var hookErrors []error
+	// pendingCompileMods buffers the display names of DeployCompile
+	// zero-file mods as they're installed - their "merged pak updated"
+	// claim can't be verified until the batch's one sync attempt, below
+	// the loop, actually runs (#197 postsmoke Copilot review fix, #200).
+	var pendingCompileMods []string
 
 	for i, mod := range mods {
 		fmt.Printf("\n[%d/%d] Installing: %s v%s\n", i+1, len(mods), mod.Name, mod.Version)
@@ -1213,9 +1248,12 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		// #197 postsmoke UX fix: see doInstall's identical fix - a
 		// DeployCompile ".exmodz" mod deploys zero files of its own by
 		// design (validate+retain only; the merged pak sync below is what
-		// actually deploys it).
+		// actually deploys it). The "merged pak updated" half of that
+		// claim can't be printed yet (see pendingCompileMods above) -
+		// deferred until the sync below actually runs and its outcome is
+		// known.
 		if game.DeployMode == domain.DeployCompile && downloadResult.FilesExtracted == 0 {
-			fmt.Println("  ✓ Installed (merged pak updated)")
+			pendingCompileMods = append(pendingCompileMods, mod.Name)
 		} else {
 			fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
 		}
@@ -1246,11 +1284,23 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 	// warn the user. Sync failures are printed unconditionally (not
 	// --verbose-gated): if this had failed loudly the first time, the user
 	// would have noticed immediately instead of silently missing content.
-	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
+	syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName)
+	if syncErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
 	} else {
 		for _, w := range syncWarnings {
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+
+	// The sync above has now happened - print the deferred per-mod
+	// completion lines pendingCompileMods buffered during the loop, with
+	// the outcome finally known (#197 postsmoke Copilot review fix, #200).
+	for _, name := range pendingCompileMods {
+		if syncErr != nil {
+			fmt.Printf("  ✓ %s: installed; merged pak sync FAILED — see warning above\n", name)
+		} else {
+			fmt.Printf("  ✓ %s: Installed (merged pak updated)\n", name)
 		}
 	}
 

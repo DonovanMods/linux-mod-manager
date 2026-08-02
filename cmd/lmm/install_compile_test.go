@@ -79,6 +79,11 @@ func TestDoInstall_DeployCompile_AnnouncesRetaining(t *testing.T) {
 	svc, game, src := setupDoInstallTest(t)
 	game.DeployMode = domain.DeployCompile
 	game.InstallPath = t.TempDir()
+	// SyncMergedPak resolves the game's configured sources, which requires
+	// the game to be registered - setupDoInstallTest's bare *domain.Game
+	// construction skips this (a shared fixture used by many non-compile
+	// tests too); the production CLI always has this via withGameService.
+	require.NoError(t, svc.AddGame(game))
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
@@ -155,6 +160,52 @@ func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
 		"#197 postsmoke UX fix: each zero-file exmodz mod must say what happened, not print the misleading '(0 files)'")
 }
 
+// TestBatchInstallMods_DeployCompile_SyncFailure_LinesDontClaimSuccess is
+// the #197 postsmoke Copilot review fix (#200): batchInstallMods' per-mod
+// "✓ Installed (merged pak updated)" line used to print unconditionally,
+// even when the batch's own sync attempt (right below the loop) had just
+// failed and printed a Warning to stderr - a stdout/stderr contradiction.
+// Proves both installed mods' completion lines instead say the sync
+// FAILED, printed after the stderr warning.
+func TestBatchInstallMods_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	game.DeployMode = domain.DeployCompile
+	game.InstallPath = t.TempDir()
+
+	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
+
+	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
+	svc.RegisterSource(compiler)
+	require.NoError(t, svc.AddGame(game))
+
+	bearMod := &domain.Mod{ID: "bear-mount", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"}
+	wolfMod := &domain.Mod{ID: "wolf-mount", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
+	src.AddMod(bearMod, []domain.DownloadableFile{{ID: "bear-exmodz", Name: "Bear Mount", FileName: "Bear_Mount.exmodz", IsPrimary: true, Category: "MAIN"}})
+	src.AddMod(wolfMod, []domain.DownloadableFile{{ID: "wolf-exmodz", Name: "Wolf Mount", FileName: "Wolf_Mount.exmodz", IsPrimary: true, Category: "MAIN"}})
+	src.AddDownload("bear-exmodz", []byte("bear-bytes"))
+	src.AddDownload("wolf-exmodz", []byte("wolf-bytes"))
+
+	oldStderr := os.Stderr
+	r, w, pipeErr := os.Pipe()
+	require.NoError(t, pipeErr)
+	os.Stderr = w
+	out, err := captureStdoutErr(t, func() error {
+		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{bearMod, wolfMod}, "default")
+	})
+	_ = w.Close()
+	os.Stderr = oldStderr
+	require.NoError(t, err, "a merge failure is non-fatal to the batch install itself")
+
+	var stderrBuf bytes.Buffer
+	_, _ = stderrBuf.ReadFrom(r)
+	assert.Contains(t, stderrBuf.String(), "Warning:")
+
+	assert.Equal(t, 2, strings.Count(out, "installed; merged pak sync FAILED — see warning above"))
+	assert.NotContains(t, out, "Installed (merged pak updated)")
+}
+
 // TestDoInstall_DeployCompile_SyncFailure_PrintsLoudly is the #197
 // postsmoke "must be LOUD" regression test: ApplyInstall's own sync call
 // used to only append to result.Warnings, which doInstall (the single-mod
@@ -183,12 +234,106 @@ func TestDoInstall_DeployCompile_SyncFailure_PrintsLoudly(t *testing.T) {
 	r, w, pipeErr := os.Pipe()
 	require.NoError(t, pipeErr)
 	os.Stderr = w
-	err := doInstall(context.Background(), svc, game, nil)
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
 	_ = w.Close()
 	os.Stderr = oldStderr
-	require.NoError(t, err, "a merge failure is non-fatal to the install itself - the mod is still validated+retained+recorded")
 
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(r)
 	assert.Contains(t, buf.String(), "Warning:", "a merge failure during install must print a Warning unconditionally, not silently vanish into a discarded result")
+
+	// #197 postsmoke Copilot review fix (#200): the success line must not
+	// claim "merged pak updated" when the sync above it just failed - it
+	// contradicted the loud Warning on stderr.
+	assert.Contains(t, out, "merged pak sync FAILED — see warning above")
+	assert.NotContains(t, out, "Installed (merged pak updated)")
+}
+
+// TestDoInstallBatch_DeployCompile_DeploysMergedPak drives the dependency
+// (BATCH) path - doInstall -> doInstallBatch -> core.ApplyInstall - with two
+// exmodz mods (a dependency and its primary), proving this path (distinct
+// from batchInstallMods, the multi-select search path) also deploys the
+// merged pak and reports each mod correctly.
+func TestDoInstallBatch_DeployCompile_DeploysMergedPak(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	game.DeployMode = domain.DeployCompile
+	game.InstallPath = t.TempDir()
+	require.NoError(t, svc.AddGame(game))
+	installYes = true
+
+	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
+
+	compiler := &compilerInstallSource{fakeInstallSource: src}
+	svc.RegisterSource(compiler)
+
+	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}}
+	src.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", FileName: "Wolf_Mount.exmodz", IsPrimary: true}})
+	src.AddDownload("dep-file", []byte("wolf-bytes"))
+	src.AddMod(root, []domain.DownloadableFile{{ID: "main", FileName: "Bear_Mount.exmodz", IsPrimary: true}})
+	src.AddDownload("main", []byte("bear-bytes"))
+
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	data, readErr := os.ReadFile(deployedPath)
+	require.NoError(t, readErr, "doInstallBatch must sync the merged pak - both mods deploy zero files of their own")
+	assert.Contains(t, string(data), "wolf-bytes")
+	assert.Contains(t, string(data), "bear-bytes")
+
+	assert.Equal(t, 2, strings.Count(out, "Installed (merged pak updated)"),
+		"#197 postsmoke UX fix: each zero-file exmodz dependency/primary must say what happened")
+}
+
+// TestDoInstallBatch_DeployCompile_SyncFailure_LinesDontClaimSuccess is the
+// #197 postsmoke Copilot review fix (#200) for the dependency (BATCH) path:
+// each per-dependency "✓ Installed (merged pak updated)" line streams live,
+// BEFORE ApplyInstall's own end-of-batch sync attempt runs - so the claim
+// can't be verified at print time. Proves the completion lines are deferred
+// until the real outcome is known and say the sync FAILED instead.
+func TestDoInstallBatch_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	game.DeployMode = domain.DeployCompile
+	game.InstallPath = t.TempDir()
+	require.NoError(t, svc.AddGame(game))
+	installYes = true
+
+	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
+
+	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
+	svc.RegisterSource(compiler)
+
+	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}}
+	src.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", FileName: "Wolf_Mount.exmodz", IsPrimary: true}})
+	src.AddDownload("dep-file", []byte("wolf-bytes"))
+	src.AddMod(root, []domain.DownloadableFile{{ID: "main", FileName: "Bear_Mount.exmodz", IsPrimary: true}})
+	src.AddDownload("main", []byte("bear-bytes"))
+
+	oldStderr := os.Stderr
+	r, w, pipeErr := os.Pipe()
+	require.NoError(t, pipeErr)
+	os.Stderr = w
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+	_ = w.Close()
+	os.Stderr = oldStderr
+
+	var stderrBuf bytes.Buffer
+	_, _ = stderrBuf.ReadFrom(r)
+	assert.Contains(t, stderrBuf.String(), "Warning:")
+
+	assert.Equal(t, 2, strings.Count(out, "installed; merged pak sync FAILED — see warning above"))
+	assert.NotContains(t, out, "Installed (merged pak updated)")
 }
