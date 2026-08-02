@@ -79,10 +79,12 @@ func TestDoImport_DeployCompile_ImportedModParticipatesInMerge(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "Bear_Mount.exmodz")
 	require.NoError(t, os.WriteFile(archivePath, []byte("bear-exmodz-bytes"), 0o644))
 
-	_, err := captureStdoutErr(t, func() error {
+	out, err := captureStdoutErr(t, func() error {
 		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
 	})
 	require.NoError(t, err)
+	require.Contains(t, out, "Installed (merged pak updated)",
+		"#197 postsmoke UX fix: a zero-file exmodz import must say what happened, not print the misleading 'Files deployed: 0'")
 
 	prof, err := svc.NewProfileManager().Get(game.ID, "default")
 	require.NoError(t, err)

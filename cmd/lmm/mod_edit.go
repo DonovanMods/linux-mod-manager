@@ -242,6 +242,19 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 		}
 	}
 
+	// #197 postsmoke seam-audit fix: a --version edit is a direct
+	// regeneration trigger; a --source/--source-id relink changes the
+	// identity enabledExmodzSources keys off (mod.SourceID + ":" +
+	// mod.ID). Sync unconditionally now that changes is non-empty - cheap
+	// no-op if nothing merge-relevant actually moved.
+	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
+	} else {
+		for _, w := range syncWarnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+
 	fmt.Printf("Updated %s:\n", installedMod.Name)
 	for _, change := range changes {
 		fmt.Printf("  %s\n", change)

@@ -355,6 +355,12 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 	gameCache := s.GetGameCache(game)
 	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
 	stored, ok := readMergedFingerprint(cachePath)
+	// #197 postsmoke UX fix: reason defaults to the fingerprint-mismatch
+	// case ("base pak updated") and is only downgraded to "not deployed"
+	// below, once we know the fingerprint actually matched - callers
+	// (verify/update's console output) must not blame the base pak when
+	// the real cause is a missing artifact.
+	reason := "base pak updated"
 	if ok {
 		if eq, eqErr := mergedFingerprintsEqual(current, stored); eqErr == nil && eq {
 			// #197 I5 fix: mirrors syncMergedPak's identical fast-path
@@ -367,6 +373,7 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 			if _, statErr := os.Stat(filepath.Join(game.ModPath, mergedPakFileName)); statErr == nil {
 				return nil, nil
 			}
+			reason = "not deployed"
 		}
 	}
 
@@ -379,6 +386,7 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 		},
 		NewVersion:      mergedPakVersion,
 		RecompileNeeded: true,
+		RecompileReason: reason,
 	}, nil
 }
 

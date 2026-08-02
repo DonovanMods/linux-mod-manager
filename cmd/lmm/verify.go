@@ -81,13 +81,15 @@ pak (#196, "the Friday problem" - a weekly base pak refresh silently
 reverts a compiled mod's patched tables, with nothing to notice
 otherwise):
 
-    ? NAME - RECOMPILE NEEDED           the game's base pak has changed
-                                         since this mod was compiled; run
-                                         'lmm update' to recompile it
+    ? NAME - RECOMPILE NEEDED           the merged pak's inputs changed
+                                         (base pak update, or missing from
+                                         the game directory); run 'lmm
+                                         update --all' to fix it
 
 This check is entirely local (no source contacted) and applies to every
-compiled mod regardless of source, including local imports. --fix does
-not repair it - use 'lmm update' (or 'lmm update --all').
+compiled mod regardless of source, including local imports. Use --fix to
+repair it: it resyncs the profile's merged pak (recompiling and
+redeploying it if needed), the same repair 'lmm update --all' applies.
 
 Mods installed from a local source, mods requiring manual download, and
 mods with no recorded file IDs are skipped silently - there is nothing
@@ -357,9 +359,15 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		checked++
 		if staleUpd != nil {
 			if jsonOutput {
-				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile"})
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile", Note: staleUpd.RecompileReason})
 			} else {
-				fmt.Printf("%s %s - RECOMPILE NEEDED (base pak updated - run 'lmm update' to fix)\n", colorYellow("?"), staleUpd.InstalledMod.Name)
+				// #197 postsmoke UX fix: use the real reason
+				// (RecompileReason distinguishes a fingerprint mismatch
+				// from a missing artifact) and name the flag that actually
+				// applies it - this row is always notify-policy (the
+				// synthetic merged-pak mod's zero-value UpdatePolicy), so
+				// bare 'lmm update' would only report it again, not fix it.
+				fmt.Printf("%s %s - RECOMPILE NEEDED (%s - run 'lmm update --all' to fix)\n", colorYellow("?"), staleUpd.InstalledMod.Name, staleUpd.RecompileReason)
 			}
 			warnings++
 		}
@@ -642,6 +650,22 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"})
 		} else {
 			fmt.Printf("%s %s (%s) - %s\n", colorGreen("+"), mod.Name, f.FileID, colorGreen("OK"))
+		}
+	}
+
+	// #197 postsmoke seam-audit fix: --fix can repair a VERSION MISMATCH
+	// (repairModVersion moves the cache dir and the recorded version) or
+	// redownload a file whose content has since changed upstream
+	// (redownloadModFile) - both are merge-fingerprint inputs with no
+	// other seam to catch them. No-op when --fix wasn't passed (nothing
+	// mutated) or the game isn't DeployCompile (SyncMergedPak's own guard).
+	if verifyFix {
+		if syncWarnings, syncErr := svc.SyncMergedPak(cmd.Context(), game, profile); syncErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
+		} else {
+			for _, w := range syncWarnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
 		}
 	}
 

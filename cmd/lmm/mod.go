@@ -411,10 +411,12 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 		// the result struct, exactly like doModDisable below.
 		if result != nil {
 			printModNotes(result.Notes)
+			printModWarnings(result.Warnings)
 		}
 		return err
 	}
 	printModNotes(result.Notes)
+	printModWarnings(result.Warnings)
 
 	if !result.Changed {
 		fmt.Printf("%s is already enabled.\n", mod.Name)
@@ -462,10 +464,12 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 		// before it could allocate the result struct.
 		if result != nil {
 			printModNotes(result.Notes)
+			printModWarnings(result.Warnings)
 		}
 		return err
 	}
 	printModNotes(result.Notes)
+	printModWarnings(result.Warnings)
 
 	if !result.Changed {
 		fmt.Printf("%s is already disabled.\n", mod.Name)
@@ -492,6 +496,16 @@ func printModNotes(notes []string) {
 	}
 	for _, n := range notes {
 		fmt.Printf("  %s\n", n)
+	}
+}
+
+// printModWarnings prints EnableResult.Warnings/DisableResult.Warnings
+// unconditionally to stderr (#197 postsmoke fix) - unlike printModNotes,
+// these must reach the user regardless of --verbose. Today the only
+// producer is a merged-pak sync failure; nil-safe like printModNotes.
+func printModWarnings(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 }
 
@@ -527,6 +541,12 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 	fmt.Printf("Files deployed by %s (%s):\n\n", mod.Name, modID)
 
 	if len(files) == 0 {
+		gameCache := svc.GetGameCache(game)
+		if game.DeployMode == domain.DeployCompile && hasRetainedSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
+			fmt.Println("  No files of its own - this mod participates in the profile's merged pak.")
+			fmt.Printf("  (See zzz_LMM_Merged_P.pak; run `lmm verify` to check the merged pak is up to date)\n")
+			return nil
+		}
 		fmt.Println("  No deployed files tracked.")
 		fmt.Println("  (Files are tracked on install; existing mods may need to be redeployed)")
 		return nil

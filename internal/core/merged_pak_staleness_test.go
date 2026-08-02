@@ -34,6 +34,7 @@ func TestCheckMergedPakStaleness_StaleAfterModEnable(t *testing.T) {
 	require.NotNil(t, upd)
 	require.True(t, upd.RecompileNeeded)
 	require.Equal(t, upd.InstalledMod.Version, upd.NewVersion, "a staleness row has no real version change")
+	require.Equal(t, "base pak updated", upd.RecompileReason, "inputs changed (a mod was enabled) - the reason must say so, not the not-deployed case")
 }
 
 func TestCheckMergedPakStaleness_NilWhenNoMergedPakEverGenerated(t *testing.T) {
@@ -154,4 +155,5 @@ func TestCheckMergedPakStaleness_MissingArtifact_ReportsStale(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, upd, "a missing deployed artifact must be reported stale even though the fingerprint hasn't changed")
 	require.True(t, upd.RecompileNeeded)
+	require.Equal(t, "not deployed", upd.RecompileReason, "the fingerprint still matches - the real reason is the missing artifact, not a base pak change")
 }

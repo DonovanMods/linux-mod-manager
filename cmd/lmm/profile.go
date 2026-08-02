@@ -378,11 +378,18 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	}
 
-	if _, err := service.ApplyProfileSwitch(ctx, game, plan, progress); err != nil {
+	result, err := service.ApplyProfileSwitch(ctx, game, plan, progress)
+	if err != nil {
 		// Diagnostics accumulated before a fatal error (ApplyProfileSwitch's
 		// error-path convention returns them alongside it) were already
 		// printed above, live, via progress - nothing left to print here.
 		return err
+	}
+	// #197 postsmoke fix: SwitchResult.Warnings (unconditional stderr,
+	// unlike .Notes above) - today, only a merged-pak sync failure for the
+	// target profile. Previously this whole result was discarded.
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
 	fmt.Printf("\n✓ Switched to profile: %s\n", targetName)
@@ -537,6 +544,14 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		return err
 	}
 
+	// #197 postsmoke fix: result.Warnings was never read - a merged-pak
+	// sync failure only ever reached the ImportNote progress event above
+	// (--verbose-gated), so it was silent by default. Print unconditionally
+	// as the loud backstop, matching applyRecompile's identical fix (M4).
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+
 	switch {
 	case profileImportNoInstall:
 		if result.Skipped > 0 {
@@ -561,11 +576,11 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 
 func runProfileSync(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileSync(service, game, args)
+		return doProfileSync(ctx, service, game, args)
 	})
 }
 
-func doProfileSync(service *core.Service, game *domain.Game, args []string) error {
+func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 	pm := getProfileManager(service)
 
 	// Determine profile name
@@ -718,6 +733,19 @@ func doProfileSync(service *core.Service, game *domain.Game, args []string) erro
 			if verbose {
 				fmt.Printf("  Warning: could not update %s:%s: %v\n", ref.SourceID, ref.ModID, err)
 			}
+		}
+	}
+
+	// #197 postsmoke seam-audit fix: toAdd/toRemove change profile.Mods
+	// MEMBERSHIP directly (AddMod/RemoveMod) - membership, not just the DB
+	// Enabled flag, is what GetInstalledModsInProfileOrder (and so
+	// enabledExmodzSources) requires, so this is a genuine merge-input
+	// change with no other seam to catch it.
+	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
+	} else {
+		for _, w := range syncWarnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 	}
 
@@ -1175,6 +1203,19 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			}
 
 			fmt.Printf("    ✓ Installed: %s\n", mod.Name)
+		}
+	}
+
+	// #197 postsmoke seam-audit fix: doProfileApply is a bespoke
+	// disable/enable/install reimplementation - like batchInstallMods, it
+	// never went through a core seam that syncs the merged pak. Sync
+	// failures are printed unconditionally, matching batchInstallMods'
+	// loud-failure fix.
+	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
+	} else {
+		for _, w := range syncWarnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 	}
 

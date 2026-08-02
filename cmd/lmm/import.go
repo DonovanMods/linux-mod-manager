@@ -416,7 +416,14 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	printHookWarnings(hookErrors)
 
 	fmt.Printf("\n✓ Imported: %s\n", result.Mod.Name)
-	fmt.Printf("  Files deployed: %d\n", result.FilesExtracted)
+	// #197 postsmoke UX fix: see doInstall's identical fix (cmd/lmm/install.go)
+	// - a DeployCompile ".exmodz" mod deploys zero files of its own by
+	// design (validate+retain only).
+	if game.DeployMode == domain.DeployCompile && result.FilesExtracted == 0 {
+		fmt.Println("  Installed (merged pak updated)")
+	} else {
+		fmt.Printf("  Files deployed: %d\n", result.FilesExtracted)
+	}
 	fmt.Printf("  Added to profile: %s\n", profileName)
 
 	if result.LinkedSource == domain.SourceLocal {

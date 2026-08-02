@@ -57,6 +57,13 @@ func (s *Service) ReorderProfileMods(gameID, profileName string, mods []domain.M
 type EnableResult struct {
 	Changed bool
 	Notes   []string
+	// Warnings holds diagnostics that must reach the user unconditionally
+	// (#197 postsmoke fix), unlike Notes' --verbose-only display contract -
+	// today, only a merged-pak sync failure. A silent sync failure here is
+	// exactly the class of bug the postsmoke fix-wave exists to close: the
+	// mod's Enabled bit flips, but the game directory may not actually
+	// reflect it.
+	Warnings []string
 }
 
 // DisableResult reports the outcome of DisableMod. Changed mirrors
@@ -70,6 +77,9 @@ type EnableResult struct {
 type DisableResult struct {
 	Changed bool
 	Notes   []string
+	// Warnings mirrors EnableResult.Warnings' identical rationale
+	// (#197 postsmoke fix): unconditional display, unlike Notes.
+	Warnings []string
 }
 
 // EnableMod deploys an installed-but-disabled mod's files from the cache to
@@ -118,12 +128,13 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 		return result, fmt.Errorf("failed to update mod status: %w", err)
 	}
 
+	// #197 postsmoke fix: Warnings, not Notes - Notes is --verbose-gated in
+	// the CLI (printModNotes), so a sync failure here used to be silent by
+	// default.
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
-		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not sync merged pak: %v", syncErr))
 	} else {
-		for _, w := range syncWarnings {
-			result.Notes = append(result.Notes, "Warning: "+w)
-		}
+		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
 
 	result.Changed = true
@@ -199,12 +210,11 @@ func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName
 		return result, fmt.Errorf("failed to update mod status: %w", err)
 	}
 
+	// #197 postsmoke fix: Warnings, not Notes (see EnableMod's identical fix).
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
-		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not sync merged pak: %v", syncErr))
 	} else {
-		for _, w := range syncWarnings {
-			result.Notes = append(result.Notes, "Warning: "+w)
-		}
+		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
 
 	result.Changed = true
@@ -336,12 +346,14 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_all hook failed: %v", err))
 	}
 
+	// #197 postsmoke fix: UninstallResult.Warnings (unconditional stderr)
+	// already exists for exactly this - Notes is --verbose-gated
+	// (printUninstallDiagnostics), so a sync failure here used to be
+	// silent by default.
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
-		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not sync merged pak: %v", syncErr))
 	} else {
-		for _, w := range syncWarnings {
-			result.Notes = append(result.Notes, "Warning: "+w)
-		}
+		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
 
 	return result, nil
@@ -2245,8 +2257,16 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 
 	// #197 I2 fix: see PurgeMergedPak's own doc comment - exmodz mods have
 	// no per-mod deployment for the loop above to have already undeployed.
+	// #197 postsmoke fix: Warnings, not Notes, AND emit PurgeWarning -
+	// cmd/lmm/purge.go's own doc comment claims every Notes/Warnings entry
+	// has a corresponding live event; this one didn't, so it was
+	// completely invisible (not even --verbose-gated).
 	if perr := s.PurgeMergedPak(ctx, game, profileName, opts.Uninstall); perr != nil {
-		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not remove merged pak: %v", perr))
+		msg := fmt.Sprintf("could not remove merged pak: %v", perr)
+		result.Warnings = append(result.Warnings, msg)
+		if progress != nil {
+			progress(DeployProgress{Phase: PurgeWarning, Detail: msg})
+		}
 	}
 
 	return result, nil
@@ -2445,6 +2465,10 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 type SwitchResult struct {
 	Disabled, Enabled, Installed int
 	Notes                        []string
+	// Warnings holds diagnostics that must reach the user unconditionally
+	// (#197 postsmoke fix), unlike Notes' --verbose-only display contract -
+	// today, only a merged-pak sync failure for plan.To.
+	Warnings []string
 }
 
 // ApplyProfileSwitch executes a plan produced by PlanProfileSwitch: disables
@@ -2717,12 +2741,13 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		return result, fmt.Errorf("setting default profile: %w", err)
 	}
 
+	// #197 postsmoke fix: Warnings, not Notes - SwitchResult.Notes is
+	// --verbose-gated in the CLI, so a sync failure here used to be
+	// silent by default.
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.To); syncErr != nil {
-		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not sync merged pak: %v", syncErr))
 	} else {
-		for _, w := range syncWarnings {
-			result.Notes = append(result.Notes, "Warning: "+w)
-		}
+		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
 
 	return result, nil
@@ -3223,6 +3248,16 @@ type InstallResult struct {
 	// line. Always 0 in the BATCH path (batchInstallMods' terminal summary
 	// never printed a file count, only Installed/Failed - see Failed).
 	FilesDeployed int
+
+	// MergedPakSyncFailed is true when this call's own end-of-install
+	// syncMergedPak attempt returned a hard error (#197 postsmoke review
+	// fix - Copilot flagged that a DeployCompile zero-file mod's success
+	// line unconditionally claimed "merged pak updated" even when the
+	// non-fatal sync failed, contradicting the loud Warning already on
+	// stderr). False when the sync succeeded, including when it returned
+	// its own non-fatal merge warnings - those still leave the pak
+	// deployed. Always false for a non-DeployCompile game.
+	MergedPakSyncFailed bool
 
 	Warnings []string
 	Notes    []string
@@ -3731,10 +3766,22 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		emit(w)
 	}
 
+	// #197 postsmoke fix: appending to result.Warnings alone is not loud -
+	// doInstall (cmd/lmm) never reads result.Warnings back, only the
+	// progress events emitted live above (InstallWarning is what actually
+	// reaches stderr). A sync failure here used to be completely silent,
+	// the exact plumbing gap that let the postsmoke bug through even on
+	// the already-fixed single-mod install path.
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.Profile); syncErr != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("syncing merged pak: %v", syncErr))
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		result.MergedPakSyncFailed = true
+		emit(DeployProgress{Phase: InstallWarning, Detail: msg})
 	} else {
-		result.Warnings = append(result.Warnings, syncWarnings...)
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: InstallWarning, Detail: w})
+		}
 	}
 
 	return result, nil
@@ -4560,10 +4607,21 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 
 	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, effectiveVersion))
 
+	// #197 postsmoke fix: also emit UpdateWarning - appending to
+	// result.Warnings alone is not loud enough, since applyUpdate
+	// (cmd/lmm/update.go) discards ApplyUpdate's result entirely
+	// (`_, err := ...`) and drives its console output purely from live
+	// progress events, exactly the plumbing gap the ApplyInstall fix
+	// closed for install.
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("syncing merged pak: %v", syncErr))
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: UpdateWarning, Detail: msg})
 	} else {
-		result.Warnings = append(result.Warnings, syncWarnings...)
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: UpdateWarning, Detail: w})
+		}
 	}
 
 	return result, nil
@@ -4820,12 +4878,18 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 	// #197 I1 fix: a rollback changes the mod's Version (and possibly its
 	// FileIDs), both regeneration triggers - without this, the merged pak
 	// keeps the rolled-away-from version's diff until some OTHER flow
-	// happens to sync it.
+	// happens to sync it. #197 postsmoke fix: Warnings, not Notes (Notes is
+	// --verbose-gated in the CLI) - AND emit UpdateWarning: doUpdateRollback
+	// (cmd/lmm/update.go) drives its console output from live progress
+	// events, never reads RollbackResult.Warnings back directly.
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
-		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+		msg := fmt.Sprintf("could not sync merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: UpdateWarning, Detail: msg})
 	} else {
 		for _, w := range syncWarnings {
-			result.Notes = append(result.Notes, "Warning: "+w)
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: UpdateWarning, Detail: w})
 		}
 	}
 
