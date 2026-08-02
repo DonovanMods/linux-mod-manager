@@ -378,11 +378,18 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	}
 
-	if _, err := service.ApplyProfileSwitch(ctx, game, plan, progress); err != nil {
+	result, err := service.ApplyProfileSwitch(ctx, game, plan, progress)
+	if err != nil {
 		// Diagnostics accumulated before a fatal error (ApplyProfileSwitch's
 		// error-path convention returns them alongside it) were already
 		// printed above, live, via progress - nothing left to print here.
 		return err
+	}
+	// #197 postsmoke fix: SwitchResult.Warnings (unconditional stderr,
+	// unlike .Notes above) - today, only a merged-pak sync failure for the
+	// target profile. Previously this whole result was discarded.
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
 	fmt.Printf("\n✓ Switched to profile: %s\n", targetName)
@@ -535,6 +542,14 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		// appropriately wrapped (e.g. "importing profile: %w" for a failed
 		// save) or bare (ctx cancellation) - no additional wrapping here.
 		return err
+	}
+
+	// #197 postsmoke fix: result.Warnings was never read - a merged-pak
+	// sync failure only ever reached the ImportNote progress event above
+	// (--verbose-gated), so it was silent by default. Print unconditionally
+	// as the loud backstop, matching applyRecompile's identical fix (M4).
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
 	switch {

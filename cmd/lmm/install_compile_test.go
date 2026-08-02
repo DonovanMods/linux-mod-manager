@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -34,6 +35,7 @@ type compilerInstallSource struct {
 	validateCalls int
 	compileCalls  int
 	mergeWarnings []string
+	mergeErr      error
 }
 
 // ValidateSource confirms the archive exists - this test only asserts the
@@ -51,6 +53,9 @@ func (s *compilerInstallSource) ValidateSource(sourceFilePath string) error {
 // internal/core/service_icarus_compile_test.go's fakeCompilerSource).
 func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
 	s.compileCalls++
+	if s.mergeErr != nil {
+		return nil, s.mergeErr
+	}
 	var out []byte
 	for _, src := range sources {
 		data, err := os.ReadFile(src.ExmodzPath)
@@ -140,4 +145,42 @@ func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
 	require.NoError(t, readErr, "batchInstallMods must sync the merged pak - both mods deploy zero files of their own")
 	assert.Contains(t, string(data), "bear-bytes")
 	assert.Contains(t, string(data), "wolf-bytes")
+}
+
+// TestDoInstall_DeployCompile_SyncFailure_PrintsLoudly is the #197
+// postsmoke "must be LOUD" regression test: ApplyInstall's own sync call
+// used to only append to result.Warnings, which doInstall (the single-mod
+// install path) never reads back - a sync failure here was completely
+// silent, not even --verbose-gated, the exact plumbing gap the task asked
+// to check. Proves a merge failure during a real single-mod install
+// reaches stderr unconditionally.
+func TestDoInstall_DeployCompile_SyncFailure_PrintsLoudly(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	game.DeployMode = domain.DeployCompile
+	game.InstallPath = t.TempDir()
+	require.NoError(t, svc.AddGame(game))
+
+	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
+
+	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
+	svc.RegisterSource(compiler)
+
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", Name: "Bear Mount", FileName: "Bear_Mount.exmodz", IsPrimary: true, Category: "MAIN"}})
+	src.AddDownload("main", []byte("fake-exmodz-bytes"))
+
+	oldStderr := os.Stderr
+	r, w, pipeErr := os.Pipe()
+	require.NoError(t, pipeErr)
+	os.Stderr = w
+	err := doInstall(context.Background(), svc, game, nil)
+	_ = w.Close()
+	os.Stderr = oldStderr
+	require.NoError(t, err, "a merge failure is non-fatal to the install itself - the mod is still validated+retained+recorded")
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	assert.Contains(t, buf.String(), "Warning:", "a merge failure during install must print a Warning unconditionally, not silently vanish into a discarded result")
 }

@@ -735,7 +735,9 @@ func (p *coreProvider) EnableMod(ctx context.Context, item ModItem) (ActionOutco
 	if !result.Changed {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already enabled", item.Name)}, nil
 	}
-	return ActionOutcome{Message: fmt.Sprintf("Enabled %q", item.Name), Warnings: mergeDiagnostics(nil, result.Notes)}, nil
+	// #197 postsmoke fix: fold in result.Warnings (a merged-pak sync
+	// failure lands there now, not result.Notes).
+	return ActionOutcome{Message: fmt.Sprintf("Enabled %q", item.Name), Warnings: mergeDiagnostics(result.Warnings, result.Notes)}, nil
 }
 
 func (p *coreProvider) DisableMod(ctx context.Context, item ModItem) (ActionOutcome, error) {
@@ -746,7 +748,9 @@ func (p *coreProvider) DisableMod(ctx context.Context, item ModItem) (ActionOutc
 	if !result.Changed {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already disabled", item.Name)}, nil
 	}
-	return ActionOutcome{Message: fmt.Sprintf("Disabled %q", item.Name), Warnings: mergeDiagnostics(nil, result.Notes)}, nil
+	// #197 postsmoke fix: fold in result.Warnings (a merged-pak sync
+	// failure lands there now, not result.Notes).
+	return ActionOutcome{Message: fmt.Sprintf("Disabled %q", item.Name), Warnings: mergeDiagnostics(result.Warnings, result.Notes)}, nil
 }
 
 // UninstallMod runs the same hook configuration cmd/lmm/uninstall.go's
@@ -1075,9 +1079,12 @@ func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName strin
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("switching to %s: %w", profileName, err)
 	}
+	// #197 postsmoke fix: fold in result.Warnings (a merged-pak sync
+	// failure now lands there, not result.Notes - SwitchResult gained a
+	// Warnings field for exactly this).
 	return ActionOutcome{
 		Message:  fmt.Sprintf("Switched to %q", profileName),
-		Warnings: mergeDiagnostics(installFailures, result.Notes),
+		Warnings: mergeDiagnostics(append(installFailures, result.Warnings...), result.Notes),
 	}, nil
 }
 
