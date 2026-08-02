@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -96,11 +97,20 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	// #97: lock state lives on the profile YAML ref, not the DB row
 	// GetInstalledMods above already returned - load it separately and key
 	// by domain.ModKey for O(1) lookup per mod below (a precomputed map,
-	// not per-row FindRef, since this loops over every mod). Tolerant of a
-	// missing/unreadable profile.yaml (mirrors coreProvider.Overview's own
-	// "_ =" shape, internal/tui/service_core.go): an unreadable profile just
-	// means nothing shows as locked, not a failed listing.
-	profileYAML, _ := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
+	// not per-row FindRef, since this loops over every mod). Tolerant ONLY
+	// of a genuinely missing profile.yaml (domain.ErrProfileNotFound) - a
+	// fresh profile with no YAML on disk yet just means nothing shows as
+	// locked, not a failed listing. Any OTHER LoadProfile error, including
+	// #172's fail-loud link_method validation, must surface immediately
+	// instead of silently degrading: swallowing it here used to mean an
+	// invalid profile YAML made `lmm list` quietly show no lock info AND
+	// (per #201) treat every mod as absent from the load order, instead of
+	// reporting the same error every other command honors (#203 release
+	// review).
+	profileYAML, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
+	if err != nil && !errors.Is(err, domain.ErrProfileNotFound) {
+		return fmt.Errorf("loading profile: %w", err)
+	}
 	lockedByKey := map[string]domain.ModReference{}
 	if profileYAML != nil {
 		for _, ref := range profileYAML.Mods {
