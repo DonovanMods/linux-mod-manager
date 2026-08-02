@@ -43,6 +43,12 @@ func TestDisplayVersion(t *testing.T) {
 			buildDescribe: "v1.28.0-2-g140e3c6-dirty",
 			want:          "1.28.0 (dev: v1.28.0-2-g140e3c6-dirty)",
 		},
+		{
+			name:          "tag-less clone falls back to a bare hash (git describe --always)",
+			version:       "1.28.0",
+			buildDescribe: "140e3c6",
+			want:          "1.28.0 (dev: 140e3c6)",
+		},
 	}
 
 	for _, tt := range tests {
