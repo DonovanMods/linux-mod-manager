@@ -10,6 +10,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,14 +63,14 @@ func TestDownloadModToCache_TraversalFileName_SanitizedAgainstEscape(t *testing.
 	require.Equal(t, []string{"evil-traversal.zip"}, files, "the sanitized (Base'd) filename is what must actually land in the cache")
 }
 
-// TestDownloadMod_DeployCompile_TraversalFileName_SanitizedAgainstEscape
-// covers the third #196-review site in the same function: the DeployCompile
-// branch derives destName via compiledFileName(file.FileName), which only
-// trims/adds a suffix - it does not strip directory components, so a
-// traversal payload in the STEM (e.g. "../evil.exmodz") survives into
-// destName unless separately re-sanitized before the final
-// filepath.Join(stagePath, destName).
-func TestDownloadMod_DeployCompile_TraversalFileName_SanitizedAgainstEscape(t *testing.T) {
+// TestDownloadMod_DeployCompile_TraversalFileID_SanitizedAgainstEscape
+// covers the #197-era equivalent of the #196-review site above: the
+// DeployCompile branch now retains the .exmodz under
+// cache.RetainedSourceName(file.ID) instead of compiling a per-mod pak
+// named from file.FileName - file.ID is exactly as source-controlled as
+// FileName was, so a traversal payload in the ID (e.g. "../evil-id") must
+// not survive into the retained source's on-disk name either.
+func TestDownloadMod_DeployCompile_TraversalFileID_SanitizedAgainstEscape(t *testing.T) {
 	dlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("fake-exmodz-bytes"))
 	}))
@@ -93,21 +94,22 @@ func TestDownloadMod_DeployCompile_TraversalFileName_SanitizedAgainstEscape(t *t
 	require.NoError(t, svc.AddGame(game))
 
 	mod := &domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", GameID: "icarus", Version: "3.3"}
-	file := &domain.DownloadableFile{ID: "exmodz", FileName: "../evil-traversal.exmodz"}
+	file := &domain.DownloadableFile{ID: "../evil-traversal-id", FileName: "Bear_Mount.exmodz"}
 
 	result, err := svc.DownloadMod(context.Background(), "fake-compiler", game, mod, file, nil)
 	require.NoError(t, err)
-	require.Equal(t, 1, result.FilesExtracted)
+	require.Equal(t, 0, result.FilesExtracted, "#197: DeployCompile ingest retains only, no per-mod deployment member")
 
 	// The mod's own cache dir is cacheDir/icarus/fake-compiler-bear-mount/3.3
-	// - an unsanitized "../evil-traversal" stem would climb into
+	// - an unsanitized "../evil-traversal-id" fileID would climb into
 	// fake-compiler-bear-mount/ (one level up from the version dir).
 	gameCache := svc.GetGameCache(game)
-	escapedPath := filepath.Join(gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version), "..", "evil-traversal_P.pak")
+	escapedPath := filepath.Join(gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version), "..", "evil-traversal-id")
 	_, statErr := os.Stat(escapedPath)
-	require.True(t, os.IsNotExist(statErr), "a traversal filename's compiled output must never escape the version directory")
+	require.True(t, os.IsNotExist(statErr), "a traversal fileID's retained source must never escape the version directory")
 
-	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
-	require.NoError(t, err)
-	require.Equal(t, []string{"evil-traversal_P.pak"}, files, "the sanitized (Base'd) compiled name is what must actually land in the cache")
+	retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+	data, err := os.ReadFile(retainedPath)
+	require.NoError(t, err, "the sanitized (Base'd) retained source must actually land inside the version directory")
+	require.Equal(t, "fake-exmodz-bytes", string(data))
 }

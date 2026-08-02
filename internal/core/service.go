@@ -167,34 +167,35 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 }
 
 // compilerSourceForGame resolves the sole Compiler-capable source
-// registered for gameID (#173). The download path pins its Compiler check
-// to the specific source a file was downloaded from (DownloadModToCache's
-// src.(source.Compiler) check); Importer.Import has no such per-archive
-// source to key off of, so it resolves against every source the game maps
-// in its registry instead — matching resolveBasePak's v1 scope of "Icarus
-// only", at most one of a game's configured sources implements Compiler
-// today. Zero is the expected failure when the game (or its Compiler
-// source) isn't configured; more than one is treated as ambiguous rather
-// than picking arbitrarily — both fail loud instead of letting an .exmodz
-// import silently skip compilation.
-func (s *Service) compilerSourceForGame(gameID string) (source.Compiler, error) {
+// registered for gameID (#173). The download path pins its MergeCompiler
+// check to the specific source a file was downloaded from
+// (DownloadModToCache's src.(source.MergeCompiler) check); Importer.Import
+// has no such per-archive source to key off of, so it resolves against
+// every source the game maps in its registry instead — matching
+// resolveBasePak's v1 scope of "Icarus only", at most one of a game's
+// configured sources implements MergeCompiler today. Zero is the expected
+// failure when the game (or its MergeCompiler source) isn't configured;
+// more than one is treated as ambiguous rather than picking arbitrarily —
+// both fail loud instead of letting an .exmodz import silently skip
+// validation.
+func (s *Service) mergeCompilerSourceForGame(gameID string) (source.MergeCompiler, error) {
 	srcs, err := s.SourcesForGame(gameID)
 	if err != nil {
 		return nil, err
 	}
-	var compilers []source.Compiler
+	var compilers []source.MergeCompiler
 	for _, src := range srcs {
-		if c, ok := src.(source.Compiler); ok {
+		if c, ok := src.(source.MergeCompiler); ok {
 			compilers = append(compilers, c)
 		}
 	}
 	switch len(compilers) {
 	case 0:
-		return nil, fmt.Errorf("game %q requires DeployCompile but has no compiler-capable source configured (map a source implementing source.Compiler in the game's sources)", gameID)
+		return nil, fmt.Errorf("game %q requires DeployCompile but has no merge-compiler-capable source configured (map a source implementing source.MergeCompiler in the game's sources)", gameID)
 	case 1:
 		return compilers[0], nil
 	default:
-		return nil, fmt.Errorf("game %q has multiple compiler-capable sources configured; ambiguous compile source", gameID)
+		return nil, fmt.Errorf("game %q has multiple merge-compiler-capable sources configured; ambiguous compile source", gameID)
 	}
 }
 
@@ -541,36 +542,31 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
 	if game.DeployMode == domain.DeployCompile && isExmodzFile(safeFileName) {
-		compiler, ok := src.(source.Compiler)
+		mc, ok := src.(source.MergeCompiler)
 		if !ok {
-			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement Compiler", src.ID(), game.ID)
+			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement MergeCompiler", src.ID(), game.ID)
 		}
-		basePakPath, err := resolveBasePak(game)
-		if err != nil {
-			return nil, err
+		if err := mc.ValidateSource(archivePath); err != nil {
+			return nil, fmt.Errorf("validating %s: %w", safeFileName, err)
 		}
 		// Unlike copyFileStreaming (which mkdirs its destination itself),
-		// Compile writes via unrealpak.Create - a bare os.Create - so
-		// stagePath must exist before it's called.
+		// the retained-source write below needs stagePath to exist first.
 		if err := os.MkdirAll(stagePath, 0755); err != nil {
-			return nil, fmt.Errorf("preparing compile staging: %w", err)
+			return nil, fmt.Errorf("preparing staging: %w", err)
 		}
-		// filepath.Base again: compiledFileName only trims a suffix/adds
-		// one - it does not strip directory components, so a traversal
-		// payload in safeFileName's stem would otherwise survive into
-		// destName unsanitized.
-		destName := filepath.Base(compiledFileName(safeFileName))
-		destPath := filepath.Join(stagePath, destName)
-		if err := compiler.Compile(ctx, basePakPath, archivePath, destPath); err != nil {
-			return nil, fmt.Errorf("compiling mod: %w", err)
+		retainedPath := filepath.Join(stagePath, cache.RetainedSourceName(file.ID))
+		if err := copyFileStreaming(archivePath, retainedPath); err != nil {
+			return nil, fmt.Errorf("retaining %s: %w", safeFileName, err)
 		}
-		if err := stageCompileFingerprint(stagePath, file.ID, basePakPath, archivePath); err != nil {
+		// members is nil (#197): this cache entry's ONLY content is the
+		// reserved retained source - there is no per-mod deployment
+		// artifact anymore. The merged pak (a separate, profile-level
+		// cache entry - internal/core/merged_pak.go) is what actually
+		// deploys.
+		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, nil); err != nil {
 			return nil, err
 		}
-		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{destName}); err != nil {
-			return nil, err
-		}
-		return &DownloadModResult{FilesExtracted: 1, Checksum: downloadResult.Checksum}, nil
+		return &DownloadModResult{FilesExtracted: 0, Checksum: downloadResult.Checksum}, nil
 	}
 
 	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(archivePath) {
@@ -1002,14 +998,6 @@ func resolveBasePak(game *domain.Game) (string, error) {
 	return candidate, nil
 }
 
-// compiledFileName turns a downloaded source filename into the cached
-// output's name: same base name, .pak extension, matching Icarus's "_P.pak"
-// override convention.
-func compiledFileName(sourceFileName string) string {
-	base := strings.TrimSuffix(sourceFileName, filepath.Ext(sourceFileName))
-	return base + "_P.pak"
-}
-
 // basePakIndexHash opens basePakPath and returns its footer IndexHash
 // (#196) - cheap (footer + primary-index region only; unrealpak.Open never
 // reads a pak's actual file payloads), matching the base pak Compile itself
@@ -1022,30 +1010,6 @@ func basePakIndexHash(basePakPath string) (string, error) {
 	}
 	defer r.Close() //nolint:errcheck
 	return r.IndexHash(), nil
-}
-
-// stageCompileFingerprint stages fileID's #196 compile fingerprint into
-// stagePath: the base pak's IndexHash (cache.MarkBaseIndexHash) and a copy
-// of the original .exmodz (cache.RetainedSourceName), so a later staleness
-// check can detect the base pak changing, and a later recompile can run
-// offline. Both land in the SAME atomic commit as the compiled pak - see
-// commitStagedCache/commitStagedCacheWithMarker - so a partial write here
-// can never separate a compiled pak from its fingerprint or retained
-// source. Called by both compile sites (download: DownloadModToCache;
-// import: Importer.Import) after Compile succeeds, before the commit.
-func stageCompileFingerprint(stagePath, fileID, basePakPath, sourceFilePath string) error {
-	indexHash, err := basePakIndexHash(basePakPath)
-	if err != nil {
-		return err
-	}
-	if err := cache.MarkBaseIndexHash(stagePath, fileID, indexHash); err != nil {
-		return err
-	}
-	retainedPath := filepath.Join(stagePath, cache.RetainedSourceName(fileID))
-	if err := copyFileStreaming(sourceFilePath, retainedPath); err != nil {
-		return fmt.Errorf("retaining compile source: %w", err)
-	}
-	return nil
 }
 
 // GetGame retrieves a game by ID

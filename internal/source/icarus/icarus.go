@@ -34,14 +34,21 @@ func New(httpClient *http.Client, projectID string) *Icarus {
 var (
 	_ source.ModSource          = (*Icarus)(nil)
 	_ source.CapabilityReporter = (*Icarus)(nil)
-	_ source.Compiler           = (*Icarus)(nil)
+	_ source.MergeCompiler      = (*Icarus)(nil)
 )
 
-// Compile implements source.Compiler by delegating to the package-level
-// Compile function. ctx is unused: compiling is pure local file I/O against
-// the installed game's own pak (#175), with nothing to cancel.
-func (s *Icarus) Compile(_ context.Context, basePakPath, sourceFilePath, outputPath string) error {
-	return Compile(basePakPath, sourceFilePath, outputPath)
+// ValidateSource implements source.MergeCompiler by delegating to the
+// package-level ValidateSource function.
+func (s *Icarus) ValidateSource(sourceFilePath string) error {
+	return ValidateSource(sourceFilePath)
+}
+
+// MergeCompile implements source.MergeCompiler by delegating to the
+// package-level MergeCompile function. ctx is unused: merging is pure local
+// file I/O against the installed game's own pak (#175/#197), with nothing
+// to cancel.
+func (s *Icarus) MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) ([]string, error) {
+	return MergeCompile(ctx, basePakPath, sources, outputPakPath)
 }
 
 func (s *Icarus) ID() string   { return "icarus" }
@@ -236,12 +243,12 @@ func mapDoc(d firestoreDoc) domain.Mod {
 // fileNameFromURL derives a download's file name from its URL, falling back
 // to a synthesized "mod.<fallbackExt>" name (never a bare, dot-less
 // fallbackExt) when the URL yields nothing usable. A dot-less fallback would
-// silently defeat both isExmodzFile's case-insensitive ".exmodz" suffix
-// check and compiledFileName's filepath.Ext-based rename in Service — a
-// downloaded file named e.g. "exmodz" would never route through Compile.
-// A parsed basename that exists but carries no extension of its own gets
-// fallbackExt appended rather than being discarded outright, preserving
-// whatever real name the URL offered.
+// silently defeat isExmodzFile's case-insensitive ".exmodz" suffix check —
+// a downloaded file named e.g. "exmodz" would never route through the
+// DeployCompile ingest branch (validate+retain, #197). A parsed basename
+// that exists but carries no extension of its own gets fallbackExt
+// appended rather than being discarded outright, preserving whatever real
+// name the URL offered.
 func fileNameFromURL(rawURL, fallbackExt string) string {
 	fallback := "mod." + fallbackExt
 	u, err := url.Parse(rawURL)

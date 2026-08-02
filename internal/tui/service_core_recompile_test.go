@@ -15,12 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// recompileFakeSource is a minimal ModSource + source.Compiler standing in
-// for internal/source/icarus.Icarus, mirroring
+// recompileFakeSource is a minimal ModSource + source.MergeCompiler
+// standing in for internal/source/icarus.Icarus, mirroring
 // internal/core/service_icarus_compile_test.go's fakeCompilerSource at the
 // TUI layer.
 type recompileFakeSource struct {
-	compileCalls int
+	validateCalls int
+	compileCalls  int
 }
 
 func (s *recompileFakeSource) ID() string      { return "fake-compiler" }
@@ -47,24 +48,40 @@ func (s *recompileFakeSource) GetDownloadURL(ctx context.Context, mod *domain.Mo
 func (s *recompileFakeSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
 	return nil, nil
 }
-func (s *recompileFakeSource) Compile(ctx context.Context, basePakPath, sourceFilePath, outputPath string) error {
+
+// ValidateSource confirms the archive exists.
+func (s *recompileFakeSource) ValidateSource(sourceFilePath string) error {
+	s.validateCalls++
+	_, err := os.Stat(sourceFilePath)
+	return err
+}
+
+// MergeCompile concatenates every source's bytes - enough to prove a
+// merge/regen actually happened and used the retained content.
+func (s *recompileFakeSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
 	s.compileCalls++
-	data, err := os.ReadFile(sourceFilePath)
-	if err != nil {
-		return err
+	var out []byte
+	for _, src := range sources {
+		data, err := os.ReadFile(src.ExmodzPath)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, data...)
 	}
-	return os.WriteFile(outputPath, data, 0o644)
+	return nil, os.WriteFile(outputPath, out, 0o644)
 }
 
 var (
-	_ source.ModSource = (*recompileFakeSource)(nil)
-	_ source.Compiler  = (*recompileFakeSource)(nil)
+	_ source.ModSource     = (*recompileFakeSource)(nil)
+	_ source.MergeCompiler = (*recompileFakeSource)(nil)
 )
 
-// newRecompileActionsFixture builds a DeployCompile game with an installed,
-// deployed compiled mod whose recorded base-pak fingerprint is wrong, and
-// returns the ActionProvider (#196's CLI/TUI parity seam), the fake
-// compiler, and the deployed file's game-dir path.
+// newRecompileActionsFixture builds a DeployCompile game with a registered
+// merge-compiler-capable source and an ENABLED exmodz mod, deliberately
+// leaving the merged pak un-generated so the TUI's update check reports/
+// applies a #197 merge-needed row end to end, returning the ActionProvider
+// (#196's CLI/TUI parity seam), the fake compiler, and the merged pak's
+// game-dir path.
 func newRecompileActionsFixture(t *testing.T) (tui.ActionProvider, *recompileFakeSource, string) {
 	t.Helper()
 
@@ -97,31 +114,23 @@ func newRecompileActionsFixture(t *testing.T) (tui.ActionProvider, *recompileFak
 
 	const modID, version, fileID = "bear-mount", "3.3", "exmodz-file-id"
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, "Bear_Mount_P.pak", []byte("stale-compiled-bytes")))
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID), []byte("retained-exmodz-bytes")))
-	versionDir := gameCache.ModPath(game.ID, "fake-compiler", modID, version)
-	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{"Bear_Mount_P.pak"}))
-	require.NoError(t, cache.MarkBaseIndexHash(versionDir, fileID, "0000000000000000000000000000000000dead"))
 
 	im := &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: "Bear Mount", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
-		Deployed:     true,
-		LinkMethod:   domain.LinkCopy,
 		FileIDs:      []string{fileID},
 	}
 	require.NoError(t, svc.SaveInstalledMod(im))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &im.Mod, "default"))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
 
-	return tui.NewCoreActions(svc, game, "default"), compiler, filepath.Join(game.ModPath, "Bear_Mount_P.pak")
+	return tui.NewCoreActions(svc, game, "default"), compiler, filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
 }
 
 // TestCoreProviderActions_CheckUpdates_ReportsRecompileNeeded proves the TUI
-// update check reports a #196 base-pak staleness row through the same
+// update check reports a #197 merged-pak staleness row through the same
 // CheckGameUpdates seam the CLI uses.
 func TestCoreProviderActions_CheckUpdates_ReportsRecompileNeeded(t *testing.T) {
 	actions, _, _ := newRecompileActionsFixture(t)
@@ -130,16 +139,21 @@ func TestCoreProviderActions_CheckUpdates_ReportsRecompileNeeded(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, view.Updates, 1)
 	u := view.Updates[0]
-	require.Equal(t, "bear-mount", u.ID)
+	// #197: a merged-pak staleness row's identity is the SYNTHETIC
+	// merged-pak mod, not the contributing "bear-mount" mod -
+	// CheckMergedPakStaleness is profile-scoped, not per-mod.
+	require.Equal(t, "merged-pak", u.ID)
 	require.True(t, u.RecompileNeeded)
 	require.Equal(t, u.FromVersion, u.ToVersion, "a staleness row has no real version change")
 	require.Equal(t, "(base pak updated)", u.VersionLabel())
 }
 
 // TestCoreProviderActions_ApplyUpdate_Recompile_AppliesAndRedeploys proves
-// ApplyUpdate dispatches a RecompileNeeded row to Service.ApplyRecompile:
-// the retained source is recompiled and redeployed, provable via the
-// on-disk (LinkCopy) deployed bytes.
+// ApplyUpdate dispatches a RecompileNeeded row to Service.ApplyMergedPakRegen
+// (checking RecompileNeeded BEFORE resolving a real InstalledMod - see
+// coreProvider.ApplyUpdate's own doc comment for the defect this guards):
+// the retained source is merged and deployed, provable via the on-disk
+// (LinkCopy) deployed bytes.
 func TestCoreProviderActions_ApplyUpdate_Recompile_AppliesAndRedeploys(t *testing.T) {
 	actions, compiler, deployedPath := newRecompileActionsFixture(t)
 
@@ -154,5 +168,5 @@ func TestCoreProviderActions_ApplyUpdate_Recompile_AppliesAndRedeploys(t *testin
 
 	data, err := os.ReadFile(deployedPath)
 	require.NoError(t, err)
-	require.Equal(t, "retained-exmodz-bytes", string(data), "redeploy must reflect the freshly recompiled bytes")
+	require.Equal(t, "retained-exmodz-bytes", string(data), "redeploy must reflect the freshly merged bytes")
 }

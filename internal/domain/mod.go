@@ -19,6 +19,12 @@ var UpdateProgressContextKey = &updateProgressKey{}
 // SourceLocal is the source ID for mods imported from local files
 const SourceLocal = "local"
 
+// SourceMerged is the source ID for the synthetic, profile-scoped "mod"
+// that tracks a game's merged compiled pak (#197 - Icarus's cross-mod
+// table merge). Follows the SourceLocal precedent: a reserved sentinel
+// string, not a real ModSource registration.
+const SourceMerged = "lmm-merged"
+
 // UpdatePolicy determines how a mod handles updates
 type UpdatePolicy int
 

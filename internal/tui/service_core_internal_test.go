@@ -52,9 +52,12 @@ func TestSwitchProgressLine_UnhandledPhaseStillDrops(t *testing.T) {
 // the TUI drives the exact same core.ApplyInstall/DeployProgress path as the
 // CLI (installProgressLine's own doc comment), so InstallCompiling must
 // compose a status line here too, not silently fall to the default case.
+// #197: ingest no longer compiles a per-mod pak, so the line now says
+// "retaining" (validated+retained for a later merge) instead of
+// "compiling" - see Service.syncMergedPak.
 func TestInstallProgressLine_RendersCompiling(t *testing.T) {
 	line, ok := installProgressLine("Bear Mount", core.DeployProgress{Phase: core.InstallCompiling})
 	assert.True(t, ok, "InstallCompiling must compose a visible progress line, not be dropped")
 	assert.Contains(t, line.Line, "Bear Mount")
-	assert.Contains(t, line.Line, "compiling")
+	assert.Contains(t, line.Line, "retaining")
 }

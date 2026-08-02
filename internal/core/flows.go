@@ -16,6 +16,35 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
+// ReorderProfileMods persists mods as gameID/profileName's new load order
+// (via ProfileManager.ReorderMods) and syncs the merged pak (#197: a
+// load-order change is a documented regeneration trigger, since profile
+// load order IS merge-application order - see enabledExmodzSources). The
+// single seam cmd/lmm and internal/tui both call, replacing their
+// previous direct pm.ReorderMods(...) calls (CLI+TUI parity).
+//
+// A sync failure is non-fatal and returned as part of the SAME error only
+// if the reorder itself also failed; a reorder that succeeded but whose
+// merged-pak sync failed still returns nil - the reorder took effect, and
+// `lmm update`/`lmm verify` are the safety net for a merged pak that
+// didn't catch up. Callers wanting to surface a sync warning distinctly
+// can call Service.syncMergedPak's own exported test seam directly in a
+// follow-up if this proves too quiet in practice; kept simple here to
+// match ReorderMods' own existing bare-error signature rather than
+// inventing a new result type for one warning slice.
+func (s *Service) ReorderProfileMods(gameID, profileName string, mods []domain.ModReference) error {
+	pm := NewProfileManager(s.configDir, s.db)
+	if err := pm.ReorderMods(gameID, profileName, mods); err != nil {
+		return err
+	}
+	game, ok := s.games[gameID]
+	if !ok {
+		return nil // an unknown game has no merged pak to sync either
+	}
+	_, _ = s.syncMergedPak(context.Background(), game, profileName) //nolint:errcheck // best-effort, see doc comment
+	return nil
+}
+
 // EnableResult reports the outcome of EnableMod. Changed is true iff the
 // mod was actually deployed and flipped to enabled — false (not an error)
 // when it was already enabled, mirroring EnableMod's pre-Task-6 (bool,
@@ -89,6 +118,14 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 		return result, fmt.Errorf("failed to update mod status: %w", err)
 	}
 
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+	} else {
+		for _, w := range syncWarnings {
+			result.Notes = append(result.Notes, "Warning: "+w)
+		}
+	}
+
 	result.Changed = true
 	return result, nil
 }
@@ -160,6 +197,14 @@ func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName
 
 	if err := s.SetModEnabled(sourceID, modID, game.ID, profileName, false); err != nil {
 		return result, fmt.Errorf("failed to update mod status: %w", err)
+	}
+
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+	} else {
+		for _, w := range syncWarnings {
+			result.Notes = append(result.Notes, "Warning: "+w)
+		}
 	}
 
 	result.Changed = true
@@ -289,6 +334,14 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 	hookCtx.ModVersion = ""
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_all", opts.Hooks.GetUninstallAfterAll()); err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_all hook failed: %v", err))
+	}
+
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+	} else {
+		for _, w := range syncWarnings {
+			result.Notes = append(result.Notes, "Warning: "+w)
+		}
 	}
 
 	return result, nil
@@ -678,14 +731,16 @@ const (
 	// way; the CLI applies its own truncateChecksum.
 	InstallChecksumComputed
 	// InstallCompiling fires instead of InstallExtracting, once per file,
-	// when a DeployCompile game's ".exmodz" file was actually compiled
-	// (#190 item 1) - the generic "Extracting to cache..." wording is
-	// misleading for a compile step, which never extracts anything. File
-	// identifies the source file (for displayFileLabel); Detail carries the
-	// compiled output filename (e.g. "Bear_Mount_P.pak"), so the CLI can
-	// announce "Compiling <source> → <output>..." without core owning the
-	// exact sentence. The BATCH path never prints this (it has no
-	// DeployCompile support and no equivalent status line at all).
+	// when a DeployCompile game's ".exmodz" file was validated and retained
+	// for a later merge (#190 item 1; #197: ingest no longer compiles a
+	// per-mod pak - the real merge happens once, batched across the whole
+	// profile, via Service.syncMergedPak) - the generic "Extracting to
+	// cache..." wording is misleading here either way, since nothing is
+	// extracted. File identifies the source file (for displayFileLabel);
+	// Detail is unset (there is no per-file compiled output filename left
+	// to announce under the merged-only model). The BATCH path never
+	// prints this (it has no DeployCompile support and no equivalent
+	// status line at all).
 	InstallCompiling
 	// InstallExtracting mirrors doInstall's unconditional "Extracting to
 	// cache..." status line, fired once after the STRICT-path primary's
@@ -1815,6 +1870,17 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: DeployWarning, Detail: msg})
+	} else {
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: DeployWarning, Detail: w})
+		}
+	}
+
 	for _, w := range deferredWarnings {
 		emit(w)
 	}
@@ -2173,7 +2239,17 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 		skipped:  &result.Skipped,
 		purged:   &result.Purged,
 	})
-	return result, err
+	if err != nil {
+		return result, err
+	}
+
+	// #197 I2 fix: see PurgeMergedPak's own doc comment - exmodz mods have
+	// no per-mod deployment for the loop above to have already undeployed.
+	if perr := s.PurgeMergedPak(ctx, game, profileName, opts.Uninstall); perr != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not remove merged pak: %v", perr))
+	}
+
+	return result, nil
 }
 
 // SwitchPlan is the pure, displayable diff between the currently-active
@@ -2639,6 +2715,14 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 	if err := pm.SetDefault(game.ID, plan.To); err != nil {
 		return result, fmt.Errorf("setting default profile: %w", err)
+	}
+
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.To); syncErr != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+	} else {
+		for _, w := range syncWarnings {
+			result.Notes = append(result.Notes, "Warning: "+w)
+		}
 	}
 
 	return result, nil
@@ -3647,6 +3731,12 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		emit(w)
 	}
 
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.Profile); syncErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("syncing merged pak: %v", syncErr))
+	} else {
+		result.Warnings = append(result.Warnings, syncWarnings...)
+	}
+
 	return result, nil
 }
 
@@ -4023,15 +4113,19 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 	}
 
-	// A compiled file was never "extracted" - announce the compile step by
-	// name instead of the generic message, which is actively misleading
-	// here (#190 item 1). Only fires for files that actually compiled, so
-	// every non-DeployCompile (or non-exmodz) install keeps today's exact
-	// "Extracting to cache..." text unchanged.
+	// A retained-for-merge file was never "extracted" - announce the step
+	// by name instead of the generic message, which is actively misleading
+	// here (#190 item 1). Only fires for files that actually go through
+	// ingest's validate+retain branch, so every non-DeployCompile (or
+	// non-exmodz) install keeps today's exact "Extracting to cache..." text
+	// unchanged. #197: this no longer compiles a per-mod pak - the merge
+	// happens later, batched across the whole profile, via
+	// Service.syncMergedPak - so there is no compiled output filename left
+	// to announce (Detail is unset).
 	if len(compiledFiles) > 0 {
 		for _, cf := range compiledFiles {
 			evt := base
-			evt.Phase, evt.File, evt.Detail = InstallCompiling, cf, compiledFileName(cf.FileName)
+			evt.Phase, evt.File = InstallCompiling, cf
 			emit(evt)
 		}
 	} else {
@@ -4465,6 +4559,13 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, effectiveVersion))
+
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("syncing merged pak: %v", syncErr))
+	} else {
+		result.Warnings = append(result.Warnings, syncWarnings...)
+	}
+
 	return result, nil
 }
 
@@ -4714,6 +4815,18 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)                                         //nolint:errcheck // best-effort recovery on an already-erroring path
 		_ = installer.ReplaceForUpdate(ctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
+	}
+
+	// #197 I1 fix: a rollback changes the mod's Version (and possibly its
+	// FileIDs), both regeneration triggers - without this, the merged pak
+	// keeps the rolled-away-from version's diff until some OTHER flow
+	// happens to sync it.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not sync merged pak: %v", syncErr))
+	} else {
+		for _, w := range syncWarnings {
+			result.Notes = append(result.Notes, "Warning: "+w)
+		}
 	}
 
 	return result, nil
@@ -5121,6 +5234,22 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		installedEvt := base
 		installedEvt.Phase = ImportModInstalled
 		emit(installedEvt)
+	}
+
+	// #197 I3 fix: profile import deploys mods (installer.Install above) the
+	// same way ApplyInstall/DeployProfile do - without this, an imported
+	// profile's exmodz mods (zero per-mod deployment members of their own,
+	// Task 2/3) put NO content in the game directory at all until some
+	// OTHER flow happens to sync the merged pak.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profile.Name); syncErr != nil {
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: ImportNote, Detail: msg})
+	} else {
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: ImportNote, Detail: w})
+		}
 	}
 
 	return result, nil

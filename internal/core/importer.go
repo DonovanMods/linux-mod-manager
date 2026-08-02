@@ -28,6 +28,17 @@ type ImportResult struct {
 	FilesExtracted int
 	LinkedSource   string // "nexusmods", "local", etc.
 	AutoDetected   bool   // true if source/ID was parsed from filename
+	// RetainedFileID is the identity Import used to key a retained compile
+	// source (cache.RetainedSourceName) - only set for the DeployCompile
+	// ".exmodz" branch, where it is the archive's own filename (Import has
+	// no other stable identity to retain under; see that branch's own doc
+	// comment). Callers MUST fold this into the InstalledMod/ModReference's
+	// FileIDs (#197 C1 fix): enabledExmodzSources walks FileIDs to find each
+	// mod's retained source, and a row whose FileIDs never includes this
+	// value is invisible to every future merge - silently, forever, since
+	// it is also excluded from the staleness fingerprint on both sides of
+	// the comparison. Empty for every other deploy mode.
+	RetainedFileID string
 }
 
 // Importer handles importing mods from local archive files
@@ -37,15 +48,15 @@ type Importer struct {
 	// stagingRoot is where archives are extracted before being committed to the
 	// cache. Empty means fall back to $TMPDIR — see newStagingDir.
 	stagingRoot string
-	// resolveCompiler resolves the Compiler-capable source mapped to a
-	// DeployCompile game's registry entry (#173), consulted only when
+	// resolveMergeCompiler resolves the MergeCompiler-capable source mapped
+	// to a DeployCompile game's registry entry (#197), consulted only when
 	// importing a ".exmodz" archive for such a game — Import has no
 	// per-archive source pinned the way DownloadModToCache does, so it must
 	// look up the game's configured sources instead. nil when the Importer
 	// was built via the standalone NewImporter (no Service context):
-	// compiling an .exmodz through such an Importer fails loud rather than
-	// silently caching the uncompiled archive.
-	resolveCompiler func(gameID string) (source.Compiler, error)
+	// importing an .exmodz through such an Importer fails loud rather than
+	// silently caching an unvalidated archive.
+	resolveMergeCompiler func(gameID string) (source.MergeCompiler, error)
 }
 
 // NewImporter creates a new Importer that stages extraction in the OS temp dir.
@@ -62,7 +73,7 @@ func NewImporter(cache *cache.Cache) *Importer {
 func (s *Service) NewImporter(game *domain.Game) *Importer {
 	imp := NewImporter(s.GetGameCache(game))
 	imp.stagingRoot = s.stagingRoot()
-	imp.resolveCompiler = s.compilerSourceForGame
+	imp.resolveMergeCompiler = s.mergeCompilerSourceForGame
 	return imp
 }
 
@@ -105,26 +116,25 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 	var modName string
 	var fileCount int
+	var retainedFileID string
 
 	// Handle based on game's deploy mode
 	if game.DeployMode == domain.DeployCompile && isExmodzFile(filename) {
-		// Compile mode (#173): mirror Service.DownloadModToCache's
-		// DeployCompile branch — compile the archive against the game's
-		// installed base pak instead of extracting or copying it verbatim,
-		// caching the compiled *_P.pak the same way a downloaded .exmodz
-		// would be. Unlike the download path, Import has no per-archive
-		// source pinned to check for source.Compiler, so it resolves the
-		// game's mapped compiler-capable source from the registry instead.
-		if i.resolveCompiler == nil {
+		// Validate mode (#197): Import has no real source file ID the way a
+		// download does (DownloadableFile.ID is resolved later, outside
+		// Import, only when --id was given), so the retained source is
+		// keyed by the archive's own filename instead - stable across
+		// re-imports of the same name, and the ONLY identity Import ever
+		// has for this content.
+		if i.resolveMergeCompiler == nil {
 			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not Service.NewImporter) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
 		}
-		compiler, err := i.resolveCompiler(game.ID)
+		mc, err := i.resolveMergeCompiler(game.ID)
 		if err != nil {
 			return nil, err
 		}
-		basePakPath, err := resolveBasePak(game)
-		if err != nil {
-			return nil, err
+		if err := mc.ValidateSource(archivePath); err != nil {
+			return nil, fmt.Errorf("validating %s: %w", filename, err)
 		}
 
 		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
@@ -134,28 +144,6 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			}
 		}
 
-		// Compile into a scratch dir first so a mid-compile failure never
-		// leaves a partial/uncompiled artifact in the cache (mirrors #136
-		// review's fix for the download path's compile branch).
-		tempDir, err := newStagingDir(i.stagingRoot, "lmm-import-compile-*")
-		if err != nil {
-			return nil, err
-		}
-		defer os.RemoveAll(tempDir) //nolint:errcheck
-
-		destName := compiledFileName(filename)
-		compiledPath := filepath.Join(tempDir, destName)
-		if err := compiler.Compile(ctx, basePakPath, archivePath, compiledPath); err != nil {
-			return nil, fmt.Errorf("compiling mod: %w", err)
-		}
-
-		// Stage the compiled artifact and commit it atomically (#173 review:
-		// mirrors Service.DownloadModToCache's compile branch). cachePath is
-		// never touched until commitStagedCache's single backup-then-rename
-		// swap, so a failure staging the artifact (or committing it) leaves
-		// any existing cache entry exactly as it was — unlike the previous
-		// remove-existing-then-copy sequence, which destroyed the prior
-		// entry before the copy that could still fail.
 		cacheMod := &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID}
 		cachePath, stagePath, err := prepareUnseededStaging(i.cache, game, cacheMod)
 		if err != nil {
@@ -166,24 +154,15 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		if err := os.MkdirAll(stagePath, 0755); err != nil {
 			return nil, fmt.Errorf("preparing cache staging: %w", err)
 		}
-		if err := copyFileStreaming(compiledPath, filepath.Join(stagePath, destName)); err != nil {
-			return nil, fmt.Errorf("staging compiled mod: %w", err)
-		}
-		// #196: stage the compile fingerprint (base pak IndexHash) and
-		// retained source keyed by destName - Import has no real source
-		// file ID the way a download does (DownloadableFile.ID is resolved
-		// later, outside Import, only when --id was given), so the compiled
-		// output's own filename is the stable per-entry key instead. A
-		// re-import of the same archive name replaces this entry outright
-		// (prepareUnseededStaging), so destName never collides across
-		// generations of the same mod.
-		if err := stageCompileFingerprint(stagePath, destName, basePakPath, archivePath); err != nil {
-			return nil, err
+		retainedPath := filepath.Join(stagePath, cache.RetainedSourceName(filename))
+		if err := copyFileStreaming(archivePath, retainedPath); err != nil {
+			return nil, fmt.Errorf("retaining %s: %w", filename, err)
 		}
 		if err := commitStagedCache(cachePath, stagePath); err != nil {
 			return nil, err
 		}
-		fileCount = 1
+		fileCount = 0
+		retainedFileID = filename
 	} else if game.DeployMode == domain.DeployCopy {
 		// Copy mode: just copy the file as-is to cache (don't extract)
 		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
@@ -272,6 +251,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		FilesExtracted: fileCount,
 		LinkedSource:   sourceID,
 		AutoDetected:   autoDetected,
+		RetainedFileID: retainedFileID,
 	}, nil
 }
 

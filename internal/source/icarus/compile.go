@@ -22,7 +22,8 @@ import (
 //
 // There is no ctx parameter: every step is local file I/O over a ~2 MB pak,
 // with no network call and no long-running loop to cancel. The
-// source.Compiler interface still takes one, for implementations that need it.
+// source.MergeCompiler interface still takes one, for implementations that
+// need it (MergeCompile, this package's own N-mod entry point, is one).
 //
 // The compiled pak's mount point and table-entry paths (icarusContentMountPoint,
 // icarusDataTablePrefix below) are Icarus-specific and deliberately live here

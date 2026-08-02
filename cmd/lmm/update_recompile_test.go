@@ -16,12 +16,12 @@ import (
 )
 
 // setupDoUpdateRecompileTest builds a DeployCompile game with a registered
-// compiler-capable source and an installed, deployed compiled mod whose
-// recorded base-pak fingerprint is deliberately wrong, so `lmm update`
-// reports/applies a #196 recompile row end to end through the CLI.
-// linkMethod is LinkCopy so a successful recompile+redeploy is provable
-// from the on-disk deployed bytes (a symlink would trivially reflect an
-// in-place cache swap on its own).
+// merge-compiler-capable source and an ENABLED exmodz mod, deliberately
+// leaving the merged pak un-generated so `lmm update` reports/applies a
+// #197 merge-needed row end to end through the CLI. linkMethod is LinkCopy
+// so a successful regen+redeploy is provable from the on-disk deployed
+// bytes (a symlink would trivially reflect an in-place cache swap on its
+// own).
 func setupDoUpdateRecompileTest(t *testing.T) (*core.Service, *domain.Game, *compilerInstallSource, string) {
 	t.Helper()
 
@@ -64,31 +64,23 @@ func setupDoUpdateRecompileTest(t *testing.T) (*core.Service, *domain.Game, *com
 
 	const modID, version, fileID = "bear-mount", "3.3", "exmodz-file-id"
 	gameCache := svc.GetGameCache(game)
-	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, "Bear_Mount_P.pak", []byte("stale-compiled-bytes")))
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID), []byte("retained-exmodz-bytes")))
-	versionDir := gameCache.ModPath(game.ID, "fake-compiler", modID, version)
-	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{"Bear_Mount_P.pak"}))
-	require.NoError(t, cache.MarkBaseIndexHash(versionDir, fileID, "0000000000000000000000000000000000dead"))
 
 	im := &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: "Bear Mount", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
-		Deployed:     true,
-		LinkMethod:   domain.LinkCopy,
 		FileIDs:      []string{fileID},
 	}
 	require.NoError(t, svc.SaveInstalledMod(im))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &im.Mod, "default"))
 
 	pm := svc.NewProfileManager()
 	_, cerr := pm.Create(game.ID, "default")
 	require.NoError(t, cerr)
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
 
-	return svc, game, compiler, filepath.Join(game.ModPath, "Bear_Mount_P.pak")
+	return svc, game, compiler, filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
 }
 
 // TestDoUpdate_JSON_ReportsRecompileNeeded proves the bulk --json contract
@@ -113,9 +105,13 @@ func TestDoUpdate_JSON_ReportsRecompileNeeded(t *testing.T) {
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
 	require.Len(t, out.Updates, 1)
 	row := out.Updates[0]
-	assert.Equal(t, "bear-mount", row.ModID)
-	assert.Equal(t, "3.3", row.Current)
-	assert.Equal(t, "3.3", row.Available, "a staleness row's available version equals current - the mod hasn't changed")
+	// #197: a merged-pak staleness row's identity is the SYNTHETIC
+	// merged-pak mod (domain.SourceMerged/"merged-pak"), not the
+	// contributing "bear-mount" mod - CheckMergedPakStaleness is
+	// profile-scoped, not per-mod.
+	assert.Equal(t, "merged-pak", row.ModID)
+	assert.Equal(t, "merged", row.Current)
+	assert.Equal(t, "merged", row.Available, "a staleness row's available version equals current - nothing has a real version change")
 	assert.True(t, row.RecompileNeeded)
 	assert.Equal(t, "stale_compile", row.Reason)
 }
@@ -166,26 +162,30 @@ func TestApplySingleUpdate_Recompile_JSON(t *testing.T) {
 	assert.Equal(t, "3.3", out.ToVersion)
 }
 
-// TestApplySingleUpdate_Recompile_LockedRefuses proves the CLI's locked-
-// refusal wording fires for a staleness row too, and never touches the
-// locked mod's deployed files.
-func TestApplySingleUpdate_Recompile_LockedRefuses(t *testing.T) {
-	svc, game, compiler, deployedPath := setupDoUpdateRecompileTest(t)
-
-	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "fake-compiler", "bear-mount", ""))
-
-	before, err := os.ReadFile(deployedPath)
-	require.NoError(t, err)
+// TestApplySingleUpdate_Recompile_PrintsMergeWarnings is the #197 M4
+// regression test: ApplyMergedPakRegen's merge warnings (e.g. an
+// asset-path collision - "a loud warning" per the CHANGELOG) travel
+// through result.Warnings, not a progress event (ApplyMergedPakRegen only
+// ever emits UpdateDownloadDone) - applyRecompile used to watch for
+// UpdateWarning/UpdateNote progress phases that never fire, silently
+// dropping every merge warning on `lmm update`'s apply path.
+func TestApplySingleUpdate_Recompile_PrintsMergeWarnings(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	compiler.mergeWarnings = []string{"asset collision: fixture warning"}
 
 	mod, err := svc.GetInstalledMod("fake-compiler", "bear-mount", "icarus", "default")
 	require.NoError(t, err)
 
+	oldStderr := os.Stderr
+	r, w, pipeErr := os.Pipe()
+	require.NoError(t, pipeErr)
+	os.Stderr = w
 	err = applySingleUpdate(context.Background(), svc, game, mod, "default")
-	require.NoError(t, err, "a locked skip is reported, not returned as an error")
-	assert.Equal(t, 0, compiler.compileCalls, "a locked mod must never be recompiled")
-
-	after, err := os.ReadFile(deployedPath)
+	_ = w.Close()
+	os.Stderr = oldStderr
 	require.NoError(t, err)
-	assert.Equal(t, before, after, "a locked mod's deployed files must never be touched")
+
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	assert.Contains(t, buf.String(), "asset collision: fixture warning", "a merge warning must reach the CLI, not be silently dropped")
 }

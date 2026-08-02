@@ -615,7 +615,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		case core.InstallChecksumComputed:
 			fmt.Printf("  Checksum: %s\n", truncateChecksum(p.Detail))
 		case core.InstallCompiling:
-			fmt.Printf("\nCompiling %s → %s...\n", displayFileLabel(*p.File), p.Detail)
+			fmt.Printf("\nRetaining %s for merge...\n", displayFileLabel(*p.File))
 		case core.InstallExtracting:
 			fmt.Println("\nExtracting to cache...")
 		case core.InstallDeploying:

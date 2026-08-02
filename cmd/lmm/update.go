@@ -314,9 +314,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Check for updates (partial results returned even when some mods fail to
-	// fetch) plus, for DeployCompile games, base-pak staleness (#196) -
+	// fetch) plus, for DeployCompile games, merged-pak staleness (#196/#197) -
 	// CheckGameUpdates is the single seam CLI and TUI both check through.
-	updates, checkErr := service.CheckGameUpdates(ctx, game, installed)
+	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed)
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
@@ -597,8 +597,8 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		}
 	}
 
-	// Check for update for this specific mod (plus base-pak staleness, #196)
-	updates, err := service.CheckGameUpdates(ctx, game, []domain.InstalledMod{*mod})
+	// Check for update for this specific mod (plus merged-pak staleness, #196/#197)
+	updates, err := service.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod})
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
@@ -669,7 +669,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 			return nil
 		}
 
-		if err := applyRecompile(ctx, service, game, *mod, profileName); err != nil {
+		if err := applyRecompile(ctx, service, game, profileName); err != nil {
 			return err
 		}
 
@@ -759,13 +759,13 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 // exact console positioning (download progress, forced-hook warnings,
 // after_each hook warnings, and the --verbose-gated link-method note).
 //
-// #196: a RecompileNeeded row carries no real version change (NewVersion ==
-// InstalledMod.Version) - it is routed to Service.ApplyRecompile instead,
-// which has no hooks to run and no version/FileIDs to record, only the
-// recompile-and-redeploy step itself.
+// #196/#197: a RecompileNeeded row carries no real version change
+// (NewVersion == InstalledMod.Version) - it is routed to
+// Service.ApplyMergedPakRegen instead, which has no hooks to run and no
+// version/FileIDs to record, only the merge-and-redeploy step itself.
 func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, upd domain.Update, profileName string) error {
 	if upd.RecompileNeeded {
-		return applyRecompile(ctx, service, game, upd.InstalledMod, profileName)
+		return applyRecompile(ctx, service, game, profileName)
 	}
 
 	opts := core.UpdateOptions{
@@ -798,24 +798,25 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	return err
 }
 
-// applyRecompile applies a #196 base-pak staleness row via
-// Service.ApplyRecompile, printing from its progress events the same way
-// applyUpdate does for its own (UpdateWarning/UpdateNote are the only
-// phases ApplyRecompile emits - it runs no hooks and downloads nothing
-// worth a progress bar).
-func applyRecompile(ctx context.Context, service *core.Service, game *domain.Game, mod domain.InstalledMod, profileName string) error {
-	progress := func(p core.DeployProgress) {
-		switch p.Phase {
-		case core.UpdateWarning:
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
-		case core.UpdateNote:
-			if verbose && !jsonOutput {
-				fmt.Printf("  %s\n", p.Detail)
-			}
+// applyRecompile applies a #197 merged-pak staleness row via
+// Service.ApplyMergedPakRegen, printing from its progress events the same
+// way applyUpdate does for its own (UpdateWarning/UpdateNote are the only
+// phases ApplyMergedPakRegen emits - it runs no hooks and downloads
+// nothing worth a progress bar).
+func applyRecompile(ctx context.Context, service *core.Service, game *domain.Game, profileName string) error {
+	result, err := service.ApplyMergedPakRegen(ctx, game, profileName, nil)
+	// #197 M4 fix: ApplyMergedPakRegen never emits UpdateWarning/UpdateNote
+	// progress events (only UpdateDownloadDone) - its merge warnings (e.g.
+	// an asset-path collision, "a loud warning" per the CHANGELOG) travel
+	// through result.Warnings instead. A progress callback watching for
+	// those phases would silently never fire; print result.Warnings
+	// directly so `lmm update`'s apply path surfaces them the same way
+	// DeployProfile/the TUI already do.
+	if result != nil {
+		for _, w := range result.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 	}
-
-	_, err := service.ApplyRecompile(ctx, game, profileName, mod, progress)
 	return err
 }
 
