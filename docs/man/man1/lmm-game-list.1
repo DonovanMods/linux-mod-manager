@@ -2,29 +2,27 @@
 .TH "LMM" "1" "Jul 2026" "lmm 1.28.0" "User Commands"
 
 .SH NAME
-lmm-mod-disable - Disable a mod without uninstalling
+lmm-game-list - List configured games
 
 
 .SH SYNOPSIS
-\fBlmm mod disable <mod-id> [flags]\fP
+\fBlmm game list [flags]\fP
 
 
 .SH DESCRIPTION
-Disable a mod by removing its files from the game directory.
-
-.PP
-The mod remains installed and cached, so it can be re-enabled later
-without downloading again.
+List every game configured in games.yaml: ID, name, install path, mod
+path, deploy mode, and configured sources. The default game (see 'lmm game
+show-default') is marked "(default)" next to its ID.
 
 .PP
 Examples:
-  lmm mod disable 12345 --game skyrim-se
-  lmm mod disable 12345 --game skyrim-se --profile survival
+  lmm game list
+  lmm game list --json
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
-	help for disable
+	help for list
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -52,20 +50,12 @@ Examples:
 	disable all hooks
 
 .PP
-\fB-p\fP, \fB--profile\fP=""
-	profile (default: active profile)
-
-.PP
-\fB-s\fP, \fB--source\fP=""
-	mod source (default: the sole configured source; prompts when several are configured)
-
-.PP
 \fB-v\fP, \fB--verbose\fP[=false]
 	verbose output
 
 
 .SH SEE ALSO
-\fBlmm-mod(1)\fP
+\fBlmm-game(1)\fP
 
 
 .SH HISTORY

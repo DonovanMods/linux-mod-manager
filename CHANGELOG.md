@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `lmm game list` — a table of every configured game (ID, name, install path, mod path, deploy mode, and a compact `source:id` rendering of its sources), marking the default game (see `lmm game show-default`) and pointing at `lmm game add`/`lmm game detect` when nothing is configured yet. Supports `--json` like `list`/`search`/`source list` (#205)
+
+### Changed
+
+- `lmm game detect` now marks a game already present in `games.yaml` as `[configured]` (mirroring `search`'s `[installed]` convention) and excludes it from the default "all" selection, since it needs no re-offering. It stays listed, and naming its number explicitly still selects it — the same re-add/repair path `lmm game add` has always used unconditionally (games.yaml entry + a fresh empty default profile, replacing any existing one) (#205)
+
 ## [1.28.0] - 2026-08-02
 
 ### Added
