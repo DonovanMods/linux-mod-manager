@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/google/uuid"
 )
@@ -27,6 +28,17 @@ type ImportResult struct {
 	FilesExtracted int
 	LinkedSource   string // "nexusmods", "local", etc.
 	AutoDetected   bool   // true if source/ID was parsed from filename
+	// RetainedFileID is the identity Import used to key a retained compile
+	// source (cache.RetainedSourceName) - only set for the DeployCompile
+	// ".exmodz" branch, where it is the archive's own filename (Import has
+	// no other stable identity to retain under; see that branch's own doc
+	// comment). Callers MUST fold this into the InstalledMod/ModReference's
+	// FileIDs (#197 C1 fix): enabledExmodzSources walks FileIDs to find each
+	// mod's retained source, and a row whose FileIDs never includes this
+	// value is invisible to every future merge - silently, forever, since
+	// it is also excluded from the staleness fingerprint on both sides of
+	// the comparison. Empty for every other deploy mode.
+	RetainedFileID string
 }
 
 // Importer handles importing mods from local archive files
@@ -36,6 +48,15 @@ type Importer struct {
 	// stagingRoot is where archives are extracted before being committed to the
 	// cache. Empty means fall back to $TMPDIR — see newStagingDir.
 	stagingRoot string
+	// resolveMergeCompiler resolves the MergeCompiler-capable source mapped
+	// to a DeployCompile game's registry entry (#197), consulted only when
+	// importing a ".exmodz" archive for such a game — Import has no
+	// per-archive source pinned the way DownloadModToCache does, so it must
+	// look up the game's configured sources instead. nil when the Importer
+	// was built via the standalone NewImporter (no Service context):
+	// importing an .exmodz through such an Importer fails loud rather than
+	// silently caching an unvalidated archive.
+	resolveMergeCompiler func(gameID string) (source.MergeCompiler, error)
 }
 
 // NewImporter creates a new Importer that stages extraction in the OS temp dir.
@@ -52,6 +73,7 @@ func NewImporter(cache *cache.Cache) *Importer {
 func (s *Service) NewImporter(game *domain.Game) *Importer {
 	imp := NewImporter(s.GetGameCache(game))
 	imp.stagingRoot = s.stagingRoot()
+	imp.resolveMergeCompiler = s.mergeCompilerSourceForGame
 	return imp
 }
 
@@ -94,9 +116,54 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 	var modName string
 	var fileCount int
+	var retainedFileID string
 
 	// Handle based on game's deploy mode
-	if game.DeployMode == domain.DeployCopy {
+	if game.DeployMode == domain.DeployCompile && isExmodzFile(filename) {
+		// Validate mode (#197): Import has no real source file ID the way a
+		// download does (DownloadableFile.ID is resolved later, outside
+		// Import, only when --id was given), so the retained source is
+		// keyed by the archive's own filename instead - stable across
+		// re-imports of the same name, and the ONLY identity Import ever
+		// has for this content.
+		if i.resolveMergeCompiler == nil {
+			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not Service.NewImporter) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
+		}
+		mc, err := i.resolveMergeCompiler(game.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := mc.ValidateSource(archivePath); err != nil {
+			return nil, fmt.Errorf("validating %s: %w", filename, err)
+		}
+
+		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
+		if version != "" && version != "unknown" {
+			if idx := strings.LastIndex(modName, version); idx > 0 {
+				modName = strings.TrimRight(modName[:idx], "-_ ")
+			}
+		}
+
+		cacheMod := &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID}
+		cachePath, stagePath, err := prepareUnseededStaging(i.cache, game, cacheMod)
+		if err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(stagePath) //nolint:errcheck
+
+		if err := os.MkdirAll(stagePath, 0755); err != nil {
+			return nil, fmt.Errorf("preparing cache staging: %w", err)
+		}
+		retainedPath := filepath.Join(stagePath, cache.RetainedSourceName(filename))
+		if err := copyFileStreaming(archivePath, retainedPath); err != nil {
+			return nil, fmt.Errorf("retaining %s: %w", filename, err)
+		}
+		if err := commitStagedCache(cachePath, stagePath); err != nil {
+			return nil, err
+		}
+		fileCount = 0
+		retainedFileID = filename
+	} else if game.DeployMode == domain.DeployCopy {
 		// Copy mode: just copy the file as-is to cache (don't extract)
 		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
 		if version != "" && version != "unknown" {
@@ -184,6 +251,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		FilesExtracted: fileCount,
 		LinkedSource:   sourceID,
 		AutoDetected:   autoDetected,
+		RetainedFileID: retainedFileID,
 	}, nil
 }
 

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -47,6 +49,14 @@ var listCmd = &cobra.Command{
 	Short: "List installed mods",
 	Long: `List all mods installed in the specified game and profile.
 
+Mods are printed in the profile's load order (see 'lmm profile reorder')
+- the same order that decides merge precedence for a compiled/merged pak:
+a mod later in the load order is merged later and wins conflicting
+fields on a shared data-table row (untouched fields from earlier mods
+still survive). A mod installed but missing from the load order is
+still shown (never silently dropped), placed first since it has no
+claim to the final say.
+
 Use --profiles to list profile names for the game instead of mods.
 
 Examples:
@@ -87,11 +97,20 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	// #97: lock state lives on the profile YAML ref, not the DB row
 	// GetInstalledMods above already returned - load it separately and key
 	// by domain.ModKey for O(1) lookup per mod below (a precomputed map,
-	// not per-row FindRef, since this loops over every mod). Tolerant of a
-	// missing/unreadable profile.yaml (mirrors coreProvider.Overview's own
-	// "_ =" shape, internal/tui/service_core.go): an unreadable profile just
-	// means nothing shows as locked, not a failed listing.
-	profileYAML, _ := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
+	// not per-row FindRef, since this loops over every mod). Tolerant ONLY
+	// of a genuinely missing profile.yaml (domain.ErrProfileNotFound) - a
+	// fresh profile with no YAML on disk yet just means nothing shows as
+	// locked, not a failed listing. Any OTHER LoadProfile error, including
+	// #172's fail-loud link_method validation, must surface immediately
+	// instead of silently degrading: swallowing it here used to mean an
+	// invalid profile YAML made `lmm list` quietly show no lock info AND
+	// (per #201) treat every mod as absent from the load order, instead of
+	// reporting the same error every other command honors (#203 release
+	// review).
+	profileYAML, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
+	if err != nil && !errors.Is(err, domain.ErrProfileNotFound) {
+		return fmt.Errorf("loading profile: %w", err)
+	}
 	lockedByKey := map[string]domain.ModReference{}
 	if profileYAML != nil {
 		for _, ref := range profileYAML.Mods {
@@ -100,6 +119,20 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 			}
 		}
 	}
+
+	// #201: display the profile's load order - the order that actually
+	// decides merge precedence (later = merged later = wins) - not
+	// installed_at (GetInstalledMods' own DB order), which has no
+	// relationship to it. core.OrderByProfile, not the deploy-only
+	// GetInstalledModsInProfileOrder seam: that one deliberately OMITS a
+	// mod absent from the profile's load order (correct for deploy - an
+	// untracked mod must never silently deploy), which would make such a
+	// mod vanish from a listing instead of just being placed first (lowest
+	// priority, since it has no claim to "final say"). OrderByProfile is
+	// the same never-omitting seam the TUI's mod list already uses
+	// (internal/tui/service_core.go's Overview) - reusing it here keeps the
+	// CLI and TUI in agreement on what "the load order" looks like.
+	mods = core.OrderByProfile(profileYAML, mods)
 
 	if jsonOutput {
 		out := listJSONOutput{GameID: game.ID, Profile: profileName, Mods: make([]listModJSON, len(mods))}
@@ -146,7 +179,8 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	}
 	fmt.Println()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	header := "ID\tNAME\tVERSION\tAUTHOR"
 	sep := "--\t----\t-------\t------"
 	if verbose {
@@ -193,6 +227,24 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
+	}
+
+	// Row tinting reflects each mod's actual enabled/deployed state
+	// regardless of --verbose: the non-verbose table doesn't SHOW the
+	// ENABLED/DEPLOYED columns, but the mod's health is exactly as real
+	// there as in the verbose table, and a user comparing `lmm list` against
+	// `lmm list -v` should see the identical color for the identical mod
+	// (#193 round 2 - the row-tint decision had only ever been wired up on
+	// the verbose branch, so plain `lmm list` stayed uncolored while `-v`
+	// wasn't).
+	rowColor := func(i int) func(string) string {
+		if i < 0 || i >= len(mods) {
+			return nil
+		}
+		return modRowColor(mods[i].Enabled, mods[i].Deployed)
+	}
+	if err := printTable(&buf, 2, rowColor); err != nil {
+		return fmt.Errorf("writing table: %w", err)
 	}
 
 	return nil

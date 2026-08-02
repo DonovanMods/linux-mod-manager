@@ -142,3 +142,32 @@ func CapabilitiesOf(src ModSource) Capabilities {
 type DownloadHeaderProvider interface {
 	DownloadHeaders(fileURL string) map[string]string
 }
+
+// MergeCompiler is implemented by sources whose compile-eligible files must
+// be merged across every enabled mod into ONE profile-level artifact rather
+// than compiled per-mod (#197: Icarus's cross-mod table merge - a whole-pak
+// last-wins deploy would silently drop one mod's table rows whenever two
+// mods patch the same table). Replaces #196's Compiler interface, which
+// this source no longer implements: there is no more per-mod compiled
+// artifact to produce.
+type MergeCompiler interface {
+	// ValidateSource parses/validates sourceFilePath (the retained,
+	// not-yet-merged source archive) without compiling anything - called at
+	// ingest time (download/import) so a malformed archive fails loud
+	// immediately rather than at the next merge.
+	ValidateSource(sourceFilePath string) error
+
+	// MergeCompile applies every entry in sources, in order (profile load
+	// order), against basePakPath's tables, and writes the merged result to
+	// outputPakPath. Returns non-fatal warnings (e.g. same-path asset
+	// collisions - last-applied wins) alongside a nil error; a nil error
+	// with warnings is still a fully-written, deployable pak.
+	MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) (warnings []string, err error)
+}
+
+// MergeSource identifies one mod's contribution to a merge, in the order it
+// must be applied (profile load order).
+type MergeSource struct {
+	ModRef     string // "sourceID:modID" - identity used in collision warnings
+	ExmodzPath string // the retained source archive to read
+}

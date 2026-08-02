@@ -280,6 +280,44 @@ type UpdateItem struct {
 	// is false" contract.
 	Locked        bool
 	LockedVersion string
+	// RecompileNeeded marks a #197 merged-pak staleness row (generalizing
+	// #196's per-mod version): the profile's merged pak no longer matches
+	// its recorded fingerprint (enabled-mod set, load order, a mod's
+	// version, or the base pak changed). ToVersion equals FromVersion in
+	// this case - u itself is the SYNTHETIC merged-pak row, not a real
+	// installed mod - and ApplyUpdate routes such a row to
+	// Service.ApplyMergedPakRegen instead of Service.ApplyUpdate.
+	RecompileNeeded bool
+	// RecompileReason is domain.Update's own distinct staleness reason
+	// ("base pak updated" - the fingerprint changed - or "not deployed" -
+	// the fingerprint still matches but the artifact is missing from the
+	// game directory), meaningful only when RecompileNeeded is true. #203
+	// release review: the TUI used to hardcode "(base pak updated)" for
+	// every staleness row regardless of the real cause, unlike `lmm verify`
+	// (cmd/lmm/verify.go), which already names the distinct reason.
+	RecompileReason string
+}
+
+// VersionLabel renders u's version change for display: the normal
+// "<from> → <to>" arrow for a real update, or "(<reason>)" for a #197
+// RecompileNeeded row, where FromVersion == ToVersion and an arrow would
+// misleadingly read as a no-op - RecompileReason names the actual cause
+// ("base pak updated" or "not deployed"), matching what `lmm verify`
+// already shows; an empty RecompileReason (defensive - core always sets
+// one alongside RecompileNeeded) falls back to "base pak updated" rather
+// than rendering an empty "()". Used everywhere an UpdateItem's version
+// change is shown - the apply-updates modal, its result lines, and the
+// changelog picker/overlay - so all of them read sanely for a staleness
+// row without duplicating this branch four times.
+func (u UpdateItem) VersionLabel() string {
+	if u.RecompileNeeded {
+		reason := u.RecompileReason
+		if reason == "" {
+			reason = "base pak updated"
+		}
+		return fmt.Sprintf("(%s)", reason)
+	}
+	return fmt.Sprintf("%s → %s", u.FromVersion, u.ToVersion)
 }
 
 // UpdatesView is CheckUpdates' result: the available updates plus any

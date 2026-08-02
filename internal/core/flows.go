@@ -16,35 +16,87 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
+// ReorderProfileMods persists mods as gameID/profileName's new load order
+// (via ProfileManager.ReorderMods) and syncs the merged pak (#197: a
+// load-order change is a documented regeneration trigger, since profile
+// load order IS merge-application order - see enabledExmodzSources). The
+// single seam cmd/lmm and internal/tui both call, replacing their
+// previous direct pm.ReorderMods(...) calls (CLI+TUI parity).
+//
+// A sync failure is non-fatal and returned as part of the SAME error only
+// if the reorder itself also failed; a reorder that succeeded but whose
+// merged-pak sync failed still returns nil - the reorder took effect, and
+// `lmm update`/`lmm verify` are the safety net for a merged pak that
+// didn't catch up. Callers wanting to surface a sync warning distinctly
+// can call Service.syncMergedPak's own exported test seam directly in a
+// follow-up if this proves too quiet in practice; kept simple here to
+// match ReorderMods' own existing bare-error signature rather than
+// inventing a new result type for one warning slice.
+func (s *Service) ReorderProfileMods(gameID, profileName string, mods []domain.ModReference) error {
+	pm := NewProfileManager(s.configDir, s.db)
+	if err := pm.ReorderMods(gameID, profileName, mods); err != nil {
+		return err
+	}
+	game, ok := s.games[gameID]
+	if !ok {
+		return nil // an unknown game has no merged pak to sync either
+	}
+	_, _ = s.syncMergedPak(context.Background(), game, profileName) //nolint:errcheck // best-effort, see doc comment
+	return nil
+}
+
 // EnableResult reports the outcome of EnableMod. Changed is true iff the
 // mod was actually deployed and flipped to enabled — false (not an error)
 // when it was already enabled, mirroring EnableMod's pre-Task-6 (bool,
 // error) return. Notes carries operational diagnostics using the same
 // display-contract convention as UninstallResult/DeployResult (Task 2's
 // convention, extended here in Task 6 item a for result-struct
-// convergence): always empty today — EnableMod has no diagnostic-producing
-// step — kept for parity with DisableResult and so a future EnableMod
-// diagnostic wouldn't need another signature change.
+// convergence, and by #183's SetModDeployed note below): a caller wanting
+// byte-identical pre-5a output should print each entry to stdout ONLY
+// under --verbose, verbatim, e.g. `fmt.Printf("  %s\n", n)`.
 type EnableResult struct {
 	Changed bool
 	Notes   []string
+	// Warnings holds diagnostics that must reach the user unconditionally
+	// (#197 postsmoke fix), unlike Notes' --verbose-only display contract -
+	// today, only a merged-pak sync failure. A silent sync failure here is
+	// exactly the class of bug the postsmoke fix-wave exists to close: the
+	// mod's Enabled bit flips, but the game directory may not actually
+	// reflect it.
+	Warnings []string
 }
 
 // DisableResult reports the outcome of DisableMod. Changed mirrors
-// EnableResult.Changed. Notes carries the sole diagnostic DisableMod can
-// produce — a non-fatal undeploy failure (see DisableMod's doc comment) —
-// using the same historical-prefix-baked-into-the-text convention
-// UninstallResult's doc comment documents: a caller wanting byte-identical
-// pre-5a output should print each entry to stdout ONLY under --verbose,
-// verbatim, e.g. `fmt.Printf("  %s\n", n)`.
+// EnableResult.Changed. Notes carries the diagnostics DisableMod can
+// produce — a non-fatal undeploy failure (see DisableMod's doc comment) and
+// (#183) a non-fatal SetModDeployed failure — using the same
+// historical-prefix-baked-into-the-text convention UninstallResult's doc
+// comment documents: a caller wanting byte-identical pre-5a output should
+// print each entry to stdout ONLY under --verbose, verbatim, e.g.
+// `fmt.Printf("  %s\n", n)`.
 type DisableResult struct {
 	Changed bool
 	Notes   []string
+	// Warnings mirrors EnableResult.Warnings' identical rationale
+	// (#197 postsmoke fix): unconditional display, unlike Notes.
+	Warnings []string
 }
 
 // EnableMod deploys an installed-but-disabled mod's files from the cache to
-// the game directory and marks it enabled in the database. Returns a result
-// with Changed false — not an error — if the mod was already enabled.
+// the game directory and marks it enabled (and deployed, #183) in the
+// database. Returns a result with Changed false — not an error — if the
+// mod was already enabled.
+//
+// A SetModDeployed failure is non-fatal (recorded in Notes) — mirroring
+// both DisableMod's own treatment of the identical call and
+// DeployProfile's/PurgeProfile's existing SetModDeployed call sites: the
+// files are already live on disk at this point, and refusing to record the
+// user's intent to enable the mod over a secondary bookkeeping-write
+// failure would leave it stuck exactly like the undeploy-failure case
+// DisableMod already accepts. SetModEnabled's own failure, in contrast,
+// stays fatal (pre-existing behavior, unchanged) — it is the write that
+// makes "the mod is enabled" true at all, unlike the deployed flag, which
+// is a cache of already-true, already-observable state.
 func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*EnableResult, error) {
 	mod, err := s.GetInstalledMod(sourceID, modID, game.ID, profileName)
 	if err != nil {
@@ -59,22 +111,44 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 		return nil, fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 
-	installer := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return nil, err
+	}
 	if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
 		return nil, fmt.Errorf("failed to deploy mod: %w", err)
 	}
 
-	if err := s.SetModEnabled(sourceID, modID, game.ID, profileName, true); err != nil {
-		return nil, fmt.Errorf("failed to update mod status: %w", err)
+	result := &EnableResult{}
+	if err := s.SetModDeployed(sourceID, modID, game.ID, profileName, true); err != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as deployed: %v", err))
 	}
 
-	return &EnableResult{Changed: true}, nil
+	if err := s.SetModEnabled(sourceID, modID, game.ID, profileName, true); err != nil {
+		return result, fmt.Errorf("failed to update mod status: %w", err)
+	}
+
+	// #197 postsmoke fix: Warnings, not Notes - Notes is --verbose-gated in
+	// the CLI (printModNotes), so a sync failure here used to be silent by
+	// default.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not sync merged pak: %v", syncErr))
+	} else {
+		result.Warnings = append(result.Warnings, syncWarnings...)
+	}
+
+	result.Changed = true
+	return result, nil
 }
 
 // DisableMod undeploys the mod's files from the game directory — the cache
 // entry is kept so the mod can be re-enabled later without downloading again
-// — and marks it disabled in the database. Returns a result with Changed
-// false — not an error — if the mod was already disabled.
+// — and marks it disabled (and not-deployed, #183) in the database. Returns
+// a result with Changed false — not an error — if the mod was already
+// disabled. That already-disabled path still self-heals a stale
+// deployed=true left behind by a pre-#183 disable (or any other drift):
+// it clears the flag, non-fatally, before returning, so calling disable
+// again converges deployed state even when enabled was already false.
 //
 // Undeploy failures are treated as non-fatal: the game files may already
 // have been removed manually, and refusing to record the user's intent to
@@ -83,6 +157,18 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 // — DisableResult.Notes (Task 6 item a) restores that diagnostic for
 // callers that want it, rather than discarding it as the (bool, error)
 // signature this replaces was forced to.
+//
+// A SetModDeployed failure gets the identical non-fatal treatment (#183),
+// for the identical reason and matching DeployProfile's/PurgeProfile's own
+// SetModDeployed call sites: it is attempted unconditionally, even when the
+// undeploy above already failed, because the deployed flag should reflect
+// "disable was requested" regardless of whether the file-level undeploy
+// itself succeeded — an undeploy failure already means the flag may not
+// match reality either way, and the alternative (skipping the write
+// because undeploy failed) would leave the mod stuck reporting DEPLOYED
+// forever, which is #183 itself. SetModEnabled's own failure stays fatal,
+// unchanged: it is the write that makes "the mod is disabled" true at all,
+// not a cache of already-true state.
 func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*DisableResult, error) {
 	mod, err := s.GetInstalledMod(sourceID, modID, game.ID, profileName)
 	if err != nil {
@@ -90,19 +176,45 @@ func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName
 	}
 
 	if !mod.Enabled {
-		return &DisableResult{}, nil
+		// Self-heal (#183): a mod disabled before this fix shipped can be
+		// stuck with enabled=false but deployed=true forever, since nothing
+		// else clears the flag once the mod is already disabled. Clear it
+		// here too, under the same non-fatal Note convention as the
+		// already-enabled path below, so disable converges the flag even
+		// when called on an already-disabled mod.
+		result := &DisableResult{}
+		if mod.Deployed {
+			if err := s.SetModDeployed(sourceID, modID, game.ID, profileName, false); err != nil {
+				result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as not deployed: %v", err))
+			}
+		}
+		return result, nil
 	}
 
 	result := &DisableResult{}
-	installer := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return nil, err
+	}
 	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 		// Non-fatal — see doc comment. Historical "Warning: " prefix baked
 		// into the text itself, matching UninstallResult's own convention.
 		result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to undeploy some files: %v", err))
 	}
 
+	if err := s.SetModDeployed(sourceID, modID, game.ID, profileName, false); err != nil {
+		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as not deployed: %v", err))
+	}
+
 	if err := s.SetModEnabled(sourceID, modID, game.ID, profileName, false); err != nil {
 		return result, fmt.Errorf("failed to update mod status: %w", err)
+	}
+
+	// #197 postsmoke fix: Warnings, not Notes (see EnableMod's identical fix).
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not sync merged pak: %v", syncErr))
+	} else {
+		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
 
 	result.Changed = true
@@ -196,7 +308,10 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err))
 	}
 
-	installer := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return result, err
+	}
 	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 		// Non-fatal - files may have been manually removed. Always
 		// recorded; the historical "Warning: " prefix is baked into the
@@ -229,6 +344,16 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 	hookCtx.ModVersion = ""
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_all", opts.Hooks.GetUninstallAfterAll()); err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_all hook failed: %v", err))
+	}
+
+	// #197 postsmoke fix: UninstallResult.Warnings (unconditional stderr)
+	// already exists for exactly this - Notes is --verbose-gated
+	// (printUninstallDiagnostics), so a sync failure here used to be
+	// silent by default.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not sync merged pak: %v", syncErr))
+	} else {
+		result.Warnings = append(result.Warnings, syncWarnings...)
 	}
 
 	return result, nil
@@ -617,10 +742,25 @@ const (
 	// succeeds). Detail carries the full (untruncated) checksum either
 	// way; the CLI applies its own truncateChecksum.
 	InstallChecksumComputed
+	// InstallCompiling fires instead of InstallExtracting, once per file,
+	// when a DeployCompile game's ".exmodz" file was validated and retained
+	// for a later merge (#190 item 1; #197: ingest no longer compiles a
+	// per-mod pak - the real merge happens once, batched across the whole
+	// profile, via Service.syncMergedPak) - the generic "Extracting to
+	// cache..." wording is misleading here either way, since nothing is
+	// extracted. File identifies the source file (for displayFileLabel);
+	// Detail is unset (there is no per-file compiled output filename left
+	// to announce under the merged-only model). The BATCH path never
+	// prints this (it has no DeployCompile support and no equivalent
+	// status line at all).
+	InstallCompiling
 	// InstallExtracting mirrors doInstall's unconditional "Extracting to
 	// cache..." status line, fired once after the STRICT-path primary's
-	// download(s) finish, before Install/Replace. The BATCH path never
-	// prints this (batchInstallMods had no equivalent status line).
+	// download(s) finish, before Install/Replace - unless every downloaded
+	// file was compiled instead (InstallCompiling fires in that case, one
+	// event per compiled file, and this is skipped entirely). The BATCH
+	// path never prints this (batchInstallMods had no equivalent status
+	// line).
 	InstallExtracting
 	// InstallDeploying mirrors "Deploying to game directory...", fired once
 	// right before the STRICT-path primary's Install/Replace. The BATCH
@@ -1591,7 +1731,11 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 	if opts.LinkMethod != nil {
 		linkMethod = *opts.LinkMethod
 	} else {
-		linkMethod = s.GetEffectiveLinkMethod(game, profileName)
+		method, err := s.GetEffectiveLinkMethod(game, profileName)
+		if err != nil {
+			return result, err
+		}
+		linkMethod = method
 	}
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
@@ -1735,6 +1879,17 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 			msg := fmt.Sprintf("applying profile overrides: %v", err)
 			result.Warnings = append(result.Warnings, msg)
 			emit(DeployProgress{Phase: DeployWarning, Detail: msg})
+		}
+	}
+
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: DeployWarning, Detail: msg})
+	} else {
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: DeployWarning, Detail: w})
 		}
 	}
 
@@ -1910,7 +2065,10 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		spec.emit(DeployProgress{Phase: DeployBeforeAllForced, Detail: msg})
 	}
 
-	installer := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(game, profileName)
+	if err != nil {
+		return err
+	}
 	spec.emit(DeployProgress{Phase: DeployPurging, Total: len(mods)})
 
 	// deferredWarnings holds uninstall.after_each (per mod, in loop order)
@@ -2093,7 +2251,25 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 		skipped:  &result.Skipped,
 		purged:   &result.Purged,
 	})
-	return result, err
+	if err != nil {
+		return result, err
+	}
+
+	// #197 I2 fix: see PurgeMergedPak's own doc comment - exmodz mods have
+	// no per-mod deployment for the loop above to have already undeployed.
+	// #197 postsmoke fix: Warnings, not Notes, AND emit PurgeWarning -
+	// cmd/lmm/purge.go's own doc comment claims every Notes/Warnings entry
+	// has a corresponding live event; this one didn't, so it was
+	// completely invisible (not even --verbose-gated).
+	if perr := s.PurgeMergedPak(ctx, game, profileName, opts.Uninstall); perr != nil {
+		msg := fmt.Sprintf("could not remove merged pak: %v", perr)
+		result.Warnings = append(result.Warnings, msg)
+		if progress != nil {
+			progress(DeployProgress{Phase: PurgeWarning, Detail: msg})
+		}
+	}
+
+	return result, nil
 }
 
 // SwitchPlan is the pure, displayable diff between the currently-active
@@ -2289,6 +2465,10 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 type SwitchResult struct {
 	Disabled, Enabled, Installed int
 	Notes                        []string
+	// Warnings holds diagnostics that must reach the user unconditionally
+	// (#197 postsmoke fix), unlike Notes' --verbose-only display contract -
+	// today, only a merged-pak sync failure for plan.To.
+	Warnings []string
 }
 
 // ApplyProfileSwitch executes a plan produced by PlanProfileSwitch: disables
@@ -2326,8 +2506,14 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// link methods - the disable loop undeploys the FROM profile's
 	// deployments (which were made with plan.From's method), while the
 	// enable and install loops deploy into plan.To.
-	fromInstaller := s.GetInstallerForProfile(game, plan.From)
-	toInstaller := s.GetInstallerForProfile(game, plan.To)
+	fromInstaller, err := s.GetInstallerForProfile(game, plan.From)
+	if err != nil {
+		return result, err
+	}
+	toInstaller, err := s.GetInstallerForProfile(game, plan.To)
+	if err != nil {
+		return result, err
+	}
 	pm := s.NewProfileManager()
 
 	totalDisable := len(plan.ToDisable)
@@ -2555,6 +2741,15 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		return result, fmt.Errorf("setting default profile: %w", err)
 	}
 
+	// #197 postsmoke fix: Warnings, not Notes - SwitchResult.Notes is
+	// --verbose-gated in the CLI, so a sync failure here used to be
+	// silent by default.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.To); syncErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not sync merged pak: %v", syncErr))
+	} else {
+		result.Warnings = append(result.Warnings, syncWarnings...)
+	}
+
 	return result, nil
 }
 
@@ -2779,9 +2974,16 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	// Conflict detection mirrors confirmInstallConflicts exactly: ANY
 	// GetConflicts error - including "mod not in cache" for a mod PlanInstall
 	// has (by construction) never downloaded - degrades to "no conflicts
-	// detected", never fails the plan. See Conflicts' doc comment.
-	if conflicts, err := s.GetInstallerForProfile(game, profileName).GetConflicts(ctx, game, mod, profileName); err == nil {
-		plan.Conflicts = conflicts
+	// detected", never fails the plan. See Conflicts' doc comment. Extended
+	// (#189) to GetInstallerForProfile's own error (e.g. an invalid
+	// profile link_method): this is a read-only preview, not a deploy, so
+	// the existing "never fails the plan" policy still applies - the
+	// installer's resolution simply doesn't get to say whether this
+	// specific plan conflicts with anything already on disk.
+	if installer, err := s.GetInstallerForProfile(game, profileName); err == nil {
+		if conflicts, err := installer.GetConflicts(ctx, game, mod, profileName); err == nil {
+			plan.Conflicts = conflicts
+		}
 	}
 
 	return plan, nil
@@ -3046,6 +3248,16 @@ type InstallResult struct {
 	// line. Always 0 in the BATCH path (batchInstallMods' terminal summary
 	// never printed a file count, only Installed/Failed - see Failed).
 	FilesDeployed int
+
+	// MergedPakSyncFailed is true when this call's own end-of-install
+	// syncMergedPak attempt returned a hard error (#197 postsmoke review
+	// fix - Copilot flagged that a DeployCompile zero-file mod's success
+	// line unconditionally claimed "merged pak updated" even when the
+	// non-fatal sync failed, contradicting the loud Warning already on
+	// stderr). False when the sync succeeded, including when it returned
+	// its own non-fatal merge warnings - those still leave the pak
+	// deployed. Always false for a non-DeployCompile game.
+	MergedPakSyncFailed bool
 
 	Warnings []string
 	Notes    []string
@@ -3472,7 +3684,10 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		emit(DeployProgress{Phase: InstallBeforeAllForced, Detail: msg})
 	}
 
-	linkMethod := s.GetEffectiveLinkMethod(game, plan.Profile)
+	linkMethod, err := s.GetEffectiveLinkMethod(game, plan.Profile)
+	if err != nil {
+		return result, err
+	}
 	pm := s.NewProfileManager()
 
 	// deferredWarnings holds every install.after_each (BATCH path: every mod
@@ -3549,6 +3764,24 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 
 	for _, w := range deferredWarnings {
 		emit(w)
+	}
+
+	// #197 postsmoke fix: appending to result.Warnings alone is not loud -
+	// doInstall (cmd/lmm) never reads result.Warnings back, only the
+	// progress events emitted live above (InstallWarning is what actually
+	// reaches stderr). A sync failure here used to be completely silent,
+	// the exact plumbing gap that let the postsmoke bug through even on
+	// the already-fixed single-mod install path.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.Profile); syncErr != nil {
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		result.MergedPakSyncFailed = true
+		emit(DeployProgress{Phase: InstallWarning, Detail: msg})
+	} else {
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: InstallWarning, Detail: w})
+		}
 	}
 
 	return result, nil
@@ -3873,6 +4106,13 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 
 	var downloadedFileIDs []string
 	var checksums []fileChecksum
+	// compiledFiles accumulates every file this loop actually compiled (game
+	// DeployCompile + a ".exmodz" file - the same condition
+	// DownloadModToCache itself gates on), re-derived here rather than read
+	// back from DownloadModToCache's result since flows.go already has
+	// everything the condition needs. Drives the InstallCompiling
+	// announcement below in place of the generic InstallExtracting one.
+	var compiledFiles []*domain.DownloadableFile
 	filesTotal := len(plan.Files)
 	for i := range plan.Files {
 		file := &plan.Files[i]
@@ -3914,9 +4154,30 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 
 		result.FilesDeployed += downloadResult.FilesExtracted
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
+
+		if game.DeployMode == domain.DeployCompile && isExmodzFile(file.FileName) {
+			compiledFiles = append(compiledFiles, file)
+		}
 	}
 
-	emit(DeployProgress{Phase: InstallExtracting, ModName: mod.Name, ModID: mod.ID})
+	// A retained-for-merge file was never "extracted" - announce the step
+	// by name instead of the generic message, which is actively misleading
+	// here (#190 item 1). Only fires for files that actually go through
+	// ingest's validate+retain branch, so every non-DeployCompile (or
+	// non-exmodz) install keeps today's exact "Extracting to cache..." text
+	// unchanged. #197: this no longer compiles a per-mod pak - the merge
+	// happens later, batched across the whole profile, via
+	// Service.syncMergedPak - so there is no compiled output filename left
+	// to announce (Detail is unset).
+	if len(compiledFiles) > 0 {
+		for _, cf := range compiledFiles {
+			evt := base
+			evt.Phase, evt.File = InstallCompiling, cf
+			emit(evt)
+		}
+	} else {
+		emit(DeployProgress{Phase: InstallExtracting, ModName: mod.Name, ModID: mod.ID})
+	}
 
 	// Conflict confirmation restored to doInstall's ORIGINAL position (C1
 	// review finding): AFTER the primary is downloaded/extracted to cache,
@@ -4275,7 +4536,10 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		emit(evt)
 	}
 
-	linkMethod := s.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := s.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return result, err
+	}
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
@@ -4342,6 +4606,24 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, effectiveVersion))
+
+	// #197 postsmoke fix: also emit UpdateWarning - appending to
+	// result.Warnings alone is not loud enough, since applyUpdate
+	// (cmd/lmm/update.go) discards ApplyUpdate's result entirely
+	// (`_, err := ...`) and drives its console output purely from live
+	// progress events, exactly the plumbing gap the ApplyInstall fix
+	// closed for install.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: UpdateWarning, Detail: msg})
+	} else {
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: UpdateWarning, Detail: w})
+		}
+	}
+
 	return result, nil
 }
 
@@ -4516,7 +4798,10 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		emit(evt)
 	}
 
-	linkMethod := s.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := s.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return result, err
+	}
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
 	prevMod := mod.Mod
@@ -4588,6 +4873,24 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		_ = s.RollbackModVersion(mod.SourceID, mod.ID, game.ID, profileName)                                         //nolint:errcheck // best-effort recovery on an already-erroring path
 		_ = installer.ReplaceForUpdate(ctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
+	}
+
+	// #197 I1 fix: a rollback changes the mod's Version (and possibly its
+	// FileIDs), both regeneration triggers - without this, the merged pak
+	// keeps the rolled-away-from version's diff until some OTHER flow
+	// happens to sync it. #197 postsmoke fix: Warnings, not Notes (Notes is
+	// --verbose-gated in the CLI) - AND emit UpdateWarning: doUpdateRollback
+	// (cmd/lmm/update.go) drives its console output from live progress
+	// events, never reads RollbackResult.Warnings back directly.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+		msg := fmt.Sprintf("could not sync merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: UpdateWarning, Detail: msg})
+	} else {
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: UpdateWarning, Detail: w})
+		}
 	}
 
 	return result, nil
@@ -4847,7 +5150,10 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		return result, nil
 	}
 
-	installer := s.GetInstallerForProfile(game, profile.Name)
+	installer, err := s.GetInstallerForProfile(game, profile.Name)
+	if err != nil {
+		return result, err
+	}
 	total := len(toDownload)
 	emit(DeployProgress{Phase: ImportInstalling, Total: total})
 
@@ -4992,6 +5298,22 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 		installedEvt := base
 		installedEvt.Phase = ImportModInstalled
 		emit(installedEvt)
+	}
+
+	// #197 I3 fix: profile import deploys mods (installer.Install above) the
+	// same way ApplyInstall/DeployProfile do - without this, an imported
+	// profile's exmodz mods (zero per-mod deployment members of their own,
+	// Task 2/3) put NO content in the game directory at all until some
+	// OTHER flow happens to sync the merged pak.
+	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profile.Name); syncErr != nil {
+		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
+		result.Warnings = append(result.Warnings, msg)
+		emit(DeployProgress{Phase: ImportNote, Detail: msg})
+	} else {
+		for _, w := range syncWarnings {
+			result.Warnings = append(result.Warnings, w)
+			emit(DeployProgress{Phase: ImportNote, Detail: w})
+		}
 	}
 
 	return result, nil

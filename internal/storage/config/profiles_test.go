@@ -349,6 +349,21 @@ func TestImportProfile_TracksLinkMethodExplicit(t *testing.T) {
 	assert.Equal(t, domain.LinkCopy, imported.LinkMethod)
 }
 
+// TestImportProfile_RejectsUnknownLinkMethod pins #172's fail-loud contract
+// for imported profiles: a non-empty, unrecognized link_method is a
+// load-time error naming the field, offending value, the profile/game, and
+// valid options, instead of silently defaulting.
+func TestImportProfile_RejectsUnknownLinkMethod(t *testing.T) {
+	_, err := ImportProfile([]byte("name: default\ngame_id: skyrim-se\nlink_method: bogus\n"))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidLinkMethod)
+	assert.Contains(t, err.Error(), "default")
+	assert.Contains(t, err.Error(), "skyrim-se")
+	assert.Contains(t, err.Error(), "link_method")
+	assert.Contains(t, err.Error(), "bogus")
+}
+
 // TestSaveProfile_PreservesLockedMarker guards that Locked is written to YAML when true,
 // omitted when false (omitempty), verified against the raw saved YAML
 // (LoadProfile round-trip behavior is covered by the sibling Load tests).

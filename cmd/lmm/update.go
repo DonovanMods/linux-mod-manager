@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -63,6 +64,16 @@ type updateModJSON struct {
 	// the lock moves or clears, even under auto policy or --all. Omitted
 	// (not false) when unlocked, so pre-#143 documents are unchanged.
 	Locked bool `json:"locked,omitempty"`
+	// RecompileNeeded is the --json sibling of the bulk table's "[recompile]"
+	// POLICY marker (#196): true means this row is a base-pak staleness
+	// signal, not a real mod version update - Available equals Current, and
+	// Reason explains why. Omitted (not false) when the row is a normal
+	// update, so pre-#196 documents are unchanged (additive field, per the
+	// JSON-contract-additions-are-MINOR precedent - see #143/#155).
+	RecompileNeeded bool `json:"recompile_needed,omitempty"`
+	// Reason qualifies RecompileNeeded: "stale_compile" today. Omitted
+	// otherwise.
+	Reason string `json:"reason,omitempty"`
 }
 
 // singleUpdateJSON is the one-document --json result of `lmm update <mod-id>`
@@ -80,6 +91,9 @@ type singleUpdateJSON struct {
 	ToVersion   string `json:"to_version,omitempty"` // omitted for up_to_date / skipped
 	Changelog   string `json:"changelog,omitempty"`
 	// Status: "updated" | "up_to_date" | "skipped" | "available" | "rolled_back"
+	// | "recompiled" | "recompile_available" (#196: a base-pak staleness row,
+	// applied or --dry-run respectively - ToVersion equals FromVersion for
+	// both, since the mod itself hasn't changed).
 	Status string `json:"status"`
 	// Reason qualifies status=="skipped": "pinned" | "local" | "locked".
 	// Omitted otherwise.
@@ -115,18 +129,26 @@ If the update check itself fails partway through (e.g. a source outage),
 whatever was learned before the failure is still printed and the command
 exits non-zero rather than silently claiming success.
 
+For a compile-deploy game (e.g. Icarus), a compiled mod whose game base pak
+has changed since it was last compiled ("recompile needed") is checked and
+applied through this same command: no new version, just a same-version
+recompile against the current base pak.
+
 --json prints exactly one JSON document to stdout, in one of two shapes:
   - Bulk check (no mod ID): {game_id, profile, updates: [...], skipped:
     {pinned, local}, error?}. error is present when the check itself
     failed partway through; updates/skipped still reflect whatever was
     learned first. A locked mod's updates[] entry carries "locked": true
     (omitted when unlocked): the update is reported but will not be
-    applied until the lock moves or clears.
+    applied until the lock moves or clears. A recompile-needed entry
+    carries "recompile_needed": true and "reason": "stale_compile"
+    (available_version equals current_version - the mod hasn't changed).
   - Single mod (a mod ID given) or 'update rollback': {mod_id, name,
     from_version, to_version, changelog, status, reason}. status is one
-    of "updated", "up_to_date", "skipped", "available" (--dry-run), or
-    "rolled_back"; reason is set only when status is "skipped" ("pinned",
-    "local", or "locked").
+    of "updated", "up_to_date", "skipped", "available" (--dry-run),
+    "rolled_back", "recompiled", or "recompile_available" (--dry-run,
+    same-version base-pak recompile); reason is set only when status is
+    "skipped" ("pinned", "local", or "locked").
 
 Examples:
   lmm update --game skyrim-se                    # Check all mods for updates
@@ -291,9 +313,10 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}))
 	}
 
-	// Check for updates (partial results returned even when some mods fail to fetch)
-	updater := service.NewUpdater()
-	updates, checkErr := updater.CheckUpdates(ctx, game, installed)
+	// Check for updates (partial results returned even when some mods fail to
+	// fetch) plus, for DeployCompile games, merged-pak staleness (#196/#197) -
+	// CheckGameUpdates is the single seam CLI and TUI both check through.
+	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed)
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
@@ -380,7 +403,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 		for i, u := range updates {
 			_, isLocked := lockedRefs[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)]
-			out.Updates[i] = updateModJSON{
+			row := updateModJSON{
 				ModID:        u.InstalledMod.ID,
 				Name:         u.InstalledMod.Name,
 				Current:      u.InstalledMod.Version,
@@ -388,6 +411,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 				UpdatePolicy: policyToString(u.InstalledMod.UpdatePolicy),
 				Locked:       isLocked,
 			}
+			if u.RecompileNeeded {
+				row.RecompileNeeded = true
+				row.Reason = "stale_compile"
+			}
+			out.Updates[i] = row
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -398,7 +426,8 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Display available updates with policy
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintf(w, "MOD\tCURRENT\tAVAILABLE\tPOLICY\n"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
@@ -419,6 +448,12 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if isLocked {
 			policyStr += " [locked@" + lockedVersion + "]"
 		}
+		if update.RecompileNeeded {
+			// #196: a base-pak staleness row - Available above equals
+			// Current, so this marker is the only thing telling it apart
+			// from a genuine no-op row in the table.
+			policyStr += " [recompile]"
+		}
 		if update.InstalledMod.UpdatePolicy == domain.UpdateAuto {
 			if isLocked {
 				lockedAuto++
@@ -427,6 +462,17 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 				policyStr += " ✓"
 				autoUpdates = append(autoUpdates, update)
 			}
+		}
+		// Safe to color inline here specifically because POLICY is the
+		// LAST column - text/tabwriter never pads after the final cell, so
+		// this cell's inflated byte length can't misalign any column after
+		// it (see printTable's doc comment; do not do this for an interior
+		// column).
+		switch {
+		case isLocked:
+			policyStr = colorYellow(policyStr)
+		case strings.HasSuffix(policyStr, " ✓"):
+			policyStr = colorGreen(policyStr)
 		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			truncate(update.InstalledMod.Name, 40),
@@ -440,8 +486,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
 	}
+	if err := printTable(&buf, 2, nil); err != nil {
+		return fmt.Errorf("writing table: %w", err)
+	}
 
-	fmt.Printf("\n%d update(s) available.\n", len(updates))
+	fmt.Printf("\n%s\n", colorYellow(fmt.Sprintf("%d update(s) available.", len(updates))))
 	if skips := core.CountUpdateSkips(installed); skips.Total() > 0 {
 		fmt.Println()
 		printSkipped(skips)
@@ -486,9 +535,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		fmt.Printf("\nApplying %d auto-update(s)...\n", len(autoUpdates))
 		for _, update := range autoUpdates {
 			if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
-				fmt.Printf("  ✗ %s: %v\n", update.InstalledMod.Name, err)
+				fmt.Printf("  %s %s: %v\n", colorRed("✗"), update.InstalledMod.Name, err)
 			} else {
-				fmt.Printf("  ✓ %s %s → %s\n", update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
+				fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
 			}
 		}
 	}
@@ -512,9 +561,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Printf("\nApplying %d remaining update(s)...\n", len(notifyUpdates))
 			for _, update := range notifyUpdates {
 				if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
-					fmt.Printf("  ✗ %s: %v\n", update.InstalledMod.Name, err)
+					fmt.Printf("  %s %s: %v\n", colorRed("✗"), update.InstalledMod.Name, err)
 				} else {
-					fmt.Printf("  ✓ %s %s → %s\n", update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
+					fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
 				}
 			}
 		}
@@ -548,9 +597,8 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		}
 	}
 
-	// Check for update for this specific mod
-	updater := service.NewUpdater()
-	updates, err := updater.CheckUpdates(ctx, game, []domain.InstalledMod{*mod})
+	// Check for update for this specific mod (plus merged-pak staleness, #196/#197)
+	updates, err := service.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod})
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
@@ -590,6 +638,50 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	}
 
 	update := updates[0]
+
+	// #196: a base-pak staleness row carries no real version change
+	// (NewVersion == mod.Version) - branch off before any of the
+	// version-bump wording/JSON below, which would otherwise print a
+	// misleading "Updating vX → vX...".
+	if update.RecompileNeeded {
+		if locked {
+			if jsonOutput {
+				return emitSingleUpdateJSON(singleUpdateJSON{
+					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, ToVersion: mod.Version, Status: "skipped", Reason: "locked",
+				})
+			}
+			fmt.Printf("Recompile needed for %s (base pak updated) — but it is locked at v%s.\n", mod.Name, lockedVersion)
+			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", mod.SourceID, profileName, mod.ID, mod.Version, mod.SourceID, profileName, mod.ID)
+			return nil
+		}
+
+		if !jsonOutput {
+			fmt.Printf("Recompiling %s (base pak updated)...\n", mod.Name)
+		}
+
+		if updateDryRun {
+			if jsonOutput {
+				return emitSingleUpdateJSON(singleUpdateJSON{
+					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, ToVersion: mod.Version, Status: "recompile_available",
+				})
+			}
+			fmt.Println("(dry-run: no changes applied)")
+			return nil
+		}
+
+		if err := applyRecompile(ctx, service, game, profileName); err != nil {
+			return err
+		}
+
+		if jsonOutput {
+			return emitSingleUpdateJSON(singleUpdateJSON{
+				ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, ToVersion: mod.Version, Status: "recompiled",
+			})
+		}
+		fmt.Printf("\n%s Recompiled: %s (base pak updated)\n", colorGreen("✓"), mod.Name)
+		return nil
+	}
+
 	oldVersion := mod.Version
 	newVersion := update.NewVersion
 
@@ -655,7 +747,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		})
 	}
 
-	fmt.Printf("\n✓ Updated: %s %s → %s\n", mod.Name, oldVersion, newVersion)
+	fmt.Printf("\n%s Updated: %s %s → %s\n", colorGreen("✓"), mod.Name, oldVersion, newVersion)
 	fmt.Println("  Previous version preserved for rollback")
 	return nil
 }
@@ -666,7 +758,16 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 // core.ApplyUpdate's progress events - reproducing the pre-extraction CLI's
 // exact console positioning (download progress, forced-hook warnings,
 // after_each hook warnings, and the --verbose-gated link-method note).
+//
+// #196/#197: a RecompileNeeded row carries no real version change
+// (NewVersion == InstalledMod.Version) - it is routed to
+// Service.ApplyMergedPakRegen instead, which has no hooks to run and no
+// version/FileIDs to record, only the merge-and-redeploy step itself.
 func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, upd domain.Update, profileName string) error {
+	if upd.RecompileNeeded {
+		return applyRecompile(ctx, service, game, profileName)
+	}
+
 	opts := core.UpdateOptions{
 		Hooks:       getResolvedHooks(service, game, profileName),
 		HookRunner:  getHookRunner(service),
@@ -694,6 +795,28 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	_, err := service.ApplyUpdate(ctx, game, profileName, upd, opts, progress)
+	return err
+}
+
+// applyRecompile applies a #197 merged-pak staleness row via
+// Service.ApplyMergedPakRegen, printing from its progress events the same
+// way applyUpdate does for its own (UpdateWarning/UpdateNote are the only
+// phases ApplyMergedPakRegen emits - it runs no hooks and downloads
+// nothing worth a progress bar).
+func applyRecompile(ctx context.Context, service *core.Service, game *domain.Game, profileName string) error {
+	result, err := service.ApplyMergedPakRegen(ctx, game, profileName, nil)
+	// #197 M4 fix: ApplyMergedPakRegen never emits UpdateWarning/UpdateNote
+	// progress events (only UpdateDownloadDone) - its merge warnings (e.g.
+	// an asset-path collision, "a loud warning" per the CHANGELOG) travel
+	// through result.Warnings instead. A progress callback watching for
+	// those phases would silently never fire; print result.Warnings
+	// directly so `lmm update`'s apply path surfaces them the same way
+	// DeployProfile/the TUI already do.
+	if result != nil {
+		for _, w := range result.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
 	return err
 }
 
@@ -803,7 +926,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		})
 	}
 
-	fmt.Printf("\n✓ Rolled back: %s %s → %s\n", result.ModName, result.FromVersion, result.ToVersion)
+	fmt.Printf("\n%s Rolled back: %s %s → %s\n", colorGreen("✓"), result.ModName, result.FromVersion, result.ToVersion)
 	return nil
 }
 

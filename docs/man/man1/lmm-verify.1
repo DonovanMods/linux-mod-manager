@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.27.1" "User Commands"
+.TH "LMM" "1" "Jul 2026" "lmm 1.28.0" "User Commands"
 
 .SH NAME
 lmm-verify - Verify cached mod files
@@ -53,6 +53,26 @@ X NAME - VERSION MISMATCH (recorded X, source reports Y)
 .EE
 
 .PP
+For a compile-deploy game (e.g. Icarus), verify also compares each
+compiled mod's recorded base-pak fingerprint against the game's live base
+pak (#196, "the Friday problem" - a weekly base pak refresh silently
+reverts a compiled mod's patched tables, with nothing to notice
+otherwise):
+
+.EX
+? NAME - RECOMPILE NEEDED           the merged pak's inputs changed
+                                     (base pak update, or missing from
+                                     the game directory); run 'lmm
+                                     update --all' to fix it
+.EE
+
+.PP
+This check is entirely local (no source contacted) and applies to every
+compiled mod regardless of source, including local imports. Use --fix to
+repair it: it resyncs the profile's merged pak (recompiling and
+redeploying it if needed), the same repair 'lmm update --all' applies.
+
+.PP
 Mods installed from a local source, mods requiring manual download, and
 mods with no recorded file IDs are skipped silently - there is nothing
 to check against. If the source can't be reached, the mod is reported
@@ -96,9 +116,10 @@ OK case - this is never counted in issues or warnings.
 .PP
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
-"no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
-"version_unverifiable"; note adds detail where there's something extra to
-say - a blocked cache rename, sibling-repair results, a --fix repair or
+"no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
+"version_unverifiable", or "stale_compile"; note adds detail where
+there's something extra to say - a blocked cache rename, sibling-repair
+results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
 record ("locked"), or a locked record's pending convergence detail - and

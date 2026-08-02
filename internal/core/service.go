@@ -21,6 +21,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -163,6 +164,39 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 	}
 	sort.Slice(srcs, func(i, j int) bool { return srcs[i].ID() < srcs[j].ID() })
 	return srcs, nil
+}
+
+// compilerSourceForGame resolves the sole Compiler-capable source
+// registered for gameID (#173). The download path pins its MergeCompiler
+// check to the specific source a file was downloaded from
+// (DownloadModToCache's src.(source.MergeCompiler) check); Importer.Import
+// has no such per-archive source to key off of, so it resolves against
+// every source the game maps in its registry instead — matching
+// resolveBasePak's v1 scope of "Icarus only", at most one of a game's
+// configured sources implements MergeCompiler today. Zero is the expected
+// failure when the game (or its MergeCompiler source) isn't configured;
+// more than one is treated as ambiguous rather than picking arbitrarily —
+// both fail loud instead of letting an .exmodz import silently skip
+// validation.
+func (s *Service) mergeCompilerSourceForGame(gameID string) (source.MergeCompiler, error) {
+	srcs, err := s.SourcesForGame(gameID)
+	if err != nil {
+		return nil, err
+	}
+	var compilers []source.MergeCompiler
+	for _, src := range srcs {
+		if c, ok := src.(source.MergeCompiler); ok {
+			compilers = append(compilers, c)
+		}
+	}
+	switch len(compilers) {
+	case 0:
+		return nil, fmt.Errorf("game %q requires DeployCompile but has no merge-compiler-capable source configured (map a source implementing source.MergeCompiler in the game's sources)", gameID)
+	case 1:
+		return compilers[0], nil
+	default:
+		return nil, fmt.Errorf("game %q has multiple merge-compiler-capable sources configured; ambiguous compile source", gameID)
+	}
 }
 
 // SourceWarning reports a per-source failure during an aggregate operation.
@@ -477,8 +511,15 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		}
 	}()
 
-	// Download the file
-	archivePath := filepath.Join(tempDir, file.FileName)
+	// Download the file. safeFileName sanitizes file.FileName - a
+	// SOURCE-CONTROLLED value (NexusMods/CurseForge/Icarus/a custom source's
+	// own declared filename) - before it is ever used as a path component:
+	// an entry like "../../evil" would otherwise let a malicious or buggy
+	// source escape tempDir/stagePath (#196 review). Used for every
+	// path-construction use of the filename below; file.FileName itself is
+	// left untouched for display purposes (the SHA256 mismatch message).
+	safeFileName := filepath.Base(file.FileName)
+	archivePath := filepath.Join(tempDir, safeFileName)
 	var headers map[string]string
 	if hp, ok := src.(source.DownloadHeaderProvider); ok {
 		headers = hp.DownloadHeaders(url)
@@ -499,15 +540,44 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		return nil, err
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
+
+	if game.DeployMode == domain.DeployCompile && isExmodzFile(safeFileName) {
+		mc, ok := src.(source.MergeCompiler)
+		if !ok {
+			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement MergeCompiler", src.ID(), game.ID)
+		}
+		if err := mc.ValidateSource(archivePath); err != nil {
+			return nil, fmt.Errorf("validating %s: %w", safeFileName, err)
+		}
+		// Unlike copyFileStreaming (which mkdirs its destination itself),
+		// the retained-source write below needs stagePath to exist first.
+		if err := os.MkdirAll(stagePath, 0755); err != nil {
+			return nil, fmt.Errorf("preparing staging: %w", err)
+		}
+		retainedPath := filepath.Join(stagePath, cache.RetainedSourceName(file.ID))
+		if err := copyFileStreaming(archivePath, retainedPath); err != nil {
+			return nil, fmt.Errorf("retaining %s: %w", safeFileName, err)
+		}
+		// members is nil (#197): this cache entry's ONLY content is the
+		// reserved retained source - there is no per-mod deployment
+		// artifact anymore. The merged pak (a separate, profile-level
+		// cache entry - internal/core/merged_pak.go) is what actually
+		// deploys.
+		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, nil); err != nil {
+			return nil, err
+		}
+		return &DownloadModResult{FilesExtracted: 0, Checksum: downloadResult.Checksum}, nil
+	}
+
 	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(archivePath) {
 		// Copy mode: game wants files as-is (e.g., Hytale .zip mods)
 		// Or not an archive - just copy to cache. copyFileStreaming mkdirs
 		// stagePath itself (importer.go), so no MkdirAll needed here.
-		destPath := filepath.Join(stagePath, file.FileName)
+		destPath := filepath.Join(stagePath, safeFileName)
 		if err := copyFileStreaming(archivePath, destPath); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
-		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{file.FileName}); err != nil {
+		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, []string{safeFileName}); err != nil {
 			return nil, err
 		}
 		return &DownloadModResult{
@@ -603,11 +673,14 @@ func (s *Service) ingestLocalToCache(gameCache *cache.Cache, game *domain.Game, 
 		// item 12); localPath's own basename is often just a temp file name
 		// and falls back only when the caller left FileName unset.
 		// copyFileStreaming mkdirs stagePath itself (importer.go), so no
-		// MkdirAll needed here.
+		// MkdirAll needed here. filepath.Base sanitizes whichever name was
+		// chosen: file.FileName is SOURCE-CONTROLLED (#196 review) and must
+		// not be trusted as a path component verbatim (e.g. "../../evil").
 		destName := file.FileName
 		if destName == "" {
 			destName = filepath.Base(localPath)
 		}
+		destName = filepath.Base(destName)
 		if err := copyFileStreaming(localPath, filepath.Join(stagePath, destName)); err != nil {
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
@@ -893,6 +966,52 @@ func commitStagedCache(cachePath, stagePath string) error {
 	return nil
 }
 
+// isExmodzFile reports whether fileName is a compile-eligible archive
+// (case-insensitive ".exmodz" suffix). DeployCompile games can also serve
+// plain, already-built ".pak" files (icarus.GetModFiles enumerates "pak"
+// before "exmodz") - those must NOT be routed through Compile, which expects
+// an .exmodz diff (#136 review, Task 13 fix round 1): a prebuilt pak falls
+// through to the pre-compile extract/copy logic unchanged, exactly as if
+// DeployMode were not DeployCompile at all.
+func isExmodzFile(fileName string) bool {
+	return strings.HasSuffix(strings.ToLower(fileName), ".exmodz")
+}
+
+// resolveBasePak locates the currently-installed game's base pak for
+// DeployCompile sources. v1 scope: Icarus only, one known pak filename
+// pattern — extend this if a second DeployCompile-using game is ever added
+// rather than generalizing speculatively now. The relative path below is
+// Task 1's empirically-confirmed finding (docs/plans/icarus-pak-format-findings.md),
+// recorded before this function was written, not an assumption made here: the
+// JSON data tables live in Content/Data/data.pak, NOT in the Content/Paks
+// pakchunks, which carry only cooked .uasset/.uexp assets and no JSON at all.
+//
+// This pak is also the direct source of base table *content* (#175): Compile
+// reads each patched table straight out of it via internal/unrealpak, so a
+// compile is always week-correct by construction (there's no separate dump
+// to go stale relative to the install) and works entirely offline.
+func resolveBasePak(game *domain.Game) (string, error) {
+	candidate := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
+	if _, err := os.Stat(candidate); err != nil {
+		return "", fmt.Errorf("locating base pak for %q: %w", game.ID, err)
+	}
+	return candidate, nil
+}
+
+// basePakIndexHash opens basePakPath and returns its footer IndexHash
+// (#196) - cheap (footer + primary-index region only; unrealpak.Open never
+// reads a pak's actual file payloads), matching the base pak Compile itself
+// already opens to read patched tables from, so this adds no new I/O
+// pattern to the compile path.
+func basePakIndexHash(basePakPath string) (string, error) {
+	r, err := unrealpak.Open(basePakPath)
+	if err != nil {
+		return "", fmt.Errorf("reading base pak for compile fingerprint: %w", err)
+	}
+	defer r.Close() //nolint:errcheck
+	return r.IndexHash(), nil
+}
+
 // GetGame retrieves a game by ID
 func (s *Service) GetGame(gameID string) (*domain.Game, error) {
 	game, ok := s.games[gameID]
@@ -974,13 +1093,26 @@ func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
 // global default (#81). A missing or unreadable profile degrades to the
 // game-level resolution rather than erroring - callers resolving a method are
 // deploying, not validating, and the profile's absence is diagnosed elsewhere.
-// The CLI --method override sits above all of these and is applied by callers
+// An invalid link_method value in an otherwise-loadable profile is different:
+// #172 made that a fail-loud load-time error at every explicit LoadProfile
+// call site, and degrading here would deploy with the wrong method with
+// nothing telling the caller anything was wrong - so that one LoadProfile
+// failure mode (errors.Is domain.ErrInvalidLinkMethod) is returned as an
+// error instead of folding into the silent-degrade path (#189). The CLI
+// --method override sits above all of these and is applied by callers
 // (see DeployOptions.LinkMethod).
-func (s *Service) GetEffectiveLinkMethod(game *domain.Game, profileName string) domain.LinkMethod {
-	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil && profile.LinkMethodExplicit {
-		return profile.LinkMethod
+func (s *Service) GetEffectiveLinkMethod(game *domain.Game, profileName string) (domain.LinkMethod, error) {
+	profile, err := config.LoadProfile(s.configDir, game.ID, profileName)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidLinkMethod) {
+			return 0, fmt.Errorf("resolving effective link method: %w", err)
+		}
+		return s.GetGameLinkMethod(game), nil
 	}
-	return s.GetGameLinkMethod(game)
+	if profile.LinkMethodExplicit {
+		return profile.LinkMethod, nil
+	}
+	return s.GetGameLinkMethod(game), nil
 }
 
 // GetInstaller returns an Installer configured for the given game
@@ -990,9 +1122,14 @@ func (s *Service) GetInstaller(game *domain.Game) *Installer {
 
 // GetInstallerForProfile returns an Installer whose linker honors
 // profileName's effective link method (GetEffectiveLinkMethod) - the
-// profile-aware companion to GetInstaller.
-func (s *Service) GetInstallerForProfile(game *domain.Game, profileName string) *Installer {
-	return s.NewInstallerWithLinker(game, s.GetLinker(s.GetEffectiveLinkMethod(game, profileName)))
+// profile-aware companion to GetInstaller. Propagates GetEffectiveLinkMethod's
+// new error case (#189) rather than swallowing it.
+func (s *Service) GetInstallerForProfile(game *domain.Game, profileName string) (*Installer, error) {
+	method, err := s.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return nil, err
+	}
+	return s.NewInstallerWithLinker(game, s.GetLinker(method)), nil
 }
 
 // NewInstallerWithLinker returns an Installer for the given game using a

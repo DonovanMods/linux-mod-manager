@@ -2,6 +2,8 @@
 
 lmm uses YAML configuration files under `~/.config/lmm/` (or the directory set with `--config`).
 
+`link_method` and `deploy_mode` fields (in `config.yaml`, `games.yaml`, and profile files) are validated at load time: leaving one unset keeps its documented default, but a value that doesn't exactly match one of the listed options — a typo like `deploy_mode: compil` — is a load-time error naming the field, the offending value, and the valid options, not a silent fallback.
+
 ## config.yaml
 
 Global application settings. Optional; defaults apply if the file is missing.
@@ -20,16 +22,16 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 
 ### Game options
 
-| Option         | Type   | Required | Description                                                |
-| -------------- | ------ | -------- | ---------------------------------------------------------- |
-| `name`         | string | yes      | Display name                                               |
-| `install_path` | string | yes      | Game installation directory (supports `~`)                 |
-| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)           |
-| `sources`      | map    | yes      | Source ID to game ID mapping (see below)                   |
-| `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy` |
-| `cache_path`   | string | no       | Per-game cache directory override                          |
-| `hooks`        | object | no       | Scripts to run around install/uninstall (see below)        |
-| `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default) or `copy`  |
+| Option         | Type   | Required | Description                                                           |
+| -------------- | ------ | -------- | --------------------------------------------------------------------- |
+| `name`         | string | yes      | Display name                                                          |
+| `install_path` | string | yes      | Game installation directory (supports `~`)                            |
+| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)                      |
+| `sources`      | map    | yes      | Source ID to game ID mapping (see below)                              |
+| `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy`            |
+| `cache_path`   | string | no       | Per-game cache directory override                                     |
+| `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                   |
+| `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
 
 ### Hooks (games.yaml)
 
@@ -57,6 +59,9 @@ The `deploy_mode` option controls how downloaded mod archives are handled:
 
 - **`extract`** (default): Archives are extracted to the mod path. Use for games where mods are loose files (e.g., Skyrim, Fallout).
 - **`copy`**: Archives are copied as-is to the mod path without extraction. Use for games that expect mod files to remain as archives (e.g., Minecraft `.jar` files, some Unity games).
+- **`compile`**: The downloaded file is compiled into a new artifact before caching (currently Icarus only: an `.exmodz` diff is applied to the game's base data tables to produce a deployable `_P.pak`). Only sources that implement compiling support this mode. The base data tables are read directly from the installed game's own `data.pak`, so a compile always matches the installed game version and needs no network access.
+
+**Merge precedence**: with more than one `compile`-mode mod installed, the merge applies each mod's changes in the profile's load order (the `mods` list's order - see [Profile files](#profile-files) below, and the same order `lmm list` displays) against the same evolving base tables, so a mod later in the load order is applied later. Table-row conflicts compose at the _field_ level: an upsert, not a whole-row overwrite, so two mods patching different fields of the same row - or different rows entirely - both survive; only a genuine same-row-same-field write is last-wins, which is an expected outcome of ordinary upserts, not something that gets a warning. Bundled asset files can't compose that way - a same-path asset collision between two mods is necessarily whole-file last-wins, and is reported as a warning (installing or updating a colliding mod prints it). Either way, the mod at the bottom of the load order has final say, and reordering the profile (`lmm profile reorder`) regenerates the merged pak immediately, so the new precedence takes effect right away.
 
 Example:
 
@@ -104,7 +109,7 @@ Used by `lmm game detect` to know which Steam games are moddable. The app ships 
 
 **`~/.config/lmm/steam-games.yaml`**
 
-Format: Steam App ID (string) as key, then `slug`, `name`, `nexus_id`, `mod_path` (relative to game install, empty for game root). Example:
+Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative to game install, empty for game root), optional `nexus_id` (omit for a game with no NexusMods presence), and two more optional fields, `deploy_mode` and `sources`, that pass straight through to the generated `games.yaml` entry's own `deploy_mode`/`sources` (omit both for the default `{nexusmods: <nexus_id>}` sources map and `extract` deploy mode every entry got before these existed). Example:
 
 ```yaml
 "489830":
@@ -117,6 +122,13 @@ Format: Steam App ID (string) as key, then `slug`, `name`, `nexus_id`, `mod_path
   name: My Game
   nexus_id: mygame
   mod_path: ""
+"7654321":
+  slug: my-compile-game
+  name: My Compile-Mode Game
+  mod_path: Mods
+  deploy_mode: compile
+  sources:
+    mysource: my-compile-game
 ```
 
 Entries here are merged with the built-in list (overrides win). No rebuild needed to support more games.

@@ -147,3 +147,39 @@ func CompareVersions(v1, v2 string) int {
 func IsNewerVersion(currentVersion, newVersion string) bool {
 	return domain.IsNewerVersion(currentVersion, newVersion)
 }
+
+// CheckGameUpdates is the single seam CLI and TUI both check updates
+// through (#196/#197): it combines Updater.CheckUpdates' remote version
+// checks with CheckMergedPakStaleness' local merged-pak staleness scan
+// (#197's generalization of #196's per-mod base-pak check to the merged
+// model), so "does this profile need attention" means the same thing in
+// both interfaces. profileName is required (#197): staleness is scoped to
+// ONE profile's merged pak, not the whole game.
+//
+// Errors from either half are tolerated the same way CheckUpdates already
+// tolerates a single source failing: whatever updates were found are still
+// returned, with the first non-nil error surfaced (checkErr takes priority
+// as the richer, multi-source diagnostic when both fail).
+func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod) ([]domain.Update, error) {
+	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, installed)
+
+	staleUpd, staleErr := s.CheckMergedPakStaleness(game, profileName)
+	if staleErr != nil && checkErr == nil {
+		checkErr = staleErr
+	}
+
+	if staleUpd != nil {
+		reported := false
+		for _, u := range updates {
+			if u.InstalledMod.SourceID == staleUpd.InstalledMod.SourceID && u.InstalledMod.ID == staleUpd.InstalledMod.ID {
+				reported = true
+				break
+			}
+		}
+		if !reported {
+			updates = append(updates, *staleUpd)
+		}
+	}
+
+	return updates, checkErr
+}

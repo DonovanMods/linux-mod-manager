@@ -230,7 +230,7 @@ func doModSetUpdate(service *core.Service, game *domain.Game, modID string) erro
 		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
-	fmt.Printf("✓ %s update policy: %s", mod.Name, policyStr)
+	fmt.Printf("%s %s update policy: %s", colorGreen("✓"), mod.Name, policyStr)
 	if modSetPin {
 		fmt.Printf(" (v%s)", mod.Version)
 	}
@@ -327,7 +327,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		return err
 	}
 
-	fmt.Printf("✓ %s locked at v%s\n", mod.Name, target)
+	fmt.Printf("%s %s locked at v%s\n", colorGreen("✓"), mod.Name, target)
 	// Locking is a metadata write, not a deploy (design decision): when the
 	// target differs from what is actually installed, the game directory
 	// won't match the lock until convergence, so say so.
@@ -370,7 +370,7 @@ func doModUnlock(service *core.Service, game *domain.Game, modID string) error {
 		return err
 	}
 
-	fmt.Printf("✓ %s unlocked (update policy: %s)\n", mod.Name, policyToString(mod.UpdatePolicy))
+	fmt.Printf("%s %s unlocked (update policy: %s)\n", colorGreen("✓"), mod.Name, policyToString(mod.UpdatePolicy))
 	return nil
 }
 
@@ -405,24 +405,25 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 		// accumulated before the fatal error alongside it (mirrors
 		// UninstallMod's own convention - see uninstall.go's
 		// printUninstallDiagnostics); print them now, or they'd otherwise be
-		// lost even though they already happened. result is nil on every
-		// EnableMod error path today, but is guarded here anyway, for parity
-		// with doModDisable below and because EnableResult.Notes is kept
-		// specifically so a future EnableMod diagnostic wouldn't need
-		// another signature change (see its doc comment in flows.go).
+		// lost even though they already happened (e.g. a SetModDeployed
+		// failure Note recorded, then a later SetModEnabled failure, #183).
+		// result is nil only when EnableMod failed before it could allocate
+		// the result struct, exactly like doModDisable below.
 		if result != nil {
 			printModNotes(result.Notes)
+			printModWarnings(result.Warnings)
 		}
 		return err
 	}
 	printModNotes(result.Notes)
+	printModWarnings(result.Warnings)
 
 	if !result.Changed {
 		fmt.Printf("%s is already enabled.\n", mod.Name)
 		return nil
 	}
 
-	fmt.Printf("✓ Enabled: %s\n", mod.Name)
+	fmt.Printf("%s Enabled: %s\n", colorGreen("✓"), mod.Name)
 	return nil
 }
 
@@ -463,17 +464,19 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 		// before it could allocate the result struct.
 		if result != nil {
 			printModNotes(result.Notes)
+			printModWarnings(result.Warnings)
 		}
 		return err
 	}
 	printModNotes(result.Notes)
+	printModWarnings(result.Warnings)
 
 	if !result.Changed {
 		fmt.Printf("%s is already disabled.\n", mod.Name)
 		return nil
 	}
 
-	fmt.Printf("✓ Disabled: %s (files removed from game, kept in cache)\n", mod.Name)
+	fmt.Printf("%s Disabled: %s (files removed from game, kept in cache)\n", colorGreen("✓"), mod.Name)
 	return nil
 }
 
@@ -493,6 +496,16 @@ func printModNotes(notes []string) {
 	}
 	for _, n := range notes {
 		fmt.Printf("  %s\n", n)
+	}
+}
+
+// printModWarnings prints EnableResult.Warnings/DisableResult.Warnings
+// unconditionally to stderr (#197 postsmoke fix) - unlike printModNotes,
+// these must reach the user regardless of --verbose. Today the only
+// producer is a merged-pak sync failure; nil-safe like printModNotes.
+func printModWarnings(warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 }
 
@@ -528,6 +541,12 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 	fmt.Printf("Files deployed by %s (%s):\n\n", mod.Name, modID)
 
 	if len(files) == 0 {
+		gameCache := svc.GetGameCache(game)
+		if game.DeployMode == domain.DeployCompile && hasRetainedSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
+			fmt.Println("  No files of its own - this mod participates in the profile's merged pak.")
+			fmt.Printf("  (See zzz_LMM_Merged_P.pak; run `lmm verify` to check the merged pak is up to date)\n")
+			return nil
+		}
 		fmt.Println("  No deployed files tracked.")
 		fmt.Println("  (Files are tracked on install; existing mods may need to be redeployed)")
 		return nil
@@ -631,9 +650,9 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	// Human-readable output
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("%s\n", mod.Name)
+	fmt.Printf("%s\n", colorHeader(mod.Name))
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, mod.Version, mod.Author)
+	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, colorCyan(mod.Version), mod.Author)
 	if mod.Category != "" {
 		fmt.Printf("Category: %s\n", mod.Category)
 	}
@@ -667,8 +686,18 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	if installedInfo != nil {
 		fmt.Println()
-		fmt.Printf("Installed: v%s (profile: %s)\n", installedInfo.Version, installedInfo.Profile)
-		fmt.Printf("  Update policy: %s\n", installedInfo.UpdatePolicy)
+		fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)
+		policyDisplay := installedInfo.UpdatePolicy
+		switch policyDisplay {
+		case "pinned":
+			policyDisplay = colorYellow(policyDisplay)
+		case "auto":
+			// Auto is a positive, hands-off state - green, matching #193's
+			// "colored values, not just the odd count" (notify, the
+			// default, stays plain - there's nothing notable to flag).
+			policyDisplay = colorGreen(policyDisplay)
+		}
+		fmt.Printf("  Update policy: %s\n", policyDisplay)
 		if installedInfo.Locked {
 			lockLine := "locked at v" + installedInfo.LockedVersion
 			// Locking is a metadata write, not a deploy (same #97 design
@@ -678,7 +707,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			if installedInfo.LockedVersion != installedInfo.Version {
 				lockLine += " — run 'lmm profile apply' to converge"
 			}
-			fmt.Printf("  Lock: %s\n", lockLine)
+			fmt.Printf("  Lock: %s\n", colorYellow(lockLine))
 		} else {
 			fmt.Println("  Lock: none")
 		}

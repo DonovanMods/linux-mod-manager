@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -33,7 +34,7 @@ type verifyFileJSON struct {
 	ModID   string `json:"mod_id"`
 	ModName string `json:"mod_name"`
 	FileID  string `json:"file_id"`
-	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable
+	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile
 	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, or a file-count-check lookup failure - omitted when there's nothing extra to add
 }
 
@@ -73,6 +74,22 @@ the version of the file that was actually downloaded and deployed):
     ? NAME - VERSION UNVERIFIABLE       none of the recorded file ID(s)
                                          are listed by the source anymore
                                          (reinstall or 'lmm update')
+
+For a compile-deploy game (e.g. Icarus), verify also compares each
+compiled mod's recorded base-pak fingerprint against the game's live base
+pak (#196, "the Friday problem" - a weekly base pak refresh silently
+reverts a compiled mod's patched tables, with nothing to notice
+otherwise):
+
+    ? NAME - RECOMPILE NEEDED           the merged pak's inputs changed
+                                         (base pak update, or missing from
+                                         the game directory); run 'lmm
+                                         update --all' to fix it
+
+This check is entirely local (no source contacted) and applies to every
+compiled mod regardless of source, including local imports. Use --fix to
+repair it: it resyncs the profile's merged pak (recompiling and
+redeploying it if needed), the same repair 'lmm update --all' applies.
 
 Mods installed from a local source, mods requiring manual download, and
 mods with no recorded file IDs are skipped silently - there is nothing
@@ -114,9 +131,10 @@ OK case - this is never counted in issues or warnings.
 
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
-"no_checksum", "file_count_mismatch", "skipped", "version_mismatch", or
-"version_unverifiable"; note adds detail where there's something extra to
-say - a blocked cache rename, sibling-repair results, a --fix repair or
+"no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
+"version_unverifiable", or "stale_compile"; note adds detail where
+there's something extra to say - a blocked cache rename, sibling-repair
+results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
 record ("locked"), or a locked record's pending convergence detail - and
@@ -145,6 +163,21 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
 		return doVerify(cmd, svc, game, args)
 	})
+}
+
+// hasRetainedSource reports whether any of fileIDs has a retained compile
+// source (cache.RetainedSourceName) on disk for sourceID/modID/version -
+// the signal that a cache entry is a DeployCompile ".exmodz" validate+
+// retain-only entry (#197 I4), which deploys zero files of its own by
+// design and must not be flagged as a FILE COUNT MISMATCH.
+func hasRetainedSource(gameCache *cache.Cache, gameID, sourceID, modID, version string, fileIDs []string) bool {
+	for _, fileID := range fileIDs {
+		retainedPath := gameCache.GetFilePath(gameID, sourceID, modID, version, cache.RetainedSourceName(fileID))
+		if _, err := os.Stat(retainedPath); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []string) error {
@@ -232,6 +265,20 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		if modFilter != "" && mod.ID != modFilter {
 			continue
 		}
+		// #197 I4 fix: a DeployCompile game's ".exmodz" mod is ingested as
+		// validate+retain ONLY (Task 2/3) - it has zero deployment members
+		// of its own by design (the shared merged pak, checked separately
+		// above, is what actually deploys), so ListFiles == 0 here is
+		// correct, healthy state, not a mismatch. Detected by checking
+		// whether any of the mod's own FileIDs has a retained source on
+		// disk - that is the one signal that distinguishes "this entry
+		// deploys nothing on purpose" from a genuinely corrupted/emptied
+		// cache entry (which the check below must still catch for every
+		// OTHER deploy mode, and even for a compile-mode game's own plain
+		// prebuilt ".pak" mods, which still deploy normally).
+		if game.DeployMode == domain.DeployCompile && hasRetainedSource(gameCache, game.ID, mod.SourceID, mod.ID, mod.Version, mod.FileIDs) {
+			continue
+		}
 		cacheExists := gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version)
 		if !cacheExists {
 			continue
@@ -289,6 +336,41 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	installedMods, err := svc.GetInstalledMods(game.ID, profile)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
+	}
+
+	// Merged-pak staleness check (#197, generalizing #196's per-mod
+	// version): for a DeployCompile game, compare the profile's merged
+	// pak's recorded fingerprint against the game's CURRENT enabled-mod
+	// set/order/versions/base pak. Entirely local/offline. modFilter has no
+	// effect here - the merged pak is profile-scoped, not per-mod, so
+	// `lmm verify <mod-id>` still checks it (a single mod's own version
+	// mismatch and the profile's overall merge staleness are independent
+	// facts).
+	if game.DeployMode == domain.DeployCompile {
+		staleUpd, serr := svc.CheckMergedPakStaleness(game, profile)
+		if serr != nil {
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{Status: "skipped", Note: fmt.Sprintf("could not check merged pak staleness: %v", serr)})
+			} else {
+				fmt.Printf("%s could not check merged pak staleness: %v\n", colorYellow("?"), serr)
+			}
+			warnings++
+		}
+		checked++
+		if staleUpd != nil {
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile", Note: staleUpd.RecompileReason})
+			} else {
+				// #197 postsmoke UX fix: use the real reason
+				// (RecompileReason distinguishes a fingerprint mismatch
+				// from a missing artifact) and name the flag that actually
+				// applies it - this row is always notify-policy (the
+				// synthetic merged-pak mod's zero-value UpdatePolicy), so
+				// bare 'lmm update' would only report it again, not fix it.
+				fmt.Printf("%s %s - RECOMPILE NEEDED (%s - run 'lmm update --all' to fix)\n", colorYellow("?"), staleUpd.InstalledMod.Name, staleUpd.RecompileReason)
+			}
+			warnings++
+		}
 	}
 	for i := range installedMods {
 		mod := &installedMods[i]
@@ -568,6 +650,22 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"})
 		} else {
 			fmt.Printf("%s %s (%s) - %s\n", colorGreen("+"), mod.Name, f.FileID, colorGreen("OK"))
+		}
+	}
+
+	// #197 postsmoke seam-audit fix: --fix can repair a VERSION MISMATCH
+	// (repairModVersion moves the cache dir and the recorded version) or
+	// redownload a file whose content has since changed upstream
+	// (redownloadModFile) - both are merge-fingerprint inputs with no
+	// other seam to catch them. No-op when --fix wasn't passed (nothing
+	// mutated) or the game isn't DeployCompile (SyncMergedPak's own guard).
+	if verifyFix {
+		if syncWarnings, syncErr := svc.SyncMergedPak(cmd.Context(), game, profile); syncErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
+		} else {
+			for _, w := range syncWarnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
 		}
 	}
 
@@ -1132,9 +1230,15 @@ func repairSiblingProfiles(cmd *cobra.Command, svc *core.Service, game *domain.G
 // SUCCESSFUL install, likewise non-fatal: the deployment itself is fixed,
 // only the recorded method is stale, and failing the whole repair over it
 // would misreport a fixed deployment as broken. installErr and recordErr
-// are mutually exclusive.
+// are mutually exclusive. A GetEffectiveLinkMethod failure (#189: an invalid
+// profile link_method) is reported as installErr too - it happens before
+// anything is touched, same as any other reason no method could be
+// resolved to install with.
 func relinkDeployedRow(cmd *cobra.Command, svc *core.Service, game *domain.Game, profileName string, mod *domain.InstalledMod) (installErr, recordErr, undeployErr error) {
-	method := svc.GetEffectiveLinkMethod(game, profileName)
+	method, err := svc.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return err, nil, nil
+	}
 	installer := svc.NewInstallerWithLinker(game, svc.GetLinker(method))
 	// Undeploy-then-install, the same shape DeployProfile uses
 	// (internal/core/flows.go) and for the same reason: dst still holds

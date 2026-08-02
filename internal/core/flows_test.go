@@ -128,6 +128,7 @@ func TestService_EnableMod_DeploysDisabledMod(t *testing.T) {
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, mod.Enabled)
+	assert.True(t, mod.Deployed, "#183: enabling a mod must also record it as deployed")
 }
 
 func TestService_EnableMod_AlreadyEnabledIsNoop(t *testing.T) {
@@ -214,9 +215,12 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 	})
 
 	// Deploy the files first so there's something to undeploy (mirrors an
-	// install that happened earlier).
+	// install that happened earlier), and record the DB's deployed flag to
+	// match — seedInstalledMod doesn't set it, so this mirrors the real
+	// precondition DisableMod actually sees for a genuinely-deployed mod.
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, svc.SetModDeployed("src", "1", "g1", "default", true))
 
 	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
@@ -232,6 +236,7 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled)
+	assert.False(t, mod.Deployed, "#183: disabling a mod must also clear the deployed flag")
 }
 
 func TestService_DisableMod_AlreadyDisabledIsNoop(t *testing.T) {
@@ -247,6 +252,34 @@ func TestService_DisableMod_AlreadyDisabledIsNoop(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.Changed)
+}
+
+// TestService_DisableMod_AlreadyDisabledSelfHealsStaleDeployedFlag pins
+// #183's self-heal follow-up: a mod disabled before the #183 fix shipped
+// (or otherwise drifted) can be stuck at enabled=false, deployed=true
+// forever, since nothing else clears the flag once a mod is already
+// disabled. Calling DisableMod again on it must converge deployed to
+// false, still succeed, and still report Changed=false (the enabled
+// status itself didn't change).
+func TestService_DisableMod_AlreadyDisabledSelfHealsStaleDeployedFlag(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
+	require.NoError(t, svc.SetModDeployed("src", "1", "g1", "default", true),
+		"simulate a pre-#183 disable that left the stale deployed=true flag behind")
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "self-healing the stale flag must still report success")
+	require.NotNil(t, result)
+	assert.False(t, result.Changed, "enabled status itself didn't change")
+
+	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Deployed, "#183: re-disabling an already-disabled mod must self-heal a stale deployed=true")
 }
 
 func TestService_DisableMod_UnknownModReturnsErrModNotFound(t *testing.T) {
@@ -279,6 +312,8 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, svc.SetModDeployed("src", "1", "g1", "default", true),
+		"seed Deployed=true so the post-disable assertion below actually proves a transition")
 
 	// Corrupt the deployed file into a plain file (not a symlink) so the
 	// symlink linker's Undeploy fails deterministically ("not a symlink").
@@ -297,6 +332,73 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled, "DB should still flip to disabled even when undeploy is best-effort")
+	assert.False(t, mod.Deployed, "#183: the deployed flag must still clear to record intent, even when the undeploy itself was best-effort")
+}
+
+// TestService_DisableMod_SetModDeployedFailure_NonFatalNote pins the #183
+// fix's own failure-handling decision: a SetModDeployed(false) failure is
+// non-fatal, recorded as a Note, exactly like DisableMod's existing
+// Uninstall-failure handling and like PurgeProfile's own SetModDeployed
+// call (see TestService_PurgeProfile_SetModDeployedFailure_NonFatalNote) —
+// not escalated to a hard error the way SetModEnabled's own failure still
+// is. installBlockingTrigger blocks only the "deployed" column, so
+// SetModEnabled (a different column) still succeeds.
+func TestService_DisableMod_SetModDeployedFailure_NonFatalNote(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	installSeededMod(t, svc, game, "1")
+	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "a SetModDeployed failure must not fail DisableMod")
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	require.NotEmpty(t, result.Notes)
+	assert.Contains(t, strings.Join(result.Notes, "\n"), "could not mark as not deployed",
+		"Notes = %v, want one mentioning the SetModDeployed failure", result.Notes)
+
+	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "SetModEnabled touches a different column and must still succeed")
+}
+
+// TestService_EnableMod_SetModDeployedFailure_NonFatalNote is
+// TestService_DisableMod_SetModDeployedFailure_NonFatalNote's mirror for
+// the enable path.
+func TestService_EnableMod_SetModDeployedFailure_NonFatalNote(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{"plugin.esp": []byte("data")})
+	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
+
+	result, err := svc.EnableMod(context.Background(), game, "default", "src", "1")
+	require.NoError(t, err, "a SetModDeployed failure must not fail EnableMod")
+	require.NotNil(t, result)
+	assert.True(t, result.Changed)
+	require.NotEmpty(t, result.Notes)
+	assert.Contains(t, strings.Join(result.Notes, "\n"), "could not mark as deployed",
+		"Notes = %v, want one mentioning the SetModDeployed failure", result.Notes)
+
+	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	require.NoError(t, err)
+	assert.True(t, mod.Enabled, "SetModEnabled touches a different column and must still succeed")
 }
 
 // --- UninstallMod ---
@@ -1054,9 +1156,35 @@ func TestService_GetEffectiveLinkMethod_Precedence(t *testing.T) {
 				}
 			}
 
-			assert.Equal(t, tc.expectedMethod, svc.GetEffectiveLinkMethod(game, "default"))
+			method, err := svc.GetEffectiveLinkMethod(game, "default")
+			require.NoError(t, err)
+			assert.Equal(t, tc.expectedMethod, method)
 		})
 	}
+}
+
+// TestService_GetEffectiveLinkMethod_InvalidLinkMethodSurfaces pins #189: a
+// hand-edited profile with an unrecognized link_method must surface as an
+// error naming domain.ErrInvalidLinkMethod, not silently degrade to the
+// game/global default the way a missing profile file does (the precedence
+// test above). Without the fix, GetEffectiveLinkMethod would return the
+// game's LinkHardlink with no error - the exact silent-misbehavior #172's
+// fail-loud contract exists to prevent, one layer deeper on the deploy path.
+func TestService_GetEffectiveLinkMethod_InvalidLinkMethodSurfaces(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkHardlink, LinkMethodExplicit: true}
+
+	_, err := svc.NewProfileManager().Create("g1", "default")
+	require.NoError(t, err)
+	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
+	data, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(profilePath, append(data, []byte("link_method: bogus\n")...), 0644))
+
+	_, err = svc.GetEffectiveLinkMethod(game, "default")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidLinkMethod)
 }
 
 func linkMethodPtr(m domain.LinkMethod) *domain.LinkMethod {
@@ -1110,6 +1238,36 @@ func TestService_DeployProfile_CLIMethodOverrideBeatsProfileLinkMethod(t *testin
 	info, err := os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	require.NoError(t, err)
 	assert.NotEqual(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "--method symlink must beat the profile's copy")
+}
+
+// TestService_DeployProfile_InvalidProfileLinkMethodFailsLoud is #189's
+// deploy-path-level proof, one layer up from
+// TestService_GetEffectiveLinkMethod_InvalidLinkMethodSurfaces: a profile
+// with a hand-edited, unrecognized link_method must VISIBLY fail the deploy
+// rather than silently deploying with the game's method. Before the fix,
+// this would have deployed 1 mod with a real symlink at gameDir/plugin.esp;
+// after, DeployProfile errors and nothing is written.
+func TestService_DeployProfile_InvalidProfileLinkMethodFailsLoud(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
+	data, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(profilePath, append(data, []byte("link_method: bogus\n")...), 0644))
+
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrInvalidLinkMethod)
+	if result != nil {
+		assert.Zero(t, result.Deployed, "an invalid link_method must deploy nothing, not fall back to the game's method")
+	}
+	_, statErr := os.Lstat(filepath.Join(gameDir, "plugin.esp"))
+	assert.True(t, os.IsNotExist(statErr), "no file may be deployed when the effective link method can't be resolved")
 }
 
 // TestService_DeployProfile_PurgeRemovesFilesFirstAndPreservesEnabledSet

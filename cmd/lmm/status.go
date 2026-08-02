@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"text/tabwriter"
 	"time"
 
@@ -72,7 +74,8 @@ func doStatus(service *core.Service) error {
 	fmt.Println("Configured Games:")
 	fmt.Println()
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 
 	if verbose {
 		if _, err := fmt.Fprintln(w, "GAME\tID\tPATH\tLINK\tPROFILES\tMODS†"); err != nil {
@@ -110,28 +113,33 @@ func doStatus(service *core.Service) error {
 			gameName += " (default)"
 		}
 
+		// The last column (whichever count it is - MODS† in verbose,
+		// PROFILES otherwise) is safe to color inline: text/tabwriter never
+		// pads after the final cell, so this cell's inflated byte length
+		// can't misalign any column after it (see printTable's doc
+		// comment; do not do this for an interior column).
 		if verbose {
 			linkMethod := service.GetGameLinkMethod(game)
 			linkStr := linkMethod.String()
 			if game.LinkMethodExplicit {
 				linkStr += "*" // Indicate per-game override
 			}
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\n",
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n",
 				gameName,
 				game.ID,
 				truncate(game.InstallPath, 30),
 				linkStr,
 				len(profiles),
-				modCount,
+				colorCyan(strconv.Itoa(modCount)),
 			); err != nil {
 				return fmt.Errorf("writing row: %w", err)
 			}
 		} else {
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%d\n",
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%s\n",
 				gameName,
 				truncate(game.InstallPath, 40),
 				modCount,
-				len(profiles),
+				colorCyan(strconv.Itoa(len(profiles))),
 			); err != nil {
 				return fmt.Errorf("writing row: %w", err)
 			}
@@ -139,6 +147,9 @@ func doStatus(service *core.Service) error {
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
+	}
+	if err := printTable(&buf, 2, nil); err != nil {
+		return fmt.Errorf("writing table: %w", err)
 	}
 
 	fmt.Println()
@@ -231,7 +242,11 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 	if defaultProfile, err := pm.GetDefault(gameID); err == nil {
 		// Mirror the text twin (showGameStatus): the effective method is the
 		// active profile's resolution (profile > game > global, #155).
-		out.EffectiveLinkMethod = service.GetEffectiveLinkMethod(game, defaultProfile.Name).String()
+		method, err := service.GetEffectiveLinkMethod(game, defaultProfile.Name)
+		if err != nil {
+			return err
+		}
+		out.EffectiveLinkMethod = method.String()
 		if defaultProfile.LinkMethodExplicit {
 			out.LinkMethodSource = "profile"
 		}
@@ -313,11 +328,11 @@ func showGameStatus(service *core.Service, gameID string) error {
 	activeProfile, activeErr := pm.GetDefault(gameID)
 	switch {
 	case activeErr == nil && activeProfile.LinkMethodExplicit:
-		fmt.Printf("  Link Method: %s (per-profile)\n", activeProfile.LinkMethod)
+		fmt.Printf("  Link Method: %s (per-profile)\n", colorCyan(activeProfile.LinkMethod.String()))
 	case game.LinkMethodExplicit:
-		fmt.Printf("  Link Method: %s (per-game)\n", service.GetGameLinkMethod(game))
+		fmt.Printf("  Link Method: %s (per-game)\n", colorCyan(service.GetGameLinkMethod(game).String()))
 	case verbose:
-		fmt.Printf("  Link Method: %s (global default)\n", service.GetGameLinkMethod(game))
+		fmt.Printf("  Link Method: %s (global default)\n", colorCyan(service.GetGameLinkMethod(game).String()))
 	}
 
 	// Show cache path
@@ -353,17 +368,17 @@ func showGameStatus(service *core.Service, gameID string) error {
 	for _, p := range profiles {
 		defaultMark := ""
 		if p.IsDefault {
-			defaultMark = " (active)"
+			defaultMark = colorGreen(" (active)")
 		}
-		fmt.Printf("  - %s%s: %d mod(s)\n", p.Name, defaultMark, len(p.Mods))
+		fmt.Printf("  - %s%s: %s mod(s)\n", p.Name, defaultMark, colorCyan(strconv.Itoa(len(p.Mods))))
 	}
 
 	// Show installed mods count for active profile
 	defaultProfile, err := pm.GetDefault(gameID)
 	if err == nil {
 		mods, _ := service.GetInstalledMods(gameID, defaultProfile.Name)
-		fmt.Printf("\nActive Profile: %s\n", defaultProfile.Name)
-		fmt.Printf("  Installed Mods: %d\n", len(mods))
+		fmt.Printf("\nActive Profile: %s\n", colorGreen(defaultProfile.Name))
+		fmt.Printf("  Installed Mods: %s\n", colorCyan(strconv.Itoa(len(mods))))
 
 		// Count enabled vs disabled
 		var enabled, disabled int
@@ -375,14 +390,25 @@ func showGameStatus(service *core.Service, gameID string) error {
 			}
 		}
 		if len(mods) > 0 {
-			fmt.Printf("  Enabled: %d, Disabled: %d\n", enabled, disabled)
+			// Disabled is a routine, expected state (not an error), so it's
+			// dimmed rather than red - accent, not alarm.
+			fmt.Printf("  Enabled: %s, Disabled: %s\n", colorGreen(strconv.Itoa(enabled)), colorDim(strconv.Itoa(disabled)))
 		}
 
 		lastDeploy, err := service.GetLastDeployTime(gameID, defaultProfile.Name)
 		if err != nil {
 			return fmt.Errorf("status: last deploy time: %w", err)
 		}
-		fmt.Printf("  Last Deploy: %s\n", formatLastDeploy(lastDeploy))
+		deployDisplay := formatLastDeploy(lastDeploy)
+		if lastDeploy == nil {
+			// "Never deployed" is a routine, expected state for a freshly
+			// added game - dimmed rather than red, same convention as a
+			// disabled mod (accent, not alarm).
+			deployDisplay = colorDim(deployDisplay)
+		} else {
+			deployDisplay = colorGreen(deployDisplay)
+		}
+		fmt.Printf("  Last Deploy: %s\n", deployDisplay)
 	}
 
 	return nil

@@ -19,6 +19,12 @@ var UpdateProgressContextKey = &updateProgressKey{}
 // SourceLocal is the source ID for mods imported from local files
 const SourceLocal = "local"
 
+// SourceMerged is the source ID for the synthetic, profile-scoped "mod"
+// that tracks a game's merged compiled pak (#197 - Icarus's cross-mod
+// table merge). Follows the SourceLocal precedent: a reserved sentinel
+// string, not a real ModSource registration.
+const SourceMerged = "lmm-merged"
+
 // UpdatePolicy determines how a mod handles updates
 type UpdatePolicy int
 
@@ -119,6 +125,21 @@ type Update struct {
 	NewVersion         string
 	Changelog          string
 	FileIDReplacements map[string]string // Old file ID -> new file ID when a file was superseded (e.g. NexusMods FileUpdates)
+	// RecompileNeeded marks a DeployCompile mod whose deployed compile no
+	// longer matches the game's live base data.pak (#196, "the Friday
+	// problem": a weekly base-pak refresh silently reverts the tables a
+	// compiled mod patches, with nothing before #196 to notice). NewVersion
+	// equals InstalledMod.Version in this case - the mod itself hasn't
+	// changed, only the base pak has - so callers must not treat NewVersion
+	// as a real version bump when this is set.
+	RecompileNeeded bool
+	// RecompileReason qualifies RecompileNeeded with why a recompile/resync
+	// is needed (#197 postsmoke UX fix): "base pak updated" when the
+	// merged/compiled fingerprint no longer matches current inputs, "not
+	// deployed" when the fingerprint still matches but the artifact is
+	// missing from the game directory (#197 I5's wedge case). Empty when
+	// RecompileNeeded is false.
+	RecompileReason string
 }
 
 // ModKey returns a unique lookup key for a mod: "sourceID:modID".

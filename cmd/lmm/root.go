@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -15,9 +17,11 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/icarus"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 )
 
@@ -35,7 +39,7 @@ var ErrCancelled = errors.New("cancelled")
 var ErrReported = errors.New("already reported")
 
 var (
-	version = "1.27.1"
+	version = "1.28.0"
 
 	// Global flags
 	configDir  string
@@ -90,16 +94,32 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (NO_COLOR env is also honored)")
 }
 
-// colorEnabled returns true if colored output should be used (respects --no-color and NO_COLOR env).
-// NO_COLOR: if set (any value), color is disabled per https://no-color.org
+// stdoutColorCapable reports whether the live os.Stdout is a color-capable
+// terminal (not a pipe, redirect, or non-interactive runner). A function
+// var, not a direct termenv.ColorProfile() call, so it re-resolves the
+// CURRENT os.Stdout on every call - tests that swap os.Stdout for an
+// os.Pipe (see captureStdout) get a truthful "not a terminal" answer for
+// free, and tests that need to simulate an interactive TTY can override
+// this var directly instead of faking a pty.
+var stdoutColorCapable = func() bool {
+	return termenv.NewOutput(os.Stdout).ColorProfile() != termenv.Ascii
+}
+
+// colorEnabled returns true if colored output should be used: respects
+// --no-color and NO_COLOR env (https://no-color.org) first, then falls back
+// to TTY detection so piped/redirected output stays plain without an
+// explicit opt-out.
 func colorEnabled() bool {
 	if noColor {
 		return false
 	}
-	if os.Getenv("NO_COLOR") != "" {
+	// Presence-only per https://no-color.org: NO_COLOR disables color when
+	// set to ANY value, including the empty string - os.Getenv can't tell
+	// "unset" from "set to empty", so this must use os.LookupEnv.
+	if _, set := os.LookupEnv("NO_COLOR"); set {
 		return false
 	}
-	return true
+	return stdoutColorCapable()
 }
 
 const (
@@ -107,6 +127,9 @@ const (
 	ansiGreen  = "\033[32m"
 	ansiRed    = "\033[31m"
 	ansiYellow = "\033[33m"
+	ansiCyan   = "\033[36m"
+	ansiBold   = "\033[1m"
+	ansiDim    = "\033[2m"
 )
 
 // colorGreen returns s with green ANSI when color is enabled, otherwise s.
@@ -131,6 +154,110 @@ func colorYellow(s string) string {
 		return s
 	}
 	return ansiYellow + s + ansiReset
+}
+
+// colorBold returns s with bold ANSI when color is enabled, otherwise s.
+func colorBold(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiBold + s + ansiReset
+}
+
+// colorDim returns s with faint/dim ANSI when color is enabled, otherwise s.
+// Used for negative-but-routine states (e.g. a disabled mod row) where a
+// loud red would overstate the severity - accent, not alarm.
+func colorDim(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiDim + s + ansiReset
+}
+
+// colorCyan returns s with cyan ANSI when color is enabled, otherwise s.
+// The palette's fourth accent, used for "key field" values (a version
+// number, a link method, an active profile name) that deserve a visual
+// anchor without implying good/bad the way green/yellow/red do.
+func colorCyan(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiCyan + s + ansiReset
+}
+
+// colorHeader returns s bold+cyan when color is enabled, otherwise s - the
+// accent for a table header or section title. #193: bold alone read as
+// nearly plain in smoke feedback, so headers now carry both bold and a
+// color, not bold-only.
+func colorHeader(s string) string {
+	if !colorEnabled() {
+		return s
+	}
+	return ansiBold + ansiCyan + s + ansiReset
+}
+
+// modRowColor returns the row-tint color function for a mod's
+// enabled/deployed state: dim for disabled (a routine, expected state - not
+// an error), yellow for enabled-but-not-yet-deployed (drift worth noticing),
+// green for enabled+deployed (the common, healthy case - #193: originally
+// left untinted, which read as nearly plain in smoke feedback).
+//
+// The single shared decision for any command that lists mod rows keyed on
+// this state - do not reimplement this switch inline in a second call site;
+// a mod's health must render identically everywhere it's shown, independent
+// of which columns that particular view happens to display (#193 round 2:
+// list -v and plain list colored inconsistently because the decision only
+// existed inline in the verbose branch).
+func modRowColor(enabled, deployed bool) func(string) string {
+	switch {
+	case !enabled:
+		return colorDim
+	case !deployed:
+		return colorYellow
+	default:
+		return colorGreen
+	}
+}
+
+// printTable writes a fully-flushed text/tabwriter table (buf) to os.Stdout,
+// accenting the header line (bold+cyan, via colorHeader) and applying
+// rowColor's per-row wrapper (nil for no tint) when color is enabled.
+// headerLines is the number of leading lines to skip when indexing data
+// rows (2: header + dashed separator).
+//
+// Color is applied ONLY to buf's already-rendered, already-padded text -
+// never to a cell before it reaches the tabwriter. text/tabwriter computes
+// column padding from raw byte length, so an ANSI-wrapped cell fed into it
+// would inflate that cell's measured width and misalign every column after
+// it (verified empirically). Wrapping an already-flushed line's start/end
+// is safe: those bytes are invisible to the terminal and never shift where
+// the real characters land. Do not colorize interior cell values before
+// Fprintf-ing them into a tabwriter.Writer - use whole-row tinting (via
+// rowColor) or, for a table's genuinely last column (nothing pads after it
+// per tabwriter's own behavior), inline coloring of that one column instead.
+func printTable(buf *bytes.Buffer, headerLines int, rowColor func(dataRowIndex int) func(string) string) error {
+	return printTableTo(os.Stdout, buf, headerLines, rowColor)
+}
+
+// printTableTo is printTable's testable seam: same contract, explicit writer.
+func printTableTo(out io.Writer, buf *bytes.Buffer, headerLines int, rowColor func(dataRowIndex int) func(string) string) error {
+	text := strings.TrimSuffix(buf.String(), "\n")
+	if text == "" {
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	if colorEnabled() {
+		lines[0] = colorHeader(lines[0])
+		if rowColor != nil {
+			for i := headerLines; i < len(lines); i++ {
+				if fn := rowColor(i - headerLines); fn != nil {
+					lines[i] = fn(lines[i])
+				}
+			}
+		}
+	}
+	_, err := fmt.Fprintln(out, strings.Join(lines, "\n"))
+	return err
 }
 
 // Execute runs the root command. Exit codes: 0 = success, 1 = error, 2 = user cancelled.
@@ -160,7 +287,7 @@ func reportError(err error) {
 	if jsonOutput {
 		fmt.Printf(`{"error":%q}`+"\n", err.Error())
 	} else {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s %v\n", colorRed("Error:"), err)
 	}
 }
 
@@ -207,12 +334,19 @@ func initService() (*core.Service, error) {
 	return svc, nil
 }
 
+// icarusFirestoreProjectID is Project Daedalus's Firebase project ID, from
+// the Firebase console. It is public information (Firestore reads are
+// unauthenticated by design, per the research spike) — this constant is the
+// one place it needs to be substituted with the real value.
+const icarusFirestoreProjectID = "projectdaedalus-fb09f"
+
 // builtinSourceFactories constructs each built-in source keyless — the
 // unified pipeline resolves and applies API keys post-construction via
 // registerSource's SetAPIKey seam, the same path custom sources use.
 var builtinSourceFactories = []func() source.ModSource{
 	func() source.ModSource { return nexusmods.New(nil, "") },
 	func() source.ModSource { return curseforge.New(nil, "") },
+	func() source.ModSource { return icarus.New(nil, icarusFirestoreProjectID) },
 }
 
 // registerSources registers all available mod sources with the service

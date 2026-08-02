@@ -484,7 +484,7 @@ func (m Model) openChangelogFromUpdateModal() (tea.Model, tea.Cmd) {
 
 	options := make([]pickerOption, len(updates))
 	for i, u := range updates {
-		options[i] = pickerOption{Label: fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion)}
+		options[i] = pickerOption{Label: fmt.Sprintf("%s %s", u.Name, u.VersionLabel())}
 	}
 	m.picker = &pendingPicker{
 		title:   "View changelog",
@@ -507,7 +507,7 @@ func (m Model) openChangelogFromUpdateModal() (tea.Model, tea.Cmd) {
 // (the source reported none) renders the single line "no changelog
 // available" instead of an empty panel.
 func changelogOverlay(u UpdateItem) *infoOverlay {
-	title := fmt.Sprintf("%s %s → %s", u.Name, u.FromVersion, u.ToVersion)
+	title := fmt.Sprintf("%s %s", u.Name, u.VersionLabel())
 	lines := []string{"no changelog available"}
 	if u.Changelog != "" {
 		lines = strings.Split(u.Changelog, "\n")

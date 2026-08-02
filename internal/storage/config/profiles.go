@@ -135,10 +135,16 @@ func LoadProfile(configDir, gameID, profileName string) (*domain.Profile, error)
 		return nil, fmt.Errorf("parsing profile: %w", err)
 	}
 
+	linkMethod, ok := domain.ParseLinkMethod(cfg.LinkMethod)
+	if !ok {
+		return nil, fmt.Errorf("%w: profile %q (game %q): link_method %q (valid: %s)",
+			domain.ErrInvalidLinkMethod, profileName, gameID, cfg.LinkMethod, domain.ValidLinkMethods)
+	}
+
 	profile := &domain.Profile{
 		Name:               cfg.Name,
 		GameID:             cfg.GameID,
-		LinkMethod:         domain.ParseLinkMethod(cfg.LinkMethod),
+		LinkMethod:         linkMethod,
 		LinkMethodExplicit: cfg.LinkMethod != "",
 		IsDefault:          cfg.IsDefault,
 		Mods:               make([]domain.ModReference, len(cfg.Mods)),
@@ -294,11 +300,17 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		return nil, fmt.Errorf("parsing exported profile: %w", err)
 	}
 
+	linkMethod, ok := domain.ParseLinkMethod(exported.LinkMethod)
+	if !ok {
+		return nil, fmt.Errorf("%w: imported profile %q (game %q): link_method %q (valid: %s)",
+			domain.ErrInvalidLinkMethod, exported.Name, exported.GameID, exported.LinkMethod, domain.ValidLinkMethods)
+	}
+
 	p := &domain.Profile{
 		Name:               exported.Name,
 		GameID:             exported.GameID,
 		Mods:               exported.Mods,
-		LinkMethod:         domain.ParseLinkMethod(exported.LinkMethod),
+		LinkMethod:         linkMethod,
 		LinkMethodExplicit: exported.LinkMethod != "",
 	}
 	if len(exported.Overrides) > 0 {

@@ -250,6 +250,46 @@ func (c *Cache) HasFileIDs(gameID, sourceID, modID, version string, fileIDs []st
 	return true
 }
 
+// retainedSourcePrefix names a compiled file's retained source archive
+// (#196): the original .exmodz kept beside the compiled pak so a later
+// recompile - the base pak changed, not the mod - can run offline instead
+// of re-downloading. Reserved (ReservedPrefix) so ListFiles/Size/deploy skip
+// it like every other lmm bookkeeping entry: it is cache-internal
+// provenance, never a deployment member.
+const retainedSourcePrefix = ReservedPrefix + "source-"
+
+// RetainedSourceName returns the reserved on-disk filename for fileID's
+// retained compile source. It is a pure naming function - like
+// GetFilePath, callers join it against a staging or cache directory
+// themselves and read/write/copy the actual bytes with ordinary file I/O
+// (see internal/core's ingest/merge paths).
+//
+// fileID is Base'd first (#197 hardening): it is source-controlled (a
+// ModSource's own DownloadableFile.ID, or - for an import - the archive's
+// own filename) exactly like the FileName fields #196's review already
+// found needed filepath.Base sanitization at their own join sites - a
+// fileID containing "../" must not be able to escape the staging/cache
+// directory this name gets joined against downstream.
+func RetainedSourceName(fileID string) string {
+	return retainedSourcePrefix + filepath.Base(fileID)
+}
+
+// mergeFingerprintMarkerName names the single JSON fingerprint marker a
+// merged-pak cache entry carries (#197): what base pak and which
+// (source, mod, version, exmodz-checksum) tuples, in order, the pak was
+// last built from - so a later staleness check can compare without
+// re-deriving the merge. Reserved (ReservedPrefix) so ListFiles/Size/deploy
+// skip it like every other lmm bookkeeping entry.
+const mergeFingerprintMarkerName = ReservedPrefix + "merge-fingerprint"
+
+// MergeFingerprintPath returns the reserved on-disk path for versionDir's
+// merge-fingerprint marker. Pure naming, like RetainedSourceName - callers
+// (internal/core, which owns the MergedFingerprint type and its JSON
+// encoding) read/write the actual bytes with ordinary file I/O.
+func MergeFingerprintPath(versionDir string) string {
+	return filepath.Join(versionDir, mergeFingerprintMarkerName)
+}
+
 // Store saves a file to the cache
 func (c *Cache) Store(gameID, sourceID, modID, version, relativePath string, content []byte) error {
 	modPath := c.ModPath(gameID, sourceID, modID, version)
@@ -321,13 +361,41 @@ func walkEntries(modPath string, includeReserved bool) ([]string, error) {
 	return files, nil
 }
 
-// Delete removes a cached mod version
+// Delete removes a cached mod version, then removes the mod's per-mod
+// container directory (ModPath's parent - the "<source>-<modID>" directory
+// version subdirectories live under) if this was its last remaining
+// version. The container has no meaning once nothing is left under it, so
+// leaving it behind after every version is gone is just litter (#190 item
+// 4). A container that still holds another version, or that never existed,
+// is left alone either way - never an error.
 func (c *Cache) Delete(gameID, sourceID, modID, version string) error {
 	modPath := c.ModPath(gameID, sourceID, modID, version)
 	if err := os.RemoveAll(modPath); err != nil {
 		return fmt.Errorf("deleting cached mod: %w", err)
 	}
+	if err := removeIfEmpty(filepath.Dir(modPath)); err != nil {
+		return fmt.Errorf("removing empty mod cache directory: %w", err)
+	}
 	return nil
+}
+
+// removeIfEmpty removes dir if it exists and holds no entries. A dir that
+// doesn't exist, or still has content, is left untouched - both are normal,
+// not errors. No locking: this package has no concurrent-write story today
+// (single Service, sequential cache mutations), so this is a plain
+// read-then-remove, same as every other cache directory operation here.
+func removeIfEmpty(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if len(entries) > 0 {
+		return nil
+	}
+	return os.Remove(dir)
 }
 
 // GetFilePath returns the full path to a cached file

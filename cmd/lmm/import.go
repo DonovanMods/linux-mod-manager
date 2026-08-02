@@ -200,6 +200,26 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 			fmt.Fprintf(os.Stderr, "Warning: could not mark cache entry complete: %v\n", err)
 		}
 	}
+	// #197 C1 fix: a DeployCompile ".exmodz" import retains its source under
+	// RetainedFileID (the archive's own filename - Import's only stable
+	// identity), which is NEVER resolvedFile.ID (a real source file ID, or
+	// nothing at all without --id). Without folding it into FileIDs too,
+	// enabledExmodzSources can never find this mod's retained source - it
+	// silently never participates in any merge, forever, and is invisible
+	// to update/verify since it's excluded from both sides of the
+	// staleness fingerprint as well.
+	if result.RetainedFileID != "" {
+		found := false
+		for _, id := range importedFileIDs {
+			if id == result.RetainedFileID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			importedFileIDs = append(importedFileIDs, result.RetainedFileID)
+		}
+	}
 
 	// Show detection results
 	fmt.Printf("\nMod: %s\n", result.Mod.Name)
@@ -222,7 +242,10 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	// Set up installer for conflict checking and deployment. The installer is
 	// built from the already-resolved method so both stay consistent (and the
 	// profile file is only read once).
-	linkMethod := service.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := service.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return err
+	}
 	installer := service.NewInstallerWithLinker(game, service.GetLinker(linkMethod))
 
 	// Check for conflicts (unless --force)
@@ -355,6 +378,18 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		}
 	}
 
+	// #197 I3/C1 fix: a DeployCompile ".exmodz" import deploys zero files of
+	// its own (validate+retain only) - without this, the imported mod's
+	// content never reaches the game directory until some OTHER flow
+	// happens to sync the merged pak.
+	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
+	} else {
+		for _, w := range syncWarnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+
 	// Run install.after_each hook
 	if hookRunner != nil && resolvedHooks != nil && resolvedHooks.Install.AfterEach != "" {
 		hookCtx.HookName = "install.after_each"
@@ -381,7 +416,14 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	printHookWarnings(hookErrors)
 
 	fmt.Printf("\n✓ Imported: %s\n", result.Mod.Name)
-	fmt.Printf("  Files deployed: %d\n", result.FilesExtracted)
+	// #197 postsmoke UX fix: see doInstall's identical fix (cmd/lmm/install.go)
+	// - a DeployCompile ".exmodz" mod deploys zero files of its own by
+	// design (validate+retain only).
+	if game.DeployMode == domain.DeployCompile && result.FilesExtracted == 0 {
+		fmt.Println("  Installed (merged pak updated)")
+	} else {
+		fmt.Printf("  Files deployed: %d\n", result.FilesExtracted)
+	}
 	fmt.Printf("  Added to profile: %s\n", profileName)
 
 	if result.LinkedSource == domain.SourceLocal {
@@ -577,7 +619,10 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	}
 
 	// Import each untracked mod
-	linkMethod := service.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := service.GetEffectiveLinkMethod(game, profileName)
+	if err != nil {
+		return err
+	}
 
 	// Get current installed mods for duplicate checking
 	currentMods, _ := service.GetInstalledMods(game.ID, profileName)
@@ -737,6 +782,18 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 		// Non-fatal
 		if verbose {
 			fmt.Printf("    Warning: could not update profile: %v\n", err)
+		}
+	}
+
+	// #197 I3 fix: mirrors doImport's archive-mode tail - a scanned mod is a
+	// mod-set change for whatever profile it's registered into.
+	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
+		if verbose {
+			fmt.Printf("    Warning: could not sync merged pak: %v\n", syncErr)
+		}
+	} else {
+		for _, w := range syncWarnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 	}
 

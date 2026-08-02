@@ -421,7 +421,19 @@ games:
       nexusmods: "starfield"
     link_method: copy # This game requires file copies instead of symlinks
     cache_path: /mnt/fast-ssd/starfield-mods # Store this game's mods on fast storage
+
+  icarus:
+    name: "Icarus"
+    install_path: "/path/to/Steam/steamapps/common/Icarus"
+    mod_path: "/path/to/Steam/steamapps/common/Icarus/Icarus/Content/Paks/mods"
+    sources:
+      icarus: "icarus"
+    deploy_mode: compile
 ```
+
+Steam auto-detection (`lmm game detect`) knows about Icarus (App ID `1149460`) and generates an equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
+
+**Merge precedence**: with more than one `compile`-mode mod installed (currently Icarus only), the profile's load order — the same order `lmm list` displays and `lmm profile reorder` changes — decides how conflicting changes resolve. Mods are merged in load order, so a mod later in the list is applied later and wins conflicting _fields_ on a shared data-table row; it's a per-field upsert, not a whole-row overwrite, so untouched fields from earlier mods still survive. Bundled asset files can't compose that way — a same-path collision between two mods is whole-file last-wins, and installing or updating a colliding mod prints a warning naming both. Either way, the bottom of the load order has final say, and `lmm profile reorder` regenerates the merged pak immediately, so a reorder's effect on precedence is visible right away rather than at the next deploy.
 
 ### Deployment Methods
 
@@ -655,6 +667,8 @@ api:
 | `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)                                                                        | `search`                                         |
 | `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)                                                                         | `search`                                         |
 | `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs                                         | `search`                                         |
+| `{category}`  | The search query's category filter (source-specific ID or name), empty when unset                                                        | `search`                                         |
+| `{tags}`      | The search query's tag filters, comma-joined, empty when unset                                                                           | `search`                                         |
 | `{mod_id}`    | The mod ID                                                                                                                               | `get_mod`, `mod_files`, `download_url`           |
 | `{file_id}`   | The file ID                                                                                                                              | `download_url`                                   |
 
@@ -858,6 +872,8 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 | `--json`     |       | Output in JSON (list, status, search, update, conflicts, verify, mod show, source list); errors print `{"error":"..."}` |
 | `--no-hooks` |       | Disable all hooks at runtime                                                                                            |
 | `--no-color` |       | Disable colored output (respects NO_COLOR env)                                                                          |
+
+Output is colorized by default whenever stdout is a terminal (headers, status accents like enabled/disabled/pinned, success/warning/error markers); piped or redirected output stays plain automatically, and `--json` output is never colored. Disable explicitly with `--no-color` or the `NO_COLOR` environment variable.
 
 ### Commands
 
@@ -1085,7 +1101,7 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 - [x] Automatic dependency installation (opt out with `--no-deps`)
 - [x] Interactive TUI (Bubble Tea) - see the Terminal UI section above
 - [x] CurseForge integration
-- [ ] Additional first-party built-in sources beyond NexusMods/CurseForge
+- [x] Additional first-party built-in sources beyond NexusMods/CurseForge (Icarus)
 - [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
 - [ ] Backup and restore
 

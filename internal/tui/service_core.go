@@ -735,7 +735,9 @@ func (p *coreProvider) EnableMod(ctx context.Context, item ModItem) (ActionOutco
 	if !result.Changed {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already enabled", item.Name)}, nil
 	}
-	return ActionOutcome{Message: fmt.Sprintf("Enabled %q", item.Name), Warnings: mergeDiagnostics(nil, result.Notes)}, nil
+	// #197 postsmoke fix: fold in result.Warnings (a merged-pak sync
+	// failure lands there now, not result.Notes).
+	return ActionOutcome{Message: fmt.Sprintf("Enabled %q", item.Name), Warnings: mergeDiagnostics(result.Warnings, result.Notes)}, nil
 }
 
 func (p *coreProvider) DisableMod(ctx context.Context, item ModItem) (ActionOutcome, error) {
@@ -746,7 +748,9 @@ func (p *coreProvider) DisableMod(ctx context.Context, item ModItem) (ActionOutc
 	if !result.Changed {
 		return ActionOutcome{Message: fmt.Sprintf("%q is already disabled", item.Name)}, nil
 	}
-	return ActionOutcome{Message: fmt.Sprintf("Disabled %q", item.Name), Warnings: mergeDiagnostics(nil, result.Notes)}, nil
+	// #197 postsmoke fix: fold in result.Warnings (a merged-pak sync
+	// failure lands there now, not result.Notes).
+	return ActionOutcome{Message: fmt.Sprintf("Disabled %q", item.Name), Warnings: mergeDiagnostics(result.Warnings, result.Notes)}, nil
 }
 
 // UninstallMod runs the same hook configuration cmd/lmm/uninstall.go's
@@ -975,7 +979,7 @@ func (p *coreProvider) ReorderMods(_ context.Context, orderedKeys []string) (Act
 		})
 	}
 
-	if err := pm.ReorderMods(game.ID, profileName, mods); err != nil {
+	if err := p.svc.ReorderProfileMods(game.ID, profileName, mods); err != nil {
 		return ActionOutcome{}, fmt.Errorf("reordering profile %s: %w", profileName, err)
 	}
 	return ActionOutcome{Message: "load order updated"}, nil
@@ -1075,9 +1079,12 @@ func (p *coreProvider) ApplyProfileSwitch(ctx context.Context, profileName strin
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("switching to %s: %w", profileName, err)
 	}
+	// #197 postsmoke fix: fold in result.Warnings (a merged-pak sync
+	// failure now lands there, not result.Notes - SwitchResult gained a
+	// Warnings field for exactly this).
 	return ActionOutcome{
 		Message:  fmt.Sprintf("Switched to %q", profileName),
-		Warnings: mergeDiagnostics(installFailures, result.Notes),
+		Warnings: mergeDiagnostics(append(installFailures, result.Warnings...), result.Notes),
 	}, nil
 }
 
@@ -1146,6 +1153,8 @@ func installProgressLine(modName string, p core.DeployProgress) (ActionProgress,
 		return ActionProgress{Line: fmt.Sprintf("Installing %s: %.0f%%", modName, p.Percent), Percent: p.Percent}, true
 	case core.InstallDepDownloading:
 		return ActionProgress{Line: fmt.Sprintf("Installing %s: %.0f%%", p.ModName, p.Percent), Percent: p.Percent}, true
+	case core.InstallCompiling:
+		return ActionProgress{Line: fmt.Sprintf("Installing %s: retaining", modName), Percent: -1}, true
 	case core.InstallExtracting:
 		return ActionProgress{Line: fmt.Sprintf("Installing %s: extracting", modName), Percent: -1}, true
 	case core.InstallDeploying:
@@ -1421,7 +1430,7 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 		return UpdatesView{}, fmt.Errorf("loading installed mods for %s/%s: %w", game.ID, profile, err)
 	}
 
-	updates, checkErr := p.svc.NewUpdater().CheckUpdates(ctx, game, installed)
+	updates, checkErr := p.svc.CheckGameUpdates(ctx, game, profile, installed)
 
 	// #143: join the profile YAML's lock state onto the update rows - the
 	// same projection (and the same nil-safe "an unreadable profile leaves
@@ -1444,6 +1453,8 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 			FromVersion: u.InstalledMod.Version, ToVersion: u.NewVersion,
 			Changelog: core.CleanChangelog(u.Changelog),
 			Locked:    isLocked, LockedVersion: lockedVersion,
+			RecompileNeeded: u.RecompileNeeded,
+			RecompileReason: u.RecompileReason,
 		})
 	}
 	if skipped := updateSkipWarning(core.CountUpdateSkips(installed)); skipped != "" {
@@ -1462,21 +1473,46 @@ func (p *coreProvider) CheckUpdates(ctx context.Context) (UpdatesView, error) {
 
 // ApplyUpdate applies u with the SAME hook configuration cmd/lmm/update.go's
 // applyUpdate passes (Force=false, its default). u is re-checked via
-// CheckUpdates for just this one mod first - mirroring
+// CheckGameUpdates for just this one mod first - mirroring
 // cmd/lmm/update.go's applySingleUpdate, which does the same before calling
 // applyUpdate - rather than reconstructing a bare domain.Update from u's own
 // fields: UpdateItem carries no FileIDReplacements (see its doc comment),
 // and a real update may need that superseded-file-ID mapping to install
-// correctly; only a fresh CheckUpdates call can supply it.
+// correctly; only a fresh check call can supply it.
+//
+// #196/#197: a RecompileNeeded row (NewVersion == the mod's current
+// version - a merged-pak staleness signal, not a real update) is routed to
+// Service.ApplyMergedPakRegen instead, which has no hooks/options to
+// configure. This check MUST happen before GetInstalledMod below: a
+// RecompileNeeded row's u.Source/u.ID identify the SYNTHETIC merged-pak
+// row (domain.SourceMerged/"merged-pak"), which has no real
+// installed_mods DB row - GetInstalledMod would fail loud for it. (Caught
+// while wiring this task: the original draft called GetInstalledMod
+// unconditionally first, which broke exactly this case.)
 func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
 	game := p.currentGame()
 	profile := p.currentProfile()
+
+	if u.RecompileNeeded {
+		adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
+			return updateProgressLine(u.Name, p)
+		})
+		result, err := p.svc.ApplyMergedPakRegen(ctx, game, profile, adapter)
+		if err != nil {
+			return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("recompiling %s", u.Name), u.Source, err)
+		}
+		return ActionOutcome{
+			Message:  fmt.Sprintf("Recompiled %q (base pak updated)", u.Name),
+			Warnings: mergeDiagnostics(result.Warnings, result.Notes),
+		}, nil
+	}
+
 	mod, err := p.svc.GetInstalledMod(u.Source, u.ID, game.ID, profile)
 	if err != nil {
 		return ActionOutcome{}, fmt.Errorf("getting installed mod %s: %w", u.Name, err)
 	}
 
-	updates, err := p.svc.NewUpdater().CheckUpdates(ctx, game, []domain.InstalledMod{*mod})
+	updates, err := p.svc.CheckGameUpdates(ctx, game, profile, []domain.InstalledMod{*mod})
 	if err != nil {
 		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("checking update for %s", u.Name), u.Source, err)
 	}
@@ -1485,6 +1521,10 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 	}
 	upd := updates[0]
 
+	adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
+		return updateProgressLine(u.Name, p)
+	})
+
 	opts := core.UpdateOptions{
 		Hooks:       p.resolvedHooks(game, profile),
 		HookRunner:  p.hookRunner(),
@@ -1492,9 +1532,6 @@ func (p *coreProvider) ApplyUpdate(ctx context.Context, u UpdateItem, progress f
 		Force:       false,
 	}
 
-	adapter := deployProgressAdapter(progress, func(p core.DeployProgress) (ActionProgress, bool) {
-		return updateProgressLine(u.Name, p)
-	})
 	result, err := p.svc.ApplyUpdate(ctx, game, profile, upd, opts, adapter)
 	if err != nil {
 		return ActionOutcome{}, mapUpdateNetworkError(fmt.Sprintf("updating %s", u.Name), u.Source, err)

@@ -3,6 +3,7 @@ package cache_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
@@ -218,6 +219,66 @@ func TestCache_Delete(t *testing.T) {
 	assert.False(t, c.Exists("skyrim-se", "nexusmods", "12345", "1.0.0"))
 }
 
+// TestCache_Delete_RemovesNowEmptyModDirectory guards #190 item 4: deleting
+// a mod's only cached version used to leave the empty per-mod container
+// directory (<gameID>/<source>-<modID>/) behind as litter. Delete now
+// removes it too, but only once nothing is left under it.
+func TestCache_Delete_RemovesNowEmptyModDirectory(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.New(dir)
+
+	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "test.txt", []byte("data")))
+	modDir := filepath.Join(dir, "skyrim-se", "nexusmods-12345")
+	require.DirExists(t, modDir)
+
+	require.NoError(t, c.Delete("skyrim-se", "nexusmods", "12345", "1.0.0"))
+	assert.NoDirExists(t, modDir, "the now-empty per-mod cache directory must not be left behind")
+}
+
+// TestCache_Delete_KeepsModDirectoryWhenOtherVersionsRemain is the negative
+// case: a mod with more than one cached version must keep its container
+// (and the other version untouched) after deleting just one.
+func TestCache_Delete_KeepsModDirectoryWhenOtherVersionsRemain(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.New(dir)
+
+	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "old.txt", []byte("old")))
+	require.NoError(t, c.Store("skyrim-se", "nexusmods", "12345", "2.0.0", "new.txt", []byte("new")))
+	modDir := filepath.Join(dir, "skyrim-se", "nexusmods-12345")
+
+	require.NoError(t, c.Delete("skyrim-se", "nexusmods", "12345", "1.0.0"))
+	assert.DirExists(t, modDir, "a sibling version still lives here - the container must survive")
+	assert.True(t, c.Exists("skyrim-se", "nexusmods", "12345", "2.0.0"), "the other version must be untouched")
+}
+
+// TestCache_Delete_NonexistentVersion_NoopsCleanly: deleting a version that
+// was never cached (e.g. --keep-cache preserved it but a later plain delete
+// targets an already-gone entry) must not error just because there's no
+// container to clean up either.
+func TestCache_Delete_NonexistentVersion_NoopsCleanly(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.New(dir)
+
+	err := c.Delete("skyrim-se", "nexusmods", "12345", "1.0.0")
+	assert.NoError(t, err)
+}
+
+// TestCache_Delete_GameScoped_RemovesNowEmptyModDirectory: the game-scoped
+// layout (per-game cache_path override) omits the gameID level, but the
+// empty-container cleanup is purely path-relative, so it must apply there
+// too.
+func TestCache_Delete_GameScoped_RemovesNowEmptyModDirectory(t *testing.T) {
+	dir := t.TempDir()
+	c := cache.NewGameScoped(dir)
+
+	require.NoError(t, c.Store("starrupture", "nexusmods", "35", "1.00", "file.pak", []byte("data")))
+	modDir := filepath.Join(dir, "nexusmods-35")
+	require.DirExists(t, modDir)
+
+	require.NoError(t, c.Delete("starrupture", "nexusmods", "35", "1.00"))
+	assert.NoDirExists(t, modDir)
+}
+
 func TestCache_Exists_ListFiles_GameScoped(t *testing.T) {
 	dir := t.TempDir()
 	c := cache.NewGameScoped(dir)
@@ -413,4 +474,57 @@ func TestCache_MarkFileCompleteWithMembers_UnverifiableIDs(t *testing.T) {
 	entries, err := os.ReadDir(modPath)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "an unverifiable file ID must not produce a marker")
+}
+
+// TestCache_RetainedSourceName_IsReservedAndExcludedFromContent pins that a
+// retained compile source (#196) written under RetainedSourceName is
+// reserved bookkeeping, not a deployment member - it must never be listed,
+// sized, or deployed, even though its content is a real, non-empty file
+// (unlike a marker, which is metadata).
+func TestCache_RetainedSourceName_IsReservedAndExcludedFromContent(t *testing.T) {
+	name := cache.RetainedSourceName("file-a")
+	require.True(t, strings.HasPrefix(name, cache.ReservedPrefix),
+		"retained source name must live under the reserved namespace")
+
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("g", "src", "mod", "1.0", "Bear_Mount_P.pak", []byte("compiled")))
+	require.NoError(t, c.Store("g", "src", "mod", "1.0", name, []byte("original exmodz bytes")))
+
+	files, err := c.ListFiles("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bear_Mount_P.pak"}, files, "a retained source must never be listed as deployable content")
+
+	size, err := c.Size("g", "src", "mod", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, int64(len("compiled")), size, "a retained source's bytes must not count toward cache size")
+}
+
+// TestCache_RetainedSourceName_UniquePerFileID guards against two compiled
+// files in the same mod entry colliding on their retained source's name.
+func TestCache_RetainedSourceName_UniquePerFileID(t *testing.T) {
+	assert.NotEqual(t, cache.RetainedSourceName("file-a"), cache.RetainedSourceName("file-b"))
+}
+
+// TestCache_MergeFingerprintPath_IsReserved pins that the merged pak's
+// fingerprint marker (#197) lives under the reserved namespace, like every
+// other lmm bookkeeping file.
+func TestCache_MergeFingerprintPath_IsReserved(t *testing.T) {
+	path := cache.MergeFingerprintPath("/some/version/dir")
+	if !strings.HasPrefix(filepath.Base(path), cache.ReservedPrefix) {
+		t.Errorf("MergeFingerprintPath = %q, want a reserved-prefixed basename", path)
+	}
+}
+
+// TestCache_MergeFingerprintPath_ExcludedFromContent proves the fingerprint
+// marker is never listed as deployable content, matching every other
+// reserved marker's ListFiles exclusion.
+func TestCache_MergeFingerprintPath_ExcludedFromContent(t *testing.T) {
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("g", "lmm-merged", "merged-pak", "merged", "zzz_LMM_Merged_P.pak", []byte("pak-bytes")))
+	versionDir := c.ModPath("g", "lmm-merged", "merged-pak", "merged")
+	require.NoError(t, os.WriteFile(cache.MergeFingerprintPath(versionDir), []byte(`{"BaseIndexHash":"abc"}`), 0o644))
+
+	files, err := c.ListFiles("g", "lmm-merged", "merged-pak", "merged")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"zzz_LMM_Merged_P.pak"}, files, "the fingerprint marker must never be listed as deployable content")
 }

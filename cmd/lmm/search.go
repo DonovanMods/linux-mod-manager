@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -280,7 +281,8 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Print results
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(w, "ID\tNAME\tAUTHOR\tVERSION\tSOURCE\t"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
@@ -288,11 +290,20 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
+	// installedRows tracks each row's installed state in iteration order, so
+	// the whole row (not just the marker) can be green-tinted post-Flush -
+	// #193's richer palette (a cell-only accent read as too subtle in smoke
+	// feedback). Plain "[installed]" text is fed into the tabwriter; the
+	// row-level color wraps the already-padded line, matching printTable's
+	// "color only after Flush" contract.
+	var installedRows []bool
 	for _, mod := range mods {
 		installedMark := ""
-		if installedKeys[domain.ModKey(mod.SourceID, mod.ID)] {
+		installed := installedKeys[domain.ModKey(mod.SourceID, mod.ID)]
+		if installed {
 			installedMark = "[installed]"
 		}
+		installedRows = append(installedRows, installed)
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			mod.ID,
 			truncate(mod.Name, 40),
@@ -306,6 +317,15 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
+	}
+	rowColor := func(i int) func(string) string {
+		if i >= 0 && i < len(installedRows) && installedRows[i] {
+			return colorGreen
+		}
+		return nil
+	}
+	if err := printTable(&buf, 2, rowColor); err != nil {
+		return fmt.Errorf("writing table: %w", err)
 	}
 
 	if verbose {
