@@ -5,7 +5,8 @@ BINARY_NAME := lmm
 BUILD_DIR := ./build
 MAIN_PATH := ./cmd/lmm
 VERSION := $(shell grep 'version = ' cmd/lmm/root.go | cut -d'"' -f2)
-LDFLAGS := -ldflags "-s -w"
+DESCRIBE := $(shell git describe --tags --dirty 2>/dev/null)
+LDFLAGS := -ldflags "-s -w -X main.buildDescribe=$(DESCRIBE)"
 # Project-local Go cache so tests run in sandboxed environments (e.g. CI, Cursor)
 GOCACHE_LOCAL := $(CURDIR)/.go-mod/cache
 # Trunk cache under project for sandbox-friendly lint
@@ -16,7 +17,7 @@ all: build
 
 ## build: Build the binary
 build:
-	@echo "Building $(BINARY_NAME) v$(VERSION)..."
+	@echo "Building $(BINARY_NAME) v$(VERSION) ($(DESCRIBE))..."
 	@go build $(LDFLAGS) -o $(BINARY_NAME) $(MAIN_PATH)
 
 ## build-debug: Build with debug symbols
