@@ -1,11 +1,14 @@
 package icarus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -213,5 +216,79 @@ func TestFirestoreClient_GetJSON_DrainsBodyBeforeCloseOnErrorPath(t *testing.T) 
 	}
 	if !transport.tracked.closed {
 		t.Error("response body was not closed")
+	}
+}
+
+// TestFirestoreClient_GetJSON_ErrorNamesURLAndBodySnippet guards a Copilot
+// release-review finding on #203: getJSON's non-200 error was a bare "HTTP
+// %d", naming neither which request failed nor what the server actually
+// said - a 403 was otherwise undiagnosable (a Firestore permission error, a
+// quota message, and a malformed-request response all look identical). The
+// error must name the request URL and a snippet of the response body.
+func TestFirestoreClient_GetJSON_ErrorNamesURLAndBodySnippet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":{"message":"PERMISSION_DENIED: quota exceeded"}}`)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	c := newFirestoreClient("test-project", srv.Client())
+	err := c.getJSON(context.Background(), srv.URL+"/some/path", &struct{}{})
+	if err == nil {
+		t.Fatal("expected an error for a 403 response, got nil")
+	}
+	if !strings.Contains(err.Error(), srv.URL+"/some/path") {
+		t.Errorf("error %q does not name the request URL", err.Error())
+	}
+	if !strings.Contains(err.Error(), "PERMISSION_DENIED") {
+		t.Errorf("error %q does not include the response body snippet", err.Error())
+	}
+}
+
+// TestFirestoreClient_GetJSON_ErrorBodySnippetIsCapped guards the "cap it"
+// half of the same finding: a large/pathological error body (a stray HTML
+// error page, a runaway response, ...) must not be echoed in full into the
+// error message.
+func TestFirestoreClient_GetJSON_ErrorBodySnippetIsCapped(t *testing.T) {
+	const bodySize = 64 * 1024
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write(bytes.Repeat([]byte("x"), bodySize)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	c := newFirestoreClient("test-project", srv.Client())
+	err := c.getJSON(context.Background(), srv.URL, &struct{}{})
+	if err == nil {
+		t.Fatal("expected an error for a 403 response, got nil")
+	}
+	if len(err.Error()) >= bodySize {
+		t.Errorf("error message is %d bytes - the response body snippet must be capped, not echoed in full", len(err.Error()))
+	}
+}
+
+// TestFirestoreClient_GetJSON_ErrorOmitsBodyClauseWhenSnippetIsEmpty guards
+// a Copilot round-2 release-review finding on #204: a non-200 response with
+// no body (or a whitespace-only one) left the ": %s" clause in the error
+// message with nothing after the trailing colon (e.g. "icarus: GET
+// http://...: HTTP 403: "). The body clause must be omitted entirely when
+// the trimmed snippet is empty, not rendered with a dangling colon.
+func TestFirestoreClient_GetJSON_ErrorOmitsBodyClauseWhenSnippetIsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := newFirestoreClient("test-project", srv.Client())
+	err := c.getJSON(context.Background(), srv.URL, &struct{}{})
+	if err == nil {
+		t.Fatal("expected an error for a 403 response, got nil")
+	}
+	if strings.HasSuffix(err.Error(), ":") || strings.HasSuffix(err.Error(), ": ") {
+		t.Errorf("error %q has a dangling colon with no body snippet after it", err.Error())
+	}
+	want := fmt.Sprintf("icarus: GET %s: HTTP 403", srv.URL)
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 }
