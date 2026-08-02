@@ -40,6 +40,38 @@ func TestDoVerify_StaleCompile_ReportedAsWarning(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "RECOMPILE NEEDED")
 	assert.Contains(t, output, "Bear Mount")
+	assert.Contains(t, output, "base pak updated", "this fixture's staleness is a fingerprint mismatch, not a missing artifact")
+	assert.Contains(t, output, "lmm update --all", "notify-policy rows aren't applied by bare 'lmm update' - the hint must name the flag that actually applies them")
+}
+
+// TestDoVerify_StaleCompile_NotDeployed_ReasonSaysSo is the #197 postsmoke
+// UX regression test: the "RECOMPILE NEEDED" hint always said "base pak
+// updated", even when the merged pak's fingerprint still matched and the
+// real problem was a missing deployed artifact (the #197 I5 wedge case).
+// CheckMergedPakStaleness now distinguishes the two - this proves doVerify
+// actually surfaces the real reason instead of the fingerprint-mismatch
+// text unconditionally.
+func TestDoVerify_StaleCompile_NotDeployed_ReasonSaysSo(t *testing.T) {
+	svc, game, _, _ := setupDoUpdateRecompileTest(t)
+	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	require.NoError(t, os.Remove(deployedPath))
+
+	verifyProfile = "default"
+	t.Cleanup(func() { verifyProfile = "" })
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	assert.Contains(t, out, "RECOMPILE NEEDED")
+	assert.Contains(t, out, "not deployed")
+	assert.NotContains(t, out, "base pak updated", "the fingerprint still matches - blaming the base pak here is false")
 }
 
 // TestDoVerify_StaleCompile_JSON is the --json sibling of the above.
@@ -77,6 +109,7 @@ func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 	// #197: a merged-pak staleness row's identity is the SYNTHETIC
 	// merged-pak mod, not the contributing "bear-mount" mod.
 	assert.Equal(t, "merged-pak", found.ModID)
+	assert.Equal(t, "base pak updated", found.Note, "the JSON note should carry the same real reason as the text-mode hint")
 	assert.GreaterOrEqual(t, out.Warnings, 1)
 }
 

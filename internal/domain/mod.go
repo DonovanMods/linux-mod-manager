@@ -133,6 +133,13 @@ type Update struct {
 	// changed, only the base pak has - so callers must not treat NewVersion
 	// as a real version bump when this is set.
 	RecompileNeeded bool
+	// RecompileReason qualifies RecompileNeeded with why a recompile/resync
+	// is needed (#197 postsmoke UX fix): "base pak updated" when the
+	// merged/compiled fingerprint no longer matches current inputs, "not
+	// deployed" when the fingerprint still matches but the artifact is
+	// missing from the game directory (#197 I5's wedge case). Empty when
+	// RecompileNeeded is false.
+	RecompileReason string
 }
 
 // ModKey returns a unique lookup key for a mod: "sourceID:modID".

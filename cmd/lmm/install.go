@@ -645,7 +645,16 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	}
 
 	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
-	fmt.Printf("  Files deployed: %d\n", result.FilesDeployed)
+	// #197 postsmoke UX fix: a DeployCompile ".exmodz" mod deploys zero
+	// files of its own by design (validate+retain only - it participates
+	// in the profile's shared merged pak instead, synced separately
+	// above) - "Files deployed: 0" read as a failure, not the correct,
+	// expected outcome it actually is.
+	if game.DeployMode == domain.DeployCompile && result.FilesDeployed == 0 {
+		fmt.Println("  Installed (merged pak updated)")
+	} else {
+		fmt.Printf("  Files deployed: %d\n", result.FilesDeployed)
+	}
 	fmt.Printf("  Added to profile: %s\n", profileName)
 
 	return nil
@@ -720,7 +729,14 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		case core.InstallDepConflictWarning:
 			fmt.Printf("  ⚠ %s\n", p.Detail)
 		case core.InstallDepInstalled:
-			fmt.Printf("  ✓ Installed (%d files)\n", p.FilesExtracted)
+			// #197 postsmoke UX fix: see the single-mod path's identical
+			// fix above - a DeployCompile ".exmodz" dependency deploys
+			// zero files of its own by design.
+			if game.DeployMode == domain.DeployCompile && p.FilesExtracted == 0 {
+				fmt.Println("  ✓ Installed (merged pak updated)")
+			} else {
+				fmt.Printf("  ✓ Installed (%d files)\n", p.FilesExtracted)
+			}
 		case core.InstallNote:
 			if verbose {
 				fmt.Printf("  %s\n", p.Detail)
@@ -1194,7 +1210,15 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			fmt.Printf("  Warning: could not update profile: %v\n", err)
 		}
 
-		fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
+		// #197 postsmoke UX fix: see doInstall's identical fix - a
+		// DeployCompile ".exmodz" mod deploys zero files of its own by
+		// design (validate+retain only; the merged pak sync below is what
+		// actually deploys it).
+		if game.DeployMode == domain.DeployCompile && downloadResult.FilesExtracted == 0 {
+			fmt.Println("  ✓ Installed (merged pak updated)")
+		} else {
+			fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
+		}
 		installed = append(installed, mod.Name)
 
 		// Run install.after_each hook

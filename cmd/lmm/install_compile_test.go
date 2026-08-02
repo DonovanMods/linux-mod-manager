@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -100,6 +101,8 @@ func TestDoInstall_DeployCompile_AnnouncesRetaining(t *testing.T) {
 	assert.Equal(t, 1, compiler.validateCalls)
 	assert.Contains(t, out, "Retaining Bear_Mount.exmodz for merge...\n")
 	assert.NotContains(t, out, "Extracting to cache...", "retaining isn't extracting - the generic message must not also print")
+	assert.Contains(t, out, "Installed (merged pak updated)",
+		"#197 postsmoke UX fix: 'Files deployed: 0' read as a failure, not the correct expected outcome for a validate+retain-only exmodz mod")
 }
 
 // TestBatchInstallMods_DeployCompile_DeploysMergedPak is the #197
@@ -137,7 +140,9 @@ func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
 	src.AddDownload("bear-exmodz", []byte("bear-bytes"))
 	src.AddDownload("wolf-exmodz", []byte("wolf-bytes"))
 
-	err := batchInstallMods(context.Background(), svc, game, []*domain.Mod{bearMod, wolfMod}, "default")
+	out, err := captureStdoutErr(t, func() error {
+		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{bearMod, wolfMod}, "default")
+	})
 	require.NoError(t, err)
 
 	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
@@ -145,6 +150,9 @@ func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
 	require.NoError(t, readErr, "batchInstallMods must sync the merged pak - both mods deploy zero files of their own")
 	assert.Contains(t, string(data), "bear-bytes")
 	assert.Contains(t, string(data), "wolf-bytes")
+
+	assert.Equal(t, 2, strings.Count(out, "Installed (merged pak updated)"),
+		"#197 postsmoke UX fix: each zero-file exmodz mod must say what happened, not print the misleading '(0 files)'")
 }
 
 // TestDoInstall_DeployCompile_SyncFailure_PrintsLoudly is the #197

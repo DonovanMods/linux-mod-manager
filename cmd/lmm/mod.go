@@ -541,6 +541,12 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 	fmt.Printf("Files deployed by %s (%s):\n\n", mod.Name, modID)
 
 	if len(files) == 0 {
+		gameCache := svc.GetGameCache(game)
+		if game.DeployMode == domain.DeployCompile && hasRetainedSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
+			fmt.Println("  No files of its own - this mod participates in the profile's merged pak.")
+			fmt.Printf("  (See zzz_LMM_Merged_P.pak; run `lmm verify` to check the merged pak is up to date)\n")
+			return nil
+		}
 		fmt.Println("  No deployed files tracked.")
 		fmt.Println("  (Files are tracked on install; existing mods may need to be redeployed)")
 		return nil
