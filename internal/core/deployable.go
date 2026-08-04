@@ -8,8 +8,6 @@
 package core
 
 import (
-	"fmt"
-
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 )
 
@@ -27,14 +25,17 @@ import (
 // none"), or the entry has no markers at all, the full ListFiles union is
 // returned unchanged: pre-manifest entries, import-populated entries, and
 // pure pre-#197 entries keep their historical deploy behavior exactly.
+//
+// Errors from ListFiles and FileManifests are returned unwrapped; the caller
+// adds context with a single "resolving deployable files" wrapper.
 func deployableFiles(gameCache *cache.Cache, gameID, sourceID, modID, version string) ([]string, error) {
 	files, err := gameCache.ListFiles(gameID, sourceID, modID, version)
 	if err != nil {
-		return nil, fmt.Errorf("listing cached files: %w", err)
+		return nil, err
 	}
 	manifests, err := gameCache.FileManifests(gameID, sourceID, modID, version)
 	if err != nil {
-		return nil, fmt.Errorf("reading cache manifests: %w", err)
+		return nil, err
 	}
 	if len(manifests) == 0 {
 		return files, nil

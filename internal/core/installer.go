@@ -42,7 +42,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	// Get list of files in the cached mod
 	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return fmt.Errorf("listing cached files: %w", err)
+		return fmt.Errorf("resolving deployable files: %w", err)
 	}
 
 	var deployed []string
@@ -454,7 +454,7 @@ func (i *Installer) IsInstalled(game *domain.Game, mod *domain.Mod) (bool, error
 	// Get list of files in the cached mod
 	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return false, fmt.Errorf("listing cached files: %w", err)
+		return false, fmt.Errorf("resolving deployable files: %w", err)
 	}
 
 	if len(files) == 0 {
@@ -497,7 +497,7 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 	// Get list of files in the cached mod
 	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return nil, fmt.Errorf("listing cached files: %w", err)
+		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}
 
 	// Check for conflicts
@@ -529,7 +529,7 @@ func (i *Installer) GetDeployedFiles(game *domain.Game, mod *domain.Mod) ([]stri
 
 	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}
 
 	var deployed []string
