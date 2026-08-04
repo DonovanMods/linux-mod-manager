@@ -130,9 +130,9 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	if err != nil {
 		return fmt.Errorf("listing old cached files: %w", err)
 	}
-	newFiles, err := newCache.ListFiles(game.ID, newMod.SourceID, newMod.ID, newMod.Version)
+	newFiles, err := deployableFiles(newCache, game.ID, newMod.SourceID, newMod.ID, newMod.Version)
 	if err != nil {
-		return fmt.Errorf("listing new cached files: %w", err)
+		return fmt.Errorf("resolving deployable new-side files: %w", err)
 	}
 
 	// #144 item 4: in the degenerate same-version shape (old and new resolve
@@ -260,6 +260,13 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 //     one recorded manifest, stale markers included (unattributed content
 //     proves an unmanifested contributor exists, e.g. an entry populated
 //     directly by `lmm import`).
+//
+// unionFiles is the caller's deploy-direction set (deployableFiles' output,
+// #210), not always the raw ListFiles union: when that resolver narrowed to
+// recorded members, every entry here is attributed by construction, since
+// resolveSharedDirUpdate independently requires all-recorded provenance too;
+// when it fell back to the full union, the attribution check below behaves
+// exactly as before.
 //
 // The ownership rule: the DEPLOY set is exactly the members attributed to the
 // mod's current (new-side) file IDs - newCurrent. Every other listed member

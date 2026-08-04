@@ -452,6 +452,39 @@ func TestInstaller_Replace_DeployFailureRestoresOldFiles(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "new-only file should not remain after rollback")
 }
 
+// TestInstaller_Replace_NewSideSkipsUnclaimed: replacing onto a version whose
+// cache entry mixes a recorded retain-only marker with a stale unclaimed pak
+// must (a) undeploy the old version's files, (b) NOT deploy the stale pak.
+func TestInstaller_Replace_NewSideSkipsUnclaimed(t *testing.T) {
+	cacheDir := t.TempDir()
+	gameDir := t.TempDir()
+	modCache := cache.New(cacheDir)
+
+	// Old version: ordinary claimed pak, deployed.
+	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.0", "Old_P.pak", []byte("old")))
+	oldDir := modCache.ModPath("icarus", "icarus", "m1", "1.0")
+	require.NoError(t, cache.MarkFileCompleteWithMembers(oldDir, "pak", []string{"Old_P.pak"}))
+
+	// New version: the #210 mixed shape.
+	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.4", "Stale_P.pak", []byte("stale")))
+	newDir := modCache.ModPath("icarus", "icarus", "m1", "1.4")
+	require.NoError(t, cache.MarkFileCompleteWithMembers(newDir, "exmodz", nil))
+	require.NoError(t, os.WriteFile(filepath.Join(newDir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
+
+	game := &domain.Game{ID: "icarus", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	oldMod := &domain.Mod{ID: "m1", SourceID: "icarus", Version: "1.0", GameID: "icarus"}
+	newMod := &domain.Mod{ID: "m1", SourceID: "icarus", Version: "1.4", GameID: "icarus"}
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
+
+	require.NoError(t, inst.Install(context.Background(), game, oldMod, "default"))
+	require.NoError(t, inst.Replace(context.Background(), game, oldMod, newMod, "default"))
+
+	_, err := os.Lstat(filepath.Join(gameDir, "Old_P.pak"))
+	assert.True(t, os.IsNotExist(err), "old file must be undeployed")
+	_, err = os.Lstat(filepath.Join(gameDir, "Stale_P.pak"))
+	assert.True(t, os.IsNotExist(err), "stale unclaimed pak must not deploy")
+}
+
 func TestInstaller_ReplaceWithOldCache_SameVersionRemovesStaleFiles(t *testing.T) {
 	oldCacheDir := t.TempDir()
 	newCacheDir := t.TempDir()
