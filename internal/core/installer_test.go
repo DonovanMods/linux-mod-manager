@@ -873,3 +873,74 @@ func TestInstaller_ReplaceForUpdate_DistinctCacheDirs_MatchesReplace(t *testing.
 	assert.Equal(t, modCache.GetFilePath("g", "src", "mod", "2.0", "shared.esp"), target,
 		"shared members must point at the NEW version's cache entry")
 }
+
+// TestInstaller_Install_SkipsUnclaimedFiles reproduces the #210 live shape:
+// a retain-only marker (recorded, zero members) plus a stale unclaimed pak.
+// Install must deploy nothing; a legacy bare-marker entry must keep the
+// historical deploy-everything behavior.
+func TestInstaller_Install_SkipsUnclaimedFiles(t *testing.T) {
+	cacheDir := t.TempDir()
+	gameDir := t.TempDir()
+	modCache := cache.New(cacheDir)
+
+	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.4", "Stale_P.pak", []byte("stale")))
+	dir := modCache.ModPath("icarus", "icarus", "m1", "1.4")
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
+
+	game := &domain.Game{ID: "icarus", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	mod := &domain.Mod{ID: "m1", SourceID: "icarus", Version: "1.4", GameID: "icarus"}
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
+
+	require.NoError(t, inst.Install(context.Background(), game, mod, "default"))
+	_, err := os.Lstat(filepath.Join(gameDir, "Stale_P.pak"))
+	assert.True(t, os.IsNotExist(err), "unclaimed stale pak must not deploy")
+
+	// Deployed-file views agree with the deploy decision.
+	deployed, err := inst.GetDeployedFiles(game, mod)
+	require.NoError(t, err)
+	assert.Empty(t, deployed)
+}
+
+func TestInstaller_Install_LegacyBareMarker_DeploysUnion(t *testing.T) {
+	cacheDir := t.TempDir()
+	gameDir := t.TempDir()
+	modCache := cache.New(cacheDir)
+
+	require.NoError(t, modCache.Store("icarus", "icarus", "m2", "2.2", "MorePoints_P.pak", []byte("pak")))
+	dir := modCache.ModPath("icarus", "icarus", "m2", "2.2")
+	require.NoError(t, cache.MarkFileComplete(dir, "exmodz")) // pre-manifest bare marker
+
+	game := &domain.Game{ID: "icarus", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	mod := &domain.Mod{ID: "m2", SourceID: "icarus", Version: "2.2", GameID: "icarus"}
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
+
+	require.NoError(t, inst.Install(context.Background(), game, mod, "default"))
+	_, err := os.Lstat(filepath.Join(gameDir, "MorePoints_P.pak"))
+	assert.NoError(t, err, "legacy entry must keep deploying its pak")
+
+	installed, err := inst.IsInstalled(game, mod)
+	require.NoError(t, err)
+	assert.True(t, installed)
+}
+
+// TestInstaller_IsInstalled_RetainOnlyEntry guards the deploy-loop
+// interaction: a retain-only entry (deployable set empty) must not report
+// "not installed" in a way that spins redeploy loops - with nothing
+// deployable and nothing deployed there is nothing missing.
+func TestInstaller_IsInstalled_RetainOnlyEntry(t *testing.T) {
+	cacheDir := t.TempDir()
+	gameDir := t.TempDir()
+	modCache := cache.New(cacheDir)
+
+	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.4", "Stale_P.pak", []byte("stale")))
+	dir := modCache.ModPath("icarus", "icarus", "m1", "1.4")
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
+
+	game := &domain.Game{ID: "icarus", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	mod := &domain.Mod{ID: "m1", SourceID: "icarus", Version: "1.4", GameID: "icarus"}
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
+
+	installed, err := inst.IsInstalled(game, mod)
+	require.NoError(t, err)
+	assert.False(t, installed, "empty deployable set keeps IsInstalled's len==0 false answer")
+}

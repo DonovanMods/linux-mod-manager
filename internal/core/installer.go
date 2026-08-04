@@ -40,7 +40,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	}
 
 	// Get list of files in the cached mod
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return fmt.Errorf("listing cached files: %w", err)
 	}
@@ -406,7 +406,10 @@ func rollbackDeploy(lnk linker.Linker, modPath string, relativePaths []string) e
 
 // Uninstall removes a mod from the game directory
 func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
-	// Get list of files in the cached mod
+	// Deliberately the full ListFiles union, not deployableFiles (#210):
+	// removal must cover anything that might ever have been linked, including
+	// stale unclaimed files a pre-fix deploy linked. Narrowing this would
+	// strand those links forever.
 	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return fmt.Errorf("listing cached files: %w", err)
@@ -449,7 +452,7 @@ func (i *Installer) IsInstalled(game *domain.Game, mod *domain.Mod) (bool, error
 	}
 
 	// Get list of files in the cached mod
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return false, fmt.Errorf("listing cached files: %w", err)
 	}
@@ -492,7 +495,7 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 	}
 
 	// Get list of files in the cached mod
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return nil, fmt.Errorf("listing cached files: %w", err)
 	}
@@ -524,7 +527,7 @@ func (i *Installer) GetDeployedFiles(game *domain.Game, mod *domain.Mod) ([]stri
 		return nil, nil
 	}
 
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return nil, err
 	}
