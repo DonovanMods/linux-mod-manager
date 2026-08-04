@@ -844,6 +844,14 @@ func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []
 	if err := cache.MarkFileCompleteWithMembers(stagePath, fileID, members); err != nil {
 		return err
 	}
+	// #210: with full provenance recorded AND a retained source present, drop
+	// anything no manifest claims (pre-#197 compiled paks carried forward by
+	// prepareStaging's seeding). A legacy bare marker anywhere, or an entry
+	// with no retained source, makes this a silent no-op - see
+	// cache.PruneUnclaimed's doc comment for the full gate.
+	if err := cache.PruneUnclaimed(stagePath); err != nil {
+		return err
+	}
 	return commitStagedCache(cachePath, stagePath)
 }
 

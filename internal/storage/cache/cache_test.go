@@ -548,3 +548,88 @@ func TestCache_MergeFingerprintPath_ExcludedFromContent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"zzz_LMM_Merged_P.pak"}, files, "the fingerprint marker must never be listed as deployable content")
 }
+
+// TestPruneUnclaimed_RemovesUnclaimedWhenAllRecorded proves the#210 core
+// case: once every marker in the entry carries a recorded manifest AND the
+// entry holds a retained source, anything no manifest claims is stale
+// debris and gets removed - including the now-empty subdirectory it lived
+// in - while the retained source itself, which is reserved bookkeeping
+// claimed by nothing, survives.
+func TestPruneUnclaimed_RemovesUnclaimedWhenAllRecorded(t *testing.T) {
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "claimed.pak", []byte("a")))
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "stale.pak", []byte("b")))
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "sub/stale2.pak", []byte("c")))
+	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("f1")), []byte("zip"), 0o644))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "f1", []string{"claimed.pak"}))
+
+	require.NoError(t, cache.PruneUnclaimed(dir))
+
+	files, err := c.ListFiles("g", "s", "m", "1.0")
+	require.NoError(t, err)
+	require.Equal(t, []string{"claimed.pak"}, files)
+	// Emptied subdirectory is removed too.
+	_, err = os.Stat(filepath.Join(dir, "sub"))
+	require.True(t, os.IsNotExist(err))
+}
+
+// TestPruneUnclaimed_NoOpWithoutRetainedSource proves the retained-source
+// gate: even with every marker recorded, an entry holding no retained
+// source is left untouched - unattributed content on disk could be
+// legacy/import-populated (#144's protected shapes) rather than debris, and
+// only a retained source's presence is the validate+retain model's actual
+// signature.
+func TestPruneUnclaimed_NoOpWithoutRetainedSource(t *testing.T) {
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "claimed.pak", []byte("a")))
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "stale.pak", []byte("b")))
+	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "f1", []string{"claimed.pak"}))
+
+	require.NoError(t, cache.PruneUnclaimed(dir))
+
+	files, err := c.ListFiles("g", "s", "m", "1.0")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"claimed.pak", "stale.pak"}, files, "no retained source means no-op, even with all markers recorded")
+}
+
+func TestPruneUnclaimed_NoOpWithBareMarker(t *testing.T) {
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "a.pak", []byte("a")))
+	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, cache.MarkFileComplete(dir, "f1")) // bare: provenance unknown
+
+	require.NoError(t, cache.PruneUnclaimed(dir))
+
+	files, err := c.ListFiles("g", "s", "m", "1.0")
+	require.NoError(t, err)
+	require.Equal(t, []string{"a.pak"}, files)
+}
+
+func TestPruneUnclaimed_NoOpWithoutMarkers(t *testing.T) {
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "a.pak", []byte("a")))
+	dir := c.ModPath("g", "s", "m", "1.0")
+
+	require.NoError(t, cache.PruneUnclaimed(dir))
+
+	files, err := c.ListFiles("g", "s", "m", "1.0")
+	require.NoError(t, err)
+	require.Equal(t, []string{"a.pak"}, files)
+}
+
+func TestPruneUnclaimed_NeverTouchesReservedEntries(t *testing.T) {
+	c := cache.New(t.TempDir())
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "claimed.pak", []byte("a")))
+	dir := c.ModPath("g", "s", "m", "1.0")
+	// A retained source is reserved bookkeeping, claimed by nothing.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "f1", []string{"claimed.pak"}))
+
+	require.NoError(t, cache.PruneUnclaimed(dir))
+
+	_, err := os.Stat(filepath.Join(dir, cache.RetainedSourceName("exmodz")))
+	require.NoError(t, err, "reserved entries are never pruned")
+}

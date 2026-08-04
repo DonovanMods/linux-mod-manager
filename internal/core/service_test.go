@@ -12,6 +12,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -660,6 +661,56 @@ func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
 	content, err := os.ReadFile(svc.GetGameCache(game).GetFilePath("testgame", "test", "123", "1.0.0", "shared.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "from file2", string(content))
+}
+
+// TestService_DownloadMod_PrunesUnclaimedStaleFiles is the #210 wiring test:
+// commitStagedCacheWithMarker's single choke point calls cache.PruneUnclaimed
+// right after stamping its own marker, so a cache entry carrying stale
+// unclaimed debris (e.g. a pre-#197 compiled pak carried forward by
+// prepareStaging's reseed, sitting beside a #197 retained-source marker) gets
+// cleaned up the moment every marker in the entry becomes recorded - while
+// the retained source itself, being reserved bookkeeping, survives.
+func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	mock := newMockSourceWithDownloads("test")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
+
+	gameCache := svc.GetGameCache(game)
+	dir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+
+	// Pre-seed the entry with debris a manifest-unaware world would have left
+	// behind: a stale pak no current marker claims, and a #197 retained
+	// source whose own marker IS recorded (claiming nothing).
+	require.NoError(t, gameCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "stale.pak", []byte("debris")))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("legacy")), []byte("zip"), 0o644))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "legacy", nil))
+
+	zip1, err := os.ReadFile(createTestZip(t, t.TempDir(), map[string]string{"new.txt": "fresh content"}))
+	require.NoError(t, err)
+	mock.AddDownload("file1", zip1)
+
+	ctx := context.Background()
+	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
+	require.NoError(t, err)
+
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"new.txt"}, files, "the unclaimed stale pak must be pruned once every marker is recorded")
+
+	_, err = os.Stat(filepath.Join(dir, cache.RetainedSourceName("legacy")))
+	require.NoError(t, err, "the retained source is reserved bookkeeping and must survive the prune")
 }
 
 // TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected is the

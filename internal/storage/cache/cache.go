@@ -165,7 +165,14 @@ type FileManifest struct {
 // union-fallback direction - so pre-manifest entries and any future format
 // revision both degrade silently rather than misreport provenance.
 func (c *Cache) FileManifests(gameID, sourceID, modID, version string) (map[string]FileManifest, error) {
-	versionDir := c.ModPath(gameID, sourceID, modID, version)
+	return fileManifestsAt(c.ModPath(gameID, sourceID, modID, version))
+}
+
+// fileManifestsAt is FileManifests' shared implementation, taking a raw
+// directory path instead of a cache key so PruneUnclaimed (which operates on
+// a STAGING directory, not a committed cache entry) can read the same
+// markers.
+func fileManifestsAt(versionDir string) (map[string]FileManifest, error) {
 	entries, err := os.ReadDir(versionDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -303,6 +310,82 @@ func HasRetainedSource(versionDir string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// PruneUnclaimed deletes non-reserved regular files in versionDir that no
+// recorded manifest claims, then removes directories the deletions emptied
+// (#210). It is a no-op unless EVERY marker carries a recorded manifest AND
+// the entry holds a retained source (.lmm-source-*) - the validate+retain
+// model's signature (#210); pruning on anything less could delete legacy
+// content no manifest attributes. A bare marker means unknown provenance -
+// pruning on guesswork could delete a legacy file's live content, so any
+// bare marker anywhere in versionDir makes the whole call a no-op. Reserved
+// (ReservedPrefix) entries are never candidates. Callers invoke it on a
+// STAGING directory at commit time, so a prune can never race a deploy.
+func PruneUnclaimed(versionDir string) error {
+	manifests, err := fileManifestsAt(versionDir)
+	if err != nil {
+		return fmt.Errorf("reading manifests for prune: %w", err)
+	}
+	if len(manifests) == 0 {
+		return nil
+	}
+	claimed := make(map[string]bool)
+	for _, m := range manifests {
+		if !m.Recorded {
+			return nil
+		}
+		for _, member := range m.Members {
+			claimed[filepath.FromSlash(member)] = true
+		}
+	}
+	hasRetained, err := HasRetainedSource(versionDir)
+	if err != nil {
+		return fmt.Errorf("checking retained source for prune: %w", err)
+	}
+	if !hasRetained {
+		return nil
+	}
+	files, err := walkEntries(versionDir, false) // same walker ListFiles uses
+	if err != nil {
+		return fmt.Errorf("walking entry for prune: %w", err)
+	}
+	for _, f := range files {
+		if claimed[f] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(versionDir, f)); err != nil {
+			return fmt.Errorf("pruning unclaimed %s: %w", f, err)
+		}
+	}
+	removeEmptyDirs(versionDir)
+	return nil
+}
+
+// removeEmptyDirs removes every empty subdirectory under versionDir
+// (post-order, so a directory left empty by an inner removal is itself
+// removed), never versionDir itself. Best-effort: a directory a concurrent
+// writer has since populated (ENOTEMPTY) is simply left in place rather than
+// treated as an error, matching removeIfEmpty's tolerant style elsewhere in
+// this package.
+func removeEmptyDirs(versionDir string) {
+	var dirs []string
+	_ = filepath.WalkDir(versionDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() || path == versionDir {
+			return nil
+		}
+		dirs = append(dirs, path)
+		return nil
+	})
+	// Remove deepest-first so a parent emptied by removing its last child
+	// subdirectory is itself a candidate on this same pass.
+	for i := len(dirs) - 1; i >= 0; i-- {
+		entries, err := os.ReadDir(dirs[i])
+		if err != nil || len(entries) > 0 {
+			continue
+		}
+		_ = os.Remove(dirs[i])
+	}
 }
 
 // mergeFingerprintMarkerName names the single JSON fingerprint marker a
