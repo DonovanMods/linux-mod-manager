@@ -148,8 +148,10 @@ func (s *Icarus) GetMod(ctx context.Context, queryGameID, modID string) (*domain
 }
 
 // GetModFiles returns the mod's downloadable files (pak and/or exmodz — see
-// modinfo.json v2 schema). A single file is marked primary, matching the
-// existing custom.API convention.
+// modinfo.json v2 schema). When exactly one file exists, it is marked primary.
+// When both variants are published, exmodz is marked primary (#211) — the pak
+// remains explicitly selectable. All returned files have a Description set:
+// "mergeable EXMOD - recommended" for exmodz, "prebuilt PAK" for pak.
 func (s *Icarus) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
 	doc, err := s.firestore.getDocument(ctx, "mods", mod.ID)
 	if err != nil {
@@ -162,15 +164,30 @@ func (s *Icarus) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Dow
 		if !ok || rawURL == "" {
 			continue
 		}
+		description := "prebuilt PAK"
+		if kind == "exmodz" {
+			description = "mergeable EXMOD - recommended"
+		}
 		out = append(out, domain.DownloadableFile{
-			ID:       kind,
-			Name:     kind,
-			FileName: fileNameFromURL(rawURL, kind),
-			Category: strings.ToUpper(kind),
+			ID:          kind,
+			Name:        kind,
+			FileName:    fileNameFromURL(rawURL, kind),
+			Category:    strings.ToUpper(kind),
+			Description: description,
 		})
 	}
 	if len(out) == 1 {
 		out[0].IsPrimary = true
+	} else {
+		// #211: with both variants published, the mergeable exmodz is the
+		// default everywhere IsPrimary is honored (CLI default mark, --yes,
+		// TUI plan, batch, profile apply, selectDeployFiles) - the prebuilt
+		// pak stays explicitly selectable.
+		for i := range out {
+			if out[i].ID == "exmodz" {
+				out[i].IsPrimary = true
+			}
+		}
 	}
 	return out, nil
 }

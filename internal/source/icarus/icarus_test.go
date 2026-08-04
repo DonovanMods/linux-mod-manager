@@ -161,6 +161,110 @@ func TestIcarus_GetModFiles_ReturnsExmodzAndPak(t *testing.T) {
 	}
 }
 
+func TestIcarus_GetModFiles_BothVariants_ExmodzIsPrimary(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"name": "projects/p/databases/(default)/documents/mods/abc",
+			"fields": map[string]any{
+				"name": map[string]any{"stringValue": "Bear Mount"},
+				"files": map[string]any{"mapValue": map[string]any{"fields": map[string]any{
+					"pak":    map[string]any{"stringValue": "https://x/bear.pak"},
+					"exmodz": map[string]any{"stringValue": "https://x/bear.exmodz"},
+				}}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	src := New(srv.Client(), "test-project")
+	src.firestore.baseURL = srv.URL
+
+	files, err := src.GetModFiles(context.Background(), &domain.Mod{ID: "abc", GameID: "icarus"})
+	if err != nil {
+		t.Fatalf("GetModFiles: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("files = %+v, want 2 entries", files)
+	}
+	byID := map[string]domain.DownloadableFile{}
+	for _, f := range files {
+		byID[f.ID] = f
+	}
+	if !byID["exmodz"].IsPrimary {
+		t.Error("exmodz must be the default when both variants exist")
+	}
+	if byID["pak"].IsPrimary {
+		t.Error("pak should not be primary when exmodz exists")
+	}
+	if byID["exmodz"].Description != "mergeable EXMOD - recommended" {
+		t.Errorf("exmodz Description = %q, want %q", byID["exmodz"].Description, "mergeable EXMOD - recommended")
+	}
+	if byID["pak"].Description != "prebuilt PAK" {
+		t.Errorf("pak Description = %q, want %q", byID["pak"].Description, "prebuilt PAK")
+	}
+}
+
+func TestIcarus_GetModFiles_SingleVariant_StaysPrimary(t *testing.T) {
+	tests := []struct {
+		name             string
+		fileKey          string
+		fileURL          string
+		expectedFileName string
+		expectedDesc     string
+	}{
+		{
+			name:             "pak-only",
+			fileKey:          "pak",
+			fileURL:          "https://x/bear.pak",
+			expectedFileName: "bear.pak",
+			expectedDesc:     "prebuilt PAK",
+		},
+		{
+			name:             "exmodz-only",
+			fileKey:          "exmodz",
+			fileURL:          "https://x/bear.exmodz",
+			expectedFileName: "bear.exmodz",
+			expectedDesc:     "mergeable EXMOD - recommended",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+					"name": "projects/p/databases/(default)/documents/mods/abc",
+					"fields": map[string]any{
+						"name": map[string]any{"stringValue": "Bear Mount"},
+						"files": map[string]any{"mapValue": map[string]any{"fields": map[string]any{
+							tt.fileKey: map[string]any{"stringValue": tt.fileURL},
+						}}},
+					},
+				})
+			}))
+			defer srv.Close()
+
+			src := New(srv.Client(), "test-project")
+			src.firestore.baseURL = srv.URL
+
+			files, err := src.GetModFiles(context.Background(), &domain.Mod{ID: "abc", GameID: "icarus"})
+			if err != nil {
+				t.Fatalf("GetModFiles: %v", err)
+			}
+			if len(files) != 1 {
+				t.Fatalf("files = %+v, want exactly 1 entry", files)
+			}
+			if files[0].FileName != tt.expectedFileName {
+				t.Errorf("FileName = %q, want %q", files[0].FileName, tt.expectedFileName)
+			}
+			if !files[0].IsPrimary {
+				t.Error("single file should be marked primary")
+			}
+			if files[0].Description != tt.expectedDesc {
+				t.Errorf("Description = %q, want %q", files[0].Description, tt.expectedDesc)
+			}
+		})
+	}
+}
+
 // TestIcarus_GetMod pins the happy path: a single Firestore document maps
 // through mapDoc into the domain.Mod fields Search/GetModFiles callers
 // expect. GetMod's queryGameID parameter is deliberately not exercised here
