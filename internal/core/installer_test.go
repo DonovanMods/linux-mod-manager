@@ -1012,9 +1012,9 @@ func TestInstaller_Install_LegacyBareMarker_DeploysUnion(t *testing.T) {
 }
 
 // TestInstaller_IsInstalled_RetainOnlyEntry guards the deploy-loop
-// interaction: a retain-only entry (deployable set empty) must not report
-// "not installed" in a way that spins redeploy loops - with nothing
-// deployable and nothing deployed there is nothing missing.
+// interaction: a retain-only entry (empty deployable set) consistently reports
+// "not installed" via IsInstalled's len==0 answer. This is stable and expected
+// because the mod's content deploys via the shared merged pak.
 func TestInstaller_IsInstalled_RetainOnlyEntry(t *testing.T) {
 	cacheDir := t.TempDir()
 	gameDir := t.TempDir()

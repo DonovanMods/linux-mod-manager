@@ -549,7 +549,7 @@ func TestCache_MergeFingerprintPath_ExcludedFromContent(t *testing.T) {
 	assert.Equal(t, []string{"zzz_LMM_Merged_P.pak"}, files, "the fingerprint marker must never be listed as deployable content")
 }
 
-// TestPruneUnclaimed_RemovesUnclaimedWhenAllRecorded proves the#210 core
+// TestPruneUnclaimed_RemovesUnclaimedWhenAllRecorded proves the #210 core
 // case: once every marker in the entry carries a recorded manifest AND the
 // entry holds a retained source, anything no manifest claims is stale
 // debris and gets removed - including the now-empty subdirectory it lived
