@@ -3746,7 +3746,7 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 			// before any dependency (or the primary itself) is touched -
 			// mirrors the STRICT path's fold-site validation above for the
 			// BATCH path's one place a caller can pin more than one file.
-			if err := s.ValidateInstallFileSelection(plan.SourceID, primaryOverrideFiles); err != nil {
+			if err := s.ValidateInstallFileSelection(primary.SourceID, primaryOverrideFiles); err != nil {
 				return result, err
 			}
 		}

@@ -172,12 +172,7 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 
 	fmt.Println("\nAvailable files:")
 	for i, f := range files {
-		sizeStr := formatSize(f.Size)
-		defaultMark := ""
-		if f.IsPrimary {
-			defaultMark = " <- default"
-		}
-		fmt.Printf("  [%d] %s (%s, %s)%s\n", i+1, displayFileLabel(f), f.Category, sizeStr, defaultMark)
+		fmt.Println(installFileRow(i, f))
 	}
 
 	// reader is created ONCE and shared across every attempt below (both
@@ -387,6 +382,23 @@ func init() {
 	installCmd.Flags().BoolVar(&installNoDeps, "no-deps", false, "skip automatic dependency installation")
 
 	rootCmd.AddCommand(installCmd)
+}
+
+// installFileRow renders one chooser row. The Description suffix (#211) is
+// what tells the user WHY a variant is recommended - e.g. Icarus's
+// "mergeable EXMOD - recommended" vs "prebuilt PAK"; sources that leave it
+// empty render exactly as before.
+func installFileRow(index int, f domain.DownloadableFile) string {
+	sizeStr := formatSize(f.Size)
+	defaultMark := ""
+	if f.IsPrimary {
+		defaultMark = " <- default"
+	}
+	row := fmt.Sprintf("  [%d] %s (%s, %s)", index+1, displayFileLabel(f), f.Category, sizeStr)
+	if f.Description != "" {
+		row += " - " + f.Description
+	}
+	return row + defaultMark
 }
 
 func displayFileLabel(file domain.DownloadableFile) string {

@@ -170,6 +170,43 @@ func TestApplyInstall_StrictPath_CallerSuppliedMixedVariantFiles_Rejected(t *tes
 	require.False(t, gameCache.Exists(game.ID, "mc", "mod1", "1.0"), "a rejected selection must leave no cache entry")
 }
 
+// TestApplyInstall_BatchPath_TargetFileIDs_MixedVariants_Rejected is the
+// BATCH-path seam: when plan.Dependencies is non-empty, the primary's
+// TargetFileIDs pins are resolved and validated up-front (flows.go, inside
+// ApplyInstall's BATCH branch) before any mod - dependency or primary - is
+// touched. This mirrors TestApplyInstall_StrictPath_TargetFileIDs_
+// MixedVariants_Rejected above but drives the one path neither existing seam
+// test reaches, since both require an empty plan.Dependencies to stay on the
+// STRICT path.
+//
+// mockSource.GetDependencies (inherited unchanged by
+// variantExclusivitySource, since it only overrides GetModFiles) returns
+// mod.Dependencies verbatim - setting mod1.Dependencies directly is the
+// entire mechanism needed to make PlanInstall take the BATCH path; no new
+// fixture type or plumbing required.
+func TestApplyInstall_BatchPath_TargetFileIDs_MixedVariants_Rejected(t *testing.T) {
+	svc, game, mc := setupVariantExclusivityService(t)
+
+	depMod := &domain.Mod{ID: "dep-mod", SourceID: "mc", Name: "Dependency", Version: "1.0", GameID: "g1"}
+	mc.AddMod(depMod.GameID, depMod)
+
+	mod1, err := mc.GetMod(context.Background(), game.ID, "mod1")
+	require.NoError(t, err)
+	mod1.Dependencies = []domain.ModReference{{SourceID: "mc", ModID: "dep-mod"}}
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "mc", "mod1", false)
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Dependencies, "must take the BATCH path")
+
+	opts := core.InstallOptions{TargetFileIDs: []string{"pak", "exmodz"}}
+	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.ErrorContains(t, err, "pak and exmodz are alternate forms of the same mod - select one")
+
+	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
+	gameCache := svc.GetGameCache(game)
+	require.False(t, gameCache.Exists(game.ID, "mc", "mod1", "1.0"), "a rejected selection must leave no cache entry")
+}
+
 // TestPlanInstall_BothVariants_DefaultsToExmodz is #211's parity acceptance:
 // PlanInstall's non-interactive default (what the TUI, --yes, and every
 // batch path install) must pick the exmodz variant when both exist. The TUI

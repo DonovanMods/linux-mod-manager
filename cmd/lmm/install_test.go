@@ -268,6 +268,18 @@ func TestDisplayFileLabel(t *testing.T) {
 	}
 }
 
+// TestInstallFileRow covers #211's chooser-description acceptance gap: the
+// Description icarus sets ("mergeable EXMOD - recommended" / "prebuilt PAK")
+// must reach the chooser row, appended after the existing (category, size)
+// suffix and before the "<- default" mark; sources that leave Description
+// empty (the pre-#211 shape) render exactly as before.
+func TestInstallFileRow(t *testing.T) {
+	withDesc := domain.DownloadableFile{FileName: "Mod.exmodz", Category: "EXMODZ", Description: "mergeable EXMOD - recommended", IsPrimary: true}
+	assert.Equal(t, "  [2] Mod.exmodz (EXMODZ, 0 B) - mergeable EXMOD - recommended <- default", installFileRow(1, withDesc))
+	noDesc := domain.DownloadableFile{FileName: "Mod_P.pak", Category: "PAK"}
+	assert.Equal(t, "  [1] Mod_P.pak (PAK, 0 B)", installFileRow(0, noDesc))
+}
+
 // TestFileCategoryPriority tests category priority ordering
 func TestFileCategoryPriority(t *testing.T) {
 	assert.Less(t, fileCategoryPriority("MAIN"), fileCategoryPriority("OPTIONAL"))
