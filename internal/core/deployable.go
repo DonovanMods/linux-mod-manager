@@ -42,8 +42,10 @@ import (
 // contested "recorded manifests plus unattributed content" shape.
 //
 // Errors from ListFiles, FileManifests, and HasRetainedSource are returned
-// unwrapped; the caller adds context with a single "resolving deployable
-// files" wrapper.
+// unwrapped; each caller adds a single contextual wrapper of its own choosing
+// (e.g. Installer.Install's "resolving deployable files", conflicts.go's
+// pre-existing "listing cache files for %s") - this resolver does not
+// prescribe the wording.
 func deployableFiles(gameCache *cache.Cache, gameID, sourceID, modID, version string) ([]string, error) {
 	files, err := gameCache.ListFiles(gameID, sourceID, modID, version)
 	if err != nil {

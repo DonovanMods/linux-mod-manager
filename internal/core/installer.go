@@ -145,7 +145,20 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	// (distinct dirs, no departing ID, or incomplete provenance) leaves the
 	// historical union behavior byte-for-byte intact.
 	newCurrent, oldDeployed, provenanceOK := resolveSharedDirUpdate(game.ID, oldCache, newCache, oldMod, newMod, oldFileIDs, newFileIDs, newFiles)
-	oldRestorable := oldFiles
+
+	// oldRestorable starts as the old side's deployable set (deploy-direction,
+	// #210), not the raw oldFiles union: a rollback restores the pre-replace
+	// DEPLOYMENT, which is whatever deployableFiles resolved for the old
+	// entry, never the union. An old-side mixed entry (recorded markers plus
+	// a retained source plus an unclaimed stale file) never deploys the stale
+	// file in the first place, so a mid-replace failure must not link it
+	// fresh either - using oldFiles here would resurrect it through this
+	// error path even though the #210 narrowing kept it off disk on every
+	// success path.
+	oldRestorable, err := deployableFiles(oldCache, game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version)
+	if err != nil {
+		return fmt.Errorf("resolving deployable old-side files: %w", err)
+	}
 	if provenanceOK {
 		kept := make([]string, 0, len(newFiles))
 		for _, file := range newFiles {

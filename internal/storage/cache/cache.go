@@ -317,11 +317,12 @@ func HasRetainedSource(versionDir string) (bool, error) {
 // (#210). It is a no-op unless EVERY marker carries a recorded manifest AND
 // the entry holds a retained source (.lmm-source-*) - the validate+retain
 // model's signature (#210); pruning on anything less could delete legacy
-// content no manifest attributes. A bare marker means unknown provenance -
-// pruning on guesswork could delete a legacy file's live content, so any
-// bare marker anywhere in versionDir makes the whole call a no-op. Reserved
-// (ReservedPrefix) entries are never candidates. Callers invoke it on a
-// STAGING directory at commit time, so a prune can never race a deploy.
+// content no manifest attributes (#144, e.g. an entry `lmm import` populated
+// directly). A bare marker means unknown provenance - pruning on guesswork
+// could delete a legacy file's live content, so any bare marker anywhere in
+// versionDir makes the whole call a no-op. Reserved (ReservedPrefix) entries
+// are never candidates. Callers invoke it on a STAGING directory at commit
+// time, so a prune can never race a deploy.
 func PruneUnclaimed(versionDir string) error {
 	manifests, err := fileManifestsAt(versionDir)
 	if err != nil {
@@ -335,8 +336,14 @@ func PruneUnclaimed(versionDir string) error {
 		if !m.Recorded {
 			return nil
 		}
+		// m.Members already arrives OS-native: parseManifest applies
+		// filepath.FromSlash per line when it decodes the marker body, so
+		// re-converting here would be a redundant double-conversion.
+		// deployableFiles (internal/core/deployable.go) uses the same
+		// convention directly off FileManifests for its claimed set - both
+		// builders agree members are OS-separator paths.
 		for _, member := range m.Members {
-			claimed[filepath.FromSlash(member)] = true
+			claimed[member] = true
 		}
 	}
 	hasRetained, err := HasRetainedSource(versionDir)
