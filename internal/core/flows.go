@@ -3658,6 +3658,19 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		if strictFiles != nil {
 			plan.Files = strictFiles
 		}
+		// #211: validate the STRICT path's final selection - covers BOTH an
+		// explicit --file pin resolved just above (strictFiles) AND a
+		// caller-supplied plan.Files left untouched (resolveStrictInstallFiles
+		// returned nil, nil: no pins set, or the caller's selection already
+		// satisfied them - the CLI's interactive-override shape). One call
+		// here is correct rather than a second one inside
+		// resolveStrictInstallFiles: that helper has no other caller (see its
+		// doc comment), so validating its result immediately after this fold
+		// is equivalent to validating inside it, and plan.Files is the only
+		// value that matters to applyInstallPrimary either way.
+		if err := s.ValidateInstallFileSelection(plan.SourceID, plan.Files); err != nil {
+			return result, err
+		}
 	}
 
 	// #143: refuse up front - before any hook, download, deploy, or DB/
@@ -3727,6 +3740,13 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 			}
 			primaryOverrideFiles, err = selectInstallTargetFiles(pool, opts.TargetFileIDs)
 			if err != nil {
+				return result, err
+			}
+			// #211: validate the primary's up-front resolved selection
+			// before any dependency (or the primary itself) is touched -
+			// mirrors the STRICT path's fold-site validation above for the
+			// BATCH path's one place a caller can pin more than one file.
+			if err := s.ValidateInstallFileSelection(plan.SourceID, primaryOverrideFiles); err != nil {
 				return result, err
 			}
 		}

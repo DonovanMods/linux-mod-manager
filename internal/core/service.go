@@ -109,6 +109,39 @@ func (s *Service) GetSource(id string) (source.ModSource, error) {
 	return s.registry.Get(id)
 }
 
+// ValidateInstallFileSelection rejects an install selection that mixes a
+// merge-compile source's exmodz variant with any other file (#211): the two
+// are alternate forms of the same mod, and installing both double-applies
+// its table edits (the pak deploys standalone while the exmodz joins the
+// merged pak). Sources that don't implement source.MergeCompiler are never
+// restricted, single-file selections are always fine, and an unknown
+// sourceID is not this check's problem - pool resolution errors on it
+// first.
+func (s *Service) ValidateInstallFileSelection(sourceID string, files []domain.DownloadableFile) error {
+	if len(files) < 2 {
+		return nil
+	}
+	src, err := s.registry.Get(sourceID)
+	if err != nil {
+		return nil
+	}
+	if _, ok := src.(source.MergeCompiler); !ok {
+		return nil
+	}
+	var exmodz, other bool
+	for _, f := range files {
+		if isExmodzFile(f.FileName) {
+			exmodz = true
+		} else {
+			other = true
+		}
+	}
+	if exmodz && other {
+		return fmt.Errorf("pak and exmodz are alternate forms of the same mod - select one")
+	}
+	return nil
+}
+
 // ListSources returns all registered sources
 func (s *Service) ListSources() []source.ModSource {
 	return s.registry.List()
