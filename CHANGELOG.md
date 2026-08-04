@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `lmm game detect` now marks a game already present in `games.yaml` as `[configured]` (mirroring `search`'s `[installed]` convention) and excludes it from the default "all" selection, since it needs no re-offering. It stays listed, and naming its number explicitly still selects it — the same re-add/repair path `lmm game add` has always used unconditionally (games.yaml entry + a fresh empty default profile, replacing any existing one) (#205)
 
+### Fixed
+
+- Deploy no longer links cache files that no download manifest claims: stale
+  per-mod paks left behind by pre-v1.28 exmodz installs were being deployed
+  alongside the merged pak, double-applying their table edits. One
+  `lmm deploy` cycle now removes such links, download commits prune the
+  stale files, and the conflict scanner ignores them. Legacy cache entries
+  without recorded manifests keep their exact previous behavior. (#210)
+
 ## [1.28.0] - 2026-08-02
 
 ### Added

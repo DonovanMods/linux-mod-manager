@@ -40,9 +40,9 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 	}
 
 	// Get list of files in the cached mod
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return fmt.Errorf("listing cached files: %w", err)
+		return fmt.Errorf("resolving deployable files: %w", err)
 	}
 
 	var deployed []string
@@ -130,9 +130,9 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	if err != nil {
 		return fmt.Errorf("listing old cached files: %w", err)
 	}
-	newFiles, err := newCache.ListFiles(game.ID, newMod.SourceID, newMod.ID, newMod.Version)
+	newFiles, err := deployableFiles(newCache, game.ID, newMod.SourceID, newMod.ID, newMod.Version)
 	if err != nil {
-		return fmt.Errorf("listing new cached files: %w", err)
+		return fmt.Errorf("resolving deployable new-side files: %w", err)
 	}
 
 	// #144 item 4: in the degenerate same-version shape (old and new resolve
@@ -145,7 +145,20 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	// (distinct dirs, no departing ID, or incomplete provenance) leaves the
 	// historical union behavior byte-for-byte intact.
 	newCurrent, oldDeployed, provenanceOK := resolveSharedDirUpdate(game.ID, oldCache, newCache, oldMod, newMod, oldFileIDs, newFileIDs, newFiles)
-	oldRestorable := oldFiles
+
+	// oldRestorable starts as the old side's deployable set (deploy-direction,
+	// #210), not the raw oldFiles union: a rollback restores the pre-replace
+	// DEPLOYMENT, which is whatever deployableFiles resolved for the old
+	// entry, never the union. An old-side mixed entry (recorded markers plus
+	// a retained source plus an unclaimed stale file) never deploys the stale
+	// file in the first place, so a mid-replace failure must not link it
+	// fresh either - using oldFiles here would resurrect it through this
+	// error path even though the #210 narrowing kept it off disk on every
+	// success path.
+	oldRestorable, err := deployableFiles(oldCache, game.ID, oldMod.SourceID, oldMod.ID, oldMod.Version)
+	if err != nil {
+		return fmt.Errorf("resolving deployable old-side files: %w", err)
+	}
 	if provenanceOK {
 		kept := make([]string, 0, len(newFiles))
 		for _, file := range newFiles {
@@ -260,6 +273,13 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 //     one recorded manifest, stale markers included (unattributed content
 //     proves an unmanifested contributor exists, e.g. an entry populated
 //     directly by `lmm import`).
+//
+// unionFiles is the caller's deploy-direction set (deployableFiles' output,
+// #210), not always the raw ListFiles union: when that resolver narrowed to
+// recorded members, every entry here is attributed by construction, since
+// resolveSharedDirUpdate independently requires all-recorded provenance too;
+// when it fell back to the full union, the attribution check below behaves
+// exactly as before.
 //
 // The ownership rule: the DEPLOY set is exactly the members attributed to the
 // mod's current (new-side) file IDs - newCurrent. Every other listed member
@@ -406,7 +426,10 @@ func rollbackDeploy(lnk linker.Linker, modPath string, relativePaths []string) e
 
 // Uninstall removes a mod from the game directory
 func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
-	// Get list of files in the cached mod
+	// Deliberately the full ListFiles union, not deployableFiles (#210):
+	// removal must cover anything that might ever have been linked, including
+	// stale unclaimed files a pre-fix deploy linked. Narrowing this would
+	// strand those links forever.
 	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return fmt.Errorf("listing cached files: %w", err)
@@ -449,9 +472,9 @@ func (i *Installer) IsInstalled(game *domain.Game, mod *domain.Mod) (bool, error
 	}
 
 	// Get list of files in the cached mod
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return false, fmt.Errorf("listing cached files: %w", err)
+		return false, fmt.Errorf("resolving deployable files: %w", err)
 	}
 
 	if len(files) == 0 {
@@ -492,9 +515,9 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 	}
 
 	// Get list of files in the cached mod
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return nil, fmt.Errorf("listing cached files: %w", err)
+		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}
 
 	// Check for conflicts
@@ -524,9 +547,9 @@ func (i *Installer) GetDeployedFiles(game *domain.Game, mod *domain.Mod) ([]stri
 		return nil, nil
 	}
 
-	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	files, err := deployableFiles(i.cache, game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}
 
 	var deployed []string
