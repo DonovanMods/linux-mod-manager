@@ -274,6 +274,37 @@ func RetainedSourceName(fileID string) string {
 	return retainedSourcePrefix + filepath.Base(fileID)
 }
 
+// HasRetainedSource reports whether versionDir contains at least one
+// retained compile source (any entry named by RetainedSourceName, for any
+// fileID). It is deployableFiles' narrowing gate (#210): a retained source
+// is the validate+retain compile model's signature, present in every real
+// #210 entry (a merged-pak deploy that keeps its .exmodz for offline
+// recompile) and the same signal verify's retained-source carve-out trusts.
+// Its absence means unattributed content on disk cannot be distinguished
+// from an unmanifested contributor (#144, e.g. `lmm import`), so callers
+// must fall back to the full union rather than narrow.
+//
+// A missing versionDir is not an error - it reports (false, nil), same as
+// an empty directory.
+func HasRetainedSource(versionDir string) (bool, error) {
+	entries, err := os.ReadDir(versionDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), retainedSourcePrefix) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // mergeFingerprintMarkerName names the single JSON fingerprint marker a
 // merged-pak cache entry carries (#197): what base pak and which
 // (source, mod, version, exmodz-checksum) tuples, in order, the pak was

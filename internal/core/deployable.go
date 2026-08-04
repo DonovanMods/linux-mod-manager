@@ -14,20 +14,36 @@ import (
 // deployableFiles returns the version-dir-relative files that deploy-direction
 // operations may link for this cache entry, in ListFiles order.
 //
-// When EVERY completion marker in the entry carries a recorded member
-// manifest, the result is the union of recorded members intersected with the
-// files actually on disk - content claimed by no manifest (e.g. a stale
-// pre-#197 compiled per-mod pak carried forward by staging seeding, #210) is
-// excluded. A claimed-but-missing member is silently dropped here; verify
-// owns missing-file detection and repair.
+// The narrowing gate is a three-way rule (#210, amended after Task 3's #144
+// regression):
 //
-// When ANY marker is bare (Recorded=false - "provenance unknown, never
-// none"), or the entry has no markers at all, the full ListFiles union is
-// returned unchanged: pre-manifest entries, import-populated entries, and
-// pure pre-#197 entries keep their historical deploy behavior exactly.
+//  1. EVERY completion marker in the entry must carry a recorded member
+//     manifest (Recorded=true). ANY bare marker (Recorded=false -
+//     "provenance unknown, never none"), or no markers at all, falls back to
+//     the full ListFiles union unchanged: pre-manifest entries and
+//     pure pre-#197 entries keep their historical deploy behavior exactly.
+//  2. Even with full attribution, the entry must hold at least one retained
+//     compile source (cache.HasRetainedSource) - the validate+retain compile
+//     model's signature, present in every real #210 entry (a merged-pak
+//     deploy that keeps its .exmodz for offline recompile), and the same
+//     signal verify's retained-source carve-out trusts. Without it,
+//     unattributed content on disk cannot be told apart from an
+//     unmanifested contributor (#144, e.g. an entry `lmm import` populated
+//     directly) rather than a stale pre-#197 leftover, so the full union is
+//     the only safe answer.
 //
-// Errors from ListFiles and FileManifests are returned unwrapped; the caller
-// adds context with a single "resolving deployable files" wrapper.
+// Only when BOTH hold does the result narrow to the union of recorded
+// members intersected with the files actually on disk - content claimed by
+// no manifest (e.g. a stale pre-#197 compiled per-mod pak carried forward by
+// staging seeding) is excluded. A claimed-but-missing member is silently
+// dropped here; verify owns missing-file detection and repair. When
+// attribution is complete and every listed file is claimed, the narrowed
+// result equals the union anyway, so this gate only changes behavior for the
+// contested "recorded manifests plus unattributed content" shape.
+//
+// Errors from ListFiles, FileManifests, and HasRetainedSource are returned
+// unwrapped; the caller adds context with a single "resolving deployable
+// files" wrapper.
 func deployableFiles(gameCache *cache.Cache, gameID, sourceID, modID, version string) ([]string, error) {
 	files, err := gameCache.ListFiles(gameID, sourceID, modID, version)
 	if err != nil {
@@ -48,6 +64,13 @@ func deployableFiles(gameCache *cache.Cache, gameID, sourceID, modID, version st
 		for _, member := range m.Members {
 			claimed[member] = true
 		}
+	}
+	hasRetainedSource, err := cache.HasRetainedSource(gameCache.ModPath(gameID, sourceID, modID, version))
+	if err != nil {
+		return nil, err
+	}
+	if !hasRetainedSource {
+		return files, nil
 	}
 	deployable := make([]string, 0, len(files))
 	for _, f := range files {

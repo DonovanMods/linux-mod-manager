@@ -886,6 +886,7 @@ func TestInstaller_Install_SkipsUnclaimedFiles(t *testing.T) {
 	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.4", "Stale_P.pak", []byte("stale")))
 	dir := modCache.ModPath("icarus", "icarus", "m1", "1.4")
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 
 	game := &domain.Game{ID: "icarus", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 	mod := &domain.Mod{ID: "m1", SourceID: "icarus", Version: "1.4", GameID: "icarus"}
@@ -935,6 +936,7 @@ func TestInstaller_IsInstalled_RetainOnlyEntry(t *testing.T) {
 	require.NoError(t, modCache.Store("icarus", "icarus", "m1", "1.4", "Stale_P.pak", []byte("stale")))
 	dir := modCache.ModPath("icarus", "icarus", "m1", "1.4")
 	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 
 	game := &domain.Game{ID: "icarus", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 	mod := &domain.Mod{ID: "m1", SourceID: "icarus", Version: "1.4", GameID: "icarus"}

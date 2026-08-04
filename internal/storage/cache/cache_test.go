@@ -505,6 +505,26 @@ func TestCache_RetainedSourceName_UniquePerFileID(t *testing.T) {
 	assert.NotEqual(t, cache.RetainedSourceName("file-a"), cache.RetainedSourceName("file-b"))
 }
 
+// TestCache_HasRetainedSource pins deployableFiles' narrowing gate (#210):
+// present when the version dir holds a retained compile source, absent
+// otherwise, and a missing directory is not an error.
+func TestCache_HasRetainedSource(t *testing.T) {
+	dir := t.TempDir()
+	has, err := cache.HasRetainedSource(dir)
+	require.NoError(t, err)
+	assert.False(t, has, "an empty dir has no retained source")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
+	has, err = cache.HasRetainedSource(dir)
+	require.NoError(t, err)
+	assert.True(t, has, "a retained source entry must be detected")
+
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	has, err = cache.HasRetainedSource(missing)
+	require.NoError(t, err)
+	assert.False(t, has, "a missing version dir is not an error")
+}
+
 // TestCache_MergeFingerprintPath_IsReserved pins that the merged pak's
 // fingerprint marker (#197) lives under the reserved namespace, like every
 // other lmm bookkeeping file.
