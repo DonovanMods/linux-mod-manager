@@ -169,3 +169,25 @@ func TestApplyInstall_StrictPath_CallerSuppliedMixedVariantFiles_Rejected(t *tes
 	gameCache := svc.GetGameCache(game)
 	require.False(t, gameCache.Exists(game.ID, "mc", "mod1", "1.0"), "a rejected selection must leave no cache entry")
 }
+
+// TestPlanInstall_BothVariants_DefaultsToExmodz is #211's parity acceptance:
+// PlanInstall's non-interactive default (what the TUI, --yes, and every
+// batch path install) must pick the exmodz variant when both exist. The TUI
+// has no file chooser and installs plan.Files exactly as planned
+// (internal/tui/service_core.go), so this single core assertion covers both
+// interfaces.
+func TestPlanInstall_BothVariants_DefaultsToExmodz(t *testing.T) {
+	svc, game, mc := setupVariantExclusivityService(t)
+
+	// Mirror Task 1's real icarus behavior: exmodz is the primary file, not pak.
+	// For this test, override the fixture's files to mark exmodz primary.
+	mc.files["mod1"] = []domain.DownloadableFile{
+		{ID: "pak", Name: "Main", FileName: "Mod_P.pak", Category: "MAIN"},
+		{ID: "exmodz", Name: "Exmodz Source", FileName: "Mod.exmodz", IsPrimary: true, Category: "MAIN"},
+	}
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "mc", "mod1", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Files, 1, "PlanInstall must select exactly one file when both variants exist")
+	require.Equal(t, "exmodz", plan.Files[0].ID, "PlanInstall must default to the exmodz variant")
+}
