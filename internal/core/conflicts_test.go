@@ -9,6 +9,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -255,4 +256,40 @@ func TestGetProfileConflictsOwnerLookupErrorPropagates(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "file owner")
 	assert.Nil(t, conflicts)
+}
+
+// TestProfileConflicts_IgnoresUnclaimedCacheFiles: a stale unclaimed file in
+// mod A's cache entry that collides with a path mod B legitimately provides
+// must NOT be reported - deploy will never link it (#210).
+//
+// Fixture: mod A's cache entry has a recorded, zero-member "exmodz" marker
+// plus a retained compile source (the full manifest-aware narrowing gate),
+// but "shared.pak" on disk is claimed by no manifest member. Mod B's entry
+// claims "shared.pak" via its own recorded "exmodz" marker plus retained
+// source. Expect: no conflict on "shared.pak" (A provides nothing).
+func TestProfileConflicts_IgnoresUnclaimedCacheFiles(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "modA", "Mod A", "1.0", true, map[string][]byte{"shared.pak": []byte("A-content")})
+	seedNamedInstalledMod(t, svc, game, "src", "modB", "Mod B", "1.0", true, map[string][]byte{"shared.pak": []byte("B-content")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "modA", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "modB", "1.0")
+
+	gameCache := svc.GetGameCache(game)
+
+	dirA := gameCache.ModPath("g1", "src", "modA", "1.0")
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dirA, "exmodz", nil))
+	require.NoError(t, os.WriteFile(filepath.Join(dirA, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
+
+	dirB := gameCache.ModPath("g1", "src", "modB", "1.0")
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dirB, "exmodz", []string{"shared.pak"}))
+	require.NoError(t, os.WriteFile(filepath.Join(dirB, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
+
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	conflicts, err := svc.GetProfileConflicts(context.Background(), game, "default")
+	require.NoError(t, err)
+	assert.Empty(t, conflicts, "mod A's unclaimed shared.pak must not be reported as a conflict provider")
 }

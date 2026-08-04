@@ -96,7 +96,7 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		files, err := gameCache.ListFiles(game.ID, m.SourceID, m.ID, m.Version)
+		files, err := deployableFiles(gameCache, game.ID, m.SourceID, m.ID, m.Version)
 		if err != nil {
 			// A missing cache entry (e.g. manually deleted) just means the mod
 			// provides nothing; any OTHER read failure (permissions, corruption)
