@@ -101,7 +101,28 @@ func installFileIDList() []string {
 
 // selectInstallFiles applies the --file flag, single-file shortcut, --yes default,
 // or interactive prompt to choose which downloadable files to install.
-func selectInstallFiles(files []domain.DownloadableFile) ([]*domain.DownloadableFile, error) {
+// validate, when non-nil, enforces variant-exclusivity rules (#211 -
+// Service.ValidateInstallFileSelection): the --file path returns its error
+// as-is (an explicit flag isn't retried), while the interactive path prints
+// it and re-prompts. nil skips validation entirely (no caller currently
+// needs that, but it keeps the signature honest for a future one).
+func selectInstallFiles(files []domain.DownloadableFile, validate func([]domain.DownloadableFile) error) ([]*domain.DownloadableFile, error) {
+	return selectInstallFilesFrom(os.Stdin, files, validate)
+}
+
+// selectInstallFilesFrom is the testable core of selectInstallFiles.
+func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, validate func([]domain.DownloadableFile) error) ([]*domain.DownloadableFile, error) {
+	runValidate := func(selected []*domain.DownloadableFile) error {
+		if validate == nil {
+			return nil
+		}
+		sel := make([]domain.DownloadableFile, len(selected))
+		for i, f := range selected {
+			sel[i] = *f
+		}
+		return validate(sel)
+	}
+
 	// Direct file ID(s) via --file flag
 	if installFileID != "" {
 		var selected []*domain.DownloadableFile
@@ -118,11 +139,18 @@ func selectInstallFiles(files []domain.DownloadableFile) ([]*domain.Downloadable
 				return nil, fmt.Errorf("file ID %s not found", fid)
 			}
 		}
+		if err := runValidate(selected); err != nil {
+			return nil, err
+		}
 		return selected, nil
 	}
 
 	if len(files) == 1 {
-		return []*domain.DownloadableFile{&files[0]}, nil
+		selected := []*domain.DownloadableFile{&files[0]}
+		if err := runValidate(selected); err != nil {
+			return nil, err
+		}
+		return selected, nil
 	}
 
 	// Find primary file index for default
@@ -135,7 +163,11 @@ func selectInstallFiles(files []domain.DownloadableFile) ([]*domain.Downloadable
 	}
 
 	if installYes {
-		return []*domain.DownloadableFile{&files[defaultChoice-1]}, nil
+		selected := []*domain.DownloadableFile{&files[defaultChoice-1]}
+		if err := runValidate(selected); err != nil {
+			return nil, err
+		}
+		return selected, nil
 	}
 
 	fmt.Println("\nAvailable files:")
@@ -148,15 +180,32 @@ func selectInstallFiles(files []domain.DownloadableFile) ([]*domain.Downloadable
 		fmt.Printf("  [%d] %s (%s, %s)%s\n", i+1, displayFileLabel(f), f.Category, sizeStr, defaultMark)
 	}
 
-	selections, err := promptMultiSelection("Select file(s) (e.g., 1 or 1,3 or 1-3)", defaultChoice, len(files))
-	if err != nil {
-		return nil, err
+	// reader is created ONCE and shared across every attempt below (both
+	// readMultiSelectionLine's own invalid-format retry and the
+	// validation retry here) - re-wrapping the same underlying r in a
+	// fresh bufio.Reader per attempt (as calling promptMultiSelectionFrom
+	// per-iteration would) silently drops whatever that attempt's Reader
+	// had buffered past the line it returned, losing later input lines
+	// (e.g. this function's own re-prompt test's second line).
+	reader := bufio.NewReader(r)
+	for {
+		selections, retry, err := readMultiSelectionLine(reader, "Select file(s) (e.g., 1 or 1,3 or 1-3)", defaultChoice, len(files))
+		if err != nil {
+			return nil, err
+		}
+		if retry {
+			continue
+		}
+		selected := make([]*domain.DownloadableFile, 0, len(selections))
+		for _, sel := range selections {
+			selected = append(selected, &files[sel-1])
+		}
+		if err := runValidate(selected); err != nil {
+			fmt.Printf("Invalid selection: %v\n", err)
+			continue
+		}
+		return selected, nil
 	}
-	selected := make([]*domain.DownloadableFile, 0, len(selections))
-	for _, sel := range selections {
-		selected = append(selected, &files[sel-1])
-	}
-	return selected, nil
 }
 
 // searchAndSelectMods runs an interactive paginated search for query and returns
@@ -523,7 +572,16 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		return fmt.Errorf("no downloadable files available for this mod")
 	}
 
-	selectedFiles, err := selectInstallFiles(files)
+	// validateFileSelection is the CLI-side enforcement of #211's
+	// variant-exclusivity rule (Service.ValidateInstallFileSelection):
+	// the interactive path re-prompts on a mixed pak+exmodz pick, --file
+	// hard-errors immediately - both friendlier/earlier than the identical
+	// backstop core.ApplyInstall applies to plan.Files right before this
+	// override (internal/core/flows.go ~line 3671).
+	validateFileSelection := func(sel []domain.DownloadableFile) error {
+		return service.ValidateInstallFileSelection(plan.SourceID, sel)
+	}
+	selectedFiles, err := selectInstallFiles(files, validateFileSelection)
 	if err != nil {
 		return err
 	}
@@ -812,28 +870,53 @@ func promptMultiSelectionFrom(r io.Reader, prompt string, defaultChoice, max int
 	reader := bufio.NewReader(r)
 
 	for {
-		fmt.Printf("\n%s (q to cancel) [%d]: ", prompt, defaultChoice)
-		input, err := reader.ReadString('\n')
+		selections, retry, err := readMultiSelectionLine(reader, prompt, defaultChoice, max)
 		if err != nil {
-			return nil, fmt.Errorf("reading input: %w", err)
+			return nil, err
 		}
-
-		input = strings.TrimSpace(input)
-		if input == "" {
-			return []int{defaultChoice}, nil
-		}
-		if input == "q" || input == "Q" {
-			return nil, ErrCancelled
-		}
-
-		selections, err := parseRangeSelection(input, max)
-		if err != nil {
-			fmt.Printf("Invalid selection: %v\n", err)
+		if retry {
 			continue
 		}
-
 		return selections, nil
 	}
+}
+
+// readMultiSelectionLine prints prompt and reads/parses a single selection
+// line from reader - the shared attempt-level logic behind both
+// promptMultiSelectionFrom's own invalid-format retry loop and
+// selectInstallFilesFrom's validation retry loop (#211). reader is a
+// *bufio.Reader (not io.Reader) so callers that loop across multiple
+// attempts pass the SAME instance every time: bufio.Reader.fill() eagerly
+// buffers everything available from the underlying stream on first read,
+// so wrapping it afresh per attempt (as calling promptMultiSelectionFrom
+// itself in a loop would) silently discards any input beyond the first
+// line the moment that attempt's Reader is discarded.
+//
+// retry=true means an invalid-format message was already printed and the
+// caller should prompt again; err is either a genuine read failure or
+// ErrCancelled, both of which the caller returns immediately.
+func readMultiSelectionLine(reader *bufio.Reader, prompt string, defaultChoice, max int) (selections []int, retry bool, err error) {
+	fmt.Printf("\n%s (q to cancel) [%d]: ", prompt, defaultChoice)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, false, fmt.Errorf("reading input: %w", err)
+	}
+
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return []int{defaultChoice}, false, nil
+	}
+	if input == "q" || input == "Q" {
+		return nil, false, ErrCancelled
+	}
+
+	selections, err = parseRangeSelection(input, max)
+	if err != nil {
+		fmt.Printf("Invalid selection: %v\n", err)
+		return nil, true, nil
+	}
+
+	return selections, false, nil
 }
 
 // formatSize formats bytes to human-readable string

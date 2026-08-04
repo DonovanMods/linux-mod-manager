@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -365,6 +366,59 @@ func TestPromptMultiSelection_Range(t *testing.T) {
 	selections, err := promptMultiSelectionFrom(r, "Select", 1, 10)
 	assert.NoError(t, err)
 	assert.Equal(t, []int{2, 3, 4}, selections)
+}
+
+// mixedPakExmodzValidate mirrors the shape of the real
+// Service.ValidateInstallFileSelection closure (#211): reject a selection
+// that mixes an exmodz file with any other file.
+func mixedPakExmodzValidate(sel []domain.DownloadableFile) error {
+	var ex, other bool
+	for _, f := range sel {
+		if strings.HasSuffix(strings.ToLower(f.FileName), ".exmodz") {
+			ex = true
+		} else {
+			other = true
+		}
+	}
+	if ex && other {
+		return fmt.Errorf("pak and exmodz are alternate forms of the same mod - select one")
+	}
+	return nil
+}
+
+// TestSelectInstallFiles_MixedSelectionReprompts verifies the interactive
+// path re-prompts (rather than erroring out) when the user's selection
+// mixes a pak and an exmodz file - #211's CLI-side backstop for
+// Service.ValidateInstallFileSelection.
+func TestSelectInstallFiles_MixedSelectionReprompts(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "pak", FileName: "Mod_P.pak", Category: "PAK"},
+		{ID: "exmodz", FileName: "Mod.exmodz", Category: "EXMODZ", IsPrimary: true},
+	}
+	// First input line picks both (rejected, re-prompted); second picks 2.
+	in := strings.NewReader("1,2\n2\n")
+	selected, err := selectInstallFilesFrom(in, files, mixedPakExmodzValidate)
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.Equal(t, "exmodz", selected[0].ID)
+}
+
+// TestSelectInstallFiles_FileFlagMixedRejected verifies the --file path
+// (installFileID set to a comma-list) returns the validation error as-is,
+// with no re-prompt - the flag was explicit, so there's nothing to retry.
+func TestSelectInstallFiles_FileFlagMixedRejected(t *testing.T) {
+	oldFileID := installFileID
+	installFileID = "pak,exmodz"
+	t.Cleanup(func() { installFileID = oldFileID })
+
+	files := []domain.DownloadableFile{
+		{ID: "pak", FileName: "Mod_P.pak", Category: "PAK"},
+		{ID: "exmodz", FileName: "Mod.exmodz", Category: "EXMODZ", IsPrimary: true},
+	}
+	selected, err := selectInstallFilesFrom(strings.NewReader(""), files, mixedPakExmodzValidate)
+	require.Error(t, err)
+	assert.Nil(t, selected)
+	assert.Contains(t, err.Error(), "pak and exmodz are alternate forms of the same mod - select one")
 }
 
 // --- doInstall (Phase 5b Task 2 CLI refit) ---
