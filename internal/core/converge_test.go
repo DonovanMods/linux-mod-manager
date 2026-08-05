@@ -429,3 +429,51 @@ func TestConverge_SweepPass_UnreadableDirSkippedNotAborted(t *testing.T) {
 	_, statErr := os.Lstat(linkPath)
 	assert.True(t, os.IsNotExist(statErr), "the sibling dangling link must actually be removed")
 }
+
+// TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence pins fix
+// round 2's correction to Finding 2: an unknown-provenance mod's rows must
+// be skipped by the row pass's BOOKKEEPING judgment, but NOT marked
+// handled - a genuinely dangling cache-pointing symlink among those rows is
+// still its own physical evidence and must be swept (with its now-orphaned
+// row best-effort deleted), even though the row pass itself declined to
+// judge it. This is the counterpart to
+// TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared's copy-mode
+// (regular file) shape, which is never a sweep candidate and must keep
+// surviving unchanged.
+func TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	// Symlink-mode deploy: the row's own deployed file IS a symlink into
+	// the mod's cache dir.
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
+		"gone.esp": []byte("g"),
+	})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	// The mod's ENTIRE cache entry disappears - deployableFiles now returns
+	// fs.ErrNotExist for m1 (unknown provenance), and the existing
+	// game-dir symlink (still on disk - the row pass leaves it alone) is
+	// now dangling: physical evidence the sweep pass judges independently
+	// of the row pass's bookkeeping decision.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, os.RemoveAll(gameCache.ModPath("g1", "src", "m1", "1.0")))
+
+	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	require.NoError(t, err)
+	require.Len(t, result.Removed, 1)
+	assert.Equal(t, "gone.esp", result.Removed[0].Path)
+	assert.Equal(t, "dangling link into lmm cache", result.Removed[0].Reason)
+	// Sweep finds don't carry mod identity (ConvergedFile's own doc
+	// comment) - SourceID/ModID are empty here even though the path
+	// happens to trace back to a known mod's row.
+
+	_, err = os.Lstat(filepath.Join(gameDir, "gone.esp"))
+	assert.True(t, os.IsNotExist(err), "the dangling symlink must be swept, even though its row's mod has unknown provenance")
+
+	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	require.NoError(t, err)
+	assert.Empty(t, rows, "the sweep's best-effort DeleteDeployedFile should clean up the now-orphaned row")
+}

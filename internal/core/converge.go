@@ -62,25 +62,33 @@ type ConvergeResult struct {
 //     regular file, not a symlink - the row pass is the only thing that
 //     could ever remove it) exactly when verify couldn't repair the cache
 //     that would let it prove otherwise. Such a mod's rows are therefore
-//     skipped entirely in the row pass (never removed), but are still
-//     marked handled so the sweep pass below doesn't re-litigate them -
-//     the sweep continues to catch any genuinely dangling, ROW-LESS
-//     symlink under that same mod's cache dir on its own terms (a dangling
-//     link is its own provenance, independent of any row).
+//     skipped entirely in the row pass - never undeployed, never marked
+//     handled, and never judged by bookkeeping (provenance being unknown
+//     means there is nothing to judge THEM by). Deliberately NOT marked
+//     handled (round 2 correction: an earlier draft of this fix did mark
+//     them handled, which wrongly let a still-dangling symlink among these
+//     rows survive forever): each such path instead falls through
+//     unclaimed into the sweep pass below, which judges it purely by
+//     PHYSICAL evidence instead - a dangling cache-pointing symlink is
+//     itself its own provenance and gets swept (best-effort cleaning up
+//     its now-orphaned row too), while a regular file (a copy/hardlink
+//     deployment) is never a sweep candidate at all and simply survives,
+//     row intact.
 //
-//  2. Sweep pass: walks gameDir for symlinks with no surviving DB row (the
-//     row pass already handled every row path, whether or not it acted on
-//     it) whose target resolves under this game's effective cache root(s)
-//     and whose target is now missing (dangling). Regular files are NEVER
-//     touched by the sweep - only the row pass ever removes non-symlink
-//     content, and only when a row says so. A symlink pointing outside
-//     every cache root, or one whose target still exists (the merged-pak
-//     shape: content deliberately left content-addressed with no row), is
-//     left alone. "Cache root(s)" is plural (fix round 2 Finding 1): a
-//     game with a per-game CachePath override still keeps globally-cached
-//     content in the GLOBAL cache root too - CachePath augments, it never
-//     migrates existing content - so a target is cache-pointing if it
-//     falls under EITHER root.
+//  2. Sweep pass: walks gameDir for symlinks with no CLAIMED DB row - "no
+//     surviving row" (a row the row pass judged and kept, or deleted) OR
+//     "an unknown-provenance mod's row, deliberately left unclaimed" (the
+//     round-2 Finding 2 case above) - whose target resolves under this
+//     game's effective cache root(s) and whose target is now missing
+//     (dangling). Regular files are NEVER touched by the sweep - only the
+//     row pass ever removes non-symlink content, and only when a row says
+//     so. A symlink pointing outside every cache root, or one whose target
+//     still exists (the merged-pak shape: content deliberately left
+//     content-addressed with no row), is left alone. "Cache root(s)" is
+//     plural (fix round 2 Finding 1): a game with a per-game CachePath
+//     override still keeps globally-cached content in the GLOBAL cache
+//     root too - CachePath augments, it never migrates existing content -
+//     so a target is cache-pointing if it falls under EITHER root.
 //
 // Every per-item failure (an Undeploy or a sweep os.Remove) is collected and
 // returned as one joined error after all mods/paths are processed - it does
@@ -130,7 +138,7 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	lnk := s.GetLinker(method)
 
 	result := &ConvergeResult{}
-	handled := make(map[string]bool) // every row path seen, regardless of disposition
+	handled := make(map[string]bool) // every row path the row pass actually judged (kept or removed)
 	var errs []error
 
 	// --- Row pass ---
@@ -145,10 +153,14 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		}
 		unknown := unknownProvenance[domain.ModKey(m.SourceID, m.ID)]
 		for _, path := range rows {
-			handled[path] = true
 			if unknown {
-				continue // Finding 2: unknown provenance is never judged, only left alone
+				// Finding 2 (round 2): unknown provenance is never judged by
+				// bookkeeping - deliberately NOT marked handled, so this path
+				// falls through to the sweep pass, which judges it by
+				// physical evidence instead (see the function doc above).
+				continue
 			}
+			handled[path] = true
 			if provided[path] {
 				continue
 			}
