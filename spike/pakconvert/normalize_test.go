@@ -48,6 +48,45 @@ func TestNormalizeEntry(t *testing.T) {
 			wantClass: ClassOther, wantPath: "",
 		},
 		{
+			// Real layout from the ground-truth audit (round-3 fix, #220):
+			// Eye Colors Expanded!'s mount carries a capital "Data/" segment
+			// — reports/55F4mIY6qi5RYsAY278Y-assetprobe.json, mount
+			// "../../../Icarus/Content/Data/Inventory/". Case-sensitive
+			// matching classified this ClassOther with no Finding, silently
+			// hiding a real table from the converter. Case-insensitive
+			// matching must recover ClassTable AND preserve the original
+			// "Inventory/D_InventoryInfo.json" casing — the live base pak's
+			// actual entry name — so base.ReadFile still resolves it.
+			name:  "table with capital Data mount segment (audit variant, case-insensitive)",
+			mount: "../../../Icarus/Content/Data/Inventory/", entry: "D_InventoryInfo.json",
+			wantClass: ClassTable, wantPath: "Inventory/D_InventoryInfo.json",
+		},
+		{
+			// Real layout from the ground-truth audit (round-3 fix, #220):
+			// Intreeg's More Resources' mount is bare "Content/" with the
+			// entry dropped directly at the Content root, no "Data/" segment
+			// anywhere — reports/JfZ0dRNFJWrvi5gpVXFq-assetprobe.json, mount
+			// "../../../Icarus/Content/", entry "D_ProcessorRecipes.json".
+			// There is no "data" substring to match case-insensitively, so
+			// this correctly (and deliberately) stays ClassOther even after
+			// the case-insensitivity fix — the entry carries no subdirectory
+			// information, so there is no path to recover the real base
+			// table ("Crafting/D_ProcessorRecipes.json") from. The
+			// groundtruth harness's Census["other"]>0 guard (round-3 fix,
+			// groundtruth_test.go) is the safety net for exactly this case.
+			name:  "bare Content json with no data segment stays Other (audit variant, unresolvable)",
+			mount: "../../../Icarus/Content/", entry: "D_ProcessorRecipes.json",
+			wantClass: ClassOther, wantPath: "",
+		},
+		{
+			// Synthetic (not from the audit): confirms the mount-prefix half
+			// of the case-insensitivity fix independently of the data/
+			// prefix half above.
+			name:  "table with all-caps mount prefix (synthetic, case-insensitive)",
+			mount: "../../../ICARUS/CONTENT/", entry: "Data/Character/D_CharacterGrowth.json",
+			wantClass: ClassTable, wantPath: "Character/D_CharacterGrowth.json",
+		},
+		{
 			name:  "entry outside Content mount is Other",
 			mount: "../../../", entry: "Engine/Config/Base.ini",
 			wantClass: ClassOther, wantPath: "",

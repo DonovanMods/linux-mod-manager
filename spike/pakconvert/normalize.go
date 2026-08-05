@@ -38,27 +38,41 @@ func (c EntryClass) String() string {
 	}
 }
 
+// hasPrefixFold reports whether s starts with prefix, ASCII-case-insensitively
+// (UE virtual paths are case-insensitive on disk — the game loads paks fine
+// regardless of "Data/" vs "data/" — so a case-sensitive match here silently
+// misclassifies real corpus paks into ClassOther with no Finding to explain
+// why: see the ground-truth audit for Eye Colors Expanded!, whose mount
+// contains a capital "Data/" segment).
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
 // NormalizeEntry joins a pak's mount point with one entry path and classifies
 // the result. The data/ boundary floats between mount point and entry path in
 // real mod paks (pak-divergence-report §1), so classification always works on
 // the JOINED path. For ClassTable the returned string is the base-table
 // mount-relative path (what unrealpak data.pak Files() report, and what
 // CurrentFileFor flattens); for ClassAsset and ClassEmbeddedExmod it is the
-// Content-relative remainder; for ClassOther it is "".
+// Content-relative remainder; for ClassOther it is "". Prefix matching against
+// contentMount and dataPrefix is case-insensitive (real corpus paks vary the
+// casing of the "Data/" mount segment), but the ORIGINAL case of the returned
+// path is preserved — it must match the live base pak's actual entry casing
+// for base.ReadFile lookups to succeed.
 func NormalizeEntry(mountPoint, entryPath string) (EntryClass, string, error) {
 	full := path.Join(mountPoint, entryPath) // Join cleans but keeps leading ../
-	if !strings.HasPrefix(full, contentMount) {
+	if !hasPrefixFold(full, contentMount) {
 		return ClassOther, "", nil
 	}
-	rest := strings.TrimPrefix(full, contentMount)
+	rest := full[len(contentMount):] // slice, not TrimPrefix, to preserve rest's original case
 	lower := strings.ToLower(rest)
 	switch {
 	case strings.HasSuffix(lower, ".exmod"):
 		return ClassEmbeddedExmod, rest, nil
 	case strings.HasSuffix(lower, ".uasset") || strings.HasSuffix(lower, ".uexp"):
 		return ClassAsset, rest, nil
-	case strings.HasPrefix(rest, dataPrefix) && strings.HasSuffix(lower, ".json"):
-		tablePath := strings.TrimPrefix(rest, dataPrefix)
+	case hasPrefixFold(rest, dataPrefix) && strings.HasSuffix(lower, ".json"):
+		tablePath := rest[len(dataPrefix):] // slice, not TrimPrefix, to preserve tablePath's original case
 		if strings.Contains(tablePath, "-") {
 			// The CurrentFile encoding replaces ALL '/' with '-' and is only
 			// reversible because no real base-table path contains a hyphen

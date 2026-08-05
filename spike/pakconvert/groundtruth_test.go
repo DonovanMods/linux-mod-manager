@@ -224,10 +224,22 @@ func TestGroundTruthDualFormMods(t *testing.T) {
 						case blocked:
 							// 1. Converter couldn't even process the table.
 							res.Detail = fmt.Sprintf("converter could not process table (%s); %s", kind, res.Detail)
+						case !processed && report.Census["other"] > 0:
+							// 2a. "Not processed" only proves absence if
+							// EVERY entry was actually classified. A
+							// ClassOther entry is unclassified by
+							// definition (NormalizeEntry gave up on it
+							// silently, no Finding) — it could BE this
+							// table under a mount/case variant the
+							// classifier doesn't recognize. Full
+							// enumeration is broken here, so the "verified
+							// absent" premise doesn't hold.
+							res.Detail = fmt.Sprintf("table absence unverifiable: pak contains %d unclassified (other) entries; %s", report.Census["other"], res.Detail)
 						case !processed:
-							// 2. No Finding AND not processed: full
-							// enumeration proves the pak never had this
-							// table at all.
+							// 2b. No Finding, not processed, and every
+							// entry WAS classified (Census["other"] == 0):
+							// full enumeration proves the pak never had
+							// this table at all.
 							res.Class = "exmodz-newer-than-pak"
 							res.Detail = fmt.Sprintf("table absent from pak (verified by full enumeration) — author exmodz touches it; %s", res.Detail)
 						case !staleOK:
