@@ -128,6 +128,43 @@ func TestDiffTableFindings(t *testing.T) {
 	}
 }
 
+func TestDiffTableRemovedTopLevelKey(t *testing.T) {
+	// Mod table is missing a top-level key present in base (e.g., "Extra")
+	// This should generate a top-level-changed finding.
+	mod := `{
+		"RowStruct": "/Script/Icarus.FakeRow",
+		"Defaults": {"Speed": 1},
+		"Rows": [
+			{"Name": "Alpha", "Speed": 10, "Nested": {"A": 1, "B": 2}},
+			{"Name": "Beta", "Speed": 20},
+			{"Name": "Gamma", "Speed": 30}
+		],
+		"ExtraKey": "extra_value"
+	}`
+	baseWithExtra := `{
+		"RowStruct": "/Script/Icarus.FakeRow",
+		"Defaults": {"Speed": 1},
+		"Rows": [
+			{"Name": "Alpha", "Speed": 10, "Nested": {"A": 1, "B": 2}},
+			{"Name": "Beta", "Speed": 20},
+			{"Name": "Gamma", "Speed": 30}
+		],
+		"ExtraKey": "extra_value",
+		"RemovedKey": "removed_value"
+	}`
+	d := mustDiff(t, baseWithExtra, mod)
+	found := false
+	for _, f := range d.Findings {
+		if f.Kind == "top-level-changed" && f.Detail == "top-level key \"RemovedKey\" differs from base" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("want top-level-changed finding for removed key, got findings: %+v", d.Findings)
+	}
+}
+
 func TestDiffTableMalformed(t *testing.T) {
 	if _, err := DiffTable([]byte(`{"Rows": "nope"}`), []byte(baseTable)); err == nil {
 		t.Fatal("want error for malformed base table")

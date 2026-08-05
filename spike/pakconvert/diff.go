@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 )
 
 // Item is one upsert the converter derived: a row Name plus the changed (or,
@@ -91,11 +92,29 @@ func DiffTable(baseJSON, modJSON []byte) (*TableDiff, error) {
 				Detail: fmt.Sprintf("%s differs from base (EXMOD cannot express this)", key)})
 		}
 	}
-	for key, v := range mod.other {
-		if key == "RowStruct" || key == "Defaults" {
-			continue
+
+	// Check all other top-level keys (union of base and mod keys, sorted for determinism)
+	otherKeys := make(map[string]bool)
+	for key := range base.other {
+		if key != "RowStruct" && key != "Defaults" {
+			otherKeys[key] = true
 		}
-		if !reflect.DeepEqual(base.other[key], v) {
+	}
+	for key := range mod.other {
+		if key != "RowStruct" && key != "Defaults" {
+			otherKeys[key] = true
+		}
+	}
+	var sortedKeys []string
+	for key := range otherKeys {
+		sortedKeys = append(sortedKeys, key)
+	}
+	sort.Strings(sortedKeys)
+
+	for _, key := range sortedKeys {
+		baseVal := base.other[key]
+		modVal := mod.other[key]
+		if !reflect.DeepEqual(baseVal, modVal) {
 			d.Findings = append(d.Findings, Finding{Kind: "top-level-changed",
 				Detail: fmt.Sprintf("top-level key %q differs from base", key)})
 		}
