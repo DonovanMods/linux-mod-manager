@@ -109,6 +109,39 @@ func (s *Service) GetSource(id string) (source.ModSource, error) {
 	return s.registry.Get(id)
 }
 
+// ValidateInstallFileSelection rejects an install selection that mixes a
+// merge-compile source's exmodz variant with any other file (#211): the two
+// are alternate forms of the same mod, and installing both double-applies
+// its table edits (the pak deploys standalone while the exmodz joins the
+// merged pak). Sources that don't implement source.MergeCompiler are never
+// restricted, single-file selections are always fine, and an unknown
+// sourceID is not this check's problem - pool resolution errors on it
+// first.
+func (s *Service) ValidateInstallFileSelection(sourceID string, files []domain.DownloadableFile) error {
+	if len(files) < 2 {
+		return nil
+	}
+	src, err := s.registry.Get(sourceID)
+	if err != nil {
+		return nil
+	}
+	if _, ok := src.(source.MergeCompiler); !ok {
+		return nil
+	}
+	var exmodz, other bool
+	for _, f := range files {
+		if isExmodzFile(f.FileName) {
+			exmodz = true
+		} else {
+			other = true
+		}
+	}
+	if exmodz && other {
+		return fmt.Errorf("pak and exmodz are alternate forms of the same mod - select one")
+	}
+	return nil
+}
+
 // ListSources returns all registered sources
 func (s *Service) ListSources() []source.ModSource {
 	return s.registry.List()
@@ -844,6 +877,20 @@ func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []
 	if err := cache.MarkFileCompleteWithMembers(stagePath, fileID, members); err != nil {
 		return err
 	}
+	// A fileID the marker layer cannot verify writes no marker (see
+	// writeFileMarker), so the members this very commit contributes would
+	// be unattributable - pruning now could delete them. Judge the prune
+	// gate only when every contributor is marker-visible (#210).
+	if cache.VerifiableFileID(fileID) {
+		// #210: with full provenance recorded AND a retained source present, drop
+		// anything no manifest claims (pre-#197 compiled paks carried forward by
+		// prepareStaging's seeding). A legacy bare marker anywhere, or an entry
+		// with no retained source, makes this a silent no-op - see
+		// cache.PruneUnclaimed's doc comment for the full gate.
+		if err := cache.PruneUnclaimed(stagePath); err != nil {
+			return err
+		}
+	}
 	return commitStagedCache(cachePath, stagePath)
 }
 
@@ -1161,6 +1208,18 @@ func (s *Service) GetGameCachePath(game *domain.Game) string {
 	if game.CachePath != "" {
 		return game.CachePath
 	}
+	return s.cacheDir
+}
+
+// GlobalCacheDir returns the top-level cache directory this Service was
+// constructed with (ServiceConfig.CacheDir), regardless of any per-game
+// CachePath override. A per-game CachePath augments the global cache rather
+// than replacing it as a valid location for lmm-owned content (#168/#212
+// convergence sweep Finding 1: content can legitimately live under either
+// root), so callers that need to recognize BOTH cache roots for a game -
+// not just the single one GetGameCachePath resolves to - use this alongside
+// game.CachePath.
+func (s *Service) GlobalCacheDir() string {
 	return s.cacheDir
 }
 

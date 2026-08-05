@@ -302,7 +302,12 @@ func TestDoVerify_FileCountPrePass_ListFilesFails_SurfacedAsWarning(t *testing.T
 		return doVerify(cmd, svc, game, nil)
 	})
 	assert.Contains(t, out, "could not check cached file count", "a real ListFiles error must be surfaced, not silently swallowed")
-	assert.Contains(t, out, "1 warning(s)", "the surfaced error must actually count as a warning, not just print")
+	// #168/#212: the same permission-denied cache dir also breaks
+	// ConvergeDeployedFiles' own attempt to list mod1's deployable files
+	// while building its "provided" set - a second, independent warning via
+	// a different code path for the same underlying permission problem, not
+	// a double-count of the one above.
+	assert.Contains(t, out, "2 warning(s)", "the surfaced error must actually count as a warning, not just print")
 }
 
 // --- doVerify --fix repairs version_mismatch rows (issue #94, Task A7) ---
@@ -625,6 +630,18 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag(t 
 	// The state must not self-erase from detection: Deployed is cleared
 	// rather than left claiming a deployment that's actually dangling.
 	assert.False(t, mod.Deployed, "Deployed must be cleared when the re-link fails")
+
+	// #168/#212: the failed re-link above left a real orphan behind - the
+	// pre-fix symlink still exists (its own removal needed the same denied
+	// write permission) but now dangles, since step 1 already renamed its
+	// target cache dir to "1.0", and its deployed_files row was deleted by
+	// Install's own rollback (installer.go) when the Deploy it attempted
+	// failed - exactly the dangling-cache-link shape ConvergeDeployedFiles'
+	// sweep pass exists to catch. Restore write access before the second
+	// run, mirroring a real recovery workflow (fix the permission problem,
+	// then re-run verify --fix): convergence can then sweep the orphan away
+	// for real, and the "second run is clean" assertion below still holds.
+	require.NoError(t, os.Chmod(game.ModPath, 0o755))
 
 	// A second run confirms the row is inert (not re-reported, not
 	// re-counted) rather than stuck retrying forever or erroring - the

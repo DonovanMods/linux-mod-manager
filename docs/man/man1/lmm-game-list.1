@@ -2,25 +2,27 @@
 .TH "LMM" "1" "Jul 2026" "lmm 1.29.0" "User Commands"
 
 .SH NAME
-lmm-status - Show current status
+lmm-game-list - List configured games
 
 
 .SH SYNOPSIS
-\fBlmm status [flags]\fP
+\fBlmm game list [flags]\fP
 
 
 .SH DESCRIPTION
-Show the current status including configured games, active profiles, and mod counts.
+List every game configured in games.yaml: ID, name, install path, mod
+path, deploy mode, and configured sources. The default game (see 'lmm game
+show-default') is marked "(default)" next to its ID.
 
 .PP
 Examples:
-  lmm status
-  lmm status --game skyrim-se
+  lmm game list
+  lmm game list --json
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
-	help for status
+	help for list
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -53,7 +55,7 @@ Examples:
 
 
 .SH SEE ALSO
-\fBlmm(1)\fP
+\fBlmm-game(1)\fP
 
 
 .SH HISTORY

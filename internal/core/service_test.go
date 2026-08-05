@@ -12,6 +12,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -662,6 +663,130 @@ func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
 	assert.Equal(t, "from file2", string(content))
 }
 
+// TestService_DownloadMod_PrunesUnclaimedStaleFiles is the #210 wiring test:
+// commitStagedCacheWithMarker's single choke point calls cache.PruneUnclaimed
+// right after stamping its own marker, so a cache entry carrying stale
+// unclaimed debris (e.g. a pre-#197 compiled pak carried forward by
+// prepareStaging's reseed, sitting beside a #197 retained-source marker) gets
+// cleaned up the moment every marker in the entry becomes recorded - while
+// the retained source itself, being reserved bookkeeping, survives.
+func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	mock := newMockSourceWithDownloads("test")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
+
+	gameCache := svc.GetGameCache(game)
+	dir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+
+	// Pre-seed the entry with debris a manifest-unaware world would have left
+	// behind: a stale pak no current marker claims, and a #197 retained
+	// source whose own marker IS recorded (claiming nothing).
+	require.NoError(t, gameCache.Store(game.ID, mod.SourceID, mod.ID, mod.Version, "stale.pak", []byte("debris")))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("legacy")), []byte("zip"), 0o644))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "legacy", nil))
+
+	zip1, err := os.ReadFile(createTestZip(t, t.TempDir(), map[string]string{"new.txt": "fresh content"}))
+	require.NoError(t, err)
+	mock.AddDownload("file1", zip1)
+
+	ctx := context.Background()
+	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
+	require.NoError(t, err)
+
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"new.txt"}, files, "the unclaimed stale pak must be pruned once every marker is recorded")
+
+	_, err = os.Stat(filepath.Join(dir, cache.RetainedSourceName("legacy")))
+	require.NoError(t, err, "the retained source is reserved bookkeeping and must survive the prune")
+}
+
+// TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzRetain
+// is the organic (two-real-generation) companion to
+// TestService_DownloadMod_PrunesUnclaimedStaleFiles above: instead of
+// hand-seeding unclaimed debris, generation 1 is a genuine
+// Service.DownloadMod commit that CLAIMS a compiled pak - the honest
+// pre-#197 shape a real user's cache would have carried. Its file (a
+// DeployCompile mod's file ID whose FileName is NOT .exmodz) misses the
+// exmodz branch entirely and falls through to the plain "copy to cache"
+// path (service.go's DownloadModToCache, ~line 605), which commits with
+// members=[]string{fileName} - a real, recorded claim on the pak.
+//
+// Generation 2 re-downloads the SAME file ID, now served as a .exmodz -
+// #197's validate+retain shape. commitStagedCacheWithMarker re-marks that
+// SAME file ID's manifest (members=nil this time), overwriting its earlier
+// claim, and prepareStaging has seeded the new commit from the existing
+// entry, so the pak from generation 1 is still on disk but is no longer
+// claimed by any manifest. PruneUnclaimed - run at this same commit, now
+// that every marker is Recorded and a retained source exists - removes it.
+//
+// This is the real-world scenario #210/#212 exist for: a mod installed
+// before #197 gets updated/re-downloaded after upgrading lmm, and the stale
+// per-mod pak its old commit produced must not linger forever.
+func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzRetain(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
+	require.NoError(t, svc.AddGame(game))
+	mod := &domain.Mod{ID: "123", SourceID: "test-compiler", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
+
+	gameCache := svc.GetGameCache(game)
+	dir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+
+	// Generation 1: the honest pre-#197 shape - a real DownloadModToCache
+	// commit that claims a compiled pak for this file ID.
+	mock.AddDownload("file1", []byte("compiled pak bytes"))
+	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod_P.pak"}, nil)
+	require.NoError(t, err)
+
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"Mod_P.pak"}, files, "generation 1 must land the compiled pak as a claimed member")
+
+	manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	require.True(t, manifests["file1"].Recorded)
+	require.Equal(t, []string{"Mod_P.pak"}, manifests["file1"].Members, "generation 1's marker must genuinely claim the pak")
+
+	// Generation 2: the SAME source and file ID now serve the
+	// validated/retained .exmodz - #197's shape.
+	mock.AddDownload("file1", []byte("fake-exmodz-bytes"))
+	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod.exmodz"}, nil)
+	require.NoError(t, err)
+
+	files, err = gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	assert.Empty(t, files, "the stale pak must be pruned once file1's marker is re-recorded claiming nothing")
+
+	_, err = os.Stat(filepath.Join(dir, cache.RetainedSourceName("file1")))
+	require.NoError(t, err, "the retained .exmodz must survive - reserved bookkeeping, not prune-eligible")
+
+	_, err = os.Stat(filepath.Join(dir, "Mod_P.pak"))
+	require.True(t, os.IsNotExist(err), "the unclaimed compiled pak must actually be gone from disk")
+}
+
 // TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected is the
 // integration-level guard for the #96 round 2 review finding, reproducing its
 // probe exactly: an archive downloaded for file1 that smuggles in a member
@@ -867,6 +992,33 @@ func (m *mockSourceWithDownloads) DownloadCount() int { return int(m.served.Load
 func (m *mockSourceWithDownloads) Close() {
 	m.server.Close()
 }
+
+// compilerMockSource extends mockSourceWithDownloads with source.MergeCompiler
+// so a single source instance can serve both of
+// TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzRetain's
+// real generations for the SAME file ID: a plain (non-.exmodz) download that
+// takes DownloadModToCache's ordinary copy path, and a later .exmodz
+// re-download that takes its validate+retain (#197) path.
+type compilerMockSource struct {
+	*mockSourceWithDownloads
+}
+
+// ValidateSource implements source.MergeCompiler minimally - confirms the
+// staged archive exists, mirroring service_icarus_compile_test.go's
+// fakeCompilerSource. Real .exmodz parsing is covered elsewhere
+// (internal/source/icarus).
+func (s *compilerMockSource) ValidateSource(sourceFilePath string) error {
+	_, err := os.Stat(sourceFilePath)
+	return err
+}
+
+// MergeCompile is never exercised by this file's tests (they only drive
+// ingest, not a merge), but is required to satisfy source.MergeCompiler.
+func (s *compilerMockSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
+	return nil, os.WriteFile(outputPath, []byte("merged"), 0o644)
+}
+
+var _ source.MergeCompiler = (*compilerMockSource)(nil)
 
 // TestService_ModLifecycleFacade pins the Phase 3 Service boundary: callers
 // drive the full mod lifecycle via Service methods without ever reaching into

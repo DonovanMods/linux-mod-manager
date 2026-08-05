@@ -1,5 +1,5 @@
 .nh
-.TH "LMM" "1" "Jul 2026" "lmm 1.28.0" "User Commands"
+.TH "LMM" "1" "Jul 2026" "lmm 1.29.0" "User Commands"
 
 .SH NAME
 lmm-game-detect - Detect Steam games and add them to config
@@ -13,10 +13,16 @@ lmm-game-detect - Detect Steam games and add them to config
 Scan Steam libraries for known moddable games and optionally add them to games.yaml.
 
 .PP
-Prompts for which games to add (e.g. 1,2 or all or none). Each added
-game gets a NexusMods source mapping, the symlink link method, and an
-empty default profile; edit games.yaml afterwards for anything more
-specific, including the NexusMods slug if none was detected.
+Prompts for which games to add (e.g. 1,2 or all or none). A game already
+configured (present in games.yaml) is marked "[configured]" and is
+excluded from the default "all" selection, since it needs no re-offering
+- but it stays listed, and you can still name its number explicitly to
+re-add/repair it (this replays the same games.yaml + default-profile
+overwrite 'lmm game add' always performs, so a repair also resets the
+default profile's mod list). Each added game gets a NexusMods source
+mapping, the symlink link method, and an empty default profile; edit
+games.yaml afterwards for anything more specific, including the
+NexusMods slug if none was detected.
 
 .PP
 Examples:
@@ -42,7 +48,7 @@ Examples:
 
 .PP
 \fB--json\fP[=false]
-	output in JSON format (list, status, search, update, conflicts, verify, mod show, source list)
+	output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)
 
 .PP
 \fB--no-color\fP[=false]

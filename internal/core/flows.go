@@ -3613,19 +3613,24 @@ func (s *Service) resolveStrictInstallFiles(ctx context.Context, plan *InstallPl
 //     design byte-for-byte - the primary is NOT special-cased here at all
 //     (no Replace, no interactive selection, no blocking conflict prompt -
 //     see applyInstallBatchMod's own doc comment; its ONE divergence is the
-//     up-front opts.TargetVersion/TargetFileIDs pre-resolution, #96/#140,
-//     which pins the primary's file selection only).
+//     opts.TargetVersion/TargetFileIDs pre-resolution, #96/#140, which pins
+//     the primary's file selection only). Like the STRICT path's own fold
+//     above, this now happens HERE, up front - before the #143 lock gate
+//     and before install.before_all - rather than inside the BATCH branch
+//     itself (#214: an unhonorable pin must fail before any hook or side
+//     effect, on BOTH paths alike).
 //
-// install.before_all runs once, before any mod is touched, in EITHER path
-// (matching both doInstall's own single-mod code and batchInstallMods,
-// which each had their own, functionally-identical, Force-gated
-// install.before_all call). install.after_all runs once, at the very end:
-// in the STRICT path, only if the primary's own install fully succeeded (an
-// early return skips it entirely, matching doInstall's single-mod code); in
-// the BATCH path, unconditionally once the loop finishes, since no per-mod
-// failure there is ever fatal (matching batchInstallMods, which always
-// reaches its own install.after_all call regardless of how many mods in
-// its list failed). progress may be nil.
+// install.before_all runs once, before any mod is touched - and, on either
+// path, only after that path's own up-front pre-resolution has already
+// succeeded (see above) - matching both doInstall's own single-mod code and
+// batchInstallMods, which each had their own, functionally-identical,
+// Force-gated install.before_all call. install.after_all runs once, at the
+// very end: in the STRICT path, only if the primary's own install fully
+// succeeded (an early return skips it entirely, matching doInstall's
+// single-mod code); in the BATCH path, unconditionally once the loop
+// finishes, since no per-mod failure there is ever fatal (matching
+// batchInstallMods, which always reaches its own install.after_all call
+// regardless of how many mods in its list failed). progress may be nil.
 //
 // On error, the returned result carries any diagnostics/Installed entries
 // accumulated before the failure - callers should surface them alongside the
@@ -3657,6 +3662,57 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		}
 		if strictFiles != nil {
 			plan.Files = strictFiles
+		}
+		// #211: validate the STRICT path's final selection - covers BOTH an
+		// explicit --file pin resolved just above (strictFiles) AND a
+		// caller-supplied plan.Files left untouched (resolveStrictInstallFiles
+		// returned nil, nil: no pins set, or the caller's selection already
+		// satisfied them - the CLI's interactive-override shape). One call
+		// here is correct rather than a second one inside
+		// resolveStrictInstallFiles: that helper has no other caller (see its
+		// doc comment), so validating its result immediately after this fold
+		// is equivalent to validating inside it, and plan.Files is the only
+		// value that matters to applyInstallPrimary either way.
+		if err := s.ValidateInstallFileSelection(plan.SourceID, plan.Files); err != nil {
+			return result, err
+		}
+	}
+
+	// #214: the BATCH path's primary pre-resolution (#96/#140 - pins the
+	// primary's file selection only) runs HERE, before the lock gate and
+	// install.before_all, for the same reason the STRICT path resolves
+	// pins up front: a selection the user asked for that cannot be honored
+	// must fail before any hook or side effect. The block is read-only
+	// (candidate-pool fetch + pure selection), so a successful install is
+	// byte-identical to the previous ordering.
+	//
+	// #96/#140: opts.TargetVersion/TargetFileIDs pin the PRIMARY only
+	// (see their doc comments) - resolved here, once, to the FINAL
+	// file selection, before any mod in mods is touched, so an
+	// unresolvable version or file ID aborts the whole install with
+	// zero side effects rather than surfacing as a per-mod "Failed"
+	// line after dependencies already installed. primaryOverrideFiles
+	// is passed to applyInstallBatchMod ONLY for the primary's own
+	// iteration (the last entry in mods, by construction above); every
+	// dependency iteration gets nil and re-derives its own selection
+	// exactly as before.
+	var primaryOverrideFiles []domain.DownloadableFile
+	if len(plan.Dependencies) > 0 && (opts.TargetVersion != "" || len(opts.TargetFileIDs) > 0) {
+		primary := plan.Mod // local, addressable copy - distinct from plan.Mod
+		pool, err := s.resolveInstallCandidatePool(ctx, primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
+		if err != nil {
+			return result, err
+		}
+		primaryOverrideFiles, err = selectInstallTargetFiles(pool, opts.TargetFileIDs)
+		if err != nil {
+			return result, err
+		}
+		// #211: validate the primary's up-front resolved selection
+		// before any dependency (or the primary itself) is touched -
+		// mirrors the STRICT path's fold-site validation above for the
+		// BATCH path's one place a caller can pin more than one file.
+		if err := s.ValidateInstallFileSelection(primary.SourceID, primaryOverrideFiles); err != nil {
+			return result, err
 		}
 	}
 
@@ -3709,28 +3765,12 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		primary := plan.Mod // local, addressable copy - distinct from plan.Mod
 		mods = append(mods, &primary)
 
-		// #96/#140: opts.TargetVersion/TargetFileIDs pin the PRIMARY only
-		// (see their doc comments) - resolved here, once, to the FINAL
-		// file selection, before any mod in mods is touched, so an
-		// unresolvable version or file ID aborts the whole install with
-		// zero side effects rather than surfacing as a per-mod "Failed"
-		// line after dependencies already installed. primaryOverrideFiles
-		// is passed to applyInstallBatchMod ONLY for the primary's own
-		// iteration (the last entry in mods, by construction above); every
-		// dependency iteration gets nil and re-derives its own selection
-		// exactly as before.
-		var primaryOverrideFiles []domain.DownloadableFile
-		if opts.TargetVersion != "" || len(opts.TargetFileIDs) > 0 {
-			pool, err := s.resolveInstallCandidatePool(ctx, primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
-			if err != nil {
-				return result, err
-			}
-			primaryOverrideFiles, err = selectInstallTargetFiles(pool, opts.TargetFileIDs)
-			if err != nil {
-				return result, err
-			}
-		}
-
+		// primaryOverrideFiles was resolved (and validated) up front, above
+		// - see #214's comment there - before the lock gate and
+		// install.before_all. It is passed to applyInstallBatchMod ONLY for
+		// the primary's own iteration (the last entry in mods, by
+		// construction above); every dependency iteration gets nil and
+		// re-derives its own selection exactly as before.
 		total := len(mods)
 		for idx, mod := range mods {
 			if err := ctx.Err(); err != nil {

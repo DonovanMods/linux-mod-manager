@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -267,6 +268,18 @@ func TestDisplayFileLabel(t *testing.T) {
 	}
 }
 
+// TestInstallFileRow covers #211's chooser-description acceptance gap: the
+// Description icarus sets ("mergeable EXMOD - recommended" / "prebuilt PAK")
+// must reach the chooser row, appended after the existing (category, size)
+// suffix and before the "<- default" mark; sources that leave Description
+// empty (the pre-#211 shape) render exactly as before.
+func TestInstallFileRow(t *testing.T) {
+	withDesc := domain.DownloadableFile{FileName: "Mod.exmodz", Category: "EXMODZ", Description: "mergeable EXMOD - recommended", IsPrimary: true}
+	assert.Equal(t, "  [2] Mod.exmodz (EXMODZ, 0 B) - mergeable EXMOD - recommended <- default", installFileRow(1, withDesc))
+	noDesc := domain.DownloadableFile{FileName: "Mod_P.pak", Category: "PAK"}
+	assert.Equal(t, "  [1] Mod_P.pak (PAK, 0 B)", installFileRow(0, noDesc))
+}
+
 // TestFileCategoryPriority tests category priority ordering
 func TestFileCategoryPriority(t *testing.T) {
 	assert.Less(t, fileCategoryPriority("MAIN"), fileCategoryPriority("OPTIONAL"))
@@ -365,6 +378,119 @@ func TestPromptMultiSelection_Range(t *testing.T) {
 	selections, err := promptMultiSelectionFrom(r, "Select", 1, 10)
 	assert.NoError(t, err)
 	assert.Equal(t, []int{2, 3, 4}, selections)
+}
+
+// mixedPakExmodzValidate mirrors the shape of the real
+// Service.ValidateInstallFileSelection closure (#211): reject a selection
+// that mixes an exmodz file with any other file.
+func mixedPakExmodzValidate(sel []domain.DownloadableFile) error {
+	var ex, other bool
+	for _, f := range sel {
+		if strings.HasSuffix(strings.ToLower(f.FileName), ".exmodz") {
+			ex = true
+		} else {
+			other = true
+		}
+	}
+	if ex && other {
+		return fmt.Errorf("pak and exmodz are alternate forms of the same mod - select one")
+	}
+	return nil
+}
+
+// TestSelectInstallFiles_MixedSelectionReprompts verifies the interactive
+// path re-prompts (rather than erroring out) when the user's selection
+// mixes a pak and an exmodz file - #211's CLI-side backstop for
+// Service.ValidateInstallFileSelection.
+func TestSelectInstallFiles_MixedSelectionReprompts(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "pak", FileName: "Mod_P.pak", Category: "PAK"},
+		{ID: "exmodz", FileName: "Mod.exmodz", Category: "EXMODZ", IsPrimary: true},
+	}
+	// First input line picks both (rejected, re-prompted); second picks 2.
+	in := strings.NewReader("1,2\n2\n")
+	selected, err := selectInstallFilesFrom(in, files, mixedPakExmodzValidate)
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.Equal(t, "exmodz", selected[0].ID)
+}
+
+// TestSelectInstallFiles_FileFlagMixedRejected verifies the --file path
+// (installFileID set to a comma-list) returns the validation error as-is,
+// with no re-prompt - the flag was explicit, so there's nothing to retry.
+func TestSelectInstallFiles_FileFlagMixedRejected(t *testing.T) {
+	oldFileID := installFileID
+	installFileID = "pak,exmodz"
+	t.Cleanup(func() { installFileID = oldFileID })
+
+	files := []domain.DownloadableFile{
+		{ID: "pak", FileName: "Mod_P.pak", Category: "PAK"},
+		{ID: "exmodz", FileName: "Mod.exmodz", Category: "EXMODZ", IsPrimary: true},
+	}
+	selected, err := selectInstallFilesFrom(strings.NewReader(""), files, mixedPakExmodzValidate)
+	require.Error(t, err)
+	assert.Nil(t, selected)
+	assert.Contains(t, err.Error(), "pak and exmodz are alternate forms of the same mod - select one")
+}
+
+// TestSelectInstallFiles_EOFAfterRejectedSelection guards against a hang:
+// once a rejected interactive selection re-prompts (see
+// TestSelectInstallFiles_MixedSelectionReprompts above), the shared reader
+// must not be re-wrapped fresh on retry - and if the input stream ends right
+// there (piped input closed, no genuine second line coming) the retry's
+// readMultiSelectionLine must surface its own "reading input" EOF error
+// rather than block forever waiting for input that will never arrive.
+func TestSelectInstallFiles_EOFAfterRejectedSelection(t *testing.T) {
+	files := []domain.DownloadableFile{
+		{ID: "pak", FileName: "Mod_P.pak", Category: "PAK"},
+		{ID: "exmodz", FileName: "Mod.exmodz", Category: "EXMODZ", IsPrimary: true},
+	}
+	in := strings.NewReader("1,2\n") // rejected (mixed) selection, no second line to retry with
+	selected, err := selectInstallFilesFrom(in, files, mixedPakExmodzValidate)
+	require.Error(t, err)
+	assert.Nil(t, selected)
+}
+
+// TestSelectInstallFiles_ValidateRunsOnFastPaths guards the two fast paths
+// that skip the interactive prompt entirely (a single-file list, and the
+// --yes default-choice shortcut) still run validate and surface its error -
+// "nothing to prompt for" must not also mean "nothing to validate".
+func TestSelectInstallFiles_ValidateRunsOnFastPaths(t *testing.T) {
+	alwaysError := func([]domain.DownloadableFile) error {
+		return fmt.Errorf("always rejected")
+	}
+
+	t.Run("single-file list", func(t *testing.T) {
+		oldFileID := installFileID
+		installFileID = ""
+		t.Cleanup(func() { installFileID = oldFileID })
+
+		files := []domain.DownloadableFile{{ID: "only", FileName: "Mod_P.pak"}}
+		selected, err := selectInstallFilesFrom(strings.NewReader(""), files, alwaysError)
+		require.Error(t, err)
+		assert.Nil(t, selected)
+		assert.Contains(t, err.Error(), "always rejected")
+	})
+
+	t.Run("installYes default-choice fast path", func(t *testing.T) {
+		oldFileID := installFileID
+		installFileID = ""
+		oldYes := installYes
+		installYes = true
+		t.Cleanup(func() {
+			installFileID = oldFileID
+			installYes = oldYes
+		})
+
+		files := []domain.DownloadableFile{
+			{ID: "pak", FileName: "Mod_P.pak", Category: "PAK", IsPrimary: true},
+			{ID: "exmodz", FileName: "Mod.exmodz", Category: "EXMODZ"},
+		}
+		selected, err := selectInstallFilesFrom(strings.NewReader(""), files, alwaysError)
+		require.Error(t, err)
+		assert.Nil(t, selected)
+		assert.Contains(t, err.Error(), "always rejected")
+	})
 }
 
 // --- doInstall (Phase 5b Task 2 CLI refit) ---

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-08-05
+
+### Added
+
+- Icarus mods that publish both a prebuilt pak and a mergeable `.exmodz`
+  now install the `.exmodz` by default everywhere (TUI, `--yes`, batch and
+  profile installs, and the CLI chooser's default), with descriptive
+  chooser labels. Selecting both variants together is rejected — they are
+  alternate forms of the same mod; `--file pak` remains the escape hatch
+  for installing the prebuilt pak alone. (#211)
+- `lmm game list` — a table of every configured game (ID, name, install path, mod path, deploy mode, and a compact `source:id` rendering of its sources), marking the default game (see `lmm game show-default`) and pointing at `lmm game add`/`lmm game detect` when nothing is configured yet. Supports `--json` like `list`/`search`/`source list` (#205)
+- `make build` (and `make`) now stamp `git describe --tags --dirty` into the binary via `-ldflags -X`, so `lmm --version` on a dev build self-identifies (e.g. `1.28.0 (dev: v1.28.0-2-g140e3c6-dirty)`) instead of showing the same plain `1.28.0` as a release build — the confusion this fixed came up during the v1.28.0 cycle. A build exactly on the release tag (clean) still shows the plain version; a plain `go build`/`go test` (no ldflags) is unaffected. The static `version` var and man pages are untouched by construction (#208)
+- `lmm verify` now detects stale deployments — game-directory files lmm
+  deployed that no installed mod still provides, and dangling symlinks
+  left pointing into the mod cache — and `verify --fix` removes them
+  (provenance-gated: only lmm-attributed files are ever touched). (#168, #212)
+
+### Changed
+
+- `lmm game detect` now marks a game already present in `games.yaml` as `[configured]` (mirroring `search`'s `[installed]` convention) and excludes it from the default "all" selection, since it needs no re-offering. It stays listed, and naming its number explicitly still selects it — the same re-add/repair path `lmm game add` has always used unconditionally (games.yaml entry + a fresh empty default profile, replacing any existing one) (#205)
+
+### Fixed
+
+- Deploy no longer links cache files that no download manifest claims: stale
+  per-mod paks left behind by pre-v1.28 exmodz installs were being deployed
+  alongside the merged pak, double-applying their table edits. One
+  `lmm deploy` cycle now removes such links, download commits prune the
+  stale files, and the conflict scanner ignores them. Legacy cache entries
+  without recorded manifests keep their exact previous behavior. (#210)
+- Batch installs (dependencies present) now resolve and validate the primary
+  mod's `--version`/`--file` pins before the `install.before_all` hook runs,
+  so an unhonorable selection can no longer fire user hooks first. (#214)
+
 ## [1.28.0] - 2026-08-02
 
 ### Added
@@ -1182,7 +1215,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.28.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.0...HEAD
+[1.29.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.28.0...v1.29.0
 [1.28.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.1...v1.28.0
 [1.27.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.0...v1.27.1
 [1.27.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.26.0...v1.27.0
