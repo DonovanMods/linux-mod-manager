@@ -50,8 +50,14 @@ func TestAssetProbe(t *testing.T) {
 			r, err := unrealpak.Open(filepath.Join(corpusDir, cm.Pak))
 			if err != nil {
 				// Unreadable pak IS a census result, not a test failure.
+				// LayoutMatchesInference is set true VACUOUSLY here — nothing
+				// was probed to violate it, so false is reserved exclusively
+				// for genuine layout violations in probed paks. The
+				// "UNOPENABLE: <err>" census key is the don't-trust-this-report
+				// signal a consumer should check first.
 				report := AssetProbeReport{ModID: cm.ID, ModName: cm.Name,
-					ExtensionCensus: map[string]int{"UNOPENABLE: " + err.Error(): 1}}
+					ExtensionCensus:        map[string]int{"UNOPENABLE: " + err.Error(): 1},
+					LayoutMatchesInference: true}
 				if serr := SaveJSON(filepath.Join(corpusDir, "reports", cm.ID+"-assetprobe.json"), report); serr != nil {
 					t.Fatalf("writing report: %v", serr)
 				}
