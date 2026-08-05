@@ -701,7 +701,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 				if jsonOutput {
 					jsonFiles = append(jsonFiles, verifyFileJSON{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason})
 				} else {
-					fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("!"), cf.Path, cf.Reason)
+					fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), cf.Path, cf.Reason)
 				}
 				warnings++
 			}
