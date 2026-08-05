@@ -669,6 +669,60 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		}
 	}
 
+	// Deploy convergence (#168/#212): reconcile the game dir against current
+	// reality - deployed_files rows no longer provided by any installed mod,
+	// and dangling cache-rooted symlinks with no row at all
+	// (ConvergeDeployedFiles, internal/core/converge.go). Runs AFTER the
+	// cache repairs above so --fix converges against the POST-repair state
+	// (a version-mismatch repair or a merged-pak resync can change what's
+	// currently "provided"). Plain verify passes dryRun=true (report
+	// candidates only, nothing mutates, cf below is never actually removed);
+	// --fix passes dryRun=false (act). Like the merged-pak staleness check
+	// above, this is profile-scoped, not per-mod - modFilter has no effect.
+	convResult, convErr := svc.ConvergeDeployedFiles(ctx, game, profile, !verifyFix)
+	if convResult != nil {
+		for _, cf := range convResult.Removed {
+			// ConvergeResult's own contract: with dryRun=true (plain verify)
+			// every candidate here is unactioned and reported as a warning;
+			// with dryRun=false (--fix) every candidate here already
+			// succeeded (a failed item never lands in Removed - see the
+			// joined-error handling below), so it's reported as fixed and
+			// deliberately does NOT add to warnings - same convention as a
+			// successful NO CHECKSUM re-download or VERSION MISMATCH repair
+			// elsewhere in this function, which don't count a resolved
+			// problem as an outstanding one.
+			if verifyFix {
+				if jsonOutput {
+					jsonFiles = append(jsonFiles, verifyFileJSON{ModID: cf.ModID, FileID: cf.Path, Status: "fixed_stale_deployment", Note: cf.Reason})
+				} else {
+					fmt.Println(colorGreen(fmt.Sprintf("Fixed: removed %s (%s)", cf.Path, cf.Reason)))
+				}
+			} else {
+				if jsonOutput {
+					jsonFiles = append(jsonFiles, verifyFileJSON{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason})
+				} else {
+					fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("!"), cf.Path, cf.Reason)
+				}
+				warnings++
+			}
+		}
+	}
+	// Per-item convergence failures (an Undeploy or sweep os.Remove that
+	// failed) are joined into one error by ConvergeDeployedFiles rather than
+	// aborting the whole pass (ConvergeResult's doc comment) - surfaced the
+	// same way every other per-item problem in this command is: a warning,
+	// not a fatal verify failure.
+	if convErr != nil {
+		for _, e := range unwrapJoinedErrors(convErr) {
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{Status: "skipped", Note: fmt.Sprintf("convergence: %v", e)})
+			} else {
+				fmt.Printf("%s convergence: %v\n", colorYellow("?"), e)
+			}
+			warnings++
+		}
+	}
+
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -717,6 +771,18 @@ func sourceMappedMod(game *domain.Game, mod *domain.Mod) *domain.Mod {
 		mapped.GameID = id
 	}
 	return &mapped
+}
+
+// unwrapJoinedErrors splits an errors.Join-produced error into its
+// individual parts (Go's join error implements Unwrap() []error) so each
+// per-item convergence failure (ConvergeDeployedFiles' joined error) can be
+// reported as its own warning line instead of one opaque multi-line blob. A
+// plain, non-joined error is returned as a single-element slice.
+func unwrapJoinedErrors(err error) []error {
+	if u, ok := err.(interface{ Unwrap() []error }); ok {
+		return u.Unwrap()
+	}
+	return []error{err}
 }
 
 // cacheDirExists reports whether a cache mod-version directory exists,
