@@ -8,14 +8,18 @@
 
 The design rubric's strict GO bar — semantic equivalence on ≥3 of 4 sampled
 dual-form mods with every residual explained — was **not met by blind
-diff-derivation**: of 11 dual-form mods, only 2 PASS outright and 1 more is
-genuinely explained; 6 DIVERGED and 2 further "EXPLAINED" verdicts turned
-out, on post-hoc audit, to mask silent conversion misses (mount-variance
-gaps, see below). However, the failures decompose cleanly into (a) two
-**mechanical normalization gaps** that are straightforward fixes, and
-(b) three **inherent expressiveness gaps** of diffing a stale whole-table
-snapshot against a live base — and 5 of the 6 DIVERGED paks embed the
-author's original `data.EXMOD`, which sidesteps (b) entirely. The pipeline
+diff-derivation**: of 11 dual-form mods, 2 PASS outright, 1 is genuinely
+explained (a pure asset-only pak), and **8 DIVERGED** (final round-3
+harness numbers; an audit-then-fixed normalization blind spot had briefly
+made this look like 6). The failures decompose cleanly into (a) one
+**mechanical normalization gap** (case-sensitivity — found by audit, fixed
+in the harness, which flipped Eye Colors Expanded! into an ordinary
+processed-but-drifted mod), (b) one **conversion-robustness gap** (a pak
+whose table sits at `Content/` root with no recoverable directory
+structure is structurally unconvertible by this approach), and (c) three
+**inherent expressiveness gaps** of diffing a stale whole-table snapshot
+against a live base — and 5 of the 8 DIVERGED paks embed the author's
+original `data.EXMOD`, which sidesteps (c) entirely. The pipeline
 seam is proven end-to-end (`ValidateSource` + `MergeCompile` accept a
 synthesized `.exmodz` with zero changes), asset pass-through is empirically
 viable (0 Oodle entries, all assets `.uasset`/`.uexp`), and `MergeCompile`
@@ -29,29 +33,35 @@ surfaced to the user. Blind diff-derivation as a silent default is NO-GO.
 
 Ground truth = convert the mod's pak, apply our diff and the author's own
 exmodz each to the **live** base tables via the real `icarus.ApplyRowPatch`,
-deep-compare results. Final (round-2 classifier, verified premises):
+deep-compare results. Final (round-3 harness: case-insensitive
+normalization + unverifiable-guard on the benign branch; commit a02840d):
 
-| Mod | Verdict | Residuals | Breakdown | Post-hoc audit |
+| Mod | Verdict | Residuals | Breakdown | Notes |
 |---|---|---|---|---|
-| Cry's Lvl 120 Cap - 25% | PASS | 0 | — | clean conversion (tables + assets) |
-| Cry's Lvl 120 Cap - 50% | PASS | 0 | — | clean conversion (tables + assets) |
-| Turret Variants | EXPLAINED | 139 | all table-absent-from-pak (verified) | genuine: pak is asset-only; exmodz variant is broader |
-| Eye Colors Expanded! | EXPLAINED | 3 | all "table-absent-from-pak" | **mislabeled — converter miss**: table mounts under capital `Data/`, classified `other` |
-| Intreeg's More Resources | EXPLAINED | 21 | all "table-absent-from-pak" | **mislabeled — converter miss**: table sits at `Content/` root, no `data/` segment |
+| Cry's Lvl 120 Cap - 25% | PASS | 0 | — | clean conversion (tables + `data/`-mounted assets) |
+| Cry's Lvl 120 Cap - 50% | PASS | 0 | — | clean conversion (tables + `data/`-mounted assets) |
+| Turret Variants | EXPLAINED | 139 | all table-absent-from-pak (verified; `Census["other"]==0`) | genuine: pure asset-only pak; exmodz variant is broader |
 | Floofs QOL | DIVERGED | 1804 | 13 diverged / 1791 stale-pak-change | expressiveness gaps (embedded `.EXMOD` present) |
 | Dextermod: Tactical Backpack | DIVERGED | 59 | 7 / 52 | expressiveness gaps (embedded `.EXMOD` present) |
 | Dyls123's Horse Cart | DIVERGED | 1849 | 136 / 1713 | expressiveness gaps (embedded `.EXMOD` present) |
 | Dextermod: Stronger HVAC | DIVERGED | 132 | 73 / 59 | expressiveness gaps (embedded `.EXMOD` present) |
 | Intreeg's 4XP | DIVERGED | 27 | 26 / 1 | expressiveness gaps (embedded `.EXMOD` present) |
+| Eye Colors Expanded! | DIVERGED | 25 | 2 / 23 | capital-`Data/` mount (audit-caught, harness-fixed); now genuinely processed (50 stale rows) — ordinary stale-drift divergence |
+| Intreeg's More Resources | DIVERGED | 21 | 21 / 0 | **structurally unconvertible**: table at `Content/` root, no recoverable directory structure; unverifiable-guard refuses a benign call |
 | Extraction 5 Seconds | DIVERGED | 7 | 7 / 0 | expressiveness gaps (no embedded `.EXMOD`) |
 
-Totals across 4,041 residuals: 3,616 `stale-pak-change` (machine-verified:
+Totals across 4,063 residuals: 3,639 `stale-pak-change` (machine-verified:
 our value provably traces to the pak's stale snapshot while the author's
-matches live), 163 `exmodz-newer-than-pak` (whole-table absence; 24 of
-these are the two mislabeled mods above), 262 genuinely `diverged`.
-The classifier's branch-5 harness tripwire (pak touched a row but the
-converter emitted no patch) fired **zero** times in 4,041 residuals — the
-row-level differ itself dropped nothing it could see.
+matches live), 139 `exmodz-newer-than-pak` (whole-table absence, all
+Turret Variants, verified), 285 `diverged`. The classifier's branch-5
+harness tripwire (pak touched a row but the converter emitted no patch)
+fired **zero** times in 4,063 residuals — the row-level differ itself
+dropped nothing it could see. The two normalization blind spots this
+spike's own audit surfaced (capital `Data/`, bare `Content/`) were fixed
+in the harness (case-insensitive `NormalizeEntry` preserving original
+case, plus a `Census["other"]>0` guard that blocks the benign
+classification whenever unclassified entries exist) and the corpus re-run
+— the numbers above are post-fix.
 
 **Pipeline seam (Task 7): PASS.** A synthesized "Floofs QOL" `.exmodz`
 passed the real `icarus.ValidateSource`, merged via the real
@@ -88,29 +98,32 @@ available (it is exactly what `ParseExmod` consumes).
 ## Answers to the Six Spike Questions
 
 ### 1. Path normalization
-*Can mount-point + entry-path pairs be normalized reliably?* **Mostly —
-with two real-world variance cases the spike's normalizer missed.** The
-floating `data/` boundary (mount `.../Content/` + entry
-`data/X/Y.json` vs mount `.../Content/data/X/` + entry `Y.json`) is
-handled correctly by joining the pair before classifying. But the corpus
-produced two variants the archived research never saw: a **capital
-`Data/`** segment (Eye Colors Expanded!) and a table mounted **directly at
-`Content/` root with no `data/` segment at all** (Intreeg's More
-Resources). Both were silently classified `other` and skipped. A
-production normalizer needs case-insensitive `data/` matching plus a
-basename-fallback (an unmatched `D_*.json` whose filename uniquely matches
-a base table should resolve to it) — and "unclassifiable JSON" must be a
-loud finding, never a silent skip.
+*Can mount-point + entry-path pairs be normalized reliably?* **Yes for
+every structured layout observed — with case-insensitivity required and
+one structurally unresolvable layout.** The floating `data/` boundary
+(mount `.../Content/` + entry `data/X/Y.json` vs mount
+`.../Content/data/X/` + entry `Y.json`) is handled correctly by joining
+the pair before classifying. The corpus produced two variants the
+archived research never saw: a **capital `Data/`** segment (Eye Colors
+Expanded!) — initially misclassified, then fixed with case-insensitive
+matching (original case preserved) and re-proven on the corpus — and a
+table mounted **directly at `Content/` root with no `data/` segment at
+all** (Intreeg's More Resources), which carries no recoverable directory
+structure and is **structurally unconvertible** by path normalization
+alone (a basename-fallback against base tables is a candidate future
+mitigation; not attempted in this spike). Either way, "unclassifiable
+JSON" must be a loud signal, never a silent skip — the spike harness now
+enforces this via a `Census["other"]>0` guard.
 
 ### 2. Differ fidelity
 *Does a Name-keyed row differ against the live base reproduce author
 intent?* **Only when the pak is fresh relative to the base.** The differ
-mechanism itself is sound (branch-5 tripwire: 0 hits in 4,041 residuals;
+mechanism itself is sound (branch-5 tripwire: 0 hits in 4,063 residuals;
 the 2 PASS mods, whose paks target base tables that barely drift, convert
 byte-equivalently). But because prebuilt tables are **stale whole-table
 snapshots**, per-field diffing against today's base sweeps every
 independently-drifted field into the diff alongside the author's real
-change (dominant pattern: 3,616 residuals). Author intent per-row is
+change (dominant pattern: 3,639 residuals). Author intent per-row is
 recoverable only from the embedded `.EXMOD` (when present) — not from the
 snapshot alone.
 
@@ -159,7 +172,8 @@ exactly as the design predicted.
 
 | Gap | Count | Production consequence |
 |---|---|---|
-| Stale-drift sweep-in (`stale-pak-change` residuals) | 3,616 | The dominant hazard: a derived diff silently reverts base-game updates in every field that drifted since the pak was built. Must be mitigated (embedded-EXMOD preference, drift heuristics, or explicit user warning), never silently shipped. |
+| Stale-drift sweep-in (`stale-pak-change` residuals) | 3,639 | The dominant hazard: a derived diff silently reverts base-game updates in every field that drifted since the pak was built. Must be mitigated (embedded-EXMOD preference, drift heuristics, or explicit user warning), never silently shipped. |
+| Structurally unconvertible layout (bare-`Content/` mount) | 1 mod (21 residuals) | A pak with no recoverable directory structure cannot be converted by normalization alone — must be detected and refused loudly (basename-fallback is a candidate future mitigation). |
 | `field-removed` (schema drift, base-only fields) | 795 | Correctly ignorable (staleness), but confirms snapshots routinely predate schema changes. |
 | Whole-table absence from pak vs exmodz (verified) | 139 | Pak and exmodz variants of the same mod can differ in **feature scope** — conversion fidelity vs the exmodz is not always achievable from the pak alone. |
 | Tool-auto-populated new-row fields | ~26 rows (Intreeg's 4XP) | Harmless-looking extra fields ride along on new rows; cosmetic in the cases inspected but unverified in general. |
@@ -169,7 +183,7 @@ exactly as the design predicted.
 ## Constraints a Feature Design Must Honor
 
 1. **Diff against the live base only; base-absent rows are staleness, not
-   deletions** — confirmed empirically (795 field-removed, 3,444 stale
+   deletions** — confirmed empirically (795 field-removed, 3,494 stale
    rows) and EXMOD has no delete verb anyway.
 2. **Derived diffs go stale too.** A diff synthesized at ingest freezes
    live-base values from that day; the next weekly base update recreates
@@ -179,15 +193,20 @@ exactly as the design predicted.
    on the same trigger. The embedded-`data.EXMOD` path does not have this
    problem (field-scoped author intent, exactly like a published exmodz).
 3. **Prefer the embedded `data.EXMOD` whenever the pak carries one**
-   (5/11 corpus paks, including 5 of the 6 DIVERGED) — it converts the
+   (5/11 corpus paks, including 5 of the 8 DIVERGED) — it converts the
    hardest cases exactly and needs zero inference. Verify embedded ≡
    published-exmodz on dual-form mods before trusting it blindly (not
    done in this spike).
-4. **Mount + entry normalized as a pair, case-insensitively, with
-   basename fallback** — the corpus contains capital-`Data/` mounts,
+4. **Mount + entry normalized as a pair, case-insensitively** (original
+   case preserved) — the corpus contains capital-`Data/` mounts,
    bare-`Content/` mounts, and `data/`-prefixed asset mounts (Cry's).
+   Case-insensitivity is proven necessary and sufficient for the
+   capital-`Data/` case (harness-fixed and corpus-re-proven);
+   bare-`Content/` paks are structurally unconvertible without a
+   basename-fallback (future mitigation) and must be refused loudly.
    "Unclassifiable JSON entry" must be a loud finding; `ClassOther` as a
-   silent third outcome is how this spike mislabeled 2 mods as EXPLAINED.
+   silent third outcome briefly mislabeled 2 mods as EXPLAINED before the
+   spike's own audit caught and fixed it.
 5. **Four unexported upstream values must be exported** (or a conversion
    API added to `internal/source/icarus`) before production work:
    `endOfModSentinel`, `icarusContentMountPoint`, `icarusDataTablePrefix`,
@@ -240,9 +259,11 @@ exactly as the design predicted.
 Corpus and generated evidence live **outside the repo** (copyrighted mod
 content; never committed): `~/.cache/lmm-spike-corpus/` — downloaded mod
 files under `<docID>/`, `manifest.json`, `catalog-census.json`, and
-per-mod `reports/<id>-groundtruth.json` + `reports/<id>-assetprobe.json`.
+per-mod `reports/<id>-groundtruth.json` + `reports/<id>-assetprobe.json`
+(regenerated by the round-3 harness re-run; asset-probe deltas confined to
+Eye Colors' entry flipping `other`→`table` as expected).
 The spike prototype and its tests are on branch `spike/pak-to-exmod`
-(`spike/pakconvert/`); the env-gated ground-truth test intentionally fails
-on DIVERGED verdicts by design — that failure is the recorded evidence,
-not a defect. SDD execution ledger:
+(`spike/pakconvert/`; round-3 harness fix a02840d); the env-gated
+ground-truth test intentionally fails on DIVERGED verdicts by design —
+that failure is the recorded evidence, not a defect. SDD execution ledger:
 `.superpowers/sdd/2026-08-05-icarus-pak-to-exmod-spike-plan/progress.md`.
