@@ -13,7 +13,10 @@ package core_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -205,6 +208,127 @@ func TestApplyInstall_BatchPath_TargetFileIDs_MixedVariants_Rejected(t *testing.
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)
 	require.False(t, gameCache.Exists(game.ID, "mc", "mod1", "1.0"), "a rejected selection must leave no cache entry")
+}
+
+// beforeAllSentinelHooks returns a ResolvedHooks whose install.before_all
+// script touches sentinel (via `touch`), plus the HookRunner to drive it -
+// mirrors TestService_ApplyInstall_HookOrder's createTestScript/HookRunner
+// pattern (flows_install_test.go), pared down to just before_all since these
+// #214 tests only care about that hook's firing order.
+func beforeAllSentinelHooks(t *testing.T, scriptsDir, sentinel string) (*core.ResolvedHooks, *core.HookRunner) {
+	t.Helper()
+	script := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\ntouch "+sentinel+"\nexit 0")
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: script}}
+	runner := core.NewHookRunner(5 * time.Second)
+	return hooks, runner
+}
+
+// TestApplyInstall_BatchPath_PreResolutionFailure_SkipsBeforeAllHook is
+// #214: a failing primary pre-resolution (here: the #211 mixed-variant
+// rejection) must abort BEFORE install.before_all fires. The hook writes a
+// sentinel file; the sentinel must not exist after the failed install.
+func TestApplyInstall_BatchPath_PreResolutionFailure_SkipsBeforeAllHook(t *testing.T) {
+	svc, game, mc := setupVariantExclusivityService(t)
+
+	depMod := &domain.Mod{ID: "dep-mod", SourceID: "mc", Name: "Dependency", Version: "1.0", GameID: "g1"}
+	mc.AddMod(depMod.GameID, depMod)
+
+	mod1, err := mc.GetMod(context.Background(), game.ID, "mod1")
+	require.NoError(t, err)
+	mod1.Dependencies = []domain.ModReference{{SourceID: "mc", ModID: "dep-mod"}}
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "mc", "mod1", false)
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Dependencies, "must take the BATCH path")
+
+	scriptsDir := t.TempDir()
+	sentinel := filepath.Join(scriptsDir, "before_all_ran")
+	hooks, runner := beforeAllSentinelHooks(t, scriptsDir, sentinel)
+
+	opts := core.InstallOptions{TargetFileIDs: []string{"pak", "exmodz"}, Hooks: hooks, HookRunner: runner}
+	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.ErrorContains(t, err, "alternate forms of the same mod")
+
+	_, statErr := os.Stat(sentinel)
+	require.True(t, os.IsNotExist(statErr), "install.before_all must not fire when primary pre-resolution fails")
+	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
+}
+
+// TestApplyInstall_BatchPath_BadFileID_SkipsBeforeAllHook is #214's other
+// pre-resolution failure class: an unresolvable --file pin (pre-existing
+// #96/#140 behavior, unrelated to #211's variant rule) must likewise abort
+// BEFORE install.before_all fires.
+func TestApplyInstall_BatchPath_BadFileID_SkipsBeforeAllHook(t *testing.T) {
+	svc, game, mc := setupVariantExclusivityService(t)
+
+	depMod := &domain.Mod{ID: "dep-mod", SourceID: "mc", Name: "Dependency", Version: "1.0", GameID: "g1"}
+	mc.AddMod(depMod.GameID, depMod)
+
+	mod1, err := mc.GetMod(context.Background(), game.ID, "mod1")
+	require.NoError(t, err)
+	mod1.Dependencies = []domain.ModReference{{SourceID: "mc", ModID: "dep-mod"}}
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "mc", "mod1", false)
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Dependencies, "must take the BATCH path")
+
+	scriptsDir := t.TempDir()
+	sentinel := filepath.Join(scriptsDir, "before_all_ran")
+	hooks, runner := beforeAllSentinelHooks(t, scriptsDir, sentinel)
+
+	opts := core.InstallOptions{TargetFileIDs: []string{"no-such-id"}, Hooks: hooks, HookRunner: runner}
+	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.ErrorContains(t, err, "file ID no-such-id not found")
+
+	_, statErr := os.Stat(sentinel)
+	require.True(t, os.IsNotExist(statErr), "install.before_all must not fire when primary pre-resolution fails")
+	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for an unresolvable file ID")
+}
+
+// TestApplyInstall_BatchPath_Success_StillRunsBeforeAll is #214's regression
+// guard: a batch install whose primary pins resolve successfully must still
+// run install.before_all (the hoist only reorders pre-resolution relative to
+// the hook - it must never skip the hook on the happy path). Uses the "pak"
+// escape-hatch file alone (not exmodz) to stay clear of the game's
+// (unconfigured here) DeployCompile/merge-compile path and exercise a plain
+// download+deploy.
+func TestApplyInstall_BatchPath_Success_StillRunsBeforeAll(t *testing.T) {
+	svc, game, mc := setupVariantExclusivityService(t)
+
+	depMod := &domain.Mod{ID: "dep-mod", SourceID: "mc", Name: "Dependency", Version: "1.0", GameID: "g1"}
+	mc.files["dep-mod"] = []domain.DownloadableFile{
+		{ID: "dep-file", Name: "Dep File", FileName: "dep-file.zip", IsPrimary: true},
+	}
+	mc.AddMod(depMod.GameID, depMod)
+	depZip := createTestZip(t, t.TempDir(), map[string]string{"dep.esp": "dep-payload"})
+	depContent, err := os.ReadFile(depZip)
+	require.NoError(t, err)
+	mc.AddDownload("dep-file", depContent)
+
+	pakZip := createTestZip(t, t.TempDir(), map[string]string{"Mod_P.pak": "pak-payload"})
+	pakContent, err := os.ReadFile(pakZip)
+	require.NoError(t, err)
+	mc.AddDownload("pak", pakContent)
+
+	mod1, err := mc.GetMod(context.Background(), game.ID, "mod1")
+	require.NoError(t, err)
+	mod1.Dependencies = []domain.ModReference{{SourceID: "mc", ModID: "dep-mod"}}
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "mc", "mod1", false)
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Dependencies, "must take the BATCH path")
+
+	scriptsDir := t.TempDir()
+	sentinel := filepath.Join(scriptsDir, "before_all_ran")
+	hooks, runner := beforeAllSentinelHooks(t, scriptsDir, sentinel)
+
+	opts := core.InstallOptions{TargetFileIDs: []string{"pak"}, Hooks: hooks, HookRunner: runner}
+	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	_, statErr := os.Stat(sentinel)
+	require.NoError(t, statErr, "install.before_all must still run on the happy path")
 }
 
 // TestPlanInstall_BothVariants_DefaultsToExmodz is #211's parity acceptance:

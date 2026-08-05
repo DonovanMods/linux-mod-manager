@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lmm deploy` cycle now removes such links, download commits prune the
   stale files, and the conflict scanner ignores them. Legacy cache entries
   without recorded manifests keep their exact previous behavior. (#210)
+- Batch installs (dependencies present) now resolve and validate the primary
+  mod's `--version`/`--file` pins before the `install.before_all` hook runs,
+  so an unhonorable selection can no longer fire user hooks first. (#214)
 
 ## [1.28.0] - 2026-08-02
 
