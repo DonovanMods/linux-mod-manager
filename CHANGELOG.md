@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for installing the prebuilt pak alone. (#211)
 - `lmm game list` — a table of every configured game (ID, name, install path, mod path, deploy mode, and a compact `source:id` rendering of its sources), marking the default game (see `lmm game show-default`) and pointing at `lmm game add`/`lmm game detect` when nothing is configured yet. Supports `--json` like `list`/`search`/`source list` (#205)
 - `make build` (and `make`) now stamp `git describe --tags --dirty` into the binary via `-ldflags -X`, so `lmm --version` on a dev build self-identifies (e.g. `1.28.0 (dev: v1.28.0-2-g140e3c6-dirty)`) instead of showing the same plain `1.28.0` as a release build — the confusion this fixed came up during the v1.28.0 cycle. A build exactly on the release tag (clean) still shows the plain version; a plain `go build`/`go test` (no ldflags) is unaffected. The static `version` var and man pages are untouched by construction (#208)
+- `lmm verify` now detects stale deployments — game-directory files lmm
+  deployed that no installed mod still provides, and dangling symlinks
+  left pointing into the mod cache — and `verify --fix` removes them
+  (provenance-gated: only lmm-attributed files are ever touched). (#168, #212)
 
 ### Changed
 
