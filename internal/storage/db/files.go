@@ -99,6 +99,21 @@ func (d *DB) DeleteDeployedFiles(gameID, profileName, sourceID, modID string) er
 	return nil
 }
 
+// DeleteDeployedFile removes one deployed-file ownership row. Deleting a
+// row that does not exist is a silent no-op - convergence (#168/#212) calls
+// this for paths it just undeployed, and a row may already be gone when the
+// path was attributed only by a dangling link.
+func (d *DB) DeleteDeployedFile(gameID, profileName, relativePath string) error {
+	_, err := d.Exec(`
+		DELETE FROM deployed_files
+		WHERE game_id = ? AND profile_name = ? AND relative_path = ?`,
+		gameID, profileName, relativePath)
+	if err != nil {
+		return fmt.Errorf("deleting deployed file record: %w", err)
+	}
+	return nil
+}
+
 // GetDeployedFilesForMod returns all file paths deployed by a specific mod.
 func (d *DB) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string) (paths []string, err error) {
 	rows, err := d.Query(`

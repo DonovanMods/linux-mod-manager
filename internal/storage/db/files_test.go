@@ -88,6 +88,23 @@ func TestDeleteDeployedFiles(t *testing.T) {
 	assert.Equal(t, "456", owner.ModID)
 }
 
+func TestDeleteDeployedFile(t *testing.T) {
+	d, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = d.Close() }()
+
+	require.NoError(t, d.SaveDeployedFile("g", "default", "mods/a.pak", "src", "m1"))
+	require.NoError(t, d.SaveDeployedFile("g", "default", "mods/b.pak", "src", "m1"))
+
+	require.NoError(t, d.DeleteDeployedFile("g", "default", "mods/a.pak"))
+	files, err := d.GetDeployedFilesForMod("g", "default", "src", "m1")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"mods/b.pak"}, files)
+
+	// Idempotent: deleting again is a no-op, not an error.
+	require.NoError(t, d.DeleteDeployedFile("g", "default", "mods/a.pak"))
+}
+
 func TestGetDeployedFilesForMod(t *testing.T) {
 	database, err := db.New(":memory:")
 	require.NoError(t, err)

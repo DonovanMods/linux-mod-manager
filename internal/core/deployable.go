@@ -67,7 +67,8 @@ func deployableFiles(gameCache *cache.Cache, gameID, sourceID, modID, version st
 			claimed[member] = true
 		}
 	}
-	hasRetainedSource, err := cache.HasRetainedSource(gameCache.ModPath(gameID, sourceID, modID, version))
+	versionDir := gameCache.ModPath(gameID, sourceID, modID, version)
+	hasRetainedSource, err := cache.HasRetainedSource(versionDir)
 	if err != nil {
 		return nil, err
 	}

@@ -903,7 +903,7 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `lmm update --dry-run`                             | Preview what would update                                                                                                                            |
 | `lmm update rollback <mod-id>`                     | Rollback to previous version                                                                                                                         |
 | `lmm verify`                                       | Verify cached mod files (see below)                                                                                                                  |
-| `lmm verify --fix`                                 | Re-download missing files, populate missing checksums, repair version-record mismatches                                                              |
+| `lmm verify --fix`                                 | Re-download missing files, populate missing checksums, repair version-record mismatches, remove stale lmm-deployed files                             |
 | `lmm mod enable <mod-id>`                          | Enable a disabled mod                                                                                                                                |
 | `lmm mod disable <mod-id>`                         | Disable mod (keep in cache)                                                                                                                          |
 | `lmm mod set-update <mod-id> --auto`               | Enable auto-updates for mod                                                                                                                          |
@@ -1028,6 +1028,9 @@ When you run `lmm update`, the tool checks each installed mod against the source
 - **? ModName (fileID) - NO CHECKSUM** - File was installed without a stored checksum (e.g. before checksum support or with `--skip-verify`).
 - **! ModName - FILE COUNT MISMATCH** - The cache directory exists but is empty, when downloads were expected (per-mod, not per-file); not repaired by `--fix`.
 - **? Unknown mod ID - SKIPPED** - A stored checksum row references a mod that's no longer installed; not repaired by `--fix`.
+- **? path - STALE DEPLOYMENT (reason)** - A game-directory file/symlink that's either no longer provided by any installed mod, or a dangling symlink into the lmm cache with no owning row; `--fix` removes it (see below).
+
+With `--fix`, verify also REMOVES stale lmm-deployed files and dangling lmm-cache symlinks from the game directory: files/links `--fix` created or tracks that no installed mod claims anymore, and cache-rooted symlinks whose target is gone. This is provenance-gated - only content lmm itself is responsible for is ever touched, never a foreign file just sitting in the game directory.
 
 `lmm verify` also contacts each installed mod's source to check its recorded version against what the stored file ID(s) actually are upstream (issue #94: older installs could record the mod's "latest" version instead of the version of the file that was actually downloaded and deployed), reporting per mod:
 
