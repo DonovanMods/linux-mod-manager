@@ -206,9 +206,25 @@ func TestGroundTruthDualFormMods(t *testing.T) {
 						// the (older) pak did. Pak is stale relative to exmodz.
 						res.Class = "stale-pak-change"
 					case reflect.DeepEqual(o, l) && a != nil:
-						// We suppressed (pak matches live base); author's
-						// exmodz is newer than the pak build.
-						res.Class = "exmodz-newer-than-pak"
+						// o==l is ALSO what happens when ConvertPak silently
+						// skipped this table (table-not-in-base,
+						// unreadable-entry, hyphen-path finding) — oursRows
+						// falls back to liveRows in that case too. Don't
+						// credit "exmodz is newer than the pak" unless the
+						// premise is actually verified: no blocking finding
+						// for this table, AND the stale-pak side genuinely
+						// supports staleness (table was processed, or this
+						// row's stale-pak snapshot itself already matches
+						// live — proving the pak never touched it).
+						if kind, blocked := blockingFinding(report.Findings, tablePath); blocked {
+							res.Detail = fmt.Sprintf("premise unverified: table %q has blocking finding %q; %s", tablePath, kind, res.Detail)
+						} else if _, processed := report.Tables[tablePath]; processed {
+							res.Class = "exmodz-newer-than-pak"
+						} else if staleVal, ok := staleRows[n]; ok && reflect.DeepEqual(staleVal, l) {
+							res.Class = "exmodz-newer-than-pak"
+						} else {
+							res.Detail = fmt.Sprintf("premise unverified: table %q not processed and stale row %q not confirmed unchanged; %s", tablePath, n, res.Detail)
+						}
 					}
 					gt.Residuals = append(gt.Residuals, res)
 				}
@@ -246,6 +262,31 @@ func TestGroundTruthDualFormMods(t *testing.T) {
 	if diverged > 0 {
 		t.Errorf("%d dual-form mods DIVERGED — see <corpus>/reports/", diverged)
 	}
+}
+
+// blockingFinding reports whether report.Findings records a table-processing
+// failure (table-not-in-base, unreadable-entry, hyphen-path) for tablePath —
+// the three Finding.Kind values under which ConvertPak skips a table
+// entirely, leaving oursFinal[tablePath] absent and oursRows falling back to
+// liveRows for reasons that have nothing to do with staleness. Matching is
+// tolerant of Finding.Table formatting: table-not-in-base carries the same
+// table-relative path this test uses, but unreadable-entry and hyphen-path
+// carry the raw pak entry path (untrimmed of its Data/ prefix), so an exact
+// match, a case-insensitive match, and a path-suffix match are all accepted.
+func blockingFinding(findings []Finding, tablePath string) (kind string, blocked bool) {
+	lowerTable := strings.ToLower(tablePath)
+	for _, f := range findings {
+		switch f.Kind {
+		case "table-not-in-base", "unreadable-entry", "hyphen-path":
+		default:
+			continue
+		}
+		lowerFinding := strings.ToLower(f.Table)
+		if lowerFinding == lowerTable || strings.HasSuffix(lowerFinding, "/"+lowerTable) {
+			return f.Kind, true
+		}
+	}
+	return "", false
 }
 
 // compareRowSets reports whether two EXMOD row sets touch the same
