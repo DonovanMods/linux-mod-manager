@@ -164,6 +164,33 @@ func TestDoGameList_JSONOutput_EmptyIsArrayNotNull(t *testing.T) {
 	assert.Equal(t, "[]", strings.TrimSpace(out))
 }
 
+// TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject tests that a game
+// with no sources configured emits "sources": {} in JSON, not null.
+func TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject(t *testing.T) {
+	svc := setupGameAddTest(t)
+	require.NoError(t, svc.AddGame(&domain.Game{
+		ID:          "bare-game",
+		Name:        "Bare Game",
+		InstallPath: "/games/bare",
+		ModPath:     "/games/bare/Mods",
+		// SourceIDs is nil, intentionally
+	}))
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doGameList(&cobra.Command{}, svc)
+	})
+
+	var rows []gameListJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
+	require.Len(t, rows, 1)
+	assert.Equal(t, "bare-game", rows[0].ID)
+	assert.Equal(t, map[string]string{}, rows[0].Sources)
+}
+
 func lineContaining(out, needle string) string {
 	for _, l := range strings.Split(out, "\n") {
 		if strings.Contains(l, needle) {

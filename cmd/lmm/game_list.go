@@ -66,13 +66,17 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	if jsonOutput {
 		rows := make([]gameListJSON, len(games))
 		for i, g := range games {
+			sources := g.SourceIDs
+			if sources == nil {
+				sources = map[string]string{}
+			}
 			rows[i] = gameListJSON{
 				ID:          g.ID,
 				Name:        g.Name,
 				InstallPath: g.InstallPath,
 				ModPath:     g.ModPath,
 				DeployMode:  g.DeployMode.String(),
-				Sources:     g.SourceIDs,
+				Sources:     sources,
 				Default:     g.ID == defaultGame,
 			}
 		}

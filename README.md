@@ -1127,7 +1127,7 @@ go build -o lmm ./cmd/lmm
 
 `make build` (or `make`) is the preferred way to build a working binary: it
 stamps `git describe --tags --dirty` into the binary, so `lmm --version` on
-a dev build self-identifies as e.g. `1.28.0 (dev: v1.28.0-2-g140e3c6-dirty)`
+a dev build self-identifies as e.g. `1.29.0 (dev: v1.29.0-2-g140e3c6-dirty)`
 instead of silently claiming the last released version. A plain
 `go build`/`go test` (no ldflags) behaves exactly like a clean release build.
 
