@@ -232,3 +232,81 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.esp"}, rows)
 }
+
+// TestConverge_RowPass_UndeployFailureExcludedFromRemoved pins fix round 1
+// (#168): a failed Undeploy must NOT be reported in Result.Removed, since
+// callers (verify --fix's "removed N") treat that list as what actually
+// happened. Mirrors TestService_DisableMod_UndeployFailureIsNonFatal's
+// fixture shape (flows_test.go:304): corrupt a deployed symlink into a
+// plain file so SymlinkLinker.Undeploy fails deterministically with "not a
+// symlink" - exactly the linker-method-mismatch trigger the review flagged.
+func TestConverge_RowPass_UndeployFailureExcludedFromRemoved(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
+		"gone.esp": []byte("g"),
+	})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	// gone.esp becomes stale: no longer provided by m1.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
+
+	// Corrupt the deployed symlink into a plain file so the symlink linker's
+	// Undeploy fails deterministically ("not a symlink").
+	deployedPath := filepath.Join(gameDir, "gone.esp")
+	require.NoError(t, os.Remove(deployedPath))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
+
+	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	require.Error(t, err, "a failed Undeploy must surface as a joined error")
+	assert.Contains(t, err.Error(), "gone.esp")
+	assert.Empty(t, result.Removed, "a failed Undeploy must not be reported as removed")
+
+	_, statErr := os.Stat(deployedPath)
+	assert.NoError(t, statErr, "the file must survive a failed undeploy")
+
+	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"gone.esp"}, rows, "the row must survive a failed undeploy")
+}
+
+// TestConverge_SweepPass_RemoveFailureExcludedFromRemoved is the sweep
+// pass's counterpart to the row-pass test above: os.Remove failing on a
+// dangling cache-rooted symlink must not be reported in Result.Removed
+// either. Removing a directory entry requires write permission on its
+// parent, so stripping that (0o555: read+execute, no write) on the link's
+// containing directory fails the removal deterministically while still
+// letting WalkDir list and Lstat the entry. Root bypasses directory
+// permission checks entirely (see TestGetProfileConflictsCacheReadErrorPropagates,
+// conflicts_test.go:210), so this is meaningless there and skipped.
+func TestConverge_SweepPass_RemoveFailureExcludedFromRemoved(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	subDir := filepath.Join(gameDir, "sub")
+	require.NoError(t, os.Mkdir(subDir, 0755))
+
+	cacheRoot := svc.GetGameCachePath(game)
+	target := filepath.Join(cacheRoot, "g1", "src-stray", "1.0", "stray.pak")
+	linkPath := filepath.Join(subDir, "stray.pak")
+	require.NoError(t, os.Symlink(target, linkPath))
+
+	require.NoError(t, os.Chmod(subDir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(subDir, 0o755) })
+
+	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	require.Error(t, err, "a failed sweep os.Remove must surface as a joined error")
+	assert.Contains(t, err.Error(), "stray.pak")
+	assert.Empty(t, result.Removed, "a failed sweep removal must not be reported as removed")
+
+	_, statErr := os.Lstat(linkPath)
+	assert.NoError(t, statErr, "the dangling link must survive a failed removal")
+}

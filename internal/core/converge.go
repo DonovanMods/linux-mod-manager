@@ -30,9 +30,14 @@ type ConvergedFile struct {
 	ModID    string
 }
 
-// ConvergeResult is ConvergeDeployedFiles' outcome. Removed lists every path
-// convergence acted on (dryRun=false) or would have acted on (dryRun=true) -
-// dry-run detection is identical to the real pass, it just skips the mutation.
+// ConvergeResult is ConvergeDeployedFiles' outcome. Removed's meaning
+// depends on dryRun: with dryRun=true it lists every candidate detection
+// would act on (no mutation happened, so nothing can have failed); with
+// dryRun=false it lists ONLY paths that were SUCCESSFULLY removed - a path
+// whose Undeploy or os.Remove failed is never added here, even though it
+// was a genuine candidate. Callers that report counts ("removed N") must
+// read Removed's length, not the number of candidates detection found;
+// per-item failures are surfaced via the returned joined error instead.
 type ConvergeResult struct {
 	Removed []ConvergedFile
 }
@@ -60,10 +65,10 @@ type ConvergeResult struct {
 //
 // Every per-item failure (an Undeploy or a sweep os.Remove) is collected and
 // returned as one joined error after all mods/paths are processed - it does
-// not abort the pass, and the returned *ConvergeResult still reflects
-// everything that DID succeed (or, under dryRun, everything that WOULD have
-// been attempted). ctx is checked between mods during the row pass and
-// periodically during the directory walk.
+// not abort the pass, and the returned *ConvergeResult.Removed reflects
+// exactly what succeeded (see ConvergeResult's doc comment: a failed item is
+// never added to Removed, only to the joined error). ctx is checked between
+// mods during the row pass and periodically during the directory walk.
 func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, profileName string, dryRun bool) (*ConvergeResult, error) {
 	mods, err := s.GetInstalledMods(game.ID, profileName)
 	if err != nil {
@@ -120,13 +125,14 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				continue
 			}
 
-			result.Removed = append(result.Removed, ConvergedFile{
+			cf := ConvergedFile{
 				Path:     path,
 				Reason:   fmt.Sprintf("no longer provided by %s/%s", m.SourceID, m.ID),
 				SourceID: m.SourceID,
 				ModID:    m.ID,
-			})
+			}
 			if dryRun {
+				result.Removed = append(result.Removed, cf)
 				continue
 			}
 
@@ -134,6 +140,7 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				errs = append(errs, fmt.Errorf("undeploying %s: %w", path, err))
 				continue
 			}
+			result.Removed = append(result.Removed, cf)
 			if err := s.db.DeleteDeployedFile(game.ID, profileName, path); err != nil {
 				errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
 			}
@@ -191,11 +198,12 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			return nil // target still exists (or a non-ErrNotExist stat failure): leave it
 		}
 
-		result.Removed = append(result.Removed, ConvergedFile{
+		cf := ConvergedFile{
 			Path:   rel,
 			Reason: "dangling link into lmm cache",
-		})
+		}
 		if dryRun {
+			result.Removed = append(result.Removed, cf)
 			return nil
 		}
 
@@ -203,6 +211,7 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			errs = append(errs, fmt.Errorf("removing dangling link %s: %w", rel, err))
 			return nil
 		}
+		result.Removed = append(result.Removed, cf)
 		_ = s.db.DeleteDeployedFile(game.ID, profileName, rel) // best-effort: no row typically exists here
 
 		return nil
