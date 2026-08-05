@@ -153,6 +153,18 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		}
 		unknown := unknownProvenance[domain.ModKey(m.SourceID, m.ID)]
 		for _, path := range rows {
+			// A deployed_files row is bookkeeping, not truth: a corrupted or
+			// hand-edited relative_path (absolute, or escaping the game dir
+			// via "..") must never steer a removal outside game.ModPath.
+			// IsLocal is the exact contract needed: relative, no escape, no
+			// absolute. The row itself is deliberately left alone here -
+			// deleting records based on corrupt data is its own hazard; the
+			// error surfaces it to the user as a verify warning via the
+			// joined-error path instead.
+			if !filepath.IsLocal(path) {
+				errs = append(errs, fmt.Errorf("skipping unsafe deployed-file record %q for %s/%s", path, m.SourceID, m.ID))
+				continue
+			}
 			if unknown {
 				// Finding 2 (round 2): unknown provenance is never judged by
 				// bookkeeping - deliberately NOT marked handled, so this path

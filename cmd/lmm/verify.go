@@ -35,7 +35,7 @@ type verifyFileJSON struct {
 	ModName string `json:"mod_name"`
 	FileID  string `json:"file_id"`
 	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile, stale_deployment, fixed_stale_deployment
-	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, or a file-count-check lookup failure - omitted when there's nothing extra to add
+	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, a file-count-check lookup failure, a stale-deployment reason ("no longer provided by <source>/<mod>" | "dangling link into lmm cache"), or a convergence per-item error (e.g. an unsafe deployed-file record skipped) - omitted when there's nothing extra to add
 }
 
 var verifyCmd = &cobra.Command{

@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -476,4 +478,83 @@ func TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence(t *testing.
 	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Empty(t, rows, "the sweep's best-effort DeleteDeployedFile should clean up the now-orphaned row")
+}
+
+// TestConverge_RowPass_RejectsUnsafeDeployedFileRecords pins the PR-review
+// Finding 1 fix: a deployed_files row is bookkeeping, not truth. A
+// corrupted or hand-edited relative_path - absolute, or escaping game.ModPath
+// via ".." - must never steer the row pass's Undeploy (or row delete)
+// outside game.ModPath. The two unsafe rows here are seeded directly against
+// the DB file backing svc via a second connection (db.New), bypassing every
+// normal write path (installer/deploy) entirely - exactly the "someone
+// hand-edited the sqlite file" shape this guards against.
+func TestConverge_RowPass_RejectsUnsafeDeployedFileRecords(t *testing.T) {
+	// gameDir is a known child of baseDir so "../outside.pak" resolves to an
+	// exact, controlled location outside game.ModPath.
+	baseDir := t.TempDir()
+	gameDir := filepath.Join(baseDir, "gamedir")
+	require.NoError(t, os.Mkdir(gameDir, 0o755))
+
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   dataDir,
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	// Copy-mode: CopyLinker.Undeploy is an unconditional os.Remove(dst), so a
+	// pre-fix Undeploy against an escaped path would actually delete the
+	// outside file, not just refuse it as SymlinkLinker's "not a symlink"
+	// guard would.
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkCopy, LinkMethodExplicit: true}
+
+	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
+		"a.esp": []byte("a"),
+	})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	// A real, precious file genuinely outside game.ModPath at exactly the
+	// location "../outside.pak" resolves to.
+	outsidePath := filepath.Join(baseDir, "outside.pak")
+	require.NoError(t, os.WriteFile(outsidePath, []byte("precious"), 0o644))
+
+	// An absolute-path row: also unsafe per filepath.IsLocal's contract, even
+	// though filepath.Join(game.ModPath, absPath) happens not to escape
+	// game.ModPath in practice (Join treats a leading "/" as an ordinary
+	// path segment, not a root reset) - IsLocal is the correct, general
+	// guard regardless of Join's particular behavior.
+	otherDir := t.TempDir()
+	absPath := filepath.Join(otherDir, "abs.pak")
+	require.NoError(t, os.WriteFile(absPath, []byte("precious2"), 0o644))
+
+	rawDB, err := db.New(filepath.Join(dataDir, "lmm.db"))
+	require.NoError(t, err)
+	require.NoError(t, rawDB.SaveDeployedFile("g1", "default", "../outside.pak", "src", "m1"))
+	require.NoError(t, rawDB.SaveDeployedFile("g1", "default", absPath, "src", "m1"))
+	require.NoError(t, rawDB.Close())
+
+	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	require.Error(t, err, "an unsafe deployed-file record must surface as an error")
+	assert.Contains(t, err.Error(), "unsafe")
+	assert.Contains(t, err.Error(), "../outside.pak")
+	assert.Contains(t, err.Error(), absPath)
+
+	_, statErr := os.Stat(outsidePath)
+	assert.NoError(t, statErr, "the escaped file outside game.ModPath must survive untouched")
+	_, statErr = os.Stat(absPath)
+	assert.NoError(t, statErr, "the absolute-path target must survive untouched")
+
+	var paths []string
+	for _, cf := range result.Removed {
+		paths = append(paths, cf.Path)
+	}
+	assert.NotContains(t, paths, "../outside.pak")
+	assert.NotContains(t, paths, absPath)
+
+	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"a.esp", "../outside.pak", absPath}, rows, "unsafe rows are left alone - deleting records based on corrupt data is its own hazard")
 }
