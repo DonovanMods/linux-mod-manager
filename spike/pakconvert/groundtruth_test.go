@@ -209,21 +209,43 @@ func TestGroundTruthDualFormMods(t *testing.T) {
 						// o==l is ALSO what happens when ConvertPak silently
 						// skipped this table (table-not-in-base,
 						// unreadable-entry, hyphen-path finding) — oursRows
-						// falls back to liveRows in that case too. Don't
-						// credit "exmodz is newer than the pak" unless the
-						// premise is actually verified: no blocking finding
-						// for this table, AND the stale-pak side genuinely
-						// supports staleness (table was processed, or this
-						// row's stale-pak snapshot itself already matches
-						// live — proving the pak never touched it).
-						if kind, blocked := blockingFinding(report.Findings, tablePath); blocked {
-							res.Detail = fmt.Sprintf("premise unverified: table %q has blocking finding %q; %s", tablePath, kind, res.Detail)
-						} else if _, processed := report.Tables[tablePath]; processed {
+						// falls back to liveRows in that case too. ConvertPak
+						// fully enumerates every pak entry, so a table ends
+						// up EITHER processed (report.Tables) OR recorded in
+						// a blocking Finding — never neither, unless it was
+						// truly absent from the pak. That full-enumeration
+						// guarantee is what lets "table absent from both"
+						// count as POSITIVE proof of absence (benign), not
+						// just an unverified assumption.
+						kind, blocked := blockingFinding(report.Findings, tablePath)
+						_, processed := report.Tables[tablePath]
+						staleVal, staleOK := staleRows[n]
+						switch {
+						case blocked:
+							// 1. Converter couldn't even process the table.
+							res.Detail = fmt.Sprintf("converter could not process table (%s); %s", kind, res.Detail)
+						case !processed:
+							// 2. No Finding AND not processed: full
+							// enumeration proves the pak never had this
+							// table at all.
 							res.Class = "exmodz-newer-than-pak"
-						} else if staleVal, ok := staleRows[n]; ok && reflect.DeepEqual(staleVal, l) {
+							res.Detail = fmt.Sprintf("table absent from pak (verified by full enumeration) — author exmodz touches it; %s", res.Detail)
+						case !staleOK:
+							// 3. Table was processed, but this row's name
+							// isn't in the pak's own snapshot of it.
 							res.Class = "exmodz-newer-than-pak"
-						} else {
-							res.Detail = fmt.Sprintf("premise unverified: table %q not processed and stale row %q not confirmed unchanged; %s", tablePath, n, res.Detail)
+							res.Detail = fmt.Sprintf("row absent from pak snapshot — author addition post-dates pak build; %s", res.Detail)
+						case reflect.DeepEqual(staleVal, l):
+							// 4. Row exists in the pak snapshot but the pak
+							// never actually changed it (matches live).
+							res.Class = "exmodz-newer-than-pak"
+							res.Detail = fmt.Sprintf("pak snapshot did not touch this row — author change post-dates pak build; %s", res.Detail)
+						default:
+							// 5. The pak DID touch this row (differs from
+							// live) yet we produced no patch for it (o==l).
+							// Should be rare/never — a real harness/differ
+							// defect if it fires.
+							res.Detail = fmt.Sprintf("pak touched this row but converter emitted no patch — possible harness/differ defect; %s", res.Detail)
 						}
 					}
 					gt.Residuals = append(gt.Residuals, res)
