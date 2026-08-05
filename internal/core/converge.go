@@ -53,15 +53,34 @@ type ConvergeResult struct {
 //     longer does - this protects in-flight ownership churn (a file that
 //     changed hands between mods, or is about to on the next deploy) from
 //     being yanked out from under a still-valid claim.
+//
+//     A mod whose cache entry is WHOLLY absent (deployableFiles returns
+//     fs.ErrNotExist, not "zero files") is a special case (fix round 2
+//     Finding 2): it is UNKNOWN provenance, never "provides nothing" - the
+//     same principle as #144's bare-marker rule. Judging it "provides
+//     nothing" would delete a still-working copy/hardlink deployment (a
+//     regular file, not a symlink - the row pass is the only thing that
+//     could ever remove it) exactly when verify couldn't repair the cache
+//     that would let it prove otherwise. Such a mod's rows are therefore
+//     skipped entirely in the row pass (never removed), but are still
+//     marked handled so the sweep pass below doesn't re-litigate them -
+//     the sweep continues to catch any genuinely dangling, ROW-LESS
+//     symlink under that same mod's cache dir on its own terms (a dangling
+//     link is its own provenance, independent of any row).
+//
 //  2. Sweep pass: walks gameDir for symlinks with no surviving DB row (the
 //     row pass already handled every row path, whether or not it acted on
-//     it) whose target resolves under this game's effective cache root and
-//     whose target is now missing (dangling). Regular files are NEVER
+//     it) whose target resolves under this game's effective cache root(s)
+//     and whose target is now missing (dangling). Regular files are NEVER
 //     touched by the sweep - only the row pass ever removes non-symlink
-//     content, and only when a row says so. A symlink pointing outside the
-//     cache root, or one whose target still exists (the merged-pak shape:
-//     content deliberately left content-addressed with no row), is left
-//     alone.
+//     content, and only when a row says so. A symlink pointing outside
+//     every cache root, or one whose target still exists (the merged-pak
+//     shape: content deliberately left content-addressed with no row), is
+//     left alone. "Cache root(s)" is plural (fix round 2 Finding 1): a
+//     game with a per-game CachePath override still keeps globally-cached
+//     content in the GLOBAL cache root too - CachePath augments, it never
+//     migrates existing content - so a target is cache-pointing if it
+//     falls under EITHER root.
 //
 // Every per-item failure (an Undeploy or a sweep os.Remove) is collected and
 // returned as one joined error after all mods/paths are processed - it does
@@ -83,6 +102,10 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	// undeploys files but doesn't always clear every row), and its cache
 	// entry may still legitimately claim a path some OTHER mod's row names.
 	provided := make(map[string]bool)
+	// unknownProvenance holds every mod (by ModKey) whose cache entry is
+	// wholly absent - see the row-pass doc above (Finding 2): such a mod's
+	// rows must be skipped, not judged "no longer provided".
+	unknownProvenance := make(map[string]bool)
 	for _, m := range mods {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -90,7 +113,8 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		files, err := deployableFiles(gameCache, game.ID, m.SourceID, m.ID, m.Version)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				continue // mod's cache entry is gone: it provides nothing
+				unknownProvenance[domain.ModKey(m.SourceID, m.ID)] = true
+				continue // absent cache entry: unknown provenance, not "provides nothing"
 			}
 			return nil, fmt.Errorf("listing deployable files for %s: %w", domain.ModKey(m.SourceID, m.ID), err)
 		}
@@ -119,8 +143,12 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			errs = append(errs, fmt.Errorf("getting deployed files for %s: %w", domain.ModKey(m.SourceID, m.ID), err))
 			continue
 		}
+		unknown := unknownProvenance[domain.ModKey(m.SourceID, m.ID)]
 		for _, path := range rows {
 			handled[path] = true
+			if unknown {
+				continue // Finding 2: unknown provenance is never judged, only left alone
+			}
 			if provided[path] {
 				continue
 			}
@@ -151,14 +179,32 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	cacheRoot := filepath.Clean(s.GetGameCachePath(game))
-	cacheRootPrefix := cacheRoot + string(filepath.Separator)
+	// cacheRoots (fix round 2 Finding 1): the global cache dir ALWAYS
+	// applies, and game.CachePath is added on top when set - a per-game
+	// override augments the global root rather than replacing it as a
+	// valid home for lmm-owned content, so a target under EITHER root is
+	// cache-pointing.
+	cacheRoots := []string{filepath.Clean(s.GlobalCacheDir())}
+	if game.CachePath != "" {
+		cacheRoots = append(cacheRoots, filepath.Clean(game.CachePath))
+	}
 
 	checked := 0
 	walkErr := filepath.WalkDir(game.ModPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if path == game.ModPath && errors.Is(err, fs.ErrNotExist) {
 				return fs.SkipAll // never deployed: nothing to sweep
+			}
+			// Fix round 2 Finding 4: a directory read error (e.g. permission
+			// denied) must not abort the ENTIRE sweep - record it and skip
+			// just that subtree, so a dangling link elsewhere still gets
+			// found. WalkDir invokes the callback with d describing the
+			// directory itself when its ReadDir call is what failed; any
+			// other error (e.g. a non-directory Lstat failure) keeps the
+			// prior abort-the-walk behavior.
+			if d != nil && d.IsDir() {
+				errs = append(errs, fmt.Errorf("reading directory %s: %w", path, err))
+				return fs.SkipDir
 			}
 			return err
 		}
@@ -190,8 +236,8 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			target = filepath.Join(filepath.Dir(path), target)
 		}
 		target = filepath.Clean(target)
-		if target != cacheRoot && !strings.HasPrefix(target, cacheRootPrefix) {
-			return nil // not under this game's cache root: foreign link
+		if !underAnyCacheRoot(target, cacheRoots) {
+			return nil // not under any of this game's cache roots: foreign link
 		}
 
 		if _, statErr := os.Stat(path); !errors.Is(statErr, fs.ErrNotExist) {
@@ -227,4 +273,19 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		return result, errors.Join(errs...)
 	}
 	return result, nil
+}
+
+// underAnyCacheRoot reports whether target (already filepath.Clean'd) falls
+// under one of roots - either equal to a root, or nested inside it (a
+// separator-suffixed prefix match, so "/cache2" is never mistaken for a
+// match against root "/cache"). Supports fix round 2 Finding 1: a game with
+// a per-game CachePath override must still recognize the GLOBAL cache root
+// as its own.
+func underAnyCacheRoot(target string, roots []string) bool {
+	for _, root := range roots {
+		if target == root || strings.HasPrefix(target, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

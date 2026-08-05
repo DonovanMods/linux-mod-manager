@@ -1211,6 +1211,18 @@ func (s *Service) GetGameCachePath(game *domain.Game) string {
 	return s.cacheDir
 }
 
+// GlobalCacheDir returns the top-level cache directory this Service was
+// constructed with (ServiceConfig.CacheDir), regardless of any per-game
+// CachePath override. A per-game CachePath augments the global cache rather
+// than replacing it as a valid location for lmm-owned content (#168/#212
+// convergence sweep Finding 1: content can legitimately live under either
+// root), so callers that need to recognize BOTH cache roots for a game -
+// not just the single one GetGameCachePath resolves to - use this alongside
+// game.CachePath.
+func (s *Service) GlobalCacheDir() string {
+	return s.cacheDir
+}
+
 // GetGameCache returns a cache manager for the specified game.
 // Uses the game's cache_path if configured (game-scoped: paths omit gameID), otherwise the global cache.
 func (s *Service) GetGameCache(game *domain.Game) *cache.Cache {

@@ -34,7 +34,7 @@ type verifyFileJSON struct {
 	ModID   string `json:"mod_id"`
 	ModName string `json:"mod_name"`
 	FileID  string `json:"file_id"`
-	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile
+	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile, stale_deployment, fixed_stale_deployment
 	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, or a file-count-check lookup failure - omitted when there's nothing extra to add
 }
 
@@ -53,6 +53,9 @@ Each file is reported with one of:
     ? NAME (FILE) - NO CHECKSUM         cached, but no checksum was ever stored
     ! NAME - FILE COUNT MISMATCH        cache exists but is empty (per-mod, not per-file)
     ? Unknown mod ID - SKIPPED          checksum row references a mod no longer installed
+    ? PATH - STALE DEPLOYMENT (reason)  a game-dir file/link no installed mod
+                                         provides anymore, or a dangling
+                                         symlink into the lmm cache
 
 Use --fix to re-download files that are MISSING or have NO CHECKSUM,
 storing a fresh checksum afterwards. "OK (checksum populated)" is only
@@ -90,6 +93,18 @@ This check is entirely local (no source contacted) and applies to every
 compiled mod regardless of source, including local imports. Use --fix to
 repair it: it resyncs the profile's merged pak (recompiling and
 redeploying it if needed), the same repair 'lmm update --all' applies.
+
+verify also reconciles the game directory's deployed state against
+current reality (#168/#212): a deployed_files record no longer provided
+by any installed mod, or a dangling symlink into the lmm cache with no
+owning record at all, is reported as STALE DEPLOYMENT. Plain verify only
+reports candidates - nothing is touched. With --fix, verify REMOVES
+these: the stale deployed file/link itself, and any dangling lmm-cache
+symlink with no record. This is provenance-gated - only content lmm
+itself deployed or is tracking is ever touched, never a foreign file
+just sitting in the game directory. Like the merged-pak staleness check
+above, this is profile-wide and still runs even when you pass a specific
+mod-id filter.
 
 Mods installed from a local source, mods requiring manual download, and
 mods with no recorded file IDs are skipped silently - there is nothing
@@ -132,17 +147,22 @@ OK case - this is never counted in issues or warnings.
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
-"version_unverifiable", or "stale_compile"; note adds detail where
-there's something extra to say - a blocked cache rename, sibling-repair
-results, a --fix repair or
+"version_unverifiable", "stale_compile", "stale_deployment", or
+"fixed_stale_deployment"; note adds detail where there's something extra
+to say - a blocked cache rename, sibling-repair results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
-record ("locked"), or a locked record's pending convergence detail - and
-is omitted otherwise. issues counts MISSING files
-and VERSION MISMATCH rows (a successful --fix repair of either decrements
-it back out; a locked VERSION MISMATCH stays counted since --fix refuses
-it); warnings counts everything else that isn't OK. Lock-pending-
-convergence rows are informational only and count toward neither.
+record ("locked"), a locked record's pending convergence detail, or a
+stale-deployment row's reason (populated on both "stale_deployment" and
+"fixed_stale_deployment") - and is omitted otherwise. issues counts
+MISSING files and VERSION MISMATCH rows (a successful --fix repair of
+either decrements it back out; a locked VERSION MISMATCH stays counted
+since --fix refuses it); warnings counts everything else that isn't OK,
+including "stale_deployment" rows (never "fixed_stale_deployment" - a
+successful --fix removal is a resolved problem, not an outstanding one,
+the same convention as a successful re-download or version repair).
+Lock-pending-convergence rows are informational only and count toward
+neither.
 
 Examples:
   lmm verify --game skyrim-se           # Verify all mods
@@ -153,7 +173,7 @@ Examples:
 }
 
 func init() {
-	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "re-download missing files, fill missing checksums, repair version records")
+	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "re-download missing files, fill missing checksums, repair version records, remove stale lmm-deployed files")
 	verifyCmd.Flags().StringVarP(&verifyProfile, "profile", "p", "", "profile to verify (default: active profile)")
 
 	rootCmd.AddCommand(verifyCmd)
@@ -742,7 +762,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	if issues > 0 || warnings > 0 {
 		fmt.Printf("%d issue(s), %d warning(s) found.\n", issues, warnings)
 		if (issues > 0 || warnings > 0) && !verifyFix {
-			fmt.Println("Run with --fix to re-download missing files, populate missing checksums, and repair version-record mismatches.")
+			fmt.Println("Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.")
 		}
 	} else {
 		fmt.Println(colorGreen("All files verified OK."))

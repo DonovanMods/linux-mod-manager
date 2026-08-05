@@ -310,3 +310,122 @@ func TestConverge_SweepPass_RemoveFailureExcludedFromRemoved(t *testing.T) {
 	_, statErr := os.Lstat(linkPath)
 	assert.NoError(t, statErr, "the dangling link must survive a failed removal")
 }
+
+// TestConverge_SweepPass_ChecksBothCacheRoots pins fix round 2 Finding 1: a
+// game with a per-game CachePath override still keeps content-addressed
+// content in the GLOBAL cache root too (nothing migrates existing global
+// content when CachePath is set), so the sweep must recognize a dangling
+// link into EITHER root, not just the one GetGameCachePath happens to
+// resolve to for this game.
+func TestConverge_SweepPass_ChecksBothCacheRoots(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	gameCachePath := t.TempDir() // per-game cache_path override
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, CachePath: gameCachePath, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	// A dangling symlink into the GLOBAL cache root - NOT the per-game
+	// CachePath override. GetGameCachePath(game) resolves to gameCachePath
+	// here, so a sweep that only checks that single root would (wrongly)
+	// treat this as foreign and leave it dangling forever.
+	globalCacheRoot := svc.GlobalCacheDir()
+	target := filepath.Join(globalCacheRoot, "g1", "src-stray", "1.0", "stray.pak")
+	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "stray.pak")))
+
+	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	require.NoError(t, err)
+	require.Len(t, result.Removed, 1)
+	assert.Equal(t, "stray.pak", result.Removed[0].Path)
+	assert.Equal(t, "dangling link into lmm cache", result.Removed[0].Reason)
+
+	_, err = os.Lstat(filepath.Join(gameDir, "stray.pak"))
+	assert.True(t, os.IsNotExist(err), "the dangling link into the global cache root must be swept even though this game has a CachePath override")
+}
+
+// TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared pins fix round 2
+// Finding 2: a mod whose cache entry is WHOLLY absent (not just missing one
+// file - deployableFiles returns fs.ErrNotExist) must be treated as UNKNOWN
+// provenance, never "provides nothing". Before this fix, the row pass
+// silently deleted such a mod's rows and (for a copy-mode deployment) the
+// game-dir file itself, exactly when verify couldn't repair the cache. A
+// separate, genuinely row-less dangling symlink elsewhere under this same
+// mod's (now-removed) cache dir proves the sweep's own independent
+// detection still works unaffected by the row-pass skip.
+func TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	// Copy-mode deploy: undeployed content is a REGULAR file, the shape
+	// Finding 2 is specifically about (an absent cache entry must not
+	// delete a still-working copy-mode deployment).
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkCopy, LinkMethodExplicit: true}
+
+	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
+		"a.esp": []byte("a"),
+	})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	// The mod's ENTIRE cache entry disappears (unlike TestConverge_RowDrivenStaleRemoved,
+	// which removes just one file) - deployableFiles now returns
+	// fs.ErrNotExist for m1, not "zero files".
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, os.RemoveAll(gameCache.ModPath("g1", "src", "m1", "1.0")))
+
+	// A dangling symlink with no DB row, targeting the same now-removed
+	// mod's cache dir - proves the sweep still catches genuinely row-less
+	// dangling links "belonging to" an unknown-provenance mod.
+	cacheRoot := svc.GetGameCachePath(game)
+	strayTarget := filepath.Join(cacheRoot, "g1", "src", "m1", "1.0", "untracked.pak")
+	require.NoError(t, os.Symlink(strayTarget, filepath.Join(gameDir, "untracked.pak")))
+
+	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	require.NoError(t, err)
+	require.Len(t, result.Removed, 1)
+	assert.Equal(t, "untracked.pak", result.Removed[0].Path)
+	assert.Equal(t, "dangling link into lmm cache", result.Removed[0].Reason)
+
+	_, err = os.Stat(filepath.Join(gameDir, "a.esp"))
+	assert.NoError(t, err, "a.esp must survive: an absent cache entry is unknown provenance, not grounds for deletion")
+
+	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.esp"}, rows, "the row must survive too")
+}
+
+// TestConverge_SweepPass_UnreadableDirSkippedNotAborted pins fix round 2
+// Finding 4: a directory-read error (permission denied on ReadDir) during
+// the sweep walk must not abort the whole sweep - it should be recorded as
+// an error and the walk should continue past it (fs.SkipDir), so a dangling
+// link in a SIBLING directory still gets swept. Mirrors
+// TestConverge_SweepPass_RemoveFailureExcludedFromRemoved's root-guard/
+// chmod-restore fixture shape.
+func TestConverge_SweepPass_UnreadableDirSkippedNotAborted(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
+
+	unreadableDir := filepath.Join(gameDir, "locked")
+	require.NoError(t, os.Mkdir(unreadableDir, 0755))
+	require.NoError(t, os.Chmod(unreadableDir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(unreadableDir, 0o755) })
+
+	// "sibling" sorts after "locked" lexically, so WalkDir hits the
+	// unreadable dir first and must still reach this one.
+	siblingDir := filepath.Join(gameDir, "sibling")
+	require.NoError(t, os.Mkdir(siblingDir, 0755))
+	cacheRoot := svc.GetGameCachePath(game)
+	target := filepath.Join(cacheRoot, "g1", "src-stray", "1.0", "stray.pak")
+	linkPath := filepath.Join(siblingDir, "stray.pak")
+	require.NoError(t, os.Symlink(target, linkPath))
+
+	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	require.Error(t, err, "the unreadable directory must surface as an error")
+	assert.Contains(t, err.Error(), "locked")
+	require.Len(t, result.Removed, 1, "the sibling directory's dangling link must still be swept")
+	assert.Equal(t, filepath.Join("sibling", "stray.pak"), result.Removed[0].Path)
+
+	_, statErr := os.Lstat(linkPath)
+	assert.True(t, os.IsNotExist(statErr), "the sibling dangling link must actually be removed")
+}
