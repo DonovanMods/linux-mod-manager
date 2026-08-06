@@ -4146,12 +4146,22 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 
 	var downloadedFileIDs []string
 	var checksums []fileChecksum
+
+	// Resolve the source to check MergeCompiler capability for .pak gating (#221)
+	src, err := s.GetSource(plan.SourceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
+	}
+	_, isMergeCompiler := src.(source.MergeCompiler)
+
 	// compiledFiles accumulates every file this loop actually compiled (game
 	// DeployCompile + a ".exmodz" file - the same condition
 	// DownloadModToCache itself gates on), re-derived here rather than read
 	// back from DownloadModToCache's result since flows.go already has
 	// everything the condition needs. Drives the InstallCompiling
 	// announcement below in place of the generic InstallExtracting one.
+	// #221: convert-eligible .pak files are only included if the source
+	// implements MergeCompiler, matching the ingest path's predicate.
 	var compiledFiles []*domain.DownloadableFile
 	filesTotal := len(plan.Files)
 	for i := range plan.Files {
@@ -4201,7 +4211,10 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		// in cmd/lmm/install.go's InstallCompiling case) fires for a
 		// convert-eligible raw pak exactly as it does for a native
 		// .exmodz; len(compiledFiles) > 0 doesn't care which kind matched.
-		if game.DeployMode == domain.DeployCompile && (isExmodzFile(file.FileName) || isConvertEligiblePakFile(game, file.FileName)) {
+		// #221: gate .pak files on MergeCompiler capability, matching the
+		// ingest path's predicate. .exmodz files are still included because
+		// they hard-error later if the source lacks MergeCompiler.
+		if game.DeployMode == domain.DeployCompile && (isExmodzFile(file.FileName) || (isMergeCompiler && isConvertEligiblePakFile(game, file.FileName))) {
 			compiledFiles = append(compiledFiles, file)
 		}
 	}
