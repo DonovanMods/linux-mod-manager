@@ -101,7 +101,7 @@ compile-only states:
                                           be converted into the merged pak
                                           on the last sync; it stays
                                           raw-deployed instead. Fix the mod
-                                          or run 'lmm mod convert NAME off'
+                                          or run 'lmm mod convert <mod-id> off'
                                           to silence it.
     ? NAME (FILE) - NEEDS REINGEST       the mod's pak was cached before
                                           conversion support existed (no
