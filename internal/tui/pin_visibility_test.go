@@ -51,19 +51,25 @@ func TestModRow_NoTrailingColumnDrift(t *testing.T) {
 }
 
 // TestModFlags_LockOutranksPin pins modFlags' precedence contract (#97,
-// task-6-brief.md; extended #221, task-12-brief.md): "lck" takes the 3-char
-// slot over "pin" when a mod is both locked and pinned, and "pin" outranks
-// "raw" the same way - the pin/raw state itself is untouched (still visible
-// elsewhere), it just doesn't get its own glyph here. A plain pin-only mod
-// still renders "pin", a plain raw-only mod (CompileGame true, ConvertPaks
-// false) renders "raw", and a mod with none of the three renders blank -
-// exercising modFlags directly (not through modRow) for an exact string
-// match on the documented "%-3s %s" shape. The "lck *" row (#143 polish)
-// pins the shape's documented two-slots-at-once case: the flag and the
-// updated-this-session marker are independent, so a locked mod brought
-// current this session fills both (m.lastUpdates is seeded with a matching
-// applied entry — Source+ID match AND Version == ToVersion, the two
-// conditions wasUpdatedThisSession requires).
+// task-6-brief.md; extended #221, task-12-brief.md; extended again for the
+// game-level convert_paks gap, Copilot round 3 on PR #222): "lck" takes the
+// 3-char slot over "pin" when a mod is both locked and pinned, and "pin"
+// outranks "raw" the same way - the pin/raw state itself is untouched
+// (still visible elsewhere), it just doesn't get its own glyph here. A
+// plain pin-only mod still renders "pin", a plain raw-only mod (CompileGame
+// true, GameConvertPaks true, ConvertPaks false) renders "raw", and a mod
+// with none of the three renders blank - exercising modFlags directly (not
+// through modRow) for an exact string match on the documented "%-3s %s"
+// shape. "raw" requires BOTH ModItem.GameConvertPaks and ModItem.
+// ConvertPaks to be true before it clears - a game-level convert_paks:
+// false (GameConvertPaks false) shows "raw" even when the per-mod flag is
+// itself on, mirroring the README's "either one is enough to keep a pak
+// raw" rule. The "lck *" row (#143 polish) pins the shape's documented
+// two-slots-at-once case: the flag and the updated-this-session marker are
+// independent, so a locked mod brought current this session fills both
+// (m.lastUpdates is seeded with a matching applied entry — Source+ID match
+// AND Version == ToVersion, the two conditions wasUpdatedThisSession
+// requires).
 func TestModFlags_LockOutranksPin(t *testing.T) {
 	m, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
@@ -80,11 +86,12 @@ func TestModFlags_LockOutranksPin(t *testing.T) {
 		{"locked and pinned - lock wins the slot", ModItem{Locked: true, UpdatePolicy: "pin"}, "lck  "},
 		{"locked and updated this session - both slots fill", ModItem{Locked: true, Source: "nexusmods", ID: "skyui", Version: "5.3"}, "lck *"},
 		{"pinned only", ModItem{UpdatePolicy: "pin"}, "pin  "},
-		{"raw only", ModItem{CompileGame: true, ConvertPaks: false}, "raw  "},
-		{"compile game with conversion ON is not raw", ModItem{CompileGame: true, ConvertPaks: true}, "     "},
-		{"non-compile game is never raw, even unconverted", ModItem{CompileGame: false, ConvertPaks: false}, "     "},
-		{"pinned and raw - pin wins the slot", ModItem{UpdatePolicy: "pin", CompileGame: true, ConvertPaks: false}, "pin  "},
-		{"locked and raw - lock wins the slot", ModItem{Locked: true, CompileGame: true, ConvertPaks: false}, "lck  "},
+		{"raw only", ModItem{CompileGame: true, GameConvertPaks: true, ConvertPaks: false}, "raw  "},
+		{"compile game with conversion ON at both levels is not raw", ModItem{CompileGame: true, GameConvertPaks: true, ConvertPaks: true}, "     "},
+		{"non-compile game is never raw, even unconverted", ModItem{CompileGame: false, GameConvertPaks: false, ConvertPaks: false}, "     "},
+		{"game-level convert_paks off shows raw even with the per-mod flag on", ModItem{CompileGame: true, GameConvertPaks: false, ConvertPaks: true}, "raw  "},
+		{"pinned and raw - pin wins the slot", ModItem{UpdatePolicy: "pin", CompileGame: true, GameConvertPaks: true, ConvertPaks: false}, "pin  "},
+		{"locked and raw - lock wins the slot", ModItem{Locked: true, CompileGame: true, GameConvertPaks: true, ConvertPaks: false}, "lck  "},
 		{"neither", ModItem{}, "     "},
 	}
 	for _, tt := range tests {

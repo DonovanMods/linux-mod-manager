@@ -407,10 +407,12 @@ func (m Model) moveSelectedMod(delta int) (Model, tea.Cmd) {
 // isn't wrong, the game's deploy mode just makes the flag inert).
 //
 // On success: the outcome's message (coreProvider.SetConvertPaks's "<name>
-// pak conversion: on/off (deploy to apply)") becomes the status line, and a
-// refresh (m.loadData) is dispatched so the "raw" flag column (app.go's
-// modFlags) picks up the new state immediately - mirroring moveSelectedMod's
-// own "refresh on both success and failure" contract.
+// pak conversion: on/off (deploy to apply)", or a game-disabled variant when
+// the active game's own convert_paks is false - see that method's doc
+// comment) becomes the status line, and a refresh (m.loadData) is dispatched
+// so the "raw" flag column (app.go's modFlags) picks up the new state
+// immediately - mirroring moveSelectedMod's own "refresh on both success and
+// failure" contract.
 func (m Model) toggleSelectedModConvert() (Model, tea.Cmd) {
 	if m.screen != ScreenInstalledMods || m.actions == nil {
 		return m, nil

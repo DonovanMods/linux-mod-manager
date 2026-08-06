@@ -2302,12 +2302,17 @@ func (m Model) modRow(index, width int, mod ModItem) string {
 // slot and the UI names the lock"); the mod's pin state is untouched and
 // stays visible in the P picker and mod actions, it just doesn't get its own
 // glyph here when a lock is also set. "raw" (#221) is the lowest-precedence
-// flag: a mod on a merge-compile game (ModItem.CompileGame) with pak
-// conversion turned OFF (!ModItem.ConvertPaks) shows "raw" ONLY when neither
-// lck nor pin already claimed the slot - it names a state (this mod's prebuilt
-// .pak ships unconverted into the merge) rather than a user-set marker like
-// the other two, so it defers to both. The wire string "pin" (not the CLI's
-// "pinned") matches ModItem.UpdatePolicy's documented values - see
+// flag: a mod on a merge-compile game (ModItem.CompileGame) whose prebuilt
+// pak deploys unconverted shows "raw" ONLY when neither lck nor pin already
+// claimed the slot - it names a state (this mod's prebuilt .pak ships
+// unconverted into the merge) rather than a user-set marker like the other
+// two, so it defers to both. Deploy truth needs BOTH the per-mod flag
+// (ModItem.ConvertPaks) AND the active game's own flag (ModItem.
+// GameConvertPaks) to be on before a pak actually converts - mirroring the
+// README's "either one is enough to keep a pak raw" ([Pak conversion
+// (Icarus)](README.md#pak-conversion-icarus)) - so "raw" shows whenever
+// EITHER is off, not just the per-mod one. The wire string "pin" (not the
+// CLI's "pinned") matches ModItem.UpdatePolicy's documented values - see
 // service_core.go's policyToString for why the two interfaces differ. The
 // fixed "%-3s %s" shape always fills exactly flagsWidth (5) columns -
 // "lck *", "pin *", "pin  ", "raw  ", "    *", or "     " - so the flag and
@@ -2321,7 +2326,7 @@ func (m Model) modFlags(mod ModItem) string {
 		flag = "lck" // lock wins the slot ("the UI names the lock"); pin state stays visible in the P picker and mod actions
 	case mod.UpdatePolicy == "pin":
 		flag = "pin"
-	case mod.CompileGame && !mod.ConvertPaks:
+	case mod.CompileGame && !(mod.GameConvertPaks && mod.ConvertPaks):
 		flag = "raw"
 	}
 	marker := " "

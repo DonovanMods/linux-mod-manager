@@ -121,6 +121,19 @@ type ModItem struct {
 	// the toggle refuses synchronously rather than silently writing a flag
 	// that does nothing.
 	CompileGame bool
+	// GameConvertPaks mirrors the active game's own convert_paks setting
+	// (domain.Game.ConvertPaks) - the OTHER of the two levels #221's Pak
+	// conversion (Icarus) README section documents ("either one is enough
+	// to keep a pak raw"). Populated by coreProvider's Overview mapping
+	// (service_core.go) from the game already in scope there, and left at
+	// the zero value in prototypeProvider (modItems - service.go), mirroring
+	// ConvertPaks' own "prototype.Mod carries no state for this" convention
+	// immediately above. Meaningful only when CompileGame is true - app.go's
+	// modFlags and service_core.go's SetConvertPaks both read it alongside
+	// ConvertPaks rather than ConvertPaks alone, so a game-level
+	// convert_paks: false is reflected in the TUI exactly like the CLI
+	// already reflects it (cmd/lmm/mod.go's doModConvert).
+	GameConvertPaks bool
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of

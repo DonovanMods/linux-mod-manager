@@ -816,11 +816,13 @@ func (p *prototypeProvider) SetUpdatePolicy(_ context.Context, item ModItem, pol
 
 // SetConvertPaks validates item against the ACTIVE game's installed-mods
 // list (findInstalledIndex - the same existence check SetUpdatePolicy/
-// SetLock perform above) and returns the same message shape coreProvider.
-// SetConvertPaks does (service_core.go), without a canned field to actually
-// flip: prototype.Mod carries no ConvertPaks/CompileGame state to persist
-// against - #221's flag only matters for compile-mode games, which
-// --prototype mode has no need to model dynamically.
+// SetLock perform above) and returns the same base message shape
+// coreProvider.SetConvertPaks does (service_core.go) - always the
+// "(deploy to apply)" trailer, never coreProvider's game-disabled variant,
+// since prototype.Mod carries no ConvertPaks/CompileGame/GameConvertPaks
+// state to persist against or check - #221's flag only matters for
+// compile-mode games, which --prototype mode has no need to model
+// dynamically.
 func (p *prototypeProvider) SetConvertPaks(_ context.Context, item ModItem, enabled bool) (ActionOutcome, error) {
 	idx := p.findInstalledIndex(item.Source, item.ID)
 	if idx < 0 {

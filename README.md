@@ -345,8 +345,10 @@ metadata write, not a deploy — the merged pak itself is unchanged until
 the next deploy, which the status line's "(deploy to apply)" reminds you
 of — and a non-compile game reports the toggle as inapplicable on the
 status line instead of doing anything. The row's flags column shows `raw`
-whenever conversion is off and the mod's prebuilt pak is deploying
-unconverted — see [Pak conversion (Icarus)](#pak-conversion-icarus).
+whenever the mod's prebuilt pak is deploying unconverted — either this
+mod's own conversion flag is off, or the game's `convert_paks: false`
+disables it for the whole game (either one is enough to keep a pak raw) —
+see [Pak conversion (Icarus)](#pak-conversion-icarus).
 `J`/`K` (also `ctrl+down`/`ctrl+up`)
 swap the selected mod with its neighbor in load order and persist the new
 order right away; the list itself renders in load order, and a hint reads

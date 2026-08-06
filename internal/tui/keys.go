@@ -313,7 +313,7 @@ func DefaultKeyMap() KeyMap {
 		),
 		ConvertToggle: key.NewBinding(
 			key.WithKeys("m"),
-			key.WithHelp("m", "toggle pak merge"),
+			key.WithHelp("m", "toggle pak conversion"),
 		),
 	}
 }
