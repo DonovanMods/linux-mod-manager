@@ -95,6 +95,23 @@ func fingerprintInputs(f MergedFingerprint) MergedFingerprint {
 	return out
 }
 
+// failedRefsFromFingerprint extracts the "ModRef -> failure reason" map
+// reconcilePakManifests needs, from an ALREADY-COMPUTED fingerprint (#221).
+// Used by syncMergedPak's fast path, which trusts the STORED fingerprint's
+// recorded outcomes rather than re-running MergeCompile just to relearn
+// what it already reported on the run that produced fp - the merge inputs
+// are unchanged (that's why the fast path was taken), so a mod's prior
+// conversion success/failure still holds.
+func failedRefsFromFingerprint(fp MergedFingerprint) map[string]string {
+	failed := make(map[string]string, len(fp.Mods))
+	for _, m := range fp.Mods {
+		if !m.Converted {
+			failed[m.SourceID+":"+m.ModID] = m.FailReason
+		}
+	}
+	return failed
+}
+
 // marshalMergedFingerprint renders f deterministically: encoding/json
 // marshals struct fields in declaration order (not sorted) and preserves
 // slice order exactly, so the same MergedFingerprint value always produces
@@ -254,13 +271,33 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 			// path; if it's missing, redeploy the EXISTING cache content
 			// (self-healing) rather than re-merging - the inputs haven't
 			// changed, so there is nothing new to compute.
-			if _, statErr := os.Stat(deployedPath); statErr == nil {
-				return nil, nil // fast path: nothing changed, and it's actually deployed
+			if _, statErr := os.Stat(deployedPath); statErr != nil {
+				if err := installer.Install(ctx, game, syntheticMod, profileName); err != nil {
+					return nil, fmt.Errorf("redeploying merged pak: %w", err)
+				}
 			}
-			if err := installer.Install(ctx, game, syntheticMod, profileName); err != nil {
-				return nil, fmt.Errorf("redeploying merged pak: %w", err)
+			// #221 fix: reconcile unconditionally even on this fast path.
+			// Inputs are unchanged, so stored's own outcome fields (which
+			// mods converted vs failed) are still authoritative - no need to
+			// re-run MergeCompile to learn what it already reported last
+			// time. Skipping reconcile entirely here (as before this fix)
+			// is exactly what let a PRIOR partial failure - e.g. a per-mod
+			// Uninstall/Install that failed after reconcile had already
+			// started, or was never reached because syncMergedPak errored
+			// out earlier in a previous run - go permanently unretried: the
+			// fingerprint becomes "current" as soon as it's committed
+			// (before reconcile even runs, in the non-fast path below), so
+			// every later call would keep hitting this same fast path and
+			// never look at per-mod manifest state again. Reconcile's own
+			// pre-checks are cheap (a stat plus a couple of manifest/file-
+			// list reads per enabled pak mod) and no-op once truly
+			// converged, so running it here is not a meaningful cost on the
+			// common "nothing to do" path.
+			reconWarnings, rerr := s.reconcilePakManifests(ctx, game, profileName, installer, failedRefsFromFingerprint(stored))
+			if rerr != nil {
+				return nil, fmt.Errorf("reconciling pak manifests: %w", rerr)
 			}
-			return nil, nil
+			return reconWarnings, nil
 		}
 	}
 
@@ -377,20 +414,59 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				if recorded && len(currentMembers) == 0 {
 					continue // already converged
 				}
-				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, nil); werr != nil {
-					return warnings, fmt.Errorf("flipping %s to merged-claimed: %w", ref, werr)
-				}
-				// The raw copy is now unclaimed: undeploy this mod's files
-				// (idempotent; the merged pak carries its content now).
+				// #221 partial-failure fix: Uninstall FIRST, mark SECOND.
+				// Installer.Uninstall targets cache.ListFiles' full on-disk
+				// union, never the manifest, so its correctness does not
+				// depend on the mark having already flipped - unlike the
+				// raw-fallback branch below, reordering here is safe. It
+				// also closes the window a mark-then-uninstall order would
+				// leave open: if Uninstall fails, the mark is never
+				// written, so this mod's manifest still reads "raw"
+				// (non-empty currentMembers) and the "already converged"
+				// check above stays false - the NEXT reconcile pass (any
+				// later sync, including the fast path) retries. Uninstall
+				// is idempotent (linker.Undeploy tolerates an already-
+				// absent path), so a retry after a PARTIAL Uninstall - or
+				// one that actually succeeded but errored on DB bookkeeping
+				// - is always safe, never a double-apply: the raw copy is
+				// never claimed as "gone" (members=nil) before it actually
+				// is.
 				if uerr := installer.Uninstall(ctx, game, &mod.Mod, profileName); uerr != nil {
 					return warnings, fmt.Errorf("undeploying raw pak for %s: %w", ref, uerr)
 				}
+				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, nil); werr != nil {
+					return warnings, fmt.Errorf("flipping %s to merged-claimed: %w", ref, werr)
+				}
 			} else {
+				// Assumes one pak-kind fileID per mod (today's only real
+				// shape): members claims EVERY file in the cache entry
+				// (gameCache.ListFiles' full union), not just this fileID's
+				// own file. deployableFiles unions every recorded
+				// manifest's members before narrowing (internal/core/
+				// deployable.go), so if a mod ever carried a SECOND pak
+				// fileID, this branch's mark would double-claim the first
+				// fileID's member as if it belonged to the second too.
 				members, lerr := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 				if lerr != nil {
 					return warnings, lerr
 				}
-				if recorded && len(currentMembers) == len(members) && len(members) > 0 {
+				// #221 partial-failure fix: a manifest-shape match alone
+				// (recorded + member count) does not prove the raw pak is
+				// ACTUALLY deployed - the mark below must be written BEFORE
+				// Install (Installer.Install's deployableFiles narrowing
+				// reads THIS manifest to decide what to deploy, so writing
+				// the target members first is what makes Install deploy
+				// the right file at all; unlike the participating branch
+				// above, this order can't be flipped). That means a PRIOR
+				// pass's Install could have failed AFTER the mark was
+				// already written, leaving the manifest saying "raw" while
+				// nothing is actually on disk - a shape-only check would
+				// then treat that as converged forever. Confirming every
+				// claimed member is actually present under game.ModPath
+				// (mirroring syncMergedPak's own outer fast-path stat
+				// check for the merged artifact) closes that gap: the next
+				// reconcile pass retries instead of masking it.
+				if recorded && len(currentMembers) == len(members) && len(members) > 0 && allMembersDeployed(game.ModPath, currentMembers) {
 					continue // already converged (raw)
 				}
 				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, members); werr != nil {
@@ -403,6 +479,31 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 		}
 	}
 	return warnings, nil
+}
+
+// allMembersDeployed reports whether every one of members (version-dir-
+// relative paths, as recorded by a cache manifest) is actually present
+// under modPath - the on-disk confirmation reconcilePakManifests' raw-
+// fallback branch needs so it never trusts recorded manifest shape alone
+// as proof of a completed deploy (#221).
+func allMembersDeployed(modPath string, members []string) bool {
+	for _, m := range members {
+		if _, err := os.Stat(filepath.Join(modPath, m)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// ReconcilePakManifestsForTest exposes reconcilePakManifests to external
+// (core_test package) fault-injection tests, which need to pass a caller-
+// constructed Installer wrapping a fault-injecting linker directly - the
+// same installer parameter production syncMergedPak already threads
+// through, just supplied by the test instead of GetInstallerForProfile.
+// The method itself stays unexported; this mirrors EnabledMergeSourcesForTest
+// above.
+func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) ([]string, error) {
+	return s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
 }
 
 // MergedPakOutcomes returns the stored merge fingerprint's per-mod entries
