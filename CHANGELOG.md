@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON additions: `convert_paks` in `lmm list --json`, `lmm mod show
 --json`, and `lmm game list --json`.
 
+### Fixed
+
+- `lmm verify` no longer skips the deployment-convergence sweep when the
+  profile has no installed mods, so stray lmm-deployed files (e.g.
+  dangling cache symlinks left after uninstalling everything) are
+  reported — and removed with `--fix` (#217).
+
 ## [1.29.0] - 2026-08-05
 
 ### Added
