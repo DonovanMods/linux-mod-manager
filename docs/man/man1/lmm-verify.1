@@ -118,7 +118,9 @@ symlink with no record. This is provenance-gated - only content lmm
 itself deployed or is tracking is ever touched, never a foreign file
 just sitting in the game directory. Like the merged-pak staleness check
 above, this is profile-wide and still runs even when you pass a specific
-mod-id filter.
+mod-id filter - and it runs even when the profile has no installed mods
+at all, since a game dir can still hold stray lmm-deployed files after
+everything is uninstalled (#217).
 
 .PP
 Mods installed from a local source, mods requiring manual download, and

@@ -132,7 +132,9 @@ symlink with no record. This is provenance-gated - only content lmm
 itself deployed or is tracking is ever touched, never a foreign file
 just sitting in the game directory. Like the merged-pak staleness check
 above, this is profile-wide and still runs even when you pass a specific
-mod-id filter.
+mod-id filter - and it runs even when the profile has no installed mods
+at all, since a game dir can still hold stray lmm-deployed files after
+everything is uninstalled (#217).
 
 Mods installed from a local source, mods requiring manual download, and
 mods with no recorded file IDs are skipped silently - there is nothing
@@ -274,15 +276,32 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	}
 
 	if len(files) == 0 {
+		// #217: don't return before the deploy-convergence sweep - it needs
+		// no installed mods at all, and a game dir can still hold stray
+		// lmm-deployed files (e.g. dangling cache-rooted symlinks left after
+		// uninstalling everything). The checksum/version/count passes all
+		// have nothing to do here, so only convergence runs.
+		var warnings int
+		jsonFiles := []verifyFileJSON{}
+		if !jsonOutput {
+			fmt.Println("No installed mods to verify.")
+		}
+		reportConvergencePass(cmd.Context(), svc, game, profile, &jsonFiles, &warnings)
 		if jsonOutput {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: []verifyFileJSON{}, Issues: 0, Warnings: 0}); err != nil {
+			if err := enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: jsonFiles, Issues: 0, Warnings: warnings}); err != nil {
 				return fmt.Errorf("encoding json: %w", err)
 			}
 			return nil
 		}
-		fmt.Println("No installed mods to verify.")
+		if warnings > 0 {
+			fmt.Println()
+			fmt.Printf("0 issue(s), %d warning(s) found.\n", warnings)
+			if !verifyFix {
+				fmt.Println("Run with --fix to remove stale lmm-deployed files.")
+			}
+		}
 		return nil
 	}
 
@@ -856,53 +875,9 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	// (ConvergeDeployedFiles, internal/core/converge.go). Runs AFTER the
 	// cache repairs above so --fix converges against the POST-repair state
 	// (a version-mismatch repair or a merged-pak resync can change what's
-	// currently "provided"). Plain verify passes dryRun=true (report
-	// candidates only, nothing mutates, cf below is never actually removed);
-	// --fix passes dryRun=false (act). Like the merged-pak staleness check
-	// above, this is profile-scoped, not per-mod - modFilter has no effect.
-	convResult, convErr := svc.ConvergeDeployedFiles(ctx, game, profile, !verifyFix)
-	if convResult != nil {
-		for _, cf := range convResult.Removed {
-			// ConvergeResult's own contract: with dryRun=true (plain verify)
-			// every candidate here is unactioned and reported as a warning;
-			// with dryRun=false (--fix) every candidate here already
-			// succeeded (a failed item never lands in Removed - see the
-			// joined-error handling below), so it's reported as fixed and
-			// deliberately does NOT add to warnings - same convention as a
-			// successful NO CHECKSUM re-download or VERSION MISMATCH repair
-			// elsewhere in this function, which don't count a resolved
-			// problem as an outstanding one.
-			if verifyFix {
-				if jsonOutput {
-					jsonFiles = append(jsonFiles, verifyFileJSON{ModID: cf.ModID, FileID: cf.Path, Status: "fixed_stale_deployment", Note: cf.Reason})
-				} else {
-					fmt.Println(colorGreen(fmt.Sprintf("Fixed: removed %s (%s)", cf.Path, cf.Reason)))
-				}
-			} else {
-				if jsonOutput {
-					jsonFiles = append(jsonFiles, verifyFileJSON{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason})
-				} else {
-					fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), cf.Path, cf.Reason)
-				}
-				warnings++
-			}
-		}
-	}
-	// Per-item convergence failures (an Undeploy or sweep os.Remove that
-	// failed) are joined into one error by ConvergeDeployedFiles rather than
-	// aborting the whole pass (ConvergeResult's doc comment) - surfaced the
-	// same way every other per-item problem in this command is: a warning,
-	// not a fatal verify failure.
-	if convErr != nil {
-		for _, e := range unwrapJoinedErrors(convErr) {
-			if jsonOutput {
-				jsonFiles = append(jsonFiles, verifyFileJSON{Status: "skipped", Note: fmt.Sprintf("convergence: %v", e)})
-			} else {
-				fmt.Printf("%s convergence: %v\n", colorYellow("?"), e)
-			}
-			warnings++
-		}
-	}
+	// currently "provided"). Like the merged-pak staleness check above, this
+	// is profile-scoped, not per-mod - modFilter has no effect.
+	reportConvergencePass(ctx, svc, game, profile, &jsonFiles, &warnings)
 
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
@@ -930,6 +905,59 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	}
 
 	return nil
+}
+
+// reportConvergencePass runs ConvergeDeployedFiles and reports its results
+// through the command's global output flags - appending --json rows or
+// printing lines, and counting unactioned candidates into warnings. Plain
+// verify passes dryRun=true (report candidates only, nothing mutates);
+// --fix passes dryRun=false (act). Split out of doVerify's main flow so the
+// "no checksummed files" path can run it too (#217): the sweep needs no
+// installed mods at all.
+func reportConvergencePass(ctx context.Context, svc *core.Service, game *domain.Game, profile string, jsonFiles *[]verifyFileJSON, warnings *int) {
+	convResult, convErr := svc.ConvergeDeployedFiles(ctx, game, profile, !verifyFix)
+	if convResult != nil {
+		for _, cf := range convResult.Removed {
+			// ConvergeResult's own contract: with dryRun=true (plain verify)
+			// every candidate here is unactioned and reported as a warning;
+			// with dryRun=false (--fix) every candidate here already
+			// succeeded (a failed item never lands in Removed - see the
+			// joined-error handling below), so it's reported as fixed and
+			// deliberately does NOT add to warnings - same convention as a
+			// successful NO CHECKSUM re-download or VERSION MISMATCH repair
+			// elsewhere in doVerify, which don't count a resolved problem
+			// as an outstanding one.
+			if verifyFix {
+				if jsonOutput {
+					*jsonFiles = append(*jsonFiles, verifyFileJSON{ModID: cf.ModID, FileID: cf.Path, Status: "fixed_stale_deployment", Note: cf.Reason})
+				} else {
+					fmt.Println(colorGreen(fmt.Sprintf("Fixed: removed %s (%s)", cf.Path, cf.Reason)))
+				}
+			} else {
+				if jsonOutput {
+					*jsonFiles = append(*jsonFiles, verifyFileJSON{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason})
+				} else {
+					fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), cf.Path, cf.Reason)
+				}
+				*warnings++
+			}
+		}
+	}
+	// Per-item convergence failures (an Undeploy or sweep os.Remove that
+	// failed) are joined into one error by ConvergeDeployedFiles rather than
+	// aborting the whole pass (ConvergeResult's doc comment) - surfaced the
+	// same way every other per-item problem in this command is: a warning,
+	// not a fatal verify failure.
+	if convErr != nil {
+		for _, e := range unwrapJoinedErrors(convErr) {
+			if jsonOutput {
+				*jsonFiles = append(*jsonFiles, verifyFileJSON{Status: "skipped", Note: fmt.Sprintf("convergence: %v", e)})
+			} else {
+				fmt.Printf("%s convergence: %v\n", colorYellow("?"), e)
+			}
+			*warnings++
+		}
+	}
 }
 
 // sourceMappedMod returns a copy of mod with GameID translated through the
