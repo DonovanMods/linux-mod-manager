@@ -787,6 +787,12 @@ func doModConvert(service *core.Service, game *domain.Game, modID string, conver
 		return fmt.Errorf("looking up mod %s: %w", modID, err)
 	}
 
+	// Pak conversion only applies to mods with a pak-kind merge source.
+	// Exmodz-only mods have no pak to convert or leave raw, so reject the request.
+	if !service.ModHasPakMergeSource(mod) {
+		return fmt.Errorf("mod %s has no pak merge source: pak conversion does not apply", modID)
+	}
+
 	if err := service.SetModConvertPaks(modSource, modID, game.ID, profileName, convert); err != nil {
 		return fmt.Errorf("setting pak conversion for %s: %w", mod.Name, err)
 	}

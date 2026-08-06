@@ -56,6 +56,14 @@ func setupDoModConvertTest(t *testing.T) (*core.Service, *domain.Game, *fakeInst
 // doModConvert reads from. Mirrors seedLockableMod's pattern.
 func seedConvertableMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, version string) {
 	t.Helper()
+	seedConvertableModWithFileIDs(t, svc, game, modID, name, version, []string{"pak"})
+}
+
+// seedConvertableModWithFileIDs is like seedConvertableMod but allows setting
+// specific FileIDs to create pak-source or exmodz-only mods (for testing
+// ModHasPakMergeSource rejection).
+func seedConvertableModWithFileIDs(t *testing.T, svc *core.Service, game *domain.Game, modID, name, version string, fileIDs []string) {
+	t.Helper()
 
 	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: version, GameID: game.ID},
@@ -63,6 +71,7 @@ func seedConvertableMod(t *testing.T, svc *core.Service, game *domain.Game, modI
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 		ConvertPaks:  true,
+		FileIDs:      fileIDs,
 	}))
 	pm := svc.NewProfileManager()
 	if _, err := pm.Get(game.ID, "default"); err != nil {
@@ -296,6 +305,48 @@ func TestListShowsConvert_NonCompileGame_OmitsConvertPaks(t *testing.T) {
 	// convert_paks field must not appear at all (omitempty nil contract)
 	assert.NotContains(t, out, "convert_paks",
 		"non-compile game must omit convert_paks from JSON entirely (omitempty)")
+}
+
+// TestModConvertCommand_Exmodz_Only guards the #221 fix: a mod with only
+// exmodz-kind merge sources (no pak) must reject convert attempts - exmodz-only
+// mods have no pak to convert or leave raw, so the conversion flag is
+// meaningless. The command returns an error and does NOT write the flag.
+func TestModConvertCommand_ExmodzOnly(t *testing.T) {
+	svc, game, _ := setupDoModConvertTest(t)
+	// Create an exmodz-only mod: FileIDs with no pak entries
+	seedConvertableModWithFileIDs(t, svc, game, "a", "Exmodz Mod", "1.0", []string{"exmodz", "mesh.uasset"})
+
+	err := doModConvert(svc, game, "a", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no pak merge source")
+	assert.Contains(t, err.Error(), "pak conversion does not apply")
+
+	// Verify the flag was NOT written to the DB (should remain true from seed)
+	installed, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	require.NoError(t, err)
+	assert.True(t, installed.ConvertPaks, "exmodz-only mod rejection must not write the flag")
+}
+
+// TestModConvertCommand_PakSource guards that mods with a pak-kind merge
+// source continue to accept conversion flagging normally (#221 CLI parity fix:
+// reject exmodz-only, accept pak-source unchanged).
+func TestModConvertCommand_PakSource(t *testing.T) {
+	svc, game, _ := setupDoModConvertTest(t)
+	// Create a pak-source mod: FileIDs with at least one pak entry
+	seedConvertableModWithFileIDs(t, svc, game, "a", "Pak Mod", "1.0", []string{"pak"})
+
+	// Convert off should succeed
+	out := captureStdout(t, func() error {
+		return doModConvert(svc, game, "a", false)
+	})
+	assert.Contains(t, out, "✓")
+	assert.Contains(t, out, "Pak Mod")
+	assert.Contains(t, out, "conversion: off")
+
+	// Verify DB flag is false
+	installed, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, installed.ConvertPaks)
 }
 
 // TestModConvertCmd_Structure pins the cobra wiring: convert accepts exactly
