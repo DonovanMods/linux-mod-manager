@@ -193,20 +193,7 @@ func migrateV11(d *DB) error {
 func migrateV12(d *DB) error {
 	// #221: per-mod pak-to-exmod conversion opt-out. Default 1 = convert
 	// (paks join the merged pak); 0 = deploy raw. Deliberately excluded
-	// from SaveInstalledMod's upsert so reinstall preserves the user's
-	// choice - changes go through SetModConvertPaks only.
-	// Use IF NOT EXISTS style (via conditional check) to handle idempotent runs.
-	var exists int
-	err := d.QueryRow(`
-		SELECT COUNT(*) FROM pragma_table_info('installed_mods')
-		WHERE name = 'convert_paks'
-	`).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("checking for convert_paks column: %w", err)
-	}
-	if exists > 0 {
-		return nil // Column already exists, nothing to do
-	}
-	_, err = d.Exec(`ALTER TABLE installed_mods ADD COLUMN convert_paks INTEGER DEFAULT 1`)
+	// from SaveInstalledMod's upsert so reinstall preserves the user's choice.
+	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN convert_paks INTEGER DEFAULT 1`)
 	return err
 }
