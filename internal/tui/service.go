@@ -107,6 +107,19 @@ type ModItem struct {
 	// SetLock's doc comment). Empty whenever Locked is false, mirroring
 	// PreviousVersion's own "empty means nothing to show" convention.
 	LockedVersion string
+	// ConvertPaks reports the #221 per-mod pak-to-exmod conversion flag -
+	// populated by coreProvider's Overview mapping (domain.InstalledMod.
+	// ConvertPaks) and prototypeProvider's canned Mod.ConvertPaks field,
+	// mirroring UpdatePolicy/Locked's own "only Overview populates it"
+	// convention above. Meaningful only when CompileGame is true.
+	ConvertPaks bool
+	// CompileGame is true when the active game's DeployMode is
+	// domain.DeployCompile - gates the "m" toggle (mutations.go's
+	// toggleSelectedModConvert) and the "raw" flag column (app.go's
+	// modFlags): a non-compile game's ConvertPaks value has no effect, so
+	// the toggle refuses synchronously rather than silently writing a flag
+	// that does nothing.
+	CompileGame bool
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of

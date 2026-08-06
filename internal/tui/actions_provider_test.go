@@ -742,6 +742,14 @@ type recordingActions struct {
 	// []ModItem (mirroring the other *Calls fields) since both the mod
 	// identity and the chosen policy string matter to those tests.
 	SetPolicyCalls []struct{ ModID, Policy string }
+	// SetConvertPaksCalls records each SetConvertPaks call as {modID,
+	// enabled} - #221's toggle wiring tests assert against this, mirroring
+	// SetPolicyCalls' own struct-per-call shape immediately above (two
+	// arguments matter here too).
+	SetConvertPaksCalls []struct {
+		ModID   string
+		Enabled bool
+	}
 	// SetLockCalls records each SetLock call as {modID, version} - Task 6's
 	// lock wiring tests assert against this, mirroring SetPolicyCalls' own
 	// struct-per-call shape above (two arguments matter here too).
@@ -798,6 +806,7 @@ type recordingActions struct {
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
+	SetConvertPaksOutcome                                                        ActionOutcome
 	SetLockOutcome, UnlockOutcome                                                ActionOutcome
 	CreateProfileOutcome, DeleteProfileOutcome                                   ActionOutcome
 	PurgeOutcome                                                                 ActionOutcome
@@ -826,6 +835,7 @@ type recordingActions struct {
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
 	SetPolicyErr                                                      error
+	SetConvertPaksErr                                                 error
 	SetLockErr, UnlockErr, AvailableVersionsErr                       error
 	CreateProfileErr, DeleteProfileErr                                error
 	PurgeErr                                                          error
@@ -913,6 +923,15 @@ func (r *recordingActions) ApplyUpdate(_ context.Context, u UpdateItem, progress
 func (r *recordingActions) SetUpdatePolicy(_ context.Context, item ModItem, policy string) (ActionOutcome, error) {
 	r.SetPolicyCalls = append(r.SetPolicyCalls, struct{ ModID, Policy string }{item.ID, policy})
 	return r.SetPolicyOutcome, r.SetPolicyErr
+}
+
+// SetConvertPaks implements ActionProvider (#221).
+func (r *recordingActions) SetConvertPaks(_ context.Context, item ModItem, enabled bool) (ActionOutcome, error) {
+	r.SetConvertPaksCalls = append(r.SetConvertPaksCalls, struct {
+		ModID   string
+		Enabled bool
+	}{item.ID, enabled})
+	return r.SetConvertPaksOutcome, r.SetConvertPaksErr
 }
 
 // SetLock implements ActionProvider (Task 6).
@@ -1053,6 +1072,10 @@ func (f failingActions) ApplyUpdate(context.Context, UpdateItem, func(ActionProg
 }
 
 func (f failingActions) SetUpdatePolicy(context.Context, ModItem, string) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) SetConvertPaks(context.Context, ModItem, bool) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
 

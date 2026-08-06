@@ -163,6 +163,8 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 			Status:          installedModStatus(mod),
 			UpdatePolicy:    policyToString(mod.UpdatePolicy),
 			PreviousVersion: mod.PreviousVersion,
+			ConvertPaks:     mod.ConvertPaks,
+			CompileGame:     game.DeployMode == domain.DeployCompile,
 		}
 		// ModItem.LockedVersion is only ever populated alongside Locked
 		// (see that field's own doc comment) - an unlocked ref's Version is
@@ -1603,6 +1605,23 @@ func (p *coreProvider) SetUpdatePolicy(_ context.Context, item ModItem, policy s
 		return ActionOutcome{}, fmt.Errorf("setting update policy for %s: %w", item.Name, err)
 	}
 	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
+}
+
+// SetConvertPaks persists item's #221 pak-to-exmod conversion flag via
+// svc.SetModConvertPaks - a local DB write, no network call, no hooks
+// (mirroring SetUpdatePolicy immediately above). The merged pak isn't
+// regenerated here; the message says so, matching the CLI's `lmm mod
+// convert` wording (cmd/lmm/mod.go's doModConvert) - convergence happens on
+// the next deploy/merge sync.
+func (p *coreProvider) SetConvertPaks(_ context.Context, item ModItem, enabled bool) (ActionOutcome, error) {
+	if err := p.svc.SetModConvertPaks(item.Source, item.ID, p.currentGame().ID, p.currentProfile(), enabled); err != nil {
+		return ActionOutcome{}, fmt.Errorf("setting pak conversion for %s: %w", item.Name, err)
+	}
+	state := "on"
+	if !enabled {
+		state = "off"
+	}
+	return ActionOutcome{Message: fmt.Sprintf("%s pak conversion: %s (deploy to apply)", item.Name, state)}, nil
 }
 
 // SetLock locks item at version (""=the ref's current recorded version) via
