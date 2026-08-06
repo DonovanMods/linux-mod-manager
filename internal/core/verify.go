@@ -528,8 +528,69 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 			recorded := mod.Version
 			r.result.Issues++
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch"}, VerifyEvent{Recorded: recorded, Effective: effective})
-			// --fix's repair (including the locked-ref refusal) lands in
-			// Task 5.
+			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
+				// #97 (Task 8): a locked ref's Version is the lock's
+				// TARGET, not a repairable mistake - rewriting it here
+				// would silently move what the lock means instead of
+				// fixing anything. The mismatch stays reported/counted
+				// above (verify stays honest about state); only the
+				// repair itself is refused.
+				if ref != nil && ref.Locked {
+					// #142 round 5: name the source/profile in both remedies -
+					// same "copy-paste acts on the wrong target" fix already
+					// applied to the core gates (internal/core/flows.go's
+					// LockedRefRefusalError) and the sibling-repair warning
+					// below - a bare 'lmm mod lock <id> <version>' would
+					// resolve against the active profile/an ambiguous source
+					// if this mod's lock lives elsewhere.
+					refusal := fmt.Sprintf("--fix skipped: %s is locked at v%s in profile %s — the record is the lock's target; move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s' instead of rewriting it.", mod.Name, ref.Version, r.profile, mod.SourceID, r.profile, mod.ID, mod.SourceID, r.profile, mod.ID)
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: refusal})
+					// The Note field already exists on this contract
+					// (repair-failure/rename-blocked detail) - this is an
+					// additive use of it, not a new field. Kept short
+					// ("locked") rather than the full refusal sentence
+					// since a --json caller mainly needs the
+					// machine-checkable reason; the sentence itself is the
+					// text-mode surface. Status stays version_mismatch -
+					// the repair was refused, not performed.
+					r.resolveLast("version_mismatch", "locked")
+					continue
+				}
+				note, siblingFailures, repairErr := r.repairModVersion(r.ctx, mod, effective)
+				// Sibling failures are warnings regardless of how the
+				// PRIMARY row's own repair turned out - a failed sibling
+				// repair is real, surfaced work left undone, and the
+				// warnings counter must reflect it either way, not just
+				// when the primary repair also happened to succeed.
+				r.result.Warnings += siblingFailures
+				if repairErr != nil {
+					// The PRIMARY row keeps reporting version_mismatch
+					// (status/issues stay as already recorded above), but
+					// the repair may have PARTIALLY succeeded: a step-4
+					// re-link failure surfaces here after the cache
+					// rename and the DB/profile version correction have
+					// already landed and are not rolled back (see
+					// repairModVersion's doc). The failure reason itself
+					// (audit Finding 7) and note can still carry a
+					// successful SIBLING repair - see repairModVersion's
+					// doc comment - and dropping either here would make
+					// them invisible to a --json caller even though they
+					// genuinely happened.
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repair failed: %v", repairErr)})
+					repairNote := "repair failed: " + repairErr.Error()
+					if note != "" {
+						repairNote += "; " + note
+					}
+					r.resolveLast("version_mismatch", repairNote)
+				} else {
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repaired: %s → %s", recorded, effective), Green: true})
+					if note != "" {
+						r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + note})
+					}
+					r.resolveLast("ok", note)
+					r.result.Issues--
+				}
+			}
 			continue
 		}
 

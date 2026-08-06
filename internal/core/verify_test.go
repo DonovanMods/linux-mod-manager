@@ -942,3 +942,407 @@ func TestVerify_Fix_SourceLocal_NoRepairAttempted(t *testing.T) {
 	require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "missing"}}, result.Findings)
 	require.Empty(t, repairDetails(events), "SourceLocal must never reach a redownload attempt")
 }
+
+// --- #224 Task 5: fix mode II - version repair, siblings, locked refusals
+// ---------------------------------------------------------------------------
+//
+// newVersionRepairFixGame builds the shared version_mismatch --fix fixture:
+// a "test-src"/"mod1" mod recorded at "1.5" whose stored file ID "2" is, per
+// the (scripted) source, actually version "1.0" - the same recorded/
+// effective shape the pre-refactor CLI's setupDoVerifyFixTest used. The
+// profile ref is upserted to match (so pm.UpsertMod's rename path is
+// exercised for real, and a lock test has a ref to lock). When deployed is
+// true, the row is marked Deployed via a real installer.Install call (not
+// hand-rolled) so the pre-state - a symlink pointing INTO the "1.5" cache
+// dir - matches what a real install would have produced before the repair
+// renames it.
+func newVersionRepairFixGame(t *testing.T, deployed bool) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := newFixTestGame(t)
+
+	src := &scriptedVersionSource{
+		mockSource: newMockSource("test-src"),
+		filesByModID: map[string][]domain.DownloadableFile{
+			"mod1": {{ID: "2", Version: "1.0", IsPrimary: true}},
+		},
+	}
+	svc.RegisterSource(src)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.5", "2", []byte("plugin content")))
+
+	seedVerifyMod(t, svc, game, "test-src", "mod1", "Mod One", "1.5", []string{"2"}, false)
+	require.NoError(t, svc.SaveFileChecksum("test-src", "mod1", game.ID, "default", "2", "deadbeef"))
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"}}))
+
+	if deployed {
+		require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "default", true))
+		require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "default", domain.LinkSymlink))
+		mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+		require.NoError(t, err)
+		require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &mod.Mod, "default"))
+	}
+
+	return svc, game
+}
+
+// addVersionRepairSibling adds profileName as a sibling profile carrying its
+// own installed_mods row for test-src/mod1 at recordedVersion/fileIDs -
+// newVersionRepairFixGame's sibling-fixture helper for the sibling-repaired/
+// differs/locked scenarios.
+func addVersionRepairSibling(t *testing.T, svc *core.Service, game *domain.Game, profileName, recordedVersion string, fileIDs []string) {
+	t.Helper()
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, profileName)
+	require.NoError(t, err)
+	require.NoError(t, pm.UpsertMod(game.ID, profileName, domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: recordedVersion, FileIDs: fileIDs}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: recordedVersion, GameID: game.ID},
+		ProfileName:  profileName,
+		Enabled:      true,
+		FileIDs:      fileIDs,
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+}
+
+// runVersionRepairFix runs a Fix:true, VerifyFull Verify against game/
+// "default" and returns the result plus every emitted event.
+func runVersionRepairFix(t *testing.T, svc *core.Service, game *domain.Game) (*core.VerifyResult, []core.VerifyEvent) {
+	t.Helper()
+	var events []core.VerifyEvent
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Fix: true}, func(e core.VerifyEvent) {
+		events = append(events, e)
+	})
+	require.NoError(t, err)
+	return result, events
+}
+
+// mismatchFinding returns the version-check finding (FileID == "") for
+// mod1, failing the test if none is present.
+func mismatchFinding(t *testing.T, findings []core.VerifyFinding) core.VerifyFinding {
+	t.Helper()
+	for _, f := range findings {
+		if f.ModID == "mod1" && f.FileID == "" {
+			return f
+		}
+	}
+	t.Fatalf("expected a mod1 version-check finding: %+v", findings)
+	return core.VerifyFinding{}
+}
+
+// TestVerify_Fix_VersionMismatch_NotDeployed_RepairsCacheAndRecord is the
+// clean-repair scenario: not deployed, so the cache dir is renamed to the
+// effective version, the DB row and profile ref are corrected, and the
+// version-check finding flips from version_mismatch to ok with no note
+// (nothing was blocked). Issues drops back to 0.
+func TestVerify_Fix_VersionMismatch_NotDeployed_RepairsCacheAndRecord(t *testing.T) {
+	svc, game := newVersionRepairFixGame(t, false)
+
+	result, events := runVersionRepairFix(t, svc, game)
+
+	require.Equal(t, 0, result.Issues, "a successful repair must decrement issues back out")
+	require.Equal(t, 0, result.Warnings)
+
+	f := mismatchFinding(t, result.Findings)
+	require.Equal(t, "ok", f.Status)
+	require.Empty(t, f.Note, "no blocked-rename/sibling note - nothing to report")
+
+	gameCache := svc.GetGameCache(game)
+	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must exist under the effective version")
+	require.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "cache must no longer exist under the recorded version")
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	require.Equal(t, "1.0", mod.Version, "DB row must be corrected to the effective version")
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	ref := profile.FindRef("test-src", "mod1")
+	require.NotNil(t, ref)
+	require.Equal(t, "1.0", ref.Version, "profile YAML ref must be corrected")
+
+	details := repairDetails(events)
+	require.Len(t, details, 1)
+	require.Equal(t, "Repaired: 1.5 → 1.0", details[0].Detail)
+	require.True(t, details[0].Green)
+}
+
+// TestVerify_Fix_VersionMismatch_RenameBlocked_NoRelink is the
+// blocked-rename scenario: a cache dir already exists under the effective
+// version, so the rename is skipped (a note is recorded instead of
+// clobbering it), but the DB/profile record is still corrected. The mod is
+// Deployed via symlink, proving the blocked rename also suppresses the
+// re-link - the working deployment still points at the intact
+// recorded-version cache dir and must be left alone.
+func TestVerify_Fix_VersionMismatch_RenameBlocked_NoRelink(t *testing.T) {
+	svc, game := newVersionRepairFixGame(t, true)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "2", []byte("unvetted 1.0 content")))
+
+	deployedPath := filepath.Join(game.ModPath, "2")
+	preTarget, err := os.Readlink(deployedPath)
+	require.NoError(t, err)
+	require.Contains(t, preTarget, filepath.Join("test-src-mod1", "1.5"))
+
+	result, events := runVersionRepairFix(t, svc, game)
+
+	require.Equal(t, 0, result.Issues)
+	f := mismatchFinding(t, result.Findings)
+	require.Equal(t, "ok", f.Status)
+	require.Equal(t, "cache entry for 1.0 already exists; left 1.5 in place", f.Note)
+
+	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "old cache entry must be left in place")
+	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "pre-existing new cache entry must be left untouched")
+
+	postTarget, err := os.Readlink(deployedPath)
+	require.NoError(t, err)
+	require.Equal(t, preTarget, postTarget, "the deployment must still point at the original (intact) recorded-version cache dir - no relink")
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	require.Equal(t, "1.0", mod.Version, "DB is still corrected even though the deployment was left alone")
+	require.True(t, mod.Deployed, "Deployed must remain true - the existing deployment is still valid")
+
+	details := repairDetails(events)
+	require.Len(t, details, 2)
+	require.Equal(t, "Repaired: 1.5 → 1.0", details[0].Detail)
+	require.True(t, details[0].Green)
+	require.Equal(t, "Note: cache entry for 1.0 already exists; left 1.5 in place", details[1].Detail)
+	require.False(t, details[1].Green)
+}
+
+// TestVerify_Fix_VersionMismatch_LockedPrimary_RefusesRepair is the
+// locked-primary scenario: the profile ref is locked at the recorded
+// version, so --fix must refuse the rewrite entirely - the row stays
+// version_mismatch, issues stays incremented, and the row's Note is the
+// short "locked" marker (the findings-slice/JSON contract), while the
+// RepairDetail event carries the full refusal sentence (the text-render
+// contract).
+func TestVerify_Fix_VersionMismatch_LockedPrimary_RefusesRepair(t *testing.T) {
+	svc, game := newVersionRepairFixGame(t, false)
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "1.5"))
+
+	result, events := runVersionRepairFix(t, svc, game)
+
+	require.Equal(t, 1, result.Issues, "a locked mod's version mismatch must still be reported and counted as an issue")
+	f := mismatchFinding(t, result.Findings)
+	require.Equal(t, "version_mismatch", f.Status, "status must NOT flip to ok - --fix refused the repair")
+	require.Equal(t, "locked", f.Note)
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	require.Equal(t, "1.5", mod.Version, "a locked record must not be rewritten by --fix")
+
+	gameCache := svc.GetGameCache(game)
+	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"))
+	require.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must not be renamed to the effective version for a locked mod")
+
+	details := repairDetails(events)
+	require.Len(t, details, 1)
+	wantRefusal := "--fix skipped: Mod One is locked at v1.5 in profile default — the record is the lock's target; move the lock with 'lmm mod lock -s test-src -p default mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p default mod1' instead of rewriting it."
+	require.Equal(t, wantRefusal, details[0].Detail)
+	require.False(t, details[0].Green)
+}
+
+// TestVerify_Fix_VersionMismatch_SiblingRepaired covers the sibling-repaired
+// scenario AND the ordering trap: a sibling profile ("second") sharing the
+// same stale recorded version and file selection must be corrected too, and
+// its "Repaired (profile second): ..." RepairDetail must be emitted BEFORE
+// the primary row's own "Repaired: ..." detail - the sibling repair happens
+// DURING repairModVersion, while the primary's own resolution detail is
+// only emitted by versionPass after repairModVersion returns.
+func TestVerify_Fix_VersionMismatch_SiblingRepaired(t *testing.T) {
+	svc, game := newVersionRepairFixGame(t, false)
+	addVersionRepairSibling(t, svc, game, "second", "1.5", []string{"2"})
+
+	result, events := runVersionRepairFix(t, svc, game)
+
+	require.Equal(t, 0, result.Issues)
+	require.Equal(t, 0, result.Warnings)
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	require.Equal(t, "1.0", secondMod.Version, "sibling DB row must be corrected to the effective version")
+
+	pm := svc.NewProfileManager()
+	secondProfile, err := pm.Get(game.ID, "second")
+	require.NoError(t, err)
+	secondRef := secondProfile.FindRef("test-src", "mod1")
+	require.NotNil(t, secondRef)
+	require.Equal(t, "1.0", secondRef.Version, "sibling profile YAML ref must be corrected")
+
+	f := mismatchFinding(t, result.Findings)
+	require.Equal(t, "ok", f.Status)
+	require.Equal(t, "also repaired in profile(s): second", f.Note, "note must mention the repaired sibling profile")
+
+	details := repairDetails(events)
+	require.Len(t, details, 3, "sibling detail + primary Repaired detail + Note detail (the sibling repair produced a non-empty note)")
+	require.Equal(t, "Repaired (profile second): 1.5 → 1.0", details[0].Detail, "ordering trap: the sibling detail must be emitted FIRST")
+	require.True(t, details[0].Green)
+	require.Equal(t, "Repaired: 1.5 → 1.0", details[1].Detail, "the primary row's own resolution detail comes AFTER the sibling's")
+	require.True(t, details[1].Green)
+	require.Equal(t, "Note: also repaired in profile(s): second", details[2].Detail)
+	require.False(t, details[2].Green)
+}
+
+// TestVerify_Fix_VersionMismatch_SiblingDiffers_DeclinedWithWarning covers
+// the sibling-differs scenario: a sibling recording the same stale version
+// but a DIFFERENT file selection must not be auto-repaired - it's declined
+// with a warning instead, and that decline counts toward warnings via
+// siblingFailures.
+func TestVerify_Fix_VersionMismatch_SiblingDiffers_DeclinedWithWarning(t *testing.T) {
+	svc, game := newVersionRepairFixGame(t, false)
+	addVersionRepairSibling(t, svc, game, "differs", "1.5", []string{"3"})
+
+	result, events := runVersionRepairFix(t, svc, game)
+
+	require.Equal(t, 0, result.Issues, "the primary row's own repair still succeeds")
+	require.Equal(t, 1, result.Warnings, "the declined sibling counts as a warning")
+
+	differsMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "differs")
+	require.NoError(t, err)
+	require.Equal(t, "1.5", differsMod.Version, "a sibling with different FileIDs must NOT be auto-repaired")
+
+	f := mismatchFinding(t, result.Findings)
+	wantNote := "differs in file selection in profile(s): differs (run verify --fix -p <profile>)"
+	require.Equal(t, wantNote, f.Note)
+
+	details := repairDetails(events)
+	require.Len(t, details, 3)
+	require.Equal(t, "Warning: profile differs records the same version but differs in file selection; run verify --fix -p differs", details[0].Detail, "the decline detail must be emitted before the primary's own Repaired detail")
+	require.False(t, details[0].Green)
+	require.Equal(t, "Repaired: 1.5 → 1.0", details[1].Detail)
+	require.Equal(t, "Note: "+wantNote, details[2].Detail)
+}
+
+// TestVerify_Fix_VersionMismatch_SiblingLocked_DeclinedWithWarning covers
+// the sibling-locked scenario: a sibling ref locked in ITS OWN profile must
+// not be rewritten, even though its version/FileIDs match the primary's
+// pre-repair state - declined with a warning naming the mod (not the
+// profile) as locked, with -s/-p flagged remedies. Counts toward warnings.
+func TestVerify_Fix_VersionMismatch_SiblingLocked_DeclinedWithWarning(t *testing.T) {
+	svc, game := newVersionRepairFixGame(t, false)
+	addVersionRepairSibling(t, svc, game, "second", "1.5", []string{"2"})
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.SetModLock(game.ID, "second", "test-src", "mod1", ""))
+
+	result, events := runVersionRepairFix(t, svc, game)
+
+	require.Equal(t, 0, result.Issues)
+	require.Equal(t, 1, result.Warnings, "the declined locked sibling counts as a warning")
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	require.Equal(t, "1.5", secondMod.Version, "a locked sibling must NOT be auto-repaired")
+
+	secondProfile, err := pm.Get(game.ID, "second")
+	require.NoError(t, err)
+	secondRef := secondProfile.FindRef("test-src", "mod1")
+	require.NotNil(t, secondRef)
+	require.True(t, secondRef.Locked, "the sibling must remain locked")
+
+	f := mismatchFinding(t, result.Findings)
+	wantNote := "locked in profile(s): second (move the lock or unlock instead)"
+	require.Equal(t, wantNote, f.Note)
+
+	details := repairDetails(events)
+	require.Len(t, details, 3)
+	wantWarning := "Warning: Mod One is locked at v1.5 in profile second; run 'lmm mod lock -s test-src -p second mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p second mod1' instead of rewriting it"
+	require.Equal(t, wantWarning, details[0].Detail, "the sibling decline detail must be emitted before the primary's own Repaired detail")
+	require.Equal(t, "Repaired: 1.5 → 1.0", details[1].Detail)
+	require.Equal(t, "Note: "+wantNote, details[2].Detail)
+}
+
+// TestVerify_Fix_VersionMismatch_Deployed_RelinkFailure_ClearsDeployedFlag
+// covers the relink-failure scenario: once the cache re-key and DB save
+// succeed, mod.Version == effective, so a re-link failure (e.g. a read-only
+// game dir) must not roll that back - but it must clear Deployed so the DB
+// stays honest about the now-dangling deployment, and it must be reported
+// as a FAILURE (row stays version_mismatch, issue stays counted), not
+// folded into a false "Repaired" success.
+func TestVerify_Fix_VersionMismatch_Deployed_RelinkFailure_ClearsDeployedFlag(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	svc, game := newVersionRepairFixGame(t, true)
+
+	require.NoError(t, os.Chmod(game.ModPath, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) })
+
+	result, events := runVersionRepairFix(t, svc, game)
+
+	require.Equal(t, 1, result.Issues, "the re-link failure must leave the issue outstanding")
+	f := mismatchFinding(t, result.Findings)
+	require.Equal(t, "version_mismatch", f.Status, "status must stay version_mismatch - the repair did not fully succeed")
+	require.Contains(t, f.Note, "repair failed: relinking deployed files:")
+
+	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	require.Equal(t, "1.0", mod.Version, "the version correction from the cache/DB/profile steps must stand even though the re-link failed")
+	require.False(t, mod.Deployed, "Deployed must be cleared when the re-link fails")
+
+	// A read-only game dir makes BOTH relinkDeployedRow's undeploy-then-
+	// install steps fail (removing the stale symlink also needs write
+	// permission on the directory) - the undeploy failure is non-fatal
+	// (relinkDeployedRow's own doc) and surfaced as its own detail emitted
+	// DURING the primary's re-link attempt, before the final "Repair
+	// failed" detail that versionPass emits once repairModVersion returns.
+	details := repairDetails(events)
+	require.Len(t, details, 2)
+	require.Contains(t, details[0].Detail, "Warning: undeploy Mod One:")
+	require.False(t, details[0].Green)
+	require.Contains(t, details[1].Detail, "Repair failed: relinking deployed files:")
+	require.False(t, details[1].Green)
+}
+
+// TestVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingStillRepaired
+// nails the ordering trap under partial failure: the PRIMARY row's own
+// re-link fails, but the sibling repair still runs (it's gated on the cache
+// rename, not the primary's re-link outcome) and its RepairDetail must
+// still be emitted BEFORE the primary's own "Repair failed" detail. The
+// note on the primary's (still version_mismatch) row must carry the
+// successful sibling repair alongside the failure reason.
+func TestVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingStillRepaired(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	svc, game := newVersionRepairFixGame(t, true)
+	addVersionRepairSibling(t, svc, game, "second", "1.5", []string{"2"})
+
+	require.NoError(t, os.Chmod(game.ModPath, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) })
+
+	result, events := runVersionRepairFix(t, svc, game)
+
+	require.Equal(t, 1, result.Issues, "the primary row's own repair failed")
+	f := mismatchFinding(t, result.Findings)
+	require.Equal(t, "version_mismatch", f.Status)
+	require.Contains(t, f.Note, "second", "the successful sibling repair must still be visible in the note despite the primary relink failure")
+	require.Contains(t, f.Note, "repair failed: relinking deployed files:")
+
+	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	require.NoError(t, err)
+	require.Equal(t, "1.0", secondMod.Version, "the sibling repair must have gone through independently of the primary's relink failure")
+
+	// Three details, all emitted before versionPass's own final resolution
+	// event: (1) the primary's own undeploy warning, emitted inside
+	// repairModVersion's step-4 re-link attempt; (2) the sibling's Repaired
+	// detail, emitted inside repairModVersion's step-5 sibling pass (which
+	// runs regardless of step 4's outcome); (3) the "Repair failed" detail,
+	// emitted by versionPass only AFTER repairModVersion returns.
+	details := repairDetails(events)
+	require.Len(t, details, 3)
+	require.Contains(t, details[0].Detail, "Warning: undeploy Mod One:")
+	require.False(t, details[0].Green)
+	require.Equal(t, "Repaired (profile second): 1.5 → 1.0", details[1].Detail, "ordering trap: the sibling detail (emitted DURING repairModVersion) must precede the primary's own failure detail")
+	require.True(t, details[1].Green)
+	require.Contains(t, details[2].Detail, "Repair failed: relinking deployed files:", "the primary's own failure detail (emitted by versionPass AFTER repairModVersion returns) comes last")
+	require.False(t, details[2].Green)
+}
