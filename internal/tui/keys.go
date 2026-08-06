@@ -142,6 +142,10 @@ type KeyMap struct {
 	// shape); a locked mod's picker additionally offers a trailing "unlock"
 	// row. Capital "L" - lowercase "l" is already NextScreen's alias.
 	Lock key.Binding
+	// ConvertToggle toggles #221 pak-to-exmod conversion for the selected
+	// mod on the Installed Mods screen. Lowercase per the single-screen
+	// non-destructive-toggle convention (see ToggleEnable's "e").
+	ConvertToggle key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -306,6 +310,10 @@ func DefaultKeyMap() KeyMap {
 		Lock: key.NewBinding(
 			key.WithKeys("L"),
 			key.WithHelp("L", "lock"),
+		),
+		ConvertToggle: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "toggle pak conversion"),
 		),
 	}
 }

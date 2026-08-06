@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,15 +10,16 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
-// TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled
-// proves enabledExmodzSources returns retained exmodz files in PROFILE
+// TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled
+// proves enabledMergeSources returns retained merge-source files in PROFILE
 // LOAD ORDER (merge-application order), skips disabled mods entirely, and
 // skips a mod's fileIDs that have no retained source (a plain .pak).
-func TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *testing.T) {
+func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
 	require.NoError(t, svc.AddGame(game))
@@ -28,7 +30,7 @@ func TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *te
 		for _, fileID := range fileIDs {
 			// Only an "exmodz"-named fileID gets a retained source, mirroring
 			// the real ingest shape (Task 2/3): a plain .pak fileID is never
-			// retained, so enabledExmodzSources must skip it via the
+			// retained, so enabledMergeSources must skip it via the
 			// os.Stat check, not just by naming convention.
 			if !strings.Contains(fileID, "exmodz") {
 				continue
@@ -36,7 +38,7 @@ func TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *te
 			require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), []byte("exmodz-"+modID+"-"+fileID)))
 		}
 		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
-			Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
+			Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID + " (display)", Version: version, GameID: game.ID},
 			ProfileName:  "default",
 			Enabled:      enabled,
 			FileIDs:      fileIDs,
@@ -60,13 +62,15 @@ func TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *te
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "second-mod", Version: "1.0", FileIDs: []string{"exmodz-file", "pak-file"}}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "disabled-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
 
-	sources, err := svc.EnabledExmodzSourcesForTest(game, "default")
+	sources, err := svc.EnabledMergeSourcesForTest(game, "default")
 	require.NoError(t, err)
 	require.Len(t, sources, 2, "disabled-mod excluded; second-mod's plain-pak fileID excluded")
 	require.Equal(t, "icarus:first-mod", sources[0].ModRef)
 	require.Equal(t, "icarus:second-mod", sources[1].ModRef)
+	require.Equal(t, "first-mod (display)", sources[0].ModName, "display name must flow into MergeSource for user-facing warnings")
+	require.Equal(t, "second-mod (display)", sources[1].ModName)
 
-	data, err := os.ReadFile(sources[0].ExmodzPath)
+	data, err := os.ReadFile(sources[0].SourcePath)
 	require.NoError(t, err)
 	require.Equal(t, "exmodz-first-mod-exmodz-file", string(data))
 }
@@ -257,4 +261,115 @@ func TestSyncMergedPak_AssetCollisionWarningSurfaces(t *testing.T) {
 	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Equal(t, []string{"asset collision: fixture warning"}, warnings)
+}
+
+// failOnceLinker fails a single Deploy or Undeploy call the FIRST time it's
+// invoked, then delegates to the real linker for every call after - a
+// fault-injection double for the #221 partial-reconcile convergence
+// guarantee tests below, proving a transient installer failure gets
+// retried (and converges) on the next reconcile pass rather than being
+// permanently masked. Mirrors installer_test.go's failingLinker/
+// conditionalFailingLinker convention (both cover only Deploy, for
+// rollback tests wanting PERMANENT failure past a threshold); this one
+// covers both Deploy and Undeploy and fails exactly once.
+type failOnceLinker struct {
+	linker.Linker
+	failDeployOnce   bool
+	failUndeployOnce bool
+	deployCalls      int
+	undeployCalls    int
+}
+
+func (f *failOnceLinker) Deploy(src, dst string) error {
+	f.deployCalls++
+	if f.failDeployOnce {
+		f.failDeployOnce = false
+		return fmt.Errorf("simulated deploy failure")
+	}
+	return f.Linker.Deploy(src, dst)
+}
+
+func (f *failOnceLinker) Undeploy(dst string) error {
+	f.undeployCalls++
+	if f.failUndeployOnce {
+		f.failUndeployOnce = false
+		return fmt.Errorf("simulated undeploy failure")
+	}
+	return f.Linker.Undeploy(dst)
+}
+
+// TestReconcilePakManifests_ConvertedPath_UninstallFailureRetries proves
+// the #221 fix for the "converted" branch: when Uninstall fails, the
+// manifest must NOT have already flipped to merged-claimed (members=nil) -
+// that would be a double-apply (raw pak still on disk/undetermined AND
+// claimed as merged-owned). The next reconcile pass must retry Uninstall
+// and only then converge.
+func TestReconcilePakManifests_ConvertedPath_UninstallFailureRetries(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	game.ConvertPaks = true
+	seedEnabledPakMod(t, svc, game, "fake-compiler", "goodmod", "1.0", "pak", []byte("good-bytes"))
+
+	gameCache := svc.GetGameCache(game)
+	faulty := &failOnceLinker{Linker: linker.New(game.LinkMethod), failUndeployOnce: true}
+	inst := core.NewInstaller(gameCache, faulty, nil)
+
+	// First reconcile: goodmod participates (converted) - Uninstall fails.
+	_, err := svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "undeploying raw pak")
+
+	manifests, err := gameCache.FileManifests(game.ID, "fake-compiler", "goodmod", "1.0")
+	require.NoError(t, err)
+	require.Equal(t, []string{"goodmod.pak"}, manifests["pak"].Members,
+		"a failed Uninstall must NOT flip the manifest to merged-claimed (would be a double-apply)")
+	require.Equal(t, 1, faulty.undeployCalls)
+
+	// Second reconcile (the "next sync"): must retry and converge.
+	_, err = svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
+	require.NoError(t, err)
+	require.Equal(t, 2, faulty.undeployCalls, "the retry must call Undeploy again")
+
+	manifests, err = gameCache.FileManifests(game.ID, "fake-compiler", "goodmod", "1.0")
+	require.NoError(t, err)
+	require.Empty(t, manifests["pak"].Members, "the retry must converge to merged-claimed")
+}
+
+// TestReconcilePakManifests_RawFallbackPath_InstallFailureRetries proves
+// the #221 fix for the raw-fallback branch: a manifest that already
+// records the target ("raw") member shape is not trusted as proof of an
+// actual deploy - reconcile must confirm the file is really on disk before
+// treating it as converged, so a failed Install gets retried by the next
+// reconcile pass instead of being silently believed done forever.
+func TestReconcilePakManifests_RawFallbackPath_InstallFailureRetries(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	game.ConvertPaks = true
+	seedEnabledPakMod(t, svc, game, "fake-compiler", "badmod", "1.0", "pak", []byte("bad-bytes"))
+
+	gameCache := svc.GetGameCache(game)
+	faulty := &failOnceLinker{Linker: linker.New(game.LinkMethod), failDeployOnce: true}
+	inst := core.NewInstaller(gameCache, faulty, nil)
+	failedByRef := map[string]string{"fake-compiler:badmod": "boom"}
+
+	deployedPath := filepath.Join(game.ModPath, "badmod.pak")
+	_, statErr := os.Stat(deployedPath)
+	require.True(t, os.IsNotExist(statErr), "precondition: nothing deployed to the game dir yet")
+
+	// First reconcile: badmod does not participate (failed) - Install fails.
+	_, err := svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, failedByRef)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "deploying raw pak")
+	require.Equal(t, 1, faulty.deployCalls)
+
+	_, statErr = os.Stat(deployedPath)
+	require.True(t, os.IsNotExist(statErr), "the failed Install must not have deployed anything")
+
+	// Second reconcile (the "next sync"): must retry and actually deploy -
+	// the manifest already matched the target shape from ingest, so this
+	// also proves the strengthened precheck doesn't trust shape alone.
+	_, err = svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, failedByRef)
+	require.NoError(t, err)
+	require.Equal(t, 2, faulty.deployCalls, "the retry must call Deploy again")
+
+	_, statErr = os.Stat(deployedPath)
+	require.NoError(t, statErr, "the retry must actually deploy the raw pak")
 }

@@ -78,6 +78,48 @@ func TestImportMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) {
 	require.Equal(t, "fake-exmodz-bytes", string(data))
 }
 
+// TestImportPakRetainsAndDeploysRaw mirrors the download-path
+// TestDownloadPakRetainsAndDeploysRaw (#221) for import: a convert-eligible
+// prebuilt .pak import validates+retains like an .exmodz, ALSO stages a
+// deployable copy of itself, and MarkImportedFileComplete's generic
+// entry-listing member computation picks that deployable copy up as the
+// manifest's sole member - the raw-deploy default.
+func TestImportPakRetainsAndDeploysRaw(t *testing.T) {
+	svc, src, game := newImportCompileTestGame(t)
+	game.ConvertPaks = true
+
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "CoolMod.pak")
+	require.NoError(t, os.WriteFile(archivePath, []byte("fake-pak-bytes"), 0o644))
+
+	importer := svc.NewImporter(game)
+	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, src.validateCalls, "import must validate the pak via ValidateSource")
+	require.Equal(t, 0, src.compileCalls, "import must NOT compile at import time")
+	require.Equal(t, 1, result.FilesExtracted, "raw-deploy default: the deployable copy counts as the one member")
+	require.Equal(t, "CoolMod.pak", result.RetainedFileID, "import keys retention by the archive's own filename")
+
+	gameCache := svc.GetGameCache(game)
+
+	retainedPath := gameCache.GetFilePath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version, cache.RetainedSourceName("CoolMod.pak"))
+	retainedData, err := os.ReadFile(retainedPath)
+	require.NoError(t, err)
+	require.Equal(t, "fake-pak-bytes", string(retainedData), "the original pak bytes must be retained")
+
+	deployablePath := gameCache.GetFilePath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version, "CoolMod.pak")
+	deployableData, err := os.ReadFile(deployablePath)
+	require.NoError(t, err)
+	require.Equal(t, "fake-pak-bytes", string(deployableData), "a deployable copy of the raw pak must also be staged")
+
+	require.NoError(t, svc.MarkImportedFileComplete(game, result.Mod, result.RetainedFileID))
+
+	manifests, err := gameCache.FileManifests(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+	require.NoError(t, err)
+	require.True(t, manifests["CoolMod.pak"].Recorded)
+	require.Equal(t, []string{"CoolMod.pak"}, manifests["CoolMod.pak"].Members, "raw-deploy default: the deployable copy is the sole member")
+}
+
 // TestImportMod_DeployCompile_MalformedExmodz_FailsLoud proves validation
 // happens at import time - the only failure mode left in this branch since
 // there is no per-mod compile step anymore.
@@ -164,6 +206,61 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 
 	_, statErr := os.Stat(filepath.Join(cfg.CacheDir, game.ID))
 	require.True(t, os.IsNotExist(statErr), "no cache entry should have been created")
+}
+
+// TestImportMod_DeployCompile_PakNoCompilerSourceFallsThrough is the I1 fix
+// (final whole-branch review of #221) for the import path, mirroring
+// TestImportMod_DeployCompile_NoCompilerSourceFailsLoud's setup (a
+// DeployCompile game with NO MergeCompiler-capable source mapped) but for a
+// .pak filename instead of .exmodz: isConvertEligiblePakFile only checked
+// game flags (DeployMode + ConvertPaks), so this scenario used to enter the
+// validate+retain branch and hard-error on resolveMergeCompiler's failure -
+// exactly like the exmodz case above, even though a .pak (unlike an
+// .exmodz) has another valid interpretation once eligibility is properly
+// gated on actual resolver success.
+//
+// Unlike the download path (DownloadModToCache's copy fallback triggers
+// unconditionally whenever the file isn't a recognized archive, regardless
+// of deploy mode), Import has no such unconditional fallback outside
+// DeployCopy - a DeployCompile game importing any unrecognized, non-archive
+// format (a raw .pak included) has always ended in "unsupported archive
+// format" once it misses the compile branch, pre-#221 included (a .pak
+// import for Icarus simply wasn't a supported scenario before #221 existed
+// at all). So the observable fix here is not "the import now succeeds" (it
+// can't - Import genuinely has nothing else to do with a raw .pak) but "the
+// import fails with the SAME, accurate, pre-#221-consistent 'unsupported
+// archive format' error instead of a MISLEADING 'no merge-compiler-capable
+// source configured' one" - and, just as importantly, no cache entry or
+// retained source is created for a mod that was never actually ingested.
+func TestImportMod_DeployCompile_PakNoCompilerSourceFallsThrough(t *testing.T) {
+	installDir := t.TempDir()
+	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
+
+	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	// No RegisterSource call at all - the game has no source mapped, let
+	// alone a MergeCompiler-capable one.
+	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
+	require.NoError(t, svc.AddGame(game))
+
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "CoolMod.pak")
+	require.NoError(t, os.WriteFile(archivePath, []byte("fake-pak-bytes"), 0o644))
+
+	importer := svc.NewImporter(game)
+	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.Contains(t, err.Error(), "unsupported archive format", "must fall through to the legacy path's own error, not the misleading MergeCompiler-resolution one")
+	require.NotContains(t, err.Error(), "compiler", "must NOT report a MergeCompiler-resolution failure once eligibility correctly fell through")
+
+	_, statErr := os.Stat(filepath.Join(cfg.CacheDir, game.ID))
+	require.True(t, os.IsNotExist(statErr), "no cache entry (and no retained source) should have been created")
 }
 
 // TestImportMod_DeployCompile_StandaloneImporterFailsLoud proves an

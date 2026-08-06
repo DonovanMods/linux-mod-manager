@@ -34,8 +34,8 @@ type verifyFileJSON struct {
 	ModID   string `json:"mod_id"`
 	ModName string `json:"mod_name"`
 	FileID  string `json:"file_id"`
-	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile, stale_deployment, fixed_stale_deployment
-	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, a file-count-check lookup failure, a stale-deployment reason ("no longer provided by <source>/<mod>" | "dangling link into lmm cache"), or a convergence per-item error (e.g. an unsafe deployed-file record skipped) - omitted when there's nothing extra to add
+	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile, stale_deployment, fixed_stale_deployment, conversion_failed, needs_reingest, fixed_needs_reingest
+	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, a file-count-check lookup failure, a stale-deployment reason ("no longer provided by <source>/<mod>" | "dangling link into lmm cache"), a convergence per-item error (e.g. an unsafe deployed-file record skipped), a pak-conversion failure reason (conversion_failed), or why/whether a pak needed re-ingesting (needs_reingest / fixed_needs_reingest) - omitted when there's nothing extra to add
 }
 
 var verifyCmd = &cobra.Command{
@@ -94,6 +94,34 @@ compiled mod regardless of source, including local imports. Use --fix to
 repair it: it resyncs the profile's merged pak (recompiling and
 redeploying it if needed), the same repair 'lmm update --all' applies.
 
+For a pak-to-exmod-conversion game (#221), verify also surfaces two more
+compile-only states:
+
+    ? NAME - CONVERSION FAILED (reason)  the mod's prebuilt .pak could not
+                                          be converted into the merged pak
+                                          on the last sync; it stays
+                                          raw-deployed instead. Fix the mod
+                                          or run 'lmm mod convert <mod-id> off'
+                                          to silence it.
+    ? NAME (FILE) - NEEDS REINGEST       the mod's pak was cached before
+                                          conversion support existed (no
+                                          retained source); run 'lmm verify
+                                          --fix' to re-ingest it, or
+                                          re-import the archive for a local
+                                          mod
+
+CONVERSION FAILED is read straight from the merged pak's stored
+fingerprint (the outcome of the last successful sync) - it is not
+recomputed by verify itself, so it stays accurate even between syncs.
+NEEDS REINGEST only fires for a convert-eligible pak (the game and the mod
+both have conversion enabled) whose cache entry predates #221. --fix
+re-ingests it via the same redownload path MISSING uses; a local/imported
+mod has no source to redownload from and must be re-imported instead. A
+successful --fix re-ingest flips the row to "fixed_needs_reingest" in
+--json (a resolved problem, same convention as "fixed_stale_deployment"
+below) instead of leaving it reading as still-outstanding in the very run
+that just fixed it, and is not counted as a warning.
+
 verify also reconciles the game directory's deployed state against
 current reality (#168/#212): a deployed_files record no longer provided
 by any installed mod, or a dangling symlink into the lmm cache with no
@@ -147,22 +175,26 @@ OK case - this is never counted in issues or warnings.
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
-"version_unverifiable", "stale_compile", "stale_deployment", or
-"fixed_stale_deployment"; note adds detail where there's something extra
-to say - a blocked cache rename, sibling-repair results, a --fix repair or
+"version_unverifiable", "stale_compile", "stale_deployment",
+"fixed_stale_deployment", "conversion_failed", "needs_reingest", or
+"fixed_needs_reingest"; note adds detail where there's something extra to
+say - a blocked cache rename, sibling-repair results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
-record ("locked"), a locked record's pending convergence detail, or a
+record ("locked"), a locked record's pending convergence detail, a
 stale-deployment row's reason (populated on both "stale_deployment" and
-"fixed_stale_deployment") - and is omitted otherwise. issues counts
-MISSING files and VERSION MISMATCH rows (a successful --fix repair of
-either decrements it back out; a locked VERSION MISMATCH stays counted
-since --fix refuses it); warnings counts everything else that isn't OK,
-including "stale_deployment" rows (never "fixed_stale_deployment" - a
-successful --fix removal is a resolved problem, not an outstanding one,
-the same convention as a successful re-download or version repair).
-Lock-pending-convergence rows are informational only and count toward
-neither.
+"fixed_stale_deployment"), a pak's conversion-failure reason
+("conversion_failed"), or why/whether a pak needed re-ingesting
+(populated on both "needs_reingest" and "fixed_needs_reingest") - and is
+omitted otherwise. issues counts MISSING files and VERSION MISMATCH rows
+(a successful --fix repair of either decrements it back out; a locked
+VERSION MISMATCH stays counted since --fix refuses it); warnings counts
+everything else that isn't OK, including "stale_deployment",
+"conversion_failed", and "needs_reingest" rows (never
+"fixed_stale_deployment" or "fixed_needs_reingest" - a successful --fix
+removal/re-ingest is a resolved problem, not an outstanding one, the same
+convention as a successful re-download or version repair). Lock-pending-convergence rows
+are informational only and count toward neither.
 
 Examples:
   lmm verify --game skyrim-se           # Verify all mods
@@ -186,18 +218,47 @@ func runVerify(cmd *cobra.Command, args []string) error {
 }
 
 // hasRetainedSource reports whether any of fileIDs has a retained compile
-// source (cache.RetainedSourceName) on disk for sourceID/modID/version -
-// the signal that a cache entry is a DeployCompile ".exmodz" validate+
-// retain-only entry (#197 I4), which deploys zero files of its own by
-// design and must not be flagged as a FILE COUNT MISMATCH.
+// source (cache.RetainedSourceName) on disk for sourceID/modID/version AND
+// every recorded manifest at that cache entry carries ZERO members - the
+// signal that the entry is a DeployCompile validate+retain-ONLY entry
+// (#197 I4's ".exmodz" case), which deploys zero files of its own by design
+// and must not be flagged as a FILE COUNT MISMATCH.
+//
+// #221 fix: a convert-eligible pak's cache entry ALSO carries a retained
+// source (Task 9's widened ingest), but - unlike an exmodz - it stages a
+// REAL deployable member (the raw pak copy) until the first successful
+// merge flips it. Blanket-suppressing on retained-source presence alone (the
+// pre-#221 behavior) silently hid a genuinely broken pak entry (its member
+// content gone missing while the retained source survived) behind the same
+// carve-out meant only for the zero-member exmodz case. Reading the file's
+// manifests and requiring every one to record zero members narrows the
+// carve-out back to its original intent.
 func hasRetainedSource(gameCache *cache.Cache, gameID, sourceID, modID, version string, fileIDs []string) bool {
+	retained := false
 	for _, fileID := range fileIDs {
 		retainedPath := gameCache.GetFilePath(gameID, sourceID, modID, version, cache.RetainedSourceName(fileID))
 		if _, err := os.Stat(retainedPath); err == nil {
-			return true
+			retained = true
+			break
 		}
 	}
-	return false
+	if !retained {
+		return false
+	}
+	manifests, err := gameCache.FileManifests(gameID, sourceID, modID, version)
+	if err != nil {
+		// Unreadable manifests: don't suppress on the strength of a check
+		// that itself failed (epic98 audit Finding 4's precedent) - the
+		// file-count check below runs normally instead of trusting a
+		// carve-out we couldn't actually verify.
+		return false
+	}
+	for _, m := range manifests {
+		if len(m.Members) > 0 {
+			return false // a real deployable member - not a retain-only entry
+		}
+	}
+	return true
 }
 
 func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []string) error {
@@ -392,6 +453,47 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 			warnings++
 		}
 	}
+
+	// #221: report per-mod pak-conversion outcomes recorded on the merged
+	// pak's own fingerprint (Task 8's MergedPakOutcomes) - a mod whose pak
+	// failed to convert stays raw-deployed, and the user needs to know why
+	// (fix the mod, or 'lmm mod convert <id> off' to silence). Independent
+	// of the staleness check above: a merge can be perfectly up to date
+	// (fingerprint unchanged) while still recording a PRIOR conversion
+	// failure for one of its contributing mods. A warning, not an issue -
+	// deploying raw is a documented, working fallback, not corruption.
+	if game.DeployMode == domain.DeployCompile {
+		modNames := make(map[string]string, len(installedMods))
+		for _, m := range installedMods {
+			modNames[m.SourceID+":"+m.ID] = m.Name
+		}
+		if outcomes, ok := svc.MergedPakOutcomes(game, profile); ok {
+			for _, entry := range outcomes {
+				if entry.Converted {
+					continue
+				}
+				// Copilot round 1 (PR #222): the fingerprint entry can
+				// outlive the mod it names - if the mod was since
+				// uninstalled, modNames has no entry and name would be
+				// blank (blank human output, JSON mod_name:""). Fall back
+				// to the raw entry.ModID, same as the "Unknown mod <id>"
+				// skip line above does when a checksum row's mod can't be
+				// found (line 660) - a stable, non-empty identifier beats
+				// silence either way.
+				name := modNames[entry.SourceID+":"+entry.ModID]
+				if name == "" {
+					name = entry.ModID
+				}
+				if jsonOutput {
+					jsonFiles = append(jsonFiles, verifyFileJSON{ModID: entry.ModID, ModName: name, Status: "conversion_failed", Note: entry.FailReason})
+				} else {
+					fmt.Printf("  %s %s - CONVERSION FAILED (%s) - deploying raw; fix the mod or run 'lmm mod convert %s off' to silence\n", colorYellow("?"), name, entry.FailReason, entry.ModID)
+				}
+				warnings++
+			}
+		}
+	}
+
 	for i := range installedMods {
 		mod := &installedMods[i]
 		if modFilter != "" && mod.ID != modFilter {
@@ -569,6 +671,65 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 				fmt.Printf("? Unknown mod %s - SKIPPED\n", f.ModID)
 			}
 			warnings++
+			continue
+		}
+
+		// #221 lazy migration: a convert-eligible pak whose cache entry
+		// predates pak retention (deployable pak present, no retained
+		// source) needs re-ingesting before it can ever participate in a
+		// merge - PakNeedsReingest is the one place that kind/retained
+		// detection lives (verify must not reimplement it). --fix re-ingests
+		// it through the existing redownload path: the widened ingest
+		// predicate (Task 9) retains the source, and the SyncMergedPak call
+		// below (verify.go:683-ish) picks it up on the next sync. A local/
+		// imported mod has no source to redownload from, so its note points
+		// at re-importing instead.
+		need, nerr := svc.PakNeedsReingest(game, mod, f.FileID)
+		if nerr != nil {
+			// A real check failure (a Stat/ListFiles error, not "nothing
+			// ingested yet") - not counted as a warning and not fatal to the
+			// rest of this row's checks below, but not silently dropped
+			// either: surfaced under --verbose like every other soft
+			// diagnostic in this codebase (update.go's UpdateNote convention),
+			// gated on !jsonOutput so it never corrupts the one-document-on-
+			// stdout JSON contract.
+			if verbose && !jsonOutput {
+				fmt.Printf("  (verbose) could not check pak-reingest status for %s (%s): %v\n", mod.Name, f.FileID, nerr)
+			}
+		} else if need {
+			note := "pak predates conversion support - run 'lmm verify --fix' to re-ingest"
+			if mod.SourceID == domain.SourceLocal {
+				note = "re-import the archive to enable conversion"
+			}
+			if jsonOutput {
+				jsonFiles = append(jsonFiles, verifyFileJSON{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "needs_reingest", Note: note})
+			} else {
+				fmt.Printf("%s %s (%s) - NEEDS REINGEST (%s)\n", colorYellow("?"), mod.Name, f.FileID, note)
+			}
+			warnings++
+			if verifyFix && mod.SourceID != domain.SourceLocal {
+				if _, rerr := redownloadModFile(cmd, svc, game, profile, mod, f.FileID); rerr != nil {
+					if jsonOutput {
+						jsonFiles[len(jsonFiles)-1].Note = fmt.Sprintf("re-ingest failed: %v", rerr)
+					} else {
+						fmt.Printf("  Re-ingest failed: %v\n", rerr)
+					}
+				} else {
+					// Same convention as MISSING/NO CHECKSUM's own --fix
+					// success path just above, and stale_deployment's
+					// fixed_stale_deployment: a resolved problem is not left
+					// reading as an outstanding one in the SAME run that just
+					// fixed it - rewrite the row to a fixed-state status/note
+					// and back the count out.
+					if jsonOutput {
+						jsonFiles[len(jsonFiles)-1].Status = "fixed_needs_reingest"
+						jsonFiles[len(jsonFiles)-1].Note = "re-ingested with retained source for pak conversion"
+					} else {
+						fmt.Printf("  %s\n", colorGreen("Re-ingested for pak conversion"))
+					}
+					warnings--
+				}
+			}
 			continue
 		}
 

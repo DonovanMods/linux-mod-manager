@@ -383,6 +383,74 @@ func (m Model) moveSelectedMod(delta int) (Model, tea.Cmd) {
 	return m, m.loadData
 }
 
+// --- Pak conversion toggle ('m' on Installed Mods, #221) ---
+
+// toggleSelectedModConvert handles 'm' on Installed Mods (#221): flips the
+// selected mod's pak-to-exmod conversion flag via ActionProvider.
+// SetConvertPaks. Direct, synchronous call - mirroring moveSelectedMod's own
+// "local write, not network I/O, nothing for a confirm modal to gate"
+// exception immediately above - and confirmation-free for the same reason
+// the update-policy picker is (resolvePolicyChoice's doc comment): this is a
+// reversible metadata write, so the keypress itself IS the confirmation.
+//
+// Guards, in order: wrong screen or no ActionProvider configured, and an
+// out-of-range selection (empty list) - both mirror moveSelectedMod's own
+// guard/selection shape; a single-flight conflict, checked explicitly here
+// (this method never reaches buildAction's own guard, exactly like
+// moveSelectedMod - it makes no buildAction call at all); and
+// !item.CompileGame - the flag only affects DeployMode == DeployCompile
+// games (ModItem.CompileGame, populated by coreProvider's Overview mapping
+// from the ACTIVE game, not the mod), so a non-compile game's toggle is
+// refused synchronously on the status line rather than silently persisting a
+// flag with no effect - mirroring rollbackSelectedMod's "benign, not an
+// error" PreviousVersion=="" refusal (statusIsError false: the row itself
+// isn't wrong, the game's deploy mode just makes the flag inert); and
+// !item.HasPakSource (#221 round-4 fix) - conversion flags only affect a mod
+// that actually has a pak merge source, so an exmodz-only mod's toggle is
+// refused the same synchronous, benign way BEFORE the provider is ever
+// called, rather than persisting a flag that can never have a deploy-time
+// effect.
+//
+// On success: the outcome's message (coreProvider.SetConvertPaks's "<name>
+// pak conversion: on/off (deploy to apply)", or a game-disabled variant when
+// the active game's own convert_paks is false - see that method's doc
+// comment) becomes the status line, and a refresh (m.loadData) is dispatched
+// so the "raw" flag column (app.go's modFlags) picks up the new state
+// immediately - mirroring moveSelectedMod's own "refresh on both success and
+// failure" contract.
+func (m Model) toggleSelectedModConvert() (Model, tea.Cmd) {
+	if m.screen != ScreenInstalledMods || m.actions == nil {
+		return m, nil
+	}
+	item, ok := m.selectedMod()
+	if !ok {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	if !item.CompileGame {
+		m.action.status = "pak conversion applies only to merge-compile games"
+		m.action.statusIsError = false
+		return m, nil
+	}
+	if !item.HasPakSource {
+		m.action.status = "pak conversion applies only to mods with a pak merge source"
+		m.action.statusIsError = false
+		return m, nil
+	}
+
+	outcome, err := m.actions.SetConvertPaks(m.ctx, item, !item.ConvertPaks)
+	if err != nil {
+		m.action.status = singleLine(err.Error())
+		m.action.statusIsError = true
+		return m, m.loadData
+	}
+	m.action.status = outcome.Message
+	m.action.statusIsError = false
+	return m, m.loadData
+}
+
 // --- Update policy ('P' on Installed Mods) ---
 
 // updatePolicyOptions is the fixed notify/auto/pin option order the policy

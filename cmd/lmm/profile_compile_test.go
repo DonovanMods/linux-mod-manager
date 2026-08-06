@@ -67,7 +67,7 @@ func TestDoProfileApply_DeployCompile_SyncsMergedPakOnDisable(t *testing.T) {
 // TestDoProfileSync_DeployCompile_AddingDriftedModDeploysMergedPak is the
 // #197 postsmoke regression test for doProfileSync: an installed+enabled
 // exmodz mod whose profile.yaml entry drifted away (toAdd path, pm.AddMod)
-// changes profile MEMBERSHIP - the input enabledExmodzSources actually
+// changes profile MEMBERSHIP - the input enabledMergeSources actually
 // requires - with no other seam to sync it. Proves the merged pak deploys
 // once doProfileSync re-adds the mod to the profile.
 func TestDoProfileSync_DeployCompile_AddingDriftedModDeploysMergedPak(t *testing.T) {

@@ -951,6 +951,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.editSelectedModPolicy()
 	case key.Matches(msg, m.keys.Lock):
 		return m.editSelectedModLock()
+	case key.Matches(msg, m.keys.ConvertToggle):
+		return m.toggleSelectedModConvert()
 	case key.Matches(msg, m.keys.CreateProfile):
 		return m.createProfilePrompt()
 	case key.Matches(msg, m.keys.DeleteProfile):
@@ -2075,6 +2077,10 @@ func (m Model) helpGroups() []helpGroup {
 			// mutations.go's editSelectedModLock) - listed beside Policy since
 			// both open an item-scoped picker with no separate confirm modal.
 			helpEntry(m.keys.Lock),
+			// ConvertToggle is #221's pak-to-exmod conversion toggle (see
+			// mutations.go's toggleSelectedModConvert) - listed beside Policy/
+			// Lock since it's a third item-scoped, no-confirm-modal mutation.
+			helpEntry(m.keys.ConvertToggle),
 			helpEntry(m.keys.Purge),
 			// MoveDown/MoveUp are Task 4's load-order reorder keys (see
 			// mutations.go's moveSelectedMod).
@@ -2289,18 +2295,32 @@ func (m Model) modRow(index, width int, mod ModItem) string {
 	return m.row(index, line)
 }
 
-// modFlags renders the per-mod flag column: "lck" or "pin" (left-aligned in
-// the first 3 columns) and "*" (the last column) for a mod actually updated
-// THIS session - not merely checked. "lck" (#97) outranks "pin" in the
-// 3-char slot - a locked+pinned mod shows "lck" ("lock wins the slot and
-// the UI names the lock"); the mod's pin state is untouched and stays
-// visible in the P picker and mod actions, it just doesn't get its own
-// glyph here when a lock is also set. The wire string "pin" (not the CLI's
-// "pinned") matches ModItem.UpdatePolicy's documented values - see
+// modFlags renders the per-mod flag column: "lck", "pin", or "raw"
+// (left-aligned in the first 3 columns) and "*" (the last column) for a mod
+// actually updated THIS session - not merely checked. "lck" (#97) outranks
+// "pin" in the 3-char slot - a locked+pinned mod shows "lck" ("lock wins the
+// slot and the UI names the lock"); the mod's pin state is untouched and
+// stays visible in the P picker and mod actions, it just doesn't get its own
+// glyph here when a lock is also set. "raw" (#221) is the lowest-precedence
+// flag: a mod on a merge-compile game (ModItem.CompileGame) that actually
+// HAS a pak merge source (ModItem.HasPakSource) and whose prebuilt pak
+// deploys unconverted shows "raw" ONLY when neither lck nor pin already
+// claimed the slot - it names a state (this mod's prebuilt .pak ships
+// unconverted into the merge) rather than a user-set marker like the other
+// two, so it defers to both. An exmodz-only mod (HasPakSource false) never
+// shows "raw" regardless of the conversion flags - it has no pak to leave
+// unconverted, so the flag would be meaningless (#221 round-4 fix). Deploy
+// truth needs BOTH the per-mod flag (ModItem.ConvertPaks) AND the active
+// game's own flag (ModItem.GameConvertPaks) to be on before a pak actually
+// converts - mirroring the README's "either one is enough to keep a pak
+// raw" ([Pak conversion (Icarus)](README.md#pak-conversion-icarus)) - so
+// among pak-source mods "raw" shows whenever EITHER is off, not just the
+// per-mod one. The wire string "pin" (not the
+// CLI's "pinned") matches ModItem.UpdatePolicy's documented values - see
 // service_core.go's policyToString for why the two interfaces differ. The
 // fixed "%-3s %s" shape always fills exactly flagsWidth (5) columns -
-// "lck *", "pin *", "pin  ", "    *", or "     " - so the flag and the
-// marker can appear independently, together, or not at all without ever
+// "lck *", "pin *", "pin  ", "raw  ", "    *", or "     " - so the flag and
+// the marker can appear independently, together, or not at all without ever
 // shifting the author/version columns that follow (mirrors the pin-only
 // column's own fixed-width reasoning above modRow).
 func (m Model) modFlags(mod ModItem) string {
@@ -2310,6 +2330,8 @@ func (m Model) modFlags(mod ModItem) string {
 		flag = "lck" // lock wins the slot ("the UI names the lock"); pin state stays visible in the P picker and mod actions
 	case mod.UpdatePolicy == "pin":
 		flag = "pin"
+	case mod.CompileGame && mod.HasPakSource && !(mod.GameConvertPaks && mod.ConvertPaks):
+		flag = "raw"
 	}
 	marker := " "
 	if m.wasUpdatedThisSession(mod) {

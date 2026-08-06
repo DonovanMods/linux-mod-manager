@@ -277,3 +277,43 @@ func TestSetModFileIDs_SkipsEmptyStringIDs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"111", "222"}, fileIDs)
 }
+
+func TestSetModConvertPaks(t *testing.T) {
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+	mod := &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "m1",
+			SourceID: "icarus",
+			GameID:   "icarus",
+			Name:     "M",
+			Version:  "1.0",
+		},
+		ProfileName: "default",
+		Enabled:     true,
+	}
+	require.NoError(t, database.SaveInstalledMod(mod))
+
+	got, err := database.GetInstalledMod("icarus", "m1", "icarus", "default")
+	require.NoError(t, err)
+	assert.True(t, got.ConvertPaks, "convert_paks must default to true (schema DEFAULT 1)")
+
+	require.NoError(t, database.SetModConvertPaks("icarus", "m1", "icarus", "default", false))
+
+	got, err = database.GetInstalledMod("icarus", "m1", "icarus", "default")
+	require.NoError(t, err)
+	assert.False(t, got.ConvertPaks, "convert_paks not persisted off")
+
+	// Reinstall (SaveInstalledMod upsert) must NOT reset the user's flag.
+	require.NoError(t, database.SaveInstalledMod(mod))
+
+	got, err = database.GetInstalledMod("icarus", "m1", "icarus", "default")
+	require.NoError(t, err)
+	assert.False(t, got.ConvertPaks, "reinstall reset convert_paks - the column must stay out of the upsert")
+
+	// Unknown mod -> domain.ErrModNotFound (targeted-setter contract).
+	err = database.SetModConvertPaks("icarus", "nope", "icarus", "default", true)
+	assert.ErrorIs(t, err, domain.ErrModNotFound)
+}

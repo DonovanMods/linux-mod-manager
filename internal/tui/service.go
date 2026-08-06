@@ -107,6 +107,47 @@ type ModItem struct {
 	// SetLock's doc comment). Empty whenever Locked is false, mirroring
 	// PreviousVersion's own "empty means nothing to show" convention.
 	LockedVersion string
+	// ConvertPaks reports the #221 per-mod pak-to-exmod conversion flag -
+	// populated by coreProvider's Overview mapping (domain.InstalledMod.
+	// ConvertPaks) and left at the zero value in prototypeProvider (prototype.
+	// Mod carries no ConvertPaks state), mirroring UpdatePolicy/Locked's own
+	// "only Overview populates it" convention above. Meaningful only when
+	// CompileGame is true.
+	ConvertPaks bool
+	// CompileGame is true when the active game's DeployMode is
+	// domain.DeployCompile - gates the "m" toggle (mutations.go's
+	// toggleSelectedModConvert) and the "raw" flag column (app.go's
+	// modFlags): a non-compile game's ConvertPaks value has no effect, so
+	// the toggle refuses synchronously rather than silently writing a flag
+	// that does nothing.
+	CompileGame bool
+	// GameConvertPaks mirrors the active game's own convert_paks setting
+	// (domain.Game.ConvertPaks) - the OTHER of the two levels #221's Pak
+	// conversion (Icarus) README section documents ("either one is enough
+	// to keep a pak raw"). Populated by coreProvider's Overview mapping
+	// (service_core.go) from the game already in scope there, and left at
+	// the zero value in prototypeProvider (modItems - service.go), mirroring
+	// ConvertPaks' own "prototype.Mod carries no state for this" convention
+	// immediately above. Meaningful only when CompileGame is true - app.go's
+	// modFlags and service_core.go's SetConvertPaks both read it alongside
+	// ConvertPaks rather than ConvertPaks alone, so a game-level
+	// convert_paks: false is reflected in the TUI exactly like the CLI
+	// already reflects it (cmd/lmm/mod.go's doModConvert).
+	GameConvertPaks bool
+	// HasPakSource reports whether this mod has at least one pak-kind
+	// merge-source file (core.Service.ModHasPakMergeSource) - i.e. whether
+	// ConvertPaks/GameConvertPaks have any deploy-time effect on it at all
+	// (#221 round-4 fix). An exmodz-only mod's conversion flags are
+	// meaningless: there is no pak to convert or leave raw. Populated by
+	// coreProvider's Overview mapping (service_core.go); left at the zero
+	// value in prototypeProvider (modItems - service.go), mirroring
+	// ConvertPaks/GameConvertPaks' own "prototype.Mod carries no state for
+	// this" convention above. Meaningful only when CompileGame is true -
+	// app.go's modFlags and mutations.go's toggleSelectedModConvert both
+	// require it alongside CompileGame before honoring the "raw" flag or the
+	// "m" toggle, so an exmodz-only mod never shows a misleading "raw" flag
+	// and never has its (meaningless) ConvertPaks flag toggled.
+	HasPakSource bool
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of

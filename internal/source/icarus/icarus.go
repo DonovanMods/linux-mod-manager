@@ -47,7 +47,7 @@ func (s *Icarus) ValidateSource(sourceFilePath string) error {
 // package-level MergeCompile function. ctx is unused: merging is pure local
 // file I/O against the installed game's own pak (#175/#197), with nothing
 // to cancel.
-func (s *Icarus) MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) ([]string, error) {
+func (s *Icarus) MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) ([]string, []source.MergeFailure, error) {
 	return MergeCompile(ctx, basePakPath, sources, outputPakPath)
 }
 

@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -25,6 +26,7 @@ type gameListJSON struct {
 	InstallPath string            `json:"install_path"`
 	ModPath     string            `json:"mod_path"`
 	DeployMode  string            `json:"deploy_mode"`
+	ConvertPaks *bool             `json:"convert_paks,omitempty"`
 	Sources     map[string]string `json:"sources"`
 	Default     bool              `json:"default"`
 }
@@ -70,7 +72,7 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 			if sources == nil {
 				sources = map[string]string{}
 			}
-			rows[i] = gameListJSON{
+			row := gameListJSON{
 				ID:          g.ID,
 				Name:        g.Name,
 				InstallPath: g.InstallPath,
@@ -79,6 +81,12 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 				Sources:     sources,
 				Default:     g.ID == defaultGame,
 			}
+			// Populate convert_paks only for DeployCompile games
+			if g.DeployMode == domain.DeployCompile {
+				v := g.ConvertPaks
+				row.ConvertPaks = &v
+			}
+			rows[i] = row
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -96,10 +104,10 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ID\tNAME\tINSTALL PATH\tMOD PATH\tDEPLOY MODE\tSOURCES"); err != nil {
+	if _, err := fmt.Fprintln(w, "ID\tNAME\tINSTALL PATH\tMOD PATH\tDEPLOY MODE\tCONVERT PAKS\tSOURCES"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
-	if _, err := fmt.Fprintln(w, "--\t----\t------------\t--------\t-----------\t-------"); err != nil {
+	if _, err := fmt.Fprintln(w, "--\t----\t------------\t--------\t-----------\t-----------\t-------"); err != nil {
 		return fmt.Errorf("writing separator: %w", err)
 	}
 	for _, g := range games {
@@ -107,8 +115,15 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 		if g.ID == defaultGame {
 			id += " (default)"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, g.Name, g.InstallPath, g.ModPath, g.DeployMode.String(), formatGameSources(g.SourceIDs)); err != nil {
+		convertPaksStr := ""
+		if g.DeployMode == domain.DeployCompile {
+			convertPaksStr = "off"
+			if g.ConvertPaks {
+				convertPaksStr = "on"
+			}
+		}
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			id, g.Name, g.InstallPath, g.ModPath, g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}

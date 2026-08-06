@@ -163,6 +163,10 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 			Status:          installedModStatus(mod),
 			UpdatePolicy:    policyToString(mod.UpdatePolicy),
 			PreviousVersion: mod.PreviousVersion,
+			ConvertPaks:     mod.ConvertPaks,
+			CompileGame:     game.DeployMode == domain.DeployCompile,
+			GameConvertPaks: game.ConvertPaks,
+			HasPakSource:    p.svc.ModHasPakMergeSource(&mod),
 		}
 		// ModItem.LockedVersion is only ever populated alongside Locked
 		// (see that field's own doc comment) - an unlocked ref's Version is
@@ -1603,6 +1607,33 @@ func (p *coreProvider) SetUpdatePolicy(_ context.Context, item ModItem, policy s
 		return ActionOutcome{}, fmt.Errorf("setting update policy for %s: %w", item.Name, err)
 	}
 	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
+}
+
+// SetConvertPaks persists item's #221 pak-to-exmod conversion flag via
+// svc.SetModConvertPaks - a local DB write, no network call, no hooks
+// (mirroring SetUpdatePolicy immediately above). The merged pak isn't
+// regenerated here; the message says so, matching the CLI's `lmm mod
+// convert` wording (cmd/lmm/mod.go's doModConvert) - convergence happens on
+// the next deploy/merge sync. When the ACTIVE game's own convert_paks is
+// false (domain.Game.ConvertPaks), the generic "(deploy to apply)" trailer
+// is misleading - no deploy will convert this mod no matter what the
+// per-mod flag says until the game flag is flipped back on (Copilot round 1
+// on PR #222 fixed the identical wording trap in doModConvert; this mirrors
+// that fix for the TUI's own status line).
+func (p *coreProvider) SetConvertPaks(_ context.Context, item ModItem, enabled bool) (ActionOutcome, error) {
+	game := p.currentGame()
+	if err := p.svc.SetModConvertPaks(item.Source, item.ID, game.ID, p.currentProfile(), enabled); err != nil {
+		return ActionOutcome{}, fmt.Errorf("setting pak conversion for %s: %w", item.Name, err)
+	}
+	state := "on"
+	if !enabled {
+		state = "off"
+	}
+	trailer := "(deploy to apply)"
+	if !game.ConvertPaks {
+		trailer = "(this game's convert_paks: false currently disables conversion for the whole game)"
+	}
+	return ActionOutcome{Message: fmt.Sprintf("%s pak conversion: %s %s", item.Name, state, trailer)}, nil
 }
 
 // SetLock locks item at version (""=the ref's current recorded version) via

@@ -80,6 +80,11 @@ type ActionProvider interface {
 	// network - a local DB write - so it carries no progress callback.
 	SetUpdatePolicy(ctx context.Context, item ModItem, policy string) (ActionOutcome, error)
 
+	// SetConvertPaks toggles #221 pak-to-exmod conversion for item. A local
+	// DB write like SetUpdatePolicy - no network, no hooks; the next merge
+	// sync applies it.
+	SetConvertPaks(ctx context.Context, item ModItem, enabled bool) (ActionOutcome, error)
+
 	// SetLock locks item at version (""= the ref's current recorded version).
 	// Metadata write on the profile ref - never touches the network or deploys;
 	// convergence happens on the next profile apply/switch.
@@ -807,6 +812,27 @@ func (p *prototypeProvider) SetUpdatePolicy(_ context.Context, item ModItem, pol
 	}
 	p.activeMods()[idx].UpdatePolicy = policy
 	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
+}
+
+// SetConvertPaks validates item against the ACTIVE game's installed-mods
+// list (findInstalledIndex - the same existence check SetUpdatePolicy/
+// SetLock perform above) and returns the same base message shape
+// coreProvider.SetConvertPaks does (service_core.go) - always the
+// "(deploy to apply)" trailer, never coreProvider's game-disabled variant,
+// since prototype.Mod carries no ConvertPaks/CompileGame/GameConvertPaks
+// state to persist against or check - #221's flag only matters for
+// compile-mode games, which --prototype mode has no need to model
+// dynamically.
+func (p *prototypeProvider) SetConvertPaks(_ context.Context, item ModItem, enabled bool) (ActionOutcome, error) {
+	idx := p.findInstalledIndex(item.Source, item.ID)
+	if idx < 0 {
+		return ActionOutcome{}, fmt.Errorf("mod not found: %s", item.ID)
+	}
+	state := "on"
+	if !enabled {
+		state = "off"
+	}
+	return ActionOutcome{Message: fmt.Sprintf("%s pak conversion: %s (deploy to apply)", item.Name, state)}, nil
 }
 
 // prototypeAvailableVersions is the fixed version list every

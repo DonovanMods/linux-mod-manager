@@ -76,6 +76,38 @@ repair it: it resyncs the profile's merged pak (recompiling and
 redeploying it if needed), the same repair 'lmm update --all' applies.
 
 .PP
+For a pak-to-exmod-conversion game (#221), verify also surfaces two more
+compile-only states:
+
+.EX
+? NAME - CONVERSION FAILED (reason)  the mod's prebuilt .pak could not
+                                      be converted into the merged pak
+                                      on the last sync; it stays
+                                      raw-deployed instead. Fix the mod
+                                      or run 'lmm mod convert <mod-id> off'
+                                      to silence it.
+? NAME (FILE) - NEEDS REINGEST       the mod's pak was cached before
+                                      conversion support existed (no
+                                      retained source); run 'lmm verify
+                                      --fix' to re-ingest it, or
+                                      re-import the archive for a local
+                                      mod
+.EE
+
+.PP
+CONVERSION FAILED is read straight from the merged pak's stored
+fingerprint (the outcome of the last successful sync) - it is not
+recomputed by verify itself, so it stays accurate even between syncs.
+NEEDS REINGEST only fires for a convert-eligible pak (the game and the mod
+both have conversion enabled) whose cache entry predates #221. --fix
+re-ingests it via the same redownload path MISSING uses; a local/imported
+mod has no source to redownload from and must be re-imported instead. A
+successful --fix re-ingest flips the row to "fixed_needs_reingest" in
+--json (a resolved problem, same convention as "fixed_stale_deployment"
+below) instead of leaving it reading as still-outstanding in the very run
+that just fixed it, and is not counted as a warning.
+
+.PP
 verify also reconciles the game directory's deployed state against
 current reality (#168/#212): a deployed_files record no longer provided
 by any installed mod, or a dangling symlink into the lmm cache with no
@@ -133,22 +165,26 @@ OK case - this is never counted in issues or warnings.
 --json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
 status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
-"version_unverifiable", "stale_compile", "stale_deployment", or
-"fixed_stale_deployment"; note adds detail where there's something extra
-to say - a blocked cache rename, sibling-repair results, a --fix repair or
+"version_unverifiable", "stale_compile", "stale_deployment",
+"fixed_stale_deployment", "conversion_failed", "needs_reingest", or
+"fixed_needs_reingest"; note adds detail where there's something extra to
+say - a blocked cache rename, sibling-repair results, a --fix repair or
 redownload failure's reason, why a successful re-download stored no
 checksum, a file-count-check lookup failure, a --fix refusal on a locked
-record ("locked"), a locked record's pending convergence detail, or a
+record ("locked"), a locked record's pending convergence detail, a
 stale-deployment row's reason (populated on both "stale_deployment" and
-"fixed_stale_deployment") - and is omitted otherwise. issues counts
-MISSING files and VERSION MISMATCH rows (a successful --fix repair of
-either decrements it back out; a locked VERSION MISMATCH stays counted
-since --fix refuses it); warnings counts everything else that isn't OK,
-including "stale_deployment" rows (never "fixed_stale_deployment" - a
-successful --fix removal is a resolved problem, not an outstanding one,
-the same convention as a successful re-download or version repair).
-Lock-pending-convergence rows are informational only and count toward
-neither.
+"fixed_stale_deployment"), a pak's conversion-failure reason
+("conversion_failed"), or why/whether a pak needed re-ingesting
+(populated on both "needs_reingest" and "fixed_needs_reingest") - and is
+omitted otherwise. issues counts MISSING files and VERSION MISMATCH rows
+(a successful --fix repair of either decrements it back out; a locked
+VERSION MISMATCH stays counted since --fix refuses it); warnings counts
+everything else that isn't OK, including "stale_deployment",
+"conversion_failed", and "needs_reingest" rows (never
+"fixed_stale_deployment" or "fixed_needs_reingest" - a successful --fix
+removal/re-ingest is a resolved problem, not an outstanding one, the same
+convention as a successful re-download or version repair). Lock-pending-convergence rows
+are informational only and count toward neither.
 
 .PP
 Examples:

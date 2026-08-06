@@ -63,6 +63,44 @@ func TestDoGameList_ShowsConfiguredGames(t *testing.T) {
 	assert.Contains(t, out, "nexusmods:skyrimspecialedition")
 }
 
+// TestDoGameList_ConvertPaksColumnUsesOnOff is the game_list.go minor fix
+// (final whole-branch review of #221): the CONVERT PAKS column used to print
+// Go's raw %v bool formatting ("true"/"false"), the only surface in the CLI
+// that didn't follow the established on/off convention every other
+// convert-paks display (list.go, mod.go) already uses. A DeployCompile game
+// must render "on"/"off"; a non-DeployCompile game's column stays blank
+// (ConvertPaks is meaningless there).
+func TestDoGameList_ConvertPaksColumnUsesOnOff(t *testing.T) {
+	svc := setupGameAddTest(t)
+	require.NoError(t, svc.AddGame(&domain.Game{
+		ID: "icarus-convert-on", Name: "Icarus On", DeployMode: domain.DeployCompile, ConvertPaks: true,
+	}))
+	require.NoError(t, svc.AddGame(&domain.Game{
+		ID: "icarus-convert-off", Name: "Icarus Off", DeployMode: domain.DeployCompile, ConvertPaks: false,
+	}))
+	require.NoError(t, svc.AddGame(&domain.Game{
+		ID: "skyrim-se", Name: "Skyrim SE", DeployMode: domain.DeployExtract,
+	}))
+
+	out := captureStdout(t, func() error {
+		return doGameList(&cobra.Command{}, svc)
+	})
+
+	onLine := lineContaining(out, "icarus-convert-on")
+	offLine := lineContaining(out, "icarus-convert-off")
+	skyrimLine := lineContaining(out, "skyrim-se")
+
+	assert.NotContains(t, out, "true", "must never print Go's raw bool formatting")
+	assert.NotContains(t, out, "false", "must never print Go's raw bool formatting")
+	assert.Contains(t, onLine, "on")
+	assert.Contains(t, offLine, "off")
+	// A non-DeployCompile game's column is blank - assert by field count
+	// (tabwriter columns) rather than substring, since "extract" itself
+	// contains no false positive here either way.
+	assert.NotContains(t, skyrimLine, "on")
+	assert.NotContains(t, skyrimLine, "off")
+}
+
 // TestDoGameList_MarksDefaultGame pins the "(default)" marker (#205 item 1).
 func TestDoGameList_MarksDefaultGame(t *testing.T) {
 	svc := setupGameAddTest(t)
