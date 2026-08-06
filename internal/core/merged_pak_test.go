@@ -13,11 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled
-// proves enabledExmodzSources returns retained exmodz files in PROFILE
+// TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled
+// proves enabledMergeSources returns retained merge-source files in PROFILE
 // LOAD ORDER (merge-application order), skips disabled mods entirely, and
 // skips a mod's fileIDs that have no retained source (a plain .pak).
-func TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *testing.T) {
+func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
 	require.NoError(t, svc.AddGame(game))
@@ -28,7 +28,7 @@ func TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *te
 		for _, fileID := range fileIDs {
 			// Only an "exmodz"-named fileID gets a retained source, mirroring
 			// the real ingest shape (Task 2/3): a plain .pak fileID is never
-			// retained, so enabledExmodzSources must skip it via the
+			// retained, so enabledMergeSources must skip it via the
 			// os.Stat check, not just by naming convention.
 			if !strings.Contains(fileID, "exmodz") {
 				continue

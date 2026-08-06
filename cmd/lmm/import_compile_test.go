@@ -67,7 +67,7 @@ func setupDoImportCompileTest(t *testing.T) (*core.Service, *domain.Game, *compi
 // source was keyed by the archive's own filename
 // (cache.RetainedSourceName(filename)) but the DB row's FileIDs never
 // included that filename - only a resolved source file ID (with --id) or
-// nothing at all (without --id, exercised here) - so enabledExmodzSources
+// nothing at all (without --id, exercised here) - so enabledMergeSources
 // could never find it and the mod silently never participated in any
 // merge, forever, while `lmm update`/`verify` reported everything healthy
 // (the mod was equally invisible on both sides of the staleness

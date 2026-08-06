@@ -244,7 +244,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 
 	// #197 postsmoke seam-audit fix: a --version edit is a direct
 	// regeneration trigger; a --source/--source-id relink changes the
-	// identity enabledExmodzSources keys off (mod.SourceID + ":" +
+	// identity enabledMergeSources keys off (mod.SourceID + ":" +
 	// mod.ID). Sync unconditionally now that changes is non-empty - cheap
 	// no-op if nothing merge-relevant actually moved.
 	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {

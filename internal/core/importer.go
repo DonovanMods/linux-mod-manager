@@ -33,7 +33,7 @@ type ImportResult struct {
 	// ".exmodz" branch, where it is the archive's own filename (Import has
 	// no other stable identity to retain under; see that branch's own doc
 	// comment). Callers MUST fold this into the InstalledMod/ModReference's
-	// FileIDs (#197 C1 fix): enabledExmodzSources walks FileIDs to find each
+	// FileIDs (#197 C1 fix): enabledMergeSources walks FileIDs to find each
 	// mod's retained source, and a row whose FileIDs never includes this
 	// value is invisible to every future merge - silently, forever, since
 	// it is also excluded from the staleness fingerprint on both sides of

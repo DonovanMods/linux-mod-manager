@@ -19,7 +19,7 @@ import (
 // ReorderProfileMods persists mods as gameID/profileName's new load order
 // (via ProfileManager.ReorderMods) and syncs the merged pak (#197: a
 // load-order change is a documented regeneration trigger, since profile
-// load order IS merge-application order - see enabledExmodzSources). The
+// load order IS merge-application order - see enabledMergeSources). The
 // single seam cmd/lmm and internal/tui both call, replacing their
 // previous direct pm.ReorderMods(...) calls (CLI+TUI parity).
 //

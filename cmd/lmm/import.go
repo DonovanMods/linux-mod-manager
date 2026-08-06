@@ -204,7 +204,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	// RetainedFileID (the archive's own filename - Import's only stable
 	// identity), which is NEVER resolvedFile.ID (a real source file ID, or
 	// nothing at all without --id). Without folding it into FileIDs too,
-	// enabledExmodzSources can never find this mod's retained source - it
+	// enabledMergeSources can never find this mod's retained source - it
 	// silently never participates in any merge, forever, and is invisible
 	// to update/verify since it's excluded from both sides of the
 	// staleness fingerprint as well.
