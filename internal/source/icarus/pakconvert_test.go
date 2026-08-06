@@ -203,28 +203,41 @@ func TestDiffTable(t *testing.T) {
 	})
 
 	t.Run("multiple removed fields produce sorted deterministic warnings", func(t *testing.T) {
+		// Use a custom base with one row having 3 fields to test removal ordering.
+		baseMulti := []byte(`{
+			"RowStruct": "/Script/Icarus.Growth",
+			"Defaults": {"XP": 1},
+			"Rows": [
+				{"Name": "TestRow", "Speed": 5, "Level": 1, "XP": 10}
+			]
+		}`)
+		// Mod removes Speed and XP, keeps only Name and Level.
 		mod := []byte(`{
 			"RowStruct": "/Script/Icarus.Growth",
 			"Defaults": {"XP": 1},
 			"Rows": [
-				{"Name": "RowA", "XP": 10}
+				{"Name": "TestRow", "Level": 1}
 			]
 		}`)
-		items, warnings, err := diffTable("Test/D_Growth.json", base, mod)
+		items, warnings, err := diffTable("Test/D_Growth.json", baseMulti, mod)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		// RowA in base has XP:10, Level:1. Mod has only XP:10 (no change).
-		// Base has Level field missing in mod -> warning. Run multiple times
-		// to ensure deterministic order (would randomize without sort).
+		// TestRow has Level unchanged; Speed and XP removed.
+		// Should emit 0 items (Level unchanged, Speed/XP removed can't be expressed).
+		// Should emit 2 warnings, in sorted order: Speed, then XP.
 		if len(items) != 0 {
-			t.Fatalf("want 0 items (XP unchanged), got %+v", items)
+			t.Fatalf("want 0 items, got %+v", items)
 		}
-		if len(warnings) != 1 {
-			t.Fatalf("want 1 warning (Level removed), got %d: %v", len(warnings), warnings)
+		if len(warnings) != 2 {
+			t.Fatalf("want 2 warnings (Speed, XP removed), got %d: %v", len(warnings), warnings)
 		}
-		if !strings.Contains(warnings[0], "Level") {
-			t.Fatalf("want Level in warning, got: %v", warnings[0])
+		// Verify sorted order: Speed < XP alphabetically.
+		if !strings.Contains(warnings[0], "Speed") {
+			t.Fatalf("want first warning to mention Speed, got: %v", warnings[0])
+		}
+		if !strings.Contains(warnings[1], "XP") {
+			t.Fatalf("want second warning to mention XP, got: %v", warnings[1])
 		}
 	})
 }
