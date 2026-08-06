@@ -326,6 +326,7 @@ func openTestBase(t *testing.T, dir string) *unrealpak.Reader {
 func TestConvertPakToBundleTier2(t *testing.T) {
 	dir := t.TempDir()
 	base := openTestBase(t, dir)
+	baseFold := buildBaseFoldIndex(base)
 	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":99},{"Name":"RowNew","XP":5}]}`
 	pak := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
 		"data/Test/D_Growth.json":    []byte(modTable),
@@ -333,7 +334,7 @@ func TestConvertPakToBundleTier2(t *testing.T) {
 		"readme.txt":                 []byte("ignore me"),
 	})
 
-	bundle, warnings, err := convertPakToBundle(pak, base)
+	bundle, warnings, err := convertPakToBundle(pak, base, baseFold)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -362,13 +363,14 @@ func TestConvertPakToBundleTier2CaseInsensitiveBaseLookup(t *testing.T) {
 	// as "not present in current base" (#221 round-4 fix).
 	dir := t.TempDir()
 	base := openTestBase(t, dir) // base has "Test/D_Growth.json"
+	baseFold := buildBaseFoldIndex(base)
 	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":99}]}`
 	pak := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
 		// Mod pak's table path is cased differently ("TEST" vs base's "Test").
 		"data/TEST/D_Growth.json": []byte(modTable),
 	})
 
-	bundle, warnings, err := convertPakToBundle(pak, base)
+	bundle, warnings, err := convertPakToBundle(pak, base, baseFold)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -399,13 +401,14 @@ func TestConvertPakToBundleTier2AmbiguousBaseCasing(t *testing.T) {
 		t.Fatalf("opening base: %v", err)
 	}
 	t.Cleanup(func() { _ = base.Close() })
+	baseFold := buildBaseFoldIndex(base)
 
 	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":99}]}`
 	pak := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
 		"data/Test/D_Growth.json": []byte(modTable),
 	})
 
-	_, _, err = convertPakToBundle(pak, base)
+	_, _, err = convertPakToBundle(pak, base, baseFold)
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("want ambiguous-base-casing error, got %v", err)
 	}
@@ -414,6 +417,7 @@ func TestConvertPakToBundleTier2AmbiguousBaseCasing(t *testing.T) {
 func TestConvertPakToBundleTier1EmbeddedExmod(t *testing.T) {
 	dir := t.TempDir()
 	base := openTestBase(t, dir)
+	baseFold := buildBaseFoldIndex(base)
 	embedded := `{"Rows":[{"CurrentFile":"Test-D_Growth.json","File_Items":[{"Name":"RowA","XP":42}]},{"CurrentFile":"EndOfMod"}]}`
 	// The pak ALSO carries a stale table snapshot - Tier 1 must ignore it in
 	// favor of the embedded manifest (exact author intent).
@@ -423,7 +427,7 @@ func TestConvertPakToBundleTier1EmbeddedExmod(t *testing.T) {
 		"data/Test/D_Growth.json": []byte(staleTable),
 	})
 
-	bundle, _, err := convertPakToBundle(pak, base)
+	bundle, _, err := convertPakToBundle(pak, base, baseFold)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -439,12 +443,13 @@ func TestConvertPakToBundleTier1EmbeddedExmod(t *testing.T) {
 func TestConvertPakToBundleIrreconcilable(t *testing.T) {
 	dir := t.TempDir()
 	base := openTestBase(t, dir)
+	baseFold := buildBaseFoldIndex(base)
 
 	t.Run("table not in current base", func(t *testing.T) {
 		pak := buildTestPak(t, dir, "gone.pak", "../../../Icarus/Content/", map[string][]byte{
 			"data/Removed/D_Gone.json": []byte(testBaseTable),
 		})
-		_, _, err := convertPakToBundle(pak, base)
+		_, _, err := convertPakToBundle(pak, base, baseFold)
 		if err == nil || !strings.Contains(err.Error(), "not present in current base") {
 			t.Fatalf("want table-not-in-base error, got %v", err)
 		}
@@ -454,7 +459,7 @@ func TestConvertPakToBundleIrreconcilable(t *testing.T) {
 		pak := buildTestPak(t, dir, "bare.pak", "../../../Content/", map[string][]byte{
 			"D_ProcessorRecipes.json": []byte(testBaseTable),
 		})
-		_, _, err := convertPakToBundle(pak, base)
+		_, _, err := convertPakToBundle(pak, base, baseFold)
 		if err == nil || !strings.Contains(err.Error(), "unresolvable") {
 			t.Fatalf("want unresolvable-layout error, got %v", err)
 		}
@@ -465,7 +470,7 @@ func TestConvertPakToBundleIrreconcilable(t *testing.T) {
 			"a.EXMOD": []byte(`{"Rows":[]}`),
 			"b.EXMOD": []byte(`{"Rows":[]}`),
 		})
-		_, _, err := convertPakToBundle(pak, base)
+		_, _, err := convertPakToBundle(pak, base, baseFold)
 		if err == nil || !strings.Contains(err.Error(), "multiple embedded") {
 			t.Fatalf("want multiple-embedded error, got %v", err)
 		}

@@ -242,7 +242,10 @@ func diffTable(tableRef string, baseJSON, modJSON []byte) (items []ExmodFileItem
 // A non-nil error means the WHOLE mod is irreconcilable (design §4): the
 // caller must skip it (it falls back to raw deploy) - never partially
 // convert. Warnings are non-fatal observations (inexpressible details).
-func convertPakToBundle(pakPath string, base *unrealpak.Reader) (*ExmodzBundle, []string, error) {
+//
+// baseFold is the pre-built fold index from buildBaseFoldIndex(base), passed
+// in to avoid rebuilding it for every mod pak in a merge.
+func convertPakToBundle(pakPath string, base *unrealpak.Reader, baseFold map[string][]string) (*ExmodzBundle, []string, error) {
 	mod, err := unrealpak.Open(pakPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("icarus: opening pak %s: %w", pakPath, err)
@@ -309,7 +312,6 @@ func convertPakToBundle(pakPath string, base *unrealpak.Reader) (*ExmodzBundle, 
 
 	// Tier 2: diff-derive. Deterministic row order: sort snapshots by path.
 	sort.Slice(tables, func(i, j int) bool { return tables[i].rel < tables[j].rel })
-	baseFold := buildBaseFoldIndex(base)
 	diff := &ExmodDiff{}
 	for _, snap := range tables {
 		resolved, rerr := resolveBaseTablePath(baseFold, snap.rel)

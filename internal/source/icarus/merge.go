@@ -74,13 +74,17 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 	}
 	defer base.Close() //nolint:errcheck
 
+	// Build the fold index once per merge; used by convertPakToBundle for
+	// case-insensitive base table path resolution in Tier 2 conversions.
+	baseFold := buildBaseFoldIndex(base)
+
 	tableState := make(map[string][]byte) // mountPath -> current (possibly already patched) JSON bytes
 	assets := make(map[string][]byte)     // final asset path -> data (last source wins)
 	assetOwner := make(map[string]string) // asset path -> ModRef that last set it
 
 	for _, src := range sources {
 		if src.Kind == source.MergeSourcePak {
-			bundle, convWarnings, cerr := convertPakToBundle(src.SourcePath, base)
+			bundle, convWarnings, cerr := convertPakToBundle(src.SourcePath, base, baseFold)
 			if cerr != nil {
 				failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: cerr.Error()})
 				warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %v - deploying raw", src.ModRef, cerr))
