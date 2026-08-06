@@ -214,6 +214,43 @@ func TestModShowIncludesConvert(t *testing.T) {
 	assert.Contains(t, out, "off")
 }
 
+// TestRunModConvert_InvalidArgument guards that runModConvert rejects
+// invalid on|off arguments with a clear error message before any service
+// call is made (matching runModLock/runModSetUpdate's validation pattern).
+func TestRunModConvert_InvalidArgument(t *testing.T) {
+	svc, game, _ := setupDoModConvertTest(t)
+	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
+
+	// Call runModConvert with invalid argument through the cobra command
+	// (simulating `lmm mod convert a sideways`)
+	err := runModConvert(nil, []string{"a", "sideways"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "on|off")
+	assert.Contains(t, err.Error(), "sideways")
+}
+
+// TestListShowsConvert_NonCompileGame_OmitsConvertPaks guards the omitempty
+// contract: convert_paks field must be ABSENT (not present as null) from
+// list --json output for non-compile games, consistent with the "only present
+// for merge-compile games" design.
+func TestListShowsConvert_NonCompileGame_OmitsConvertPaks(t *testing.T) {
+	svc, game, _ := setupDoModConvertTest(t)
+	game.DeployMode = domain.DeployCopy // Non-compile
+	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
+
+	out := captureStdout(t, func() error {
+		oldJSON := jsonOutput
+		jsonOutput = true
+		defer func() { jsonOutput = oldJSON }()
+		return doList(nil, svc, game)
+	})
+
+	// convert_paks field must not appear at all (omitempty nil contract)
+	assert.NotContains(t, out, "convert_paks",
+		"non-compile game must omit convert_paks from JSON entirely (omitempty)")
+}
+
 // TestModConvertCmd_Structure pins the cobra wiring: convert accepts exactly
 // 2 positional args (mod-id, on|off).
 func TestModConvertCmd_Structure(t *testing.T) {
