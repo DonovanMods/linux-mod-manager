@@ -185,10 +185,30 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	require.NotNil(t, found, "expected a row for the legacy pak mod: %+v", result.Files)
 	assert.Equal(t, "needs_reingest", found.Status)
 	assert.Contains(t, found.Note, "verify --fix")
+	firstRunWarnings := result.Warnings
 
 	verifyFix = true
 	t.Cleanup(func() { verifyFix = false })
-	_ = captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	fixOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+
+	// The --fix run's OWN JSON output must reflect the successful re-ingest
+	// immediately, in the SAME run - every other --fix success path in this
+	// file (MISSING, NO CHECKSUM, stale_deployment -> fixed_stale_deployment)
+	// rewrites status/note and backs the row out of the warnings count
+	// instead of leaving it reading as still-outstanding; needs_reingest
+	// must follow the same convention.
+	var fixResult verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(fixOut), &fixResult))
+	var fixedRow *verifyFileJSON
+	for i := range fixResult.Files {
+		if fixResult.Files[i].ModID == modID {
+			fixedRow = &fixResult.Files[i]
+		}
+	}
+	require.NotNil(t, fixedRow, "expected a row for the legacy pak mod in the --fix run: %+v", fixResult.Files)
+	assert.Equal(t, "fixed_needs_reingest", fixedRow.Status, "a successful same-run re-ingest must rewrite the row to a fixed-state status")
+	assert.NotContains(t, fixedRow.Note, "run 'lmm verify --fix'", "the note must reflect success, not still tell the user to run the fix that just ran")
+	assert.Equal(t, firstRunWarnings-1, fixResult.Warnings, "a successfully re-ingested row must be backed out of the warnings count, like every other --fix success path")
 
 	gameCache := svc.GetGameCache(game)
 	retainedPath := gameCache.GetFilePath(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID))

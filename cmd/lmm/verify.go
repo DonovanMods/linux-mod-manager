@@ -34,8 +34,8 @@ type verifyFileJSON struct {
 	ModID   string `json:"mod_id"`
 	ModName string `json:"mod_name"`
 	FileID  string `json:"file_id"`
-	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile, stale_deployment, fixed_stale_deployment, conversion_failed, needs_reingest
-	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, a file-count-check lookup failure, a stale-deployment reason ("no longer provided by <source>/<mod>" | "dangling link into lmm cache"), a convergence per-item error (e.g. an unsafe deployed-file record skipped), a pak-conversion failure reason (conversion_failed), or why a pak needs re-ingesting (needs_reingest) - omitted when there's nothing extra to add
+	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile, stale_deployment, fixed_stale_deployment, conversion_failed, needs_reingest, fixed_needs_reingest
+	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, a file-count-check lookup failure, a stale-deployment reason ("no longer provided by <source>/<mod>" | "dangling link into lmm cache"), a convergence per-item error (e.g. an unsafe deployed-file record skipped), a pak-conversion failure reason (conversion_failed), or why/whether a pak needed re-ingesting (needs_reingest / fixed_needs_reingest) - omitted when there's nothing extra to add
 }
 
 var verifyCmd = &cobra.Command{
@@ -116,7 +116,11 @@ recomputed by verify itself, so it stays accurate even between syncs.
 NEEDS REINGEST only fires for a convert-eligible pak (the game and the mod
 both have conversion enabled) whose cache entry predates #221. --fix
 re-ingests it via the same redownload path MISSING uses; a local/imported
-mod has no source to redownload from and must be re-imported instead.
+mod has no source to redownload from and must be re-imported instead. A
+successful --fix re-ingest flips the row to "fixed_needs_reingest" in
+--json (a resolved problem, same convention as "fixed_stale_deployment"
+below) instead of leaving it reading as still-outstanding in the very run
+that just fixed it, and is not counted as a warning.
 
 verify also reconciles the game directory's deployed state against
 current reality (#168/#212): a deployed_files record no longer provided
@@ -172,22 +176,24 @@ OK case - this is never counted in issues or warnings.
 status, note}], issues, warnings}; status is one of "ok", "missing",
 "no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
 "version_unverifiable", "stale_compile", "stale_deployment",
-"fixed_stale_deployment", "conversion_failed", or "needs_reingest"; note
-adds detail where there's something extra to say - a blocked cache
-rename, sibling-repair results, a --fix repair or redownload failure's
-reason, why a successful re-download stored no checksum, a file-count-
-check lookup failure, a --fix refusal on a locked record ("locked"), a
-locked record's pending convergence detail, a stale-deployment row's
-reason (populated on both "stale_deployment" and "fixed_stale_deployment"),
-a pak's conversion-failure reason ("conversion_failed"), or why a pak
-needs re-ingesting ("needs_reingest") - and is omitted otherwise. issues
-counts MISSING files and VERSION MISMATCH rows (a successful --fix repair
-of either decrements it back out; a locked VERSION MISMATCH stays counted
-since --fix refuses it); warnings counts everything else that isn't OK,
-including "stale_deployment", "conversion_failed", and "needs_reingest"
-rows (never "fixed_stale_deployment" - a successful --fix removal is a
-resolved problem, not an outstanding one, the same convention as a
-successful re-download or version repair). Lock-pending-convergence rows
+"fixed_stale_deployment", "conversion_failed", "needs_reingest", or
+"fixed_needs_reingest"; note adds detail where there's something extra to
+say - a blocked cache rename, sibling-repair results, a --fix repair or
+redownload failure's reason, why a successful re-download stored no
+checksum, a file-count-check lookup failure, a --fix refusal on a locked
+record ("locked"), a locked record's pending convergence detail, a
+stale-deployment row's reason (populated on both "stale_deployment" and
+"fixed_stale_deployment"), a pak's conversion-failure reason
+("conversion_failed"), or why/whether a pak needed re-ingesting
+(populated on both "needs_reingest" and "fixed_needs_reingest") - and is
+omitted otherwise. issues counts MISSING files and VERSION MISMATCH rows
+(a successful --fix repair of either decrements it back out; a locked
+VERSION MISMATCH stays counted since --fix refuses it); warnings counts
+everything else that isn't OK, including "stale_deployment",
+"conversion_failed", and "needs_reingest" rows (never
+"fixed_stale_deployment" or "fixed_needs_reingest" - a successful --fix
+removal/re-ingest is a resolved problem, not an outstanding one, the same
+convention as a successful re-download or version repair). Lock-pending-convergence rows
 are informational only and count toward neither.
 
 Examples:
@@ -685,6 +691,20 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 					} else {
 						fmt.Printf("  Re-ingest failed: %v\n", rerr)
 					}
+				} else {
+					// Same convention as MISSING/NO CHECKSUM's own --fix
+					// success path just above, and stale_deployment's
+					// fixed_stale_deployment: a resolved problem is not left
+					// reading as an outstanding one in the SAME run that just
+					// fixed it - rewrite the row to a fixed-state status/note
+					// and back the count out.
+					if jsonOutput {
+						jsonFiles[len(jsonFiles)-1].Status = "fixed_needs_reingest"
+						jsonFiles[len(jsonFiles)-1].Note = "re-ingested with retained source for pak conversion"
+					} else {
+						fmt.Printf("  %s\n", colorGreen("Re-ingested for pak conversion"))
+					}
+					warnings--
 				}
 			}
 			continue
