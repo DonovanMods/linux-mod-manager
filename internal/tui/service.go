@@ -109,9 +109,10 @@ type ModItem struct {
 	LockedVersion string
 	// ConvertPaks reports the #221 per-mod pak-to-exmod conversion flag -
 	// populated by coreProvider's Overview mapping (domain.InstalledMod.
-	// ConvertPaks) and prototypeProvider's canned Mod.ConvertPaks field,
-	// mirroring UpdatePolicy/Locked's own "only Overview populates it"
-	// convention above. Meaningful only when CompileGame is true.
+	// ConvertPaks) and left at the zero value in prototypeProvider (prototype.
+	// Mod carries no ConvertPaks state), mirroring UpdatePolicy/Locked's own
+	// "only Overview populates it" convention above. Meaningful only when
+	// CompileGame is true.
 	ConvertPaks bool
 	// CompileGame is true when the active game's DeployMode is
 	// domain.DeployCompile - gates the "m" toggle (mutations.go's
