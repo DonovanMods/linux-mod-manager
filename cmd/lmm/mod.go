@@ -565,7 +565,7 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 
 	if len(files) == 0 {
 		gameCache := svc.GetGameCache(game)
-		if game.DeployMode == domain.DeployCompile && hasRetainedSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
+		if game.DeployMode == domain.DeployCompile && core.HasRetainedCompileSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
 			fmt.Println("  No files of its own - this mod participates in the profile's merged pak.")
 			fmt.Printf("  (See zzz_LMM_Merged_P.pak; run `lmm verify` to check the merged pak is up to date)\n")
 			return nil
