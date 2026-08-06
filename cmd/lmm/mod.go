@@ -796,9 +796,17 @@ func doModConvert(service *core.Service, game *domain.Game, modID string, conver
 		state = "off"
 	}
 	fmt.Printf("%s %s pak conversion: %s\n", colorGreen("✓"), mod.Name, state)
-	if game.DeployMode != domain.DeployCompile {
+	switch {
+	case game.DeployMode != domain.DeployCompile:
 		fmt.Println("  note: this game is not merge-compile (deploy_mode: compile); the flag has no effect until it is")
-	} else {
+	case !game.ConvertPaks:
+		// Copilot round 1 (PR #222): the generic "run 'lmm deploy'" hint is
+		// misleading here - the game-level convert_paks: false in
+		// games.yaml disables conversion for every mod, so no deploy will
+		// convert this one no matter what the per-mod flag says until the
+		// game flag is flipped back on.
+		fmt.Println("  note: per-mod setting saved, but this game's convert_paks: false in games.yaml currently disables pak conversion for the whole game")
+	default:
 		fmt.Println("  run 'lmm deploy' to re-sync the merged pak")
 	}
 	return nil

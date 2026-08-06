@@ -472,7 +472,18 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 				if entry.Converted {
 					continue
 				}
+				// Copilot round 1 (PR #222): the fingerprint entry can
+				// outlive the mod it names - if the mod was since
+				// uninstalled, modNames has no entry and name would be
+				// blank (blank human output, JSON mod_name:""). Fall back
+				// to the raw entry.ModID, same as the "Unknown mod <id>"
+				// skip line above does when a checksum row's mod can't be
+				// found (line 660) - a stable, non-empty identifier beats
+				// silence either way.
 				name := modNames[entry.SourceID+":"+entry.ModID]
+				if name == "" {
+					name = entry.ModID
+				}
 				if jsonOutput {
 					jsonFiles = append(jsonFiles, verifyFileJSON{ModID: entry.ModID, ModName: name, Status: "conversion_failed", Note: entry.FailReason})
 				} else {

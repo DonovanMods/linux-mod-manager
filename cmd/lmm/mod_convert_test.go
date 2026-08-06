@@ -127,6 +127,31 @@ func TestModConvertCommand_NonCompileGame(t *testing.T) {
 	assert.False(t, installed.ConvertPaks)
 }
 
+// TestModConvertCommand_ConvertDisabledGame guards the Copilot round 1 fix
+// (PR #222): a DeployCompile game with the GAME-level ConvertPaks flag off
+// must not show the generic "run 'lmm deploy'" hint (misleading - no
+// deploy converts anything while the game flag is off), but a specific note
+// pointing at games.yaml's convert_paks: false instead. Distinct from
+// TestModConvertCommand_NonCompileGame, which covers non-compile games.
+func TestModConvertCommand_ConvertDisabledGame(t *testing.T) {
+	svc, game, _ := setupDoModConvertTest(t)
+	game.ConvertPaks = false // game-level flag off, but still DeployCompile
+	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
+
+	out := captureStdout(t, func() error {
+		return doModConvert(svc, game, "a", true)
+	})
+	assert.Contains(t, out, "conversion: on")
+	assert.Contains(t, out, "note:", "convert-disabled compile game must explain the game-level flag")
+	assert.Contains(t, out, "convert_paks: false", "note must name the game-level setting that disables conversion")
+	assert.NotContains(t, out, "lmm deploy", "convert-disabled game must not show the generic deploy hint")
+
+	// Verify the per-mod flag still persists despite the game-level gate.
+	installed, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	require.NoError(t, err)
+	assert.True(t, installed.ConvertPaks)
+}
+
 // TestModConvertCommand_NotInstalled guards that converting a mod that
 // isn't installed fails with "mod not found" idiom, consistent with every
 // other mod subcommand.

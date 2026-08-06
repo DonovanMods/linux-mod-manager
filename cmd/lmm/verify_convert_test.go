@@ -149,6 +149,61 @@ func TestVerifyReportsConversionFailed(t *testing.T) {
 	assert.Contains(t, textOut, "deploying raw")
 }
 
+// TestVerifyReportsConversionFailed_UninstalledMod guards the Copilot round
+// 1 fix (PR #222): a merged-pak fingerprint entry can outlive the mod it
+// names - the mod may since have been uninstalled while the merged pak
+// (and its recorded conversion failure) is still in place - in which case
+// verify's modNames lookup misses and must fall back to entry.ModID instead
+// of reporting a blank name (blank human line, JSON mod_name:"").
+func TestVerifyReportsConversionFailed_UninstalledMod(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	game.ConvertPaks = true
+
+	const modID, version, fileID = "gone-pak-mod", "1.0", "modfile.pak"
+	seedEnabledPakModCLI(t, svc, game, "fake-compiler", modID, version, fileID, []byte("pak-bytes"))
+
+	outcome := &pakOutcomeCompilerSource{
+		compilerInstallSource: compiler,
+		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
+	}
+	svc.RegisterSource(outcome)
+
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	// Uninstall the mod - only the installed-mod row goes away; the merged
+	// pak's stored fingerprint (and the conversion-failure entry on it) is
+	// profile-scoped and untouched, exactly the state a fingerprint entry
+	// for a since-removed mod is in.
+	require.NoError(t, svc.DeleteInstalledMod("fake-compiler", modID, game.ID, "default"))
+
+	verifyProfile = "default"
+	jsonOutput = true
+	t.Cleanup(func() { verifyProfile = ""; jsonOutput = false })
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+
+	var found *verifyFileJSON
+	for i := range result.Files {
+		if result.Files[i].Status == "conversion_failed" {
+			found = &result.Files[i]
+		}
+	}
+	require.NotNil(t, found, "expected a conversion_failed row: %+v", result.Files)
+	assert.Equal(t, modID, found.ModID)
+	assert.Equal(t, modID, found.ModName, "ModName must fall back to the raw ModID when the mod is no longer installed")
+
+	jsonOutput = false
+	textOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	assert.Contains(t, textOut, modID+" - CONVERSION FAILED", "text output must show the fallback name, not a blank")
+}
+
 // TestVerifyNeedsReingest_ReportsThenFixes proves the #221 lazy-migration
 // contract: a convert-eligible pak whose cache entry predates pak retention
 // (deployable pak present, no retained source) is reported as

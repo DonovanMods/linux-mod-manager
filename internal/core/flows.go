@@ -4195,6 +4195,12 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		result.FilesDeployed += downloadResult.FilesExtracted
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
 
+		// Copilot round 1 (PR #222): compiledFiles collects BOTH kinds -
+		// .exmodz files and convert-eligible .pak files alike - so the
+		// InstallCompiling/"Retaining ... for merge" messaging below (and
+		// in cmd/lmm/install.go's InstallCompiling case) fires for a
+		// convert-eligible raw pak exactly as it does for a native
+		// .exmodz; len(compiledFiles) > 0 doesn't care which kind matched.
 		if game.DeployMode == domain.DeployCompile && (isExmodzFile(file.FileName) || isConvertEligiblePakFile(game, file.FileName)) {
 			compiledFiles = append(compiledFiles, file)
 		}
