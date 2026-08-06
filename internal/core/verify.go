@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
 // VerifyTier selects how much of the verify engine's work runs: VerifyLocal
@@ -80,6 +81,7 @@ type VerifyEvent struct {
 // result via finding/resolveLast so there's a single place that keeps
 // Findings and the emitted events in sync.
 type verifyRun struct {
+	ctx     context.Context
 	svc     *Service
 	game    *domain.Game
 	profile string
@@ -110,20 +112,19 @@ func (r *verifyRun) resolveLast(status, note string) {
 // incremental progress via progress (nil-safe: pass nil to skip progress
 // events entirely).
 //
-// #224 Task 2 implements only the local per-file walk: the file-count
-// pre-pass and the per-file loop's non-fix, non-reingest branches, ported
-// identically from cmd/lmm/verify.go's doVerify (counting rules included).
-// The CLI does not call this yet - later tasks extend verifyRun with the
-// remaining phases (version-record check, merged-pak staleness, pak
-// reingest, --fix repair, deploy convergence, Full-tier network checks)
-// and swap the CLI onto it.
+// #224 Task 3 adds the merged-pak staleness/conversion-outcome checks, the
+// Full-tier per-mod version-record pass (network-touching, gated on
+// opts.Tier == VerifyFull), and the per-file loop's needs_reingest branch -
+// every READ-side status the engine reports except --fix's repairs and the
+// deploy-convergence sweep (both later tasks). The CLI does not call this
+// yet - it still runs its own doVerify; a later task swaps it onto Verify.
 func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, progress func(VerifyEvent)) (*VerifyResult, error) {
 	if progress == nil {
 		progress = func(VerifyEvent) {}
 	}
 
 	result := &VerifyResult{}
-	r := &verifyRun{svc: s, game: game, profile: profile, opts: opts, emit: progress, result: result}
+	r := &verifyRun{ctx: ctx, svc: s, game: game, profile: profile, opts: opts, emit: progress, result: result}
 
 	files, err := s.GetFilesWithChecksums(game.ID, profile)
 	if err != nil {
@@ -143,6 +144,29 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 	}
 
 	r.fileCountPrePass(files)
+
+	// #97 (Task 8 of the original CLI): load the profile once, up front, so
+	// the version pass below can look up each ref's lock state
+	// (Profile.FindRef) without reloading the profile per mod. A missing/
+	// unreadable profile is treated as unlocked - FindRef's nil-receiver-
+	// safe behavior on a nil *domain.Profile does the right thing here
+	// without an extra guard.
+	prof, _ := config.LoadProfile(s.ConfigDir(), game.ID, profile)
+
+	installedMods, err := s.GetInstalledMods(game.ID, profile)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mods: %w", err)
+	}
+
+	r.mergedPakStalenessPass()
+	r.conversionOutcomesPass(installedMods)
+
+	if err := r.versionPass(installedMods, prof); err != nil {
+		// Cancelled mid-pass: return the partial result already
+		// accumulated, same contract Task 3's brief specifies.
+		return result, err
+	}
+
 	r.perFileWalk(files)
 
 	return result, nil
@@ -245,7 +269,33 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 			continue
 		}
 
-		// #221 lazy migration (PakNeedsReingest) lands in Task 3.
+		// #221 lazy migration: a convert-eligible pak whose cache entry
+		// predates pak retention (deployable pak present, no retained
+		// source) needs re-ingesting before it can ever participate in a
+		// merge - PakNeedsReingest is the one place that kind/retained
+		// detection lives (verify must not reimplement it). Ported from
+		// cmd/lmm/verify.go's doVerify (originally lines 696-753, minus the
+		// --fix re-ingest block - Task 5).
+		need, nerr := r.svc.PakNeedsReingest(r.game, mod, f.FileID)
+		if nerr != nil {
+			// A real check failure (a Stat/ListFiles error, not "nothing
+			// ingested yet") - not counted as a warning and not fatal to
+			// the rest of this row's checks below, but not silently
+			// dropped either: surfaced as a verbose diagnostic event, same
+			// as every other soft diagnostic in this codebase. The exact
+			// text (sans the CLI's own "  (verbose) " prefix) is a frozen
+			// contract - the CLI renderer depends on it verbatim.
+			r.emit(VerifyEvent{Kind: VerifyEvVerbose, Detail: fmt.Sprintf("could not check pak-reingest status for %s (%s): %v", mod.Name, f.FileID, nerr)})
+		} else if need {
+			note := "pak predates conversion support - run 'lmm verify --fix' to re-ingest"
+			if mod.SourceID == domain.SourceLocal {
+				note = "re-import the archive to enable conversion"
+			}
+			r.result.Warnings++
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "needs_reingest", Note: note}, VerifyEvent{})
+			// --fix's re-ingest repair (fixed_needs_reingest) lands in Task 5.
+			continue
+		}
 
 		cacheExists := gameCache.Exists(r.game.ID, mod.SourceID, mod.ID, mod.Version)
 		if !cacheExists {
@@ -263,4 +313,165 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 		// Cache exists and checksum stored - consider OK.
 		r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{})
 	}
+}
+
+// mergedPakStalenessPass ports cmd/lmm/verify.go's merged-pak staleness
+// check verbatim (originally doVerify lines 449-474): for a DeployCompile
+// game, compares the profile's merged pak's recorded fingerprint against
+// the game's CURRENT enabled-mod set/order/versions/base pak. Entirely
+// local/offline - runs regardless of opts.Tier. Independent of ModFilter:
+// the merged pak is profile-scoped, not per-mod, so a single-mod verify
+// still checks it.
+func (r *verifyRun) mergedPakStalenessPass() {
+	if r.game.DeployMode != domain.DeployCompile {
+		return
+	}
+
+	staleUpd, serr := r.svc.CheckMergedPakStaleness(r.game, r.profile)
+	if serr != nil {
+		r.result.Warnings++
+		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("could not check merged pak staleness: %v", serr)}, VerifyEvent{})
+	}
+	r.result.Checked++
+	if staleUpd != nil {
+		r.result.Warnings++
+		r.finding(VerifyFinding{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile", Note: staleUpd.RecompileReason}, VerifyEvent{})
+	}
+}
+
+// conversionOutcomesPass ports cmd/lmm/verify.go's per-mod pak-conversion
+// outcome report verbatim (originally doVerify lines 484-514): reports
+// every non-Converted entry recorded on the merged pak's own fingerprint
+// (MergedPakOutcomes) - a mod whose pak failed to convert stays
+// raw-deployed, and the user needs to know why. Independent of the
+// staleness check above: a merge can be perfectly up to date while still
+// recording a PRIOR conversion failure for one of its contributing mods. A
+// warning, not an issue - deploying raw is a documented, working fallback,
+// not corruption.
+func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) {
+	if r.game.DeployMode != domain.DeployCompile {
+		return
+	}
+
+	modNames := make(map[string]string, len(installedMods))
+	for _, m := range installedMods {
+		modNames[m.SourceID+":"+m.ID] = m.Name
+	}
+
+	outcomes, ok := r.svc.MergedPakOutcomes(r.game, r.profile)
+	if !ok {
+		return
+	}
+	for _, entry := range outcomes {
+		if entry.Converted {
+			continue
+		}
+		// The fingerprint entry can outlive the mod it names - if the mod
+		// was since uninstalled, modNames has no entry and name would be
+		// blank. Fall back to the raw entry.ModID, same as the
+		// unknown-mod skip in perFileWalk does when a checksum row's mod
+		// can't be found - a stable, non-empty identifier beats silence
+		// either way.
+		name := modNames[entry.SourceID+":"+entry.ModID]
+		if name == "" {
+			name = entry.ModID
+		}
+		r.result.Warnings++
+		r.finding(VerifyFinding{ModID: entry.ModID, ModName: name, Status: "conversion_failed", Note: entry.FailReason}, VerifyEvent{})
+	}
+}
+
+// versionPass ports cmd/lmm/verify.go's per-mod version-record check
+// verbatim (originally doVerify lines 516-676, minus the --fix repair
+// branch - Task 5): for each source-backed installed mod with recorded
+// FileIDs, compares the recorded Version against what the source currently
+// reports for those FileIDs (issue #94's detection half). Gated on
+// opts.Tier == VerifyFull - this is the engine's one network-touching
+// phase, and the only one skipped entirely under VerifyLocal.
+//
+// Emits VerifyEvProgress at the top of every mod's iteration (a new event
+// the CLI ignores and the TUI's status line consumes) and honors ctx
+// cancellation between mods: on cancellation the loop stops and returns
+// ctx.Err(), leaving the caller (Verify) to return the partial result
+// already accumulated rather than a phantom "everything checked out"
+// result.
+func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domain.Profile) error {
+	if r.opts.Tier != VerifyFull {
+		return nil
+	}
+
+	for i := range installedMods {
+		mod := &installedMods[i]
+		r.emit(VerifyEvent{Kind: VerifyEvProgress, Index: i + 1, Total: len(installedMods), ModName: mod.Name})
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+
+		if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
+			continue
+		}
+		// Nothing to check against: local imports and manual downloads have
+		// no source to query, and a mod with no recorded file IDs predates
+		// even the buggy stamping this check exists to catch.
+		if mod.SourceID == domain.SourceLocal || mod.ManualDownload || len(mod.FileIDs) == 0 {
+			continue
+		}
+
+		ref := prof.FindRef(mod.SourceID, mod.ID)
+
+		sourceFiles, err := r.svc.GetModFiles(r.ctx, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
+		if err != nil {
+			r.result.Warnings++
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "skipped", Note: fmt.Sprintf("could not check version: %v", err)}, VerifyEvent{})
+			continue
+		}
+
+		var matched []*domain.DownloadableFile
+		for _, id := range mod.FileIDs {
+			for j := range sourceFiles {
+				if sourceFiles[j].ID == id {
+					matched = append(matched, &sourceFiles[j])
+					break
+				}
+			}
+		}
+
+		if len(matched) == 0 {
+			r.result.Warnings++
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_unverifiable"}, VerifyEvent{})
+			continue
+		}
+
+		// When every matched file reports an empty Version (custom sources
+		// whose mappings carry no per-file versions), the fallback inside
+		// EffectiveInstalledVersion returns mod.Version and this comparison
+		// passes vacuously - a deliberate quiet OK, not a missed
+		// VERSION UNVERIFIABLE: install-time stamping applies the same
+		// fallback, so a per-file version mis-stamp cannot exist for
+		// versionless sources.
+		effective := domain.EffectiveInstalledVersion(mod.Version, matched)
+		if effective != mod.Version {
+			recorded := mod.Version
+			r.result.Issues++
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch"}, VerifyEvent{Recorded: recorded, Effective: effective})
+			// --fix's repair (including the locked-ref refusal) lands in
+			// Task 5.
+			continue
+		}
+
+		// Recorded version matches what the source reports - OK, but not
+		// reported as its own row (same quiet-ok convention as the file
+		// loop) - UNLESS the mod is locked and the DB version hasn't yet
+		// converged to the lock's target (ref.Version): that's expected
+		// drift pending a `profile apply`, not corruption, so it gets its
+		// own informational note instead of pure silence. Never counted in
+		// issues or warnings - it isn't a problem.
+		if ref != nil && ref.Locked && ref.Version != mod.Version {
+			convergenceNote := fmt.Sprintf("lock pending convergence (installed v%s, locked v%s)", mod.Version, ref.Version)
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "ok", Note: convergenceNote}, VerifyEvent{})
+		}
+		r.result.Checked++
+	}
+
+	return nil
 }
