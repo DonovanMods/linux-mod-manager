@@ -94,3 +94,111 @@ func TestCurrentFileFor(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+func TestDiffTable(t *testing.T) {
+	base := []byte(`{
+		"RowStruct": "/Script/Icarus.Growth",
+		"Defaults": {"XP": 1},
+		"Rows": [
+			{"Name": "RowA", "XP": 10, "Level": 1},
+			{"Name": "RowB", "XP": 20, "Level": 2},
+			{"Name": "BaseOnly", "XP": 30}
+		]
+	}`)
+
+	t.Run("changed field emits whole field, new row emits all fields, base-only ignored", func(t *testing.T) {
+		mod := []byte(`{
+			"RowStruct": "/Script/Icarus.Growth",
+			"Defaults": {"XP": 1},
+			"Rows": [
+				{"Name": "RowA", "XP": 99, "Level": 1},
+				{"Name": "NewRow", "XP": 5, "Nested": {"Value": "x"}}
+			]
+		}`)
+		items, warnings, err := diffTable("Test/D_Growth.json", base, mod)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(warnings) != 0 {
+			t.Fatalf("unexpected warnings: %v", warnings)
+		}
+		if len(items) != 2 {
+			t.Fatalf("want 2 items, got %d: %+v", len(items), items)
+		}
+		if items[0].Name != "RowA" || len(items[0].Fields) != 1 || items[0].Fields["XP"] != float64(99) {
+			t.Fatalf("RowA item wrong: %+v", items[0])
+		}
+		if items[1].Name != "NewRow" || len(items[1].Fields) != 2 {
+			t.Fatalf("NewRow item wrong: %+v", items[1])
+		}
+	})
+
+	t.Run("identical row emits nothing", func(t *testing.T) {
+		mod := []byte(`{
+			"RowStruct": "/Script/Icarus.Growth",
+			"Defaults": {"XP": 1},
+			"Rows": [{"Name": "RowA", "XP": 10, "Level": 1}]
+		}`)
+		items, warnings, err := diffTable("Test/D_Growth.json", base, mod)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(items) != 0 || len(warnings) != 0 {
+			t.Fatalf("want no items/warnings, got %+v / %v", items, warnings)
+		}
+	})
+
+	t.Run("rowstruct mismatch is a hard error", func(t *testing.T) {
+		mod := []byte(`{
+			"RowStruct": "/Script/Icarus.SomethingElse",
+			"Defaults": {"XP": 1},
+			"Rows": [{"Name": "RowA", "XP": 10, "Level": 1}]
+		}`)
+		_, _, err := diffTable("Test/D_Growth.json", base, mod)
+		if err == nil || !strings.Contains(err.Error(), "RowStruct") {
+			t.Fatalf("want RowStruct error, got %v", err)
+		}
+	})
+
+	t.Run("defaults and field-removed and duplicate are warnings", func(t *testing.T) {
+		mod := []byte(`{
+			"RowStruct": "/Script/Icarus.Growth",
+			"Defaults": {"XP": 2},
+			"Rows": [
+				{"Name": "RowA", "XP": 10},
+				{"Name": "RowA", "XP": 11, "Level": 1}
+			]
+		}`)
+		items, warnings, err := diffTable("Test/D_Growth.json", base, mod)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// RowA first occurrence: XP unchanged (10), Level field REMOVED vs
+		// base -> warning, no item (nothing changed that EXMOD can express).
+		if len(items) != 0 {
+			t.Fatalf("want 0 items, got %+v", items)
+		}
+		var haveDefaults, haveRemoved, haveDup bool
+		for _, w := range warnings {
+			if strings.Contains(w, "Defaults") {
+				haveDefaults = true
+			}
+			if strings.Contains(w, "cannot remove fields") {
+				haveRemoved = true
+			}
+			if strings.Contains(w, "duplicate row") {
+				haveDup = true
+			}
+		}
+		if !haveDefaults || !haveRemoved || !haveDup {
+			t.Fatalf("missing expected warnings: %v", warnings)
+		}
+	})
+
+	t.Run("malformed table errors", func(t *testing.T) {
+		_, _, err := diffTable("Test/D_Growth.json", base, []byte(`{"NoRows": true}`))
+		if err == nil {
+			t.Fatal("want error for table without Rows")
+		}
+	})
+}
