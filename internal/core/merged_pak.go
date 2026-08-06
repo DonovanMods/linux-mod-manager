@@ -99,7 +99,7 @@ func mergedFingerprintsEqual(a, b MergedFingerprint) (bool, error) {
 	return bytes.Equal(aBytes, bBytes), nil
 }
 
-// enabledExmodzSources returns every enabled mod's retained .exmodz files
+// enabledMergeSources returns every enabled mod's retained merge-source files
 // for game+profileName, in PROFILE LOAD ORDER (the merge-application order,
 // #197 design) - the exact input MergeCompile needs. Only files that were
 // actually retained (cache.RetainedSourceName present in the mod's cache
@@ -110,7 +110,7 @@ func mergedFingerprintsEqual(a, b MergedFingerprint) (bool, error) {
 // while an import-compiled entry's is keyed by its own archive filename
 // (see Task 2/3's ingest branches) - FileIDs is the one list that already
 // carries whichever identity applies, for either origin.
-func (s *Service) enabledExmodzSources(game *domain.Game, profileName string) ([]source.MergeSource, error) {
+func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]source.MergeSource, error) {
 	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile mods: %w", err)
@@ -129,25 +129,25 @@ func (s *Service) enabledExmodzSources(game *domain.Game, profileName string) ([
 			}
 			sources = append(sources, source.MergeSource{
 				ModRef:     mod.SourceID + ":" + mod.ID,
-				ExmodzPath: retainedPath,
+				SourcePath: retainedPath,
 			})
 		}
 	}
 	return sources, nil
 }
 
-// EnabledExmodzSourcesForTest exposes enabledExmodzSources to external
+// EnabledMergeSourcesForTest exposes enabledMergeSources to external
 // (core_test package) tests - the method itself stays unexported since it
 // is an internal implementation detail of syncMergedPak, not part of
 // Service's public API.
-func (s *Service) EnabledExmodzSourcesForTest(game *domain.Game, profileName string) ([]source.MergeSource, error) {
-	return s.enabledExmodzSources(game, profileName)
+func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName string) ([]source.MergeSource, error) {
+	return s.enabledMergeSources(game, profileName)
 }
 
 // syncMergedPak regenerates game+profileName's merged pak if its recorded
 // fingerprint no longer matches the CURRENT enabled-mod set/order/versions/
 // base pak (#197). Cheap when nothing changed: the fast path is one
-// directory read (enabledExmodzSources), one base-pak footer read
+// directory read (enabledMergeSources), one base-pak footer read
 // (basePakIndexHash - never the pak's full content), and N small MD5s
 // (md5File over each retained .exmodz - real files here are small, see
 // #175's own research on real base-table sizes), then a byte comparison.
@@ -291,9 +291,9 @@ func readMergedFingerprint(cachePath string) (fp MergedFingerprint, ok bool) {
 // do" from "failed to compute" via the returned slice's length, exactly
 // like syncMergedPak's own zero-sources branch does.
 func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string) (MergedFingerprint, []source.MergeSource, error) {
-	sources, err := s.enabledExmodzSources(game, profileName)
+	sources, err := s.enabledMergeSources(game, profileName)
 	if err != nil {
-		return MergedFingerprint{}, nil, fmt.Errorf("listing enabled exmodz mods: %w", err)
+		return MergedFingerprint{}, nil, fmt.Errorf("listing enabled merge sources: %w", err)
 	}
 	if len(sources) == 0 {
 		return MergedFingerprint{}, sources, nil
@@ -310,9 +310,9 @@ func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string
 
 	current := MergedFingerprint{BaseIndexHash: liveHash}
 	for _, src := range sources {
-		sum, herr := md5File(src.ExmodzPath)
+		sum, herr := md5File(src.SourcePath)
 		if herr != nil {
-			return MergedFingerprint{}, sources, fmt.Errorf("hashing %s: %w", src.ExmodzPath, herr)
+			return MergedFingerprint{}, sources, fmt.Errorf("hashing %s: %w", src.SourcePath, herr)
 		}
 		sourceID, modID, _ := strings.Cut(src.ModRef, ":")
 		current.Mods = append(current.Mods, MergedFingerprintEntry{SourceID: sourceID, ModID: modID, Checksum: sum})

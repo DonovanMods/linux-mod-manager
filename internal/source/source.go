@@ -169,5 +169,5 @@ type MergeCompiler interface {
 // must be applied (profile load order).
 type MergeSource struct {
 	ModRef     string // "sourceID:modID" - identity used in collision warnings
-	ExmodzPath string // the retained source archive to read
+	SourcePath string // the retained source archive to read (.exmodz, or a raw .pak eligible for conversion - #221)
 }

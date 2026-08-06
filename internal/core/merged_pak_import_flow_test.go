@@ -71,7 +71,7 @@ func (s *importFlowCompilerSource) ValidateSource(sourceFilePath string) error {
 func (s *importFlowCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
 	var out []byte
 	for _, src := range sources {
-		data, err := os.ReadFile(src.ExmodzPath)
+		data, err := os.ReadFile(src.SourcePath)
 		if err != nil {
 			return nil, err
 		}

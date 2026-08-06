@@ -59,7 +59,7 @@ func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath st
 	}
 	var out []byte
 	for _, src := range sources {
-		data, err := os.ReadFile(src.ExmodzPath)
+		data, err := os.ReadFile(src.SourcePath)
 		if err != nil {
 			return nil, err
 		}

@@ -68,13 +68,13 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 	assetOwner := make(map[string]string) // asset path -> ModRef that last set it
 
 	for _, src := range sources {
-		exmodzData, rerr := os.ReadFile(src.ExmodzPath)
+		exmodzData, rerr := os.ReadFile(src.SourcePath)
 		if rerr != nil {
-			return warnings, fmt.Errorf("icarus: reading %s: %w", src.ExmodzPath, rerr)
+			return warnings, fmt.Errorf("icarus: reading %s: %w", src.SourcePath, rerr)
 		}
 		bundle, perr := ParseExmodz(exmodzData)
 		if perr != nil {
-			return warnings, fmt.Errorf("icarus: %s: %w", src.ExmodzPath, perr)
+			return warnings, fmt.Errorf("icarus: %s: %w", src.SourcePath, perr)
 		}
 
 		for _, row := range bundle.Diff.Rows {

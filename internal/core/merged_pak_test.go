@@ -60,13 +60,13 @@ func TestEnabledExmodzSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *te
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "second-mod", Version: "1.0", FileIDs: []string{"exmodz-file", "pak-file"}}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "disabled-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
 
-	sources, err := svc.EnabledExmodzSourcesForTest(game, "default")
+	sources, err := svc.EnabledMergeSourcesForTest(game, "default")
 	require.NoError(t, err)
 	require.Len(t, sources, 2, "disabled-mod excluded; second-mod's plain-pak fileID excluded")
 	require.Equal(t, "icarus:first-mod", sources[0].ModRef)
 	require.Equal(t, "icarus:second-mod", sources[1].ModRef)
 
-	data, err := os.ReadFile(sources[0].ExmodzPath)
+	data, err := os.ReadFile(sources[0].SourcePath)
 	require.NoError(t, err)
 	require.Equal(t, "exmodz-first-mod-exmodz-file", string(data))
 }

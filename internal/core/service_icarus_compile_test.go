@@ -85,7 +85,7 @@ func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath strin
 	s.compileCalls++
 	var out []byte
 	for _, src := range sources {
-		data, err := os.ReadFile(src.ExmodzPath)
+		data, err := os.ReadFile(src.SourcePath)
 		if err != nil {
 			return nil, err
 		}

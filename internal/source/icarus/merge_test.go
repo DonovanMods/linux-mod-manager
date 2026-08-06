@@ -26,8 +26,8 @@ func TestMergeCompile_FieldLevelMergeAcrossMods(t *testing.T) {
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
 	warnings, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:speed-mod", ExmodzPath: modA},
-		{ModRef: "icarus:health-mod", ExmodzPath: modB},
+		{ModRef: "icarus:speed-mod", SourcePath: modA},
+		{ModRef: "icarus:health-mod", SourcePath: modB},
 	}, outputPath)
 	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
@@ -70,8 +70,8 @@ func TestMergeCompile_DifferentTablesFromDifferentMods(t *testing.T) {
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
 	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:mount-mod", ExmodzPath: modA},
-		{ModRef: "icarus:item-mod", ExmodzPath: modB},
+		{ModRef: "icarus:mount-mod", SourcePath: modA},
+		{ModRef: "icarus:item-mod", SourcePath: modB},
 	}, outputPath); err != nil {
 		t.Fatalf("MergeCompile: %v", err)
 	}
@@ -113,8 +113,8 @@ func TestMergeCompile_SameRowSameField_LastWins(t *testing.T) {
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
 	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:a", ExmodzPath: modA},
-		{ModRef: "icarus:b", ExmodzPath: modB},
+		{ModRef: "icarus:a", SourcePath: modA},
+		{ModRef: "icarus:b", SourcePath: modB},
 	}, outputPath); err != nil {
 		t.Fatalf("MergeCompile: %v", err)
 	}
@@ -151,8 +151,8 @@ func TestMergeCompile_AssetCollision_LastWinsWithWarning(t *testing.T) {
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
 	warnings, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:a", ExmodzPath: modA},
-		{ModRef: "icarus:b", ExmodzPath: modB},
+		{ModRef: "icarus:a", SourcePath: modA},
+		{ModRef: "icarus:b", SourcePath: modB},
 	}, outputPath)
 	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
@@ -195,8 +195,8 @@ func TestMergeCompile_ContentAddingModComposesWithPatchMod(t *testing.T) {
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
 	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:patch", ExmodzPath: patchMod},
-		{ModRef: "icarus:add", ExmodzPath: addMod},
+		{ModRef: "icarus:patch", SourcePath: patchMod},
+		{ModRef: "icarus:add", SourcePath: addMod},
 	}, outputPath); err != nil {
 		t.Fatalf("MergeCompile: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestMergeCompile_SingleSource_MatchesCompile(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	mergeOut := filepath.Join(t.TempDir(), "merge_P.pak")
-	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{{ModRef: "icarus:bear-mount", ExmodzPath: exmodzPath}}, mergeOut); err != nil {
+	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{{ModRef: "icarus:bear-mount", SourcePath: exmodzPath}}, mergeOut); err != nil {
 		t.Fatalf("MergeCompile: %v", err)
 	}
 
