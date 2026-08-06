@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -201,4 +202,137 @@ func TestDownloadMod_DeployCompile_MalformedExmodz_FailsLoudAtIngest(t *testing.
 
 	gameCache := svc.GetGameCache(game)
 	require.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version), "a validation failure must leave no cache entry")
+}
+
+// pakConversionOutcomeSource wraps fakeCompilerSource so a test can script
+// per-ref pak-conversion failures (#221 Task 8). Any source whose ModRef is
+// in failRefs is treated as an irreconcilable pak: skipped from the merged
+// output and reported via the returned failed slice, mirroring
+// internal/source/icarus/merge.go's real pak-dispatch failure path (which
+// also surfaces a "... - deploying raw" warning for each skipped ref).
+type pakConversionOutcomeSource struct {
+	*fakeCompilerSource
+	failRefs map[string]string
+}
+
+func (s *pakConversionOutcomeSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+	s.compileCalls++
+	var out []byte
+	var warnings []string
+	var failed []source.MergeFailure
+	for _, src := range sources {
+		if reason, bad := s.failRefs[src.ModRef]; bad {
+			failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: reason})
+			warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %s - deploying raw", src.ModRef, reason))
+			continue
+		}
+		data, err := os.ReadFile(src.SourcePath)
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, data...)
+	}
+	return warnings, failed, os.WriteFile(outputPath, out, 0o644)
+}
+
+var _ source.MergeCompiler = (*pakConversionOutcomeSource)(nil)
+
+// seedEnabledPakMod installs an ENABLED pak-kind mod carrying BOTH a
+// retained pak (cache.RetainedSourceName(fileID)) and a deployable pak copy
+// recorded as the manifest's sole member - the shape Task 9's ingest
+// produces for a pak eligible for conversion (opted in by default), before
+// any merge/reconcile has run.
+func seedEnabledPakMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, version, fileID string, pakContent []byte) {
+	t.Helper()
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), pakContent))
+	member := modID + ".pak"
+	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, member, pakContent))
+	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{member}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{fileID},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+}
+
+// TestSyncMergedPakReconcilesPakManifests proves the #221 crux: a
+// successfully converted pak mod's cache manifest flips to members=nil
+// (merged pak claims it), a failed one keeps its raw pak as the sole
+// member (raw fallback), the stored fingerprint records both outcomes, and
+// toggling a mod's ConvertPaks off both regenerates the fingerprint
+// (membership change) and flips its manifest back to raw.
+func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	game.ConvertPaks = true
+
+	pakSrc := &pakConversionOutcomeSource{
+		fakeCompilerSource: &fakeCompilerSource{},
+		failRefs:           map[string]string{"fake-compiler:badmod": "boom"},
+	}
+	svc.RegisterSource(pakSrc)
+
+	seedEnabledPakMod(t, svc, game, "fake-compiler", "goodmod", "1.0", "pak", []byte("good-pak-bytes"))
+	seedEnabledPakMod(t, svc, game, "fake-compiler", "badmod", "1.0", "pak", []byte("bad-pak-bytes"))
+
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+
+	goodManifests, err := gameCache.FileManifests(game.ID, "fake-compiler", "goodmod", "1.0")
+	require.NoError(t, err)
+	require.True(t, goodManifests["pak"].Recorded)
+	require.Empty(t, goodManifests["pak"].Members, "a converted pak's raw copy must be unclaimed (members=nil)")
+
+	badManifests, err := gameCache.FileManifests(game.ID, "fake-compiler", "badmod", "1.0")
+	require.NoError(t, err)
+	require.True(t, badManifests["pak"].Recorded)
+	require.Equal(t, []string{"badmod.pak"}, badManifests["pak"].Members, "a failed conversion must keep its raw pak deployed")
+
+	outcomes, ok := svc.MergedPakOutcomes(game, "default")
+	require.True(t, ok)
+	byMod := make(map[string]core.MergedFingerprintEntry, len(outcomes))
+	for _, o := range outcomes {
+		byMod[o.ModID] = o
+	}
+	require.True(t, byMod["goodmod"].Converted)
+	require.Empty(t, byMod["goodmod"].FailReason)
+	require.False(t, byMod["badmod"].Converted)
+	require.Equal(t, "boom", byMod["badmod"].FailReason)
+
+	foundBadmod, foundDeployingRaw := false, false
+	for _, w := range warnings {
+		if strings.Contains(w, "badmod") {
+			foundBadmod = true
+		}
+		if strings.Contains(w, "deploying raw") {
+			foundDeployingRaw = true
+		}
+	}
+	require.True(t, foundBadmod, "warnings must mention the failed mod: %v", warnings)
+	require.True(t, foundDeployingRaw, "warnings must explain the raw fallback: %v", warnings)
+
+	// Toggle goodmod's per-mod opt-out: it must drop out of the merge
+	// (membership change -> the fingerprint regenerates and omits it) and
+	// its manifest must flip back to raw deploy.
+	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "goodmod", game.ID, "default", false))
+
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	goodManifests, err = gameCache.FileManifests(game.ID, "fake-compiler", "goodmod", "1.0")
+	require.NoError(t, err)
+	require.Equal(t, []string{"goodmod.pak"}, goodManifests["pak"].Members, "opting out must flip goodmod back to raw deploy")
+
+	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	require.True(t, ok)
+	for _, o := range outcomes {
+		require.NotEqual(t, "goodmod", o.ModID, "an opted-out mod must not appear in the merge fingerprint")
+	}
 }

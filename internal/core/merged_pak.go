@@ -58,7 +58,41 @@ type MergedFingerprintEntry struct {
 	SourceID string
 	ModID    string
 	Version  string
-	Checksum string // MD5 of the retained .exmodz bytes (md5File)
+	Checksum string // MD5 of the retained source bytes (md5File)
+	Kind     string `json:",omitempty"` // source.MergeSourcePak for retained paks; empty/exmodz otherwise (#221)
+
+	// Outcome fields (#221): recorded AFTER the merge, ignored by input
+	// equality - a failed conversion retries only when an INPUT changes
+	// (pak bytes, base pak, membership), not on every sync.
+	Converted  bool   `json:",omitempty"`
+	FailReason string `json:",omitempty"`
+}
+
+// mergeSourceKind classifies a retained-source fileID (#221). Download-path
+// icarus fileIDs are literally "pak"/"exmodz"; import-path fileIDs are the
+// archive's own filename. Unknown kinds default to exmodz - the only kind
+// that existed before #221.
+func mergeSourceKind(fileID string) string {
+	lower := strings.ToLower(fileID)
+	if lower == "pak" || strings.HasSuffix(lower, ".pak") {
+		return source.MergeSourcePak
+	}
+	return source.MergeSourceExmodz
+}
+
+// fingerprintInputs strips outcome fields and normalizes Kind so equality
+// judges inputs only. Kind "" and "exmodz" are the same input (pre-#221
+// markers wrote no Kind).
+func fingerprintInputs(f MergedFingerprint) MergedFingerprint {
+	out := MergedFingerprint{BaseIndexHash: f.BaseIndexHash, Mods: make([]MergedFingerprintEntry, len(f.Mods))}
+	for i, m := range f.Mods {
+		kind := m.Kind
+		if kind == "" {
+			kind = source.MergeSourceExmodz
+		}
+		out.Mods[i] = MergedFingerprintEntry{SourceID: m.SourceID, ModID: m.ModID, Version: m.Version, Checksum: m.Checksum, Kind: kind}
+	}
+	return out
 }
 
 // marshalMergedFingerprint renders f deterministically: encoding/json
@@ -88,11 +122,11 @@ func marshalMergedFingerprint(f MergedFingerprint) ([]byte, error) {
 // against the stored marker" needs, since the marker itself IS the
 // marshaled form.
 func mergedFingerprintsEqual(a, b MergedFingerprint) (bool, error) {
-	aBytes, err := marshalMergedFingerprint(a)
+	aBytes, err := marshalMergedFingerprint(fingerprintInputs(a))
 	if err != nil {
 		return false, err
 	}
-	bBytes, err := marshalMergedFingerprint(b)
+	bBytes, err := marshalMergedFingerprint(fingerprintInputs(b))
 	if err != nil {
 		return false, err
 	}
@@ -127,9 +161,14 @@ func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]
 			if _, statErr := os.Stat(retainedPath); statErr != nil {
 				continue // not a retained exmodz file (a plain .pak's fileID, or nothing ingested)
 			}
+			kind := mergeSourceKind(fileID)
+			if kind == source.MergeSourcePak && (!game.ConvertPaks || !mod.ConvertPaks) {
+				continue // opted out (game- or mod-level): stays raw-deployed (#221)
+			}
 			sources = append(sources, source.MergeSource{
 				ModRef:     mod.SourceID + ":" + mod.ID,
 				SourcePath: retainedPath,
+				Kind:       kind,
 			})
 		}
 	}
@@ -186,7 +225,14 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		if derr := gameCache.Delete(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion); derr != nil {
 			return nil, fmt.Errorf("clearing merged pak cache entry: %w", derr)
 		}
-		return nil, nil
+		// An all-opted-out (or all-disabled) profile must still flip any
+		// previously-CONVERTED pak mod back to raw deploy (#221) - there is
+		// no merged pak anymore to claim its content.
+		reconWarnings, rerr := s.reconcilePakManifests(ctx, game, profileName, installer, nil)
+		if rerr != nil {
+			return nil, fmt.Errorf("reconciling pak manifests: %w", rerr)
+		}
+		return reconWarnings, nil
 	}
 
 	basePakPath, err := resolveBasePak(game)
@@ -238,7 +284,18 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		return nil, fmt.Errorf("merging %d merge source(s): %w", len(sources), err)
 	}
 	warnings = mergeWarnings
-	_ = mergeFailed // consumed in the fingerprint/manifest reconcile (#221 Task 8)
+
+	failedByRef := make(map[string]string, len(mergeFailed))
+	for _, f := range mergeFailed {
+		failedByRef[f.ModRef] = f.Reason
+	}
+	for i := range current.Mods {
+		ref := current.Mods[i].SourceID + ":" + current.Mods[i].ModID
+		if reason, bad := failedByRef[ref]; bad {
+			current.Mods[i].Converted = false
+			current.Mods[i].FailReason = reason
+		}
+	}
 
 	fingerprintBytes, err := marshalMergedFingerprint(current)
 	if err != nil {
@@ -255,6 +312,12 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	if err := installer.Install(ctx, game, syntheticMod, profileName); err != nil {
 		return warnings, fmt.Errorf("deploying merged pak: %w", err)
 	}
+
+	reconWarnings, rerr := s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
+	if rerr != nil {
+		return warnings, fmt.Errorf("reconciling pak manifests: %w", rerr)
+	}
+	warnings = append(warnings, reconWarnings...)
 	return warnings, nil
 }
 
@@ -266,6 +329,92 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 // non-DeployCompile game and is a cheap fast-path when nothing changed.
 func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileName string) ([]string, error) {
 	return s.syncMergedPak(ctx, game, profileName)
+}
+
+// reconcilePakManifests aligns every enabled pak mod's cache manifest with
+// the merge outcome (#221): a mod whose pak CONVERTED has members=nil (the
+// merged pak claims its content; the raw copy must not deploy - flipping it
+// undeploys any raw link), while a failed or opted-out mod has its raw pak
+// as the sole member (raw deploy, today's behavior). Flips are followed by
+// the matching installer action so the game dir converges immediately: the
+// first-install transient (raw deployed, then first sync converts) is
+// healed here, not left for the next verify.
+func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) (warnings []string, err error) {
+	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("loading profile mods: %w", err)
+	}
+	gameCache := s.GetGameCache(game)
+	for i := range mods {
+		mod := &mods[i]
+		if !mod.Enabled {
+			continue
+		}
+		for _, fileID := range mod.FileIDs {
+			if mergeSourceKind(fileID) != source.MergeSourcePak {
+				continue
+			}
+			versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+			retained := filepath.Join(versionDir, cache.RetainedSourceName(fileID))
+			if _, statErr := os.Stat(retained); statErr != nil {
+				continue // nothing retained (legacy ingest): Task 11's needs_reingest covers it
+			}
+			ref := mod.SourceID + ":" + mod.ID
+			_, failed := failedByRef[ref]
+			participating := game.ConvertPaks && mod.ConvertPaks && !failed
+
+			manifests, merr := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+			if merr != nil {
+				return warnings, merr
+			}
+			// FileManifests keys its map by fileID directly (see
+			// internal/storage/cache/cache.go's fileManifestsAt) - no FileID
+			// field on FileManifest itself.
+			existing := manifests[fileID]
+			currentMembers, recorded := existing.Members, existing.Recorded
+
+			if participating {
+				if recorded && len(currentMembers) == 0 {
+					continue // already converged
+				}
+				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, nil); werr != nil {
+					return warnings, fmt.Errorf("flipping %s to merged-claimed: %w", ref, werr)
+				}
+				// The raw copy is now unclaimed: undeploy this mod's files
+				// (idempotent; the merged pak carries its content now).
+				if uerr := installer.Uninstall(ctx, game, &mod.Mod, profileName); uerr != nil {
+					return warnings, fmt.Errorf("undeploying raw pak for %s: %w", ref, uerr)
+				}
+			} else {
+				members, lerr := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+				if lerr != nil {
+					return warnings, lerr
+				}
+				if recorded && len(currentMembers) == len(members) && len(members) > 0 {
+					continue // already converged (raw)
+				}
+				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, members); werr != nil {
+					return warnings, fmt.Errorf("flipping %s to raw-deploy: %w", ref, werr)
+				}
+				if ierr := installer.Install(ctx, game, &mod.Mod, profileName); ierr != nil {
+					return warnings, fmt.Errorf("deploying raw pak for %s: %w", ref, ierr)
+				}
+			}
+		}
+	}
+	return warnings, nil
+}
+
+// MergedPakOutcomes returns the stored merge fingerprint's per-mod entries
+// (with #221 conversion outcomes), if a merged pak exists for game+profile.
+func (s *Service) MergedPakOutcomes(game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
+	gameCache := s.GetGameCache(game)
+	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	fp, ok := readMergedFingerprint(cachePath)
+	if !ok {
+		return nil, false
+	}
+	return fp.Mods, true
 }
 
 // readMergedFingerprint reads and decodes cachePath's stored merge
@@ -316,7 +465,7 @@ func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string
 			return MergedFingerprint{}, sources, fmt.Errorf("hashing %s: %w", src.SourcePath, herr)
 		}
 		sourceID, modID, _ := strings.Cut(src.ModRef, ":")
-		current.Mods = append(current.Mods, MergedFingerprintEntry{SourceID: sourceID, ModID: modID, Checksum: sum})
+		current.Mods = append(current.Mods, MergedFingerprintEntry{SourceID: sourceID, ModID: modID, Checksum: sum, Kind: src.Kind, Converted: true})
 	}
 
 	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
