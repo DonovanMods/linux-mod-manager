@@ -241,6 +241,42 @@ version hasn't yet converged to a lock's target, `verify` prints an
 informational "lock pending convergence" note rather than treating it as
 drift to repair.
 
+### Pak conversion (Icarus)
+
+Icarus mods sometimes ship as a prebuilt `.pak` instead of (or in addition
+to) a mergeable `.exmodz`. Deployed as-is, a prebuilt pak is frozen in
+time — a whole-file snapshot of whatever `data.pak` existed when the
+author built it — so it gets whole-table shadowed by the merged pak
+(`zzz_LMM_Merged_P.pak` always mounts last) wherever a merged table
+overlaps it, and silently reverts any base-game field it touches on every
+weekly base update.
+
+lmm fixes this by converting prebuilt paks into the merged pak at merge
+time instead of deploying them raw: it **rebases** each one onto the
+game's _current_ `data.pak`. A pak that embeds a `data.EXMOD` manifest
+converts exactly — pure author intent, replayed against the current base
+— otherwise lmm diffs the pak's tables against the current base by row
+name and derives the changes. Drift baked into author-touched rows across
+a rebase is the intended semantic, not a bug — the same
+"later-in-load-order wins the field, not the whole row" rule from [Merge
+precedence](#games-gamesyaml) applies identically to converted paks and
+`.exmodz` mods.
+
+Conversion is on by default, and controlled at two levels: a per-game
+`convert_paks: false` in `games.yaml` turns it off for every pak mod on
+that game, and `lmm mod convert <mod-id> off` (TUI: `m` on Installed
+Mods) keeps one specific mod's pak raw regardless of the game setting —
+either one is enough to keep a pak raw. An irreconcilable pak (unreadable
+or unresolvable layout, a hyphen-ambiguous table path, a `RowStruct`
+mismatch) produces a per-mod error and falls back to raw deploy instead
+of blocking the rest of the merge; `lmm verify` reports it as
+`conversion_failed` (see [Verify output](#verify-output)).
+
+Pak mods cached before this feature shipped have no retained raw source
+to convert from. `lmm verify` flags these `needs_reingest`, and `--fix`
+re-ingests them — redownloading via the normal cache path — into the
+conversion pipeline; there is no separate migration step to run.
+
 ### Terminal UI
 
 Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, reorder load order, resolve file conflicts, switch profiles, install from search results, check/apply updates (with changelogs and rollback), edit update policies, view a mod's deployed files, purge a profile, switch games, and create/delete/export/import profiles — with every mutating action behind a confirmation prompt:
@@ -301,7 +337,14 @@ picker for the selected mod's update policy — picking one applies
 immediately, no separate confirmation. `L` opens an async version picker
 (fetched from the source) to lock the mod, or move an existing lock — a
 locked mod's picker gains a trailing "unlock" entry — see [Locking mods to a
-version](#locking-mods-to-a-version). `J`/`K` (also `ctrl+down`/`ctrl+up`)
+version](#locking-mods-to-a-version). On a merge-compile game (e.g.
+Icarus), `m` toggles the selected mod's pak-to-exmod conversion on/off —
+applies immediately, no confirmation modal (the same "reversible
+metadata write" exception as the `P` policy picker above) — and a
+non-compile game reports the toggle as inapplicable on the status line
+instead of doing anything. The row's flags column shows `raw` whenever
+conversion is off and the mod's prebuilt pak is deploying unconverted —
+see [Pak conversion (Icarus)](#pak-conversion-icarus). `J`/`K` (also `ctrl+down`/`ctrl+up`)
 swap the selected mod with its neighbor in load order and persist the new
 order right away; the list itself renders in load order, and a hint reads
 "order changed — deploy (`D`) to apply" until you redeploy. `<` rolls the
@@ -429,11 +472,12 @@ games:
     sources:
       icarus: "icarus"
     deploy_mode: compile
+    # convert_paks: true  # Optional: default; set false to deploy every prebuilt .pak mod raw instead of converting it
 ```
 
 Steam auto-detection (`lmm game detect`) knows about Icarus (App ID `1149460`) and generates an equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
 
-**Merge precedence**: with more than one `compile`-mode mod installed (currently Icarus only), the profile's load order — the same order `lmm list` displays and `lmm profile reorder` changes — decides how conflicting changes resolve. Mods are merged in load order, so a mod later in the list is applied later and wins conflicting _fields_ on a shared data-table row; it's a per-field upsert, not a whole-row overwrite, so untouched fields from earlier mods still survive. Bundled asset files can't compose that way — a same-path collision between two mods is whole-file last-wins, and installing or updating a colliding mod prints a warning naming both. Either way, the bottom of the load order has final say, and `lmm profile reorder` regenerates the merged pak immediately, so a reorder's effect on precedence is visible right away rather than at the next deploy.
+**Merge precedence**: with more than one `compile`-mode mod installed (currently Icarus only), the profile's load order — the same order `lmm list` displays and `lmm profile reorder` changes — decides how conflicting changes resolve. Mods are merged in load order, so a mod later in the list is applied later and wins conflicting _fields_ on a shared data-table row; it's a per-field upsert, not a whole-row overwrite, so untouched fields from earlier mods still survive. Bundled asset files can't compose that way — a same-path collision between two mods is whole-file last-wins, and installing or updating a colliding mod prints a warning naming both. Either way, the bottom of the load order has final say, and `lmm profile reorder` regenerates the merged pak immediately, so a reorder's effect on precedence is visible right away rather than at the next deploy. Prebuilt `.pak` mods participate in this same merge: at merge time each one is converted and rebased onto the game's current base pak — a pak embedding a `data.EXMOD` manifest converts exactly, otherwise lmm diff-derives the changes against the current base — and only an irreconcilable pak falls back to a raw, unconverted deploy, with a warning naming it (see [Pak conversion (Icarus)](#pak-conversion-icarus)). Set `convert_paks: false` in a game's `games.yaml` entry, or `lmm mod convert <mod-id> off` for one mod, to keep specific paks deployed raw instead.
 
 ### Deployment Methods
 
@@ -914,6 +958,7 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `lmm mod show <mod-id>`                            | Show mod details (description, image, etc.)                                                                                                          |
 | `lmm mod files <mod-id>`                           | List files deployed by mod                                                                                                                           |
 | `lmm mod edit <current-id>`                        | Edit mod details (name, version, author, source, ID)                                                                                                 |
+| `lmm mod convert <mod-id> <on\|off>`               | Toggle pak-to-exmod conversion for a mod (merge-compile games only)                                                                                  |
 | `lmm game set-default <game-id>`                   | Set the default game                                                                                                                                 |
 | `lmm game show-default`                            | Show current default game                                                                                                                            |
 | `lmm game clear-default`                           | Clear the default game setting                                                                                                                       |
@@ -1046,6 +1091,13 @@ version](#locking-mods-to-a-version)), `verify` prints an informational
 "lock pending convergence" note rather than treating it as an issue.
 
 Mods installed from a local source, mods requiring manual download, and mods with no recorded file IDs are skipped silently. `--fix` repairs a VERSION MISMATCH by re-keying the cache entry to the effective (source-reported) version, correcting the DB row and active profile record, and re-linking symlink deployments; if a cache entry already exists under the effective version the rename is skipped and a note is printed (also included as `note` in `--json` output) while the DB/profile are still corrected.
+
+For a pak-to-exmod-conversion game (Icarus, #221), `lmm verify` also reports two more compile-only states, per mod:
+
+- **? ModName - CONVERSION FAILED (reason)** - The mod's prebuilt `.pak` could not be converted into the merged pak on the last sync and stays raw-deployed instead; fix the mod or run `lmm mod convert <mod-id> off` to silence it (not repaired by `--fix`).
+- **? ModName (fileID) - NEEDS REINGEST** - The mod's pak was cached before conversion support existed, so it has no retained source to convert from; `--fix` re-ingests it via the same redownload path `MISSING` uses (a local/imported mod has no source to redownload from and must be re-imported instead).
+
+CONVERSION FAILED is read straight from the merged pak's stored fingerprint — the outcome of the last successful sync — rather than recomputed by `verify` itself, so it stays accurate between syncs. NEEDS REINGEST only fires for a convert-eligible pak (both the game and the mod have conversion enabled); a successful `--fix` re-ingest reports as `fixed_needs_reingest` in `--json`, the same "resolved problem, not an outstanding one" convention a successful redownload or version repair uses elsewhere in this section.
 
 ## Architecture
 

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Icarus: prebuilt `.pak` mods are now converted into the merged pak at
+  merge time — rebased onto the game's current `data.pak` — instead of
+  deploying raw and being shadowed by it (#221). Paks that embed a
+  `data.EXMOD` manifest convert exactly; others are diff-derived against
+  the current base. Irreconcilable paks produce a per-mod error and fall
+  back to raw deploy.
+- `lmm mod convert <mod-id> <on|off>` and a per-game `convert_paks`
+  `games.yaml` setting (both on by default) control conversion — a pak
+  ships raw if either is off; the TUI toggles the per-mod setting with
+  `m`.
+- `lmm verify` reports `conversion_failed` and `needs_reingest` statuses
+  (plus `fixed_needs_reingest` once `--fix` repairs the latter); `--fix`
+  re-ingests pre-existing pak installs into the conversion pipeline.
+- JSON additions: `convert_paks` in `lmm list --json`, `lmm mod show
+--json`, and `lmm game list --json`.
+
 ## [1.29.0] - 2026-08-05
 
 ### Added
