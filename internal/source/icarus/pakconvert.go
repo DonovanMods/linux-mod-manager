@@ -248,7 +248,7 @@ func diffTable(tableRef string, baseJSON, modJSON []byte) (items []ExmodFileItem
 func convertPakToBundle(pakPath string, base *unrealpak.Reader, baseFold map[string][]string) (*ExmodzBundle, []string, error) {
 	mod, err := unrealpak.Open(pakPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("icarus: opening pak %s: %w", pakPath, err)
+		return nil, nil, fmt.Errorf("icarus: opening pak %s: %w", path.Base(pakPath), err)
 	}
 	defer mod.Close() //nolint:errcheck
 
@@ -299,13 +299,13 @@ func convertPakToBundle(pakPath string, base *unrealpak.Reader, baseFold map[str
 	}
 
 	if len(embedded) > 1 {
-		return nil, nil, fmt.Errorf("icarus: pak %s carries multiple embedded .EXMOD manifests - ambiguous", pakPath)
+		return nil, nil, fmt.Errorf("icarus: pak %s carries multiple embedded .EXMOD manifests - ambiguous", path.Base(pakPath))
 	}
 
 	if len(embedded) == 1 {
 		diff, perr := ParseExmod(embedded[0])
 		if perr != nil {
-			return nil, nil, fmt.Errorf("icarus: embedded .EXMOD in %s: %w", pakPath, perr)
+			return nil, nil, fmt.Errorf("icarus: embedded .EXMOD in %s: %w", path.Base(pakPath), perr)
 		}
 		return &ExmodzBundle{Diff: diff, Assets: assets}, warnings, nil
 	}

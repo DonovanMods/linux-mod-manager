@@ -59,7 +59,7 @@ type Game struct {
 	CachePath           string            // Optional: custom cache path for this game's mods
 	Hooks               GameHooks         // Optional: hooks for install/uninstall operations
 	DeployMode          DeployMode        // How to handle downloaded files (extract vs copy)
-	ConvertPaks         bool              // #221: convert prebuilt .pak mods into the merged pak (DeployCompile games; default true)
+	ConvertPaks         bool              // #221: convert prebuilt .pak mods into the merged pak (DeployCompile games; default true when omitted from games.yaml, must be set explicitly for direct Game literals)
 	ConvertPaksExplicit bool              // True if ConvertPaks was explicitly set in config (round-trip fidelity, like LinkMethodExplicit)
 }
 
