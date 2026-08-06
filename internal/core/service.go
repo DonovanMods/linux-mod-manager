@@ -1308,6 +1308,12 @@ func (s *Service) SetModDeployed(sourceID, modID, gameID, profileName string, de
 	return s.db.SetModDeployed(sourceID, modID, gameID, profileName, deployed)
 }
 
+// SetModConvertPaks toggles per-mod pak-to-exmod conversion (#221). A local
+// DB write; the caller re-syncs the merged pak to apply the change.
+func (s *Service) SetModConvertPaks(sourceID, modID, gameID, profileName string, convert bool) error {
+	return s.db.SetModConvertPaks(sourceID, modID, gameID, profileName, convert)
+}
+
 // SaveInstalledMod persists an installed-mod record (insert or update).
 func (s *Service) SaveInstalledMod(mod *domain.InstalledMod) error {
 	return s.db.SaveInstalledMod(mod)

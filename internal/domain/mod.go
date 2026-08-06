@@ -117,6 +117,7 @@ type InstalledMod struct {
 	LinkMethod      LinkMethod // How the mod was deployed (symlink, hardlink, copy)
 	FileIDs         []string   // Source-specific file IDs that were downloaded
 	ManualDownload  bool       // True if mod requires manual download (CurseForge restricted, etc.)
+	ConvertPaks     bool       // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
 }
 
 // Update represents an available update for an installed mod
