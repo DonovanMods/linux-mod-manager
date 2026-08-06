@@ -1882,3 +1882,90 @@ func (p *coreProvider) ExportProfile(_ context.Context, name, path string) (Acti
 
 	return ActionOutcome{Message: fmt.Sprintf("exported %q to %s", name, path)}, nil
 }
+
+// Health runs the verify engine's LOCAL tier (disk/DB only - never the
+// network) for the dashboard signal and the Health screen's initial content
+// (#224 Task 8). Mirrors Conflicts' own "ride every ordinary loadData
+// refresh" contract (DataProvider.Health's doc comment) rather than
+// Updates/CheckUpdates' explicit-user-action gate: the Local tier is a
+// plain, cheap DB/cache walk, not a network round trip.
+func (p *coreProvider) Health(ctx context.Context) (HealthView, error) {
+	game := p.currentGame()
+	res, err := p.svc.Verify(ctx, game, p.currentProfile(), core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	if err != nil {
+		return HealthView{}, fmt.Errorf("checking health for %s/%s: %w", game.ID, p.currentProfile(), err)
+	}
+	return healthView(res, false), nil
+}
+
+// RunHealthCheck runs the verify engine on demand (#224 Task 8): full=true
+// selects the Full tier (adds the network version pass), fix=true applies
+// CLI --fix semantics. The two are independent knobs here - opts.Tier only
+// moves off VerifyLocal when full is true, regardless of fix - matching the
+// design's actual CLI parity point exactly: `lmm verify --fix` itself
+// always runs the Full tier (cmd/lmm/verify.go never offers a --fix-without-
+// network mode), so it is the Health screen's 'F' binding (ActionProvider.
+// RunHealthCheck's own doc comment: "always full") that is responsible for
+// invoking this with full=true whenever fix=true - not this method
+// second-guessing its caller.
+//
+// Progress mapping (nil-safe, checked once per event like every other
+// coreProvider streaming method's onProgress closure - e.g.
+// ApplyProfileSwitch's onProgress above): VerifyEvProgress (a version-pass
+// tick), VerifyEvFinding (a reported row), and VerifyEvRepairDetail/
+// VerifyEvSyncWarning (both already-formatted sub-lines) each compose one
+// status-line entry. VerifyEvBegin/VerifyEvVerbose carry nothing worth a
+// line and fall through unmapped.
+//
+// A VerifyEvProgress tick fires at the TOP of every version-pass mod
+// iteration, INCLUDING mods the pass then silently skips (local-source/
+// manual/no-fileIDs - see versionPass' own doc comment in verify.go) - so
+// the LAST tick a caller observes can linger on a skipped mod with no
+// finding ever following it. Harmless for this status-line consumer (the
+// next real tick, or the run's completion, simply supersedes it), but worth
+// knowing if a future caller ever tries to correlate the final tick with a
+// specific outcome.
+func (p *coreProvider) RunHealthCheck(ctx context.Context, full, fix bool, progress func(ActionProgress)) (HealthView, error) {
+	game := p.currentGame()
+	profile := p.currentProfile()
+	opts := core.VerifyOptions{Tier: core.VerifyLocal, Fix: fix}
+	if full {
+		opts.Tier = core.VerifyFull
+	}
+
+	res, err := p.svc.Verify(ctx, game, profile, opts, func(ev core.VerifyEvent) {
+		if progress == nil {
+			return
+		}
+		switch ev.Kind {
+		case core.VerifyEvProgress:
+			progress(ActionProgress{Line: fmt.Sprintf("checking versions %d/%d: %s", ev.Index, ev.Total, ev.ModName)})
+		case core.VerifyEvFinding:
+			progress(ActionProgress{Line: fmt.Sprintf("%s: %s", ev.Finding.Status, ev.Finding.ModName)})
+		case core.VerifyEvRepairDetail, core.VerifyEvSyncWarning:
+			progress(ActionProgress{Line: ev.Detail})
+		}
+	})
+	if err != nil {
+		return HealthView{}, fmt.Errorf("checking health for %s/%s: %w", game.ID, profile, err)
+	}
+	return healthView(res, full), nil
+}
+
+// healthView maps a core.VerifyResult to the TUI's HealthView, filtering out
+// quiet-ok rows (Status "ok" with an empty Note - carries no screen content,
+// same convention the CLI's own verify table applies) but KEEPING
+// lock-pending rows (ok status with a non-empty Note, e.g. "lock pending
+// convergence..." - HealthView's own doc comment). Shared by Health (always
+// full=false, the Local tier) and RunHealthCheck (full mirrors the caller's
+// own tier choice).
+func healthView(res *core.VerifyResult, full bool) HealthView {
+	v := HealthView{Issues: res.Issues, Warnings: res.Warnings, Full: full, Findings: make([]HealthFinding, 0, len(res.Findings))}
+	for _, f := range res.Findings {
+		if f.Status == "ok" && f.Note == "" {
+			continue
+		}
+		v.Findings = append(v.Findings, HealthFinding{ModID: f.ModID, ModName: f.ModName, FileID: f.FileID, Status: f.Status, Note: f.Note})
+	}
+	return v
+}

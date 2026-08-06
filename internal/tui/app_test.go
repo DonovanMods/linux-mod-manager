@@ -1088,6 +1088,7 @@ func (stubProvider) Search(context.Context, string, string, int, int) (SearchPag
 func (stubProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
 func (stubProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
 func (stubProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
+func (stubProvider) Health(context.Context) (HealthView, error)        { return HealthView{}, nil }
 
 // failingProvider embeds stubProvider and overrides only Overview - the ONE
 // method that matters here: loadData (app.go) calls Overview first and
@@ -1294,6 +1295,10 @@ func (r *recordingProvider) DeployedFiles(sourceID, modID string) ([]string, err
 
 func (r *recordingProvider) Conflicts(context.Context) ([]ConflictItem, error) {
 	return r.ConflictsResult, r.ConflictsErr
+}
+
+func (r *recordingProvider) Health(ctx context.Context) (HealthView, error) {
+	return r.delegate.Health(ctx)
 }
 
 func (r *recordingProvider) ListGames() ([]GameInfo, error) {

@@ -195,6 +195,30 @@ type ConflictItem struct {
 	Stale  bool
 }
 
+// HealthFinding is one renderable row from a verify run, mirroring
+// core.VerifyFinding's shape exactly (#224 Task 8) - a thin TUI-facing copy
+// rather than a reuse of the core type, matching every other DataProvider
+// render model in this file (ConflictItem/SwitchPlanView/etc.) that keeps
+// its own copy instead of exposing internal/core types across the provider
+// boundary.
+type HealthFinding struct {
+	ModID, ModName, FileID, Status, Note string
+}
+
+// HealthView is DataProvider.Health/ActionProvider.RunHealthCheck's result:
+// the dashboard signal (coreProvider.Health, Local tier) and the Health
+// screen's content (coreProvider.RunHealthCheck, Local or Full tier, dry-run
+// or --fix). Findings excludes quiet-ok rows (Status "ok" with an empty
+// Note - the same "nothing to show" convention the CLI's own verify table
+// already applies) but KEEPS lock-pending rows (ok status with a non-empty
+// Note, e.g. "lock pending convergence...") - see healthView's own doc
+// comment in service_core.go for the exact filter.
+type HealthView struct {
+	Findings         []HealthFinding
+	Issues, Warnings int
+	Full             bool // true when produced by the Full (network) tier
+}
+
 // GameInfo is one renderable configured-game row for the in-TUI game
 // switcher (Task 8's 'g' binding - see mutations.go's openGameSwitcher).
 // Mirrors ProfileItem's shape: just enough to render a picker option and
@@ -286,6 +310,10 @@ type DataProvider interface {
 	// count and cache size; if refreshes ever feel slow on very large mod
 	// sets, memoizing per (mod, version) manifest is the obvious lever.
 	Conflicts(ctx context.Context) ([]ConflictItem, error)
+	// Health runs the LOCAL verify tier (disk/DB only - never the network;
+	// core.VerifyLocal) for the dashboard signal and the Health screen's
+	// initial content. Rides loadData like Conflicts.
+	Health(ctx context.Context) (HealthView, error)
 }
 
 // prototypeProvider serves the static demo data set. It must never touch
@@ -609,6 +637,29 @@ func (p *prototypeProvider) Conflicts(_ context.Context) ([]ConflictItem, error)
 		})
 	}
 	return items, nil
+}
+
+// prototypeHealthFindings is the canned #224 Task 8 demo Health view -
+// one stale_deployment row and one conversion_failed row, mirroring
+// prototypeAvailableVersions' own "fixed shared canned list, no
+// per-mod/per-game variation needed" precedent (actions_provider.go).
+// prototypeProvider.RunHealthCheck's fix=true branch returns an emptied
+// copy (both rows resolved) rather than mutating this shared slice in
+// place - see that method's own doc comment.
+var prototypeHealthFindings = []HealthFinding{
+	{ModID: "101", ModName: "SkyUI", FileID: "main", Status: "stale_deployment", Note: "cache content differs from what's deployed"},
+	{ModID: "bear-mount", ModName: "Bear Mount", Status: "conversion_failed", Note: "pak-to-exmod conversion failed: unsupported UE version"},
+}
+
+// Health returns the canned demo Health view (#224 Task 8) so --prototype
+// mode can demo the Health screen's initial content without touching disk,
+// network, DB, or APIs - mirroring every other prototypeProvider read
+// (Conflicts/Profiles/etc. above).
+func (p *prototypeProvider) Health(_ context.Context) (HealthView, error) {
+	return HealthView{
+		Findings: append([]HealthFinding(nil), prototypeHealthFindings...),
+		Warnings: 2,
+	}, nil
 }
 
 func (p *prototypeProvider) Profiles(_ context.Context) ([]ProfileItem, error) {

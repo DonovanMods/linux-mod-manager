@@ -942,6 +942,10 @@ func (f *fakeSwitchableProvider) Conflicts(context.Context) ([]ConflictItem, err
 	return nil, nil
 }
 
+func (f *fakeSwitchableProvider) Health(context.Context) (HealthView, error) {
+	return HealthView{}, nil
+}
+
 func (f *fakeSwitchableProvider) Profiles(context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(f.names))
 	for _, name := range f.names {
@@ -1067,6 +1071,7 @@ func (p *searchCancelProvider) ListGames() ([]GameInfo, error)                 {
 func (p *searchCancelProvider) Conflicts(context.Context) ([]ConflictItem, error) {
 	return nil, nil
 }
+func (p *searchCancelProvider) Health(context.Context) (HealthView, error) { return HealthView{}, nil }
 
 // SetGame implements actions.go's optional gameRebinder hook.
 func (p *searchCancelProvider) SetGame(id string) error {

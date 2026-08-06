@@ -77,6 +77,7 @@ func (f conflictsFakeProvider) ListGames() ([]GameInfo, error)                 {
 func (f conflictsFakeProvider) Conflicts(context.Context) ([]ConflictItem, error) {
 	return f.conflicts, nil
 }
+func (f conflictsFakeProvider) Health(context.Context) (HealthView, error) { return HealthView{}, nil }
 
 // TestConflictsScreenRendersRows covers the non-empty path: one stale and
 // one in-sync conflict. The list pane must show FILE/OWNER/WINNER columns
@@ -214,6 +215,7 @@ func (longConflictsProvider) Conflicts(context.Context) ([]ConflictItem, error) 
 	}
 	return conflicts, nil
 }
+func (longConflictsProvider) Health(context.Context) (HealthView, error) { return HealthView{}, nil }
 
 // TestConflictsListFollowsSelectionOnShortTerminals proves conflictsListPane
 // uses scroll-follow-selection windowing: the selected row stays visible when

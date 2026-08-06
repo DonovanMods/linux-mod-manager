@@ -803,6 +803,12 @@ type recordingActions struct {
 	// here, not just one).
 	ExportCalls []struct{ Name, Path string }
 
+	// RunHealthCheckCalls records each RunHealthCheck call's {full, fix}
+	// arguments - #224 Task 8's Health-screen wiring tests assert against
+	// this, mirroring SetConvertPaksCalls' own struct-per-call shape above
+	// (two arguments matter here too).
+	RunHealthCheckCalls []struct{ Full, Fix bool }
+
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
@@ -819,6 +825,9 @@ type recordingActions struct {
 	ApplyImportOutcome                                                           ActionOutcome
 	ExportOutcome                                                                ActionOutcome
 	AvailableVersionsOut                                                         []string
+	// RunHealthCheckOutcome is what RunHealthCheck returns for every call -
+	// #224 Task 8's Health-screen wiring tests assert against this.
+	RunHealthCheckOutcome HealthView
 
 	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks/PurgeTicks, if
 	// set, are replayed through the matching method's progress callback (in
@@ -831,6 +840,10 @@ type recordingActions struct {
 	PurgeTicks        []ActionProgress
 	RollbackTicks     []ActionProgress
 	ApplyImportTicks  []ActionProgress
+	// RunHealthCheckTicks, if set, is replayed through RunHealthCheck's
+	// progress callback (in order) whenever it's non-nil - mirrors the other
+	// *Ticks fields immediately above.
+	RunHealthCheckTicks []ActionProgress
 
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
@@ -844,6 +857,9 @@ type recordingActions struct {
 	RollbackErr                                                       error
 	PlanImportErr, ApplyImportErr                                     error
 	ExportErr                                                         error
+	// RunHealthCheckErr is returned by every RunHealthCheck call - #224 Task
+	// 8's error-path wiring tests assert against this.
+	RunHealthCheckErr error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -1018,6 +1034,17 @@ func (r *recordingActions) ExportProfile(_ context.Context, name, path string) (
 	return r.ExportOutcome, r.ExportErr
 }
 
+// RunHealthCheck implements ActionProvider (#224 Task 8).
+func (r *recordingActions) RunHealthCheck(_ context.Context, full, fix bool, progress func(ActionProgress)) (HealthView, error) {
+	r.RunHealthCheckCalls = append(r.RunHealthCheckCalls, struct{ Full, Fix bool }{full, fix})
+	for _, p := range r.RunHealthCheckTicks {
+		if progress != nil {
+			progress(p)
+		}
+	}
+	return r.RunHealthCheckOutcome, r.RunHealthCheckErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -1121,6 +1148,10 @@ func (f failingActions) ApplyImport(context.Context, []byte, func(ActionProgress
 
 func (f failingActions) ExportProfile(context.Context, string, string) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) RunHealthCheck(context.Context, bool, bool, func(ActionProgress)) (HealthView, error) {
+	return HealthView{}, f.err()
 }
 
 func TestRecordingActionsRecordsCallsAndReturnsConfiguredOutcomes(t *testing.T) {
