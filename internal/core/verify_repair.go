@@ -89,7 +89,7 @@ func cacheDirExists(path string) (bool, error) {
 //     version_mismatch and the DB/cache never disagree in a new way.
 //  2. Profile: upsert the corrected version into the active profile's YAML
 //     record. Runs BEFORE step 3's DB write (audit Finding 3, swapped from
-//     the original order): the DB row is the signal doVerify's own
+//     the original order): the DB row is the signal versionPass's own
 //     mismatch detection reads (GetInstalledMods, not the profile YAML),
 //     so it must be the LAST of these two writes to succeed - if the
 //     upsert fails here, the DB is untouched, so a retry still detects
