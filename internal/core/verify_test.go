@@ -1346,3 +1346,302 @@ func TestVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingStillRepaired(t *t
 	require.Contains(t, details[2].Detail, "Repair failed: relinking deployed files:", "the primary's own failure detail (emitted by versionPass AFTER repairModVersion returns) comes last")
 	require.False(t, details[2].Green)
 }
+
+// --- #224 Task 6: convergence pass + merged-pak sync (engine completion) --
+
+// strayDanglingSymlink plants a symlink in game.ModPath pointing INTO the
+// game's own cache root at a path that was never actually stored - the
+// simplest ConvergeDeployedFiles candidate (converge_test.go's own
+// TestConverge_DanglingCacheLinkSwept fixture): no deployed_files row is
+// needed at all, only a dangling cache-rooted symlink.
+func strayDanglingSymlink(t *testing.T, svc *core.Service, game *domain.Game, name string) {
+	t.Helper()
+	cacheRoot := svc.GetGameCachePath(game)
+	target := filepath.Join(cacheRoot, game.ID, "src-stray", "1.0", name)
+	require.NoError(t, os.Symlink(target, filepath.Join(game.ModPath, name)))
+}
+
+// TestVerify_EmptyProfile_DanglingLink_DryRun proves the #217 empty-profile
+// path (no checksummed files at all) now runs the convergence pass: a
+// dangling cache-rooted symlink with no installed mods at all is reported
+// as a stale_deployment warning, and Issues stays 0 (convergence never adds
+// to Issues - only Warnings, matching the CLI's own reportConvergencePass).
+func TestVerify_EmptyProfile_DanglingLink_DryRun(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	strayDanglingSymlink(t, svc, game, "stray.pak")
+
+	var events []core.VerifyEvent
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, func(e core.VerifyEvent) {
+		events = append(events, e)
+	})
+	require.NoError(t, err)
+
+	require.False(t, result.HasFiles)
+	require.Equal(t, 0, result.Issues)
+	require.Equal(t, 1, result.Warnings)
+	require.Equal(t, []core.VerifyFinding{
+		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache"},
+	}, result.Findings)
+
+	require.Len(t, events, 2, "Begin, then the one convergence finding - nothing else runs on this path")
+	require.Equal(t, core.VerifyEvBegin, events[0].Kind)
+	require.False(t, events[0].HasFiles)
+	require.Equal(t, core.VerifyEvFinding, events[1].Kind)
+	require.Equal(t, result.Findings[0], events[1].Finding)
+
+	_, statErr := os.Lstat(filepath.Join(game.ModPath, "stray.pak"))
+	require.NoError(t, statErr, "a dry run (opts.Fix false) must not remove anything")
+}
+
+// TestVerify_EmptyProfile_DanglingLink_Fix is the --fix counterpart: the
+// same dangling link is actually removed, reported as fixed_stale_
+// deployment with the fixed_green variant, and does NOT count as a warning
+// (a resolved problem, same convention as every other successful --fix
+// repair in this engine).
+func TestVerify_EmptyProfile_DanglingLink_Fix(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	strayDanglingSymlink(t, svc, game, "stray.pak")
+
+	var events []core.VerifyEvent
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) {
+		events = append(events, e)
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 0, result.Issues)
+	require.Equal(t, 0, result.Warnings, "a successful fix is a resolved problem, not an outstanding one")
+	require.Equal(t, []core.VerifyFinding{
+		{FileID: "stray.pak", Status: "fixed_stale_deployment", Note: "dangling link into lmm cache"},
+	}, result.Findings)
+
+	require.Len(t, events, 2)
+	require.Equal(t, core.VerifyEvFinding, events[1].Kind)
+	require.Equal(t, "fixed_green", events[1].Variant, "the CLI renders the whole main line green for a fixed convergence row")
+
+	_, statErr := os.Lstat(filepath.Join(game.ModPath, "stray.pak"))
+	require.True(t, os.IsNotExist(statErr), "--fix must remove the dangling link")
+}
+
+// TestVerify_MainPath_ConvergenceAfterFileWalk proves the convergence pass
+// also runs in the normal (HasFiles true) flow, and that its rows land
+// AFTER every per-file-walk row in Findings - the phase order this task's
+// brief pins (sync, then convergence, both after the per-file walk).
+func TestVerify_MainPath_ConvergenceAfterFileWalk(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	seedVerifyMod(t, svc, game, "src", "mod-ok", "Mod OK", "1.0", []string{"ok-file"}, true)
+	require.NoError(t, svc.SaveFileChecksum("src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
+
+	strayDanglingSymlink(t, svc, game, "stray.pak")
+
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, []core.VerifyFinding{
+		{ModID: "mod-ok", ModName: "Mod OK", FileID: "ok-file", Status: "ok"},
+		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache"},
+	}, result.Findings)
+	require.Equal(t, 1, result.Warnings)
+}
+
+// TestVerify_Fix_SyncMergedPak_WarningsSurfaceAsSyncEvents proves --fix's
+// merged-pak resync (SyncMergedPak) runs before the convergence pass, and
+// every warning it returns surfaces as its own VerifyEvSyncWarning event -
+// ported from doVerify's own fmt.Fprintf(os.Stderr, "Warning: %s\n", w) loop
+// (cmd/lmm/verify.go:818-824).
+func TestVerify_Fix_SyncMergedPak_WarningsSurfaceAsSyncEvents(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	srcRaw, err := svc.GetSource("fake-compiler")
+	require.NoError(t, err)
+	src, ok := srcRaw.(*fakeCompilerSource)
+	require.True(t, ok)
+	src.mergeWarnings = []string{"asset collision: fixture warning"}
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
+
+	var events []core.VerifyEvent
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) {
+		events = append(events, e)
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	var syncEvents []core.VerifyEvent
+	for _, e := range events {
+		if e.Kind == core.VerifyEvSyncWarning {
+			syncEvents = append(syncEvents, e)
+		}
+	}
+	require.Len(t, syncEvents, 1)
+	require.Equal(t, "asset collision: fixture warning", syncEvents[0].Detail)
+}
+
+// TestVerify_Fix_SyncMergedPak_NonCompileGame_NoWarningEvents proves a
+// plain (non-DeployCompile) game under --fix never emits a sync warning
+// event - SyncMergedPak's own no-op guard for a non-compile game means
+// there is nothing to react to, matching TestSyncMergedPak_NonCompileGame_NoOp.
+func TestVerify_Fix_SyncMergedPak_NonCompileGame_NoWarningEvents(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	seedVerifyMod(t, svc, game, "src", "mod-ok", "Mod OK", "1.0", []string{"ok-file"}, true)
+	require.NoError(t, svc.SaveFileChecksum("src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
+
+	var events []core.VerifyEvent
+	_, err = svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) {
+		events = append(events, e)
+	})
+	require.NoError(t, err)
+
+	for _, e := range events {
+		require.NotEqual(t, core.VerifyEvSyncWarning, e.Kind, "a non-DeployCompile game's sync must be a silent no-op")
+	}
+}
+
+// TestVerify_FullOrder_Integration is this task's full-order fixture: one
+// mod each of file_count_mismatch, stale_compile, conversion_failed,
+// needs_reingest, missing, plus a stray dangling convergence candidate -
+// asserting the EXACT Findings sequence the complete engine produces,
+// matching every phase's documented order: file-count pre-pass, merged-pak
+// staleness, conversion outcomes, the per-file walk (in
+// GetFilesWithChecksums' own row order - fetched directly here, same
+// precedent as TestVerify_LocalWalk_StatusesAndCounts), then convergence
+// last.
+func TestVerify_FullOrder_Integration(t *testing.T) {
+	installDir := t.TempDir()
+	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
+
+	svc := newFlowsTestService(t)
+	src := &pakConversionOutcomeSource{
+		fakeCompilerSource: &fakeCompilerSource{},
+		failRefs:           map[string]string{"fake-compiler:badpak": "irreconcilable pak layout"},
+	}
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
+		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy, ConvertPaks: true,
+		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
+	}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+
+	// file_count_mismatch: cache dir exists (still holds the version
+	// directory itself) but is empty despite a recorded non-zero FileIDs
+	// count - the fileCountPrePass fixture.
+	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file", []byte("x")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file")))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "fc-mod", SourceID: "fake-compiler", Name: "FC Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"fc-file"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "fc-mod", Version: "1.0", FileIDs: []string{"fc-file"}}))
+	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "fc-mod", game.ID, "default", "fc-file", "checksum-fc"))
+
+	// goodmod converts cleanly; badpak's conversion is scripted to fail -
+	// the conversion_failed fixture (TestVerify_CompileGameStatuses' own
+	// shape).
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "goodmod", "1.0", "exmodz-file", []byte("good-bytes"))
+	seedEnabledPakMod(t, svc, game, "fake-compiler", "badpak", "1.0", "pak", []byte("bad-bytes"))
+
+	// legacypak: a pre-#221 pak cache entry (deployable member, no retained
+	// source) - the needs_reingest fixture.
+	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "legacypak", SourceID: "fake-compiler", Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"pak"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "legacypak", Version: "1.0", FileIDs: []string{"pak"}}))
+
+	// missing-mod: a checksummed row with no cache entry at all - the
+	// missing fixture.
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "missing-mod", SourceID: "fake-compiler", Name: "Missing Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"missing-file"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "missing-mod", Version: "1.0", FileIDs: []string{"missing-file"}}))
+	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "missing-mod", game.ID, "default", "missing-file", "checksum-missing"))
+
+	// First (only) sync: stamps MergedPakOutcomes with badpak's conversion
+	// failure and establishes an up-to-date fingerprint.
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	// Go stale: enable a third exmodz mod WITHOUT syncing again - the
+	// stale_compile fixture.
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolfmod", "1.0", "exmodz-file", []byte("wolf-bytes"))
+
+	// A stray dangling symlink for the convergence pass to find.
+	strayDanglingSymlink(t, svc, game, "stray.pak")
+
+	files, err := svc.GetFilesWithChecksums(game.ID, "default")
+	require.NoError(t, err)
+
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, nil)
+	require.NoError(t, err)
+
+	// The per-file walk's own row for every checksummed row, keyed by
+	// mod:file (exmodz-file and pak are each shared by two mods above) - the
+	// same by-key-then-walk-files-in-order technique
+	// TestVerify_LocalWalk_StatusesAndCounts uses, walked in
+	// GetFilesWithChecksums' own (fetched-here) row order.
+	byModAndFile := map[string]core.VerifyFinding{
+		"fc-mod:fc-file":           {ModID: "fc-mod", ModName: "FC Mod", FileID: "fc-file", Status: "ok"},
+		"goodmod:exmodz-file":      {ModID: "goodmod", ModName: "goodmod", FileID: "exmodz-file", Status: "no_checksum"},
+		"wolfmod:exmodz-file":      {ModID: "wolfmod", ModName: "wolfmod", FileID: "exmodz-file", Status: "no_checksum"},
+		"badpak:pak":               {ModID: "badpak", ModName: "badpak", FileID: "pak", Status: "no_checksum"},
+		"legacypak:pak":            {ModID: "legacypak", ModName: "Legacy Pak", FileID: "pak", Status: "needs_reingest", Note: "pak predates conversion support - run 'lmm verify --fix' to re-ingest"},
+		"missing-mod:missing-file": {ModID: "missing-mod", ModName: "Missing Mod", FileID: "missing-file", Status: "missing"},
+	}
+	var perFileRows []core.VerifyFinding
+	for _, f := range files {
+		want, ok := byModAndFile[f.ModID+":"+f.FileID]
+		require.True(t, ok, "unexpected file row in fixture: %s:%s", f.ModID, f.FileID)
+		perFileRows = append(perFileRows, want)
+	}
+
+	want := []core.VerifyFinding{
+		{ModID: "fc-mod", ModName: "FC Mod", Status: "file_count_mismatch"},
+		{ModID: "merged-pak", ModName: "Icarus Merged Pak", Status: "stale_compile", Note: "base pak updated"},
+		{ModID: "badpak", ModName: "badpak", Status: "conversion_failed", Note: "irreconcilable pak layout"},
+	}
+	want = append(want, perFileRows...)
+	want = append(want, core.VerifyFinding{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache"})
+
+	require.Equal(t, want, result.Findings)
+}

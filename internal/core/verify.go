@@ -112,12 +112,11 @@ func (r *verifyRun) resolveLast(status, note string) {
 // incremental progress via progress (nil-safe: pass nil to skip progress
 // events entirely).
 //
-// #224 Task 3 adds the merged-pak staleness/conversion-outcome checks, the
-// Full-tier per-mod version-record pass (network-touching, gated on
-// opts.Tier == VerifyFull), and the per-file loop's needs_reingest branch -
-// every READ-side status the engine reports except --fix's repairs and the
-// deploy-convergence sweep (both later tasks). The CLI does not call this
-// yet - it still runs its own doVerify; a later task swaps it onto Verify.
+// #224 Task 6 completes the engine: the fix-mode merged-pak resync and the
+// deploy-convergence sweep (ConvergeDeployedFiles) that close out every run,
+// including the #217 empty-profile path, which now runs nothing BUT that
+// sweep. The CLI does not call this yet - it still runs its own doVerify; a
+// later task (#224 Task 7) swaps it onto Verify.
 func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, progress func(VerifyEvent)) (*VerifyResult, error) {
 	if progress == nil {
 		progress = func(VerifyEvent) {}
@@ -137,9 +136,12 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 	if !result.HasFiles {
 		// #217: doVerify still runs a deploy-convergence sweep here even
 		// with no checksummed files at all (a game dir can hold stray
-		// lmm-deployed files after everything is uninstalled). That
-		// convergence wiring lands in a later task - until then this is
-		// genuinely an empty result, matching this task's brief.
+		// lmm-deployed files after everything is uninstalled). The
+		// checksum/version/count passes all have nothing to do here, so
+		// this path is entirely the convergence pass - no sync phase (that
+		// only ever reacts to a --fix repair that just ran, and nothing
+		// ran here to react to).
+		r.convergencePass()
 		return result, nil
 	}
 
@@ -169,7 +171,84 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 
 	r.perFileWalk(files)
 
+	// #224 Task 6: --fix's merged-pak resync and the deploy-convergence
+	// sweep both close out the run, in that order - ported verbatim from
+	// doVerify (originally cmd/lmm/verify.go:811-835). The sync is a --fix-
+	// only reaction to repairs the passes above may have just made (a
+	// version-mismatch repair or a redownload can change a merge's inputs);
+	// convergence then reconciles the game dir against the resulting
+	// reality, so it always runs AFTER the sync, in both modes.
+	if r.opts.Fix {
+		r.syncMergedPakPass()
+	}
+	r.convergencePass()
+
 	return result, nil
+}
+
+// syncMergedPakPass ports cmd/lmm/verify.go's fix-mode merged-pak resync
+// call verbatim (originally doVerify lines 811-825): --fix can repair a
+// VERSION MISMATCH (repairModVersion moves the cache dir and the recorded
+// version) or redownload a file whose content has since changed upstream
+// (redownloadModFile) - both are merge-fingerprint inputs with no other
+// seam to catch them. SyncMergedPak's own guard already no-ops for a
+// non-DeployCompile game, so this dials it unconditionally under --fix.
+// Only called when opts.Fix - a plain verify pass makes no changes for a
+// sync to react to.
+func (r *verifyRun) syncMergedPakPass() {
+	syncWarnings, err := r.svc.SyncMergedPak(r.ctx, r.game, r.profile)
+	if err != nil {
+		r.emit(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
+		return
+	}
+	for _, w := range syncWarnings {
+		r.emit(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: w})
+	}
+}
+
+// convergencePass ports cmd/lmm/verify.go's reportConvergencePass verbatim
+// (originally cmd/lmm/verify.go:865-916): reconciles the game dir against
+// current reality (ConvergeDeployedFiles) - deployed_files rows no longer
+// provided by any installed mod, and dangling cache-rooted symlinks with no
+// row at all - and reports every stale/dangling path found. dryRun mirrors
+// !opts.Fix: a plain verify pass reports candidates without mutating
+// anything (each becomes a stale_deployment warning); --fix acts, and each
+// path ConvergeDeployedFiles actually removed becomes a fixed_stale_
+// deployment row instead - resolved, not outstanding, the same convention
+// every other successful --fix repair in this engine follows (it does NOT
+// add to Warnings). Runs both in the main flow (after perFileWalk/the
+// fix-mode sync above) and, for the #217 empty-profile path (HasFiles
+// false), as the entirety of that run beyond the Begin event - see Verify's
+// own doc comment.
+//
+// A fixed_stale_deployment row's Variant is "fixed_green": the CLI/TUI
+// render the WHOLE main line green for it (unlike, say, a version repair,
+// which prints a plain finding line with a separate green sub-line) - Task
+// 7 wires that rendering contract up on the CLI side.
+//
+// Per-item convergence failures (an Undeploy or sweep os.Remove that
+// failed) are joined into one error by ConvergeDeployedFiles rather than
+// aborting the whole pass (ConvergeResult's own doc comment) - surfaced
+// here the same way every other per-item problem in this engine is: a
+// skipped row plus a warning, not a fatal Verify failure.
+func (r *verifyRun) convergencePass() {
+	convResult, convErr := r.svc.ConvergeDeployedFiles(r.ctx, r.game, r.profile, !r.opts.Fix)
+	if convResult != nil {
+		for _, cf := range convResult.Removed {
+			if r.opts.Fix {
+				r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "fixed_stale_deployment", Note: cf.Reason}, VerifyEvent{Variant: "fixed_green"})
+				continue
+			}
+			r.result.Warnings++
+			r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason}, VerifyEvent{})
+		}
+	}
+	if convErr != nil {
+		for _, e := range unwrapJoined(convErr) {
+			r.result.Warnings++
+			r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("convergence: %v", e)}, VerifyEvent{})
+		}
+	}
 }
 
 // fileCountPrePass ports cmd/lmm/verify.go's per-mod file-count mismatch
