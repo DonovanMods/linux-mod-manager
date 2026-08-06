@@ -261,6 +261,134 @@ func seedEnabledPakMod(t *testing.T, svc *core.Service, game *domain.Game, sourc
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 }
 
+// TestDownloadPakRetainsAndDeploysRaw proves the #221 ingest-widening
+// contract for a prebuilt .pak download: a convert-eligible pak (DeployCompile
+// + ConvertPaks) takes the SAME validate+retain branch an .exmodz does, but
+// ALSO stages a deployable copy of itself as the manifest's sole member - the
+// raw-deploy default that holds until the first successful merge flips the
+// manifest (Task 8's reconcilePakManifests). With ConvertPaks=false, the pak
+// must fall through to the pre-#221 legacy copy path unchanged.
+func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
+	setup := func(t *testing.T, convertPaks bool) (*core.Service, *fakeCompilerSource, *domain.Game, *domain.Mod, *domain.DownloadableFile, *core.DownloadModResult) {
+		t.Helper()
+		dlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("fake-pak-bytes"))
+		}))
+		t.Cleanup(dlSrv.Close)
+
+		installDir := t.TempDir()
+		basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
+		require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+		writeFakeBasePak(t, basePak)
+
+		cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+		svc, err := core.NewService(cfg)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+		src := &fakeCompilerSource{downloadURL: dlSrv.URL}
+		svc.RegisterSource(src)
+
+		game := &domain.Game{
+			ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
+			DeployMode: domain.DeployCompile, ConvertPaks: convertPaks,
+		}
+		require.NoError(t, svc.AddGame(game))
+
+		mod := &domain.Mod{ID: "cool-mod", SourceID: "fake-compiler", GameID: "icarus", Version: "1.0"}
+		file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
+
+		result, err := svc.DownloadMod(context.Background(), "fake-compiler", game, mod, file, nil)
+		require.NoError(t, err)
+		return svc, src, game, mod, file, result
+	}
+
+	t.Run("ConvertPaksEnabled_RetainsAndDeploysRaw", func(t *testing.T) {
+		svc, src, game, mod, file, result := setup(t, true)
+
+		require.Equal(t, 1, src.validateCalls, "ingest must validate the pak via ValidateSource")
+		require.Equal(t, 0, src.compileCalls, "ingest must NOT compile at ingest time")
+		require.Equal(t, 1, result.FilesExtracted, "raw-deploy default: the deployable copy counts as the one member")
+
+		gameCache := svc.GetGameCache(game)
+
+		retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+		retainedData, err := os.ReadFile(retainedPath)
+		require.NoError(t, err)
+		require.Equal(t, "fake-pak-bytes", string(retainedData), "the original pak bytes must be retained")
+
+		deployablePath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, "CoolMod.pak")
+		deployableData, err := os.ReadFile(deployablePath)
+		require.NoError(t, err)
+		require.Equal(t, "fake-pak-bytes", string(deployableData), "a deployable copy of the raw pak must also be staged")
+
+		manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+		require.NoError(t, err)
+		require.True(t, manifests[file.ID].Recorded)
+		require.Equal(t, []string{"CoolMod.pak"}, manifests[file.ID].Members, "raw-deploy default: the deployable copy is the sole member")
+	})
+
+	t.Run("ConvertPaksDisabled_LegacyPath", func(t *testing.T) {
+		svc, src, game, mod, file, result := setup(t, false)
+
+		require.Equal(t, 0, src.validateCalls, "ConvertPaks=false must never touch the MergeCompiler at all")
+		require.Equal(t, 1, result.FilesExtracted)
+
+		gameCache := svc.GetGameCache(game)
+		require.True(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version), "cache entry must exist")
+
+		retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+		_, statErr := os.Stat(retainedPath)
+		require.True(t, os.IsNotExist(statErr), "legacy path: no retained source must be written")
+
+		files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+		require.NoError(t, err)
+		require.Equal(t, []string{"CoolMod.pak"}, files, "legacy path: plain copy, the pak itself is the sole member")
+	})
+}
+
+// TestPakInstallThenSyncNeverDoubleApplies proves the design's key safety
+// property (#221): the first-install transient - a pak deployed raw at
+// ingest, then converted by the first sync - heals WITHIN that one sync
+// call, never leaving both the raw pak and the merged pak deployed at once,
+// and a re-run afterward is a pure no-op fast path.
+func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	game.ConvertPaks = true
+
+	seedEnabledPakMod(t, svc, game, "fake-compiler", "coolmod", "1.0", "pak", []byte("cool-pak-bytes"))
+
+	installer, err := svc.GetInstallerForProfile(game, "default")
+	require.NoError(t, err)
+
+	mod := &domain.Mod{ID: "coolmod", SourceID: "fake-compiler", GameID: game.ID, Version: "1.0"}
+	require.NoError(t, installer.Install(context.Background(), game, mod, "default"))
+
+	rawPath := filepath.Join(game.ModPath, "coolmod.pak")
+	_, err = os.Stat(rawPath)
+	require.NoError(t, err, "the raw pak must be deployed before the first sync")
+
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	_ = warnings
+
+	_, err = os.Stat(rawPath)
+	require.True(t, os.IsNotExist(err), "reconcile must undeploy the raw pak link once the merge converts it")
+
+	mergedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	_, err = os.Stat(mergedPath)
+	require.NoError(t, err, "the merged pak must be deployed")
+
+	// Re-run: fast path, nothing changes, raw link stays gone.
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	_, err = os.Stat(rawPath)
+	require.True(t, os.IsNotExist(err), "the raw pak link must stay gone on the re-run")
+	_, err = os.Stat(mergedPath)
+	require.NoError(t, err, "the merged pak must remain deployed")
+}
+
 // TestSyncMergedPakReconcilesPakManifests proves the #221 crux: a
 // successfully converted pak mod's cache manifest flips to members=nil
 // (merged pak claims it), a failed one keeps its raw pak as the sole

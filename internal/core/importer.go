@@ -119,7 +119,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	var retainedFileID string
 
 	// Handle based on game's deploy mode
-	if game.DeployMode == domain.DeployCompile && isExmodzFile(filename) {
+	if game.DeployMode == domain.DeployCompile && (isExmodzFile(filename) || isConvertEligiblePakFile(game, filename)) {
 		// Validate mode (#197): Import has no real source file ID the way a
 		// download does (DownloadableFile.ID is resolved later, outside
 		// Import, only when --id was given), so the retained source is
@@ -158,10 +158,21 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		if err := copyFileStreaming(archivePath, retainedPath); err != nil {
 			return nil, fmt.Errorf("retaining %s: %w", filename, err)
 		}
+		// pak (#221): ALSO keep a deployable copy as the sole member, so the
+		// default state is raw-deploy until the first successful merge
+		// flips the manifest - mirrors DownloadModToCache's identical
+		// widening. exmodz keeps fileCount 0 (#197: merged-only, no per-mod
+		// deployment artifact).
+		if isConvertEligiblePakFile(game, filename) && !isExmodzFile(filename) {
+			deployablePath := filepath.Join(stagePath, filename)
+			if err := copyFileStreaming(archivePath, deployablePath); err != nil {
+				return nil, fmt.Errorf("staging deployable pak %s: %w", filename, err)
+			}
+			fileCount = 1
+		}
 		if err := commitStagedCache(cachePath, stagePath); err != nil {
 			return nil, err
 		}
-		fileCount = 0
 		retainedFileID = filename
 	} else if game.DeployMode == domain.DeployCopy {
 		// Copy mode: just copy the file as-is to cache (don't extract)

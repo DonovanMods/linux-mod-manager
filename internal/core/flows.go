@@ -4195,7 +4195,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		result.FilesDeployed += downloadResult.FilesExtracted
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
 
-		if game.DeployMode == domain.DeployCompile && isExmodzFile(file.FileName) {
+		if game.DeployMode == domain.DeployCompile && (isExmodzFile(file.FileName) || isConvertEligiblePakFile(game, file.FileName)) {
 			compiledFiles = append(compiledFiles, file)
 		}
 	}

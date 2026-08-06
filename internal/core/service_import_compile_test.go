@@ -78,6 +78,48 @@ func TestImportMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) {
 	require.Equal(t, "fake-exmodz-bytes", string(data))
 }
 
+// TestImportPakRetainsAndDeploysRaw mirrors the download-path
+// TestDownloadPakRetainsAndDeploysRaw (#221) for import: a convert-eligible
+// prebuilt .pak import validates+retains like an .exmodz, ALSO stages a
+// deployable copy of itself, and MarkImportedFileComplete's generic
+// entry-listing member computation picks that deployable copy up as the
+// manifest's sole member - the raw-deploy default.
+func TestImportPakRetainsAndDeploysRaw(t *testing.T) {
+	svc, src, game := newImportCompileTestGame(t)
+	game.ConvertPaks = true
+
+	tempDir := t.TempDir()
+	archivePath := filepath.Join(tempDir, "CoolMod.pak")
+	require.NoError(t, os.WriteFile(archivePath, []byte("fake-pak-bytes"), 0o644))
+
+	importer := svc.NewImporter(game)
+	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, src.validateCalls, "import must validate the pak via ValidateSource")
+	require.Equal(t, 0, src.compileCalls, "import must NOT compile at import time")
+	require.Equal(t, 1, result.FilesExtracted, "raw-deploy default: the deployable copy counts as the one member")
+	require.Equal(t, "CoolMod.pak", result.RetainedFileID, "import keys retention by the archive's own filename")
+
+	gameCache := svc.GetGameCache(game)
+
+	retainedPath := gameCache.GetFilePath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version, cache.RetainedSourceName("CoolMod.pak"))
+	retainedData, err := os.ReadFile(retainedPath)
+	require.NoError(t, err)
+	require.Equal(t, "fake-pak-bytes", string(retainedData), "the original pak bytes must be retained")
+
+	deployablePath := gameCache.GetFilePath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version, "CoolMod.pak")
+	deployableData, err := os.ReadFile(deployablePath)
+	require.NoError(t, err)
+	require.Equal(t, "fake-pak-bytes", string(deployableData), "a deployable copy of the raw pak must also be staged")
+
+	require.NoError(t, svc.MarkImportedFileComplete(game, result.Mod, result.RetainedFileID))
+
+	manifests, err := gameCache.FileManifests(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+	require.NoError(t, err)
+	require.True(t, manifests["CoolMod.pak"].Recorded)
+	require.Equal(t, []string{"CoolMod.pak"}, manifests["CoolMod.pak"].Members, "raw-deploy default: the deployable copy is the sole member")
+}
+
 // TestImportMod_DeployCompile_MalformedExmodz_FailsLoud proves validation
 // happens at import time - the only failure mode left in this branch since
 // there is no per-mod compile step anymore.

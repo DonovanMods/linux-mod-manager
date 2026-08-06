@@ -574,7 +574,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
-	if game.DeployMode == domain.DeployCompile && isExmodzFile(safeFileName) {
+	if game.DeployMode == domain.DeployCompile && (isExmodzFile(safeFileName) || isConvertEligiblePakFile(game, safeFileName)) {
 		mc, ok := src.(source.MergeCompiler)
 		if !ok {
 			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement MergeCompiler", src.ID(), game.ID)
@@ -591,15 +591,23 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		if err := copyFileStreaming(archivePath, retainedPath); err != nil {
 			return nil, fmt.Errorf("retaining %s: %w", safeFileName, err)
 		}
-		// members is nil (#197): this cache entry's ONLY content is the
-		// reserved retained source - there is no per-mod deployment
-		// artifact anymore. The merged pak (a separate, profile-level
-		// cache entry - internal/core/merged_pak.go) is what actually
-		// deploys.
-		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, nil); err != nil {
+		// exmodz: members nil (#197) - the merged pak is the only artifact.
+		// pak (#221): ALSO keep a deployable copy as the sole member, so the
+		// default state is raw-deploy (today's behavior); the first
+		// successful merge flips the manifest to nil (syncMergedPak's
+		// reconcile) and the merged pak takes over.
+		var members []string
+		if isConvertEligiblePakFile(game, safeFileName) && !isExmodzFile(safeFileName) {
+			deployablePath := filepath.Join(stagePath, safeFileName)
+			if err := copyFileStreaming(archivePath, deployablePath); err != nil {
+				return nil, fmt.Errorf("staging deployable pak %s: %w", safeFileName, err)
+			}
+			members = []string{safeFileName}
+		}
+		if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, members); err != nil {
 			return nil, err
 		}
-		return &DownloadModResult{FilesExtracted: 0, Checksum: downloadResult.Checksum}, nil
+		return &DownloadModResult{FilesExtracted: len(members), Checksum: downloadResult.Checksum}, nil
 	}
 
 	if game.DeployMode == domain.DeployCopy || !s.extractor.CanExtract(archivePath) {
@@ -1016,12 +1024,28 @@ func commitStagedCache(cachePath, stagePath string) error {
 // isExmodzFile reports whether fileName is a compile-eligible archive
 // (case-insensitive ".exmodz" suffix). DeployCompile games can also serve
 // plain, already-built ".pak" files (icarus.GetModFiles enumerates "pak"
-// before "exmodz") - those must NOT be routed through Compile, which expects
-// an .exmodz diff (#136 review, Task 13 fix round 1): a prebuilt pak falls
-// through to the pre-compile extract/copy logic unchanged, exactly as if
-// DeployMode were not DeployCompile at all.
+// before "exmodz") - those must NOT be routed through this function's own
+// validate+retain branch as an exmodz, since MergeCompile expects an exmodz
+// diff, not a whole pak (#136 review, Task 13 fix round 1). A prebuilt pak
+// gets its OWN eligibility check instead - isConvertEligiblePakFile (#221) -
+// which the same validate+retain branch also widens for: a convert-eligible
+// pak still enters ingest's validate+retain machinery (a different
+// isExmodzFile-vs-isConvertEligiblePakFile Kind, not a different branch),
+// while a non-eligible pak (ConvertPaks off, or a non-DeployCompile game)
+// falls through to the pre-compile extract/copy logic unchanged, exactly as
+// if DeployMode were not DeployCompile at all.
 func isExmodzFile(fileName string) bool {
 	return strings.HasSuffix(strings.ToLower(fileName), ".exmodz")
+}
+
+// isConvertEligiblePakFile reports whether fileName is a prebuilt .pak that
+// should enter the merge-convert pipeline (#221): DeployCompile game with
+// convert_paks enabled. The per-MOD opt-out is consulted at merge-membership
+// time (enabledMergeSources), not here - ingest state is identical either
+// way (retained + raw-deployable), only participation differs.
+func isConvertEligiblePakFile(game *domain.Game, fileName string) bool {
+	return game.DeployMode == domain.DeployCompile && game.ConvertPaks &&
+		strings.HasSuffix(strings.ToLower(fileName), ".pak")
 }
 
 // resolveBasePak locates the currently-installed game's base pak for
