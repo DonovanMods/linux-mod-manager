@@ -139,6 +139,28 @@ func TestModConvertCommand_NotInstalled(t *testing.T) {
 	assert.Equal(t, "mod not found: missing", err.Error())
 }
 
+// TestModConvertCommand_DBErrorWrapped is the mod.go minor fix (final
+// whole-branch review of #221): doModConvert used to map ANY
+// GetInstalledMod error - including a genuine DB failure - to "mod not
+// found", masking real problems behind a misleading not-found message. A
+// genuine (non-ErrModNotFound) error must be wrapped and surfaced as-is
+// instead. Forces a real DB failure deterministically by closing the
+// service's DB connection before the lookup (database/sql's Close is
+// idempotent, so the test's own t.Cleanup-driven svc.Close() still
+// succeeds afterward) - GetInstalledMod's query then fails with "sql:
+// database is closed", not sql.ErrNoRows/domain.ErrModNotFound.
+func TestModConvertCommand_DBErrorWrapped(t *testing.T) {
+	svc, game, _ := setupDoModConvertTest(t)
+	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
+
+	require.NoError(t, svc.Close())
+
+	err := doModConvert(svc, game, "a", false)
+	require.Error(t, err)
+	assert.NotEqual(t, "mod not found: a", err.Error(), "a genuine DB failure must not be reported as mod-not-found")
+	assert.Contains(t, err.Error(), "looking up mod a")
+}
+
 // TestListShowsConvert guards that lmm list shows convert state in verbose
 // mode and in JSON output.
 func TestListShowsConvert(t *testing.T) {

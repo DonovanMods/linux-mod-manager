@@ -117,7 +117,10 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 		}
 		convertPaksStr := ""
 		if g.DeployMode == domain.DeployCompile {
-			convertPaksStr = fmt.Sprintf("%v", g.ConvertPaks)
+			convertPaksStr = "off"
+			if g.ConvertPaks {
+				convertPaksStr = "on"
+			}
 		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			id, g.Name, g.InstallPath, g.ModPath, g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {

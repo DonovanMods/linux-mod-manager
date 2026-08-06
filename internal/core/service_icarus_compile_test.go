@@ -347,6 +347,59 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 	})
 }
 
+// TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath is the I1
+// fix (final whole-branch review of #221): isConvertEligiblePakFile only
+// checks GAME flags (DeployMode + ConvertPaks), not whether the file's own
+// source implements source.MergeCompiler. Pre-#221, a .pak file never hit
+// the validate+retain branch at all, so a source without MergeCompiler was
+// never even asked. Post-#221, ConvertPaks=true widened that branch's entry
+// condition to also include convert-eligible paks - so a mixed-source
+// DeployCompile game (one MergeCompiler-capable source, one that isn't)
+// would hard-error the WHOLE download for any pak from the non-capable
+// source, where pre-#221 it simply fell through to extract/copy like any
+// other file. This proves the fall-through is restored: no error, no
+// retained source, plain-copy member - byte-identical to the
+// ConvertPaksDisabled_LegacyPath shape above.
+func TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath(t *testing.T) {
+	dlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("fake-pak-bytes"))
+	}))
+	defer dlSrv.Close()
+
+	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	// A plain source that does NOT implement source.MergeCompiler.
+	src := &mockSourceWithFileURL{mockSource: newMockSource("plain-source"), fileURL: dlSrv.URL}
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "icarus", InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		DeployMode: domain.DeployCompile, ConvertPaks: true,
+	}
+	require.NoError(t, svc.AddGame(game))
+
+	mod := &domain.Mod{ID: "cool-mod", SourceID: "plain-source", GameID: "icarus", Version: "1.0"}
+	file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
+
+	result, err := svc.DownloadMod(context.Background(), "plain-source", game, mod, file, nil)
+	require.NoError(t, err, "a pak from a non-MergeCompiler source must fall through to the legacy path, not hard-error")
+	require.Equal(t, 1, result.FilesExtracted)
+
+	gameCache := svc.GetGameCache(game)
+	require.True(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version), "cache entry must exist")
+
+	retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(file.ID))
+	_, statErr := os.Stat(retainedPath)
+	require.True(t, os.IsNotExist(statErr), "legacy path: no retained source must be written")
+
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	require.Equal(t, []string{"CoolMod.pak"}, files, "legacy path: plain copy, the pak itself is the sole member")
+}
+
 // TestPakInstallThenSyncNeverDoubleApplies proves the design's key safety
 // property (#221): the first-install transient - a pak deployed raw at
 // ingest, then converted by the first sync - heals WITHIN that one sync

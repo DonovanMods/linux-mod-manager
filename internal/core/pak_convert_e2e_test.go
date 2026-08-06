@@ -244,4 +244,17 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, warnings)
 	require.Equal(t, 1, rec.compileCalls, "a pre-#221 marker for unchanged inputs must not trigger a regen")
+
+	// C1 regression (final whole-branch review of #221): a pre-#221 marker
+	// entry unmarshals as Kind:"", Converted:false - the outcome fields
+	// didn't exist yet, and equality (fingerprintInputs) never regenerates
+	// them for unchanged inputs. Every consumer of MergedPakOutcomes
+	// (verify's conversion_failed rows, status's conversion-failure counts)
+	// must NOT treat that legacy shape as a conversion failure - it predates
+	// pak conversion entirely (this profile has zero pak mods).
+	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	require.True(t, ok)
+	require.Len(t, outcomes, 1)
+	require.True(t, outcomes[0].Converted, "a pre-#221 legacy marker (Kind:\"\", Converted:false) must never report as a conversion failure")
+	require.Empty(t, outcomes[0].FailReason)
 }

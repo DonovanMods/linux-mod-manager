@@ -176,7 +176,7 @@ func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]
 		for _, fileID := range mod.FileIDs {
 			retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retainedPath); statErr != nil {
-				continue // not a retained exmodz file (a plain .pak's fileID, or nothing ingested)
+				continue // not a retained merge source (nothing ingested for this fileID - a legacy-ingest pak, or a non-convert-eligible one)
 			}
 			kind := mergeSourceKind(fileID)
 			if kind == source.MergeSourcePak && (!game.ConvertPaks || !mod.ConvertPaks) {
@@ -210,8 +210,9 @@ func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName stri
 // Safe to call unconditionally from ANY mutation flow regardless of game
 // type - it no-ops immediately for a non-DeployCompile game.
 //
-// Zero enabled exmodz sources uninstalls any existing merged pak instead of
-// generating an empty one (#197 design decision 2's "uninstall-to-zero"
+// Zero enabled merge sources (exmodz or convert-eligible pak, #221)
+// uninstalls any existing merged pak instead of generating an empty one
+// (#197 design decision 2's "uninstall-to-zero"
 // requirement) - Installer.Uninstall on the synthetic merged-pak mod is
 // idempotent when there is nothing deployed (linker.Undeploy tolerates an
 // already-absent path, matching every other uninstall in this codebase),
@@ -431,6 +432,11 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				// - is always safe, never a double-apply: the raw copy is
 				// never claimed as "gone" (members=nil) before it actually
 				// is.
+				// Single-mod Installer.Uninstall, not UninstallBatch - no
+				// before/after hooks run for this undeploy (hooks are only
+				// wired through the batch path's BatchOptions). User-observable:
+				// a game's uninstall/before_each/after_each hooks never fire
+				// for this reconcile-driven raw-pak takedown.
 				if uerr := installer.Uninstall(ctx, game, &mod.Mod, profileName); uerr != nil {
 					return warnings, fmt.Errorf("undeploying raw pak for %s: %w", ref, uerr)
 				}
@@ -472,6 +478,9 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, members); werr != nil {
 					return warnings, fmt.Errorf("flipping %s to raw-deploy: %w", ref, werr)
 				}
+				// Single-mod Installer.Install, not InstallBatch - same hook
+				// gap as the Uninstall call above: no install hooks run for
+				// this reconcile-driven raw-pak fallback deploy.
 				if ierr := installer.Install(ctx, game, &mod.Mod, profileName); ierr != nil {
 					return warnings, fmt.Errorf("deploying raw pak for %s: %w", ref, ierr)
 				}
@@ -515,7 +524,33 @@ func (s *Service) MergedPakOutcomes(game *domain.Game, profileName string) ([]Me
 	if !ok {
 		return nil, false
 	}
-	return fp.Mods, true
+	return normalizeOutcomes(fp.Mods), true
+}
+
+// normalizeOutcomes forces a trivially-successful outcome on every non-pak
+// entry (#221 C1 fix): conversion failure is definitionally a pak-kind
+// concern (mergeSourceKind(fileID) == source.MergeSourcePak), but a
+// pre-#221 fingerprint marker unmarshals its (exmodz-only, at the time)
+// entries as Kind:"", Converted:false - those fields didn't exist yet, and
+// fingerprintInputs/mergedFingerprintsEqual deliberately never regenerate
+// them for an unchanged profile (input equality ignores outcomes). Without
+// this normalization, every consumer of MergedPakOutcomes (verify's
+// conversion_failed rows, status's conversion-failure counts) would report
+// a spurious, permanent "CONVERSION FAILED" for every exmodz mod on any
+// profile that predates #221 - forever, since nothing ever rewrites the
+// stored marker's outcome fields for inputs that haven't changed. Kind==""
+// is the legacy shape; Kind==MergeSourceExmodz is the current one - both
+// are non-pak and therefore always trivially "converted".
+func normalizeOutcomes(mods []MergedFingerprintEntry) []MergedFingerprintEntry {
+	out := make([]MergedFingerprintEntry, len(mods))
+	for i, m := range mods {
+		if m.Kind != source.MergeSourcePak {
+			m.Converted = true
+			m.FailReason = ""
+		}
+		out[i] = m
+	}
+	return out
 }
 
 // PakNeedsReingest reports whether mod's fileID is a convert-eligible pak

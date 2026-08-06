@@ -574,9 +574,19 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
-	if game.DeployMode == domain.DeployCompile && (isExmodzFile(safeFileName) || isConvertEligiblePakFile(game, safeFileName)) {
-		mc, ok := src.(source.MergeCompiler)
-		if !ok {
+	// convertEligiblePak requires BOTH the game's own eligibility (deploy
+	// mode + ConvertPaks) AND this specific src implementing MergeCompiler
+	// (#221 I1 fix): isConvertEligiblePakFile alone only checks game flags,
+	// so a .pak served by a source that does NOT implement MergeCompiler
+	// (a mixed-source game, or a misconfigured/non-icarus source) must fall
+	// through to the legacy extract/copy path below - exactly as it did
+	// before #221 - rather than hard-erroring the whole download. Unlike a
+	// .exmodz file, which has no other valid interpretation and so still
+	// hard-errors when src lacks MergeCompiler (see the !ok check below).
+	mc, isMergeCompiler := src.(source.MergeCompiler)
+	convertEligiblePak := isMergeCompiler && isConvertEligiblePakFile(game, safeFileName)
+	if game.DeployMode == domain.DeployCompile && (isExmodzFile(safeFileName) || convertEligiblePak) {
+		if !isMergeCompiler {
 			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement MergeCompiler", src.ID(), game.ID)
 		}
 		if err := mc.ValidateSource(archivePath); err != nil {
@@ -597,7 +607,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 		// successful merge flips the manifest to nil (syncMergedPak's
 		// reconcile) and the merged pak takes over.
 		var members []string
-		if isConvertEligiblePakFile(game, safeFileName) && !isExmodzFile(safeFileName) {
+		if convertEligiblePak {
 			deployablePath := filepath.Join(stagePath, safeFileName)
 			if err := copyFileStreaming(archivePath, deployablePath); err != nil {
 				return nil, fmt.Errorf("staging deployable pak %s: %w", safeFileName, err)
@@ -1042,7 +1052,11 @@ func isExmodzFile(fileName string) bool {
 // should enter the merge-convert pipeline (#221): DeployCompile game with
 // convert_paks enabled. The per-MOD opt-out is consulted at merge-membership
 // time (enabledMergeSources), not here - ingest state is identical either
-// way (retained + raw-deployable), only participation differs.
+// way (retained + raw-deployable), only participation differs. This checks
+// only game-level flags - callers (DownloadModToCache, Importer.Import) must
+// ALSO confirm the actual source/resolver implements source.MergeCompiler
+// before treating a pak as convert-eligible; a source that doesn't falls
+// through to the legacy extract/copy path instead (#221 I1 fix).
 func isConvertEligiblePakFile(game *domain.Game, fileName string) bool {
 	return game.DeployMode == domain.DeployCompile && game.ConvertPaks &&
 		strings.HasSuffix(strings.ToLower(fileName), ".pak")

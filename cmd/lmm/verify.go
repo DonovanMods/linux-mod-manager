@@ -673,7 +673,19 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		// below (verify.go:683-ish) picks it up on the next sync. A local/
 		// imported mod has no source to redownload from, so its note points
 		// at re-importing instead.
-		if need, nerr := svc.PakNeedsReingest(game, mod, f.FileID); nerr == nil && need {
+		need, nerr := svc.PakNeedsReingest(game, mod, f.FileID)
+		if nerr != nil {
+			// A real check failure (a Stat/ListFiles error, not "nothing
+			// ingested yet") - not counted as a warning and not fatal to the
+			// rest of this row's checks below, but not silently dropped
+			// either: surfaced under --verbose like every other soft
+			// diagnostic in this codebase (update.go's UpdateNote convention),
+			// gated on !jsonOutput so it never corrupts the one-document-on-
+			// stdout JSON contract.
+			if verbose && !jsonOutput {
+				fmt.Printf("  (verbose) could not check pak-reingest status for %s (%s): %v\n", mod.Name, f.FileID, nerr)
+			}
+		} else if need {
 			note := "pak predates conversion support - run 'lmm verify --fix' to re-ingest"
 			if mod.SourceID == domain.SourceLocal {
 				note = "re-import the archive to enable conversion"

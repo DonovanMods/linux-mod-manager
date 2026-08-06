@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -780,7 +781,10 @@ func doModConvert(service *core.Service, game *domain.Game, modID string, conver
 
 	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
 	if err != nil {
-		return fmt.Errorf("mod not found: %s", modID)
+		if errors.Is(err, domain.ErrModNotFound) {
+			return fmt.Errorf("mod not found: %s", modID)
+		}
+		return fmt.Errorf("looking up mod %s: %w", modID, err)
 	}
 
 	if err := service.SetModConvertPaks(modSource, modID, game.ID, profileName, convert); err != nil {

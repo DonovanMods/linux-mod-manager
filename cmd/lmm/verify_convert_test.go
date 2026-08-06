@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -273,6 +274,53 @@ func TestVerifyNeedsReingest_ModOptedOut_NotFlagged(t *testing.T) {
 				"a mod opted out of pak conversion (ConvertPaks=false) must not be flagged for reingest")
 		}
 	}
+}
+
+// TestVerifyNeedsReingest_CheckErrorSurfacedUnderVerbose is the verify.go
+// minor fix (final whole-branch review of #221): the needs_reingest block
+// used to silently swallow a genuine PakNeedsReingest error (`nerr == nil &&
+// need`, where a non-nil nerr just fell through to the ordinary MISSING/NO
+// CHECKSUM checks below with no trace at all). Forces a real error - not
+// "nothing ingested yet" (fs.ErrNotExist), which PakNeedsReingest treats as
+// a normal, silent "false" - by stripping all permissions from the cache
+// mod-key's parent directory (same technique as
+// TestDoVerify_Fix_VersionMismatch_OldPathStatErrorBlocksRepair), so
+// PakNeedsReingest's own os.Stat can't even traverse into the version dir.
+func TestVerifyNeedsReingest_CheckErrorSurfacedUnderVerbose(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+	svc, game, _, _ := setupDoUpdateRecompileTest(t)
+	game.ConvertPaks = true
+
+	const modID, version, fileID = "perm-blocked-pak-mod", "1.0", "PermBlocked.pak"
+	seedLegacyPakModCLI(t, svc, game, "fake-compiler", modID, version, fileID, []byte("legacy-pak-bytes"))
+
+	gameCache := svc.GetGameCache(game)
+	versionDir := gameCache.ModPath(game.ID, "fake-compiler", modID, version)
+	parentDir := filepath.Dir(versionDir)
+	require.NoError(t, os.Chmod(parentDir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(parentDir, 0o755) }) // restore before TempDir's own cleanup removes it
+
+	verifyProfile = "default"
+	jsonOutput = false
+	verbose = true
+	t.Cleanup(func() { verifyProfile = ""; verbose = false })
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	quietOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	verbose = false
+	// Non-verbose: the check failure must not be reported as a fabricated
+	// pass/fail status at all (no needs_reingest row, since the check itself
+	// never resolved either way).
+	assert.NotContains(t, quietOut, "NEEDS REINGEST")
+
+	verbose = true
+	verboseOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	assert.Contains(t, verboseOut, "could not check pak-reingest status", "a genuine check failure must be surfaced under --verbose, not silently dropped")
+	assert.Contains(t, verboseOut, modID)
 }
 
 // TestVerifyFileCountCarveOutMembersAware proves the #221 fix to
