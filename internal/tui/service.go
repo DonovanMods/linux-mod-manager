@@ -134,6 +134,20 @@ type ModItem struct {
 	// convert_paks: false is reflected in the TUI exactly like the CLI
 	// already reflects it (cmd/lmm/mod.go's doModConvert).
 	GameConvertPaks bool
+	// HasPakSource reports whether this mod has at least one pak-kind
+	// merge-source file (core.Service.ModHasPakMergeSource) - i.e. whether
+	// ConvertPaks/GameConvertPaks have any deploy-time effect on it at all
+	// (#221 round-4 fix). An exmodz-only mod's conversion flags are
+	// meaningless: there is no pak to convert or leave raw. Populated by
+	// coreProvider's Overview mapping (service_core.go); left at the zero
+	// value in prototypeProvider (modItems - service.go), mirroring
+	// ConvertPaks/GameConvertPaks' own "prototype.Mod carries no state for
+	// this" convention above. Meaningful only when CompileGame is true -
+	// app.go's modFlags and mutations.go's toggleSelectedModConvert both
+	// require it alongside CompileGame before honoring the "raw" flag or the
+	// "m" toggle, so an exmodz-only mod never shows a misleading "raw" flag
+	// and never has its (meaningless) ConvertPaks flag toggled.
+	HasPakSource bool
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of

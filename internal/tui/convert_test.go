@@ -47,6 +47,30 @@ func TestConvertToggleKeyNonCompileGameRefusesSynchronously(t *testing.T) {
 	require.Empty(t, rec.SetConvertPaksCalls)
 }
 
+// TestConvertToggleKeyNonPakModRefusesSynchronously proves the HasPakSource
+// gate (#221 round-4 fix, Copilot round 4 on PR #222): a compile-game mod
+// with NO pak merge source (exmodz-only) refuses 'm' on the status line with
+// no provider call, exactly like the non-compile-game refusal above -
+// conversion flags have no deploy-time effect on a mod with nothing to
+// convert, so persisting a toggle would write a meaningless flag.
+func TestConvertToggleKeyNonPakModRefusesSynchronously(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenInstalledMods
+	model.selected[ScreenInstalledMods] = convertReadyModIndex
+	model.mods[convertReadyModIndex].CompileGame = true
+	require.False(t, model.mods[convertReadyModIndex].HasPakSource, "sanity: prototype fixture never sets HasPakSource")
+
+	updated, cmd := model.Update(keyRunes("m"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, "pak conversion applies only to mods with a pak merge source", model.action.status)
+	require.False(t, model.action.statusIsError, "a non-pak mod's toggle is benign, not a refusal")
+	require.Empty(t, rec.SetConvertPaksCalls, "the provider must never be called for a non-pak mod")
+}
+
 // TestConvertToggleKeyDispatchesAndRefreshes proves the success path: on a
 // mod with CompileGame true, 'm' calls SetConvertPaks with the FLIPPED
 // ConvertPaks value, shows the outcome's message on the status line, and
@@ -62,6 +86,7 @@ func TestConvertToggleKeyDispatchesAndRefreshes(t *testing.T) {
 	model.selected[ScreenInstalledMods] = convertReadyModIndex
 	model.mods[convertReadyModIndex].CompileGame = true
 	model.mods[convertReadyModIndex].ConvertPaks = true
+	model.mods[convertReadyModIndex].HasPakSource = true
 
 	updated, cmd := model.Update(keyRunes("m"))
 	model = updated.(Model)

@@ -80,6 +80,27 @@ func mergeSourceKind(fileID string) string {
 	return source.MergeSourceExmodz
 }
 
+// ModHasPakMergeSource reports whether mod carries at least one pak-kind
+// (source.MergeSourcePak) merge-source fileID, as opposed to being
+// exmodz-only (#221 round-4 fix). Pure classification over mod.FileIDs via
+// mergeSourceKind - no cache lookups or retained-source disk checks (unlike
+// enabledMergeSources, which additionally confirms ingest actually RETAINED
+// something). Callers that only need "does pak-conversion state have any
+// effect on this mod at all" - e.g. the TUI deciding whether to show the
+// "raw" flag or honor the convert-toggle key - want this cheaper check, not
+// enabledMergeSources' full retained-file resolution.
+func (s *Service) ModHasPakMergeSource(mod *domain.InstalledMod) bool {
+	if mod == nil {
+		return false
+	}
+	for _, fileID := range mod.FileIDs {
+		if mergeSourceKind(fileID) == source.MergeSourcePak {
+			return true
+		}
+	}
+	return false
+}
+
 // fingerprintInputs strips outcome fields and normalizes Kind so equality
 // judges inputs only. Kind "" and "exmodz" are the same input (pre-#221
 // markers wrote no Kind).

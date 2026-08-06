@@ -404,7 +404,12 @@ func (m Model) moveSelectedMod(delta int) (Model, tea.Cmd) {
 // refused synchronously on the status line rather than silently persisting a
 // flag with no effect - mirroring rollbackSelectedMod's "benign, not an
 // error" PreviousVersion=="" refusal (statusIsError false: the row itself
-// isn't wrong, the game's deploy mode just makes the flag inert).
+// isn't wrong, the game's deploy mode just makes the flag inert); and
+// !item.HasPakSource (#221 round-4 fix) - conversion flags only affect a mod
+// that actually has a pak merge source, so an exmodz-only mod's toggle is
+// refused the same synchronous, benign way BEFORE the provider is ever
+// called, rather than persisting a flag that can never have a deploy-time
+// effect.
 //
 // On success: the outcome's message (coreProvider.SetConvertPaks's "<name>
 // pak conversion: on/off (deploy to apply)", or a game-disabled variant when
@@ -426,6 +431,11 @@ func (m Model) toggleSelectedModConvert() (Model, tea.Cmd) {
 	}
 	if !item.CompileGame {
 		m.action.status = "pak conversion applies only to merge-compile games"
+		m.action.statusIsError = false
+		return m, nil
+	}
+	if !item.HasPakSource {
+		m.action.status = "pak conversion applies only to mods with a pak merge source"
 		m.action.statusIsError = false
 		return m, nil
 	}

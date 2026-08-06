@@ -99,6 +99,45 @@ func TestCoreProviderSetConvertPaks(t *testing.T) {
 	assert.True(t, mods[0].GameConvertPaks, "GameConvertPaks reflects the game's own ConvertPaks, not the mod")
 }
 
+// TestCoreProviderOverview_HasPakSource covers the Copilot round 4 finding
+// on PR #222: Overview must populate ModItem.HasPakSource from the mod's own
+// FileIDs (core.Service.ModHasPakMergeSource), independent of ConvertPaks/
+// GameConvertPaks - an exmodz-only mod (FileIDs: {"exmodz"}) has no pak to
+// convert or leave raw, so app.go's modFlags and mutations.go's
+// toggleSelectedModConvert must both be able to tell it apart from a mod
+// that actually has a pak merge source (FileIDs: {"pak"}).
+func TestCoreProviderOverview_HasPakSource(t *testing.T) {
+	_, provider, svc, game := newConvertActionsFixture(t)
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "pak-mod", SourceID: "fake-compiler", GameID: game.ID, Name: "Pak Mod", Version: "1.0"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"pak"},
+	}))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "exmodz-mod", SourceID: "fake-compiler", GameID: game.ID, Name: "Exmodz Mod", Version: "1.0"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"exmodz"},
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "pak-mod", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "exmodz-mod", Version: "1.0"}))
+
+	_, mods, err := provider.Overview(context.Background())
+	require.NoError(t, err)
+	require.Len(t, mods, 2)
+
+	byID := make(map[string]tui.ModItem, len(mods))
+	for _, m := range mods {
+		byID[m.ID] = m
+	}
+	assert.True(t, byID["pak-mod"].HasPakSource, "a mod with a pak FileID must report HasPakSource true")
+	assert.False(t, byID["exmodz-mod"].HasPakSource, "an exmodz-only mod must report HasPakSource false")
+}
+
 // TestCoreProviderSetConvertPaks_GameLevelDisabled covers the Copilot round
 // 3 finding on PR #222: when the ACTIVE game's own convert_paks is false,
 // the generic "(deploy to apply)" trailer is misleading - no deploy will

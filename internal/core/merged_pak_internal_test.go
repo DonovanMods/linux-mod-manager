@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 )
@@ -125,6 +126,29 @@ func TestMergeSourceKind(t *testing.T) {
 		if got := mergeSourceKind(fileID); got != want {
 			t.Errorf("mergeSourceKind(%q) = %q, want %q", fileID, got, want)
 		}
+	}
+}
+
+func TestModHasPakMergeSource(t *testing.T) {
+	tests := []struct {
+		name string
+		mod  *domain.InstalledMod
+		want bool
+	}{
+		{"nil mod", nil, false},
+		{"no FileIDs", &domain.InstalledMod{}, false},
+		{"exmodz-only FileIDs", &domain.InstalledMod{FileIDs: []string{"exmodz"}}, false},
+		{"pak FileID", &domain.InstalledMod{FileIDs: []string{"pak"}}, true},
+		{"import-path .pak filename", &domain.InstalledMod{FileIDs: []string{"MyMod.PAK"}}, true},
+		{"mixed FileIDs, one pak", &domain.InstalledMod{FileIDs: []string{"exmodz", "pak"}}, true},
+	}
+	svc := &Service{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := svc.ModHasPakMergeSource(tt.mod); got != tt.want {
+				t.Errorf("ModHasPakMergeSource(%+v) = %v, want %v", tt.mod, got, tt.want)
+			}
+		})
 	}
 }
 

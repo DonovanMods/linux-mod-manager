@@ -166,6 +166,7 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 			ConvertPaks:     mod.ConvertPaks,
 			CompileGame:     game.DeployMode == domain.DeployCompile,
 			GameConvertPaks: game.ConvertPaks,
+			HasPakSource:    p.svc.ModHasPakMergeSource(&mod),
 		}
 		// ModItem.LockedVersion is only ever populated alongside Locked
 		// (see that field's own doc comment) - an unlocked ref's Version is
