@@ -340,11 +340,14 @@ locked mod's picker gains a trailing "unlock" entry — see [Locking mods to a
 version](#locking-mods-to-a-version). On a merge-compile game (e.g.
 Icarus), `m` toggles the selected mod's pak-to-exmod conversion on/off —
 applies immediately, no confirmation modal (the same "reversible
-metadata write" exception as the `P` policy picker above) — and a
-non-compile game reports the toggle as inapplicable on the status line
-instead of doing anything. The row's flags column shows `raw` whenever
-conversion is off and the mod's prebuilt pak is deploying unconverted —
-see [Pak conversion (Icarus)](#pak-conversion-icarus). `J`/`K` (also `ctrl+down`/`ctrl+up`)
+metadata write" exception as the `P` policy picker above), but it's a
+metadata write, not a deploy — the merged pak itself is unchanged until
+the next deploy, which the status line's "(deploy to apply)" reminds you
+of — and a non-compile game reports the toggle as inapplicable on the
+status line instead of doing anything. The row's flags column shows `raw`
+whenever conversion is off and the mod's prebuilt pak is deploying
+unconverted — see [Pak conversion (Icarus)](#pak-conversion-icarus).
+`J`/`K` (also `ctrl+down`/`ctrl+up`)
 swap the selected mod with its neighbor in load order and persist the new
 order right away; the list itself renders in load order, and a hint reads
 "order changed — deploy (`D`) to apply" until you redeploy. `<` rolls the
