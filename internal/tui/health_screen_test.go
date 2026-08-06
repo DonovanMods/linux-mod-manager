@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -136,6 +137,71 @@ func TestHealthContextHostPushRenderKeyAndEscPop(t *testing.T) {
 	model = updated.(Model)
 	require.Equal(t, ScreenConflicts, model.CurrentScreen(), "esc must pop back to the pushing screen")
 	require.Nil(t, model.contextContent, "popContext must clear the pushed content")
+}
+
+// TestHealthContextHostPromotesPushedContentHelpGroup is fix round 1's
+// Finding 2 regression test: while content is pushed onto ScreenHealth, the
+// help panel's promoted group (immediately after "global") must be the
+// pushed content's own HelpGroup(), not the ambient static "health" group's
+// unrelated 7/c/F bindings - otherwise HelpGroup() would be an orphaned
+// interface member. Uses a zero-size model (like
+// TestHelpViewCurrentScreenGroupFirst) so helpBodyBudget's generous unsized
+// default (50 lines) has the most room to work with; even so, the full
+// grouped list (now with the pushed "fake" group added on top) still runs
+// past that budget and tail-collapses into "+N more" before reaching
+// "health" itself, so this compares against "dashboard" (the group that
+// would normally be first after global, and one of the fixed groups still
+// guaranteed to survive the cap) rather than "health" directly.
+func TestHealthContextHostPromotesPushedContentHelpGroup(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model.screen = ScreenConflicts
+
+	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
+	model.pushContext(fake, ScreenConflicts)
+	model.showHelp = true
+
+	view := model.helpView()
+	fakeIdx := strings.Index(view, "fake")
+	globalIdx := strings.Index(view, "global")
+	dashboardIdx := strings.Index(view, "dashboard")
+	require.NotEqual(t, -1, fakeIdx, "pushed content's HelpGroup title must appear")
+	require.Less(t, globalIdx, fakeIdx, "global must still render first")
+	require.Less(t, fakeIdx, dashboardIdx, "pushed content's group must be promoted ahead of the ordinary fixed groups")
+}
+
+// TestGotoScreenAwayFromHealthClearsPushedContext is fix round 1's Finding
+// 1 regression test: a global nav key the pushed content DECLINES (a digit
+// jump, here "2") must not strand contextContent set while the session
+// sits on a different screen - gotoScreen (app.go) must clear it, or
+// returning to Health later would re-render the stale pushed content
+// instead of the home view.
+func TestGotoScreenAwayFromHealthClearsPushedContext(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 24)
+	model.screen = ScreenConflicts
+
+	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
+	model.pushContext(fake, ScreenConflicts)
+	require.Equal(t, ScreenHealth, model.CurrentScreen())
+
+	// "2" is declined by the fake (only "x" is handled=true), so it falls
+	// through to the outer switch's InstalledMods jump.
+	updated, _ := model.Update(keyRunes("2"))
+	model = updated.(Model)
+	require.Equal(t, ScreenInstalledMods, model.CurrentScreen(), "the declined nav key must still navigate")
+	require.Nil(t, model.contextContent, "navigating away from Health must clear the stranded pushed content")
+
+	// Returning to Health must render the home view, not the stale fake.
+	updated, _ = model.Update(keyRunes("7"))
+	model = updated.(Model)
+	require.Equal(t, ScreenHealth, model.CurrentScreen())
+	view := model.screenView()
+	require.NotContains(t, view, "FAKE DETAIL", "the stale pushed content must not resurface")
+	require.NotContains(t, view, "fake line")
 }
 
 // TestPopContextNoopWhenNothingPushed proves popContext is safe to call (or

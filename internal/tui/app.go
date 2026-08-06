@@ -394,6 +394,23 @@ func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 // pressed Esc (smoke-test Finding 1). See gotoScreenFocused for the bindings
 // that DO focus.
 func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
+	// Navigating away from ScreenHealth implicitly pops any pushed
+	// contextContent (#224 Task 9 fix round 1, Finding 1): the pushed-
+	// content key routing in updateKey only offers keys to HandleKey while
+	// m.screen == ScreenHealth, so a global nav key the content declines
+	// (a digit, tab/shift-tab, a dashboard menu selection) would otherwise
+	// strand contextContent set while the session sits on a different
+	// screen - returning to Health later would then re-render the stale
+	// pushed content instead of the home view (see contextContent's own
+	// "with nothing pushed, ScreenHealth renders the health home view" doc
+	// comment). gotoScreen is the single choke point every navigation
+	// route funnels through (grep confirms it's the only non-init,
+	// non-contextview.go assignment to m.screen), so clearing here covers
+	// all of them without each call site needing its own guard.
+	if m.screen == ScreenHealth && screen != ScreenHealth && m.contextContent != nil {
+		m.contextContent = nil
+		m.contextReturn = ScreenDashboard
+	}
 	m.screen = screen
 	return m, nil
 }
@@ -2194,10 +2211,13 @@ func healthStatusClass(status string) string {
 
 // healthGlyph renders the tinted leading marker for a list row, mirroring
 // the CLI's own colorRed("X")/colorGreen("+")/colorYellow("?") convention
-// (cmd/lmm/verify.go's renderVerifyFinding) - "fine" gets no theme.WarningText/
-// DangerText tint (the theme has no dedicated "success" text style; see
-// theme.Theme's own field list), same as the CLI's un-tinted "+" glyph
-// reads as healthy by absence of alarm color.
+// (cmd/lmm/verify.go's renderVerifyFinding) for the danger/warning classes.
+// "fine" gets no tint at all - unlike the CLI, which DOES color its "+" OK
+// glyph green via colorGreen, theme.Theme has no dedicated "success" text
+// style (only WarningText/DangerText - see its own field list), and adding
+// one is out of this task's file list (navigation.go/contextview.go/
+// keys.go/app.go/health_screen_test.go). Untinted is the closest available
+// approximation, not a deliberate parity claim with the CLI's own styling.
 func (m Model) healthGlyph(status string) string {
 	switch healthStatusClass(status) {
 	case "danger":
@@ -2453,6 +2473,18 @@ func (m Model) helpGroups() []helpGroup {
 		ScreenSources:       sources.name,
 		ScreenHealth:        health.name,
 	}
+	// #224 Task 9 fix round 1, Finding 2: while ScreenHealth has pushed
+	// content (contextview.go), the promoted group is the CONTENT's own
+	// HelpGroup() - the static "health" group's bindings (just the "7" jump
+	// key today) don't describe whatever the pushed content actually shows,
+	// so consulting it here (rather than leaving HelpGroup() an orphaned
+	// interface member) is the whole point of that method existing. The
+	// static "health" group stays in fixed, unpromoted, further down the
+	// list.
+	if m.screen == ScreenHealth && m.contextContent != nil {
+		return append([]helpGroup{global, m.contextContent.HelpGroup()}, fixed...)
+	}
+
 	if name, ok := screenGroupName[m.screen]; ok {
 		for i, g := range fixed {
 			if g.name == name {
