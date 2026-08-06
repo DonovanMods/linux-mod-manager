@@ -247,13 +247,15 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
 	}
 }
 
-// perFileWalk ports cmd/lmm/verify.go's main per-file loop's non-fix,
-// non-reingest branches verbatim (originally doVerify lines 678-854, minus
-// the --fix repair blocks and PakNeedsReingest - both later tasks): for
-// each checksummed file, report unknown-mod as "skipped", an absent cache
-// entry as "missing", a stored-but-empty checksum as "no_checksum", and
-// anything else as "ok". Checked is incremented once per row considered
-// (after the ModFilter check, before any of those outcomes).
+// perFileWalk ports cmd/lmm/verify.go's main per-file loop verbatim
+// (originally doVerify lines 678-854): for each checksummed file, report
+// unknown-mod as "skipped", an absent cache entry as "missing", a
+// stored-but-empty checksum as "no_checksum", and anything else as "ok".
+// Checked is incremented once per row considered (after the ModFilter
+// check, before any of those outcomes). #224 Task 4 adds the MISSING/NO
+// CHECKSUM/NEEDS REINGEST --fix redownload repairs inline at each site;
+// Task 5 adds the one repair this walk does NOT own (version_mismatch's,
+// in versionPass below).
 func (r *verifyRun) perFileWalk(files []DeployedFile) {
 	gameCache := r.svc.GetGameCache(r.game)
 	for _, f := range files {
@@ -274,8 +276,8 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 		// source) needs re-ingesting before it can ever participate in a
 		// merge - PakNeedsReingest is the one place that kind/retained
 		// detection lives (verify must not reimplement it). Ported from
-		// cmd/lmm/verify.go's doVerify (originally lines 696-753, minus the
-		// --fix re-ingest block - Task 5).
+		// cmd/lmm/verify.go's doVerify (originally lines 696-753), including
+		// the --fix re-ingest block below (#224 Task 4).
 		need, nerr := r.svc.PakNeedsReingest(r.game, mod, f.FileID)
 		if nerr != nil {
 			// A real check failure (a Stat/ListFiles error, not "nothing
@@ -293,7 +295,30 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 			}
 			r.result.Warnings++
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "needs_reingest", Note: note}, VerifyEvent{})
-			// --fix's re-ingest repair (fixed_needs_reingest) lands in Task 5.
+			// #224 Task 4: --fix re-ingests through the same redownload path
+			// as MISSING/NO CHECKSUM below - the widened ingest predicate
+			// retains the source this time, and a later sync picks it up.
+			// Ported verbatim from doVerify (originally lines 729-751).
+			// Unlike MISSING/NO CHECKSUM, only the error is branched on -
+			// redownloadModFile's persisted flag is irrelevant here (a
+			// re-ingest either retains the source or it doesn't reach this
+			// far).
+			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
+				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID); rerr != nil {
+					r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
+				} else {
+					// Same convention as MISSING/NO CHECKSUM's own --fix
+					// success path below, and stale_deployment's
+					// fixed_stale_deployment: a resolved problem is not left
+					// reading as an outstanding one in the SAME run that
+					// just fixed it - rewrite the row to a fixed-state
+					// status/note and back the count out.
+					r.resolveLast("fixed_needs_reingest", "re-ingested with retained source for pak conversion")
+					r.result.Warnings--
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-ingested for pak conversion", Green: true})
+				}
+			}
 			continue
 		}
 
@@ -301,10 +326,59 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 		if !cacheExists {
 			r.result.Issues++
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing"}, VerifyEvent{Version: mod.Version})
+			// #224 Task 4: ported verbatim from doVerify (originally lines
+			// 765-799).
+			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
+				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID)
+				switch {
+				case err != nil:
+					r.resolveLast("missing", err.Error())
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
+				case persisted:
+					r.resolveLast("ok", "")
+					r.result.Issues--
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded OK", Green: true})
+				default:
+					// The re-download restored the cache - the MISSING
+					// issue is genuinely repaired - but no checksum was
+					// available to store, so the row remains a NO CHECKSUM
+					// warning (#164: don't report "ok" for a write that
+					// never happened).
+					r.resolveLast("no_checksum", "re-downloaded, but no checksum was available to store")
+					r.result.Issues--
+					r.result.Warnings++
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store - NO CHECKSUM remains"})
+				}
+			}
 			continue
 		}
 
 		if f.Checksum == "" {
+			// #224 Task 4: --fix's redownload-to-populate-checksum repair
+			// REPLACES the plain no_checksum row emission below - ported
+			// verbatim from doVerify (originally lines 804-846), including
+			// the "ok"+Variant:"checksum_populated" main-line emission on
+			// success.
+			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
+				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID)
+				switch {
+				case err != nil:
+					r.result.Warnings++
+					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: err.Error()}, VerifyEvent{})
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download to populate checksum failed: %v", err)})
+				case persisted:
+					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{Variant: "checksum_populated"})
+				default:
+					// The download succeeded but produced no checksum to
+					// store - nothing was written, so the warning stands
+					// with an honest reason (#164: "checksum populated" was
+					// a lie here, and the summary lied with it).
+					r.result.Warnings++
+					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "re-downloaded, but no checksum was available to store"}, VerifyEvent{})
+					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store"})
+				}
+				continue
+			}
 			r.result.Warnings++
 			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"}, VerifyEvent{})
 			continue

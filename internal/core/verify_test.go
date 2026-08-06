@@ -4,12 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/stretchr/testify/require"
 )
 
@@ -542,4 +546,399 @@ func TestVerify_ContextCancelledMidVersionPass(t *testing.T) {
 	require.Equal(t, 1, src.called, "mod-b's GetModFiles must never be called after cancellation")
 	require.Equal(t, 1, result.Checked, "mod-a's quiet-OK version check ran to completion before cancellation was noticed")
 	require.Empty(t, result.Findings, "the per-file walk never ran - Verify returned before reaching it")
+}
+
+// --- #224 Task 4: fix mode I - redownload repairs (missing / no_checksum /
+// needs_reingest) --------------------------------------------------------
+//
+// errRedownloadRepair is a fixed sentinel error used by the fix-mode fake
+// sources below so a failed repair's finding.Note (the bare err.Error(),
+// what --json exposes) and its RepairDetail.Detail (a full sentence, what
+// the CLI's/TUI's text rendering shows) can be asserted against each other
+// precisely, independent of the real downloader's own wrapped error text.
+var errRedownloadRepair = errors.New("redownload boom")
+
+// redownloadURLFailingSource wraps mockSource with a GetDownloadURL that
+// always fails errRedownloadRepair - the MISSING/NO CHECKSUM --fix
+// redownload-failure fixture. mockSource's own GetModFiles (a single file ID
+// "1") still succeeds, so the failure is attributable specifically to the
+// download step, matching a real expired-URL/network failure.
+type redownloadURLFailingSource struct {
+	*mockSource
+}
+
+func (s *redownloadURLFailingSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	return "", errRedownloadRepair
+}
+
+// nonArchiveDownloadSource wraps mockSourceWithDownloads but serves a file
+// named "<mod.ID>.dat" instead of mockSource's hardcoded "<mod.ID>.zip" - the
+// extension drives DownloadModToCache's copy-vs-extract branch
+// (Extractor.CanExtract), and the fix-mode redownload success tests want the
+// plain copy path so arbitrary byte content downloads cleanly without having
+// to be a real archive.
+type nonArchiveDownloadSource struct {
+	*mockSourceWithDownloads
+}
+
+func (s *nonArchiveDownloadSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{{ID: "1", Name: "Main File", FileName: mod.ID + ".dat", IsPrimary: true}}, nil
+}
+
+// newEmptyDirSource builds (but does not register) a custom.Directory source
+// over a root containing one EMPTY mod directory named modID.
+// ingestLocalToCache's digestDirectoryMembers returns "" for zero members -
+// the only path in this codebase where a download succeeds with no checksum
+// to store (redownloadModFile's own doc comment) - the fixture for the
+// "re-downloaded, but no checksum was available to store" branch of both the
+// MISSING and NO CHECKSUM --fix repairs. The directory source's own
+// GetModFiles always serves a single synthetic file ID, "main".
+func newEmptyDirSource(t *testing.T, sourceID, modID string) source.ModSource {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, modID), 0o755))
+	src, err := custom.New(custom.SourceDefinition{
+		ID:        sourceID,
+		Name:      "Empty Dir Source",
+		Type:      custom.TypeDirectory,
+		Directory: &custom.DirectoryConfig{Path: root},
+	})
+	require.NoError(t, err)
+	return src
+}
+
+// repairDetails filters events down to its VerifyEvRepairDetail entries, in
+// order - the fix-mode tests' sub-line assertions.
+func repairDetails(events []core.VerifyEvent) []core.VerifyEvent {
+	var out []core.VerifyEvent
+	for _, e := range events {
+		if e.Kind == core.VerifyEvRepairDetail {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// newFixTestGame is the shared fixture for the MISSING/NO CHECKSUM --fix
+// tests: a plain (non-DeployCompile) game with a "default" profile ready for
+// a single seeded mod.
+func newFixTestGame(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	return svc, game
+}
+
+// TestVerify_Fix_Missing_Redownload is the #224 Task 4 MISSING repair
+// fixture: a checksummed file whose cache entry is absent, verified with
+// --fix, across redownloadModFile's three possible outcomes - a successful
+// redownload resolves the row to "ok" and backs the issue out; a redownload
+// that succeeds but yields no checksum (the empty-directory-source case)
+// demotes the row to "no_checksum" (issue backed out, warning added
+// instead); and a failed redownload leaves the row "missing" with the
+// failure reason recorded as its Note.
+func TestVerify_Fix_Missing_Redownload(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		svc, game := newFixTestGame(t)
+		mock := newMockSourceWithDownloads("rsrc")
+		t.Cleanup(mock.Close)
+		mock.AddDownload("1", []byte("fresh content"))
+		svc.RegisterSource(&nonArchiveDownloadSource{mockSourceWithDownloads: mock})
+		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, false)
+		require.NoError(t, svc.SaveFileChecksum("rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
+
+		var events []core.VerifyEvent
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		require.NoError(t, err)
+
+		require.Equal(t, 0, result.Issues, "a successful redownload resolves the missing issue")
+		require.Equal(t, 0, result.Warnings)
+		require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "ok"}}, result.Findings)
+
+		details := repairDetails(events)
+		require.Len(t, details, 1)
+		require.Equal(t, "Re-downloaded OK", details[0].Detail)
+		require.True(t, details[0].Green)
+	})
+
+	t.Run("no_checksum_available", func(t *testing.T) {
+		svc, game := newFixTestGame(t)
+		svc.RegisterSource(newEmptyDirSource(t, "rsrc", "mod1"))
+		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"main"}, false)
+		require.NoError(t, svc.SaveFileChecksum("rsrc", "mod1", game.ID, "default", "main", "old-checksum"))
+
+		var events []core.VerifyEvent
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		require.NoError(t, err)
+
+		require.Equal(t, 0, result.Issues, "the cache was restored, so the missing issue is backed out")
+		require.Equal(t, 1, result.Warnings, "but no checksum could be stored, so a warning replaces it")
+		require.Equal(t, []core.VerifyFinding{
+			{ModID: "mod1", ModName: "Mod One", FileID: "main", Status: "no_checksum", Note: "re-downloaded, but no checksum was available to store"},
+		}, result.Findings)
+
+		details := repairDetails(events)
+		require.Len(t, details, 1)
+		require.Equal(t, "Re-downloaded, but no checksum was available to store - NO CHECKSUM remains", details[0].Detail)
+		require.False(t, details[0].Green)
+	})
+
+	t.Run("error", func(t *testing.T) {
+		svc, game := newFixTestGame(t)
+		svc.RegisterSource(&redownloadURLFailingSource{mockSource: newMockSource("rsrc")})
+		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, false)
+		require.NoError(t, svc.SaveFileChecksum("rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
+
+		var events []core.VerifyEvent
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		require.NoError(t, err)
+
+		require.Equal(t, 1, result.Issues, "the failed redownload leaves the missing issue outstanding")
+		require.Equal(t, 0, result.Warnings)
+		require.Len(t, result.Findings, 1)
+		wantErr := "getting download URL: redownload boom"
+		require.Equal(t, "missing", result.Findings[0].Status)
+		require.Equal(t, wantErr, result.Findings[0].Note, "the finding's Note is the bare error, feeding --json directly")
+
+		details := repairDetails(events)
+		require.Len(t, details, 1)
+		require.Equal(t, "Re-download failed: "+wantErr, details[0].Detail)
+		require.False(t, details[0].Green)
+	})
+}
+
+// TestVerify_Fix_NoChecksum_Redownload is the #224 Task 4 NO CHECKSUM repair
+// fixture: a cached file whose checksum was never stored, verified with
+// --fix, across the same three redownloadModFile outcomes as MISSING - but
+// NO CHECKSUM's row is never pre-emitted before the repair attempt (unlike
+// MISSING's), so each branch emits its own final row directly (brief: "port
+// the exact branching from lines 804-846").
+func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		svc, game := newFixTestGame(t)
+		mock := newMockSourceWithDownloads("rsrc")
+		t.Cleanup(mock.Close)
+		mock.AddDownload("1", []byte("fresh content"))
+		svc.RegisterSource(&nonArchiveDownloadSource{mockSourceWithDownloads: mock})
+		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, true)
+
+		var events []core.VerifyEvent
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		require.NoError(t, err)
+
+		require.Equal(t, 0, result.Issues)
+		require.Equal(t, 0, result.Warnings, "a persisted checksum never counted as a warning in the first place")
+		require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "ok"}}, result.Findings)
+
+		// The "checksum populated" outcome is a main-line "ok" row, not a
+		// RepairDetail sub-line - the CLI/TUI render it via Variant, not an
+		// indented detail.
+		require.Empty(t, repairDetails(events))
+		var findingEvent *core.VerifyEvent
+		for i := range events {
+			if events[i].Kind == core.VerifyEvFinding {
+				findingEvent = &events[i]
+			}
+		}
+		require.NotNil(t, findingEvent)
+		require.Equal(t, "checksum_populated", findingEvent.Variant)
+	})
+
+	t.Run("no_checksum_available", func(t *testing.T) {
+		svc, game := newFixTestGame(t)
+		svc.RegisterSource(newEmptyDirSource(t, "rsrc", "mod1"))
+		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"main"}, true)
+
+		var events []core.VerifyEvent
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		require.NoError(t, err)
+
+		require.Equal(t, 0, result.Issues)
+		require.Equal(t, 1, result.Warnings)
+		require.Equal(t, []core.VerifyFinding{
+			{ModID: "mod1", ModName: "Mod One", FileID: "main", Status: "no_checksum", Note: "re-downloaded, but no checksum was available to store"},
+		}, result.Findings)
+
+		details := repairDetails(events)
+		require.Len(t, details, 1)
+		require.Equal(t, "Re-downloaded, but no checksum was available to store", details[0].Detail, "no ' - NO CHECKSUM remains' suffix here - that phrasing is MISSING's own")
+		require.False(t, details[0].Green)
+	})
+
+	t.Run("error", func(t *testing.T) {
+		svc, game := newFixTestGame(t)
+		svc.RegisterSource(&redownloadURLFailingSource{mockSource: newMockSource("rsrc")})
+		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, true)
+
+		var events []core.VerifyEvent
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		require.NoError(t, err)
+
+		require.Equal(t, 0, result.Issues)
+		require.Equal(t, 1, result.Warnings)
+		require.Len(t, result.Findings, 1)
+		wantErr := "getting download URL: redownload boom"
+		require.Equal(t, "no_checksum", result.Findings[0].Status)
+		require.Equal(t, wantErr, result.Findings[0].Note)
+
+		details := repairDetails(events)
+		require.Len(t, details, 1)
+		require.Equal(t, "Re-download to populate checksum failed: "+wantErr, details[0].Detail)
+		require.False(t, details[0].Green)
+	})
+}
+
+// newByteServer starts an httptest.Server that always responds with
+// content, closed automatically via t.Cleanup - the download source backing
+// the needs_reingest --fix success test (fakeCompilerSource's own
+// downloadURL field, unlike mockSourceWithDownloads, has no server built
+// in).
+func newByteServer(t *testing.T, content []byte) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// reingestFixSource lets the #224 Task 4 needs_reingest --fix tests exercise
+// redownloadModFile's real GetModFiles/DownloadMod path against the same
+// legacypak fixture PakNeedsReingest's read-side tests use
+// (TestVerify_CompileGameStatuses): fakeCompilerSource's own GetModFiles
+// always fails with ErrNotSupported (fine for those read-side tests, which
+// never call it), but --fix's redownload repair calls GetModFiles first to
+// resolve the "pak" file ID. Embeds *fakeCompilerSource so ValidateSource/
+// MergeCompile (source.MergeCompiler) are still promoted - the pak-ingest
+// path itself runs for real, genuinely retaining the source on success.
+type reingestFixSource struct {
+	*fakeCompilerSource
+}
+
+func (s *reingestFixSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	return []domain.DownloadableFile{{ID: "pak", Name: mod.Name, FileName: mod.ID + ".pak", IsPrimary: true}}, nil
+}
+
+// reingestFixErrorSource is reingestFixSource with a GetDownloadURL that
+// always fails errRedownloadRepair - the needs_reingest --fix error-path
+// fixture.
+type reingestFixErrorSource struct {
+	*reingestFixSource
+}
+
+func (s *reingestFixErrorSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	return "", errRedownloadRepair
+}
+
+// newNeedsReingestFixGame builds the DeployCompile fixture PakNeedsReingest's
+// lazy-migration case needs: a pre-#221 pak cache entry (a deployable member
+// on disk, no retained source) for a source-backed mod, registered under src
+// - the same legacypak shape TestVerify_CompileGameStatuses's read-side
+// fixture uses, trimmed to just what the --fix repair tests need.
+func newNeedsReingestFixGame(t *testing.T, src source.ModSource, sourceID string) (*core.Service, *domain.Game) {
+	t.Helper()
+	installDir := t.TempDir()
+	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
+
+	svc := newFlowsTestService(t)
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
+		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy, ConvertPaks: true,
+		SourceIDs: map[string]string{sourceID: "external-icarus-id"},
+	}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, sourceID, "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "legacypak", SourceID: sourceID, Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"pak"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: "legacypak", Version: "1.0", FileIDs: []string{"pak"}}))
+
+	return svc, game
+}
+
+// TestVerify_Fix_NeedsReingest_Redownload is the #224 Task 4 NEEDS REINGEST
+// repair fixture: a pre-#221 pak cache entry, verified with --fix. Unlike
+// MISSING/NO CHECKSUM, redownloadModFile's persisted flag plays no role here
+// (brief: only the error is branched on) - a successful re-ingest always
+// resolves to fixed_needs_reingest.
+func TestVerify_Fix_NeedsReingest_Redownload(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		dlSrv := newByteServer(t, []byte("legacy-pak-bytes"))
+		src := &reingestFixSource{fakeCompilerSource: &fakeCompilerSource{downloadURL: dlSrv}}
+		svc, game := newNeedsReingestFixGame(t, src, "fake-compiler")
+
+		var events []core.VerifyEvent
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		require.NoError(t, err)
+
+		require.Equal(t, 0, result.Warnings, "a successful re-ingest backs out the warning")
+		reingest, ok := findFindingByStatus(result.Findings, "fixed_needs_reingest")
+		require.True(t, ok, "expected a fixed_needs_reingest row: %+v", result.Findings)
+		require.Equal(t, "legacypak", reingest.ModID)
+		require.Equal(t, "re-ingested with retained source for pak conversion", reingest.Note)
+
+		details := repairDetails(events)
+		require.Len(t, details, 1)
+		require.Equal(t, "Re-ingested for pak conversion", details[0].Detail)
+		require.True(t, details[0].Green)
+	})
+
+	t.Run("error", func(t *testing.T) {
+		src := &reingestFixErrorSource{reingestFixSource: &reingestFixSource{fakeCompilerSource: &fakeCompilerSource{}}}
+		svc, game := newNeedsReingestFixGame(t, src, "fake-compiler")
+
+		var events []core.VerifyEvent
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		require.NoError(t, err)
+
+		require.Equal(t, 1, result.Warnings, "a failed re-ingest leaves the warning outstanding")
+		finding, ok := findFindingByStatus(result.Findings, "needs_reingest")
+		require.True(t, ok, "expected the row to stay needs_reingest: %+v", result.Findings)
+		require.Equal(t, "legacypak", finding.ModID)
+		wantErr := "getting download URL: redownload boom"
+		require.Equal(t, "re-ingest failed: "+wantErr, finding.Note, "the finding's Note is lowercase, unlike the printed sub-line")
+
+		details := repairDetails(events)
+		require.Len(t, details, 1)
+		require.Equal(t, "Re-ingest failed: "+wantErr, details[0].Detail)
+		require.False(t, details[0].Green)
+	})
+}
+
+// TestVerify_Fix_SourceLocal_NoRepairAttempted proves the "any+SourceLocal"
+// case: --fix's guard (opts.Fix && mod.SourceID != domain.SourceLocal) is
+// identical across all three repair sites, so a SourceLocal mod's finding is
+// left exactly as the read-side pass reported it - no redownload is
+// attempted (there is no source to redownload from), no RepairDetail event
+// fires, and Issues/Warnings are untouched by any repair.
+func TestVerify_Fix_SourceLocal_NoRepairAttempted(t *testing.T) {
+	svc, game := newFixTestGame(t)
+	seedVerifyMod(t, svc, game, domain.SourceLocal, "mod1", "Mod One", "1.0", []string{"1"}, false)
+	require.NoError(t, svc.SaveFileChecksum(domain.SourceLocal, "mod1", game.ID, "default", "1", "old-checksum"))
+
+	var events []core.VerifyEvent
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+	require.NoError(t, err)
+
+	require.Equal(t, 1, result.Issues, "no repair was attempted - the missing issue stands")
+	require.Equal(t, 0, result.Warnings)
+	require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "missing"}}, result.Findings)
+	require.Empty(t, repairDetails(events), "SourceLocal must never reach a redownload attempt")
 }
