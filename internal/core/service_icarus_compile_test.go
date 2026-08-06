@@ -352,36 +352,82 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 // ingest, then converted by the first sync - heals WITHIN that one sync
 // call, never leaving both the raw pak and the merged pak deployed at once,
 // and a re-run afterward is a pure no-op fast path.
+//
+// Deliberately goes through the REAL ingest path (svc.DownloadMod, mirroring
+// TestDownloadPakRetainsAndDeploysRaw's setup) rather than seedEnabledPakMod
+// (Task 8's manually-constructed fixture, whose member-naming convention
+// differs from real ingest's safeFileName) - this test's whole point is the
+// ingest-then-reconcile INTERACTION, not reconcile in isolation.
 func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
-	svc, game, _ := newMergedPakTestGame(t)
-	game.ConvertPaks = true
+	dlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("cool-pak-bytes"))
+	}))
+	defer dlSrv.Close()
 
-	seedEnabledPakMod(t, svc, game, "fake-compiler", "coolmod", "1.0", "pak", []byte("cool-pak-bytes"))
+	installDir := t.TempDir()
+	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
 
-	installer, err := svc.GetInstallerForProfile(game, "default")
+	svc := newFlowsTestService(t)
+	src := &fakeCompilerSource{downloadURL: dlSrv.URL}
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
+		DeployMode: domain.DeployCompile, ConvertPaks: true, LinkMethod: domain.LinkCopy,
+		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
+	}
+	require.NoError(t, svc.AddGame(game))
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
 
 	mod := &domain.Mod{ID: "coolmod", SourceID: "fake-compiler", GameID: game.ID, Version: "1.0"}
+	file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
+
+	// Task 9 ingest: the real DownloadMod call. Validates+retains the pak
+	// and stages "CoolMod.pak" as the manifest's sole (raw-deploy default)
+	// member - see TestDownloadPakRetainsAndDeploysRaw for the same shape
+	// asserted directly.
+	downloadResult, err := svc.DownloadMod(context.Background(), "fake-compiler", game, mod, file, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, downloadResult.FilesExtracted)
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          *mod,
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{file.ID},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: []string{file.ID}}))
+
+	installer, err := svc.GetInstallerForProfile(game, "default")
+	require.NoError(t, err)
 	require.NoError(t, installer.Install(context.Background(), game, mod, "default"))
 
-	rawPath := filepath.Join(game.ModPath, "coolmod.pak")
+	rawPath := filepath.Join(game.ModPath, "CoolMod.pak")
 	_, err = os.Stat(rawPath)
 	require.NoError(t, err, "the raw pak must be deployed before the first sync")
 
 	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
-	_ = warnings
+	require.Empty(t, warnings, "a clean successful merge must produce no warnings")
 
 	_, err = os.Stat(rawPath)
 	require.True(t, os.IsNotExist(err), "reconcile must undeploy the raw pak link once the merge converts it")
 
 	mergedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
-	_, err = os.Stat(mergedPath)
+	mergedData, err := os.ReadFile(mergedPath)
 	require.NoError(t, err, "the merged pak must be deployed")
+	require.Equal(t, "cool-pak-bytes", string(mergedData), "fakeCompilerSource's MergeCompile concatenates source bytes - the retained pak's own content")
 
 	// Re-run: fast path, nothing changes, raw link stays gone.
-	_, err = svc.SyncMergedPak(context.Background(), game, "default")
+	warnings, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
+	require.Empty(t, warnings)
 
 	_, err = os.Stat(rawPath)
 	require.True(t, os.IsNotExist(err), "the raw pak link must stay gone on the re-run")
