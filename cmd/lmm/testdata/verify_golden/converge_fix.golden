@@ -1,0 +1,7 @@
+Verifying cached mods...
+
++ Mod One (a.esp) - OK
+Fixed: removed gone.esp (no longer provided by local/mod1)
+Fixed: removed stray.pak (dangling link into lmm cache)
+
+All files verified OK.

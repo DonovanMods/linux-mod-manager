@@ -1,0 +1,10 @@
+Verifying cached mods...
+
+  ? raw-pak-mod - CONVERSION FAILED (table X not present in current base) - deploying raw; fix the mod or run 'lmm mod convert raw-pak-mod off' to silence
+? Bear Mount - VERSION UNVERIFIABLE (recorded file ID(s) no longer found upstream; reinstall the mod or run 'lmm update' to adopt the current version)
+? raw-pak-mod - VERSION UNVERIFIABLE (recorded file ID(s) no longer found upstream; reinstall the mod or run 'lmm update' to adopt the current version)
+? Bear Mount (exmodz-file-id) - NO CHECKSUM
+? raw-pak-mod (modfile.pak) - NO CHECKSUM
+
+0 issue(s), 5 warning(s) found.
+Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.

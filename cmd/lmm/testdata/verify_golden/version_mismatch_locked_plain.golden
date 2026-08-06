@@ -1,0 +1,7 @@
+Verifying cached mods...
+
+X Mod One - VERSION MISMATCH (recorded 1.5, source reports 1.0)
++ Mod One (2) - OK
+
+1 issue(s), 0 warning(s) found.
+Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.

@@ -1,0 +1,15 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "files": [
+    {
+      "mod_id": "",
+      "mod_name": "",
+      "file_id": "stray.pak",
+      "status": "fixed_stale_deployment",
+      "note": "dangling link into lmm cache"
+    }
+  ],
+  "issues": 0,
+  "warnings": 0
+}

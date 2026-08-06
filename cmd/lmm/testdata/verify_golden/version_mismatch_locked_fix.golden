@@ -1,0 +1,7 @@
+Verifying cached mods...
+
+X Mod One - VERSION MISMATCH (recorded 1.5, source reports 1.0)
+  --fix skipped: Mod One is locked at v1.5 in profile default — the record is the lock's target; move the lock with 'lmm mod lock -s test-src -p default mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p default mod1' instead of rewriting it.
++ Mod One (2) - OK
+
+1 issue(s), 0 warning(s) found.
