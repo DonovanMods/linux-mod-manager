@@ -337,3 +337,44 @@ func TestDoInstallBatch_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *testi
 	assert.Equal(t, 2, strings.Count(out, "installed; merged pak sync FAILED — see warning above"))
 	assert.NotContains(t, out, "Installed (merged pak updated)")
 }
+
+// TestDoDeploy_DeployCompile_ConversionFailureSurfaces is the #221 deploy-
+// flow pin: a pak-conversion failure (source.MergeFailure) discovered by
+// DeployProfile's own end-of-loop SyncMergedPak call (internal/core/flows.go)
+// must reach the user, not get swallowed by any phase in between. Drives the
+// REAL doDeploy CLI seam with a MergeCompiler that fails one enabled pak
+// mod's conversion, and proves the resulting "... pak conversion failed:
+// ... - deploying raw" warning (the same text internal/source/icarus/merge.go
+// emits for a real failure) lands on stderr via core.DeployWarning.
+func TestDoDeploy_DeployCompile_ConversionFailureSurfaces(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	game.ConvertPaks = true
+
+	const modID, version, fileID = "raw-pak-mod", "1.0", "modfile.pak"
+	seedEnabledPakModCLI(t, svc, game, "fake-compiler", modID, version, fileID, []byte("pak-bytes"))
+
+	outcome := &pakOutcomeCompilerSource{
+		compilerInstallSource: compiler,
+		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
+	}
+	svc.RegisterSource(outcome)
+
+	deployProfile = "default"
+	t.Cleanup(func() { deployProfile = "" })
+
+	oldStderr := os.Stderr
+	r, w, pipeErr := os.Pipe()
+	require.NoError(t, pipeErr)
+	os.Stderr = w
+	_, err := captureStdoutErr(t, func() error {
+		return doDeploy(context.Background(), svc, game, nil)
+	})
+	_ = w.Close()
+	os.Stderr = oldStderr
+	require.NoError(t, err)
+
+	var stderrBuf bytes.Buffer
+	_, _ = stderrBuf.ReadFrom(r)
+	assert.Contains(t, stderrBuf.String(), "pak conversion failed")
+	assert.Contains(t, stderrBuf.String(), "deploying raw")
+}

@@ -518,6 +518,36 @@ func (s *Service) MergedPakOutcomes(game *domain.Game, profileName string) ([]Me
 	return fp.Mods, true
 }
 
+// PakNeedsReingest reports whether mod's fileID is a convert-eligible pak
+// whose cache entry predates #221 pak retention (deployable pak present, no
+// retained source) - the lazy-migration detector verify --fix uses to heal a
+// pre-#221 pak install (design §6): the widened ingest predicate (Task 9)
+// retains the source on redownload, and the next SyncMergedPak picks it up.
+// Gated on BOTH game- and mod-level ConvertPaks (like enabledMergeSources'
+// own participation gate) so a legacy/opted-out mod is never touched.
+func (s *Service) PakNeedsReingest(game *domain.Game, mod *domain.InstalledMod, fileID string) (bool, error) {
+	if game.DeployMode != domain.DeployCompile || !game.ConvertPaks || !mod.ConvertPaks {
+		return false, nil
+	}
+	if mergeSourceKind(fileID) != source.MergeSourcePak {
+		return false, nil
+	}
+	gameCache := s.GetGameCache(game)
+	versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if _, err := os.Stat(filepath.Join(versionDir, cache.RetainedSourceName(fileID))); err == nil {
+		return false, nil // already retained
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	// Only flag entries that actually exist (an entirely-missing cache entry
+	// is the MISSING status's business, not ours).
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if err != nil || len(files) == 0 {
+		return false, err
+	}
+	return true, nil
+}
+
 // readMergedFingerprint reads and decodes cachePath's stored merge
 // fingerprint marker, if any. ok is false when no cache entry/marker
 // exists yet (first-ever merge for this profile) or the marker is
