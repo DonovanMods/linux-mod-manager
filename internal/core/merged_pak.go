@@ -205,6 +205,7 @@ func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]
 			}
 			sources = append(sources, source.MergeSource{
 				ModRef:     mod.SourceID + ":" + mod.ID,
+				ModName:    mod.Name,
 				SourcePath: retainedPath,
 				Kind:       kind,
 			})

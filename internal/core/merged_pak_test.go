@@ -38,7 +38,7 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 			require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), []byte("exmodz-"+modID+"-"+fileID)))
 		}
 		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
-			Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
+			Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID + " (display)", Version: version, GameID: game.ID},
 			ProfileName:  "default",
 			Enabled:      enabled,
 			FileIDs:      fileIDs,
@@ -67,6 +67,8 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 	require.Len(t, sources, 2, "disabled-mod excluded; second-mod's plain-pak fileID excluded")
 	require.Equal(t, "icarus:first-mod", sources[0].ModRef)
 	require.Equal(t, "icarus:second-mod", sources[1].ModRef)
+	require.Equal(t, "first-mod (display)", sources[0].ModName, "display name must flow into MergeSource for user-facing warnings")
+	require.Equal(t, "second-mod (display)", sources[1].ModName)
 
 	data, err := os.ReadFile(sources[0].SourcePath)
 	require.NoError(t, err)

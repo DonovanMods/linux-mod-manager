@@ -177,7 +177,8 @@ const (
 // MergeSource identifies one mod's contribution to a merge, in the order it
 // must be applied (profile load order).
 type MergeSource struct {
-	ModRef     string // "sourceID:modID" - identity used in collision warnings
+	ModRef     string // "sourceID:modID" - machine identity (MergeFailure, ownership tracking)
+	ModName    string // display name preferred over ModRef in user-facing warnings; may be empty
 	SourcePath string // the retained source archive to read (.exmodz, or a raw .pak eligible for conversion - #221)
 	Kind       string // MergeSourceExmodz (default when empty) or MergeSourcePak
 }

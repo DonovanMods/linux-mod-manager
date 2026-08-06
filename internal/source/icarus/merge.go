@@ -80,18 +80,24 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 
 	tableState := make(map[string][]byte) // mountPath -> current (possibly already patched) JSON bytes
 	assets := make(map[string][]byte)     // final asset path -> data (last source wins)
-	assetOwner := make(map[string]string) // asset path -> ModRef that last set it
+	assetOwner := make(map[string]string) // asset path -> display label of the mod that last set it
 
 	for _, src := range sources {
+		// Warnings are user-facing: prefer the display name; MergeFailure
+		// keeps ModRef as the machine identity core keys on.
+		label := src.ModName
+		if label == "" {
+			label = src.ModRef
+		}
 		if src.Kind == source.MergeSourcePak {
 			bundle, convWarnings, cerr := convertPakToBundle(src.SourcePath, base, baseFold)
 			if cerr != nil {
 				failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: cerr.Error()})
-				warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %v - deploying raw", src.ModRef, cerr))
+				warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %v - deploying raw", label, cerr))
 				continue
 			}
 			for _, w := range convWarnings {
-				warnings = append(warnings, fmt.Sprintf("mod %s: %s", src.ModRef, w))
+				warnings = append(warnings, fmt.Sprintf("mod %s: %s", label, w))
 			}
 			// Apply on scratch copies: a Tier 1 row can still fail
 			// resolveCurrentFile against the CURRENT base (the manifest may
@@ -111,10 +117,10 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 			for k, v := range assetOwner {
 				scratchOwner[k] = v
 			}
-			applyWarnings, aerr := applyBundle(base, scratchTables, scratchAssets, scratchOwner, bundle, src.ModRef)
+			applyWarnings, aerr := applyBundle(base, scratchTables, scratchAssets, scratchOwner, bundle, label)
 			if aerr != nil {
 				failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: aerr.Error()})
-				warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %v - deploying raw", src.ModRef, aerr))
+				warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %v - deploying raw", label, aerr))
 				continue
 			}
 			warnings = append(warnings, applyWarnings...)
@@ -133,7 +139,7 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 		if perr != nil {
 			return warnings, failed, fmt.Errorf("icarus: %s: %w", src.SourcePath, perr)
 		}
-		applyWarnings, aerr := applyBundle(base, tableState, assets, assetOwner, bundle, src.ModRef)
+		applyWarnings, aerr := applyBundle(base, tableState, assets, assetOwner, bundle, label)
 		if aerr != nil {
 			return warnings, failed, aerr
 		}
@@ -175,7 +181,11 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 // applyBundle applies one bundle's row upserts and assets to the merge
 // state. Asset collisions across mods warn (last-applied wins); any other
 // error is returned to the caller, which decides fatality by source kind.
-func applyBundle(base *unrealpak.Reader, tableState map[string][]byte, assets map[string][]byte, assetOwner map[string]string, bundle *ExmodzBundle, modRef string) (warnings []string, err error) {
+// modLabel is the mod's display label (name, or ModRef when unnamed); it
+// is both shown in collision warnings and stored in assetOwner, so two
+// distinct mods sharing a display name would not cross-warn - acceptable
+// for a display-only warning.
+func applyBundle(base *unrealpak.Reader, tableState map[string][]byte, assets map[string][]byte, assetOwner map[string]string, bundle *ExmodzBundle, modLabel string) (warnings []string, err error) {
 	for _, row := range bundle.Diff.Rows {
 		if row.CurrentFile == endOfModSentinel {
 			continue
@@ -207,13 +217,13 @@ func applyBundle(base *unrealpak.Reader, tableState map[string][]byte, assets ma
 		if serr != nil {
 			return warnings, serr
 		}
-		if owner, exists := assetOwner[safePath]; exists && owner != modRef {
+		if owner, exists := assetOwner[safePath]; exists && owner != modLabel {
 			warnings = append(warnings, fmt.Sprintf(
 				"asset %q is bundled by both %s and %s - %s wins (last-applied, per profile load order)",
-				safePath, owner, modRef, modRef))
+				safePath, owner, modLabel, modLabel))
 		}
 		assets[safePath] = data
-		assetOwner[safePath] = modRef
+		assetOwner[safePath] = modLabel
 	}
 	return warnings, nil
 }

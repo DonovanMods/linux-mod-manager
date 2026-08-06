@@ -411,3 +411,53 @@ func TestValidateSourcePak(t *testing.T) {
 		t.Fatal("junk .pak must fail validation")
 	}
 }
+
+// TestMergeCompileWarningsPreferModName proves user-facing warnings identify
+// mods by display name when MergeSource.ModName is set, while MergeFailure
+// keeps ModRef as the machine identity. Existing tests cover the fallback:
+// with no ModName, warnings show the ModRef.
+func TestMergeCompileWarningsPreferModName(t *testing.T) {
+	dir := t.TempDir()
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+	})
+	// Divergent Defaults triggers the inexpressible-top-level-key warning.
+	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{"X":1},"Rows":[{"Name":"RowA","XP":99}]}`
+	pakPath := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json": []byte(modTable),
+	})
+	// Irreconcilable pak triggers the deploying-raw warning.
+	badPak := buildTestPak(t, dir, "bad.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Removed/D_Gone.json": []byte(testBaseTable),
+	})
+	out := filepath.Join(dir, "merged.pak")
+
+	warnings, failed, err := MergeCompile(context.Background(), basePath, []MergeSource{
+		{ModRef: "icarus:pakmod", ModName: "Combined QOL", SourcePath: pakPath, Kind: source.MergeSourcePak},
+		{ModRef: "icarus:badmod", ModName: "Broken Mod", SourcePath: badPak, Kind: source.MergeSourcePak},
+	}, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var haveDiff, haveRaw bool
+	for _, w := range warnings {
+		if strings.Contains(w, "icarus:pakmod") || strings.Contains(w, "icarus:badmod") {
+			t.Errorf("warning shows ModRef instead of ModName: %s", w)
+		}
+		if strings.Contains(w, "mod Combined QOL:") && strings.Contains(w, "Defaults") {
+			haveDiff = true
+		}
+		if strings.Contains(w, "mod Broken Mod:") && strings.Contains(w, "deploying raw") {
+			haveRaw = true
+		}
+	}
+	if !haveDiff {
+		t.Errorf("want a Defaults-differs warning naming Combined QOL, got %v", warnings)
+	}
+	if !haveRaw {
+		t.Errorf("want a deploying-raw warning naming Broken Mod, got %v", warnings)
+	}
+	if len(failed) != 1 || failed[0].ModRef != "icarus:badmod" {
+		t.Fatalf("MergeFailure must keep ModRef as machine identity, got %+v", failed)
+	}
+}
