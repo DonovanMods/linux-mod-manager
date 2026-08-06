@@ -461,3 +461,62 @@ func TestMergeCompileWarningsPreferModName(t *testing.T) {
 		t.Fatalf("MergeFailure must keep ModRef as machine identity, got %+v", failed)
 	}
 }
+
+// TestApplyBundleAssetCollisionKeyedByRef proves asset-collision detection
+// uses the stable ModRef identity, not the display label: two DIFFERENT
+// mods sharing a display name still cross-warn (with refs appended for
+// disambiguation), while the same mod re-setting its own asset stays quiet.
+func TestApplyBundleAssetCollisionKeyedByRef(t *testing.T) {
+	dir := t.TempDir()
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+	})
+	base, err := unrealpak.Open(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer base.Close()
+
+	tables := map[string][]byte{}
+	assets := map[string][]byte{}
+	owner := map[string]mergeOwner{}
+	bundle := func(data string) *ExmodzBundle {
+		return &ExmodzBundle{Diff: &ExmodDiff{}, Assets: map[string][]byte{"mod/foo.uasset": []byte(data)}}
+	}
+
+	w, err := applyBundle(base, tables, assets, owner, bundle("a"), "icarus:a", "Same Name")
+	if err != nil || len(w) != 0 {
+		t.Fatalf("first apply: warnings %v, err %v", w, err)
+	}
+	// Same mod re-sets its own asset: no self-warning.
+	w, err = applyBundle(base, tables, assets, owner, bundle("a2"), "icarus:a", "Same Name")
+	if err != nil || len(w) != 0 {
+		t.Fatalf("same-mod re-apply must not warn: %v, err %v", w, err)
+	}
+	// Different mod, identical display name: must still warn, with refs
+	// appended so the message distinguishes the two parties.
+	w, err = applyBundle(base, tables, assets, owner, bundle("b"), "icarus:b", "Same Name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w) != 1 {
+		t.Fatalf("want exactly one collision warning, got %v", w)
+	}
+	if !strings.Contains(w[0], "icarus:a") || !strings.Contains(w[0], "icarus:b") {
+		t.Fatalf("identical-name collision must disambiguate by ref: %s", w[0])
+	}
+	if string(assets["mod/foo.uasset"]) != "b" {
+		t.Fatal("last-applied must win")
+	}
+	// Different mod, different name: warning renders names only.
+	w, err = applyBundle(base, tables, assets, owner, bundle("c"), "icarus:c", "Other Mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w) != 1 || !strings.Contains(w[0], "Same Name") || !strings.Contains(w[0], "Other Mod") {
+		t.Fatalf("want a name-rendered collision warning, got %v", w)
+	}
+	if strings.Contains(w[0], "icarus:b") || strings.Contains(w[0], "icarus:c") {
+		t.Fatalf("distinct names need no ref disambiguation: %s", w[0])
+	}
+}
