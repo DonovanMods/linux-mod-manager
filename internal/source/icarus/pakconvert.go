@@ -302,13 +302,18 @@ func convertPakToBundle(pakPath string, base *unrealpak.Reader) (*ExmodzBundle, 
 
 	// Tier 2: diff-derive. Deterministic row order: sort snapshots by path.
 	sort.Slice(tables, func(i, j int) bool { return tables[i].rel < tables[j].rel })
+	baseFold := buildBaseFoldIndex(base)
 	diff := &ExmodDiff{}
 	for _, snap := range tables {
-		baseData, berr := base.ReadFile(snap.rel)
-		if berr != nil {
-			return nil, nil, fmt.Errorf("icarus: pak table %q not present in current base: %w", snap.rel, berr)
+		resolved, rerr := resolveBaseTablePath(baseFold, snap.rel)
+		if rerr != nil {
+			return nil, nil, rerr
 		}
-		items, tblWarnings, derr := diffTable(snap.rel, baseData, snap.data)
+		baseData, berr := base.ReadFile(resolved)
+		if berr != nil {
+			return nil, nil, fmt.Errorf("icarus: reading current base table %q: %w", resolved, berr)
+		}
+		items, tblWarnings, derr := diffTable(resolved, baseData, snap.data)
 		if derr != nil {
 			return nil, nil, derr
 		}
@@ -316,7 +321,43 @@ func convertPakToBundle(pakPath string, base *unrealpak.Reader) (*ExmodzBundle, 
 		if len(items) == 0 {
 			continue // nothing expressible changed; never emit an empty row
 		}
-		diff.Rows = append(diff.Rows, ExmodRow{CurrentFile: currentFileFor(snap.rel), FileItems: items})
+		diff.Rows = append(diff.Rows, ExmodRow{CurrentFile: currentFileFor(resolved), FileItems: items})
 	}
 	return &ExmodzBundle{Diff: diff, Assets: assets}, warnings, nil
+}
+
+// buildBaseFoldIndex groups the base pak's file paths by ASCII-lowercased
+// mount-relative path, so a mod pak's (possibly differently-cased) table
+// path can be resolved to the base's actual on-disk casing. UE virtual
+// paths are case-insensitive - real mod paks vary casing from the current
+// base (the spike's "Eye Colors Expanded!" ground-truth audit, same
+// rationale as hasPrefixFold) - so an exact-case base.ReadFile lookup would
+// wrongly fail the whole mod as "not present" when only casing differs.
+// Built once per conversion (Tier 2 entry), not per table.
+func buildBaseFoldIndex(base *unrealpak.Reader) map[string][]string {
+	idx := make(map[string][]string)
+	for _, e := range base.Files() {
+		key := strings.ToLower(e.Path)
+		idx[key] = append(idx[key], e.Path)
+	}
+	return idx
+}
+
+// resolveBaseTablePath resolves a mod pak's table path against the base
+// pak's fold index, requiring exactly one case-insensitive match. Zero
+// matches means the table genuinely isn't present in the current base
+// (irreconcilable, unchanged from pre-fix behavior); more than one match is
+// a new ambiguity condition (synthetic in practice - two base entries
+// differing only by case) and is also whole-mod irreconcilable, mirroring
+// matchMountPath's own "ambiguous, matches %v" convention.
+func resolveBaseTablePath(baseFold map[string][]string, rel string) (string, error) {
+	matches := baseFold[strings.ToLower(rel)]
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return "", fmt.Errorf("icarus: pak table %q not present in current base", rel)
+	default:
+		return "", fmt.Errorf("icarus: pak table %q: ambiguous, matches %v in current base", rel, matches)
+	}
 }

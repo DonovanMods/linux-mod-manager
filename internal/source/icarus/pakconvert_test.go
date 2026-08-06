@@ -314,6 +314,62 @@ func TestConvertPakToBundleTier2(t *testing.T) {
 	}
 }
 
+func TestConvertPakToBundleTier2CaseInsensitiveBaseLookup(t *testing.T) {
+	// The spike's "Eye Colors Expanded!" ground-truth audit found a real mod
+	// pak whose table path casing differs from the current base's - Tier 2
+	// must resolve this case-insensitively rather than failing the whole mod
+	// as "not present in current base" (#221 round-4 fix).
+	dir := t.TempDir()
+	base := openTestBase(t, dir) // base has "Test/D_Growth.json"
+	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":99}]}`
+	pak := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
+		// Mod pak's table path is cased differently ("TEST" vs base's "Test").
+		"data/TEST/D_Growth.json": []byte(modTable),
+	})
+
+	bundle, warnings, err := convertPakToBundle(pak, base)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if len(bundle.Diff.Rows) != 1 {
+		t.Fatalf("want 1 row, got %+v", bundle.Diff.Rows)
+	}
+	// CurrentFile must use the BASE's casing ("Test", not "TEST") so it
+	// reverses cleanly through matchMountPath against the real base paths.
+	if got, want := bundle.Diff.Rows[0].CurrentFile, "Test-D_Growth.json"; got != want {
+		t.Fatalf("CurrentFile = %q, want %q (base casing)", got, want)
+	}
+}
+
+func TestConvertPakToBundleTier2AmbiguousBaseCasing(t *testing.T) {
+	// Synthetic: two base entries differing only by case. A mod table path
+	// matching either case-insensitively is now ambiguous - whole-mod error,
+	// not a silent pick of one.
+	dir := t.TempDir()
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+		"test/D_Growth.json": []byte(testBaseTable),
+	})
+	base, err := unrealpak.Open(basePath)
+	if err != nil {
+		t.Fatalf("opening base: %v", err)
+	}
+	t.Cleanup(func() { _ = base.Close() })
+
+	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":99}]}`
+	pak := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json": []byte(modTable),
+	})
+
+	_, _, err = convertPakToBundle(pak, base)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("want ambiguous-base-casing error, got %v", err)
+	}
+}
+
 func TestConvertPakToBundleTier1EmbeddedExmod(t *testing.T) {
 	dir := t.TempDir()
 	base := openTestBase(t, dir)
