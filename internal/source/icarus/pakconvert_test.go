@@ -201,4 +201,30 @@ func TestDiffTable(t *testing.T) {
 			t.Fatal("want error for table without Rows")
 		}
 	})
+
+	t.Run("multiple removed fields produce sorted deterministic warnings", func(t *testing.T) {
+		mod := []byte(`{
+			"RowStruct": "/Script/Icarus.Growth",
+			"Defaults": {"XP": 1},
+			"Rows": [
+				{"Name": "RowA", "XP": 10}
+			]
+		}`)
+		items, warnings, err := diffTable("Test/D_Growth.json", base, mod)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// RowA in base has XP:10, Level:1. Mod has only XP:10 (no change).
+		// Base has Level field missing in mod -> warning. Run multiple times
+		// to ensure deterministic order (would randomize without sort).
+		if len(items) != 0 {
+			t.Fatalf("want 0 items (XP unchanged), got %+v", items)
+		}
+		if len(warnings) != 1 {
+			t.Fatalf("want 1 warning (Level removed), got %d: %v", len(warnings), warnings)
+		}
+		if !strings.Contains(warnings[0], "Level") {
+			t.Fatalf("want Level in warning, got: %v", warnings[0])
+		}
+	})
 }

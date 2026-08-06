@@ -160,7 +160,7 @@ func diffTable(tableRef string, baseJSON, modJSON []byte) (items []ExmodFileItem
 	sort.Strings(sortedKeys)
 	for _, key := range sortedKeys {
 		if !reflect.DeepEqual(base.other[key], mod.other[key]) {
-			warnings = append(warnings, fmt.Sprintf("%s: top-level key %q (e.g. Defaults) differs from base - EXMOD cannot express this; base value kept", tableRef, key))
+			warnings = append(warnings, fmt.Sprintf("%s: top-level key %q differs from base - inexpressible in exmod row semantics, ignored", tableRef, key))
 		}
 	}
 
@@ -198,13 +198,19 @@ func diffTable(tableRef string, baseJSON, modJSON []byte) (items []ExmodFileItem
 				changed[k] = v
 			}
 		}
+		// Collect removed fields, sort for deterministic warning order.
+		removedFields := make([]string, 0)
 		for k := range br {
 			if k == "Name" {
 				continue
 			}
 			if _, ok := mr[k]; !ok {
-				warnings = append(warnings, fmt.Sprintf("%s: row %q: field %q present in base but absent in pak (EXMOD cannot remove fields; base value kept)", tableRef, name, k))
+				removedFields = append(removedFields, k)
 			}
+		}
+		sort.Strings(removedFields)
+		for _, k := range removedFields {
+			warnings = append(warnings, fmt.Sprintf("%s: row %q: field %q present in base but absent in pak (EXMOD cannot remove fields; base value kept)", tableRef, name, k))
 		}
 		if len(changed) > 0 {
 			items = append(items, ExmodFileItem{Name: name, Fields: changed})
