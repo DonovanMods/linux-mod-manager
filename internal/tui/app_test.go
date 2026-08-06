@@ -111,7 +111,11 @@ func TestNewPrototypeModelRejectsInvalidTheme(t *testing.T) {
 func TestNavMarksCurrentScreenWithoutColor(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	// 110 cols (Task 9): the 7th screen (Health) pushed tier 1's full nav
+	// past 100 cols' 96-cell availableWidth(), which used to be comfortably
+	// wide enough for the pre-Health 6-screen nav - see nav()'s own tier
+	// doc comment.
+	model := sizedPrototypeModel(t, "wizardry", 110, 30)
 	model.theme.Selected = model.theme.Selected.Transform(func(s string) string { return "«" + s + "»" })
 	model.screen = ScreenSearch
 
@@ -181,8 +185,8 @@ func TestNavMarkerAddsNoWidth(t *testing.T) {
 	model := sizedPrototypeModel(t, "wizardry", lipgloss.Width(unmarked)+4, 24)
 	require.Equal(t, lipgloss.Width(unmarked), model.availableWidth(),
 		"width sanity: this terminal width must make the unmarked nav an exact fit")
-	model.screen = ScreenConflicts
-	require.Contains(t, model.View(), fmt.Sprintf("•%d• %s", len(screens), ScreenConflicts),
+	model.screen = ScreenHealth
+	require.Contains(t, model.View(), fmt.Sprintf("•%d• %s", len(screens), ScreenHealth),
 		"zero-growth marker: the last label must survive intact at the exact-fit width")
 
 	// (2) Zero growth everywhere: whichever screen is current, the nav

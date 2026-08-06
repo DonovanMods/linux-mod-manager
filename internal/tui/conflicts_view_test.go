@@ -24,12 +24,15 @@ func TestConflictsScreenNavigation(t *testing.T) {
 	updated := updateWithRunes(t, model, "6")
 	require.Equal(t, ScreenConflicts, updated.CurrentScreen())
 
-	// Tab-rotation: Sources (5) -> Conflicts (6) -> back to Dashboard (1).
+	// Tab-rotation: Sources (5) -> Conflicts (6) -> Health (7, #224 Task 9) ->
+	// back to Dashboard (1).
 	onSources := updateWithRunes(t, model, "5")
 	require.Equal(t, ScreenSources, onSources.CurrentScreen())
 	onConflicts := updateWithKeyType(t, onSources, tea.KeyTab)
 	require.Equal(t, ScreenConflicts, onConflicts.CurrentScreen())
-	onDashboard := updateWithKeyType(t, onConflicts, tea.KeyTab)
+	onHealth := updateWithKeyType(t, onConflicts, tea.KeyTab)
+	require.Equal(t, ScreenHealth, onHealth.CurrentScreen())
+	onDashboard := updateWithKeyType(t, onHealth, tea.KeyTab)
 	require.Equal(t, ScreenDashboard, onDashboard.CurrentScreen())
 
 	require.Equal(t, "Conflicts", ScreenConflicts.String())

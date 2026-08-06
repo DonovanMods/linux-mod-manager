@@ -129,8 +129,30 @@ type Model struct {
 	// GetProfileConflicts), so it belongs in the ordinary load rather than a
 	// Phase 5b-style on-demand check.
 	conflicts []ConflictItem
-	search    searchModel
-	action    actionModel
+	// health backs the Health screen's home content (#224 Task 9) - the
+	// LOCAL-tier verify result from DataProvider.Health, fetched alongside
+	// mods/profiles/conflicts in loadData (Task 10's wiring; this task's
+	// healthHomeView renders whatever a caller has set here directly - see
+	// contextview.go's doc comments for the screen this backs).
+	health HealthView
+	// healthAt is when health was produced (m.now() at receipt) - nil means
+	// no scan has run yet, rendered as "no scan yet" rather than falling
+	// through lastDeployLabel's own "never" wording (see healthScanLabel).
+	healthAt *time.Time
+	// healthErr is the last scan failure's message, "" when the most recent
+	// scan (or the initial local-tier load) succeeded. Set by Task 10's
+	// loadData wiring and the 'c'/'F' handlers Tasks 11/12 add.
+	healthErr string
+	// contextContent is ScreenHealth's pushed full-screen view (see
+	// contextview.go): nil means the screen renders the health home view;
+	// non-nil means it renders contextContent.Lines instead, and esc pops
+	// back to contextReturn via Model.popContext.
+	contextContent contextContent
+	// contextReturn is the screen popContext returns to once contextContent
+	// is cleared - the screen that called pushContext.
+	contextReturn Screen
+	search        searchModel
+	action        actionModel
 	// picker is the pending list-choice modal (see picker.go), if any.
 	// Sibling to action.pending: promptPicker/updatePickerKey/pickerView
 	// mirror promptAction/updatePendingActionKey/actionModalView's structure.
@@ -286,6 +308,7 @@ func NewModel(options Options) (Model, error) {
 			ScreenProfiles:      0,
 			ScreenSources:       0,
 			ScreenConflicts:     0,
+			ScreenHealth:        0,
 		},
 	}, nil
 }
@@ -824,6 +847,26 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updatePendingActionKey(msg)
 	}
 
+	// ScreenHealth's pushed context content (#224 Task 9, contextview.go)
+	// gets first crack at every key while it's up - mirroring the
+	// picker/inputModal/overlay/action.pending early-returns above, except
+	// scoped to a screen rather than a Model field, since contextContent is
+	// itself the screen's whole content when non-nil. Content that declines
+	// (handled=false) falls through to rule 8 and the outer switch below,
+	// same as any ordinary keypress; esc (Blur) is the host's own fallback,
+	// popping back to contextReturn only when the content itself didn't
+	// already consume it.
+	if m.screen == ScreenHealth && m.contextContent != nil {
+		if next, cmd, handled := m.contextContent.HandleKey(msg); handled {
+			m.contextContent = next
+			return m, cmd
+		}
+		if key.Matches(msg, m.keys.Blur) {
+			m.popContext()
+			return m, nil
+		}
+	}
+
 	// Rule 8: any keypress that isn't a modal response (handled above,
 	// before this point is ever reached) and isn't quit clears the status
 	// line. isQuitKey (not the bare Quit binding) is used so a "q" that's
@@ -920,6 +963,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gotoScreen(ScreenSources)
 	case key.Matches(msg, m.keys.ConflictsScreen):
 		return m.gotoScreen(ScreenConflicts)
+	case key.Matches(msg, m.keys.HealthScreen):
+		return m.gotoScreen(ScreenHealth)
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 		return m.afterSearchSelectionMove()
@@ -1102,6 +1147,8 @@ func (m Model) itemCount(screen Screen) int {
 		return len(m.sources)
 	case ScreenConflicts:
 		return len(m.conflicts)
+	case ScreenHealth:
+		return len(m.health.Findings)
 	default:
 		return len(m.dashboardMenu())
 	}
@@ -1266,6 +1313,8 @@ func (m Model) screenView() string {
 		return m.sourcesView()
 	case ScreenConflicts:
 		return m.conflictsView()
+	case ScreenHealth:
+		return m.healthScreenView()
 	default:
 		return m.dashboardView()
 	}
@@ -2006,6 +2055,227 @@ func (m Model) conflictsDetailPane(width, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
+// healthScreenView renders ScreenHealth (#224 Task 9): the pushed
+// contextContent's chrome when one is pushed (contextview.go's host
+// contract - "the host owns chrome (panel, title, nav) and clamping"), or
+// the health home view otherwise.
+func (m Model) healthScreenView() string {
+	if m.contextContent == nil {
+		return m.healthHomeView()
+	}
+
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+	contentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	lines := []string{m.theme.PanelTitle.Render(m.contextContent.Title())}
+	lines = append(lines, m.contextContent.Lines(contentWidth, max(contentBudget-1, 1))...)
+	lines = m.truncateLines(lines, contentWidth)
+	lines = m.clampLines(lines, contentBudget)
+
+	return m.panelWithHeight(width, height).Render(strings.Join(lines, "\n"))
+}
+
+// healthHomeView renders the Health screen's home content (#224 Task 9):
+// every finding from the most recent verify scan, one row each, mirroring
+// conflictsView's two-pane list/detail shape. Findings arrive pre-filtered
+// by healthView (service_core.go) - quiet-ok rows are already dropped - so
+// every row here is something worth a user's attention (or, for a
+// lock-pending "ok" row, at least worth naming).
+func (m Model) healthHomeView() string {
+	width := m.availableWidth()
+	height := m.availableContentHeight()
+
+	if len(m.health.Findings) == 0 {
+		tier := "local"
+		if m.health.Full {
+			tier = "full"
+		}
+		return m.panelWithHeight(width, height).Render(strings.Join([]string{
+			m.theme.PanelTitle.Render("HEALTH"),
+			m.theme.MutedText.Render(fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full))),
+			m.theme.MutedText.Render(fmt.Sprintf("no findings (%s) — run a full check (c)", tier)),
+		}, "\n"))
+	}
+
+	// Two-pane list/detail layout, mirroring conflictsView's own width math
+	// (see its doc comment) - leftWidth + gap + rightWidth sums to exactly
+	// width.
+	gap := 1
+	leftWidth := max((width-gap)/2, 1)
+	rightWidth := max(width-gap-leftWidth, 1)
+	paneContentHeight := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		m.panelWithHeight(leftWidth, height).Render(m.healthListPane(leftWidth, paneContentHeight)),
+		" ",
+		m.panelWithHeight(rightWidth, height).Render(m.healthDetailPane(rightWidth, paneContentHeight)),
+	)
+}
+
+// healthListPane renders the header (title + "last scan: ..." age line) and
+// the selectable "[glyph] STATUS  MOD (FILE)" rows, tinted by
+// healthStatusClass. Windowed/scroll-follow-selection like
+// conflictsListPane (#42).
+func (m Model) healthListPane(width, maxLines int) string {
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	rows := []string{
+		m.theme.PanelTitle.Render("HEALTH"),
+		m.theme.MutedText.Render(truncate(fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full)), innerWidth)),
+	}
+
+	budget := max(maxLines-len(rows), 0)
+	rowFor := func(i int) string {
+		f := m.health.Findings[i]
+		label := f.ModName
+		if f.FileID != "" {
+			label = fmt.Sprintf("%s (%s)", f.ModName, f.FileID)
+		}
+		line := fmt.Sprintf("%s %s  %s", m.healthGlyph(f.Status), healthStatusLabel(f.Status), label)
+		return m.row(i, truncate(line, max(innerWidth-prefixWidth, 1)))
+	}
+	rows = append(rows, m.windowedRows(len(m.health.Findings), m.selected[ScreenHealth], budget, rowFor)...)
+	return strings.Join(rows, "\n")
+}
+
+// healthDetailPane renders the selected finding's fields plus a per-status
+// remedy line (healthRemedy), reusing the CLI's own phrasings (cmd/lmm/
+// verify.go's renderVerifyFinding/renderVerifySkipped) wherever the fields
+// HealthFinding carries are enough to reconstruct them.
+func (m Model) healthDetailPane(width, maxLines int) string {
+	idx := m.selected[ScreenHealth]
+	if idx < 0 || idx >= len(m.health.Findings) {
+		return m.theme.MutedText.Render("No selection.")
+	}
+	f := m.health.Findings[idx]
+
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	lines := []string{
+		m.theme.PanelTitle.Render("DETAIL"),
+		truncate(fmt.Sprintf("Mod:    %s", f.ModName), innerWidth),
+	}
+	if f.FileID != "" {
+		lines = append(lines, truncate(fmt.Sprintf("File:   %s", f.FileID), innerWidth))
+	}
+	lines = append(lines, truncate(fmt.Sprintf("Status: %s", healthStatusLabel(f.Status)), innerWidth))
+	if f.Note != "" {
+		lines = append(lines, truncate(fmt.Sprintf("Note:   %s", f.Note), innerWidth))
+	}
+	if remedy := healthRemedy(f); remedy != "" {
+		lines = append(lines, "", truncate(m.theme.MutedText.Render(remedy), innerWidth))
+	}
+
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// healthStatusClass buckets a HealthFinding.Status into the three tint
+// classes the list/detail panes use: "danger" for the two statuses that mean
+// a file/version is actually wrong, "fine" for a healthy (lock-pending "ok")
+// row, and "warning" for everything else - the broad "needs attention but
+// isn't broken" middle ground (needs_reingest, no_checksum,
+// version_unverifiable, stale_compile, conversion_failed, stale_deployment,
+// file_count_mismatch, skipped, ...).
+func healthStatusClass(status string) string {
+	switch status {
+	case "missing", "version_mismatch":
+		return "danger"
+	case "ok":
+		return "fine"
+	default:
+		return "warning"
+	}
+}
+
+// healthGlyph renders the tinted leading marker for a list row, mirroring
+// the CLI's own colorRed("X")/colorGreen("+")/colorYellow("?") convention
+// (cmd/lmm/verify.go's renderVerifyFinding) - "fine" gets no theme.WarningText/
+// DangerText tint (the theme has no dedicated "success" text style; see
+// theme.Theme's own field list), same as the CLI's un-tinted "+" glyph
+// reads as healthy by absence of alarm color.
+func (m Model) healthGlyph(status string) string {
+	switch healthStatusClass(status) {
+	case "danger":
+		return m.theme.DangerText.Render("X")
+	case "fine":
+		return "+"
+	default:
+		return m.theme.WarningText.Render("?")
+	}
+}
+
+// healthStatusLabel renders a Status value ("version_mismatch") as display
+// text ("VERSION MISMATCH"), matching the CLI's own uppercase wording for
+// the same statuses (cmd/lmm/verify.go).
+func healthStatusLabel(status string) string {
+	return strings.ToUpper(strings.ReplaceAll(status, "_", " "))
+}
+
+// healthRemedy returns the detail pane's per-status remedy line, reusing the
+// CLI's own phrasings (cmd/lmm/verify.go's renderVerifyFinding/
+// renderVerifySkipped) wherever HealthFinding carries enough to reconstruct
+// them - Recorded/Effective/Version/ExpectedCount (CLI-only VerifyEvent
+// extras, not copied into HealthFinding - see healthView's doc comment in
+// service_core.go) are dropped rather than guessed at. "(F)" names Task 12's
+// fix binding, which does not exist yet on this task's branch - the copy is
+// written now so it reads correctly the moment that binding lands, mirroring
+// the brief's own needs_reingest example.
+func healthRemedy(f HealthFinding) string {
+	switch f.Status {
+	case "missing":
+		return "file missing from cache — run a fix (F) to redownload"
+	case "no_checksum":
+		return "no checksum recorded — run a fix (F) to backfill"
+	case "needs_reingest":
+		return "run a fix (F) to re-ingest"
+	case "version_unverifiable":
+		return "recorded file ID(s) no longer found upstream; reinstall the mod or run 'lmm update' to adopt the current version"
+	case "version_mismatch":
+		return "source reports a different version than recorded; run 'lmm update' or a fix (F)"
+	case "stale_compile":
+		return "run 'lmm update --all' to fix"
+	case "conversion_failed":
+		return fmt.Sprintf("deploying raw; fix the mod or run 'lmm mod convert %s off' to silence", f.ModID)
+	case "stale_deployment":
+		return "run a fix (F) to remove"
+	case "fixed_stale_deployment":
+		return "resolved"
+	case "file_count_mismatch":
+		return "expected content from a download but the cache has 0 files"
+	case "ok":
+		if f.Note != "" {
+			return fmt.Sprintf("%s — run 'lmm profile apply'", f.Note)
+		}
+		return ""
+	case "skipped":
+		return "could not check — see note above"
+	default:
+		return ""
+	}
+}
+
+// healthScanLabel renders the Health screen's header line body: "no scan
+// yet" when at is nil (no scan has run this session), otherwise "<tier>,
+// <age>" reusing lastDeployLabel's own relative-age computation (its nil
+// branch is unreachable here since at != nil is already checked) - "local"/
+// "full" names the verify tier the reported findings came from (HealthView.
+// Full).
+func healthScanLabel(now time.Time, at *time.Time, full bool) string {
+	if at == nil {
+		return "no scan yet"
+	}
+	tier := "local"
+	if full {
+		tier = "full"
+	}
+	return fmt.Sprintf("%s, %s", tier, lastDeployLabel(now, at))
+}
+
 // helpGroup is one labeled section of the help panel: a screen name (or
 // "global") plus the key entries that apply to it. Group labels are
 // lowercase per Task 9's copy convention (see helpGroups).
@@ -2044,7 +2314,7 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.Help),
 			helpEntry(m.keys.NextScreen),
 			helpEntry(m.keys.PrevScreen),
-			helpRow("1-6", "jump to a screen"),
+			helpRow("1-7", "jump to a screen"),
 			helpEntry(m.keys.GameSwitch),
 		},
 	}
@@ -2160,7 +2430,20 @@ func (m Model) helpGroups() []helpGroup {
 		},
 	}
 
-	fixed := []helpGroup{dashboard, installedMods, search, profiles, conflicts, sources}
+	// health is Task 9's Health-screen group (#224): unlike every other
+	// screen group above, it lists its OWN jump-to-screen key (HealthScreen,
+	// "7") rather than leaving that to the global group's generic "1-7"
+	// entry - without it the group would start life empty (c/F, Tasks
+	// 11/12, don't exist yet on this branch) and read as broken rather than
+	// "grows later".
+	health := helpGroup{
+		name: "health",
+		entries: []string{
+			helpEntry(m.keys.HealthScreen),
+		},
+	}
+
+	fixed := []helpGroup{dashboard, installedMods, search, profiles, conflicts, sources, health}
 	screenGroupName := map[Screen]string{
 		ScreenDashboard:     dashboard.name,
 		ScreenInstalledMods: installedMods.name,
@@ -2168,6 +2451,7 @@ func (m Model) helpGroups() []helpGroup {
 		ScreenProfiles:      profiles.name,
 		ScreenConflicts:     conflicts.name,
 		ScreenSources:       sources.name,
+		ScreenHealth:        health.name,
 	}
 	if name, ok := screenGroupName[m.screen]; ok {
 		for i, g := range fixed {

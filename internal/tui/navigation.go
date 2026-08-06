@@ -12,6 +12,12 @@ const (
 	ScreenProfiles
 	ScreenSources
 	ScreenConflicts
+	// ScreenHealth is #224 Task 9's context-view host: the health home
+	// content (two-pane findings view) when nothing is pushed, or whatever
+	// contextContent Model.pushContext last pushed (see contextview.go) -
+	// the landing zone a future mod-details story (#86) will reuse as its
+	// second implementation.
+	ScreenHealth
 )
 
 var screens = []Screen{
@@ -21,6 +27,7 @@ var screens = []Screen{
 	ScreenProfiles,
 	ScreenSources,
 	ScreenConflicts,
+	ScreenHealth,
 }
 
 // String returns a human-readable screen name.
@@ -38,6 +45,8 @@ func (s Screen) String() string {
 		return "Sources"
 	case ScreenConflicts:
 		return "Conflicts"
+	case ScreenHealth:
+		return "Health"
 	default:
 		return fmt.Sprintf("Screen(%d)", s)
 	}

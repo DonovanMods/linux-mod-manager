@@ -22,14 +22,18 @@ type KeyMap struct {
 	// specific screen a user might reach some other way too - SearchScreen
 	// via "/", ConflictsScreen has no such alternate entry point yet).
 	ConflictsScreen key.Binding
-	Select          key.Binding
-	Submit          key.Binding
-	Blur            key.Binding
-	NextPage        key.Binding
-	PrevPage        key.Binding
-	CycleSource     key.Binding
-	ConfirmAction   key.Binding
-	CancelAction    key.Binding
+	// HealthScreen is Task 9's direct-jump binding to ScreenHealth (#224),
+	// mirroring ConflictsScreen's own shape (see its doc comment) - the
+	// health screen likewise has no other entry point yet.
+	HealthScreen  key.Binding
+	Select        key.Binding
+	Submit        key.Binding
+	Blur          key.Binding
+	NextPage      key.Binding
+	PrevPage      key.Binding
+	CycleSource   key.Binding
+	ConfirmAction key.Binding
+	CancelAction  key.Binding
 	// ToggleEnable, Uninstall, and Deploy are Phase 5a's Installed
 	// Mods/Dashboard mutation bindings (see mutations.go). Profile switch
 	// deliberately has no binding of its own here - it reuses Select
@@ -202,6 +206,10 @@ func DefaultKeyMap() KeyMap {
 		ConflictsScreen: key.NewBinding(
 			key.WithKeys("6"),
 			key.WithHelp("6", "conflicts"),
+		),
+		HealthScreen: key.NewBinding(
+			key.WithKeys("7"),
+			key.WithHelp("7", "health"),
 		),
 		Select: key.NewBinding(
 			key.WithKeys("enter"),
