@@ -631,8 +631,8 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			Profile:      profileName,
 			UpdatePolicy: policyToString(installed.UpdatePolicy),
 		}
-		// Populate ConvertPaks only for merge-compile games
-		if game.DeployMode == domain.DeployCompile {
+		// Populate ConvertPaks only for merge-compile games with pak merge source
+		if game.DeployMode == domain.DeployCompile && svc.ModHasPakMergeSource(installed) {
 			v := installed.ConvertPaks
 			info.ConvertPaks = &v
 		}

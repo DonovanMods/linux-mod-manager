@@ -196,7 +196,7 @@ func TestModConvertCommand_DBErrorWrapped(t *testing.T) {
 }
 
 // TestListShowsConvert guards that lmm list shows convert state in verbose
-// mode and in JSON output.
+// mode and in JSON output for mods with a pak merge source.
 func TestListShowsConvert(t *testing.T) {
 	svc, game, _ := setupDoModConvertTest(t)
 	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
@@ -238,8 +238,44 @@ func TestListShowsConvert(t *testing.T) {
 	// (The exact formatting depends on the tabwriter, but both should appear)
 }
 
+// TestListShowsConvert_ExmodzOnly guards that lmm list does NOT show
+// convert_paks for exmodz-only mods (no pak merge source), even on a compile
+// game: JSON omits the field, verbose table shows "-" for the CONVERT column.
+func TestListShowsConvert_ExmodzOnly(t *testing.T) {
+	svc, game, _ := setupDoModConvertTest(t)
+	// Create an exmodz-only mod: FileIDs with no pak entries
+	seedConvertableModWithFileIDs(t, svc, game, "a", "Exmodz Mod", "1.0", []string{"exmodz", "mesh.uasset"})
+
+	// Test JSON output omits convert_paks for exmodz-only mod
+	out := captureStdout(t, func() error {
+		oldJSON := jsonOutput
+		jsonOutput = true
+		defer func() { jsonOutput = oldJSON }()
+		return doList(nil, svc, game)
+	})
+
+	// JSON should NOT include convert_paks for exmodz-only mod (omitempty)
+	assert.NotContains(t, out, "convert_paks",
+		"exmodz-only mod must omit convert_paks from JSON (omitempty)")
+
+	// Test verbose table shows "-" for exmodz-only mod
+	out = captureStdout(t, func() error {
+		oldJSON := jsonOutput
+		oldVerbose := verbose
+		jsonOutput = false
+		verbose = true
+		defer func() { jsonOutput, verbose = oldJSON, oldVerbose }()
+		return doList(nil, svc, game)
+	})
+
+	// Verbose table should show CONVERT column
+	assert.Contains(t, out, "CONVERT")
+	// The exmodz-only mod should show "-" for its CONVERT column
+	assert.Contains(t, out, "Exmodz Mod")
+}
+
 // TestModShowIncludesConvert guards that lmm mod show includes convert state
-// for installed mods in compile-mode games.
+// for installed mods with a pak merge source in compile-mode games.
 func TestModShowIncludesConvert(t *testing.T) {
 	svc, game, src := setupDoModConvertTest(t)
 	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
@@ -268,6 +304,40 @@ func TestModShowIncludesConvert(t *testing.T) {
 
 	assert.Contains(t, out, "Pak conversion:")
 	assert.Contains(t, out, "off")
+}
+
+// TestModShowIncludesConvert_ExmodzOnly guards that lmm mod show does NOT
+// include convert state for exmodz-only mods (no pak merge source): JSON omits
+// the field, human output shows no "Pak conversion:" line.
+func TestModShowIncludesConvert_ExmodzOnly(t *testing.T) {
+	svc, game, src := setupDoModConvertTest(t)
+	// Create an exmodz-only mod: FileIDs with no pak entries
+	seedConvertableModWithFileIDs(t, svc, game, "a", "Exmodz Mod", "1.0", []string{"exmodz", "mesh.uasset"})
+	src.AddMod(&domain.Mod{ID: "a", SourceID: "src", GameID: game.ID}, []domain.DownloadableFile{
+		{ID: "f1", Version: "1.0", Category: "MAIN"},
+	})
+
+	// Test JSON output omits convert_paks for exmodz-only mod
+	out := captureStdout(t, func() error {
+		oldJSON := jsonOutput
+		jsonOutput = true
+		defer func() { jsonOutput = oldJSON }()
+		return doModShow(context.Background(), svc, game, "a")
+	})
+
+	assert.NotContains(t, out, "convert_paks",
+		"exmodz-only mod must omit convert_paks from JSON (omitempty)")
+
+	// Test human output omits "Pak conversion:" for exmodz-only mod
+	out = captureStdout(t, func() error {
+		oldJSON := jsonOutput
+		jsonOutput = false
+		defer func() { jsonOutput = oldJSON }()
+		return doModShow(context.Background(), svc, game, "a")
+	})
+
+	assert.NotContains(t, out, "Pak conversion:",
+		"exmodz-only mod must not show Pak conversion line")
 }
 
 // TestRunModConvert_InvalidArgument guards that runModConvert rejects

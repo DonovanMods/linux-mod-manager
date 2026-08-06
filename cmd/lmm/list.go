@@ -161,8 +161,8 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 				Locked:        locked,
 				LockedVersion: lockedVersion,
 			}
-			// Populate ConvertPaks only for merge-compile games
-			if game.DeployMode == domain.DeployCompile {
+			// Populate ConvertPaks only for merge-compile games with pak merge source
+			if game.DeployMode == domain.DeployCompile && service.ModHasPakMergeSource(&mod) {
 				v := mod.ConvertPaks
 				row.ConvertPaks = &v
 			}
@@ -227,7 +227,7 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 				locked = lockedRef.Version
 			}
 			convert := "-"
-			if game.DeployMode == domain.DeployCompile {
+			if game.DeployMode == domain.DeployCompile && service.ModHasPakMergeSource(&mod) {
 				if mod.ConvertPaks {
 					convert = "on"
 				} else {
