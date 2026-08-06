@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 )
 
 // entryClass classifies one mod-pak entry for pak→exmod conversion (#221).
@@ -219,4 +221,102 @@ func diffTable(tableRef string, baseJSON, modJSON []byte) (items []ExmodFileItem
 	// Base-only rows are staleness (the pak predates them) - deliberately
 	// ignored, never deletions.
 	return items, warnings, nil
+}
+
+// convertPakToBundle converts one prebuilt mod pak into the in-memory
+// ExmodzBundle shape MergeCompile's loops already consume - the pak→exmod
+// REBASE (#221): rebuild the pak's changes against the CURRENT base.
+//
+// Tier 1: when the pak embeds exactly one *.EXMOD manifest, its rows are
+// used verbatim (pure author intent; the merge loop's resolveCurrentFile +
+// ApplyRowPatch rebase them onto the current base). Tier 2: otherwise every
+// table snapshot is diffed against the current base via diffTable.
+//
+// A non-nil error means the WHOLE mod is irreconcilable (design §4): the
+// caller must skip it (it falls back to raw deploy) - never partially
+// convert. Warnings are non-fatal observations (inexpressible details).
+func convertPakToBundle(pakPath string, base *unrealpak.Reader) (*ExmodzBundle, []string, error) {
+	mod, err := unrealpak.Open(pakPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("icarus: opening pak %s: %w", pakPath, err)
+	}
+	defer mod.Close() //nolint:errcheck
+
+	type tableSnapshot struct {
+		rel  string
+		data []byte
+	}
+	var (
+		warnings []string
+		tables   []tableSnapshot
+		embedded [][]byte
+		assets   = map[string][]byte{}
+	)
+
+	for _, entry := range mod.Files() {
+		class, rel, nerr := normalizeEntry(mod.MountPoint(), entry.Path)
+		if nerr != nil {
+			return nil, nil, nerr // hyphen-ambiguous table path: irreconcilable
+		}
+		if class == classOther {
+			if strings.HasSuffix(strings.ToLower(entry.Path), ".json") {
+				// A JSON entry we cannot place under Icarus/Content/data is
+				// almost certainly a table with an unresolvable layout (e.g.
+				// a bare Content/ mount with no directory structure) - a
+				// silent skip would drop the mod's actual content.
+				return nil, nil, fmt.Errorf("icarus: pak layout unresolvable: entry %q (mount %q) does not map into Icarus/Content/data", entry.Path, mod.MountPoint())
+			}
+			continue // readme, images, etc.
+		}
+		data, rerr := mod.ReadFile(entry.Path)
+		if rerr != nil {
+			if class == classAsset {
+				warnings = append(warnings, fmt.Sprintf("asset %q unreadable (%v) - skipped", entry.Path, rerr))
+				continue
+			}
+			// Unreadable table or embedded manifest: the mod's content is
+			// unrecoverable - irreconcilable.
+			return nil, nil, fmt.Errorf("icarus: reading pak entry %q: %w", entry.Path, rerr)
+		}
+		switch class {
+		case classEmbeddedExmod:
+			embedded = append(embedded, data)
+		case classAsset:
+			assets[rel] = data
+		case classTable:
+			tables = append(tables, tableSnapshot{rel: rel, data: data})
+		}
+	}
+
+	if len(embedded) > 1 {
+		return nil, nil, fmt.Errorf("icarus: pak %s carries multiple embedded .EXMOD manifests - ambiguous", pakPath)
+	}
+
+	if len(embedded) == 1 {
+		diff, perr := ParseExmod(embedded[0])
+		if perr != nil {
+			return nil, nil, fmt.Errorf("icarus: embedded .EXMOD in %s: %w", pakPath, perr)
+		}
+		return &ExmodzBundle{Diff: diff, Assets: assets}, warnings, nil
+	}
+
+	// Tier 2: diff-derive. Deterministic row order: sort snapshots by path.
+	sort.Slice(tables, func(i, j int) bool { return tables[i].rel < tables[j].rel })
+	diff := &ExmodDiff{}
+	for _, snap := range tables {
+		baseData, berr := base.ReadFile(snap.rel)
+		if berr != nil {
+			return nil, nil, fmt.Errorf("icarus: pak table %q not present in current base: %w", snap.rel, berr)
+		}
+		items, tblWarnings, derr := diffTable(snap.rel, baseData, snap.data)
+		if derr != nil {
+			return nil, nil, derr
+		}
+		warnings = append(warnings, tblWarnings...)
+		if len(items) == 0 {
+			continue // nothing expressible changed; never emit an empty row
+		}
+		diff.Rows = append(diff.Rows, ExmodRow{CurrentFile: currentFileFor(snap.rel), FileItems: items})
+	}
+	return &ExmodzBundle{Diff: diff, Assets: assets}, warnings, nil
 }

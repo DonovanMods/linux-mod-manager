@@ -1,8 +1,11 @@
 package icarus
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 )
 
 func TestNormalizeEntry(t *testing.T) {
@@ -238,6 +241,136 @@ func TestDiffTable(t *testing.T) {
 		}
 		if !strings.Contains(warnings[1], "XP") {
 			t.Fatalf("want second warning to mention XP, got: %v", warnings[1])
+		}
+	})
+}
+
+// buildTestPak writes a synthetic pak with the given mount point and entries.
+func buildTestPak(t *testing.T, dir, name, mount string, entries map[string][]byte) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	w, err := unrealpak.Create(p, unrealpak.WithMountPoint(mount))
+	if err != nil {
+		t.Fatalf("creating %s: %v", name, err)
+	}
+	for path, data := range entries {
+		if err := w.AddFile(path, data); err != nil {
+			t.Fatalf("adding %s: %v", path, err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing %s: %v", name, err)
+	}
+	return p
+}
+
+// testBaseTable is a minimal real-shape UE DataTable.
+const testBaseTable = `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":10},{"Name":"RowB","XP":20}]}`
+
+func openTestBase(t *testing.T, dir string) *unrealpak.Reader {
+	t.Helper()
+	// Base data.pak entries are mount-relative WITHOUT a data/ prefix
+	// (matchMountPath resolves "Test/D_Growth.json" against Files()).
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+	})
+	base, err := unrealpak.Open(basePath)
+	if err != nil {
+		t.Fatalf("opening base: %v", err)
+	}
+	t.Cleanup(func() { _ = base.Close() })
+	return base
+}
+
+func TestConvertPakToBundleTier2(t *testing.T) {
+	dir := t.TempDir()
+	base := openTestBase(t, dir)
+	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":99},{"Name":"RowNew","XP":5}]}`
+	pak := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json":    []byte(modTable),
+		"Mods/Thing/SK_Thing.uasset": {0x01, 0x02},
+		"readme.txt":                 []byte("ignore me"),
+	})
+
+	bundle, warnings, err := convertPakToBundle(pak, base)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if len(bundle.Diff.Rows) != 1 {
+		t.Fatalf("want 1 row, got %+v", bundle.Diff.Rows)
+	}
+	row := bundle.Diff.Rows[0]
+	if row.CurrentFile != "Test-D_Growth.json" {
+		t.Fatalf("CurrentFile = %q", row.CurrentFile)
+	}
+	if len(row.FileItems) != 2 {
+		t.Fatalf("want 2 items (changed RowA + new RowNew), got %+v", row.FileItems)
+	}
+	if _, ok := bundle.Assets["Mods/Thing/SK_Thing.uasset"]; !ok {
+		t.Fatalf("asset missing: %+v", bundle.Assets)
+	}
+}
+
+func TestConvertPakToBundleTier1EmbeddedExmod(t *testing.T) {
+	dir := t.TempDir()
+	base := openTestBase(t, dir)
+	embedded := `{"Rows":[{"CurrentFile":"Test-D_Growth.json","File_Items":[{"Name":"RowA","XP":42}]},{"CurrentFile":"EndOfMod"}]}`
+	// The pak ALSO carries a stale table snapshot - Tier 1 must ignore it in
+	// favor of the embedded manifest (exact author intent).
+	staleTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":42},{"Name":"Ancient","XP":1}]}`
+	pak := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data.EXMOD":              []byte(embedded),
+		"data/Test/D_Growth.json": []byte(staleTable),
+	})
+
+	bundle, _, err := convertPakToBundle(pak, base)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 2 rows: the real one + the EndOfMod sentinel ParseExmod preserves.
+	if len(bundle.Diff.Rows) != 2 {
+		t.Fatalf("want embedded manifest's 2 rows, got %+v", bundle.Diff.Rows)
+	}
+	if bundle.Diff.Rows[0].FileItems[0].Fields["XP"] != float64(42) {
+		t.Fatalf("embedded row not used: %+v", bundle.Diff.Rows[0])
+	}
+}
+
+func TestConvertPakToBundleIrreconcilable(t *testing.T) {
+	dir := t.TempDir()
+	base := openTestBase(t, dir)
+
+	t.Run("table not in current base", func(t *testing.T) {
+		pak := buildTestPak(t, dir, "gone.pak", "../../../Icarus/Content/", map[string][]byte{
+			"data/Removed/D_Gone.json": []byte(testBaseTable),
+		})
+		_, _, err := convertPakToBundle(pak, base)
+		if err == nil || !strings.Contains(err.Error(), "not present in current base") {
+			t.Fatalf("want table-not-in-base error, got %v", err)
+		}
+	})
+
+	t.Run("unmappable json entry", func(t *testing.T) {
+		pak := buildTestPak(t, dir, "bare.pak", "../../../Content/", map[string][]byte{
+			"D_ProcessorRecipes.json": []byte(testBaseTable),
+		})
+		_, _, err := convertPakToBundle(pak, base)
+		if err == nil || !strings.Contains(err.Error(), "unresolvable") {
+			t.Fatalf("want unresolvable-layout error, got %v", err)
+		}
+	})
+
+	t.Run("multiple embedded manifests", func(t *testing.T) {
+		pak := buildTestPak(t, dir, "multi.pak", "../../../Icarus/Content/", map[string][]byte{
+			"a.EXMOD": []byte(`{"Rows":[]}`),
+			"b.EXMOD": []byte(`{"Rows":[]}`),
+		})
+		_, _, err := convertPakToBundle(pak, base)
+		if err == nil || !strings.Contains(err.Error(), "multiple embedded") {
+			t.Fatalf("want multiple-embedded error, got %v", err)
 		}
 	})
 }
