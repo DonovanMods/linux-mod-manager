@@ -57,6 +57,7 @@ type GameConfig struct {
 	CachePath   string            `yaml:"cache_path,omitempty"`
 	Hooks       GameHooksYAML     `yaml:"hooks,omitempty"`
 	DeployMode  string            `yaml:"deploy_mode,omitempty"`
+	ConvertPaks *bool             `yaml:"convert_paks,omitempty"`
 }
 
 // GamesFile is the top-level games.yaml structure
@@ -97,16 +98,24 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 			return nil, fmt.Errorf("%w: games.yaml: game %q: deploy_mode %q (valid: %s)",
 				domain.ErrInvalidDeployMode, id, cfg.DeployMode, domain.ValidDeployModes)
 		}
+		convertPaks := true // default: paks convert (only meaningful for DeployCompile games)
+		convertExplicit := false
+		if cfg.ConvertPaks != nil {
+			convertPaks = *cfg.ConvertPaks
+			convertExplicit = true
+		}
 		games[id] = &domain.Game{
-			ID:                 id,
-			Name:               cfg.Name,
-			InstallPath:        ExpandPath(cfg.InstallPath),
-			ModPath:            ExpandPath(cfg.ModPath),
-			SourceIDs:          cfg.Sources,
-			LinkMethod:         linkMethod,
-			LinkMethodExplicit: cfg.LinkMethod != "",
-			CachePath:          ExpandPath(cfg.CachePath),
-			DeployMode:         deployMode,
+			ID:                  id,
+			Name:                cfg.Name,
+			InstallPath:         ExpandPath(cfg.InstallPath),
+			ModPath:             ExpandPath(cfg.ModPath),
+			SourceIDs:           cfg.Sources,
+			LinkMethod:          linkMethod,
+			LinkMethodExplicit:  cfg.LinkMethod != "",
+			CachePath:           ExpandPath(cfg.CachePath),
+			DeployMode:          deployMode,
+			ConvertPaks:         convertPaks,
+			ConvertPaksExplicit: convertExplicit,
 			Hooks: domain.GameHooks{
 				Install: domain.HookConfig{
 					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),
@@ -171,6 +180,11 @@ func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 		// Only write deploy_mode if not the default (extract)
 		if game.DeployMode != domain.DeployExtract {
 			cfg.DeployMode = game.DeployMode.String()
+		}
+		// Only write convert_paks if explicitly set
+		if game.ConvertPaksExplicit {
+			v := game.ConvertPaks
+			cfg.ConvertPaks = &v
 		}
 		gamesFile.Games[id] = cfg
 	}
