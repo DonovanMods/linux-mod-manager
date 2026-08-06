@@ -42,6 +42,9 @@ type listModJSON struct {
 	// unlocked mod's JSON row doesn't carry a stray empty string.
 	Locked        bool   `json:"locked"`
 	LockedVersion string `json:"locked_version,omitempty"`
+	// ConvertPaks (#221) is an additive field (JSON-contract-additions-are-MINOR
+	// precedent): present only for merge-compile games.
+	ConvertPaks *bool `json:"convert_paks,omitempty"`
 }
 
 var listCmd = &cobra.Command{
@@ -146,7 +149,7 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 			if locked {
 				lockedVersion = lockedRef.Version
 			}
-			out.Mods[i] = listModJSON{
+			row := listModJSON{
 				ID:            mod.ID,
 				Name:          mod.Name,
 				Version:       mod.Version,
@@ -158,6 +161,12 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 				Locked:        locked,
 				LockedVersion: lockedVersion,
 			}
+			// Populate ConvertPaks only for merge-compile games
+			if game.DeployMode == domain.DeployCompile {
+				v := mod.ConvertPaks
+				row.ConvertPaks = &v
+			}
+			out.Mods[i] = row
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -184,8 +193,8 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	header := "ID\tNAME\tVERSION\tAUTHOR"
 	sep := "--\t----\t-------\t------"
 	if verbose {
-		header = "ID\tNAME\tVERSION\tAUTHOR\tSOURCE\tENABLED\tDEPLOYED\tMETHOD\tPOLICY\tLOCKED"
-		sep = "--\t----\t-------\t------\t------\t-------\t--------\t------\t------\t------"
+		header = "ID\tNAME\tVERSION\tAUTHOR\tSOURCE\tENABLED\tDEPLOYED\tMETHOD\tPOLICY\tLOCKED\tCONVERT"
+		sep = "--\t----\t-------\t------\t------\t-------\t--------\t------\t------\t------\t-------"
 	}
 	if _, err := fmt.Fprintln(w, header); err != nil {
 		return fmt.Errorf("writing header: %w", err)
@@ -217,7 +226,15 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 			if lockedRef, ok := lockedByKey[domain.ModKey(mod.SourceID, mod.ID)]; ok {
 				locked = lockedRef.Version
 			}
-			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String(), policyToString(mod.UpdatePolicy), locked)
+			convert := "-"
+			if game.DeployMode == domain.DeployCompile {
+				if mod.ConvertPaks {
+					convert = "on"
+				} else {
+					convert = "off"
+				}
+			}
+			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String(), policyToString(mod.UpdatePolicy), locked, convert)
 		} else {
 			row = fmt.Sprintf("%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20))
 		}
