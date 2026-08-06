@@ -7,11 +7,24 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
+
+// findOutcome looks up modID's entry in a MergedPakOutcomes result -
+// TestPakConvertEndToEnd's uniform fingerprint-membership check at every
+// lifecycle step, alongside the rec.lastSources merge-input proxy.
+func findOutcome(outcomes []core.MergedFingerprintEntry, modID string) (core.MergedFingerprintEntry, bool) {
+	for _, o := range outcomes {
+		if o.ModID == modID {
+			return o, true
+		}
+	}
+	return core.MergedFingerprintEntry{}, false
+}
 
 // recordingMergeCompilerSource wraps fakeCompilerSource (service_icarus_
 // compile_test.go), additionally recording the exact []source.MergeSource
@@ -81,6 +94,15 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak deployed")
 
+	outcomes, ok := svc.MergedPakOutcomes(game, "default")
+	require.True(t, ok)
+	exmodOutcome, found := findOutcome(outcomes, "exmod")
+	require.True(t, found)
+	require.True(t, exmodOutcome.Converted)
+	pakOutcome, found := findOutcome(outcomes, "pakmod")
+	require.True(t, found, "converted: pakmod must appear in the merge fingerprint")
+	require.True(t, pakOutcome.Converted)
+
 	// --- Step 2: toggle pakmod's conversion off ---
 	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "pakmod", game.ID, "default", false))
 	rec.lastSources = nil
@@ -96,6 +118,13 @@ func TestPakConvertEndToEnd(t *testing.T) {
 
 	_, err = os.Stat(rawPath)
 	require.NoError(t, err, "raw deployed again after opt-out")
+	_, err = os.Stat(mergedPath)
+	require.NoError(t, err, "merged pak still exists (exmodz-only merge must still produce one)")
+
+	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	require.True(t, ok)
+	_, found = findOutcome(outcomes, "pakmod")
+	require.False(t, found, "opted-out: pakmod must not appear in the merge fingerprint (membership changed)")
 
 	// --- Step 3: toggle back on ---
 	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "pakmod", game.ID, "default", true))
@@ -114,6 +143,12 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak still deployed")
 
+	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	require.True(t, ok)
+	pakOutcome, found = findOutcome(outcomes, "pakmod")
+	require.True(t, found, "re-opted-in: pakmod must appear in the merge fingerprint again")
+	require.True(t, pakOutcome.Converted)
+
 	// --- Step 4: disable pakmod entirely ---
 	require.NoError(t, svc.SetModEnabled("fake-compiler", "pakmod", game.ID, "default", false))
 	rec.lastSources = nil
@@ -123,11 +158,21 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.Len(t, rec.lastSources, 1, "a disabled mod must contribute nothing to the merge")
 	require.Equal(t, "fake-compiler:exmod", rec.lastSources[0].ModRef)
 
-	outcomes, ok := svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomes(game, "default")
 	require.True(t, ok)
-	for _, o := range outcomes {
-		require.NotEqual(t, "pakmod", o.ModID, "a disabled mod must not appear in the merge fingerprint")
-	}
+	_, found = findOutcome(outcomes, "pakmod")
+	require.False(t, found, "a disabled mod must not appear in the merge fingerprint")
+
+	// Disabled != opted-out: reconcilePakManifests' `!mod.Enabled` guard
+	// skips disabled mods entirely (internal/core/merged_pak.go), so the
+	// manifest must STAY in its pre-disable converted state (members=nil) -
+	// NOT revert to the raw member set the way step 2's opt-out did. A
+	// regression that conflated "disabled" with "opted out" (e.g. routing
+	// disabled mods through the raw-fallback branch) would flip this back to
+	// ["pakmod.pak"] and this assertion would catch it.
+	manifests, err = gameCache.FileManifests(game.ID, "fake-compiler", "pakmod", "1.0")
+	require.NoError(t, err)
+	require.Empty(t, manifests["pak"].Members, "disabled mods are skipped by reconcile, not reverted to raw - members stays at its pre-disable converted state")
 
 	_, err = os.Stat(rawPath)
 	require.True(t, os.IsNotExist(err), "disabled mods are not deployed at all - reconcile skips them entirely")
