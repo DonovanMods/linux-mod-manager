@@ -53,8 +53,8 @@ func (s *variantExclusivitySource) ValidateSource(sourceFilePath string) error {
 
 // MergeCompile implements source.MergeCompiler - never exercised by these
 // tests for the same reason.
-func (s *variantExclusivitySource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
-	return nil, nil
+func (s *variantExclusivitySource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+	return nil, nil, nil
 }
 
 var (

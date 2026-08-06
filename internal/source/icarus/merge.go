@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
@@ -20,18 +21,28 @@ import (
 // alias IS the same type, not a look-alike.
 type MergeSource = source.MergeSource
 
-// ValidateSource parses exmodzPath without compiling anything - the
-// ingest-time check (#197 design: "install still parses/validates the
-// .exmodz early"). A malformed archive fails loud immediately, at
-// download/import time, rather than at the next merge (which may not run
-// until a later mutation).
-func ValidateSource(exmodzPath string) error {
-	data, err := os.ReadFile(exmodzPath)
+// ValidateSource parses sourceFilePath without compiling anything - the
+// ingest-time check. .exmodz archives fully parse (#197); .pak files (#221)
+// open + enumerate only - full conversion is checked at merge time BY
+// DESIGN (the result depends on the current base pak, which changes weekly).
+func ValidateSource(sourceFilePath string) error {
+	if strings.HasSuffix(strings.ToLower(sourceFilePath), ".pak") {
+		r, err := unrealpak.Open(sourceFilePath)
+		if err != nil {
+			return fmt.Errorf("icarus: validating %s: %w", sourceFilePath, err)
+		}
+		defer r.Close() //nolint:errcheck
+		if len(r.Files()) == 0 {
+			return fmt.Errorf("icarus: validating %s: pak contains no entries", sourceFilePath)
+		}
+		return nil
+	}
+	data, err := os.ReadFile(sourceFilePath)
 	if err != nil {
-		return fmt.Errorf("icarus: reading %s: %w", exmodzPath, err)
+		return fmt.Errorf("icarus: reading %s: %w", sourceFilePath, err)
 	}
 	if _, err := ParseExmodz(data); err != nil {
-		return fmt.Errorf("icarus: validating %s: %w", exmodzPath, err)
+		return fmt.Errorf("icarus: validating %s: %w", sourceFilePath, err)
 	}
 	return nil
 }
@@ -56,10 +67,10 @@ func ValidateSource(exmodzPath string) error {
 // A non-nil error always means outputPakPath does not exist (or does not
 // contain a fully-written pak) - see the removal defer below, mirroring
 // Compile's own fail-clean contract.
-func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) (warnings []string, err error) {
+func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) (warnings []string, failed []source.MergeFailure, err error) {
 	base, err := unrealpak.Open(basePakPath)
 	if err != nil {
-		return nil, fmt.Errorf("icarus: opening base pak %s: %w", basePakPath, err)
+		return nil, nil, fmt.Errorf("icarus: opening base pak %s: %w", basePakPath, err)
 	}
 	defer base.Close() //nolint:errcheck
 
@@ -68,58 +79,66 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 	assetOwner := make(map[string]string) // asset path -> ModRef that last set it
 
 	for _, src := range sources {
+		if src.Kind == source.MergeSourcePak {
+			bundle, convWarnings, cerr := convertPakToBundle(src.SourcePath, base)
+			if cerr != nil {
+				failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: cerr.Error()})
+				warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %v - deploying raw", src.ModRef, cerr))
+				continue
+			}
+			for _, w := range convWarnings {
+				warnings = append(warnings, fmt.Sprintf("mod %s: %s", src.ModRef, w))
+			}
+			// Apply on scratch copies: a Tier 1 row can still fail
+			// resolveCurrentFile against the CURRENT base (the manifest may
+			// reference a since-removed table), and a half-applied mod must
+			// not pollute the merge. All three maps are copied so a
+			// mid-application failure cannot leave stray assets behind
+			// either - strictly transactional per mod.
+			scratchTables := make(map[string][]byte, len(tableState))
+			for k, v := range tableState {
+				scratchTables[k] = v
+			}
+			scratchAssets := make(map[string][]byte, len(assets))
+			for k, v := range assets {
+				scratchAssets[k] = v
+			}
+			scratchOwner := make(map[string]string, len(assetOwner))
+			for k, v := range assetOwner {
+				scratchOwner[k] = v
+			}
+			applyWarnings, aerr := applyBundle(base, scratchTables, scratchAssets, scratchOwner, bundle, src.ModRef)
+			if aerr != nil {
+				failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: aerr.Error()})
+				warnings = append(warnings, fmt.Sprintf("mod %s: pak conversion failed: %v - deploying raw", src.ModRef, aerr))
+				continue
+			}
+			warnings = append(warnings, applyWarnings...)
+			tableState = scratchTables
+			assets = scratchAssets
+			assetOwner = scratchOwner
+			continue
+		}
+
+		// Exmodz source: policy unchanged - any error is fatal (#197).
 		exmodzData, rerr := os.ReadFile(src.SourcePath)
 		if rerr != nil {
-			return warnings, fmt.Errorf("icarus: reading %s: %w", src.SourcePath, rerr)
+			return warnings, failed, fmt.Errorf("icarus: reading %s: %w", src.SourcePath, rerr)
 		}
 		bundle, perr := ParseExmodz(exmodzData)
 		if perr != nil {
-			return warnings, fmt.Errorf("icarus: %s: %w", src.SourcePath, perr)
+			return warnings, failed, fmt.Errorf("icarus: %s: %w", src.SourcePath, perr)
 		}
-
-		for _, row := range bundle.Diff.Rows {
-			if row.CurrentFile == endOfModSentinel {
-				continue
-			}
-			if len(row.FileItems) == 0 {
-				return warnings, fmt.Errorf("icarus: %s: row has no File_Items to apply (malformed .EXMOD manifest)", row.CurrentFile)
-			}
-			mountPath, merr := resolveCurrentFile(base, row.CurrentFile)
-			if merr != nil {
-				return warnings, merr
-			}
-			current, seen := tableState[mountPath]
-			if !seen {
-				current, merr = base.ReadFile(mountPath)
-				if merr != nil {
-					return warnings, fmt.Errorf("icarus: reading base data table %s: %w", mountPath, merr)
-				}
-			}
-			patched, perr2 := ApplyRowPatch(current, row)
-			if perr2 != nil {
-				return warnings, perr2
-			}
-			tableState[mountPath] = patched
+		applyWarnings, aerr := applyBundle(base, tableState, assets, assetOwner, bundle, src.ModRef)
+		if aerr != nil {
+			return warnings, failed, aerr
 		}
-
-		for assetPath, data := range bundle.Assets {
-			safePath, serr := sanitizeAssetPath(assetPath)
-			if serr != nil {
-				return warnings, serr
-			}
-			if owner, exists := assetOwner[safePath]; exists && owner != src.ModRef {
-				warnings = append(warnings, fmt.Sprintf(
-					"asset %q is bundled by both %s and %s - %s wins (last-applied, per profile load order)",
-					safePath, owner, src.ModRef, src.ModRef))
-			}
-			assets[safePath] = data
-			assetOwner[safePath] = src.ModRef
-		}
+		warnings = append(warnings, applyWarnings...)
 	}
 
 	out, cerr := unrealpak.Create(outputPakPath, unrealpak.WithMountPoint(icarusContentMountPoint))
 	if cerr != nil {
-		return warnings, fmt.Errorf("icarus: creating %s: %w", outputPakPath, cerr)
+		return warnings, failed, fmt.Errorf("icarus: creating %s: %w", outputPakPath, cerr)
 	}
 	defer func() {
 		if err == nil {
@@ -134,17 +153,63 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 	for mountPath, data := range tableState {
 		tablePath := icarusDataTablePrefix + mountPath
 		if err = out.AddFile(tablePath, data); err != nil {
-			return warnings, fmt.Errorf("icarus: writing merged %s: %w", tablePath, err)
+			return warnings, failed, fmt.Errorf("icarus: writing merged %s: %w", tablePath, err)
 		}
 	}
 	for assetPath, data := range assets {
 		if err = out.AddFile(assetPath, data); err != nil {
-			return warnings, fmt.Errorf("icarus: writing bundled asset %s: %w", assetPath, err)
+			return warnings, failed, fmt.Errorf("icarus: writing bundled asset %s: %w", assetPath, err)
 		}
 	}
 
 	if err = out.Close(); err != nil {
-		return warnings, fmt.Errorf("icarus: finalizing %s: %w", outputPakPath, err)
+		return warnings, failed, fmt.Errorf("icarus: finalizing %s: %w", outputPakPath, err)
+	}
+	return warnings, failed, nil
+}
+
+// applyBundle applies one bundle's row upserts and assets to the merge
+// state. Asset collisions across mods warn (last-applied wins); any other
+// error is returned to the caller, which decides fatality by source kind.
+func applyBundle(base *unrealpak.Reader, tableState map[string][]byte, assets map[string][]byte, assetOwner map[string]string, bundle *ExmodzBundle, modRef string) (warnings []string, err error) {
+	for _, row := range bundle.Diff.Rows {
+		if row.CurrentFile == endOfModSentinel {
+			continue
+		}
+		if len(row.FileItems) == 0 {
+			return warnings, fmt.Errorf("icarus: %s: row has no File_Items to apply (malformed .EXMOD manifest)", row.CurrentFile)
+		}
+		mountPath, merr := resolveCurrentFile(base, row.CurrentFile)
+		if merr != nil {
+			return warnings, merr
+		}
+		current, seen := tableState[mountPath]
+		if !seen {
+			var rerr error
+			current, rerr = base.ReadFile(mountPath)
+			if rerr != nil {
+				return warnings, fmt.Errorf("icarus: reading base data table %s: %w", mountPath, rerr)
+			}
+		}
+		patched, perr := ApplyRowPatch(current, row)
+		if perr != nil {
+			return warnings, perr
+		}
+		tableState[mountPath] = patched
+	}
+
+	for assetPath, data := range bundle.Assets {
+		safePath, serr := sanitizeAssetPath(assetPath)
+		if serr != nil {
+			return warnings, serr
+		}
+		if owner, exists := assetOwner[safePath]; exists && owner != modRef {
+			warnings = append(warnings, fmt.Sprintf(
+				"asset %q is bundled by both %s and %s - %s wins (last-applied, per profile load order)",
+				safePath, owner, modRef, modRef))
+		}
+		assets[safePath] = data
+		assetOwner[safePath] = modRef
 	}
 	return warnings, nil
 }

@@ -233,11 +233,12 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
 	outputPath := filepath.Join(stagePath, mergedPakFileName)
-	mergeWarnings, err := mc.MergeCompile(ctx, basePakPath, sources, outputPath)
+	mergeWarnings, mergeFailed, err := mc.MergeCompile(ctx, basePakPath, sources, outputPath)
 	if err != nil {
-		return nil, fmt.Errorf("merging %d exmodz mod(s): %w", len(sources), err)
+		return nil, fmt.Errorf("merging %d merge source(s): %w", len(sources), err)
 	}
 	warnings = mergeWarnings
+	_ = mergeFailed // consumed in the fingerprint/manifest reconcile (#221 Task 8)
 
 	fingerprintBytes, err := marshalMergedFingerprint(current)
 	if err != nil {

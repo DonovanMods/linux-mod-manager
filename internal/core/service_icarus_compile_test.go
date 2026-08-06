@@ -81,17 +81,17 @@ func (s *fakeCompilerSource) ValidateSource(sourceFilePath string) error {
 // MergeCompile implements source.MergeCompiler by concatenating every
 // source's bytes - enough for tests to distinguish "which sources were
 // actually merged" without needing a real base pak table to patch.
-func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
+func (s *fakeCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
 	s.compileCalls++
 	var out []byte
 	for _, src := range sources {
 		data, err := os.ReadFile(src.SourcePath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, data...)
 	}
-	return s.mergeWarnings, os.WriteFile(outputPath, out, 0o644)
+	return s.mergeWarnings, nil, os.WriteFile(outputPath, out, 0o644)
 }
 
 var (

@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -25,12 +26,15 @@ func TestMergeCompile_FieldLevelMergeAcrossMods(t *testing.T) {
 	modB := writeTestExmodzFile(t, `{"name":"Health Mod","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseHealth":800}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	warnings, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	warnings, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
 		{ModRef: "icarus:speed-mod", SourcePath: modA},
 		{ModRef: "icarus:health-mod", SourcePath: modB},
 	}, outputPath)
 	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 	if len(warnings) != 0 {
 		t.Errorf("warnings = %v, want none (no asset collision in this fixture)", warnings)
@@ -69,11 +73,15 @@ func TestMergeCompile_DifferentTablesFromDifferentMods(t *testing.T) {
 	modB := writeTestExmodzFile(t, `{"name":"Item Mod","Rows":[{"CurrentFile":"Items-D_ItemsStatic.json","File_Items":[{"Name":"Item_Saddle","Weight":1}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
 		{ModRef: "icarus:mount-mod", SourcePath: modA},
 		{ModRef: "icarus:item-mod", SourcePath: modB},
-	}, outputPath); err != nil {
+	}, outputPath)
+	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 
 	r, err := unrealpak.Open(outputPath)
@@ -112,11 +120,15 @@ func TestMergeCompile_SameRowSameField_LastWins(t *testing.T) {
 	modB := writeTestExmodzFile(t, `{"name":"B","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseMovementSpeed":400}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
 		{ModRef: "icarus:a", SourcePath: modA},
 		{ModRef: "icarus:b", SourcePath: modB},
-	}, outputPath); err != nil {
+	}, outputPath)
+	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 
 	r, err := unrealpak.Open(outputPath)
@@ -150,12 +162,15 @@ func TestMergeCompile_AssetCollision_LastWinsWithWarning(t *testing.T) {
 	})
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	warnings, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	warnings, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
 		{ModRef: "icarus:a", SourcePath: modA},
 		{ModRef: "icarus:b", SourcePath: modB},
 	}, outputPath)
 	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %v, want exactly 1 asset-collision warning", warnings)
@@ -194,11 +209,15 @@ func TestMergeCompile_ContentAddingModComposesWithPatchMod(t *testing.T) {
 	addMod := writeTestExmodzFile(t, `{"name":"NewSpecies","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Wolf","BaseMovementSpeed":320}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
 		{ModRef: "icarus:patch", SourcePath: patchMod},
 		{ModRef: "icarus:add", SourcePath: addMod},
-	}, outputPath); err != nil {
+	}, outputPath)
+	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 
 	r, err := unrealpak.Open(outputPath)
@@ -237,8 +256,12 @@ func TestMergeCompile_SingleSource_MatchesCompile(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	mergeOut := filepath.Join(t.TempDir(), "merge_P.pak")
-	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{{ModRef: "icarus:bear-mount", SourcePath: exmodzPath}}, mergeOut); err != nil {
+	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{{ModRef: "icarus:bear-mount", SourcePath: exmodzPath}}, mergeOut)
+	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 
 	cr, err := unrealpak.Open(compileOut)
@@ -284,5 +307,107 @@ func TestValidateSource_MalformedExmodz_Errors(t *testing.T) {
 	}
 	if err := ValidateSource(path); err == nil {
 		t.Error("ValidateSource: got nil error, want a failure for a non-zip file")
+	}
+}
+
+func TestMergeCompilePakSource(t *testing.T) {
+	dir := t.TempDir()
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+	})
+	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":99}]}`
+	pakPath := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json": []byte(modTable),
+	})
+	out := filepath.Join(dir, "merged.pak")
+
+	warnings, failed, err := MergeCompile(context.Background(), basePath, []MergeSource{
+		{ModRef: "icarus:pakmod", SourcePath: pakPath, Kind: source.MergeSourcePak},
+	}, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(failed) != 0 || len(warnings) != 0 {
+		t.Fatalf("unexpected failed/warnings: %v / %v", failed, warnings)
+	}
+	merged, err := unrealpak.Open(out)
+	if err != nil {
+		t.Fatalf("opening merged: %v", err)
+	}
+	defer merged.Close()
+	data, err := merged.ReadFile("data/Test/D_Growth.json")
+	if err != nil {
+		t.Fatalf("merged table missing: %v", err)
+	}
+	if !strings.Contains(string(data), `"XP":99`) {
+		t.Fatalf("converted change not applied: %s", data)
+	}
+}
+
+func TestMergeCompilePakFailureSkipsModOnly(t *testing.T) {
+	dir := t.TempDir()
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+	})
+	// Irreconcilable pak: its table does not exist in the current base.
+	badPak := buildTestPak(t, dir, "bad.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Removed/D_Gone.json": []byte(testBaseTable),
+	})
+	goodTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowB","XP":77}]}`
+	goodPak := buildTestPak(t, dir, "good.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json": []byte(goodTable),
+	})
+	out := filepath.Join(dir, "merged.pak")
+
+	warnings, failed, err := MergeCompile(context.Background(), basePath, []MergeSource{
+		{ModRef: "icarus:bad", SourcePath: badPak, Kind: source.MergeSourcePak},
+		{ModRef: "icarus:good", SourcePath: goodPak, Kind: source.MergeSourcePak},
+	}, out)
+	if err != nil {
+		t.Fatalf("per-mod failure must not be fatal: %v", err)
+	}
+	if len(failed) != 1 || failed[0].ModRef != "icarus:bad" {
+		t.Fatalf("want icarus:bad failed, got %+v", failed)
+	}
+	var haveWarning bool
+	for _, w := range warnings {
+		if strings.Contains(w, "icarus:bad") && strings.Contains(w, "deploying raw") {
+			haveWarning = true
+		}
+	}
+	if !haveWarning {
+		t.Fatalf("want a deploying-raw warning for icarus:bad, got %v", warnings)
+	}
+	merged, err := unrealpak.Open(out)
+	if err != nil {
+		t.Fatalf("opening merged: %v", err)
+	}
+	defer merged.Close()
+	data, err := merged.ReadFile("data/Test/D_Growth.json")
+	if err != nil {
+		t.Fatalf("good mod's table missing: %v", err)
+	}
+	if !strings.Contains(string(data), `"XP":77`) {
+		t.Fatalf("good mod's change not applied: %s", data)
+	}
+	if _, err := merged.ReadFile("data/Removed/D_Gone.json"); err == nil {
+		t.Fatal("failed mod's table must not be in the merged pak")
+	}
+}
+
+func TestValidateSourcePak(t *testing.T) {
+	dir := t.TempDir()
+	pakPath := buildTestPak(t, dir, "ok.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json": []byte(testBaseTable),
+	})
+	if err := ValidateSource(pakPath); err != nil {
+		t.Fatalf("valid pak rejected: %v", err)
+	}
+	badPath := filepath.Join(dir, "not-a.pak")
+	if err := os.WriteFile(badPath, []byte("junk"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSource(badPath); err == nil {
+		t.Fatal("junk .pak must fail validation")
 	}
 }

@@ -52,20 +52,20 @@ func (s *compilerInstallSource) ValidateSource(sourceFilePath string) error {
 // prove a merge/regen actually happened and used the retained content,
 // without needing a real base pak table to patch (mirrors
 // internal/core/service_icarus_compile_test.go's fakeCompilerSource).
-func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
+func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
 	s.compileCalls++
 	if s.mergeErr != nil {
-		return nil, s.mergeErr
+		return nil, nil, s.mergeErr
 	}
 	var out []byte
 	for _, src := range sources {
 		data, err := os.ReadFile(src.SourcePath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, data...)
 	}
-	return s.mergeWarnings, os.WriteFile(outputPath, out, 0o644)
+	return s.mergeWarnings, nil, os.WriteFile(outputPath, out, 0o644)
 }
 
 // TestDoInstall_DeployCompile_AnnouncesRetaining guards #190 item 1: an
