@@ -127,7 +127,7 @@ func parsePakDataTable(data []byte) (*pakDataTable, error) {
 //   - RowStruct mismatch           -> hard error (irreconcilable: the table's
 //     schema changed under the pak; a field-level rebase is meaningless)
 //   - Defaults/top-level changes, pak row missing a base field, duplicate
-//     Names (first wins)           -> warnings; conversion proceeds
+//     Names in base or pak table (first wins)           -> warnings; conversion proceeds
 func diffTable(tableRef string, baseJSON, modJSON []byte) (items []ExmodFileItem, warnings []string, err error) {
 	base, err := parsePakDataTable(baseJSON)
 	if err != nil {
@@ -167,8 +167,15 @@ func diffTable(tableRef string, baseJSON, modJSON []byte) (items []ExmodFileItem
 	}
 
 	baseByName := make(map[string]map[string]any, len(base.rows))
+	baseSeen := make(map[string]bool, len(base.rows))
 	for _, r := range base.rows {
-		baseByName[r["Name"].(string)] = r
+		name := r["Name"].(string)
+		if baseSeen[name] {
+			warnings = append(warnings, fmt.Sprintf("%s: duplicate row %q in base table; first occurrence wins", tableRef, name))
+			continue
+		}
+		baseSeen[name] = true
+		baseByName[name] = r
 	}
 
 	seen := make(map[string]bool, len(mod.rows))

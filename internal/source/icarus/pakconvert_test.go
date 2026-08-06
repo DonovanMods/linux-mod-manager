@@ -243,6 +243,47 @@ func TestDiffTable(t *testing.T) {
 			t.Fatalf("want second warning to mention XP, got: %v", warnings[1])
 		}
 	})
+
+	t.Run("duplicate row names in base table use first occurrence", func(t *testing.T) {
+		// Base table has duplicate Name; mod references one of them.
+		baseDup := []byte(`{
+			"RowStruct": "/Script/Icarus.Growth",
+			"Defaults": {"XP": 1},
+			"Rows": [
+				{"Name": "DupRow", "XP": 10},
+				{"Name": "DupRow", "XP": 20}
+			]
+		}`)
+		// Mod changes DupRow from 10 to 15 - should match the first occurrence (XP: 10).
+		mod := []byte(`{
+			"RowStruct": "/Script/Icarus.Growth",
+			"Defaults": {"XP": 1},
+			"Rows": [
+				{"Name": "DupRow", "XP": 15}
+			]
+		}`)
+		items, warnings, err := diffTable("Test/D_Growth.json", baseDup, mod)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Should warn about duplicate in base table.
+		var haveDupWarning bool
+		for _, w := range warnings {
+			if strings.Contains(w, "duplicate row") && strings.Contains(w, "base table") {
+				haveDupWarning = true
+			}
+		}
+		if !haveDupWarning {
+			t.Fatalf("missing base-table duplicate warning: %v", warnings)
+		}
+		// Should emit one item: DupRow with changed XP (first base occurrence was 10, mod is 15).
+		if len(items) != 1 {
+			t.Fatalf("want 1 item, got %d: %+v", len(items), items)
+		}
+		if items[0].Name != "DupRow" || items[0].Fields["XP"] != float64(15) {
+			t.Fatalf("DupRow item wrong (expected XP: 15): %+v", items[0])
+		}
+	})
 }
 
 // buildTestPak writes a synthetic pak with the given mount point and entries.
