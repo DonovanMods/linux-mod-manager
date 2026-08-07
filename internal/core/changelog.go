@@ -20,6 +20,12 @@ import (
 // stripHTMLForTerminal) and internal/tui's coreProvider.CheckUpdates
 // (service_core.go), so the CLI and TUI strip a source's raw HTML changelog
 // identically.
+//
+// Despite the name (it predates any other caller), this is a general
+// HTML-to-terminal cleaner, not changelog-specific: #86 also routes mod
+// descriptions through it, so `lmm mod show` and the TUI's details view
+// render a source's markup identically. Left named CleanChangelog to avoid
+// churning three unrelated call sites for a rename.
 var (
 	changelogBreakRE = regexp.MustCompile(`(?i)<br\s*/?>|</p>|<p[^>]*>`)
 	changelogTagRE   = regexp.MustCompile(`<[^>]*>`)

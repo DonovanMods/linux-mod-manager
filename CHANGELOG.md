@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deploy-convergence sweep) is now extracted into `internal/core`, shared
   unchanged between the CLI and this new TUI surface.
 
+### Changed
+
+- `lmm mod show` now strips HTML from a mod's description before printing
+  it, using the same cleaner the update flow and TUI already share — raw
+  `<p>` tags and `&amp;` entities no longer reach the terminal (#86).
+  `--json` output is unchanged: it stays the raw source markup.
+
 ### Fixed
 
 - `lmm verify --fix` now resolves a missing file's re-download URL against

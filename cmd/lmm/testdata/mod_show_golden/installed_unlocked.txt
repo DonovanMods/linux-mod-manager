@@ -11,7 +11,10 @@ Summary:
 A short summary.
 
 Description:
-<p>Line one.</p><br/><p>Line &amp; two.</p>
+Line one.
+
+
+Line & two.
 
 Installed: v1.5 (profile: default)
   Update policy: notify

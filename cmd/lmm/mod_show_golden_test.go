@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -114,4 +115,43 @@ func TestModShowGolden_JSON(t *testing.T) {
 		return doModShow(context.Background(), svc, game, "a")
 	})
 	assertModShowGolden(t, "json_installed", out)
+}
+
+// TestDoModShow_DescriptionHTMLCleaned (#86): mod show printed a source's raw
+// description HTML - literal <p> tags and &amp; entities in the user's
+// terminal. It now runs through the same core.CleanChangelog the update flow
+// and the TUI already share, so both interfaces render one cleaned text.
+// JSON is deliberately NOT cleaned: it is a machine contract, and a consumer
+// may want the original markup.
+func TestDoModShow_DescriptionHTMLCleaned(t *testing.T) {
+	svc, game, src := setupDoModLockTest(t)
+	src.AddMod(richMod(game.ID), nil)
+
+	out := captureStdout(t, func() error {
+		return doModShow(context.Background(), svc, game, "a")
+	})
+
+	assert.Contains(t, out, "Line one.")
+	assert.Contains(t, out, "Line & two.")
+	assert.NotContains(t, out, "<p>", "raw HTML tags must not reach the terminal")
+	assert.NotContains(t, out, "&amp;", "HTML entities must be decoded")
+}
+
+// TestDoModShow_JSONDescriptionStaysRaw pins the deliberate asymmetry above.
+func TestDoModShow_JSONDescriptionStaysRaw(t *testing.T) {
+	svc, game, src := setupDoModLockTest(t)
+	src.AddMod(richMod(game.ID), nil)
+
+	old := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = old })
+
+	out := captureStdout(t, func() error {
+		return doModShow(context.Background(), svc, game, "a")
+	})
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Equal(t, "<p>Line one.</p><br/><p>Line &amp; two.</p>", got["description"],
+		"--json is a machine contract; the raw description must survive")
 }

@@ -698,8 +698,12 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	if mod.Description != "" {
 		fmt.Println("Description:")
-		// Limit length for terminal; description can be long HTML
-		desc := strings.TrimSpace(mod.Description)
+		// #86: descriptions are source HTML. Clean them with the same shared
+		// cleaner the update flow and the TUI already use, so all three render
+		// identically. CleanChangelog trims for us, so no TrimSpace here.
+		// The cap stays: this is a one-shot terminal dump, unlike the TUI's
+		// details view, which scrolls the full text instead.
+		desc := core.CleanChangelog(mod.Description)
 		const maxDesc = 2000
 		if len(desc) > maxDesc {
 			desc = desc[:maxDesc] + "\n... (truncated; view on site for full description)"

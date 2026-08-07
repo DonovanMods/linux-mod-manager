@@ -11,4 +11,7 @@ Summary:
 A short summary.
 
 Description:
-<p>Line one.</p><br/><p>Line &amp; two.</p>
+Line one.
+
+
+Line & two.
