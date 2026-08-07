@@ -21,6 +21,8 @@ Read these global guidance files before starting any development work:
 - `~/.claude/DEV.md` - Project-agnostic development practices (test-first, fail-fast, error handling)
 - `~/.claude/GO.md` - Go-specific conventions (error wrapping, context threading, table-driven tests)
 
+**ALWAYS orchestrate subagents through Orca's `orchestration` skill** — invoke it by name; it ships with the `orca` binary. Orca is the dispatch mechanism and `superpowers:subagent-driven-development` is the review policy layered on top, so they compose rather than compete. Create worktrees with `orca-ide worktree create --base-branch develop --issue <n>`: Orca has no adopt/import, so a worktree made with plain `git worktree add` can never be dispatched into.
+
 ## Project Overview
 
 **lmm** (Linux Mod Manager) is a terminal-based mod manager for Linux that provides both TUI and CLI interfaces for searching, installing, updating, and managing game mods from various sources. NexusMods and CurseForge ship as built-in sources, and user-defined custom sources (directory, manifest, api) extend that further without writing code — see the README's Custom Sources section.
