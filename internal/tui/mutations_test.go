@@ -1190,34 +1190,81 @@ func TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim(t *testing.T
 // tester's follow-up guidance, 160 columns (not 80) is the normal case to
 // design and assert full clarity against — narrower terminals degrade via
 // truncation (see TestFooterFitsNarrowTerminalViaTruncation) rather than by
-// cramming the wording.
+// cramming the wording. Uses Installed Mods rather than the default
+// Dashboard screen since that's where these mutation keys actually apply
+// (see updateKey's per-key screen guards, mutations.go); the shared hint
+// text itself isn't screen-conditional (see footerLine's own "keep the
+// shared hints shared" doc comment), so which screen this asserts against
+// doesn't change the e/x/D/u wording being checked.
 func TestFooterHintNamesEachMutationAction(t *testing.T) {
 	t.Parallel()
 
 	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	model.screen = ScreenInstalledMods
 	view := model.View()
 
 	require.Contains(t, view, "e: enable/disable")
 	require.Contains(t, view, "x: uninstall")
 	require.Contains(t, view, "D: deploy")
-	require.Contains(t, view, "enter: switch")
 	require.NotContains(t, view, "mutate",
 		"the terse, unexplained 'mutate' wording must be gone")
+}
+
+// TestFooterSelectHintMatchesScreen is smoke round 2's finding 1: the old
+// "enter: switch" clause was hardcoded across every screen even though
+// Select ("enter") is context-dependent (updateKey's own Select case,
+// app.go) - on Installed Mods and Search it opens mod details (#86), not
+// "switch" (Profiles' meaning only), so the footer actively told the user
+// the wrong thing there and never mentioned details at all. The footer must
+// now say what "enter" actually does on the CURRENT screen.
+func TestFooterSelectHintMatchesScreen(t *testing.T) {
+	t.Parallel()
+
+	installed := sizedPrototypeModel(t, "wizardry", 160, 40)
+	installed.screen = ScreenInstalledMods
+	installedView := installed.View()
+	require.Contains(t, installedView, "enter: view details",
+		"Installed Mods footer must say what enter opens")
+	require.NotContains(t, installedView, "enter: switch",
+		"Installed Mods footer must not claim enter switches - that's Profiles' meaning")
+
+	search := sizedPrototypeModel(t, "wizardry", 160, 40)
+	search.screen = ScreenSearch
+	searchView := search.View()
+	require.Contains(t, searchView, "enter: view details",
+		"Search footer must say what enter opens")
+	require.NotContains(t, searchView, "enter: switch",
+		"Search footer must not claim enter switches - that's Profiles' meaning")
+
+	profiles := sizedPrototypeModel(t, "wizardry", 160, 40)
+	profiles.screen = ScreenProfiles
+	profilesView := profiles.View()
+	require.Contains(t, profilesView, "enter: switch",
+		"Profiles footer must still say switch - that meaning is unchanged")
 }
 
 // TestFooterFitsNarrowTerminalViaTruncation proves the footer degrades
 // gracefully at a narrower terminal: it must be hard-truncated to the
 // available width rather than left to lipgloss's automatic word-wrap, which
 // would silently grow the view past its fixed-height budget (see
-// contentChromeHeight's footerHeight == 1 assumption).
+// contentChromeHeight's footerHeight == 1 assumption). Swept across both the
+// Installed Mods and Profiles screens (the two screens whose footer "enter"
+// clause now differs, footerSelectHint) and both 80 and 160 columns, so a
+// screen-specific clause of either length can never grow the footer past
+// its fixed one-row budget.
 func TestFooterFitsNarrowTerminalViaTruncation(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 80, 24)
-	view := model.View()
+	for _, screen := range []Screen{ScreenInstalledMods, ScreenProfiles} {
+		for _, width := range []int{80, 160} {
+			model := sizedPrototypeModel(t, "wizardry", width, 24)
+			model.screen = screen
+			view := model.View()
 
-	require.Equal(t, 80, lipgloss.Width(view))
-	require.Equal(t, 24, lipgloss.Height(view))
+			require.Equal(t, width, lipgloss.Width(view))
+			require.Equal(t, 24, lipgloss.Height(view))
+		}
+	}
 }
 
 // --- Install from search ('i' on Search, blurred, a result selected) ---

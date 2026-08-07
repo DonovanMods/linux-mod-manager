@@ -1259,9 +1259,48 @@ func (m Model) View() string {
 // guidance, 160 columns (not 80) is the normal case the full wording is
 // designed for; narrower terminals are expected to lose some trailing hints
 // to truncation rather than the wording being shortened to fit them.
+//
+// Smoke round 2, finding 1: the "enter: switch" clause used to be
+// hardcoded for every screen, but Select ("enter") is context-dependent
+// (updateKey's own doc comment on its Select case) - on Installed Mods and
+// Search it now opens mod details (#86), not "switch" (that's Profiles'
+// meaning only), so a screen-independent string was actively wrong there.
+// footerSelectHint() isolates just that one clause per screen; every other
+// hint in the line stays a single shared string, matching this function's
+// "keep the shared hints shared" contract. The clause sits in the same
+// position it always has (immediately before "q: quit"), so its length
+// change doesn't reorder or newly threaten any OTHER hint's survival under
+// truncation - only "q: quit" sits after it, and every variant below still
+// fits well inside the 160-column design target (see footerSelectHint's
+// doc comment for the longest case).
 func (m Model) footerLine() string {
-	hint := "?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: check updates  enter: switch  q: quit"
+	hint := fmt.Sprintf(
+		"?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: check updates  %s  q: quit",
+		m.footerSelectHint(),
+	)
 	return truncate(m.theme.Help.Render(hint), m.availableWidth())
+}
+
+// footerSelectHint returns the footer's "enter: ..." clause for the
+// CURRENT screen, mirroring updateKey's own Select dispatch (app.go) and
+// helpGroups' hand-written per-screen rows for the same key: Profiles
+// switches to the highlighted profile; Installed Mods and Search open the
+// selected mod's details (#86); everywhere else (Dashboard, Sources,
+// Health) falls through to openSelectedMenuEntry, which only does
+// something on Dashboard - "open" is kept as the generic fallback there
+// rather than a screen-specific phrase, since Health/Sources have no
+// menu-entry meaning for it at all. Longest case is "enter: view details"
+// (18 chars) vs the old always-"enter: switch" (13 chars); the full footer
+// line with it is still well under the 160-column design target.
+func (m Model) footerSelectHint() string {
+	switch m.screen {
+	case ScreenProfiles:
+		return "enter: switch"
+	case ScreenInstalledMods, ScreenSearch:
+		return "enter: view details"
+	default:
+		return "enter: open"
+	}
 }
 
 // CurrentScreen exposes the selected screen for tests.
@@ -2773,8 +2812,12 @@ func (m Model) helpGroups() []helpGroup {
 	installedMods := helpGroup{
 		name: "installed mods",
 		entries: []string{
-			// Select is #86's enter-opens-details binding.
-			helpEntry(m.keys.Select),
+			// Select is #86's enter-opens-details binding. Hand-written
+			// (not helpEntry) for the same reason the dashboard's and
+			// profiles' own rows above are: keys.go's Select.Help() is the
+			// generic "enter"/"open" shared across every screen it applies
+			// to, and never says WHAT it opens - smoke round 2's finding 2.
+			helpRow(m.keys.Select.Help().Key, "open mod details"),
 			helpEntry(m.keys.ToggleEnable),
 			helpEntry(m.keys.Uninstall),
 			helpEntry(m.keys.Deploy),
@@ -2812,7 +2855,17 @@ func (m Model) helpGroups() []helpGroup {
 		name: "search",
 		entries: []string{
 			helpEntry(m.keys.Search),
-			helpEntry(m.keys.Submit),
+			// Submit and Select share the same physical key ("enter") but
+			// fire in mutually exclusive states (updateKey's focused-input
+			// branch handles Submit before the outer switch that handles
+			// Select is ever reached - see that branch's own key.Matches
+			// case): Submit only while the query input is focused, Select
+			// only once it's blurred with a result row selected. Smoke
+			// round 2's finding 2: listing both via helpEntry rendered
+			// "enter / search" next to "enter / open" with nothing saying
+			// which state either applies to, so both are hand-written here
+			// instead, each naming its own state explicitly.
+			helpRow(m.keys.Submit.Help().Key, "search (query input focused)"),
 			helpEntry(m.keys.Blur),
 			helpEntry(m.keys.NextPage),
 			helpEntry(m.keys.PrevPage),
@@ -2821,7 +2874,7 @@ func (m Model) helpGroups() []helpGroup {
 			// Select is #86's enter-opens-details binding - fires with the
 			// input blurred and a result selected, mirroring Install's own
 			// scoping (see openSelectedModDetails).
-			helpEntry(m.keys.Select),
+			helpRow(m.keys.Select.Help().Key, "open mod details (input blurred, result selected)"),
 		},
 	}
 
