@@ -364,27 +364,25 @@ func TestHealthColumnWidths_DropsNoteThenVersionOnNarrowTerminal(t *testing.T) {
 }
 
 // TestHealthTableRowsFlexToFullWidthAtWideTerminal is the #224 smoke-feedback
-// fix #3's RED-then-GREEN proof: on a wide terminal the Health table must
-// behave like Installed Mods (modRow/TestModRow_NoTrailingColumnDrift's own
-// fixed-row-width convention) - MOD, FILE, and NOTE flex proportionally to
-// consume the full panel content width, rather than MOD/FILE staying pinned
-// to healthColumnWidths' old small literal caps (24/18 runes) while only
-// NOTE absorbed whatever surplus was left. Root cause the old code shared
-// with this test's failure before the fix: modW/fileW were computed as
-// min(literalCap, avail/N) with no flex column of their own, so a wide
-// terminal's extra width could only ever grow NOTE, never the row's overall
-// look of "stretching to fill" the way Installed Mods' uncapped NAME column
-// does.
+// fix #3's RED-then-GREEN proof, updated by fix #5 (#224) for the
+// single-absorber model: on a wide terminal the Health table must behave
+// like Installed Mods (modRow/TestModRow_NoTrailingColumnDrift's own
+// fixed-row-width convention) - the table must consume the full panel
+// content width, and MOD - the row's primary identity, like modRow's own
+// NAME column - must absorb the surplus uncapped, rather than staying
+// pinned to healthColumnWidths' old small literal cap while a
+// short-content, left-aligned NOTE column silently ate most of the surplus
+// as invisible padding (the exact bug fix #5 diagnosed: a 210-col
+// screenshot showing real mod names truncated while NOTE trailed off in
+// blank space).
 func TestHealthTableRowsFlexToFullWidthAtWideTerminal(t *testing.T) {
 	t.Parallel()
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
-	longMod := strings.Repeat("m", 26)  // > the old 24-rune modW cap
-	longFile := strings.Repeat("f", 26) // > the old 18-rune fileW cap
-	longNote := strings.Repeat("n", 60)
+	longMod := strings.Repeat("m", 60) // longer than any bounded FILE/NOTE cap - only MOD may absorb this much
 	model.health = HealthView{Findings: []HealthFinding{
-		{ModID: "a", ModName: longMod, FileID: longFile, Status: "missing", Version: "1.5", Note: longNote},
+		{ModID: "a", ModName: longMod, FileID: "f1", Status: "missing", Version: "1.5", Note: "short note"},
 	}}
 	model.conflicts = conflictsHealthFixture()
 
@@ -392,12 +390,12 @@ func TestHealthTableRowsFlexToFullWidthAtWideTerminal(t *testing.T) {
 	rows := model.healthTableRows(width, 10)
 	require.Len(t, rows, 3, "1 finding + 2 conflicts")
 
-	// None of the long fields above should need truncation (ansi.Truncate's
-	// "…" marker) at 200 cols - the old 24/18-rune caps would have cut both
-	// the MOD and FILE fields well before this length.
-	for i, r := range rows {
-		require.NotContains(t, r, "…", "row %d: MOD/FILE/NOTE must flex wide enough at 200 cols to avoid truncation", i)
-	}
+	// A 60-rune mod name must render UNtruncated at 200 cols - MOD is the
+	// sole surplus absorber (healthColumnWidths' new model), so it must
+	// never be the column that clips a real mod name the way NOTE's
+	// invisible padding used to force it to.
+	require.NotContains(t, rows[0], "…", "a long mod name must not truncate at 200 cols now that MOD absorbs the surplus")
+	require.Contains(t, ansi.Strip(rows[0]), longMod, "the full 60-rune mod name must survive uncut")
 
 	// Every row must render at the same width regardless of content length -
 	// modRow/TestModRow_NoTrailingColumnDrift's own fixed-row-width
@@ -413,6 +411,34 @@ func TestHealthTableRowsFlexToFullWidthAtWideTerminal(t *testing.T) {
 	// size, not just the old capped column sum.
 	innerWidth := width - model.theme.Panel.GetHorizontalFrameSize()
 	require.Equal(t, innerWidth, rowWidth, "rendered row width must equal the panel's full content width")
+}
+
+// TestHealthTableRowsNoteBlockEndsNearRightEdge is fix #5's (#224) second
+// RED-then-GREEN proof: a short NOTE value must not leave ~100 columns of
+// invisible left-aligned padding trailing off into blank space the way the
+// old 3/5-of-the-surplus NOTE share did. NOTE is now bounded near its own
+// content (min(32, avail/6)), so once it renders, the row's VISIBLE
+// (trimmed) text should reach close to the panel's full content width -
+// unlike the old proportional split, where a short note's real text could
+// end far short of the right edge even though the cell itself was padded.
+func TestHealthTableRowsNoteBlockEndsNearRightEdge(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model.health = HealthView{Findings: []HealthFinding{
+		{ModID: "a", ModName: "Donovan's Larger Resource Stacks", FileID: "f1", Status: "ok"},
+	}}
+	model.conflicts = nil
+
+	const width = 210
+	rows := model.healthTableRows(width, 10)
+	require.Len(t, rows, 1)
+
+	contentWidth := width - model.theme.Panel.GetHorizontalFrameSize()
+	trimmed := strings.TrimRight(ansi.Strip(rows[0]), " ")
+	require.GreaterOrEqual(t, lipgloss.Width(trimmed), contentWidth*9/10,
+		"NOTE's visible text block must reach near the right edge, not leave invisible padding mid-row")
 }
 
 // TestHealthTableRowsAllOKRowsCarryVisibleRightSideContent is the 2026-08-07
@@ -434,7 +460,12 @@ func TestHealthTableRowsAllOKRowsCarryVisibleRightSideContent(t *testing.T) {
 
 	model.health = HealthView{Findings: []HealthFinding{
 		{ModID: "101", ModName: "SkyUI", FileID: "main", Status: "ok"},
-		{ModID: "bear-mount", ModName: "Bear Mount", FileID: "bm.esp", Status: "ok", Note: "lock pending convergence at v2.0"},
+		// Short enough to survive healthColumnWidths' bounded NOTE column
+		// uncut at width 160 (#224 smoke feedback fix #5 - NOTE is now
+		// capped near its own typical content rather than left to grow, so
+		// a longer note would truncate here; that's covered separately by
+		// TestHealthTableConflictNoteColumn/TestHealthTableNoteTruncatesButDetailStripShowsFull).
+		{ModID: "bear-mount", ModName: "Bear Mount", FileID: "bm.esp", Status: "ok", Note: "lock pending convergence"},
 	}}
 	model.conflicts = nil
 
@@ -459,7 +490,7 @@ func TestHealthTableRowsAllOKRowsCarryVisibleRightSideContent(t *testing.T) {
 	require.Contains(t, ansi.Strip(rows[0]), "no action needed", "a Note-less OK row must get the short default NOTE text")
 	require.Contains(t, ansi.Strip(rows[0]), "—", "a Version-less row must get the em-dash VERSION placeholder")
 
-	require.Contains(t, ansi.Strip(rows[1]), "lock pending convergence at v2.0", "an OK row WITH a Note must keep it")
+	require.Contains(t, ansi.Strip(rows[1]), "lock pending convergence", "an OK row WITH a Note must keep it")
 	require.NotContains(t, ansi.Strip(rows[1]), "no action needed", "a Note-bearing OK row must not also get the default NOTE text")
 }
 

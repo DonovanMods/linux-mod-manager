@@ -224,8 +224,13 @@ func TestHealthTableIncludesConflictRowsAfterFindings(t *testing.T) {
 	require.Equal(t, model.theme.WarningText, model.conflictRowStyle(conflictsHealthFixture()[1]), "an in-sync conflict must render with the warning tint")
 }
 
-// TestHealthTableConflictNoteColumn proves the NOTE column's exact copy for
-// both conflict variants (requirement 1's literal wording).
+// TestHealthTableConflictNoteColumn proves the NOTE column's copy for both
+// conflict variants (requirement 1's literal wording), truncated to
+// healthColumnWidths' bounded NOTE width (#224 smoke feedback fix #5 - NOTE
+// is now bounded near its own typical content rather than left to grow
+// with the panel, so a full conflictNoteText sentence clips in the table;
+// TestHealthConflictDetailStripShowsOwnerAlsoInAndHint proves the detail
+// strip below still carries the full, untruncated text).
 func TestHealthTableConflictNoteColumn(t *testing.T) {
 	t.Parallel()
 
@@ -235,8 +240,10 @@ func TestHealthTableConflictNoteColumn(t *testing.T) {
 
 	rows := model.healthTableRows(160, 10)
 	require.Len(t, rows, 2)
-	require.Contains(t, rows[0], "load order says USSEP should win — deploy (D) to apply")
-	require.Contains(t, rows[1], "owned by USSEP — reorder (J/K on Installed) to change the winner")
+	require.Contains(t, rows[0], "load order says USSEP")
+	require.Contains(t, rows[0], "…", "the full remedy sentence must truncate in the bounded NOTE column")
+	require.Contains(t, rows[1], "owned by USSEP")
+	require.Contains(t, rows[1], "…", "the full remedy sentence must truncate in the bounded NOTE column")
 }
 
 // TestHealthConflictDetailStripShowsOwnerAlsoInAndHint proves requirement

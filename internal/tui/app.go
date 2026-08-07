@@ -2337,18 +2337,24 @@ func healthNoteCell(f HealthFinding) string {
 // NOTE while MOD/FILE stayed pinned narrow; the row never "stretched to
 // fill" the way Installed Mods' rows do).
 //
-// STATUS and VERSION are intrinsic, like modRow's own status/author/version
-// columns: their values come from short, bounded vocabularies ("STALE
-// CONFLICT", "12.3.4→12.4.0"), so a proportional-but-capped share is
-// already generous and they never need to grow further. MOD, FILE, and NOTE
-// - all free-form text (a mod's name, a file path, a diagnostic note) -
-// instead split whatever's left over proportionally, the same idea as
-// modRow's single absorbing NAME column but three-way, since a Health row
-// genuinely has three variable-length fields instead of one. NOTE gets the
-// largest share of the surplus (3 of 5 parts; MOD and FILE split the other
-// 2, one part each) since it's the detail text a reader most wants room
-// for, and the engine's own remedy copy (conflictNoteText/HealthFinding's
-// Note) tends to run to a full sentence.
+// MOD is the SOLE surplus absorber, exactly like modRow's own uncapped
+// NAME column (nameWidth = avail minus every other column) - not a
+// proportional split. #224 smoke feedback fix #5 (fourth width iteration,
+// diagnosed from a real 210-col screenshot): the previous version gave
+// NOTE 3 of 5 parts of the surplus and capped MOD's share along with it -
+// the inverse of modRow's model. Because NOTE is left-aligned prose that is
+// usually much shorter than its generous share, that surplus rendered as
+// ~100 columns of invisible trailing padding mid-row, while real mod names
+// (e.g. "Donovan's Larger Resource Stacks") truncated for want of the width
+// NOTE was silently holding. STATUS and VERSION stay intrinsic, like
+// modRow's own status/author/version columns: their values come from
+// short, bounded vocabularies ("STALE CONFLICT", "12.3.4→12.4.0"), so a
+// proportional-but-capped share is already generous. FILE and NOTE are
+// each bounded near their own typical content (min(literalCap, avail/N))
+// rather than left to grow - a file path or diagnostic note that overruns
+// its bound truncates in the table, but the detail strip below
+// (healthDetailPane) always renders the FULL text, so nothing is lost, only
+// deferred to where a reader who wants it already looks.
 //
 // Unlike modRow - which always renders all 5 of its columns and lets NAME
 // shrink toward its own floor - a narrow terminal here instead drops whole
@@ -2367,31 +2373,24 @@ func (m Model) healthColumnWidths(width int) (statusW, modW, fileW, versionW, no
 
 	statusW = min(22, max(avail/6, minStatus))
 	versionW = min(11, max(avail/10, minVersion))
+	fileW = min(24, max(avail/8, minFile))
+	noteW = min(32, max(avail/6, minNote))
 
 	showVersion, showNote = true, true
 
 	// 5 columns -> 4 separating gaps.
-	remaining := avail - statusW - versionW - 4
-	if remaining < minMod+minFile+minNote {
-		showNote = false
+	remaining := avail - statusW - fileW - versionW - noteW - 4
+	if remaining < minMod {
+		showNote, noteW = false, 0
 		// 4 columns -> 3 separating gaps.
-		remaining = avail - statusW - versionW - 3
-		if remaining < minMod+minFile {
+		remaining = avail - statusW - fileW - versionW - 3
+		if remaining < minMod {
 			showVersion, versionW = false, 0
 			// 3 columns -> 2 separating gaps.
-			remaining = avail - statusW - 2
+			remaining = avail - statusW - fileW - 2
 		}
 	}
-
-	if showNote {
-		unit := remaining / 5 // MOD:FILE:NOTE = 1:1:3 parts
-		modW = max(unit, minMod)
-		fileW = max(unit, minFile)
-		noteW = max(remaining-modW-fileW, minNote)
-	} else {
-		modW = max(remaining/2, minMod)
-		fileW = max(remaining-modW, minFile)
-	}
+	modW = max(remaining, minMod)
 	return
 }
 
