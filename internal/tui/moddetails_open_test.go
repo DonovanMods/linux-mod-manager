@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -228,4 +229,98 @@ func TestOpenModDetails_EnterNoOpWhileSearchInputFocused(t *testing.T) {
 
 	assert.Nil(t, m.contextContent, "enter with the search input focused must submit, not open details")
 	assert.False(t, m.search.input.Focused(), "Submit blurs the input, matching every other submit")
+}
+
+// TestOpenModDetails_FailureStatusLineStaysSingleLine is the regression test
+// for a Task 7 review finding: resolveModDetailsFailed used to write
+// msg.err.Error() straight onto the status line, unlike every other failure
+// resolver in this file (resolvePlanFailure, resolveVersionsFetchFailed,
+// resolveInstallPlanFailure, ...), all of which wrap with singleLine.
+// statusLine's own truncate() bounds character WIDTH only, not line count,
+// so an unwrapped multi-line error adds genuine extra rows nothing budgets
+// for - empirically, a 5-line error broke
+// TestWindowSizeExpandsViewToTerminalBounds' invariant (view height == window
+// height) by rendering 34 lines in a 30-row terminal. Asserted against the
+// rendered view's HEIGHT, not the status string, since the height is what
+// actually broke - a string-only assertion would pass even with the bug
+// present.
+func TestOpenModDetails_FailureStatusLineStaysSingleLine(t *testing.T) {
+	m := sizedModelWithActions(t, &recordingActions{}, 100, 30)
+	m, _ = m.gotoScreen(ScreenInstalledMods)
+	m, _ = m.openSelectedModDetails()
+
+	multiLine := "line one\nline two\nline three\nline four\nline five"
+	updated, _ := m.Update(modDetailsFailedMsg{gen: m.action.gen, err: errors.New(multiLine)})
+	m = updated.(Model)
+
+	require.True(t, m.action.statusIsError)
+	assert.NotContains(t, m.action.status, "\n", "the status line must never carry an embedded newline")
+	view := m.View()
+	assert.LessOrEqual(t, lipgloss.Height(view), 30,
+		"a multi-line error must not push the view past the terminal's row budget")
+}
+
+// TestOpenModDetails_EscThenEnterReopensImmediately is the regression test
+// for the second Task 7 review finding: esc used to pop the details view
+// without cancelling its in-flight fetch or clearing m.action.running, so
+// pressing enter again (on the same or a different mod) was a silent no-op -
+// dead until the abandoned fetch eventually settled - because
+// openSelectedModDetails' own single-flight guard (`m.action.running ||
+// m.action.pending != nil`) refused to start a new one.
+// cancelPushedContentFetch (mutations.go), called from updateKey's Blur
+// case, fixes this by cancelling and clearing running at the moment the
+// view is dismissed, not when the abandoned fetch eventually reports back.
+func TestOpenModDetails_EscThenEnterReopensImmediately(t *testing.T) {
+	m := sizedModelWithActions(t, &recordingActions{}, 100, 30)
+	m, _ = m.gotoScreen(ScreenInstalledMods)
+	m, _ = m.openSelectedModDetails()
+	require.True(t, m.action.running, "the fetch must still be in flight")
+	firstGen := m.action.gen
+
+	// esc (Blur) pops the view while the fetch is still running.
+	m = updateWithMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	require.Nil(t, m.contextContent, "esc must pop the view")
+	require.False(t, m.action.running, "esc must cancel the abandoned fetch, not leave running stuck true")
+
+	// enter must work immediately - not a dead key until the abandoned fetch
+	// (which was never actually stopped mid-goroutine, only its result
+	// discarded) settles.
+	m = updateWithMsg(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, m.contextContent, "enter must reopen details immediately after esc")
+	assert.True(t, m.action.running, "the new fetch must actually be running")
+	assert.NotEqual(t, firstGen, m.action.gen, "the reopened fetch must get a fresh generation")
+}
+
+// TestOpenModDetails_DismissedFetchNoStatusError proves the abandoned
+// fetch's eventual result - which cancelPushedContentFetch cannot stop
+// mid-goroutine, only discard - never surfaces on the status line once the
+// view it belonged to has been dismissed: a stale error about a mod the
+// user already dismissed would be confusing, and clearing/overwriting
+// whatever status the user's NEXT action set would be just as wrong.
+// resolveModDetailsFailed/resolveModDetailsFetched both guard on the pushed
+// content still being their own *modDetailsContent (see their doc
+// comments); this exercises that guard from the OTHER side - the message
+// arriving after the content is already gone, not stale-gen dropped (esc
+// doesn't bump m.action.gen, so the ordinary gen check alone would NOT have
+// caught this).
+func TestOpenModDetails_DismissedFetchNoStatusError(t *testing.T) {
+	m := sizedModelWithActions(t, &recordingActions{}, 100, 30)
+	m, _ = m.gotoScreen(ScreenInstalledMods)
+	m, _ = m.openSelectedModDetails()
+	gen := m.action.gen
+
+	m = updateWithMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	require.Nil(t, m.contextContent)
+	require.Equal(t, gen, m.action.gen, "esc must not bump gen - the ordinary stale-gen check must not be what saves this")
+
+	// Something else now legitimately owns the status line.
+	m.action.status = "unrelated status from a later action"
+	m.action.statusIsError = false
+
+	updated, _ := m.Update(modDetailsFailedMsg{gen: gen, err: errors.New("source unreachable")})
+	m = updated.(Model)
+
+	assert.Equal(t, "unrelated status from a later action", m.action.status,
+		"a dismissed fetch's error must not overwrite whatever the status line is showing now")
+	assert.False(t, m.action.statusIsError)
 }

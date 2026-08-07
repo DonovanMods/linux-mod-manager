@@ -415,6 +415,11 @@ func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
 	// point every nav route funnels through, so one clear here covers them
 	// all - including pressing the digit for the screen you are already on.
 	if m.contextContent != nil {
+		// #86 Task 7 review finding: cancel any in-flight fetch the pushed
+		// content owns BEFORE dropping it - see cancelPushedContentFetch's
+		// own doc comment for why an abandoned fetch left running/enter dead
+		// otherwise.
+		m.cancelPushedContentFetch()
 		m.contextContent = nil
 	}
 	m.screen = screen
@@ -974,6 +979,10 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch {
 		case key.Matches(msg, m.keys.Blur):
+			// #86 Task 7 review finding: cancel any in-flight fetch the
+			// pushed content owns BEFORE popping - see
+			// cancelPushedContentFetch's own doc comment.
+			m.cancelPushedContentFetch()
 			m.popContext()
 			return m, nil
 		case m.isQuitKey(msg):
