@@ -279,7 +279,7 @@ conversion pipeline; there is no separate migration step to run.
 
 ### Terminal UI
 
-Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, reorder load order, resolve file conflicts, verify integrity and fix findings, switch profiles, install from search results, check/apply updates (with changelogs and rollback), edit update policies, view a mod's deployed files, purge a profile, switch games, and create/delete/export/import profiles — with every mutating action behind a confirmation prompt:
+Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, reorder load order, resolve file conflicts, verify integrity and fix findings, switch profiles, install from search results, check/apply updates (with changelogs and rollback), edit update policies, view a mod's deployed files, view a mod's full details, purge a profile, switch games, and create/delete/export/import profiles — with every mutating action behind a confirmation prompt:
 
 ```bash
 lmm tui                     # real data
