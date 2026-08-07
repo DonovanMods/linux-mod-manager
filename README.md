@@ -279,7 +279,7 @@ conversion pipeline; there is no separate migration step to run.
 
 ### Terminal UI
 
-Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, reorder load order, resolve file conflicts, switch profiles, install from search results, check/apply updates (with changelogs and rollback), edit update policies, view a mod's deployed files, purge a profile, switch games, and create/delete/export/import profiles — with every mutating action behind a confirmation prompt:
+Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, reorder load order, resolve file conflicts, verify integrity and fix findings, switch profiles, install from search results, check/apply updates (with changelogs and rollback), edit update policies, view a mod's deployed files, purge a profile, switch games, and create/delete/export/import profiles — with every mutating action behind a confirmation prompt:
 
 ```bash
 lmm tui                     # real data
@@ -288,8 +288,8 @@ lmm tui --prototype         # demo mode with static fake data
 ```
 
 Keys: `tab`/`h`/`l` cycle screens (landing on Search this way does not focus
-the input), `1`–`6` jump directly (`3` focuses search immediately, like `/`;
-`5` opens Sources, `6` opens Conflicts), `↑↓`/`j`/`k` move, `enter`
+the input), `1`–`7` jump directly (`3` focuses search immediately, like `/`;
+`5` opens Sources, `6` opens Conflicts, `7` opens Health), `↑↓`/`j`/`k` move, `enter`
 open/select (on Profiles, switch to the selected profile; selecting "Search
 Archives" from the Dashboard menu also focuses search — explicit search
 intent focuses, passive cycling doesn't), `/` focus search from anywhere,
@@ -367,6 +367,22 @@ been redeployed yet). Selecting a row shows a resolution hint — reorder
 (`J`/`K`) or disable the losing mod, then redeploy. `D` deploys the active
 profile directly from this screen, same as Installed Mods/Dashboard. The
 Dashboard's conflict count reflects this screen's real detection.
+
+The **Health** screen (key `7`) lists the findings from the most recent
+verify scan — missing or mismatched cache files, unrecorded checksums, mods
+needing re-ingest, stale compiles, conversion failures, and stale
+deployments — one row per finding, tinted by severity; selecting a row shows
+its detail and a one-line remedy naming the fix. `c` runs a full (network)
+check, the same tier `lmm verify` runs, and replaces the list with the
+fresh results — no confirmation, since it changes nothing. `F` opens a
+confirmation panel summarizing what a fix pass will attempt (counts grouped
+by finding type), and confirming runs that same full check with `lmm verify
+--fix`'s repairs enabled, then shows a results overlay listing what was
+fixed and what's still outstanding. The Dashboard's Health line mirrors this
+screen's counts — `?` before the first scan lands this session, `OK
+(local)`/`OK (full)` once a scan finds nothing, or `N issue(s), M
+warning(s) (local|full)` otherwise, `(local)`/`(full)` naming whichever tier
+last updated it.
 
 `u`, on Dashboard or Installed Mods, checks every checkable installed mod
 for updates (pinned and local mods are skipped) — "Checking for updates…"

@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-ingests pre-existing pak installs into the conversion pipeline.
 - JSON additions: `convert_paks` in `lmm list --json`, `lmm mod show
 --json`, and `lmm game list --json`.
+- TUI: a Health screen (screen `7`) — a Dashboard `Health: ...` signal
+  line summarizing the local-tier verify scan, a two-pane findings
+  list/detail view, an explicit full (network) check (`c`), and a batch
+  fix (`F`) that runs the same repairs as `lmm verify --fix` behind a
+  confirmation summarizing what it will attempt, by finding type (#224).
+  The verify engine itself (per-file/per-mod checks, `--fix` repairs, the
+  deploy-convergence sweep) is now extracted into `internal/core`, shared
+  unchanged between the CLI and this new TUI surface.
 
 ### Fixed
 
@@ -31,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile has no installed mods, so stray lmm-deployed files (e.g.
   dangling cache symlinks left after uninstalling everything) are
   reported — and removed with `--fix` (#217).
+- `lmm verify --json` now emits `"files": []` instead of `null` in the
+  one corner where a filtered (`lmm verify <mod-id>`) run matched no
+  rows, matching the empty-profile path's existing empty-array shape
+  (#224).
 
 ## [1.29.0] - 2026-08-05
 
