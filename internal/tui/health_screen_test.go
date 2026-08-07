@@ -70,6 +70,61 @@ func TestHealthHomeViewRendersFindingsAndHeaderAge(t *testing.T) {
 	require.Contains(t, view, "lock pending convergence at v2.0 — run 'lmm profile apply'")
 }
 
+// TestHealthHomeViewRendersOkRowWithCheckedHeader is the 2026-08-07 smoke
+// feedback fix's (#224) core regression guard: a healthy profile must show
+// an OK row per checked mod (CLI parity - `lmm verify` prints a `+ <name> -
+// OK` row per file, not just a summary), and the header must name how many
+// rows were checked so the screen has content even when nothing is wrong.
+func TestHealthHomeViewRendersOkRowWithCheckedHeader(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 7, 12, 0, 0, 0, time.UTC)
+	scannedAt := now.Add(-1 * time.Minute)
+
+	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	model.now = func() time.Time { return now }
+	model.healthAt = &scannedAt
+	model.health = HealthView{
+		Checked: 3,
+		Findings: []HealthFinding{
+			{ModID: "101", ModName: "SkyUI", FileID: "main", Status: "ok"},
+		},
+	}
+	model.screen = ScreenHealth
+
+	view := model.View()
+	require.Contains(t, view, "last scan: local, 1m ago — 3 checked")
+	require.Contains(t, view, "SkyUI")
+	require.Contains(t, view, "OK")
+
+	// Row 0 (the ok row) is selected by default - the detail pane must show
+	// a remedy line even for a quiet-ok row, in healthRemedy's own voice.
+	require.Contains(t, view, "OK — no action needed")
+}
+
+// TestHealthHomeViewGenuinelyEmptyProfileOmitsCheckedSuffix covers the
+// OTHER half of the header contract (#224 smoke feedback): a real scan
+// (healthAt set) that checked zero rows - a genuinely empty profile, no
+// mods installed at all - must NOT claim "0 checked" in the header; the
+// suffix is reserved for a scan that actually looked at something.
+func TestHealthHomeViewGenuinelyEmptyProfileOmitsCheckedSuffix(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 7, 12, 0, 0, 0, time.UTC)
+	scannedAt := now.Add(-2 * time.Minute)
+
+	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	model.now = func() time.Time { return now }
+	model.healthAt = &scannedAt
+	model.health = HealthView{} // Checked 0, Findings empty: nothing installed
+	model.screen = ScreenHealth
+
+	view := model.View()
+	require.Contains(t, view, "last scan: local, 2m ago")
+	require.NotContains(t, view, "checked", "a genuinely empty profile must not claim anything was checked")
+	require.Contains(t, view, "no findings (local) — run a full check (c)")
+}
+
 // TestHealthViewRendersSubjectFallbackForModlessFinding covers a real case
 // (#224 Copilot round 1): a stale_deployment finding from a dangling cache
 // link carries no owning mod at all, only a FileID - ModName and ModID are

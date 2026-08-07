@@ -239,6 +239,11 @@ func TestHealthE2E_Lifecycle(t *testing.T) {
 	assert.True(t, legacyOutcome.Converted, "the re-ingested pak must be reported converted, not raw-fallback")
 
 	// --- Step 3: a second Health call comes back clean (Local tier again) ---
+	// 2026-08-07 smoke feedback (#224): "clean" no longer means an empty
+	// Findings list - the repaired file's row is now kept as a plain OK
+	// entry (CLI parity), so this asserts every remaining row is "fine"
+	// (healthStatusClass's own bucket for "ok") rather than that the list is
+	// empty.
 	src.trap = true
 	after, err := provider.Health(context.Background())
 	require.NoError(t, err)
@@ -246,5 +251,7 @@ func TestHealthE2E_Lifecycle(t *testing.T) {
 	assert.False(t, after.Full)
 	assert.Equal(t, 0, after.Issues)
 	assert.Equal(t, 0, after.Warnings)
-	assert.Empty(t, after.Findings, "no findings remain: %+v", after.Findings)
+	for _, f := range after.Findings {
+		assert.Equal(t, "ok", f.Status, "no outstanding (non-ok) findings remain: %+v", after.Findings)
+	}
 }

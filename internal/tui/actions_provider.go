@@ -1064,5 +1064,6 @@ func (p *prototypeProvider) RunHealthCheck(_ context.Context, full, fix bool, pr
 		Findings: append([]HealthFinding(nil), prototypeHealthFindings...),
 		Warnings: 2,
 		Full:     full,
+		Checked:  prototypeHealthChecked,
 	}, nil
 }

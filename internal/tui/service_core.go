@@ -1962,19 +1962,21 @@ func (p *coreProvider) RunHealthCheck(ctx context.Context, full, fix bool, progr
 	return healthView(res, full), nil
 }
 
-// healthView maps a core.VerifyResult to the TUI's HealthView, filtering out
-// quiet-ok rows (Status "ok" with an empty Note - carries no screen content,
-// same convention the CLI's own verify table applies) but KEEPING
-// lock-pending rows (ok status with a non-empty Note, e.g. "lock pending
-// convergence..." - HealthView's own doc comment). Shared by Health (always
-// full=false, the Local tier) and RunHealthCheck (full mirrors the caller's
-// own tier choice).
+// healthView maps a core.VerifyResult to the TUI's HealthView.
+//
+// 2026-08-07 smoke feedback (user override, #224): this used to drop
+// quiet-ok rows (Status "ok" with an empty Note) as "nothing to show" - the
+// same convention the CLI's own verify TABLE summary applies - but the
+// CLI's row-by-row output (`lmm verify`) prints a `+ <name> - OK` line per
+// checked file regardless, and the user rightly expects the Health screen
+// to match that, not the summary. Every row the engine reports - the
+// quiet-ok rows AND the lock-pending "ok" rows (ok status with a non-empty
+// Note, e.g. "lock pending convergence...") - is now kept verbatim. Shared
+// by Health (always full=false, the Local tier) and RunHealthCheck (full
+// mirrors the caller's own tier choice).
 func healthView(res *core.VerifyResult, full bool) HealthView {
-	v := HealthView{Issues: res.Issues, Warnings: res.Warnings, Full: full, Findings: make([]HealthFinding, 0, len(res.Findings))}
+	v := HealthView{Issues: res.Issues, Warnings: res.Warnings, Full: full, Checked: res.Checked, Findings: make([]HealthFinding, 0, len(res.Findings))}
 	for _, f := range res.Findings {
-		if f.Status == "ok" && f.Note == "" {
-			continue
-		}
 		v.Findings = append(v.Findings, HealthFinding{ModID: f.ModID, ModName: f.ModName, FileID: f.FileID, Status: f.Status, Note: f.Note})
 	}
 	return v

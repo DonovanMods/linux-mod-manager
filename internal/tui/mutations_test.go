@@ -3456,3 +3456,30 @@ func TestChangelogPickedDroppedWhenOverlayAlreadyOpen(t *testing.T) {
 	require.Nil(t, cmd)
 	require.Equal(t, "Existing 1.0 → 1.1", m.overlay.title, "an already-open overlay must not be replaced")
 }
+
+// TestHealthFixResultLinesExcludesOkRowsFromRemaining guards
+// healthFixResultLines directly against a regression the 2026-08-07 smoke
+// feedback fix (#224) could easily introduce: now that HealthView.Findings
+// keeps quiet-ok rows (healthView no longer filters them), a fix-results
+// HealthView can legitimately mix a fixed_* row, a plain "ok" row (a
+// healthy mod that needed no repair at all), and a still-outstanding
+// unfixable row (e.g. "skipped") in the SAME Findings slice. The overlay
+// must still show only "what got fixed" (fixed_* rows) and "what's still
+// wrong" (unfixable-excluded outstanding rows) - the ok row must not
+// drown that list under a bogus "remaining" entry.
+func TestHealthFixResultLinesExcludesOkRowsFromRemaining(t *testing.T) {
+	t.Parallel()
+
+	findings := []HealthFinding{
+		{ModID: "x", ModName: "X", FileID: "f1", Status: "fixed_stale_deployment"},
+		{ModID: "y", ModName: "Y", FileID: "f2", Status: "ok"},
+		{ModID: "z", ModName: "Z", Status: "missing", Note: "locked"},
+	}
+
+	lines := healthFixResultLines(findings)
+
+	require.Equal(t, []string{
+		"✓ X: FIXED STALE DEPLOYMENT",
+		"✗ Z: MISSING — locked",
+	}, lines, "the ok row must not appear in the overlay at all; a genuinely outstanding row still must")
+}

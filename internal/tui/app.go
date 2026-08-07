@@ -2211,10 +2211,13 @@ func (m Model) healthScreenView() string {
 
 // healthHomeView renders the Health screen's home content (#224 Task 9):
 // every finding from the most recent verify scan, one row each, mirroring
-// conflictsView's two-pane list/detail shape. Findings arrive pre-filtered
-// by healthView (service_core.go) - quiet-ok rows are already dropped - so
-// every row here is something worth a user's attention (or, for a
-// lock-pending "ok" row, at least worth naming).
+// conflictsView's two-pane list/detail shape.
+//
+// 2026-08-07 smoke feedback (#224): Findings now carries EVERY row the
+// engine reported, quiet-ok included (HealthView's own doc comment), so the
+// empty-state branch below only fires for a genuinely empty profile (0
+// mods checked) rather than "everything happened to be quiet-ok" - the
+// pre-fix behavior the user objected to.
 func (m Model) healthHomeView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
@@ -2229,7 +2232,7 @@ func (m Model) healthHomeView() string {
 		}
 		return m.panelWithHeight(width, height).Render(strings.Join([]string{
 			m.theme.PanelTitle.Render("HEALTH"),
-			m.theme.MutedText.Render(fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full))),
+			m.theme.MutedText.Render(fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full, m.health.Checked, len(m.health.Findings) > 0))),
 			m.theme.MutedText.Render(empty),
 		}, "\n"))
 	}
@@ -2278,7 +2281,7 @@ func (m Model) healthListPane(width, maxLines int) string {
 	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 	rows := []string{
 		m.theme.PanelTitle.Render("HEALTH"),
-		m.theme.MutedText.Render(truncate(fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full)), innerWidth)),
+		m.theme.MutedText.Render(truncate(fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full, m.health.Checked, len(m.health.Findings) > 0)), innerWidth)),
 	}
 
 	budget := max(maxLines-len(rows), 0)
@@ -2391,6 +2394,12 @@ func healthStatusLabel(status string) string {
 // fix binding, which does not exist yet on this task's branch - the copy is
 // written now so it reads correctly the moment that binding lands, mirroring
 // the brief's own needs_reingest example.
+//
+// 2026-08-07 smoke feedback (#224): a quiet-ok row (Status "ok", no Note)
+// used to return "" here - it never reached the detail pane before, since
+// healthView dropped it outright. Now that it's a selectable row, "" would
+// render as a blank line where every other status has SOME remedy copy, so
+// it gets its own plain "nothing to do" line in the same voice.
 func healthRemedy(f HealthFinding) string {
 	switch f.Status {
 	case "missing":
@@ -2417,7 +2426,7 @@ func healthRemedy(f HealthFinding) string {
 		if f.Note != "" {
 			return fmt.Sprintf("%s — run 'lmm profile apply'", f.Note)
 		}
-		return ""
+		return "OK — no action needed"
 	case "skipped":
 		return "could not check — see note above"
 	default:
@@ -2427,11 +2436,18 @@ func healthRemedy(f HealthFinding) string {
 
 // healthScanLabel renders the Health screen's header line body: "no scan
 // yet" when at is nil (no scan has run this session), otherwise "<tier>,
-// <age>" reusing lastDeployLabel's own relative-age computation (its nil
-// branch is unreachable here since at != nil is already checked) - "local"/
-// "full" names the verify tier the reported findings came from (HealthView.
-// Full).
-func healthScanLabel(now time.Time, at *time.Time, full bool) string {
+// <age> — N checked" reusing lastDeployLabel's own relative-age computation
+// (its nil branch is unreachable here since at != nil is already checked) -
+// "local"/"full" names the verify tier the reported findings came from
+// (HealthView.Full).
+//
+// 2026-08-07 smoke feedback (#224): the "N checked" suffix is new - it
+// names how many rows the verify engine considered (HealthView.Checked),
+// giving the header some content even when every row is quiet-ok. The
+// suffix is omitted only when checked is 0 AND hasFindings is false - a
+// genuinely empty profile - so a real scan's header always says what it
+// looked at.
+func healthScanLabel(now time.Time, at *time.Time, full bool, checked int, hasFindings bool) string {
 	if at == nil {
 		return "no scan yet"
 	}
@@ -2439,7 +2455,11 @@ func healthScanLabel(now time.Time, at *time.Time, full bool) string {
 	if full {
 		tier = "full"
 	}
-	return fmt.Sprintf("%s, %s", tier, lastDeployLabel(now, at))
+	label := fmt.Sprintf("%s, %s", tier, lastDeployLabel(now, at))
+	if checked == 0 && !hasFindings {
+		return label
+	}
+	return fmt.Sprintf("%s — %d checked", label, checked)
 }
 
 // helpGroup is one labeled section of the help panel: a screen name (or

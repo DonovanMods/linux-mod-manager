@@ -182,7 +182,9 @@ func (s *healthDownloadSource) GetDownloadURL(_ context.Context, _ *domain.Mod, 
 // the seeded mod carries FileIDs (the version pass's own participation
 // gate). A second, unhealthy mod (checksummed but never cached, so its
 // per-file walk row is "missing") proves Health still surfaces real local
-// findings while the healthy mod's quiet-ok row stays filtered out.
+// findings alongside the healthy mod's quiet-ok row - kept, not filtered
+// out (2026-08-07 smoke feedback, #224: CLI parity means every checked row
+// shows, plain OK ones included).
 func TestHealthProvider_Local_NeverTouchesNetwork(t *testing.T) {
 	provider, _, svc, game := newHealthProviderFixture(t)
 	svc.RegisterSource(&healthTrapSource{healthSourceBase: &healthSourceBase{id: "trap-src"}, t: t})
@@ -198,17 +200,21 @@ func TestHealthProvider_Local_NeverTouchesNetwork(t *testing.T) {
 
 	assert.False(t, view.Full, "Health always runs the Local tier")
 	assert.Equal(t, 1, view.Issues, "only mod-missing's MISSING row counts as an issue")
+	assert.Equal(t, 2, view.Checked, "both mod-ok's and mod-missing's files were checked")
 	require.Equal(t, []HealthFinding{
+		{ModID: "mod-ok", ModName: "Mod OK", FileID: "ok-file", Status: "ok"},
 		{ModID: "mod-missing", ModName: "Mod Missing", FileID: "missing-file", Status: "missing"},
-	}, view.Findings, "mod-ok's quiet-ok row must be filtered out")
+	}, view.Findings, "mod-ok's quiet-ok row must be kept alongside mod-missing's real finding")
 }
 
 // TestHealthProvider_RunHealthCheck_FullTier_VersionStatusesAndProgress
 // guards ActionProvider.RunHealthCheck's full=true path: opts.Tier moves to
 // core.VerifyFull, so the version pass actually runs, its version_mismatch
-// finding reaches HealthView.Findings, and progress receives both a
-// "checking versions N/M: <name>" tick (VerifyEvProgress) and a
-// "<status>: <name>" line (VerifyEvFinding) for the mismatch.
+// finding reaches HealthView.Findings alongside both mods' quiet-ok
+// per-file rows (kept since the 2026-08-07 smoke feedback fix, #224), and
+// progress receives both a "checking versions N/M: <name>" tick
+// (VerifyEvProgress) and a "<status>: <name>" line (VerifyEvFinding) for
+// the mismatch.
 func TestHealthProvider_RunHealthCheck_FullTier_VersionStatusesAndProgress(t *testing.T) {
 	_, actions, svc, game := newHealthProviderFixture(t)
 
@@ -234,9 +240,16 @@ func TestHealthProvider_RunHealthCheck_FullTier_VersionStatusesAndProgress(t *te
 
 	assert.True(t, view.Full)
 	assert.Equal(t, 1, view.Issues, "mismatch-mod's version_mismatch is the only issue")
-	require.Len(t, view.Findings, 1)
-	assert.Equal(t, "mismatch-mod", view.Findings[0].ModID)
-	assert.Equal(t, "version_mismatch", view.Findings[0].Status)
+	require.Len(t, view.Findings, 3, "the version_mismatch row plus both mods' quiet-ok per-file rows")
+
+	var mismatchRows int
+	for _, f := range view.Findings {
+		if f.Status == "version_mismatch" {
+			mismatchRows++
+			assert.Equal(t, "mismatch-mod", f.ModID)
+		}
+	}
+	assert.Equal(t, 1, mismatchRows, "exactly one version_mismatch row: %+v", view.Findings)
 
 	var sawProgressTick, sawFindingLine bool
 	for _, line := range progress {
@@ -256,7 +269,9 @@ func TestHealthProvider_RunHealthCheck_FullTier_VersionStatusesAndProgress(t *te
 // contract ("always full", ActionProvider.RunHealthCheck's own doc comment)
 // - actually applies CLI --fix semantics: a missing cached file gets
 // re-downloaded and its checksum restored, so the finding resolves to a
-// quiet ok and HealthView reports zero issues with no leftover row.
+// quiet ok and HealthView reports zero issues - the row itself is now KEPT
+// (2026-08-07 smoke feedback, #224), showing the repaired file as an
+// ordinary OK row rather than vanishing.
 func TestHealthProvider_RunHealthCheck_Fix_ResolvesMissingFile(t *testing.T) {
 	_, actions, svc, game := newHealthProviderFixture(t)
 
@@ -276,7 +291,9 @@ func TestHealthProvider_RunHealthCheck_Fix_ResolvesMissingFile(t *testing.T) {
 	assert.True(t, view.Full)
 	assert.Equal(t, 0, view.Issues, "the redownload repair resolves the missing issue")
 	assert.Equal(t, 0, view.Warnings)
-	assert.Empty(t, view.Findings, "the repaired row is quiet-ok and filtered out")
+	require.Equal(t, []HealthFinding{
+		{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "ok"},
+	}, view.Findings, "the repaired row is quiet-ok but must still be shown")
 	assert.NotEmpty(t, progress, "the repair detail line must stream to progress")
 }
 
@@ -312,14 +329,15 @@ func TestHealthProvider_RunHealthCheck_FindingProgressUsesSubjectFallback(t *tes
 	}
 }
 
-// TestHealthView_FiltersQuietOkKeepsLockPending unit-tests healthView
-// directly (package tui only, since it's unexported): a quiet-ok row
-// (Status "ok", empty Note) is dropped, a lock-pending row (Status "ok",
-// non-empty Note) is kept, and an ordinary non-ok row is kept - proving the
-// filter is keyed on Status=="ok" && Note=="" exactly, not on Status alone.
-func TestHealthView_FiltersQuietOkKeepsLockPending(t *testing.T) {
+// TestHealthView_KeepsAllRowsIncludingQuietOk unit-tests healthView
+// directly (package tui only, since it's unexported): 2026-08-07 smoke
+// feedback (#224, user override) retired the quiet-ok filter entirely - a
+// quiet-ok row (Status "ok", empty Note), a lock-pending row (Status "ok",
+// non-empty Note), and an ordinary non-ok row must ALL be kept, verbatim
+// and in order, and Checked must carry through from core.VerifyResult.
+func TestHealthView_KeepsAllRowsIncludingQuietOk(t *testing.T) {
 	res := &core.VerifyResult{
-		Issues: 1, Warnings: 2,
+		Issues: 1, Warnings: 2, Checked: 3,
 		Findings: []core.VerifyFinding{
 			{ModID: "a", ModName: "A", FileID: "f1", Status: "ok"},
 			{ModID: "b", ModName: "B", Status: "ok", Note: "lock pending convergence (installed v1.0, locked v2.0)"},
@@ -332,7 +350,10 @@ func TestHealthView_FiltersQuietOkKeepsLockPending(t *testing.T) {
 	assert.True(t, view.Full)
 	assert.Equal(t, 1, view.Issues)
 	assert.Equal(t, 2, view.Warnings)
-	require.Len(t, view.Findings, 2)
-	assert.Equal(t, "b", view.Findings[0].ModID, "lock-pending (ok + note) must be kept")
-	assert.Equal(t, "c", view.Findings[1].ModID, "an ordinary non-ok row must be kept")
+	assert.Equal(t, 3, view.Checked)
+	require.Equal(t, []HealthFinding{
+		{ModID: "a", ModName: "A", FileID: "f1", Status: "ok"},
+		{ModID: "b", ModName: "B", Status: "ok", Note: "lock pending convergence (installed v1.0, locked v2.0)"},
+		{ModID: "c", ModName: "C", FileID: "f2", Status: "missing"},
+	}, view.Findings, "every row must be kept verbatim, quiet-ok included")
 }

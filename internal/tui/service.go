@@ -219,15 +219,24 @@ type HealthFinding struct {
 // HealthView is DataProvider.Health/ActionProvider.RunHealthCheck's result:
 // the dashboard signal (coreProvider.Health, Local tier) and the Health
 // screen's content (coreProvider.RunHealthCheck, Local or Full tier, dry-run
-// or --fix). Findings excludes quiet-ok rows (Status "ok" with an empty
-// Note - the same "nothing to show" convention the CLI's own verify table
-// already applies) but KEEPS lock-pending rows (ok status with a non-empty
-// Note, e.g. "lock pending convergence...") - see healthView's own doc
-// comment in service_core.go for the exact filter.
+// or --fix).
+//
+// 2026-08-07 smoke feedback (user override, #224): Findings used to drop
+// quiet-ok rows (Status "ok" with an empty Note) as "nothing to show" - but
+// that left a healthy profile's Health screen rendering only a bare "last
+// scan"/"no findings" pair, with no indication of what was actually
+// checked, unlike the CLI's `lmm verify`, which prints a `+ <name> - OK` row
+// per checked file. Findings now KEEPS every row the verify engine reports,
+// quiet-ok included - see healthView's own doc comment in service_core.go.
 type HealthView struct {
 	Findings         []HealthFinding
 	Issues, Warnings int
 	Full             bool // true when produced by the Full (network) tier
+	// Checked mirrors core.VerifyResult.Checked - the number of rows the
+	// verify engine considered this run, feeding the Health header's "N
+	// checked" suffix (healthScanLabel, app.go). Additive (#224 smoke
+	// feedback, 2026-08-07).
+	Checked int
 }
 
 // GameInfo is one renderable configured-game row for the in-TUI game
@@ -650,17 +659,25 @@ func (p *prototypeProvider) Conflicts(_ context.Context) ([]ConflictItem, error)
 	return items, nil
 }
 
-// prototypeHealthFindings is the canned #224 Task 8 demo Health view -
-// one stale_deployment row and one conversion_failed row, mirroring
-// prototypeAvailableVersions' own "fixed shared canned list, no
-// per-mod/per-game variation needed" precedent (actions_provider.go).
-// prototypeProvider.RunHealthCheck's fix=true branch returns an emptied
-// copy (both rows resolved) rather than mutating this shared slice in
-// place - see that method's own doc comment.
+// prototypeHealthFindings is the canned #224 Task 8 demo Health view - one
+// stale_deployment row, one conversion_failed row, and (2026-08-07 smoke
+// feedback) one quiet-ok row so --prototype also demos the CLI-parity shape
+// a healthy mod now renders as, mirroring prototypeAvailableVersions' own
+// "fixed shared canned list, no per-mod/per-game variation needed"
+// precedent (actions_provider.go). prototypeProvider.RunHealthCheck's
+// fix=true branch returns an emptied copy (every row resolved) rather than
+// mutating this shared slice in place - see that method's own doc comment.
 var prototypeHealthFindings = []HealthFinding{
 	{ModID: "101", ModName: "SkyUI", FileID: "main", Status: "stale_deployment", Note: "cache content differs from what's deployed"},
 	{ModID: "bear-mount", ModName: "Bear Mount", Status: "conversion_failed", Note: "pak-to-exmod conversion failed: unsupported UE version"},
+	{ModID: "202", ModName: "Immersive Armors", FileID: "main", Status: "ok"},
 }
+
+// prototypeHealthChecked is the canned Checked count (#224 smoke feedback,
+// 2026-08-07) backing the Health header's "N checked" suffix - one per
+// prototypeHealthFindings row, since the demo has no separate "checked but
+// unreported" mods to account for.
+var prototypeHealthChecked = len(prototypeHealthFindings)
 
 // Health returns the canned demo Health view (#224 Task 8) so --prototype
 // mode can demo the Health screen's initial content without touching disk,
@@ -670,6 +687,7 @@ func (p *prototypeProvider) Health(_ context.Context) (HealthView, error) {
 	return HealthView{
 		Findings: append([]HealthFinding(nil), prototypeHealthFindings...),
 		Warnings: 2,
+		Checked:  prototypeHealthChecked,
 	}, nil
 }
 
