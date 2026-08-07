@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `lmm verify --fix` now resolves a missing file's re-download URL against
+  the source-mapped game, not the LMM game ID (#228). On a game whose
+  `source_ids` maps to a different upstream domain (e.g. NexusMods
+  `skyrim-se` → `skyrimspecialedition`), the repair previously queried the
+  wrong game and failed. Sources with empty or identity mappings
+  (directory, local) were unaffected.
 - `lmm verify` no longer skips the deployment-convergence sweep when the
   profile has no installed mods, so stray lmm-deployed files (e.g.
   dangling cache symlinks left after uninstalling everything) are
