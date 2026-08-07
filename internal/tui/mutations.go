@@ -1666,7 +1666,18 @@ func (m Model) resolveFullHealthCheckFailure(msg fullHealthCheckFailedMsg) (Mode
 // as "actionable" for the fix-prompt's own gating purposes; this predicate
 // is deliberately the brief's literal four-status list, not a mirror of
 // core/verify.go's real repair coverage.
+//
+// Also excludes any fixed_* status (fixed_stale_deployment,
+// fixed_needs_reingest today - same prefix check healthStatusClass uses,
+// app.go, to bucket a resolved row into its "ok" tint): a row already
+// repaired by a prior fix run is exactly as unactionable as "ok" itself, and
+// without this a view containing only fixed_*/ok rows after a successful
+// fix would still let 'F' open an empty "Fix N finding(s)?" modal (Copilot
+// round 6 finding, #224).
 func healthUnfixableStatus(status string) bool {
+	if strings.HasPrefix(status, "fixed_") {
+		return true
+	}
 	switch status {
 	case "skipped", "version_unverifiable", "file_count_mismatch", "ok":
 		return true

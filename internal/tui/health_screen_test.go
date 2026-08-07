@@ -877,6 +877,14 @@ func TestFixHealthKeyRefusedWhenNothingFixable(t *testing.T) {
 				{ModID: "d", Status: "ok", Note: "lock pending convergence"},
 			},
 		},
+		{
+			name: "resolved-only view (fixed_* rows plus ok)",
+			findings: []HealthFinding{
+				{ModID: "a", Status: "fixed_stale_deployment"},
+				{ModID: "b", Status: "fixed_needs_reingest"},
+				{ModID: "c", Status: "ok"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
