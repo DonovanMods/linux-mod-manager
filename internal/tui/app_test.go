@@ -1046,7 +1046,7 @@ func TestEnterOutsideDashboardIsANoop(t *testing.T) {
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 }
 
-// stubProvider is a no-op DataProvider implementing all 8 methods with their
+// stubProvider is a no-op DataProvider implementing all 9 methods with their
 // zero value (empty Summary/nil slice/nil error throughout) - meant to be
 // embedded by a test fake that only needs to override the ONE method its
 // test actually exercises, instead of restating every other method just to
@@ -1076,6 +1076,9 @@ func (stubProvider) DeployedFiles(string, string) ([]string, error)    { return 
 func (stubProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
 func (stubProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
 func (stubProvider) Health(context.Context) (HealthView, error)        { return HealthView{}, nil }
+func (stubProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // failingProvider embeds stubProvider and overrides only Overview - the ONE
 // method that matters here: loadData (app.go) calls Overview first and
@@ -1286,6 +1289,10 @@ func (r *recordingProvider) Conflicts(context.Context) ([]ConflictItem, error) {
 
 func (r *recordingProvider) Health(ctx context.Context) (HealthView, error) {
 	return r.delegate.Health(ctx)
+}
+
+func (r *recordingProvider) GetModDetails(ctx context.Context, item ModItem) (ModDetails, error) {
+	return r.delegate.GetModDetails(ctx, item)
 }
 
 func (r *recordingProvider) ListGames() ([]GameInfo, error) {

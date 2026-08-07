@@ -35,6 +35,9 @@ func (f conflictsFakeProvider) Conflicts(context.Context) ([]ConflictItem, error
 	return f.conflicts, nil
 }
 func (f conflictsFakeProvider) Health(context.Context) (HealthView, error) { return HealthView{}, nil }
+func (f conflictsFakeProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // TestDashboardConflictCountWired proves Summary.Conflicts - populated from
 // the same Conflicts() fetch the Health screen's own table now renders, via
@@ -92,6 +95,9 @@ func (longConflictsProvider) Conflicts(context.Context) ([]ConflictItem, error) 
 	return conflicts, nil
 }
 func (longConflictsProvider) Health(context.Context) (HealthView, error) { return HealthView{}, nil }
+func (longConflictsProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // TestHealthConflictRowsFollowSelectionOnShortTerminals migrates the retired
 // conflicts_view_test.go's TestConflictsListFollowsSelectionOnShortTerminals

@@ -282,6 +282,67 @@ type SearchPage struct {
 	AttemptedCount int
 }
 
+// ModDetails is the mod-details view's render model (#86). Seeded locally
+// from the ModItem the user selected, then enriched in place by
+// GetModDetails - so the view opens instantly and fills in, rather than
+// blocking on a network round trip the user may not be able to complete.
+type ModDetails struct {
+	ID, Name, Version, Author string
+	Summary, Description      string
+	Category                  string
+	SourceURL, PictureURL     string
+	Endorsements              int64
+	HasEndorsements           bool
+
+	// Installed is nil when the mod is not installed in the active profile,
+	// matching `lmm mod show`'s omit rule.
+	Installed *InstalledDetails
+
+	// Fetching/FetchErr are set by the model's handler and resolvers, never
+	// by a provider; the view reads them to pick its render state.
+	Fetching bool
+	FetchErr string
+}
+
+// InstalledDetails mirrors core.InstalledDetail with the policy already
+// rendered to a display string - the TUI has no reason to carry a
+// domain.UpdatePolicy. A separate type because a view model is a rendering
+// contract, the convention every other TUI row type follows.
+type InstalledDetails struct {
+	Version       string
+	Profile       string
+	UpdatePolicy  string
+	Locked        bool
+	LockedVersion string
+	ConvertPaks   *bool // nil = not applicable, not "off"
+}
+
+// modDetailsFromItem seeds a details view from the row already on screen.
+// Everything here is local: no I/O, so the view can render on the very first
+// frame. Description/Category/SourceURL/PictureURL stay empty until the fetch
+// lands - inventing placeholders for them would be worse than a blank.
+func modDetailsFromItem(item ModItem) ModDetails {
+	d := ModDetails{
+		ID: item.ID, Name: item.Name, Version: item.Version, Author: item.Author,
+		Summary:         item.Summary,
+		Endorsements:    item.Endorsements,
+		HasEndorsements: item.HasEndorsements,
+	}
+	if item.Status != "available" {
+		d.Installed = &InstalledDetails{
+			Version:       item.Version,
+			UpdatePolicy:  item.UpdatePolicy,
+			Locked:        item.Locked,
+			LockedVersion: item.LockedVersion,
+		}
+		if item.CompileGame && item.HasPakSource {
+			v := item.ConvertPaks
+			d.Installed.ConvertPaks = &v
+		}
+	}
+	return d
+}
+
 // DataProvider is the narrow, read-only boundary between the TUI and app
 // data. Implementations must be safe to call from a Bubble Tea command
 // goroutine.
@@ -339,6 +400,10 @@ type DataProvider interface {
 	// core.VerifyLocal) for the dashboard signal and the Health screen's
 	// initial content. Rides loadData like Conflicts.
 	Health(ctx context.Context) (HealthView, error)
+	// GetModDetails fetches full metadata for item's mod and joins local
+	// install state. A network call for remote sources - callers must run it
+	// off the render path (see mutations.go's openSelectedModDetails).
+	GetModDetails(ctx context.Context, item ModItem) (ModDetails, error)
 }
 
 // prototypeProvider serves the static demo data set. It must never touch
@@ -396,6 +461,31 @@ func (p *prototypeProvider) activeMods() []prototype.Mod {
 		return p.data.AltMods
 	}
 	return p.data.InstalledMods
+}
+
+// allMods is every prototype mod a details view can be opened on: the active
+// game's installed mods plus the search catalog - the two lists modItems is
+// fed from (Overview at service.go:427, Search at :550).
+func (p *prototypeProvider) allMods() []prototype.Mod {
+	return append(append([]prototype.Mod(nil), p.activeMods()...), p.data.SearchResults...)
+}
+
+// GetModDetails serves the mod-details view's DataProvider contract from the
+// canned data set: modDetailsFromItem seeds everything the row already
+// carries, then this fills in the network-only fields (Description,
+// SourceURL, PictureURL) from the matching prototype.Mod, if any - mirroring
+// coreProvider.GetModDetails' local-first-then-enrich shape without a real
+// fetch.
+func (p *prototypeProvider) GetModDetails(_ context.Context, item ModItem) (ModDetails, error) {
+	out := modDetailsFromItem(item)
+	for _, m := range p.allMods() {
+		if m.ID != item.ID {
+			continue
+		}
+		out.Description, out.SourceURL, out.PictureURL = m.Description, m.SourceURL, m.PictureURL
+		break
+	}
+	return out, nil
 }
 
 // setActiveMods replaces the ACTIVE game's installed-mods slice - the

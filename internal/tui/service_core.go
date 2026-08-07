@@ -1684,6 +1684,50 @@ func (p *coreProvider) AvailableVersions(ctx context.Context, item ModItem) ([]s
 	return versions, nil
 }
 
+// GetModDetails fetches item's mod via core.Service.ModDetail (Task 2),
+// which joins the source-side fetch with whatever local install state the
+// active profile has, then overlays that onto modDetailsFromItem's local
+// seed - so a field the source doesn't report (or a fetch that fails) still
+// leaves the row-derived values in place rather than blanking them. A
+// network call for remote sources; mapped through mapNetworkError like
+// AvailableVersions above, naming 'lmm mod show' as the CLI fallback since
+// that command exercises the exact same core.Service.ModDetail path.
+func (p *coreProvider) GetModDetails(ctx context.Context, item ModItem) (ModDetails, error) {
+	action := fmt.Sprintf("fetching details for %s", item.Name)
+	game := p.currentGame()
+	detail, err := p.svc.ModDetail(ctx, game, p.currentProfile(), item.Source, item.ID)
+	if err != nil {
+		return ModDetails{}, mapNetworkError(action, item.Source, "mod details",
+			"run 'lmm mod show "+item.ID+"' in a shell", err)
+	}
+
+	out := modDetailsFromItem(item)
+	mod := detail.Mod
+	out.Name, out.Version, out.Author = mod.Name, mod.Version, mod.Author
+	out.Summary, out.Category = mod.Summary, mod.Category
+	out.SourceURL, out.PictureURL = mod.SourceURL, mod.PictureURL
+	// Same shared cleaner the CLI's mod show and the update flow use, so all
+	// three surfaces render a source's markup identically (#86).
+	out.Description = core.CleanChangelog(mod.Description)
+	if mod.Endorsements != nil {
+		out.Endorsements, out.HasEndorsements = *mod.Endorsements, true
+	}
+
+	if detail.Installed != nil {
+		out.Installed = &InstalledDetails{
+			Version:       detail.Installed.Version,
+			Profile:       detail.Installed.Profile,
+			UpdatePolicy:  policyToString(detail.Installed.UpdatePolicy),
+			Locked:        detail.Installed.Locked,
+			LockedVersion: detail.Installed.LockedVersion,
+			ConvertPaks:   detail.Installed.ConvertPaks,
+		}
+	} else {
+		out.Installed = nil
+	}
+	return out, nil
+}
+
 // CreateProfile creates a new, empty profile via ProfileManager.Create - a
 // local YAML write, no network call, no hooks (mirroring SetUpdatePolicy's
 // own "local DB/config write" shape above). ProfileManager.Create already
