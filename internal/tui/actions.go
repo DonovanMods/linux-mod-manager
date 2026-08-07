@@ -596,11 +596,14 @@ func (m Model) startQuit() (Model, tea.Cmd) {
 // installPlanResultMsg/installPlanFailedMsg, checkUpdatesResultMsg/
 // checkUpdatesFailedMsg, (#224 Task 11) fullHealthCheckResultMsg/
 // fullHealthCheckFailedMsg, and (#224 Task 12) fixHealthCheckResultMsg/
-// fixHealthCheckFailedMsg (each a PLAN/CHECK step settling) - via their
-// resolve* handlers in mutations.go (Copilot PR #63 finding: the original
-// set never checked draining at all, so quit blocked for the full
+// fixHealthCheckFailedMsg (each a PLAN/CHECK step settling), and (#86)
+// modDetailsFetchedMsg/modDetailsFailedMsg (a mod-details fetch settling) -
+// via their resolve* handlers in mutations.go (Copilot PR #63 finding: the
+// original set never checked draining at all, so quit blocked for the full
 // actionDrainTimeout even though the awaited step had already finished;
-// every pair added since follows the same contract from the start).
+// every pair added since follows the same contract from the start - this
+// comment is the ledger, and #86's pair was the one most recently missed
+// from it, per review).
 // Callers must check m.action.draining themselves before calling this - it
 // unconditionally clears the flag and quits.
 func (m Model) resolveDrainedQuit() (Model, tea.Cmd) {

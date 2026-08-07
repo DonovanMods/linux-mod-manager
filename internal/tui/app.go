@@ -992,6 +992,20 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			isScreenDigit(msg):
 			// fall through: navigation and help stay available
 		default:
+			// LOAD-BEARING: this default case is what swallows Search's own
+			// focus key ("/") while content is pushed - it is not in any of
+			// the exit cases above. That is what makes "a focused search
+			// input and pushed content cannot co-occur" an actual invariant
+			// rather than a coincidence: without this, "/" over pushed
+			// content would fall through to the outer switch, focus the
+			// search input underneath a view the user can still see full of
+			// mod details, and updateKey's focused-input branch (below)
+			// would then start eating every keystroke as search input
+			// instead of this view's own HandleKey - reintroducing exactly
+			// the "acting on the row/screen underneath a pushed view" bug
+			// class this whole swallow rule exists to retire (#86 review -
+			// recorded here so a later cleanup pass doesn't "simplify" this
+			// default away).
 			return m, nil // swallowed
 		}
 	}
@@ -1133,13 +1147,22 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// other binding's bare key.Matches, specifically so it can sit ahead of
 	// CreateProfile's unconditional one in this switch without stealing "c"
 	// on ScreenProfiles - a Go "switch true" takes the FIRST case whose
-	// condition holds, so on ScreenHealth (no pushed context) this case wins
-	// outright, and everywhere else (including ScreenHealth WITH pushed
-	// context, where the guard's own contextContent check is what disqualifies
-	// it) the condition is false and control falls through to CreateProfile's
-	// case exactly as it did before this task - CreateProfile's own internal
-	// screen guard (createProfilePrompt, mutations.go) still no-ops it on any
-	// screen but Profiles, so nothing about its pre-existing behavior changes.
+	// condition holds, so on ScreenHealth with nothing pushed this case wins
+	// outright, and everywhere else the condition is false and control falls
+	// through to CreateProfile's case - CreateProfile's own internal screen
+	// guard (createProfilePrompt, mutations.go) still no-ops it on any screen
+	// but Profiles.
+	//
+	// The m.contextContent == nil half of this guard is now DEAD CODE, kept
+	// as defense-in-depth: #86's pushed-content swallow rule (updateKey,
+	// above - "Pushed content gets first refusal on every key") means "c"
+	// never reaches this outer switch at all while content is pushed on ANY
+	// screen, including Health - the swallow happens earlier, before
+	// updateKey's per-screen switch is ever entered. This inline check used
+	// to be load-bearing (pre-#86, pushed content on Health fell through to
+	// this exact switch); it is retained rather than removed because it
+	// costs nothing and would matter again if the swallow rule were ever
+	// relaxed.
 	case key.Matches(msg, m.keys.FullCheck) && m.screen == ScreenHealth && m.contextContent == nil:
 		return m.runFullHealthCheck()
 	// FixHealth ("F", Task 12) has no other screen claiming the same key
