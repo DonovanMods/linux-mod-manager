@@ -74,6 +74,20 @@ const (
 	// covers both, exactly like actionSetPolicy above.
 	actionSetLock
 	actionUnlock
+	// actionFixHealth is Task 12's Health-screen batch-fix action kind (#224,
+	// see mutations.go's fixHealthPrompt). Unlike every other pendingAction
+	// above, the modal built for it does NOT run through buildAction: its
+	// underlying call is ActionProvider.RunHealthCheck, which returns a whole
+	// HealthView rather than an ActionOutcome, so it can't produce an
+	// actionDoneMsg the generic handler (app.go) knows how to store into
+	// m.health - fixHealthPrompt hand-rolls the same gen/cancel/progress-pump
+	// bookkeeping buildAction would (mirroring runFullHealthCheck's own
+	// precedent for the identical reason), dispatching a bespoke
+	// fixHealthCheckResultMsg/fixHealthCheckFailedMsg pair instead. This kind
+	// exists purely so the pending modal is self-documenting like every other
+	// pendingAction's kind field - nothing reads it (no actionDoneMsg is ever
+	// built with it).
+	actionFixHealth
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation

@@ -497,3 +497,279 @@ func TestFullCheckProgressTicksReachStatusLine(t *testing.T) {
 	require.Contains(t, model.statusLine(), "Checking SkyUI: 3/10")
 	require.NotNil(t, reissue, "a fresh tick must re-issue the listener")
 }
+
+// --- Task 12: 'F' batch fix behind confirmation ---
+
+// TestFixHealthKeyOpensModalWithCategoryDetail proves 'F' on ScreenHealth
+// with fixable findings opens the standard confirmation modal, titled with
+// the total fixable count and one detail line per status class present -
+// task-12-brief.md's exact phrasings - while the "ok" row (unfixable) is
+// excluded from both the count and the detail.
+func TestFixHealthKeyOpensModalWithCategoryDetail(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	model.health = HealthView{
+		Findings: []HealthFinding{
+			{ModID: "a", ModName: "A", Status: "missing"},
+			{ModID: "b", ModName: "B", Status: "missing"},
+			{ModID: "c", ModName: "C", Status: "version_mismatch"},
+			{ModID: "d", ModName: "D", Status: "stale_deployment"},
+			{ModID: "e", ModName: "E", Status: "needs_reingest"},
+			{ModID: "f", ModName: "F", Status: "ok"},
+		},
+	}
+
+	updated, cmd := model.Update(keyRunes("F"))
+	model = updated.(Model)
+	require.Nil(t, cmd, "opening the modal does not itself dispatch anything")
+	require.NotNil(t, model.action.pending)
+	require.Equal(t, "Fix 5 finding(s)?", model.action.pending.title)
+	require.Contains(t, model.action.pending.detail, "2 missing file(s) — re-download")
+	require.Contains(t, model.action.pending.detail, "1 version mismatch — re-key records (locked mods refused)")
+	require.Contains(t, model.action.pending.detail, "1 stale deployment — remove")
+	require.Contains(t, model.action.pending.detail, "1 pak needs re-ingest")
+	require.Empty(t, rec.RunHealthCheckCalls, "nothing runs until confirmed")
+}
+
+// TestFixHealthKeyRefusedWhenNothingFixable proves the "nothing actionable"
+// refusal (task-12-brief.md): an empty view, or one whose findings are ALL
+// among the four statuses fix cannot touch, refuses on the status line with
+// no modal and no provider call.
+func TestFixHealthKeyRefusedWhenNothingFixable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		findings []HealthFinding
+	}{
+		{name: "empty view", findings: nil},
+		{
+			name: "all unfixable statuses",
+			findings: []HealthFinding{
+				{ModID: "a", Status: "skipped"},
+				{ModID: "b", Status: "version_unverifiable"},
+				{ModID: "c", Status: "file_count_mismatch"},
+				{ModID: "d", Status: "ok", Note: "lock pending convergence"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := &recordingActions{}
+			model := modelWithActions(t, rec)
+			model.screen = ScreenHealth
+			model.health = HealthView{Findings: tt.findings}
+
+			updated, cmd := model.Update(keyRunes("F"))
+			model = updated.(Model)
+			require.Nil(t, cmd)
+			require.Nil(t, model.action.pending)
+			require.Equal(t, "nothing fixable — run a full check (c) first", model.action.status)
+			require.True(t, model.action.statusIsError)
+			require.Empty(t, rec.RunHealthCheckCalls)
+		})
+	}
+}
+
+// TestFixHealthCancelLeavesStateUntouched proves n/esc on the fix confirm
+// modal leaves m.health/healthAt and every other piece of state exactly as
+// they were, with no provider call - mirroring updatePendingActionKey's
+// CancelAction contract for every other confirmation modal.
+func TestFixHealthCancelLeavesStateUntouched(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	before := HealthView{Findings: []HealthFinding{{ModID: "a", ModName: "A", Status: "missing"}}}
+	model.health = before
+
+	updated, _ := model.Update(keyRunes("F"))
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+
+	updated, cmd := model.Update(keyRunes("n"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.action.pending)
+	require.Equal(t, before, model.health)
+	require.Empty(t, rec.RunHealthCheckCalls)
+}
+
+// TestFixHealthConfirmDispatchesFullFixModeAndLandsView is the enforcement
+// point T8's review deferred to this task (task-12-brief.md): confirming
+// ALWAYS calls RunHealthCheck with full=true (CLI --fix parity includes the
+// version pass), never a Local-tier fix. On a successful result: the
+// returned view replaces m.health/healthAt/healthErr, summary counts follow
+// it, a "fix results" info overlay lists the fixed_* row, and the ordinary
+// data refresh (m.loadData) is returned so the dashboard picks it up.
+func TestFixHealthConfirmDispatchesFullFixModeAndLandsView(t *testing.T) {
+	t.Parallel()
+
+	resultView := HealthView{
+		Full:     true,
+		Findings: []HealthFinding{{ModID: "x", ModName: "X", FileID: "f1", Status: "fixed_stale_deployment"}},
+	}
+	rec := &recordingActions{RunHealthCheckOutcome: resultView}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	model.health = HealthView{Findings: []HealthFinding{{ModID: "x", ModName: "X", FileID: "f1", Status: "stale_deployment"}}}
+
+	updated, _ := model.Update(keyRunes("F"))
+	model = updated.(Model)
+	require.NotNil(t, model.action.pending)
+
+	updated, cmd := model.Update(keyRunes("y"))
+	model = updated.(Model)
+	require.True(t, model.action.running)
+	msg := runActionCmd(t, cmd)
+	require.IsType(t, fixHealthCheckResultMsg{}, msg)
+
+	require.Len(t, rec.RunHealthCheckCalls, 1)
+	require.True(t, rec.RunHealthCheckCalls[0].Full, "fix mode must always request the Full tier")
+	require.True(t, rec.RunHealthCheckCalls[0].Fix)
+
+	updated, refresh := model.Update(msg)
+	model = updated.(Model)
+	require.False(t, model.action.running)
+	require.Equal(t, resultView, model.health)
+	require.NotNil(t, model.healthAt)
+	require.Empty(t, model.healthErr)
+	require.Equal(t, resultView.Issues, model.summary.HealthIssues)
+	require.Equal(t, resultView.Warnings, model.summary.HealthWarnings)
+
+	require.NotNil(t, model.overlay)
+	require.Equal(t, "fix results", model.overlay.title)
+	require.Contains(t, model.overlay.lines, "✓ X: FIXED STALE DEPLOYMENT")
+
+	require.NotNil(t, refresh, "a successful fix must return the ordinary data refresh")
+	require.IsType(t, dataLoadedMsg{}, refresh())
+}
+
+// TestFixHealthLockedVersionMismatchRemainsInOverlay proves the engine's own
+// lock refusal survives the fix pass unchanged (task-12-brief.md): a locked
+// mod's version_mismatch finding is returned by RunHealthCheck exactly as
+// the engine reports it (status still "version_mismatch", Note "locked")
+// rather than disappearing or flipping to a fixed_* status - and the fix
+// results overlay surfaces it under "remaining", not "fixed".
+func TestFixHealthLockedVersionMismatchRemainsInOverlay(t *testing.T) {
+	t.Parallel()
+
+	resultView := HealthView{
+		Full:     true,
+		Issues:   1,
+		Findings: []HealthFinding{{ModID: "locked-mod", ModName: "Locked Mod", Status: "version_mismatch", Note: "locked"}},
+	}
+	rec := &recordingActions{RunHealthCheckOutcome: resultView}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	model.health = HealthView{Findings: []HealthFinding{{ModID: "locked-mod", ModName: "Locked Mod", Status: "version_mismatch"}}}
+
+	updated, _ := model.Update(keyRunes("F"))
+	model = updated.(Model)
+	updated, cmd := model.Update(keyRunes("y"))
+	model = updated.(Model)
+	msg := runActionCmd(t, cmd)
+
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.Equal(t, resultView, model.health, "the engine's own refusal must survive unchanged")
+	require.Len(t, model.health.Findings, 1)
+	require.Equal(t, "version_mismatch", model.health.Findings[0].Status, "a locked mod's row is never rewritten to fixed_*")
+
+	require.NotNil(t, model.overlay)
+	found := false
+	for _, line := range model.overlay.lines {
+		if strings.Contains(line, "Locked Mod") && strings.Contains(line, "locked") {
+			found = true
+		}
+	}
+	require.True(t, found, "the locked refusal must surface in the fix results overlay: %v", model.overlay.lines)
+}
+
+// TestFixHealthKeyRefusedWhileRunning mirrors TestFullCheckKeyRefusedWhileRunning:
+// the standard single-flight "busy" refusal, no RunHealthCheck call at all.
+func TestFixHealthKeyRefusedWhileRunning(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	model.health = HealthView{Findings: []HealthFinding{{ModID: "a", ModName: "A", Status: "missing"}}}
+	model.action.running = true
+
+	updated, cmd := model.Update(keyRunes("F"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.action.pending)
+	require.Empty(t, rec.RunHealthCheckCalls)
+}
+
+// TestFixHealthKeyInertWhileAnotherModalPending mirrors
+// TestFullCheckKeyInertWhileAnotherModalPending: a DIFFERENT already-pending
+// confirmation modal is left completely undisturbed by 'F'.
+func TestFixHealthKeyInertWhileAnotherModalPending(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	model.health = HealthView{Findings: []HealthFinding{{ModID: "a", ModName: "A", Status: "missing"}}}
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return ActionOutcome{}, nil
+	})
+	model = model.promptAction(pa)
+
+	updated, cmd := model.Update(keyRunes("F"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, actionDeploy, model.action.pending.kind, "the original modal must still be showing")
+	require.Empty(t, rec.RunHealthCheckCalls)
+}
+
+// TestFixHealthKeyOtherScreensNoop proves 'F' is inert on every screen other
+// than Health.
+func TestFixHealthKeyOtherScreensNoop(t *testing.T) {
+	t.Parallel()
+
+	for _, screen := range []Screen{ScreenDashboard, ScreenInstalledMods, ScreenSearch, ScreenProfiles, ScreenSources, ScreenConflicts} {
+		rec := &recordingActions{}
+		model := modelWithActions(t, rec)
+		model.screen = screen
+
+		updated, cmd := model.Update(keyRunes("F"))
+		model = updated.(Model)
+		require.Nil(t, cmd, "screen %v", screen)
+		require.Nil(t, model.action.pending, "screen %v", screen)
+		require.Empty(t, rec.RunHealthCheckCalls, "screen %v", screen)
+	}
+}
+
+// TestFixHealthKeyDeclinedWithPushedContentOnHealth mirrors
+// TestFullCheckKeyDeclinedWithPushedContentOnHealth: 'F' while ScreenHealth
+// has pushed context content must not open the fix confirmation.
+func TestFixHealthKeyDeclinedWithPushedContentOnHealth(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenConflicts
+
+	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
+	model.pushContext(fake, ScreenConflicts)
+	require.Equal(t, ScreenHealth, model.CurrentScreen())
+
+	updated, cmd := model.Update(keyRunes("F"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Nil(t, model.action.pending)
+	require.Empty(t, rec.RunHealthCheckCalls)
+	require.NotNil(t, model.contextContent, "the pushed content must remain")
+}

@@ -159,6 +159,16 @@ type KeyMap struct {
 	// on ScreenProfiles - see updateKey's own doc comment on how the two
 	// coexist without collision (the screens never overlap).
 	FullCheck key.Binding
+	// FixHealth is Task 12's Health-screen batch-fix binding (#224, see
+	// mutations.go's fixHealthPrompt): opens the standard confirmation modal
+	// summarizing what a fix pass will attempt (counts by category), then
+	// runs RunHealthCheck's Full tier with fix=true - ALWAYS the Full tier,
+	// mirroring CLI --fix parity (the version pass is part of --fix, not an
+	// optional extra). Capital "F" - unlike FullCheck's "c", no other screen
+	// claims it, so no compound guard is needed in updateKey's switch (the
+	// screen/pushed-context checks live inside fixHealthPrompt itself, like
+	// every other non-colliding binding's handler).
+	FixHealth key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -335,6 +345,10 @@ func DefaultKeyMap() KeyMap {
 		FullCheck: key.NewBinding(
 			key.WithKeys("c"),
 			key.WithHelp("c", "full health check"),
+		),
+		FixHealth: key.NewBinding(
+			key.WithKeys("F"),
+			key.WithHelp("F", "fix findings"),
 		),
 	}
 }

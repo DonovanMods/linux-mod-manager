@@ -537,6 +537,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// doc comment); a failed one leaves the last known-good m.health/
 		// healthAt exactly as they were - only healthErr and the status
 		// line change - see dataLoadedMsg.health's doc comment for why.
+		//
+		// #224 Task 12 cross-task ruling: this refresh is exactly what
+		// resolveFixHealthCheckResult's own m.loadData return triggers right
+		// after a batch fix stores its Full-tier result into m.health/
+		// healthAt - so the very next dataLoadedMsg to land REPLACES that
+		// just-stored Full view with a fresh LOCAL scan (this DataProvider.
+		// Health call is always Local-tier - Task 10's own dashboard-scan-is-
+		// Local seam, unchanged by this task). This decay is BY DESIGN, not a
+		// bug to fix later: "latest scan wins" is the one rule this screen
+		// has held since Task 10, and a completed mutation - fix included -
+		// invalidates whatever scan preceded it exactly like every other
+		// action's post-mutation refresh invalidates stale list/summary data.
+		// A caller that wanted the Full fix result to stick would need its
+		// own carve-out here; none exists, deliberately.
 		if msg.healthErr == "" {
 			m.health = msg.health
 			now := m.now()
@@ -762,6 +776,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.resolveFullHealthCheckFailure(msg)
+	case fixHealthCheckResultMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveFixHealthCheckResult(msg)
+	case fixHealthCheckFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveFixHealthCheckFailure(msg)
 	case policyChosenMsg:
 		return m.resolvePolicyChoice(msg)
 	case versionsFetchedMsg:
@@ -1095,6 +1119,13 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// screen but Profiles, so nothing about its pre-existing behavior changes.
 	case key.Matches(msg, m.keys.FullCheck) && m.screen == ScreenHealth && m.contextContent == nil:
 		return m.runFullHealthCheck()
+	// FixHealth ("F", Task 12) has no other screen claiming the same key
+	// (unlike FullCheck's "c"/CreateProfile collision above), so it needs no
+	// inline compound guard here - the screen and pushed-context checks live
+	// inside fixHealthPrompt itself, matching every other non-colliding
+	// binding's handler (e.g. Lock/ConvertToggle above).
+	case key.Matches(msg, m.keys.FixHealth):
+		return m.fixHealthPrompt()
 	case key.Matches(msg, m.keys.CreateProfile):
 		return m.createProfilePrompt()
 	case key.Matches(msg, m.keys.DeleteProfile):
@@ -2538,13 +2569,14 @@ func (m Model) helpGroups() []helpGroup {
 	// screen group above, it lists its OWN jump-to-screen key (HealthScreen,
 	// "7") rather than leaving that to the global group's generic "1-7"
 	// entry - without it the group would start life empty and read as
-	// broken rather than "grows later". FullCheck ("c", Task 11) now fills
-	// that in; F (fix, Task 12) still doesn't exist yet on this branch.
+	// broken rather than "grows later". FullCheck ("c", Task 11) and
+	// FixHealth ("F", Task 12) fill it out.
 	health := helpGroup{
 		name: "health",
 		entries: []string{
 			helpEntry(m.keys.HealthScreen),
 			helpEntry(m.keys.FullCheck),
+			helpEntry(m.keys.FixHealth),
 		},
 	}
 
