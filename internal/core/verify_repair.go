@@ -37,7 +37,14 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	if downloadFile == nil {
 		return false, fmt.Errorf("file %s not found in mod", fileID)
 	}
-	result, err := r.svc.DownloadMod(ctx, mod.SourceID, r.game, &mod.Mod, downloadFile, nil)
+	// SourceMappedMod on the download too (#228): Service.DownloadMod
+	// forwards its mod straight to src.GetDownloadURL with no translation of
+	// its own, so passing the raw installed row here - whose GameID is the
+	// LMM game ID - resolved the URL against the wrong upstream game on any
+	// source with a non-identity SourceIDs mapping, while the GetModFiles
+	// lookup directly above was already mapped. The cache side is unaffected
+	// either way: every cache path is keyed off game.ID, not mod.GameID.
+	result, err := r.svc.DownloadMod(ctx, mod.SourceID, r.game, SourceMappedMod(r.game, &mod.Mod), downloadFile, nil)
 	if err != nil {
 		return false, err
 	}
