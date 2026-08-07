@@ -2680,6 +2680,26 @@ func TestCoreProviderGetModDetails_MapsAuthRequiredError(t *testing.T) {
 	assert.Contains(t, err.Error(), "lmm auth login src")
 }
 
+// TestCoreProviderGetModDetails_MapsNotSupportedError pins the GetModDetails
+// ErrNotSupported fallback wording (Copilot review finding on PR #233): the
+// notice must NOT point at 'lmm mod show', since that command now runs
+// through the exact same core.Service.ModDetail path (Task 2's extraction)
+// and would fail identically - that used to be the fallback text and was
+// self-defeating advice. Instead it must tell the user what they still have:
+// the seeded local fields (name/version/author/install state) stay visible
+// on the failure path (resolveModDetailsFailed, mutations.go); only the
+// source-side enrichment is missing.
+func TestCoreProviderGetModDetails_MapsNotSupportedError(t *testing.T) {
+	provider, _, _, netSrc := newCoreDetailsFixture(t)
+	netSrc.getModErr = fmt.Errorf("fetching: %w", source.ErrNotSupported)
+
+	_, err := provider.GetModDetails(context.Background(), tui.ModItem{ID: "modA", Source: "src", Name: "Mod A"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `source "src" does not support mod details`)
+	assert.Contains(t, err.Error(), "the fields already shown are everything known locally")
+	assert.NotContains(t, err.Error(), "mod show", "must not point at a CLI command that shares this exact failing path")
+}
+
 // --- Task 8: in-TUI game switcher ---
 
 // TestCoreProviderListGames guards ListGames' basic contract: every

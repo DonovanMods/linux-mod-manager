@@ -1204,9 +1204,11 @@ func updateProgressLine(modName string, p core.DeployProgress) (ActionProgress, 
 // mirroring cmd/lmm/search.go's capabilityGapNotice, naming sourceID plus
 // capability (what the source can't do) and fallback (the correct CLI
 // command for the ACTUAL action the caller was performing - see the review
-// finding this fixes below). Everything else is wrapped with %w under
-// action, a short present-participle label (e.g. "planning install of
-// SkyUI").
+// finding this fixes below - or, when no CLI command would fare any better
+// because it shares the same failing path, what the caller can already rely
+// on locally instead; see GetModDetails' own fallback below for that case).
+// Everything else is wrapped with %w under action, a short
+// present-participle label (e.g. "planning install of SkyUI").
 //
 // mapNetworkError is deliberately unexported and only called through the
 // per-action wrappers below (mapInstallNetworkError/mapUpdateNetworkError):
@@ -1703,15 +1705,22 @@ func (p *coreProvider) AvailableVersions(ctx context.Context, item ModItem) ([]s
 // seed - so a field the source doesn't report (or a fetch that fails) still
 // leaves the row-derived values in place rather than blanking them. A
 // network call for remote sources; mapped through mapNetworkError like
-// AvailableVersions above, naming 'lmm mod show' as the CLI fallback since
-// that command exercises the exact same core.Service.ModDetail path.
+// AvailableVersions above. The fallback does NOT point at 'lmm mod show':
+// that command now runs through this exact same core.Service.ModDetail path
+// (Task 2's extraction), so on a genuine ErrNotSupported it would fail
+// identically - pointing at it would be advice sending the user to an
+// equally-doomed command (Copilot review finding on PR #233). Instead the
+// fallback tells the user what they still have: the failure lands on
+// resolveModDetailsFailed's degrade-in-place path (mutations.go), which
+// leaves the seeded local fields - name/version/author/install state -
+// visible; only the source-side enrichment (description) is missing.
 func (p *coreProvider) GetModDetails(ctx context.Context, item ModItem) (ModDetails, error) {
 	action := fmt.Sprintf("fetching details for %s", item.Name)
 	game := p.currentGame()
 	detail, err := p.svc.ModDetail(ctx, game, p.currentProfile(), item.Source, item.ID)
 	if err != nil {
 		return ModDetails{}, mapNetworkError(action, item.Source, "mod details",
-			"run 'lmm mod show "+item.ID+"' in a shell", err)
+			"the fields already shown are everything known locally", err)
 	}
 
 	out := modDetailsFromItem(item)
