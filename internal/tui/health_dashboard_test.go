@@ -118,6 +118,9 @@ func TestHealthDashboardLinePhrasing(t *testing.T) {
 		{"ok-full", 0, 0, true, "Health: OK (full)"},
 		{"issues-and-warnings-local", 1, 2, false, "Health: 1 issue(s), 2 warning(s) (local)"},
 		{"issues-and-warnings-full", 3, 1, true, "Health: 3 issue(s), 1 warning(s) (full)"},
+		// Round 1 fix Finding 3: OK requires BOTH counts zero - warnings
+		// alone (zero issues) must still render the counted form, not "OK".
+		{"warnings-only-not-ok", 0, 2, false, "Health: 0 issue(s), 2 warning(s) (local)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -172,4 +175,65 @@ func TestDashboardMenuVerifyIntegrityEntryOpensHealth(t *testing.T) {
 			require.Equal(t, ScreenHealth, opened.(Model).CurrentScreen())
 		})
 	}
+}
+
+// TestGameSwitchClearsHealth is round 1's Finding 2 regression test:
+// resolveGameSwitch's reset block (mutations.go) clears m.mods/m.profiles/
+// m.conflicts for the OLD game, but before the fix left m.health/
+// m.healthAt/m.healthErr standing - so ScreenHealth's home view would
+// render game A's findings and scan age while game B's fresh load was
+// still in flight. Populates health for game A (via the initial load,
+// through recordingProvider's delegate to the prototype's canned Health()
+// view), drives a game switch, and asserts the reset lands BEFORE the
+// fresh load's own dataLoadedMsg does: unknown counts (the "?" sentinel
+// line) and "no scan yet" in the immediately-rendered header - mirroring
+// TestGameSwitchRebindsProvidersResetsAndReloads's own "assert on the
+// Model the switch returns, before running loadCmd" structure.
+func TestGameSwitchClearsHealth(t *testing.T) {
+	t.Parallel()
+
+	games := []GameInfo{
+		{ID: "fallout4", Name: "Fallout 4", Active: true},
+		{ID: "skyrim", Name: "Skyrim", Active: false},
+	}
+	provider := &recordingProvider{delegate: NewPrototypeProvider(), ListGamesResult: games}
+	model, err := NewModel(Options{Theme: "wizardry", Provider: provider, Actions: &recordingActions{}})
+	require.NoError(t, err)
+	loaded, _ := model.Update(model.Init()())
+	model = loaded.(Model)
+
+	// Sanity: the initial load populated game A's health from the
+	// prototype delegate's canned (non-empty) view.
+	require.NotEmpty(t, model.health.Findings, "sanity: the initial load must have populated health")
+	require.NotNil(t, model.healthAt, "sanity: the initial load must have stamped healthAt")
+
+	updated, _ := model.Update(keyRunes("g"))
+	model = updated.(Model)
+	updated, chooseCmd := model.Update(keyRunes("2")) // "Skyrim", the non-active game
+	model = updated.(Model)
+	require.NotNil(t, chooseCmd)
+	gameMsg := chooseCmd()
+
+	updated, loadCmd := model.Update(gameMsg)
+	model = updated.(Model)
+	require.NotNil(t, loadCmd)
+
+	// Asserted on the switch's own return, BEFORE loadCmd (game B's fresh
+	// load) ever runs - proves the reset itself clears the old game's
+	// health, not just that the subsequent reload happens to overwrite it.
+	require.Equal(t, HealthView{}, model.health, "the OLD game's findings must not survive the switch")
+	require.Nil(t, model.healthAt, "the OLD game's scan age must not survive the switch")
+	require.Equal(t, "", model.healthErr)
+	require.Equal(t, -1, model.summary.HealthIssues)
+	require.Equal(t, -1, model.summary.HealthWarnings)
+	require.Equal(t, "Health: ?", model.healthDashboardLine())
+
+	// state is stateLoading here (the fresh load hasn't landed) - stamped
+	// stateReady by hand so View() renders ScreenHealth's actual content
+	// instead of the "Consulting the archives..." loading screen; this
+	// only proves what the RESET itself left behind, independent of state.
+	model.state = stateReady
+	model.screen = ScreenHealth
+	view := model.View()
+	require.Contains(t, view, "no scan yet", "the reset must render as an unscanned session, not the old game's age")
 }

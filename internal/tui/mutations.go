@@ -2016,10 +2016,17 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	// answer 'v' on the new game's Installed Mods list.
 	m.lastUpdates = nil
 
-	m.summary = Summary{Updates: -1, Conflicts: -1}
+	m.summary = Summary{Updates: -1, Conflicts: -1, HealthIssues: -1, HealthWarnings: -1}
 	m.mods = nil
 	m.profiles = nil
 	m.conflicts = nil
+	// Health (#224 Task 10 fix round 1): the OLD game's findings/scan-age
+	// are just as stale as mods/profiles/conflicts above - left standing,
+	// ScreenHealth's home view would render the wrong game's data during
+	// the stateLoading window until the fresh loadData below lands.
+	m.health = HealthView{}
+	m.healthAt = nil
+	m.healthErr = ""
 	for screen := range m.selected {
 		m.selected[screen] = 0
 	}
