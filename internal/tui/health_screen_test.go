@@ -362,6 +362,58 @@ func TestHealthColumnWidths_DropsNoteThenVersionOnNarrowTerminal(t *testing.T) {
 	require.False(t, showNote)
 }
 
+// TestHealthTableRowsFlexToFullWidthAtWideTerminal is the #224 smoke-feedback
+// fix #3's RED-then-GREEN proof: on a wide terminal the Health table must
+// behave like Installed Mods (modRow/TestModRow_NoTrailingColumnDrift's own
+// fixed-row-width convention) - MOD, FILE, and NOTE flex proportionally to
+// consume the full panel content width, rather than MOD/FILE staying pinned
+// to healthColumnWidths' old small literal caps (24/18 runes) while only
+// NOTE absorbed whatever surplus was left. Root cause the old code shared
+// with this test's failure before the fix: modW/fileW were computed as
+// min(literalCap, avail/N) with no flex column of their own, so a wide
+// terminal's extra width could only ever grow NOTE, never the row's overall
+// look of "stretching to fill" the way Installed Mods' uncapped NAME column
+// does.
+func TestHealthTableRowsFlexToFullWidthAtWideTerminal(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	longMod := strings.Repeat("m", 26)  // > the old 24-rune modW cap
+	longFile := strings.Repeat("f", 26) // > the old 18-rune fileW cap
+	longNote := strings.Repeat("n", 60)
+	model.health = HealthView{Findings: []HealthFinding{
+		{ModID: "a", ModName: longMod, FileID: longFile, Status: "missing", Version: "1.5", Note: longNote},
+	}}
+	model.conflicts = conflictsHealthFixture()
+
+	const width = 200
+	rows := model.healthTableRows(width, 10)
+	require.Len(t, rows, 3, "1 finding + 2 conflicts")
+
+	// None of the long fields above should need truncation (ansi.Truncate's
+	// "…" marker) at 200 cols - the old 24/18-rune caps would have cut both
+	// the MOD and FILE fields well before this length.
+	for i, r := range rows {
+		require.NotContains(t, r, "…", "row %d: MOD/FILE/NOTE must flex wide enough at 200 cols to avoid truncation", i)
+	}
+
+	// Every row must render at the same width regardless of content length -
+	// modRow/TestModRow_NoTrailingColumnDrift's own fixed-row-width
+	// convention, extended here to Health's NOTE column (previously the only
+	// column left unpadded, so short-note rows fell short of the panel's
+	// full width and the selection highlight didn't reach the right edge).
+	rowWidth := lipgloss.Width(rows[0])
+	for i, r := range rows {
+		require.Equal(t, rowWidth, lipgloss.Width(r), "row %d must match row 0's rendered width", i)
+	}
+
+	// The table must consume the full panel content width at this terminal
+	// size, not just the old capped column sum.
+	innerWidth := width - model.theme.Panel.GetHorizontalFrameSize()
+	require.Equal(t, innerWidth, rowWidth, "rendered row width must equal the panel's full content width")
+}
+
 // TestHealthScreenNarrowTerminalDoesNotOverflow guards the #42 contract
 // (TestDashboardLayoutsDoNotOverflowNarrowTerminals' own reasoning) for the
 // new full-width table + detail strip: neither the rendered width nor the

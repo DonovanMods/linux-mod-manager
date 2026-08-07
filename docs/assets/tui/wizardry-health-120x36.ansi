@@ -5,11 +5,11 @@
   ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
   │ HEALTH                                                                                                           │  
   │ last scan: local, just now — 3 checked, 2 conflict(s)                                                            │  
-  │ > STALE DEPLOYMENT   SkyUI                    main                           cache content differs from what's … │  
-  │   CONVERSION FAILED  Bear Mount                                              pak-to-exmod conversion failed: un… │  
-  │   OK                 Immersive Armors         main                                                               │  
-  │   STALE CONFLICT     USSEP                    meshes/armor/stee…             load order says USSEP should win —… │  
-  │   CONFLICT           USSEP                    textures/frost.dds             owned by USSEP — reorder (J/K on I… │  
+  │ > STALE DEPLOYMENT   SkyUI           main                        cache content differs from what's deployed      │  
+  │   CONVERSION FAILED  Bear Mount                                  pak-to-exmod conversion failed: unsupported UE… │  
+  │   OK                 Immersive Armo… main                                                                        │  
+  │   STALE CONFLICT     USSEP           meshes/armor/s…             load order says USSEP should win — deploy (D) … │  
+  │   CONFLICT           USSEP           textures/frost…             owned by USSEP — reorder (J/K on Installed) to… │  
   │                                                                                                                  │  
   │ Mod:    SkyUI — STALE DEPLOYMENT                                                                                 │  
   │ File:   main                                                                                                     │  

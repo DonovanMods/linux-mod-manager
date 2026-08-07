@@ -2284,13 +2284,31 @@ func healthFindingVersionText(f HealthFinding) string {
 
 // healthColumnWidths computes the Health table's STATUS|MOD|FILE|VERSION|
 // NOTE column widths from the panel's available content width, mirroring
-// modRow's clamp-then-truncate scheme (a proportional, floored-and-capped
-// share of avail per column) rather than inventing a second one. Unlike
-// modRow - which always renders all 5 of its columns and lets its
-// absorbing NAME column shrink toward its own floor - a narrow terminal
-// here instead drops whole columns, NOTE first then VERSION: a Health row's
-// primary value is STATUS/MOD/FILE, and a column squeezed down to 1-2
-// legible runes is worse than not showing it at all (#224 layout rework).
+// modRow/modsView's full-width convention: the whole panel's content width
+// is always consumed, never just a capped sum (#224 smoke feedback fix #3 -
+// the earlier version capped modW/fileW at small literal maximums, e.g. an
+// 18-rune fileW cap, so a wide terminal's extra width could only ever grow
+// NOTE while MOD/FILE stayed pinned narrow; the row never "stretched to
+// fill" the way Installed Mods' rows do).
+//
+// STATUS and VERSION are intrinsic, like modRow's own status/author/version
+// columns: their values come from short, bounded vocabularies ("STALE
+// CONFLICT", "12.3.4→12.4.0"), so a proportional-but-capped share is
+// already generous and they never need to grow further. MOD, FILE, and NOTE
+// - all free-form text (a mod's name, a file path, a diagnostic note) -
+// instead split whatever's left over proportionally, the same idea as
+// modRow's single absorbing NAME column but three-way, since a Health row
+// genuinely has three variable-length fields instead of one. NOTE gets the
+// largest share of the surplus (3 of 5 parts; MOD and FILE split the other
+// 2, one part each) since it's the detail text a reader most wants room
+// for, and the engine's own remedy copy (conflictNoteText/HealthFinding's
+// Note) tends to run to a full sentence.
+//
+// Unlike modRow - which always renders all 5 of its columns and lets NAME
+// shrink toward its own floor - a narrow terminal here instead drops whole
+// columns, NOTE first then VERSION: a Health row's primary value is
+// STATUS/MOD/FILE, and a column squeezed down to 1-2 legible runes is worse
+// than not showing it at all (#224 layout rework).
 func (m Model) healthColumnWidths(width int) (statusW, modW, fileW, versionW, noteW int, showVersion, showNote bool) {
 	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
 	const minStatus = 8
@@ -2302,21 +2320,31 @@ func (m Model) healthColumnWidths(width int) (statusW, modW, fileW, versionW, no
 	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth, 1)
 
 	statusW = min(22, max(avail/6, minStatus))
-	modW = min(24, max(avail/4, minMod))
-	fileW = min(18, max(avail/6, minFile))
 	versionW = min(11, max(avail/10, minVersion))
 
-	fixed := statusW + modW + fileW + versionW
-
 	showVersion, showNote = true, true
+
 	// 5 columns -> 4 separating gaps.
-	noteW = avail - fixed - 4
-	if noteW < minNote {
-		showNote, noteW = false, 0
+	remaining := avail - statusW - versionW - 4
+	if remaining < minMod+minFile+minNote {
+		showNote = false
 		// 4 columns -> 3 separating gaps.
-		if fixed+3 > avail {
+		remaining = avail - statusW - versionW - 3
+		if remaining < minMod+minFile {
 			showVersion, versionW = false, 0
+			// 3 columns -> 2 separating gaps.
+			remaining = avail - statusW - 2
 		}
+	}
+
+	if showNote {
+		unit := remaining / 5 // MOD:FILE:NOTE = 1:1:3 parts
+		modW = max(unit, minMod)
+		fileW = max(unit, minFile)
+		noteW = max(remaining-modW-fileW, minNote)
+	} else {
+		modW = max(remaining/2, minMod)
+		fileW = max(remaining-modW, minFile)
 	}
 	return
 }
@@ -2400,7 +2428,12 @@ func (m Model) healthTableRows(width, budget int) []string {
 			parts = append(parts, fmt.Sprintf("%-*s", versionW, truncate(version, versionW)))
 		}
 		if showNote {
-			parts = append(parts, truncate(note, noteW))
+			// Padded like every other column (#224 smoke feedback fix #3),
+			// not left ragged - a short note used to leave the row short of
+			// the panel's full width, so the selection highlight (m.row's
+			// background) fell short of the right edge instead of spanning
+			// full width the way an Installed Mods row always does.
+			parts = append(parts, fmt.Sprintf("%-*s", noteW, truncate(note, noteW)))
 		}
 		return m.row(i, strings.Join(parts, " "))
 	}

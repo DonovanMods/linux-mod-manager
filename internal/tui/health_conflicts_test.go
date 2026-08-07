@@ -195,9 +195,11 @@ func TestHealthTableIncludesConflictRowsAfterFindings(t *testing.T) {
 
 	require.Contains(t, rows[0], "MISSING", "the finding row still renders first")
 
-	// FILE column is capped at 18 runes even at width 160 (healthColumnWidths'
-	// own fileW cap), so both conflict paths below truncate - assert on a
-	// prefix short enough to survive that cap rather than the full path.
+	// Assert on a path prefix rather than the exact full string - FILE now
+	// flexes proportionally (#224 smoke feedback fix #3, healthColumnWidths'
+	// own doc comment) instead of a fixed 18-rune cap, so whether either
+	// fixture path below truncates at width 160 is an implementation detail
+	// this test shouldn't pin down.
 	require.Contains(t, rows[1], "STALE CONFLICT")
 	require.Contains(t, rows[1], "USSEP", "MOD column shows the load-order winner")
 	require.Contains(t, rows[1], "meshes/armor", "FILE column shows the contested path")
