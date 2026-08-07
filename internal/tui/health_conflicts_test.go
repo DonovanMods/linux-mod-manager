@@ -306,10 +306,14 @@ func TestDeployKeyDeclinedWithPushedContentOnHealth(t *testing.T) {
 
 	rec := &recordingActions{}
 	model := modelWithActions(t, rec)
-	model.screen = ScreenDashboard
+	// #86: pushContext no longer forces the screen to ScreenHealth, so this
+	// starts there directly - deployActiveProfile's own guard checks
+	// m.contextContent == nil only for ScreenHealth (mutations.go), and
+	// starting anywhere else wouldn't exercise that guard clause at all.
+	model.screen = ScreenHealth
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenDashboard)
+	model.pushContext(fake)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 
 	updated, _ := model.Update(keyRunes("D"))

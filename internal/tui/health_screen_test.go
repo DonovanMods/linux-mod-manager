@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -524,7 +525,17 @@ type fakeContextContent struct {
 	presses int
 }
 
-func (f *fakeContextContent) Title() string { return f.title }
+// Title defaults to "FAKE DETAIL" so callers that don't care about the exact
+// title (the #86 host-generic tests below construct a bare
+// &fakeContextContent{}) still get renderable, assertable content; every
+// existing caller that DOES set title explicitly uses this same string
+// anyway.
+func (f *fakeContextContent) Title() string {
+	if f.title != "" {
+		return f.title
+	}
+	return "FAKE DETAIL"
+}
 
 func (f *fakeContextContent) Lines(_, _ int) []string { return f.lines }
 
@@ -552,9 +563,9 @@ func TestHealthContextHostPushRenderKeyAndEscPop(t *testing.T) {
 	model.screen = ScreenDashboard
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line one", "fake line two"}}
-	model.pushContext(fake, ScreenDashboard)
+	model.pushContext(fake)
 
-	require.Equal(t, ScreenHealth, model.CurrentScreen(), "pushContext must jump to ScreenHealth")
+	require.Equal(t, ScreenDashboard, model.CurrentScreen(), "push must not move the session (#86)")
 	view := model.screenView()
 	require.Contains(t, view, "FAKE DETAIL")
 	require.Contains(t, view, "fake line one")
@@ -563,7 +574,7 @@ func TestHealthContextHostPushRenderKeyAndEscPop(t *testing.T) {
 	updated, cmd := model.Update(keyRunes("x"))
 	model = updated.(Model)
 	require.Nil(t, cmd)
-	require.Equal(t, ScreenHealth, model.CurrentScreen(), "a consumed key must not leave ScreenHealth")
+	require.Equal(t, ScreenDashboard, model.CurrentScreen(), "a consumed key must not move the screen")
 	require.Equal(t, 1, fake.presses, "HandleKey must have consumed the key")
 
 	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -593,7 +604,7 @@ func TestHealthContextHostPromotesPushedContentHelpGroup(t *testing.T) {
 	model.screen = ScreenDashboard
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenDashboard)
+	model.pushContext(fake)
 	model.showHelp = true
 
 	view := model.helpView()
@@ -606,11 +617,13 @@ func TestHealthContextHostPromotesPushedContentHelpGroup(t *testing.T) {
 }
 
 // TestGotoScreenAwayFromHealthClearsPushedContext is fix round 1's Finding
-// 1 regression test: a global nav key the pushed content DECLINES (a digit
-// jump, here "2") must not strand contextContent set while the session
-// sits on a different screen - gotoScreen (app.go) must clear it, or
-// returning to Health later would re-render the stale pushed content
-// instead of the home view.
+// 1 regression test, generalized off ScreenHealth by #86 (see
+// TestContextHostNavAwayClearsFromAnyScreen below for the any-screen
+// version): a global nav key the pushed content DECLINES (a digit jump, here
+// "2") must not strand contextContent set while the session sits on a
+// different screen - gotoScreen (app.go) must clear it, or returning to
+// Health later would re-render the stale pushed content instead of the home
+// view.
 func TestGotoScreenAwayFromHealthClearsPushedContext(t *testing.T) {
 	t.Parallel()
 
@@ -618,17 +631,17 @@ func TestGotoScreenAwayFromHealthClearsPushedContext(t *testing.T) {
 	model.screen = ScreenDashboard
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenDashboard)
-	require.Equal(t, ScreenHealth, model.CurrentScreen())
+	model.pushContext(fake)
+	require.Equal(t, ScreenDashboard, model.CurrentScreen())
 
 	// "2" is declined by the fake (only "x" is handled=true), so it falls
 	// through to the outer switch's InstalledMods jump.
 	updated, _ := model.Update(keyRunes("2"))
 	model = updated.(Model)
 	require.Equal(t, ScreenInstalledMods, model.CurrentScreen(), "the declined nav key must still navigate")
-	require.Nil(t, model.contextContent, "navigating away from Health must clear the stranded pushed content")
+	require.Nil(t, model.contextContent, "navigating away must clear the stranded pushed content")
 
-	// Returning to Health must render the home view, not the stale fake.
+	// Visiting Health must render the home view, not the stale fake.
 	updated, _ = model.Update(keyRunes("6"))
 	model = updated.(Model)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
@@ -648,14 +661,94 @@ func TestPopContextNoopWhenNothingPushed(t *testing.T) {
 	model.screen = ScreenHealth
 	require.Nil(t, model.contextContent, "sanity: nothing pushed yet")
 
-	target := model.popContext()
-	require.Equal(t, ScreenHealth, target)
+	model.popContext()
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 	require.Nil(t, model.contextContent)
 
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	model = updated.(Model)
 	require.Equal(t, ScreenHealth, model.CurrentScreen(), "esc with nothing pushed must not move the screen")
+}
+
+// TestContextHostRendersOnPushingScreen (#86): pushing content no longer
+// hijacks the session to ScreenHealth. The details view opened from Installed
+// Mods must render there, with the nav bar still highlighting Installed Mods -
+// a nav bar reading "Health" over a mod details view was the whole reason the
+// host got generalized.
+func TestContextHostRendersOnPushingScreen(t *testing.T) {
+	m := sizedPrototypeModel(t, "wizardry", 100, 30)
+	m, _ = m.gotoScreen(ScreenInstalledMods)
+	fake := &fakeContextContent{}
+
+	m.pushContext(fake)
+
+	assert.Equal(t, ScreenInstalledMods, m.screen, "push must not move the session")
+	view := m.View()
+	assert.Contains(t, view, "FAKE DETAIL", "pushed content must render on the pushing screen")
+}
+
+// TestContextHostEscPopsToSameScreen: esc clears the content and leaves the
+// session exactly where it was.
+func TestContextHostEscPopsToSameScreen(t *testing.T) {
+	m := sizedPrototypeModel(t, "wizardry", 100, 30)
+	m, _ = m.gotoScreen(ScreenInstalledMods)
+	m.pushContext(&fakeContextContent{})
+
+	m = updateWithMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	assert.Nil(t, m.contextContent)
+	assert.Equal(t, ScreenInstalledMods, m.screen)
+	assert.NotContains(t, m.View(), "FAKE DETAIL")
+}
+
+// TestContextHostNavAwayClearsFromAnyScreen generalizes #224's stranded-
+// content regression test off ScreenHealth.
+func TestContextHostNavAwayClearsFromAnyScreen(t *testing.T) {
+	m := sizedPrototypeModel(t, "wizardry", 100, 30)
+	m, _ = m.gotoScreen(ScreenInstalledMods)
+	m.pushContext(&fakeContextContent{})
+
+	m = updateWithMsg(t, m, keyRunes("3")) // Search
+
+	assert.Equal(t, ScreenSearch, m.screen)
+	assert.Nil(t, m.contextContent, "navigating away must never strand pushed content")
+	assert.NotContains(t, m.View(), "FAKE DETAIL")
+}
+
+// TestContextHostSwallowsDeclinedKeys is the safety half. A key the content
+// declines must NOT reach the screen underneath: on Installed Mods that would
+// mean arrow keys silently moving the selection behind the view, and e/x/u
+// enabling or uninstalling the row the user can no longer see.
+func TestContextHostSwallowsDeclinedKeys(t *testing.T) {
+	rec := &recordingActions{}
+	m := sizedModelWithActions(t, rec, 100, 30)
+	m, _ = m.gotoScreen(ScreenInstalledMods)
+	before := m.selected[ScreenInstalledMods]
+	m.pushContext(&fakeContextContent{}) // declines everything except "x"
+
+	for _, k := range []string{"j", "e", "u"} {
+		m = updateWithMsg(t, m, keyRunes(k))
+	}
+	m = updateWithMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+
+	assert.Equal(t, before, m.selected[ScreenInstalledMods], "selection must not move behind pushed content")
+	assert.Zero(t, rec.EnableCalls, "a declined key must not trigger a mutation underneath")
+	assert.NotNil(t, m.contextContent, "declined keys must not close the view either")
+}
+
+// TestContextHostStillAllowsQuitAndHelp: the swallow rule has exits.
+func TestContextHostStillAllowsQuitAndHelp(t *testing.T) {
+	m := sizedPrototypeModel(t, "wizardry", 100, 30)
+	m, _ = m.gotoScreen(ScreenInstalledMods)
+	m.pushContext(&fakeContextContent{})
+
+	updated, _ := m.Update(keyRunes("?"))
+	m2, ok := updated.(Model)
+	require.True(t, ok)
+	assert.NotEqual(t, m.showHelp, m2.showHelp, "help must still toggle over pushed content")
+
+	_, cmd := m.Update(keyRunes("q"))
+	assert.NotNil(t, cmd, "quit must still work over pushed content")
 }
 
 // --- Task 11: 'c' full (network) health check ---
@@ -858,10 +951,13 @@ func TestFullCheckKeyDeclinedWithPushedContentOnHealth(t *testing.T) {
 
 	rec := &recordingActions{}
 	model := modelWithActions(t, rec)
-	model.screen = ScreenDashboard
+	// #86: pushContext no longer forces the screen to ScreenHealth, so this
+	// starts there directly - the guard under test is specifically about
+	// ScreenHealth with pushed content, not about push's old side effect.
+	model.screen = ScreenHealth
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenDashboard)
+	model.pushContext(fake)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 
 	updated, cmd := model.Update(keyRunes("c"))
@@ -885,10 +981,15 @@ func TestRunFullHealthCheckDirectCallRefusedWithPushedContent(t *testing.T) {
 
 	rec := &recordingActions{}
 	model := modelWithActions(t, rec)
-	model.screen = ScreenDashboard
+	// #86: pushContext no longer forces the screen to ScreenHealth, so this
+	// starts there directly - runFullHealthCheck's own guard checks BOTH
+	// m.screen != ScreenHealth and m.contextContent != nil (mutations.go),
+	// and starting anywhere else would let the screen half of that guard
+	// alone explain the refusal, defeating this test's whole point.
+	model.screen = ScreenHealth
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenDashboard)
+	model.pushContext(fake)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 
 	updated, cmd := model.runFullHealthCheck()
@@ -1399,10 +1500,15 @@ func TestFixHealthKeyDeclinedWithPushedContentOnHealth(t *testing.T) {
 
 	rec := &recordingActions{}
 	model := modelWithActions(t, rec)
-	model.screen = ScreenDashboard
+	// #86: pushContext no longer forces the screen to ScreenHealth, so this
+	// starts there directly - fixHealthPrompt's own guard checks BOTH
+	// m.screen != ScreenHealth and m.contextContent != nil (mutations.go),
+	// and starting anywhere else would let the screen half of that guard
+	// alone explain the refusal, defeating this test's whole point.
+	model.screen = ScreenHealth
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenDashboard)
+	model.pushContext(fake)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 
 	updated, cmd := model.Update(keyRunes("F"))

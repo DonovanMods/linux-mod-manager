@@ -143,16 +143,13 @@ type Model struct {
 	// scan (or the initial local-tier load) succeeded. Set by Task 10's
 	// loadData wiring and the 'c'/'F' handlers Tasks 11/12 add.
 	healthErr string
-	// contextContent is ScreenHealth's pushed full-screen view (see
-	// contextview.go): nil means the screen renders the health home view;
-	// non-nil means it renders contextContent.Lines instead, and esc pops
-	// back to contextReturn via Model.popContext.
+	// contextContent is a pushed full-screen view any screen can host (see
+	// contextview.go, generalized in #86): nil means the current screen
+	// renders normally; non-nil means contextView() renders it instead, over
+	// whatever screen pushed it, and esc pops back via Model.popContext.
 	contextContent contextContent
-	// contextReturn is the screen popContext returns to once contextContent
-	// is cleared - the screen that called pushContext.
-	contextReturn Screen
-	search        searchModel
-	action        actionModel
+	search         searchModel
+	action         actionModel
 	// picker is the pending list-choice modal (see picker.go), if any.
 	// Sibling to action.pending: promptPicker/updatePickerKey/pickerView
 	// mirror promptAction/updatePendingActionKey/actionModalView's structure.
@@ -413,22 +410,12 @@ func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 // pressed Esc (smoke-test Finding 1). See gotoScreenFocused for the bindings
 // that DO focus.
 func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
-	// Navigating away from ScreenHealth implicitly pops any pushed
-	// contextContent (#224 Task 9 fix round 1, Finding 1): the pushed-
-	// content key routing in updateKey only offers keys to HandleKey while
-	// m.screen == ScreenHealth, so a global nav key the content declines
-	// (a digit, tab/shift-tab, a dashboard menu selection) would otherwise
-	// strand contextContent set while the session sits on a different
-	// screen - returning to Health later would then re-render the stale
-	// pushed content instead of the home view (see contextContent's own
-	// "with nothing pushed, ScreenHealth renders the health home view" doc
-	// comment). gotoScreen is the single choke point every navigation
-	// route funnels through (grep confirms it's the only non-init,
-	// non-contextview.go assignment to m.screen), so clearing here covers
-	// all of them without each call site needing its own guard.
-	if m.screen == ScreenHealth && screen != ScreenHealth && m.contextContent != nil {
+	// Navigating anywhere pops pushed content (#86: any screen can host it,
+	// so this is no longer Health-specific). gotoScreen is the single choke
+	// point every nav route funnels through, so one clear here covers them
+	// all - including pressing the digit for the screen you are already on.
+	if m.contextContent != nil {
 		m.contextContent = nil
-		m.contextReturn = ScreenDashboard
 	}
 	m.screen = screen
 	return m, nil
@@ -921,6 +908,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// isScreenDigit reports whether msg is one of the nav digits ("1".."6"), so
+// the pushed-content swallow rule can let navigation through.
+func isScreenDigit(msg tea.KeyMsg) bool {
+	if msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
+		return false
+	}
+	return msg.Runes[0] >= '1' && msg.Runes[0] <= rune('0'+len(screens))
+}
+
 // updateKey routes a keypress to whichever modal (if any) is currently
 // showing, then falls through to the outer per-screen switch below.
 //
@@ -954,23 +950,30 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updatePendingActionKey(msg)
 	}
 
-	// ScreenHealth's pushed context content (#224 Task 9, contextview.go)
-	// gets first crack at every key while it's up - mirroring the
-	// picker/inputModal/overlay/action.pending early-returns above, except
-	// scoped to a screen rather than a Model field, since contextContent is
-	// itself the screen's whole content when non-nil. Content that declines
-	// (handled=false) falls through to rule 8 and the outer switch below,
-	// same as any ordinary keypress; esc (Blur) is the host's own fallback,
-	// popping back to contextReturn only when the content itself didn't
-	// already consume it.
-	if m.screen == ScreenHealth && m.contextContent != nil {
+	// Pushed content gets first refusal on every key. Anything it declines is
+	// SWALLOWED rather than falling through to the screen underneath (#86) -
+	// otherwise arrows would move a selection the user can't see and e/x/u
+	// would mutate the row behind the view. Same rule updateOverlayKey
+	// already applies for the info overlay. The exits below are the keys that
+	// must keep working over any full-screen content: leave, navigate, quit,
+	// help.
+	if m.contextContent != nil {
 		if next, cmd, handled := m.contextContent.HandleKey(msg); handled {
 			m.contextContent = next
 			return m, cmd
 		}
-		if key.Matches(msg, m.keys.Blur) {
+		switch {
+		case key.Matches(msg, m.keys.Blur):
 			m.popContext()
 			return m, nil
+		case m.isQuitKey(msg):
+			// fall through to the outer switch's quit handling
+		case key.Matches(msg, m.keys.Help),
+			key.Matches(msg, m.keys.NextScreen), key.Matches(msg, m.keys.PrevScreen),
+			isScreenDigit(msg):
+			// fall through: navigation and help stay available
+		default:
+			return m, nil // swallowed
 		}
 	}
 
@@ -1407,6 +1410,13 @@ func (m Model) screenView() string {
 		return m.actionModalView()
 	}
 
+	// Pushed content renders over whatever screen pushed it (#86). Placed
+	// after the picker/inputModal returns above so modals still outrank it,
+	// matching updateKey's own precedence.
+	if m.contextContent != nil {
+		return m.contextView()
+	}
+
 	switch m.state {
 	case stateLoading:
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
@@ -1441,7 +1451,7 @@ func (m Model) screenView() string {
 	case ScreenSources:
 		return m.sourcesView()
 	case ScreenHealth:
-		return m.healthScreenView()
+		return m.healthHomeView()
 	default:
 		return m.dashboardView()
 	}
@@ -2122,28 +2132,6 @@ func (m Model) conflictRowStyle(c ConflictItem) lipgloss.Style {
 		return m.theme.DangerText
 	}
 	return m.theme.WarningText
-}
-
-// healthScreenView renders ScreenHealth (#224 Task 9): the pushed
-// contextContent's chrome when one is pushed (contextview.go's host
-// contract - "the host owns chrome (panel, title, nav) and clamping"), or
-// the health home view otherwise.
-func (m Model) healthScreenView() string {
-	if m.contextContent == nil {
-		return m.healthHomeView()
-	}
-
-	width := m.availableWidth()
-	height := m.availableContentHeight()
-	contentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
-
-	lines := []string{m.theme.PanelTitle.Render(m.contextContent.Title())}
-	lines = append(lines, m.contextContent.Lines(contentWidth, max(contentBudget-1, 1))...)
-	lines = m.truncateLines(lines, contentWidth)
-	lines = m.clampLines(lines, contentBudget)
-
-	return m.panelWithHeight(width, height).Render(strings.Join(lines, "\n"))
 }
 
 // healthHomeView renders the Health screen's home content: a full-width
@@ -2854,14 +2842,14 @@ func (m Model) helpGroups() []helpGroup {
 		ScreenSources:       sources.name,
 		ScreenHealth:        health.name,
 	}
-	// #224 Task 9 fix round 1, Finding 2: while ScreenHealth has pushed
-	// content (contextview.go), the promoted group is the CONTENT's own
-	// HelpGroup() - the static "health" group's bindings don't describe
-	// whatever the pushed content actually shows, so consulting it here
-	// (rather than leaving HelpGroup() an orphaned interface member) is the
-	// whole point of that method existing. The static "health" group stays
-	// in fixed, unpromoted, further down the list.
-	if m.screen == ScreenHealth && m.contextContent != nil {
+	// #224 Task 9 fix round 1, Finding 2, generalized in #86: while any
+	// screen has pushed content (contextview.go), the promoted group is the
+	// CONTENT's own HelpGroup() - the ambient screen's static bindings don't
+	// describe whatever the pushed content actually shows, so consulting it
+	// here (rather than leaving HelpGroup() an orphaned interface member) is
+	// the whole point of that method existing. The pushing screen's own
+	// static group stays in fixed, unpromoted, further down the list.
+	if m.contextContent != nil {
 		return append([]helpGroup{global, m.contextContent.HelpGroup()}, fixed...)
 	}
 
