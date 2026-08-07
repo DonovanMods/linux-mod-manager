@@ -1023,37 +1023,17 @@ func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
 	require.True(t, opened.(Model).search.input.Focused(), "dashboard menu's explicit Search Archives entry must auto-focus")
 }
 
-// TestDashboardEnterOnOracleEntryOpensConflicts replaces the old
-// ...StaysPut test, which pinned Enter-on-Oracle as a NO-OP with the
-// comment "no screen exists for it yet". Phase 6b shipped ScreenConflicts
-// (v1.14.0) but neither the menu entry's target nor this test was updated,
-// so the stale pin silently protected a dead menu entry until a user smoke
-// test caught it (PR #113 round). Both dashboardMenu variants (default
-// "Consult Conflict Oracle" and amber's "ASK CONFLICT ORACLE") must
-// navigate.
-func TestDashboardEnterOnOracleEntryOpensConflicts(t *testing.T) {
-	t.Parallel()
-
-	for _, themeName := range []string{"wizardry", "amber"} {
-		t.Run(themeName, func(t *testing.T) {
-			t.Parallel()
-
-			model := sizedPrototypeModel(t, themeName, 100, 30)
-
-			// Move to the last entry (Conflict Oracle). 5 presses:
-			// Installed Mods -> Search -> Profiles -> Sources ->
-			// Verify Integrity (#224 Task 10) -> Oracle.
-			for range 5 {
-				model = updateWithRunes(t, model, "j")
-			}
-			opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-			require.Equal(t, ScreenConflicts, opened.(Model).CurrentScreen(),
-				"the Oracle menu entry must open the Conflicts screen")
-			require.False(t, opened.(Model).search.input.Focused(),
-				"conflicts is not a search-intent entry — no input focus")
-		})
-	}
-}
+// TestDashboardEnterOnOracleEntryOpensConflicts used to prove the dashboard
+// menu's "Consult Conflict Oracle"/"ASK CONFLICT ORACLE" entry opened the
+// standalone Conflicts screen. #224 Task 15 folded conflict reporting into
+// the Health screen's own table and retired ScreenConflicts, which would
+// have left this entry pointing at the exact same target as "Verify
+// Integrity" right above it - dashboardMenu drops the now-redundant entry
+// entirely rather than keep two rows for one destination (see its own doc
+// comment for the full rationale). This test's coverage now lives in
+// health_dashboard_test.go's TestDashboardMenuVerifyIntegrityEntryOpensHealth,
+// which proves the (now sole) entry opens ScreenHealth for both theme
+// variants.
 
 func TestEnterOutsideDashboardIsANoop(t *testing.T) {
 	t.Parallel()

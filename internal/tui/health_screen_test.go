@@ -12,24 +12,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHealthScreenNavigation proves ScreenHealth is a fully wired 7th
-// screen (task-9-brief.md): the "7" direct-jump binding reaches it, tab
-// cycling from Conflicts (the previous last screen) rotates onto it and
-// then wraps back to Dashboard, and its String() renders a real name
-// rather than navigation.go's Screen(N) fallback.
+// TestHealthScreenNavigation proves ScreenHealth is a fully wired 6th
+// screen (task-9-brief.md, moved from 7th by #224 Task 15's conflicts fold,
+// which retired the standalone Conflicts screen and shifted Health into its
+// slot 6): the "6" direct-jump binding reaches it, tab cycling from Sources
+// (the new next-to-last screen) rotates onto it and then wraps back to
+// Dashboard, and its String() renders a real name rather than
+// navigation.go's Screen(N) fallback.
 func TestHealthScreenNavigation(t *testing.T) {
 	t.Parallel()
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 
-	updated := updateWithRunes(t, model, "7")
+	updated := updateWithRunes(t, model, "6")
 	require.Equal(t, ScreenHealth, updated.CurrentScreen())
 	require.Equal(t, "Health", ScreenHealth.String())
 
-	onConflicts := updateWithRunes(t, model, "6")
-	require.Equal(t, ScreenConflicts, onConflicts.CurrentScreen())
-	onHealth := updateWithKeyType(t, onConflicts, tea.KeyTab)
+	onSources := updateWithRunes(t, model, "5")
+	require.Equal(t, ScreenSources, onSources.CurrentScreen())
+	onHealth := updateWithKeyType(t, onSources, tea.KeyTab)
 	require.Equal(t, ScreenHealth, onHealth.CurrentScreen())
 	onDashboard := updateWithKeyType(t, onHealth, tea.KeyTab)
 	require.Equal(t, ScreenDashboard, onDashboard.CurrentScreen())
@@ -118,6 +120,11 @@ func TestHealthHomeViewGenuinelyEmptyProfileOmitsCheckedSuffix(t *testing.T) {
 	model.now = func() time.Time { return now }
 	model.healthAt = &scannedAt
 	model.health = HealthView{} // Checked 0, Findings empty: nothing installed
+	// A genuinely empty profile means no conflicts either (#224 Task 15's
+	// empty state requires BOTH empty) - cleared here since
+	// sizedPrototypeModel's loadData round trip populates the prototype's
+	// own unrelated canned conflicts.
+	model.conflicts = nil
 	model.screen = ScreenHealth
 
 	view := model.View()
@@ -313,6 +320,11 @@ func TestHealthTableNoteTruncatesButDetailStripShowsFull(t *testing.T) {
 	model.health = HealthView{Findings: []HealthFinding{
 		{ModID: "a", ModName: "A", FileID: "f1", Status: "no_checksum", Note: longNote},
 	}}
+	// sizedPrototypeModel's canned data (via loadData) populates m.conflicts
+	// too (#224 Task 15 - the Health table now includes them); cleared here
+	// so this test's row-count/content assertions describe the one finding
+	// only, undisturbed by the prototype's own unrelated demo conflicts.
+	model.conflicts = nil
 	model.screen = ScreenHealth
 	model.selected[ScreenHealth] = 0
 
@@ -405,10 +417,10 @@ func TestHealthContextHostPushRenderKeyAndEscPop(t *testing.T) {
 	t.Parallel()
 
 	model := sizedPrototypeModel(t, "wizardry", 100, 24)
-	model.screen = ScreenConflicts
+	model.screen = ScreenDashboard
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line one", "fake line two"}}
-	model.pushContext(fake, ScreenConflicts)
+	model.pushContext(fake, ScreenDashboard)
 
 	require.Equal(t, ScreenHealth, model.CurrentScreen(), "pushContext must jump to ScreenHealth")
 	view := model.screenView()
@@ -424,7 +436,7 @@ func TestHealthContextHostPushRenderKeyAndEscPop(t *testing.T) {
 
 	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	model = updated.(Model)
-	require.Equal(t, ScreenConflicts, model.CurrentScreen(), "esc must pop back to the pushing screen")
+	require.Equal(t, ScreenDashboard, model.CurrentScreen(), "esc must pop back to the pushing screen")
 	require.Nil(t, model.contextContent, "popContext must clear the pushed content")
 }
 
@@ -446,10 +458,10 @@ func TestHealthContextHostPromotesPushedContentHelpGroup(t *testing.T) {
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
-	model.screen = ScreenConflicts
+	model.screen = ScreenDashboard
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenConflicts)
+	model.pushContext(fake, ScreenDashboard)
 	model.showHelp = true
 
 	view := model.helpView()
@@ -471,10 +483,10 @@ func TestGotoScreenAwayFromHealthClearsPushedContext(t *testing.T) {
 	t.Parallel()
 
 	model := sizedPrototypeModel(t, "wizardry", 100, 24)
-	model.screen = ScreenConflicts
+	model.screen = ScreenDashboard
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenConflicts)
+	model.pushContext(fake, ScreenDashboard)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 
 	// "2" is declined by the fake (only "x" is handled=true), so it falls
@@ -485,7 +497,7 @@ func TestGotoScreenAwayFromHealthClearsPushedContext(t *testing.T) {
 	require.Nil(t, model.contextContent, "navigating away from Health must clear the stranded pushed content")
 
 	// Returning to Health must render the home view, not the stale fake.
-	updated, _ = model.Update(keyRunes("7"))
+	updated, _ = model.Update(keyRunes("6"))
 	model = updated.(Model)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 	view := model.screenView()
@@ -671,7 +683,7 @@ func TestFullCheckKeyInertWhileAnotherModalPending(t *testing.T) {
 func TestFullCheckKeyOtherScreensNoop(t *testing.T) {
 	t.Parallel()
 
-	for _, screen := range []Screen{ScreenDashboard, ScreenInstalledMods, ScreenSearch, ScreenSources, ScreenConflicts} {
+	for _, screen := range []Screen{ScreenDashboard, ScreenInstalledMods, ScreenSearch, ScreenSources} {
 		rec := &recordingActions{}
 		model := modelWithActions(t, rec)
 		model.screen = screen
@@ -714,10 +726,10 @@ func TestFullCheckKeyDeclinedWithPushedContentOnHealth(t *testing.T) {
 
 	rec := &recordingActions{}
 	model := modelWithActions(t, rec)
-	model.screen = ScreenConflicts
+	model.screen = ScreenDashboard
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenConflicts)
+	model.pushContext(fake, ScreenDashboard)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 
 	updated, cmd := model.Update(keyRunes("c"))
@@ -1068,6 +1080,11 @@ func TestHealthCheckResultClampsSelectionOnShorterFindingsList(t *testing.T) {
 			model := modelWithActions(t, &recordingActions{})
 			model.screen = ScreenHealth
 			model.health = HealthView{Findings: longFindings}
+			// modelWithActions' prototype provider seeds unrelated canned
+			// conflicts (#224 Task 15 folds them into the same selection
+			// space) - cleared so this test's clamp assertions describe the
+			// findings-shrinking scenario alone.
+			model.conflicts = nil
 			model.selected[ScreenHealth] = len(longFindings) - 1
 			model.action.gen = 11
 			model.action.running = true
@@ -1202,7 +1219,7 @@ func TestFixHealthKeyInertWhileAnotherModalPending(t *testing.T) {
 func TestFixHealthKeyOtherScreensNoop(t *testing.T) {
 	t.Parallel()
 
-	for _, screen := range []Screen{ScreenDashboard, ScreenInstalledMods, ScreenSearch, ScreenProfiles, ScreenSources, ScreenConflicts} {
+	for _, screen := range []Screen{ScreenDashboard, ScreenInstalledMods, ScreenSearch, ScreenProfiles, ScreenSources} {
 		rec := &recordingActions{}
 		model := modelWithActions(t, rec)
 		model.screen = screen
@@ -1223,10 +1240,10 @@ func TestFixHealthKeyDeclinedWithPushedContentOnHealth(t *testing.T) {
 
 	rec := &recordingActions{}
 	model := modelWithActions(t, rec)
-	model.screen = ScreenConflicts
+	model.screen = ScreenDashboard
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenConflicts)
+	model.pushContext(fake, ScreenDashboard)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 
 	updated, cmd := model.Update(keyRunes("F"))

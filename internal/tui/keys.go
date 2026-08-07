@@ -16,15 +16,12 @@ type KeyMap struct {
 	InstalledMods key.Binding
 	Profiles      key.Binding
 	Sources       key.Binding
-	// ConflictsScreen is Task 3's direct-jump binding to ScreenConflicts,
-	// mirroring SearchScreen's own "named screen, separate from the plain
-	// Dashboard/InstalledMods/Profiles/Sources bindings" shape (both name a
-	// specific screen a user might reach some other way too - SearchScreen
-	// via "/", ConflictsScreen has no such alternate entry point yet).
-	ConflictsScreen key.Binding
-	// HealthScreen is Task 9's direct-jump binding to ScreenHealth (#224),
-	// mirroring ConflictsScreen's own shape (see its doc comment) - the
-	// health screen likewise has no other entry point yet.
+	// HealthScreen is Task 9's direct-jump binding to ScreenHealth (#224) -
+	// no other entry point reaches it directly. Task 15 folded the former
+	// standalone ScreenConflicts screen (and its own "6" ConflictsScreen
+	// binding) into ScreenHealth's table, moving this binding from "7" to
+	// "6" - the digit now names the screen's new slot 6 position (see
+	// navigation.go's screens slice).
 	HealthScreen  key.Binding
 	Select        key.Binding
 	Submit        key.Binding
@@ -222,13 +219,9 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("5"),
 			key.WithHelp("5", "sources"),
 		),
-		ConflictsScreen: key.NewBinding(
-			key.WithKeys("6"),
-			key.WithHelp("6", "conflicts"),
-		),
 		HealthScreen: key.NewBinding(
-			key.WithKeys("7"),
-			key.WithHelp("7", "health"),
+			key.WithKeys("6"),
+			key.WithHelp("6", "health"),
 		),
 		Select: key.NewBinding(
 			key.WithKeys("enter"),

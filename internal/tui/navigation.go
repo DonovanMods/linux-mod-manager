@@ -11,12 +11,15 @@ const (
 	ScreenSearch
 	ScreenProfiles
 	ScreenSources
-	ScreenConflicts
 	// ScreenHealth is #224 Task 9's context-view host: the health home
-	// content (two-pane findings view) when nothing is pushed, or whatever
-	// contextContent Model.pushContext last pushed (see contextview.go) -
-	// the landing zone a future mod-details story (#86) will reuse as its
-	// second implementation.
+	// content (a full-width findings+conflicts table with a detail strip)
+	// when nothing is pushed, or whatever contextContent Model.pushContext
+	// last pushed (see contextview.go) - the landing zone a future
+	// mod-details story (#86) will reuse as its second implementation. #224
+	// Task 15 folded the former standalone ScreenConflicts (slot 6) into
+	// this screen's table - see healthTableRows/healthDetailPane's own doc
+	// comments - so ScreenHealth now occupies slot 6 (digit "6") instead of
+	// 7, and there is no separate Conflicts screen anymore.
 	ScreenHealth
 )
 
@@ -26,7 +29,6 @@ var screens = []Screen{
 	ScreenSearch,
 	ScreenProfiles,
 	ScreenSources,
-	ScreenConflicts,
 	ScreenHealth,
 }
 
@@ -43,8 +45,6 @@ func (s Screen) String() string {
 		return "Profiles"
 	case ScreenSources:
 		return "Sources"
-	case ScreenConflicts:
-		return "Conflicts"
 	case ScreenHealth:
 		return "Health"
 	default:

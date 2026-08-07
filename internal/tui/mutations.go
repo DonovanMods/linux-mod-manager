@@ -109,10 +109,15 @@ func (m Model) uninstallSelectedMod() (Model, tea.Cmd) {
 
 // deployActiveProfile handles 'D' on Dashboard or Installed Mods
 // (task-7-brief.md's Keybindings section), and - since Phase 6b Task 3's
-// review fix wave - on the Conflicts screen too: its stale-conflict detail
-// hint reads "deploy (D) to apply" (conflictsDetailPane, app.go), so the
-// key it names must actually fire there rather than being a silent no-op.
-// Same confirmation modal and machinery on all three screens; no other
+// review fix wave - on ScreenHealth too (with nothing pushed): a stale
+// conflict's remedy copy reads "deploy (D) to apply" (conflictNoteText/
+// conflictDetailHint, app.go - originally the standalone Conflicts screen's
+// own conflictsDetailPane hint, folded into the Health table by #224 Task
+// 15), so the key it names must actually fire there rather than being a
+// silent no-op. The Health guard mirrors FullCheck/FixHealth's own
+// "ScreenHealth, no pushed context" shape (updateKey, app.go) - pushed
+// context content is a different full-screen view with no deploy remedy to
+// act on. Same confirmation modal and machinery on all screens; no other
 // behavior differs by screen. Unlike the mod-scoped actions above,
 // deploying doesn't depend on any row selection, so an empty mods list is
 // not a no-op case here - deploying zero enabled mods is a valid (if
@@ -121,7 +126,8 @@ func (m Model) uninstallSelectedMod() (Model, tea.Cmd) {
 // this task's scope keeps DataProvider frozen, so it isn't "cheaply
 // available" per the brief's own qualifier.
 func (m Model) deployActiveProfile() (Model, tea.Cmd) {
-	deployScreen := m.screen == ScreenDashboard || m.screen == ScreenInstalledMods || m.screen == ScreenConflicts
+	deployScreen := m.screen == ScreenDashboard || m.screen == ScreenInstalledMods ||
+		(m.screen == ScreenHealth && m.contextContent == nil)
 	if !deployScreen || m.actions == nil {
 		return m, nil
 	}

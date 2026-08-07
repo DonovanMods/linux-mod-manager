@@ -24,7 +24,7 @@ func TestHelpViewListsPerScreenGroups(t *testing.T) {
 	view := model.helpView()
 
 	for _, want := range []string{
-		"global", "dashboard", "installed mods", "search", "profiles", "conflicts",
+		"global", "dashboard", "installed mods", "search", "profiles", "health",
 		"files", "policy", "purge", "game", "new profile", "delete profile",
 		// changelog is fix-wave-2 finding #1's list-scoped changelog viewer
 		// ('v' on Installed Mods, outside any modal - viewSelectedModChangelog,
@@ -65,24 +65,29 @@ func TestHelpViewCurrentScreenGroupFirst(t *testing.T) {
 	require.Less(t, installedIdx, profilesIdx, "installed mods group should render before profiles when on Installed Mods")
 }
 
-// TestHelpViewConflictsGroupPromotedOnConflictsScreen mirrors
-// TestHelpViewCurrentScreenGroupFirst for Task 3's new "conflicts" group: a
-// Conflicts-screen user sees it promoted to immediately follow "global",
-// ahead of the fixed dashboard/installed mods/search/profiles order.
-func TestHelpViewConflictsGroupPromotedOnConflictsScreen(t *testing.T) {
+// TestHelpViewHealthGroupPromotedOnHealthScreen mirrors
+// TestHelpViewCurrentScreenGroupFirst for the "health" group: a
+// Health-screen user (nothing pushed) sees it promoted to immediately
+// follow "global", ahead of the fixed dashboard/installed mods/search/
+// profiles order. Formerly TestHelpViewConflictsGroupPromotedOnConflictsScreen,
+// which proved the same promotion for the standalone Conflicts screen's own
+// "conflicts" group before #224 Task 15 retired that screen and folded its
+// group's still-relevant content (Up/Down/Deploy) into "health" - see
+// helpGroups' own doc comment on the health group.
+func TestHelpViewHealthGroupPromotedOnHealthScreen(t *testing.T) {
 	t.Parallel()
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
-	model.screen = ScreenConflicts
+	model.screen = ScreenHealth
 	model.showHelp = true
 
 	view := model.helpView()
-	conflictsIdx := strings.Index(view, "conflicts")
+	healthIdx := strings.Index(view, "health")
 	dashboardIdx := strings.Index(view, "dashboard")
-	require.NotEqual(t, -1, conflictsIdx, "conflicts header missing")
+	require.NotEqual(t, -1, healthIdx, "health header missing")
 	require.NotEqual(t, -1, dashboardIdx, "dashboard header missing")
-	require.Less(t, conflictsIdx, dashboardIdx, "conflicts group should render before dashboard when on Conflicts")
+	require.Less(t, healthIdx, dashboardIdx, "health group should render before dashboard when on Health")
 }
 
 // TestHelpViewCapsWithMoreTailAtSmallHeight exercises the height-capped

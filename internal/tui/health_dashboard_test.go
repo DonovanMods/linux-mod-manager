@@ -139,7 +139,12 @@ func TestHealthDashboardLinePhrasing(t *testing.T) {
 
 // TestDashboardMenuVerifyIntegrityEntryOpensHealth proves the "Verify
 // Integrity" dashboard menu entry (both theme variants) is wired to
-// ScreenHealth and sits before the Conflicts entry, per the brief.
+// ScreenHealth. #224 Task 15 folded the former separate "Consult Conflict
+// Oracle"/"ASK CONFLICT ORACLE" entry into this one (dashboardMenu's own doc
+// comment: two rows pointing at the same retired-Conflicts-screen
+// destination would have been redundant), so this is now the menu's sole
+// "go look at a standing signal" entry - no separate Conflicts-entry
+// ordering to prove anymore.
 func TestDashboardMenuVerifyIntegrityEntryOpensHealth(t *testing.T) {
 	t.Parallel()
 
@@ -153,20 +158,15 @@ func TestDashboardMenuVerifyIntegrityEntryOpensHealth(t *testing.T) {
 			model := sizedPrototypeModel(t, tc.theme, 100, 30)
 			items := model.dashboardMenu()
 
-			idx, conflictsIdx := -1, -1
+			idx := -1
 			for i, item := range items {
 				if item.label == tc.label {
 					idx = i
 				}
-				if item.target == ScreenConflicts {
-					conflictsIdx = i
-				}
 			}
 			require.NotEqual(t, -1, idx, "menu must contain the %q entry", tc.label)
-			require.NotEqual(t, -1, conflictsIdx, "sanity: menu must still contain a Conflicts entry")
 			require.True(t, items[idx].hasTarget)
 			require.Equal(t, ScreenHealth, items[idx].target)
-			require.Less(t, idx, conflictsIdx, "Verify Integrity must precede the Conflicts entry")
 
 			for range idx {
 				model = updateWithRunes(t, model, "j")

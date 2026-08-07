@@ -24,13 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-ingests pre-existing pak installs into the conversion pipeline.
 - JSON additions: `convert_paks` in `lmm list --json`, `lmm mod show
 --json`, and `lmm game list --json`.
-- TUI: a Health screen (screen `7`) — a Dashboard `Health: ...` signal
+- TUI: a Health screen (screen `6`) — a Dashboard `Health: ...` signal
   line summarizing the local-tier verify scan, a full-width
-  STATUS/MOD/FILE/VERSION/NOTE findings table (OK rows included, per
-  checked file) with a compact detail strip below, an explicit full
-  (network) check (`c`), and a batch fix (`F`) that runs the same
-  repairs as `lmm verify --fix` behind a confirmation summarizing what
-  it will attempt, by finding type (#224).
+  STATUS/MOD/FILE/VERSION/NOTE table combining verify findings (OK rows
+  included, per checked file) with file-conflict rows (`CONFLICT`/`STALE
+CONFLICT`, tinted by severity) with a compact detail strip below, an
+  explicit full (network) check (`c`), a batch fix (`F`) that runs the
+  same repairs as `lmm verify --fix` behind a confirmation summarizing
+  what it will attempt, by finding type, and `D` to deploy in place for a
+  stale conflict; the standalone Conflicts screen (formerly screen `6`)
+  is retired — its file-conflict reporting now lives here (#224).
   The verify engine itself (per-file/per-mod checks, `--fix` repairs, the
   deploy-convergence sweep) is now extracted into `internal/core`, shared
   unchanged between the CLI and this new TUI surface.
