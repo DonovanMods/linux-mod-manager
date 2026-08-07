@@ -396,15 +396,26 @@ func TestSwitchKeyEmptyProfileListIsNoop(t *testing.T) {
 	require.Nil(t, model.action.pending)
 }
 
-func TestSwitchKeyWrongScreenIsNoop(t *testing.T) {
+// TestSwitchKeyWrongScreenNeverPlansASwitch proves switchSelectedProfile's
+// own screen guard: enter on Installed Mods must never reach
+// PlanProfileSwitch, no matter what else it does. Before #86 this key was a
+// no-op everywhere but Dashboard/Profiles, so this test used to assert a nil
+// cmd outright - #86 repurposes enter on Installed Mods to open mod details
+// (see openSelectedModDetails), which legitimately returns a non-nil fetch
+// cmd, so the assertion narrows to what this test actually guards: no
+// profile-switch machinery fires.
+func TestSwitchKeyWrongScreenNeverPlansASwitch(t *testing.T) {
 	t.Parallel()
 
-	model := modelWithActions(t, &recordingActions{})
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
 	model.screen = ScreenInstalledMods
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	require.Equal(t, ScreenInstalledMods, updated.(Model).CurrentScreen())
-	require.Nil(t, cmd)
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.Equal(t, ScreenInstalledMods, model.CurrentScreen())
+	require.Nil(t, model.action.pending)
+	require.Empty(t, rec.PlanCalls, "must never call PlanProfileSwitch from Installed Mods")
 }
 
 func TestSwitchKeyInertWhileRunning(t *testing.T) {
@@ -1134,10 +1145,14 @@ func TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult(t *testing.T) {
 func TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim(t *testing.T) {
 	t.Parallel()
 
-	// Height 60 keeps every help group uncapped (see
+	// Height 90 keeps every help group uncapped (see
 	// TestViewFitsTerminalBoundsWithHelpVisible's helpBodyBudget note), so
 	// this doesn't depend on which screen's group happens to render first.
-	model := sizedPrototypeModel(t, "wizardry", 120, 60)
+	// Bumped from 60 for #86 Task 7: the installed-mods/search groups' new
+	// Select entries pushed the full uncapped list to 57 lines, which
+	// height 60's budget (42) no longer covered - "switch profile" (the
+	// profiles group's first entry) fell one line past the cutoff.
+	model := sizedPrototypeModel(t, "wizardry", 120, 90)
 	model = updateWithRunes(t, model, "?")
 	view := model.View()
 
@@ -1877,12 +1892,12 @@ func TestPrototypeInstallPlanReinstallForSkyUI(t *testing.T) {
 func TestHelpOverlayDocumentsInstallKey(t *testing.T) {
 	t.Parallel()
 
-	// Height 60 keeps every help group uncapped, same as
-	// TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim - the
-	// "search" group (which documents Install) isn't promoted to the front
-	// on the default Dashboard screen, so it needs enough budget to render
-	// at all.
-	model := sizedPrototypeModel(t, "wizardry", 160, 60)
+	// Height 90 keeps every help group uncapped, same as
+	// TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim (see
+	// its comment for the #86 Task 7 bump rationale) - the "search" group
+	// (which documents Install) isn't promoted to the front on the default
+	// Dashboard screen, so it needs enough budget to render at all.
+	model := sizedPrototypeModel(t, "wizardry", 160, 90)
 	model = updateWithRunes(t, model, "?")
 	view := model.View()
 

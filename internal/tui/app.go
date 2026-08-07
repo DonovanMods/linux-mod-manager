@@ -774,6 +774,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.resolveFixHealthCheckFailure(msg)
+	case modDetailsFetchedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveModDetailsFetched(msg)
+	case modDetailsFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveModDetailsFailed(msg)
 	case policyChosenMsg:
 		return m.resolvePolicyChoice(msg)
 	case versionsFetchedMsg:
@@ -1080,12 +1090,14 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(1)
 		return m.afterSearchSelectionMove()
 	case key.Matches(msg, m.keys.Select):
-		// Select ("enter") is context-dependent: it opens a dashboard menu
-		// entry everywhere except Profiles, where Task 7 repurposes it to
-		// switch to the selected (non-active) profile - see mutations.go's
-		// switchSelectedProfile.
-		if m.screen == ScreenProfiles {
+		// Select ("enter") is context-dependent: Profiles switches to the
+		// selected profile, Installed Mods and Search open the selected mod's
+		// details (#86), and everywhere else it opens a dashboard menu entry.
+		switch m.screen {
+		case ScreenProfiles:
 			return m.switchSelectedProfile()
+		case ScreenInstalledMods, ScreenSearch:
+			return m.openSelectedModDetails()
 		}
 		return m.openSelectedMenuEntry()
 	case key.Matches(msg, m.keys.ToggleEnable):
@@ -2729,6 +2741,8 @@ func (m Model) helpGroups() []helpGroup {
 	installedMods := helpGroup{
 		name: "installed mods",
 		entries: []string{
+			// Select is #86's enter-opens-details binding.
+			helpEntry(m.keys.Select),
 			helpEntry(m.keys.ToggleEnable),
 			helpEntry(m.keys.Uninstall),
 			helpEntry(m.keys.Deploy),
@@ -2772,6 +2786,10 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.PrevPage),
 			helpEntry(m.keys.CycleSource),
 			helpEntry(m.keys.Install),
+			// Select is #86's enter-opens-details binding - fires with the
+			// input blurred and a result selected, mirroring Install's own
+			// scoping (see openSelectedModDetails).
+			helpEntry(m.keys.Select),
 		},
 	}
 
@@ -2876,16 +2894,16 @@ func (m Model) helpGroups() []helpGroup {
 // same as before Task 9.
 func (m Model) helpBodyBudget() int {
 	if m.height == 0 {
-		// Bumped 40->50 in Task 4: the full uncapped group list was already
-		// at 41 lines after Task 3's conflicts group (silently one past the
-		// old 40 default), and the installed-mods group's two new
-		// MoveDown/MoveUp entries pushed it further past 40, to 43 -
-		// TestHelpViewListsPerScreenGroups depends on this staying
-		// "generous" enough to render every group's content, per this
-		// method's own doc comment. 50 leaves headroom above today's 43 for
-		// the next few tasks' bindings, rather than needing a re-bump for
-		// every single addition.
-		return 50
+		// Bumped 40->50 in Task 4 (see the history above this line for that
+		// jump's own accounting), then 50->65 for #86 Task 7: the two new
+		// Select entries (installed mods + search groups, documenting
+		// enter-opens-details) pushed the full uncapped group list to 57
+		// lines, one past 50. TestHelpViewListsPerScreenGroups depends on
+		// this staying "generous" enough to render every group's content,
+		// per this method's own doc comment. 65 leaves headroom above
+		// today's 57 for the next few tasks' bindings, rather than needing a
+		// re-bump for every single addition.
+		return 65
 	}
 	status := 0
 	if m.hasVisibleStatus() {

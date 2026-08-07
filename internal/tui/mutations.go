@@ -1218,6 +1218,160 @@ func (m Model) resolveInstallPlanFailure(msg installPlanFailedMsg) (Model, tea.C
 	return m, nil
 }
 
+// --- Mod details ('enter' on Installed Mods/Search, #86) ---
+
+// modDetailsFetchedMsg/modDetailsFailedMsg carry the background enrichment of
+// an ALREADY-PUSHED details view (#86). Gen-tagged like every other async
+// fetch in this file (planResultMsg/installPlanResultMsg above are the
+// template) so a result that lands after the user moved on is discarded by
+// app.go's gen check before it ever reaches the resolvers below.
+type modDetailsFetchedMsg struct {
+	gen     int
+	details ModDetails
+}
+
+type modDetailsFailedMsg struct {
+	gen int
+	err error
+}
+
+// selectedModForDetails resolves the row openSelectedModDetails should open,
+// branching on which screen dispatched it. task-7-brief.md's own listed
+// interface names m.selectedMod() as the sole selection source, but that
+// method (above) unconditionally reads m.mods indexed by
+// m.selected[ScreenInstalledMods] - using it verbatim from the Search screen
+// would open details for whatever row happens to be selected on Installed
+// Mods, not the search result actually highlighted, since the two screens
+// keep entirely separate selection state (m.selected[ScreenSearch] indexing
+// m.search.page.Results, not m.mods). Search instead mirrors
+// installSelectedSearchResult's own selection/guard shape (this file's
+// template for reading a Search-screen selection), including its
+// searchReady gate for the identical reason: startSearch bumps
+// m.search.state to searchLoading for a NEW query WITHOUT clearing
+// m.search.page (see that method's own doc comment), so the previous
+// query's results linger through searchLoading (and, more incidentally,
+// searchIdle/searchFailed/searchAuthRequired too) - reading
+// m.search.page.Results without this guard could open details for a result
+// that isn't the one currently displayed.
+func (m Model) selectedModForDetails() (ModItem, bool) {
+	if m.screen == ScreenSearch {
+		if m.search.state != searchReady {
+			return ModItem{}, false
+		}
+		idx := m.selected[ScreenSearch]
+		results := m.search.page.Results
+		if idx < 0 || idx >= len(results) {
+			return ModItem{}, false
+		}
+		return results[idx], true
+	}
+	return m.selectedMod()
+}
+
+// openSelectedModDetails handles enter (Select) on Installed Mods and Search
+// (#86): pushes the details view for the selected mod and kicks off the
+// enrichment fetch. THE VIEW IS PUSHED FIRST, seeded from the row already on
+// screen (modDetailsFromItem) - this is the local-first design contract the
+// whole feature exists for: pushing on fetch success instead would leave an
+// offline user with nothing, when the list already knew the name, version,
+// author, and install state. A no-op on the wrong screen, with no
+// DataProvider configured, while another action/fetch is already in flight,
+// or with no row selected - mirrors installSelectedSearchResult's own
+// guard/selection shape (this file's template for an async-dispatch handler
+// with a selection to read).
+func (m Model) openSelectedModDetails() (Model, tea.Cmd) {
+	if m.screen != ScreenInstalledMods && m.screen != ScreenSearch {
+		return m, nil
+	}
+	if m.provider == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+	item, ok := m.selectedModForDetails()
+	if !ok {
+		return m, nil
+	}
+
+	seed := modDetailsFromItem(item)
+	seed.Fetching = true
+	m.pushContext(newModDetailsContent(seed, m.keys))
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.action.cancel = cancel
+	m.action.gen++
+	gen := m.action.gen
+	m.action.running = true
+	m.action.status = fmt.Sprintf("Fetching details for %s…", item.Name)
+	m.action.statusIsError = false
+
+	provider := m.provider
+	return m, func() tea.Msg {
+		details, err := provider.GetModDetails(ctx, item)
+		if err != nil {
+			return modDetailsFailedMsg{gen: gen, err: err}
+		}
+		return modDetailsFetchedMsg{gen: gen, details: details}
+	}
+}
+
+// resolveModDetailsFetched handles a fresh (non-stale - callers check
+// msg.gen first) modDetailsFetchedMsg: swaps the enriched details into the
+// pushed view wholesale - a SUCCESSFUL fetch is authoritative, unlike the
+// failure path below, which must touch nothing but Fetching/FetchErr. offset
+// (scroll position) lives on modDetailsContent itself, untouched here, so
+// the fetch landing doesn't yank the user back to the top.
+func (m Model) resolveModDetailsFetched(msg modDetailsFetchedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+	m.action.status = ""
+	if c, ok := m.contextContent.(*modDetailsContent); ok {
+		details := msg.details
+		details.Fetching = false
+		details.FetchErr = ""
+		c.details = details
+	}
+	return m, nil
+}
+
+// resolveModDetailsFailed handles a fresh modDetailsFailedMsg: degrades in
+// place rather than closing the view or blanking it. This is the local-first
+// design's failure-path contract, and it is load-bearing: GetModDetails
+// returns a zero-value ModDetails{} alongside its error (both shipped
+// providers - coreProvider/prototypeProvider - follow that contract), so
+// assigning msg.details here the way resolveModDetailsFetched does above
+// would silently wipe the name/version/author/install-state fields the user
+// could already see, seeded locally when the view was pushed
+// (openSelectedModDetails). Only Fetching/FetchErr are ever touched on
+// c.details - see TestOpenModDetails_FailurePreservesSeededFields.
+func (m Model) resolveModDetailsFailed(msg modDetailsFailedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+	m.action.status = msg.err.Error()
+	m.action.statusIsError = true
+	if c, ok := m.contextContent.(*modDetailsContent); ok {
+		c.details.Fetching = false
+		c.details.FetchErr = msg.err.Error()
+	}
+	return m, nil
+}
+
 // installTitle renders an InstallPlanView's modal title: "Reinstall" when
 // the mod is already installed (view.Reinstall), "Install" otherwise - the
 // only distinction task-5-brief.md asks the title to carry for an
