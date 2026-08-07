@@ -732,6 +732,13 @@ func TestContextHostSwallowsDeclinedKeys(t *testing.T) {
 	m = updateWithMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
 
 	assert.Equal(t, before, m.selected[ScreenInstalledMods], "selection must not move behind pushed content")
+	// rec.EnableCalls alone is vacuous here: 'e' (undeclined) only opens a
+	// confirmation modal via m.action.pending - EnableCalls is appended when
+	// the modal's confirm cmd actually runs, which this test never drives.
+	// Asserting the modal/action state 'e'/'u' would have set is what
+	// actually fails if the swallow rule's `default:` arm is removed.
+	assert.Nil(t, m.action.pending, "a declined 'e' must not open the enable confirmation modal")
+	assert.False(t, m.action.running, "a declined 'u' must not start a check-updates action")
 	assert.Zero(t, rec.EnableCalls, "a declined key must not trigger a mutation underneath")
 	assert.NotNil(t, m.contextContent, "declined keys must not close the view either")
 }
