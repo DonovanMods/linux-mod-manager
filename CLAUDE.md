@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Issues close on merge into `develop`, not at release.** The tracker answers "what's left to build," so an issue whose work is merged is done — holding it open until the release tag would surface finished work on every "check for relevant open issues first" pass. Release traceability lives in `CHANGELOG.md` instead: entries carry their issue number and move from `[Unreleased]` into a dated `vX.Y.Z` section at release, which makes it a complete issue→release index. Don't duplicate that in issue state or milestones.
 
-Because `main` is the default branch, a PR's `Fixes #N` will **not** auto-close on a develop merge — **close the issue manually**, with a comment naming the merge commit and noting it is merged but not yet released (e.g. "Fixed in #229, merged to `develop` as 2a791cb. Ships with the next release batch."). Revisit this policy if the project starts taking bug reports from other people: for an external reporter, "closed" reads as "I can go download it," and a close-on-develop sends them hunting through a release that doesn't have the fix.
+Because `main` is the default branch, a PR's `Fixes #N` will **not** auto-close on a merge into `develop` — **close the issue manually**, with a comment naming the merge commit and noting it is merged but not yet released (e.g. "Fixed in #229, merged to `develop` as 2a791cb. Ships with the next release batch."). Revisit this policy if the project starts taking bug reports from other people: for an external reporter, "closed" reads as "I can go download it," and closing at the `develop` merge sends them hunting through a release that doesn't have the fix.
 
 ## Before Development
 
