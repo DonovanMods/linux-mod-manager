@@ -1,0 +1,18 @@
+============================================================
+Mod A
+============================================================
+ID: a  Version: 1.5  Author: Author A
+Category: Utilities
+Endorsements: 84213
+URL: https://example.invalid/mods/1
+Image: https://example.invalid/img/1.png
+
+Summary:
+A short summary.
+
+Description:
+<p>Line one.</p><br/><p>Line &amp; two.</p>
+
+Installed: v1.5 (profile: default)
+  Update policy: notify
+  Lock: locked at v1.2.3 — run 'lmm profile apply' to converge
