@@ -1742,7 +1742,7 @@ func healthFixResultLine(f HealthFinding) string {
 	if strings.HasPrefix(f.Status, "fixed_") {
 		glyph = "✓"
 	}
-	line := fmt.Sprintf("%s %s: %s", glyph, f.ModName, healthStatusLabel(f.Status))
+	line := fmt.Sprintf("%s %s: %s", glyph, healthFindingSubject(f), healthStatusLabel(f.Status))
 	if f.Note != "" {
 		line += " — " + f.Note
 	}

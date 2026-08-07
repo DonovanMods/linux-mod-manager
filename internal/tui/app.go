@@ -2246,6 +2246,25 @@ func (m Model) healthHomeView() string {
 	)
 }
 
+// healthFindingSubject returns the best available human-readable identifier
+// for a HealthFinding, in order: ModName, then ModID, then FileID. Some
+// findings genuinely carry no mod at all - e.g. a stale_deployment row for a
+// dangling cache link (#224 Copilot round 1) - so callers that assumed
+// ModName was always populated rendered a blank/stray label. The three
+// health surfaces that show a finding's subject (healthListPane's row
+// label, healthDetailPane's "Mod:" line, healthFixResultLine's overlay row
+// in mutations.go) all share this one fallback so their behavior can't
+// drift apart.
+func healthFindingSubject(f HealthFinding) string {
+	if f.ModName != "" {
+		return f.ModName
+	}
+	if f.ModID != "" {
+		return f.ModID
+	}
+	return f.FileID
+}
+
 // healthListPane renders the header (title + "last scan: ..." age line) and
 // the selectable "[glyph] STATUS  MOD (FILE)" rows, tinted by
 // healthStatusClass. Windowed/scroll-follow-selection like
@@ -2262,9 +2281,14 @@ func (m Model) healthListPane(width, maxLines int) string {
 	budget := max(maxLines-len(rows), 0)
 	rowFor := func(i int) string {
 		f := m.health.Findings[i]
-		label := f.ModName
-		if f.FileID != "" {
-			label = fmt.Sprintf("%s (%s)", f.ModName, f.FileID)
+		subject := healthFindingSubject(f)
+		label := subject
+		// Only append "(FileID)" when it adds information beyond the
+		// subject already shown - avoids the redundant "X (X)" shape when
+		// healthFindingSubject's own fallback already returned the FileID
+		// (e.g. a mod-less stale_deployment row, #224 Copilot round 1).
+		if f.FileID != "" && f.FileID != subject {
+			label = fmt.Sprintf("%s (%s)", subject, f.FileID)
 		}
 		line := fmt.Sprintf("%s %s  %s", m.healthGlyph(f.Status), healthStatusLabel(f.Status), label)
 		return m.row(i, truncate(line, max(innerWidth-prefixWidth, 1)))
@@ -2287,7 +2311,7 @@ func (m Model) healthDetailPane(width, maxLines int) string {
 	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 	lines := []string{
 		m.theme.PanelTitle.Render("DETAIL"),
-		truncate(fmt.Sprintf("Mod:    %s", f.ModName), innerWidth),
+		truncate(fmt.Sprintf("Mod:    %s", healthFindingSubject(f)), innerWidth),
 	}
 	if f.FileID != "" {
 		lines = append(lines, truncate(fmt.Sprintf("File:   %s", f.FileID), innerWidth))

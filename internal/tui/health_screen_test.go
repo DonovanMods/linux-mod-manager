@@ -70,6 +70,33 @@ func TestHealthHomeViewRendersFindingsAndHeaderAge(t *testing.T) {
 	require.Contains(t, view, "lock pending convergence at v2.0 — run 'lmm profile apply'")
 }
 
+// TestHealthViewRendersSubjectFallbackForModlessFinding covers a real case
+// (#224 Copilot round 1): a stale_deployment finding from a dangling cache
+// link carries no owning mod at all, only a FileID - ModName and ModID are
+// both empty. Both the list pane row and the detail pane's "Mod:" line must
+// fall back to the FileID as a meaningful subject rather than rendering a
+// blank/stray label (e.g. list pane's old "%s (%s)" shape produced a bare
+// " (stray.pak)"). The list row must also avoid the redundant "X (X)" shape
+// since the fallback subject IS the FileID here.
+func TestHealthViewRendersSubjectFallbackForModlessFinding(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	model.health = HealthView{
+		Findings: []HealthFinding{
+			{FileID: "stray.pak", Status: "stale_deployment"},
+		},
+	}
+	model.screen = ScreenHealth
+	model.selected[ScreenHealth] = 0
+
+	view := model.View()
+	require.Contains(t, view, "stray.pak")
+	require.NotContains(t, view, "stray.pak (stray.pak)", "list row must not repeat the fallback subject as its own parenthetical")
+	require.NotContains(t, view, " (stray.pak)", "list row must not render a blank-subject label like \" (stray.pak)\"")
+	require.Contains(t, view, "Mod:    stray.pak", "detail pane's Mod: line must fall back to the FileID")
+}
+
 // TestHealthHomeViewEmptyState covers a fresh session that hasn't scanned
 // yet: healthAt is nil (its zero value) and m.health carries no findings.
 // Deliberately skips sizedPrototypeModel's Init()/loadData round trip (#224
@@ -650,6 +677,37 @@ func TestFixHealthConfirmDispatchesFullFixModeAndLandsView(t *testing.T) {
 
 	require.NotNil(t, refresh, "a successful fix must return the ordinary data refresh")
 	require.IsType(t, dataLoadedMsg{}, refresh())
+}
+
+// TestFixHealthResultOverlaySubjectFallbackForModlessFinding proves the fix
+// results overlay line (healthFixResultLine) also uses the ModName->ModID->
+// FileID subject fallback (#224 Copilot round 1): a fixed_stale_deployment
+// row from a dangling cache link carries no mod at all, only a FileID, and
+// must not render the bare "✓ : FIXED STALE DEPLOYMENT" the old
+// f.ModName-only line produced.
+func TestFixHealthResultOverlaySubjectFallbackForModlessFinding(t *testing.T) {
+	t.Parallel()
+
+	resultView := HealthView{
+		Full:     true,
+		Findings: []HealthFinding{{FileID: "stray.pak", Status: "fixed_stale_deployment"}},
+	}
+	rec := &recordingActions{RunHealthCheckOutcome: resultView}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	model.health = HealthView{Findings: []HealthFinding{{FileID: "stray.pak", Status: "stale_deployment"}}}
+
+	updated, _ := model.Update(keyRunes("F"))
+	model = updated.(Model)
+	updated, cmd := model.Update(keyRunes("y"))
+	model = updated.(Model)
+	msg := runActionCmd(t, cmd)
+
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.overlay)
+	require.Contains(t, model.overlay.lines, "✓ stray.pak: FIXED STALE DEPLOYMENT")
 }
 
 // TestFixHealthLockedVersionMismatchRemainsInOverlay proves the engine's own

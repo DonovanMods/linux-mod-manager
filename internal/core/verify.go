@@ -259,7 +259,7 @@ func (r *verifyRun) convergencePass() {
 func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
 	fileCountByMod := make(map[string]int)
 	for _, f := range files {
-		key := f.SourceID + ":" + f.ModID
+		key := domain.ModKey(f.SourceID, f.ModID)
 		if r.opts.ModFilter != "" && f.ModID != r.opts.ModFilter {
 			continue
 		}
@@ -508,7 +508,7 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 
 	modNames := make(map[string]string, len(installedMods))
 	for _, m := range installedMods {
-		modNames[m.SourceID+":"+m.ID] = m.Name
+		modNames[domain.ModKey(m.SourceID, m.ID)] = m.Name
 	}
 
 	outcomes, ok := r.svc.MergedPakOutcomes(r.game, r.profile)
@@ -525,7 +525,7 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 		// unknown-mod skip in perFileWalk does when a checksum row's mod
 		// can't be found - a stable, non-empty identifier beats silence
 		// either way.
-		name := modNames[entry.SourceID+":"+entry.ModID]
+		name := modNames[domain.ModKey(entry.SourceID, entry.ModID)]
 		if name == "" {
 			name = entry.ModID
 		}
