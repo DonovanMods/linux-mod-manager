@@ -655,7 +655,7 @@ func TestDashboardLayoutsFitHeightBudgetOnShortTerminals(t *testing.T) {
 
 // Commander's half-width panels are narrow enough at small widths (40x12:
 // panel width ~19, content ~15) that an untruncated menu label like
-// "> Consult Conflict Oracle" lipgloss-auto-wraps into two physical lines
+// "> Verify Integrity" lipgloss-auto-wraps into two physical lines
 // inside the panel. clampLines counts logical lines, so a wrapped row slips
 // past the clamp and silently grows the view over the height budget (#42);
 // the fix is per-line truncation to the panel's content width, the same

@@ -1,20 +1,20 @@
                                                                                                                         
   LMM // Linux Mod Manager                                                                                              
-  [1] Dashboard  •2• Installed Mods  [3] Search  [4] Profiles  [5] Sources  [6] Health                                  
+  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources  •6• Health                                  
                                                                                                                         
   ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
-  │ SPELLBOOK: INSTALLED MODS                                                                                        │  
-  │ [/] Search                                                                                                       │  
-  │ > SkyUI                                                               installed         schlangster          5.2 │  
-  │   USSEP                                                               update            Arthmoor             4.3 │  
-  │   SKSE Address Library                                                installed         meh321                11 │  
-  │   Immersive Armors                                                    conflict          hothtrooper44        8.1 │  
-  │   Alternate Start                                                     disabled          Arthmoor             4.2 │  
+  │ HEALTH                                                                                                           │  
+  │ last scan: local, just now — 3 checked, 2 conflict(s)                                                            │  
+  │ > STALE DEPLOYMENT   SkyUI                    main                           cache content differs from what's … │  
+  │   CONVERSION FAILED  Bear Mount                                              pak-to-exmod conversion failed: un… │  
+  │   OK                 Immersive Armors         main                                                               │  
+  │   STALE CONFLICT     USSEP                    meshes/armor/stee…             load order says USSEP should win —… │  
+  │   CONFLICT           USSEP                    textures/frost.dds             owned by USSEP — reorder (J/K on I… │  
   │                                                                                                                  │  
-  │                                                                                                                  │  
-  │                                                                                                                  │  
-  │                                                                                                                  │  
-  │                                                                                                                  │  
+  │ Mod:    SkyUI — STALE DEPLOYMENT                                                                                 │  
+  │ File:   main                                                                                                     │  
+  │ Note:   cache content differs from what's deployed                                                               │  
+  │ run a fix (F) to remove                                                                                          │  
   │                                                                                                                  │  
   │                                                                                                                  │  
   │                                                                                                                  │  

@@ -21,7 +21,7 @@ import (
 const defaultContentWidth = 76
 
 // menuItem is one dashboard menu entry. hasTarget is false for flavor-only
-// entries (like the Conflict Oracle) that have no screen yet.
+// entries that have no screen yet.
 type menuItem struct {
 	label     string
 	target    Screen
@@ -1556,7 +1556,7 @@ func (m Model) commanderDashboardView() string {
 		contentBudget)
 
 	// These half-width panels are narrow enough at small terminal widths that
-	// an overlong row ("> Consult Conflict Oracle" at width 40) would
+	// an overlong row ("> Verify Integrity" at width 40) would
 	// lipgloss-auto-wrap; truncateLines (see clamp.go) prevents that (#42).
 	leftContentWidth := max(leftWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
 	rightContentWidth := max(rightWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)

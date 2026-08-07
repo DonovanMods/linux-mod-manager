@@ -1,13 +1,13 @@
                                                                                                                         
   LMM // Linux Mod Manager                                                                                              
-  •1• Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources  [6] Conflicts                               
+  •1• Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources  [6] Health                                  
                                                                                                                         
   ╭───────────────────────────────────────────────────────╮ ╭───────────────────────────────────────────────────────╮   
   │ PARTY                                                 │ │ QUEST LOG                                             │   
   │ Game:    Skyrim Special Edition                       │ │ 3 updates available                                   │   
   │ Profile: survival                                     │ │ 2 file conflict                                       │   
-  │ Mods:    42 installed / 39 enabled                    │ │ Last deploy: 3h ago                                   │   
-  │                                                       │ │                                                       │   
+  │ Mods:    42 installed / 39 enabled                    │ │ Health: 0 issue(s), 2 warning(s) (local)              │   
+  │                                                       │ │ Last deploy: 3h ago                                   │   
   │                                                       │ │                                                       │   
   │                                                       │ │                                                       │   
   │                                                       │ │                                                       │   
@@ -22,7 +22,7 @@
   │   Search Archives                                                                                                │  
   │   Profiles                                                                                                       │  
   │   Sources                                                                                                        │  
-  │   Consult Conflict Oracle                                                                                        │  
+  │   Verify Integrity                                                                                               │  
   │                                                                                                                  │  
   │                                                                                                                  │  
   │                                                                                                                  │  

@@ -1,21 +1,21 @@
                                                                                 
   LMM // Linux Mod Manager                                                      
-  •1• Dashboard  [2]  [3]  [4]  [5]  [6]                                        
+  [1]  [2]  [3]  [4]  [5]  •6• Health                                           
                                                                                 
   ╭──────────────────────────────────────────────────────────────────────────╮  
-  │ BOOT SEQUENCE // MOD GUILD TERMINAL                                      │  
-  │ > GAME     Skyrim Special Edition                                        │  
-  │ > PROFILE  survival                                                      │  
-  │ > MODS     42 INSTALLED / 39 ENABLED                                     │  
-  │ > ALERTS   3 UPDATES // 2 CONFLICT                                       │  
-  │ > Health: 0 issue(s), 2 warning(s) (local)                               │  
-  │ > DEPLOY   3H AGO                                                        │  
+  │ HEALTH                                                                   │  
+  │ last scan: local, just now — 3 checked, 2 conflict(s)                    │  
+  │ > STALE DEPL… SkyUI             main                cache content diffe… │  
+  │   CONVERSION… Bear Mount                            pak-to-exmod conver… │  
+  │   OK          Immersive Armors  main                                     │  
+  │   STALE CONF… USSEP             meshes/arm…         load order says USS… │  
+  │   CONFLICT    USSEP             textures/f…         owned by USSEP — re… │  
   │                                                                          │  
-  │ > RUN SPELLBOOK SCAN                                                     │  
-  │   QUERY ARCHIVE INDEX                                                    │  
-  │   LOAD PROFILE ROSTER                                                    │  
-  │   SCRY SOURCE REGISTRY                                                   │  
-  │   VERIFY INTEGRITY                                                       │  
+  │ Mod:    SkyUI — STALE DEPLOYMENT                                         │  
+  │ File:   main                                                             │  
+  │ Note:   cache content differs from what's deployed                       │  
+  │ run a fix (F) to remove                                                  │  
+  │                                                                          │  
   │                                                                          │  
   │                                                                          │  
   ╰──────────────────────────────────────────────────────────────────────────╯  
