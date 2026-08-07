@@ -684,6 +684,29 @@ var prototypeHealthFindings = []HealthFinding{
 // unreported" mods to account for.
 var prototypeHealthChecked = len(prototypeHealthFindings)
 
+// prototypeHealthFixedFindings is prototypeHealthFindings' post-"--fix" demo
+// shape (2026-08-07 smoke feedback, Copilot round 11): RunHealthCheck's
+// fix=true branch used to return an emptied HealthView (Checked: 0, no
+// Findings), which contradicted the Health screen's own "OK rows included,
+// per checked file" convention once the OK-rows model landed - a
+// --prototype fix demo rendered as though nothing had been checked at all.
+// This instead mirrors the real engine's own --fix convention
+// (cmd/lmm/verify.go's doc comment): the stale_deployment row flips to
+// "fixed_stale_deployment", carrying its Note over unchanged (the
+// stale-deployment reason is "populated on both" statuses per that same
+// doc comment); the conversion_failed row is left as-is, since no
+// "fixed_conversion_failed" status exists - conversion failures aren't
+// --fix-repairable (internal/core/verify.go only ever emits
+// "conversion_failed", never a fixed_ counterpart); the ok row is
+// untouched. Checked stays prototypeHealthChecked - a --fix pass resolves
+// what it already found, it doesn't check MORE files than the initial scan
+// did.
+var prototypeHealthFixedFindings = []HealthFinding{
+	{ModID: "101", ModName: "SkyUI", FileID: "main", Status: "fixed_stale_deployment", Note: "cache content differs from what's deployed"},
+	{ModID: "bear-mount", ModName: "Bear Mount", Status: "conversion_failed", Note: "pak-to-exmod conversion failed: unsupported UE version"},
+	{ModID: "202", ModName: "Immersive Armors", FileID: "main", Status: "ok"},
+}
+
 // Health returns the canned demo Health view (#224 Task 8) so --prototype
 // mode can demo the Health screen's initial content without touching disk,
 // network, DB, or APIs - mirroring every other prototypeProvider read

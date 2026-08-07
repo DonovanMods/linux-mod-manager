@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -704,6 +705,37 @@ func TestPrototypeProviderActions_AvailableVersions_ReturnsCannedList(t *testing
 	versions, err := actions.AvailableVersions(context.Background(), ModItem{ID: "skyui", Source: "nexusmods", Name: "SkyUI"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1.2", "1.1", "1.0"}, versions)
+}
+
+// TestPrototypeProviderActions_RunHealthCheck_FixKeepsCheckedRows is a
+// Copilot round-11 finding (real, #224): RunHealthCheck(fix=true) used to
+// return an emptied HealthView (Checked: 0, no Findings at all) -
+// simulating "every problem resolved" by simulating nothing having been
+// checked in the first place. That contradicts the Health screen's own "OK
+// rows included, per checked file" convention (established once the
+// OK-rows model landed): a --prototype fix demo rendered as if the fix pass
+// never scanned anything, instead of showing the canned problems resolved.
+// This proves the post-fix canned view keeps a non-zero Checked count and
+// non-empty Findings, including at least one resolved "fixed_*" row.
+func TestPrototypeProviderActions_RunHealthCheck_FixKeepsCheckedRows(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	view, err := actions.RunHealthCheck(context.Background(), true, true, func(ActionProgress) {})
+	require.NoError(t, err)
+
+	assert.Positive(t, view.Checked, "a --fix pass still reports how many files it checked, same as the pre-fix canned view")
+	require.NotEmpty(t, view.Findings, "a --fix demo must still show what it checked, not an emptied view")
+
+	var sawFixed bool
+	for _, f := range view.Findings {
+		if strings.HasPrefix(f.Status, "fixed_") {
+			sawFixed = true
+		}
+		assert.NotEqual(t, "stale_deployment", f.Status, "the canned stale_deployment row must flip to its fixed_ equivalent after --fix")
+	}
+	assert.True(t, sawFixed, "at least one canned row must show as resolved (fixed_*) after --fix")
 }
 
 func requireModByID(t *testing.T, mods []ModItem, id string) ModItem {
