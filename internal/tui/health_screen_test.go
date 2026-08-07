@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -237,4 +239,261 @@ func TestPopContextNoopWhenNothingPushed(t *testing.T) {
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	model = updated.(Model)
 	require.Equal(t, ScreenHealth, model.CurrentScreen(), "esc with nothing pushed must not move the screen")
+}
+
+// --- Task 11: 'c' full (network) health check ---
+
+// TestFullCheckKeyDispatchesOnHealthScreen proves 'c' on ScreenHealth
+// dispatches RunHealthCheck's Full tier asynchronously - mirroring
+// TestCheckUpdatesKeyDispatchesAsyncFetchFromDashboard's own "running set
+// synchronously, provider call happens when the returned cmd runs" shape.
+func TestFullCheckKeyDispatchesOnHealthScreen(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{RunHealthCheckOutcome: HealthView{Full: true}}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+
+	updated, cmd := model.Update(keyRunes("c"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+	require.True(t, model.action.running)
+	require.Equal(t, "Running full health check…", model.action.status)
+	require.False(t, model.action.statusIsError)
+	require.Empty(t, rec.RunHealthCheckCalls, "the provider call happens when the returned cmd runs, not synchronously")
+
+	msg := runActionCmd(t, cmd)
+	require.IsType(t, fullHealthCheckResultMsg{}, msg)
+	require.Len(t, rec.RunHealthCheckCalls, 1)
+	require.True(t, rec.RunHealthCheckCalls[0].Full, "must request the Full (network) tier")
+	require.False(t, rec.RunHealthCheckCalls[0].Fix, "must be a dry run - fix is Task 12's own binding")
+}
+
+// TestFullCheckLandsViewAndStatusLine covers both status-line phrasings
+// task-11-brief.md specifies, plus the view/summary tie-in a successful
+// check must apply.
+func TestFullCheckLandsViewAndStatusLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		view       HealthView
+		wantStatus string
+	}{
+		{
+			name:       "all ok",
+			view:       HealthView{Full: true},
+			wantStatus: "full check: all OK",
+		},
+		{
+			name: "issues and warnings",
+			view: HealthView{
+				Full:     true,
+				Issues:   2,
+				Warnings: 1,
+				Findings: []HealthFinding{{ModID: "skyui", ModName: "SkyUI", Status: "missing"}},
+			},
+			wantStatus: "full check: 2 issue(s), 1 warning(s)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := &recordingActions{RunHealthCheckOutcome: tt.view}
+			model := modelWithActions(t, rec)
+			model.screen = ScreenHealth
+
+			updated, cmd := model.Update(keyRunes("c"))
+			model = updated.(Model)
+			msg := runActionCmd(t, cmd)
+
+			updated, cmd2 := model.Update(msg)
+			model = updated.(Model)
+			require.Nil(t, cmd2)
+			require.False(t, model.action.running)
+			require.Equal(t, tt.wantStatus, model.action.status)
+			require.False(t, model.action.statusIsError)
+			require.Equal(t, tt.view, model.health)
+			require.NotNil(t, model.healthAt)
+			require.Empty(t, model.healthErr)
+			require.Equal(t, tt.view.Issues, model.summary.HealthIssues)
+			require.Equal(t, tt.view.Warnings, model.summary.HealthWarnings)
+		})
+	}
+}
+
+// TestFullCheckFailurePreservesPreviousViewAndSetsErrorStatus proves a
+// failed Full-tier call reports the error on the status line but leaves
+// m.health/healthAt exactly as they were (task-11-brief.md: "on failure...
+// KEEP the previous view"), mirroring dataLoadedMsg's identical posture for
+// a failed background scan (app.go).
+func TestFullCheckFailurePreservesPreviousViewAndSetsErrorStatus(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{RunHealthCheckErr: errors.New("network unreachable")}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	prevAt := time.Date(2026, time.August, 6, 10, 0, 0, 0, time.UTC)
+	model.healthAt = &prevAt
+	model.health = HealthView{Findings: []HealthFinding{{ModID: "x", ModName: "X", Status: "missing"}}, Issues: 1}
+
+	updated, cmd := model.Update(keyRunes("c"))
+	model = updated.(Model)
+	msg := runActionCmd(t, cmd)
+	require.IsType(t, fullHealthCheckFailedMsg{}, msg)
+
+	updated, cmd2 := model.Update(msg)
+	model = updated.(Model)
+	require.Nil(t, cmd2)
+	require.False(t, model.action.running)
+	require.True(t, model.action.statusIsError)
+	require.Contains(t, model.action.status, "network unreachable")
+	require.Equal(t, prevAt, *model.healthAt, "a failed full check must keep the previous scan's timestamp")
+	require.Len(t, model.health.Findings, 1, "a failed full check must keep the previous view")
+}
+
+// TestFullCheckKeyRefusedWhileRunning mirrors TestCheckUpdatesKeyInertWhileRunning:
+// the standard single-flight "busy" refusal, no RunHealthCheck call at all.
+func TestFullCheckKeyRefusedWhileRunning(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	model.action.running = true
+
+	updated, cmd := model.Update(keyRunes("c"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Empty(t, rec.RunHealthCheckCalls)
+}
+
+// TestFullCheckKeyInertWhileAnotherModalPending mirrors
+// TestCheckUpdatesKeyInertWhileAnotherModalPending: a DIFFERENT already-
+// pending confirmation modal is left completely undisturbed by 'c'.
+func TestFullCheckKeyInertWhileAnotherModalPending(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		return ActionOutcome{}, nil
+	})
+	model = model.promptAction(pa)
+
+	updated, cmd := model.Update(keyRunes("c"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Equal(t, actionDeploy, model.action.pending.kind, "the original modal must still be showing")
+	require.Empty(t, rec.RunHealthCheckCalls)
+}
+
+// TestFullCheckKeyOtherScreensNoop proves 'c' is inert on every screen other
+// than Health (ScreenProfiles is deliberately excluded - see
+// TestFullCheckKeyDoesNotStealCFromCreateProfile below, which proves the
+// opposite: 'c' DOES still do something there, just not a full check).
+func TestFullCheckKeyOtherScreensNoop(t *testing.T) {
+	t.Parallel()
+
+	for _, screen := range []Screen{ScreenDashboard, ScreenInstalledMods, ScreenSearch, ScreenSources, ScreenConflicts} {
+		rec := &recordingActions{}
+		model := modelWithActions(t, rec)
+		model.screen = screen
+
+		updated, cmd := model.Update(keyRunes("c"))
+		model = updated.(Model)
+		require.Nil(t, cmd, "screen %v", screen)
+		require.False(t, model.action.running, "screen %v", screen)
+		require.Empty(t, rec.RunHealthCheckCalls, "screen %v", screen)
+	}
+}
+
+// TestFullCheckKeyDoesNotStealCFromCreateProfile is the collision proof
+// keys.go's FullCheck doc comment promises: FullCheck and CreateProfile
+// share the physical key "c", but updateKey's compound guard (app.go) keeps
+// CreateProfile fully functional on ScreenProfiles - see that switch case's
+// own doc comment for the "first matching case wins" mechanics this pins.
+func TestFullCheckKeyDoesNotStealCFromCreateProfile(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenProfiles
+
+	updated, _ := model.Update(keyRunes("c"))
+	model = updated.(Model)
+	require.NotNil(t, model.inputModal, "'c' on ScreenProfiles must still open CreateProfile's input modal")
+	require.Empty(t, rec.RunHealthCheckCalls)
+}
+
+// TestFullCheckKeyDeclinedWithPushedContextOnHealth proves the "&&
+// m.contextContent == nil" half of updateKey's compound guard: 'c' while
+// ScreenHealth has pushed context content (contextview.go) must not
+// dispatch a full check - it falls through to CreateProfile's own
+// unconditional case instead, which no-ops off-Profiles exactly as it
+// always has (see TestFullCheckKeyDoesNotStealCFromCreateProfile above for
+// the case where "c" DOES reach CreateProfile productively).
+func TestFullCheckKeyDeclinedWithPushedContentOnHealth(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenConflicts
+
+	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
+	model.pushContext(fake, ScreenConflicts)
+	require.Equal(t, ScreenHealth, model.CurrentScreen())
+
+	updated, cmd := model.Update(keyRunes("c"))
+	model = updated.(Model)
+	require.Nil(t, cmd)
+	require.Empty(t, rec.RunHealthCheckCalls, "'c' must not dispatch a full check while context content is pushed")
+	require.NotNil(t, model.contextContent, "the pushed content must remain")
+}
+
+// TestFullCheckProgressTicksReachStatusLine drives the FULL pump pipeline
+// through Model.Update, mirroring
+// TestActionProgressStreamsWhileRunningThenActionDoneClearsIt's identical
+// shape (actions_test.go): runFullHealthCheck's tea.Batch(actionCmd,
+// listenerCmd) is exactly what buildAction's own confirm returns, so the
+// same drive-both-sub-cmds-through-Update technique proves the Full tier's
+// progress ticks reach the status line too.
+func TestFullCheckProgressTicksReachStatusLine(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{
+		RunHealthCheckOutcome: HealthView{Full: true},
+		RunHealthCheckTicks:   []ActionProgress{{Line: "Checking SkyUI: 3/10", Percent: 30}},
+	}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenHealth
+
+	updated, cmd := model.Update(keyRunes("c"))
+	model = updated.(Model)
+	require.NotNil(t, cmd)
+
+	batchMsg := cmd()
+	batch, ok := batchMsg.(tea.BatchMsg)
+	require.True(t, ok, "runFullHealthCheck must return tea.Batch(actionCmd, listenerCmd)")
+	require.Len(t, batch, 2)
+
+	actionMsg := batch[0]()
+	require.IsType(t, fullHealthCheckResultMsg{}, actionMsg)
+
+	// The action cmd already ran do() to completion (sending its one tick and
+	// closing the channel) before actionMsg was produced above, so the
+	// listener's first receive gets that buffered tick even though the
+	// channel is already closed (Go delivers buffered values before
+	// signaling closed - see waitForActionProgress's own doc comment).
+	progressMsg := batch[1]()
+	require.IsType(t, actionProgressMsg{}, progressMsg)
+
+	updated, reissue := model.Update(progressMsg)
+	model = updated.(Model)
+	require.Equal(t, "Checking SkyUI: 3/10", model.action.progress.Line)
+	require.Contains(t, model.statusLine(), "Checking SkyUI: 3/10")
+	require.NotNil(t, reissue, "a fresh tick must re-issue the listener")
 }

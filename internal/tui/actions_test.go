@@ -743,6 +743,17 @@ func TestQuitDrainResolvesImmediatelyOnFreshPlanOrCheckMsg(t *testing.T) {
 		{"checkUpdatesFailedMsg", func(gen int) tea.Msg {
 			return checkUpdatesFailedMsg{gen: gen, err: errors.New("boom")}
 		}},
+		// fullHealthCheckResultMsg/fullHealthCheckFailedMsg (#224 Task 11) are
+		// the SAME "PLAN/CHECK step settling mid-drain" shape checkForUpdates
+		// established - extending this table's coverage to them, rather than a
+		// separate one-off test, is exactly resolveDrainedQuit's own doc
+		// comment's "eight plan/check messages" framing.
+		{"fullHealthCheckResultMsg", func(gen int) tea.Msg {
+			return fullHealthCheckResultMsg{gen: gen, view: HealthView{Full: true}}
+		}},
+		{"fullHealthCheckFailedMsg", func(gen int) tea.Msg {
+			return fullHealthCheckFailedMsg{gen: gen, err: errors.New("boom")}
+		}},
 	}
 
 	for _, tt := range tests {

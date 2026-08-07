@@ -577,13 +577,15 @@ func (m Model) startQuit() (Model, tea.Cmd) {
 // modal, or updating the status line for a process that's about to exit -
 // just clear draining and quit now instead of racing actionDrainTimeout.
 // Shared by every message that can arrive mid-drain: actionDoneMsg/
-// actionFailedMsg (a running MUTATION settling) in app.go, and the six
+// actionFailedMsg (a running MUTATION settling) in app.go, and the eight
 // plan/check messages - planResultMsg/planFailedMsg, installPlanResultMsg/
-// installPlanFailedMsg, checkUpdatesResultMsg/checkUpdatesFailedMsg (a
+// installPlanFailedMsg, checkUpdatesResultMsg/checkUpdatesFailedMsg, and
+// (#224 Task 11) fullHealthCheckResultMsg/fullHealthCheckFailedMsg (a
 // PLAN/CHECK step settling) - via their resolve* handlers in mutations.go
-// (Copilot PR #63 finding: those six never checked draining at all, so quit
-// blocked for the full actionDrainTimeout even though the awaited step had
-// already finished). Callers must check m.action.draining themselves before
+// (Copilot PR #63 finding: the original six never checked draining at all,
+// so quit blocked for the full actionDrainTimeout even though the awaited
+// step had already finished; Task 11's pair follows the same contract from
+// the start). Callers must check m.action.draining themselves before
 // calling this - it unconditionally clears the flag and quits.
 func (m Model) resolveDrainedQuit() (Model, tea.Cmd) {
 	m.action.draining = false

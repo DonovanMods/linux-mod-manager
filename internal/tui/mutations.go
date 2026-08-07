@@ -1504,6 +1504,136 @@ func (m Model) resolveCheckUpdatesFailure(msg checkUpdatesFailedMsg) (Model, tea
 	return m, nil
 }
 
+// --- Health: 'c' full (network) check (#224 Task 11) ---
+
+// fullHealthCheckResultMsg carries a successful Full-tier RunHealthCheck
+// result, tagged with the generation established when the check was
+// dispatched (see runFullHealthCheck) so a superseded result is discarded -
+// mirrors checkUpdatesResultMsg's own gen-tag reasoning in full.
+type fullHealthCheckResultMsg struct {
+	gen  int
+	view HealthView
+}
+
+// fullHealthCheckFailedMsg carries a failed Full-tier RunHealthCheck call,
+// tagged like fullHealthCheckResultMsg.
+type fullHealthCheckFailedMsg struct {
+	gen int
+	err error
+}
+
+// runFullHealthCheck handles 'c' on ScreenHealth (updateKey's own compound
+// guard - m.screen == ScreenHealth && m.contextContent == nil - already
+// keeps this from ever firing while ScreenHealth has pushed context content
+// or on any other screen, where "c" is instead CreateProfile; the screen/
+// actions checks below are defense-in-depth, matching every other mutation
+// handler's own "TUI-level check repeats the caller's guard" convention -
+// see deleteSelectedProfile's doc comment): a no-op with no ActionProvider
+// or while another action/plan is already in flight (buildAction's own
+// "busy" convention - checked directly here rather than via buildAction
+// itself, since this dispatches a custom result message, not the generic
+// actionDoneMsg/actionKind pair - see the six plan/check messages'
+// precedent in mutations.go, extended here to eight).
+//
+// Deliberately hand-rolls buildAction's own gen/cancel/progress-channel
+// bookkeeping instead of calling it: buildAction ties its result to
+// actionDoneMsg{kind, outcome} for the generic confirmation-modal flow, but
+// this action has no modal and needs to store a whole HealthView (not just
+// an ActionOutcome string) plus a bespoke status line - exactly the shape
+// checkForUpdates/resolveCheckUpdatesResult already use for the identical
+// reason, extended here with the SAME progress pump buildAction wires
+// (ch/waitForActionProgress/tea.Batch) since, unlike CheckUpdates, the Full
+// tier genuinely streams progress.
+func (m Model) runFullHealthCheck() (Model, tea.Cmd) {
+	if m.screen != ScreenHealth || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.action.cancel = cancel
+	m.action.gen++
+	gen := m.action.gen
+	m.action.running = true
+	m.action.status = "Running full health check…"
+	m.action.statusIsError = false
+
+	ch := make(chan ActionProgress, 1)
+	m.action.progressCh = ch
+
+	actionCmd := func() tea.Msg {
+		view, err := m.actions.RunHealthCheck(ctx, true, false, func(p ActionProgress) { sendActionProgress(ch, p) })
+		close(ch)
+		if err != nil {
+			return fullHealthCheckFailedMsg{gen: gen, err: err}
+		}
+		return fullHealthCheckResultMsg{gen: gen, view: view}
+	}
+	return m, tea.Batch(actionCmd, waitForActionProgress(ch, gen))
+}
+
+// resolveFullHealthCheckResult handles a fresh fullHealthCheckResultMsg:
+// stores the returned view as the Health screen's new content (m.health,
+// healthAt stamped at m.now() - matching dataLoadedMsg's own "stamp at
+// receipt" convention, see healthAt's doc comment), clears any stale scan
+// error, and folds Issues/Warnings into the dashboard's summary signal
+// (mirroring dataLoadedMsg's identical Health tie-in in app.go). The status
+// line reports the outcome directly - task-11-brief.md's exact wording -
+// rather than going through formatOutcomeStatus, since there is no
+// ActionOutcome here to format.
+func (m Model) resolveFullHealthCheckResult(msg fullHealthCheckResultMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	// Mirrors resolveCheckUpdatesResult's identical drain-first check (Copilot
+	// PR #63 finding): the app is exiting, so none of the state below - the
+	// new view, the summary counts, the status line - would ever be seen.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+
+	view := msg.view
+	m.health = view
+	now := m.now()
+	m.healthAt = &now
+	m.healthErr = ""
+	m.summary.HealthIssues, m.summary.HealthWarnings = view.Issues, view.Warnings
+
+	if view.Issues == 0 && view.Warnings == 0 {
+		m.action.status = "full check: all OK"
+	} else {
+		m.action.status = fmt.Sprintf("full check: %d issue(s), %d warning(s)", view.Issues, view.Warnings)
+	}
+	m.action.statusIsError = false
+	return m, nil
+}
+
+// resolveFullHealthCheckFailure handles a fresh fullHealthCheckFailedMsg:
+// status line error, no modal, and - unlike a success - m.health/healthAt
+// are left completely untouched (task-11-brief.md: "on failure... KEEP the
+// previous view"), matching dataLoadedMsg's own "a failed scan leaves the
+// last known-good view in place" posture (app.go).
+func (m Model) resolveFullHealthCheckFailure(msg fullHealthCheckFailedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+	m.action.status = singleLine(msg.err.Error())
+	m.action.statusIsError = true
+	return m, nil
+}
+
 // updateDetailLines renders an UpdatesView as the "Apply N update(s)?"
 // modal's detail lines: one "<name> <from> → <to>" line per update (the
 // machinery's own "+N more" collapsing, actionModalView, applies here

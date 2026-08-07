@@ -752,6 +752,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.resolveCheckUpdatesFailure(msg)
+	case fullHealthCheckResultMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveFullHealthCheckResult(msg)
+	case fullHealthCheckFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveFullHealthCheckFailure(msg)
 	case policyChosenMsg:
 		return m.resolvePolicyChoice(msg)
 	case versionsFetchedMsg:
@@ -1070,6 +1080,21 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.editSelectedModLock()
 	case key.Matches(msg, m.keys.ConvertToggle):
 		return m.toggleSelectedModConvert()
+	// FullCheck and CreateProfile deliberately share the physical key "c"
+	// (#224 Task 11 - see keys.go's FullCheck doc comment): FullCheck's own
+	// case condition carries its screen/context guard INLINE, unlike every
+	// other binding's bare key.Matches, specifically so it can sit ahead of
+	// CreateProfile's unconditional one in this switch without stealing "c"
+	// on ScreenProfiles - a Go "switch true" takes the FIRST case whose
+	// condition holds, so on ScreenHealth (no pushed context) this case wins
+	// outright, and everywhere else (including ScreenHealth WITH pushed
+	// context, where the guard's own contextContent check is what disqualifies
+	// it) the condition is false and control falls through to CreateProfile's
+	// case exactly as it did before this task - CreateProfile's own internal
+	// screen guard (createProfilePrompt, mutations.go) still no-ops it on any
+	// screen but Profiles, so nothing about its pre-existing behavior changes.
+	case key.Matches(msg, m.keys.FullCheck) && m.screen == ScreenHealth && m.contextContent == nil:
+		return m.runFullHealthCheck()
 	case key.Matches(msg, m.keys.CreateProfile):
 		return m.createProfilePrompt()
 	case key.Matches(msg, m.keys.DeleteProfile):
@@ -2512,13 +2537,14 @@ func (m Model) helpGroups() []helpGroup {
 	// health is Task 9's Health-screen group (#224): unlike every other
 	// screen group above, it lists its OWN jump-to-screen key (HealthScreen,
 	// "7") rather than leaving that to the global group's generic "1-7"
-	// entry - without it the group would start life empty (c/F, Tasks
-	// 11/12, don't exist yet on this branch) and read as broken rather than
-	// "grows later".
+	// entry - without it the group would start life empty and read as
+	// broken rather than "grows later". FullCheck ("c", Task 11) now fills
+	// that in; F (fix, Task 12) still doesn't exist yet on this branch.
 	health := helpGroup{
 		name: "health",
 		entries: []string{
 			helpEntry(m.keys.HealthScreen),
+			helpEntry(m.keys.FullCheck),
 		},
 	}
 

@@ -150,6 +150,15 @@ type KeyMap struct {
 	// mod on the Installed Mods screen. Lowercase per the single-screen
 	// non-destructive-toggle convention (see ToggleEnable's "e").
 	ConvertToggle key.Binding
+	// FullCheck is Task 11's Health-screen full (network) verify binding
+	// (#224, see mutations.go's runFullHealthCheck): fires on ScreenHealth
+	// with no pushed context content, dispatching RunHealthCheck's Full tier
+	// behind the standard single-flight action machinery - no confirm modal
+	// (it mutates nothing), mirroring CheckUpdates' own "fetch, don't
+	// confirm" shape. Deliberately reuses "c", already CreateProfile's key
+	// on ScreenProfiles - see updateKey's own doc comment on how the two
+	// coexist without collision (the screens never overlap).
+	FullCheck key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -322,6 +331,10 @@ func DefaultKeyMap() KeyMap {
 		ConvertToggle: key.NewBinding(
 			key.WithKeys("m"),
 			key.WithHelp("m", "toggle pak conversion"),
+		),
+		FullCheck: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "full health check"),
 		),
 	}
 }
