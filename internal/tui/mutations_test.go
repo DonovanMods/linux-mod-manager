@@ -400,10 +400,24 @@ func TestSwitchKeyEmptyProfileListIsNoop(t *testing.T) {
 // own screen guard: enter on Installed Mods must never reach
 // PlanProfileSwitch, no matter what else it does. Before #86 this key was a
 // no-op everywhere but Dashboard/Profiles, so this test used to assert a nil
-// cmd outright - #86 repurposes enter on Installed Mods to open mod details
-// (see openSelectedModDetails), which legitimately returns a non-nil fetch
-// cmd, so the assertion narrows to what this test actually guards: no
-// profile-switch machinery fires.
+// cmd outright (`require.Nil(t, cmd)`) - #86 repurposes enter on Installed
+// Mods to open mod details (see openSelectedModDetails), which legitimately
+// returns a non-nil fetch cmd, so Task 7's rewrite dropped that assertion.
+//
+// That rewrite went too far: it left three always-true assertions
+// (CurrentScreen unchanged, action.pending nil, PlanCalls empty - none of
+// which mod details touches either way) and nothing that actually proves
+// enter opened mod details rather than something else entirely. Routing
+// Select on Installed Mods to switchToProfileNamed("target") - literally
+// planning a profile switch, the exact thing this test is named to
+// forbid - still passed every one of those three (#86 review finding).
+// require.IsType below is what closes that gap: it fails unless enter
+// actually opened *modDetailsContent.
+//
+// Deliberately NOT `require.False(t, model.action.running)`: that would
+// fail for a legitimate reason - enter now starts a real fetch, so running
+// is true immediately after. Asserting the type of what was pushed is the
+// correct positive assertion, not "nothing happened".
 func TestSwitchKeyWrongScreenNeverPlansASwitch(t *testing.T) {
 	t.Parallel()
 
@@ -416,6 +430,8 @@ func TestSwitchKeyWrongScreenNeverPlansASwitch(t *testing.T) {
 	require.Equal(t, ScreenInstalledMods, model.CurrentScreen())
 	require.Nil(t, model.action.pending)
 	require.Empty(t, rec.PlanCalls, "must never call PlanProfileSwitch from Installed Mods")
+	require.IsType(t, &modDetailsContent{}, model.contextContent,
+		"enter must open mod details, not plan a profile switch")
 }
 
 func TestSwitchKeyInertWhileRunning(t *testing.T) {

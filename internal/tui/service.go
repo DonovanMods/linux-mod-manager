@@ -159,6 +159,41 @@ type ModItem struct {
 	// "m" toggle, so an exmodz-only mod never shows a misleading "raw" flag
 	// and never has its (meaningless) ConvertPaks flag toggled.
 	HasPakSource bool
+	// Profile is the active profile name this row is installed in - only
+	// meaningful when InstalledRow is true (see that field's own doc
+	// comment). Populated by coreProvider's Overview mapping
+	// (service_core.go, from currentProfile()) and prototypeProvider's own
+	// Overview (service.go's modItems, from data.Profile.Name). Empty for a
+	// Search-derived ModItem, mirroring UpdatePolicy/Locked's own "only
+	// Overview populates it" convention above - this is what
+	// modDetailsFromItem seeds InstalledDetails.Profile from, fixing the
+	// "(profile: )" blank parenthetical a details view used to show until
+	// its background fetch landed (#86 review).
+	Profile string
+	// InstalledRow reports whether this ModItem's install-state fields -
+	// Version (as the INSTALLED version, not a search hit's latest
+	// upstream version), UpdatePolicy, Locked, LockedVersion, ConvertPaks,
+	// Profile - were populated from genuine local install state, i.e. this
+	// row came from Overview (the Installed Mods list) or its prototype
+	// equivalent, never from a Search result.
+	//
+	// modDetailsFromItem (service.go) gates its InstalledDetails seed on
+	// THIS field alone, never on Status: a Search hit for an
+	// already-installed mod also reports Status == "installed"
+	// (coreProvider's modsToItems, service_core.go) but carries the
+	// SOURCE's latest Version, not what's actually installed, and leaves
+	// UpdatePolicy/Locked/LockedVersion/Profile at their zero values (see
+	// those fields' own doc comments) - trusting Status there fabricated an
+	// Installed block from data that was never populated, showing a lying
+	// version number and a false "Lock: none" for the whole fetch window,
+	// permanently on a failed fetch (#86 review finding).
+	//
+	// Left at its zero value (false) is the SAFE default: any future
+	// ModItem-constructing screen that forgets to set this explicitly gets
+	// "no Installed block" rather than a silently fabricated one - the same
+	// "leave it nil rather than invent a placeholder" principle
+	// modDetailsFromItem already applies to Description/Category/URLs.
+	InstalledRow bool
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of
@@ -321,6 +356,14 @@ type InstalledDetails struct {
 // Everything here is local: no I/O, so the view can render on the very first
 // frame. Description/Category/SourceURL/PictureURL stay empty until the fetch
 // lands - inventing placeholders for them would be worse than a blank.
+//
+// The Installed block is gated on item.InstalledRow, NOT item.Status - see
+// InstalledRow's own doc comment for why Status can't be trusted here (an
+// installed mod found via Search also reports Status == "installed" but
+// carries none of the fields an Installed block needs). Leaving Installed
+// nil whenever InstalledRow is false is the same "don't invent a
+// placeholder" principle this function already applies to
+// Description/Category/URLs above.
 func modDetailsFromItem(item ModItem) ModDetails {
 	d := ModDetails{
 		ID: item.ID, Name: item.Name, Version: item.Version, Author: item.Author,
@@ -328,9 +371,10 @@ func modDetailsFromItem(item ModItem) ModDetails {
 		Endorsements:    item.Endorsements,
 		HasEndorsements: item.HasEndorsements,
 	}
-	if item.Status != "available" {
+	if item.InstalledRow {
 		d.Installed = &InstalledDetails{
 			Version:       item.Version,
+			Profile:       item.Profile,
 			UpdatePolicy:  item.UpdatePolicy,
 			Locked:        item.Locked,
 			LockedVersion: item.LockedVersion,
@@ -534,7 +578,7 @@ func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, err
 			Updates:     p.data.Stats.Updates,
 			Conflicts:   p.data.Stats.Conflicts,
 			LastDeploy:  &lastDeploy,
-		}, modItems(mods), nil
+		}, modItems(mods, true, p.data.Profile.Name), nil
 	}
 
 	enabled := 0
@@ -550,7 +594,7 @@ func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, err
 		Enabled:     enabled,
 		Updates:     -1,
 		Conflicts:   -1,
-	}, modItems(mods), nil
+	}, modItems(mods, true, p.data.Profile.Name), nil
 }
 
 // ListGames returns the two canned games (see Data.AltGame's doc comment),
@@ -645,7 +689,7 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, page
 		pageSize = SearchPageSize
 	}
 
-	all := modItems(p.data.SearchResults)
+	all := modItems(p.data.SearchResults, false, "")
 	matched := make([]ModItem, 0, len(all))
 	for _, item := range all {
 		if strings.Contains(strings.ToLower(item.Name), strings.ToLower(query)) {
@@ -821,10 +865,25 @@ func (p *prototypeProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
 	return items, nil
 }
 
-func modItems(mods []prototype.Mod) []ModItem {
+// modItems maps prototype.Mod rows to ModItems, shared by Overview's two
+// installed-mods branches (both call sites above) and Search's
+// SearchResults path (:648) - the one function backs both lists, unlike
+// coreProvider's own Overview/modsToItems split (service_core.go), which
+// uses two SEPARATE mapping functions for exactly the reason installedRow
+// exists here: a Search-derived row must never claim genuine install state.
+//
+// installedRow must be true ONLY for the Overview call sites - it feeds
+// ModItem.InstalledRow, which modDetailsFromItem (above) gates its
+// Installed block on (#86 review finding). No canned SearchResults entry
+// currently sets Status: "installed", so this couldn't yet be observed from
+// --prototype mode alone, but the contract must hold regardless of what the
+// canned data happens to contain. profile is only stamped onto ModItem.
+// Profile when installedRow is true, matching Profile's own "empty for a
+// Search-derived ModItem" doc comment.
+func modItems(mods []prototype.Mod, installedRow bool, profile string) []ModItem {
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {
-		items = append(items, ModItem{
+		item := ModItem{
 			ID:              mod.ID,
 			Name:            mod.Name,
 			Author:          mod.Author,
@@ -839,7 +898,12 @@ func modItems(mods []prototype.Mod) []ModItem {
 			PreviousVersion: mod.PreviousVersion,
 			Locked:          mod.Locked,
 			LockedVersion:   mod.LockedVersion,
-		})
+			InstalledRow:    installedRow,
+		}
+		if installedRow {
+			item.Profile = profile
+		}
+		items = append(items, item)
 	}
 	return items
 }

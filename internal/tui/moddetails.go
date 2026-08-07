@@ -65,14 +65,31 @@ func (c *modDetailsContent) body() []string {
 		lines = append(lines, "", "Description:")
 		lines = append(lines, strings.Split(strings.TrimSpace(d.Description), "\n")...)
 	case d.FetchErr != "":
-		lines = append(lines, "", "Description:", "(unavailable — "+d.FetchErr+")")
+		// singleLine applied HERE, at the render site, not where FetchErr is
+		// assigned (resolveModDetailsFailed, mutations.go) - so any future
+		// FetchErr writer is covered too, not just this one. body() renders
+		// the error as ONE slice element; clampLines (contextview.go) counts
+		// slice elements, and truncateLines bounds display WIDTH, not line
+		// count - neither guard catches an embedded newline, so an
+		// unwrapped multi-line error renders that many extra physical rows
+		// past the height budget (#86 review finding; Task 7 already
+		// applied singleLine to m.action.status but missed this).
+		lines = append(lines, "", "Description:", "(unavailable — "+singleLine(d.FetchErr)+")")
 	case d.Fetching:
 		lines = append(lines, "", "Description:", "(loading…)")
 	}
 
 	if d.Installed != nil {
-		lines = append(lines, "", fmt.Sprintf("Installed: v%s (profile: %s)",
-			d.Installed.Version, d.Installed.Profile))
+		// The seeded row (modDetailsFromItem) always knows the profile now
+		// (#86 review - ModItem.Profile), but this omit-when-empty guard
+		// stays as the backstop against any future caller that seeds an
+		// Installed block without one: printing "(profile: )" is worse than
+		// omitting the parenthetical entirely.
+		header := fmt.Sprintf("Installed: v%s", d.Installed.Version)
+		if d.Installed.Profile != "" {
+			header += fmt.Sprintf(" (profile: %s)", d.Installed.Profile)
+		}
+		lines = append(lines, "", header)
 		lines = append(lines, "  Update policy: "+d.Installed.UpdatePolicy)
 		if d.Installed.Locked {
 			lock := "locked at v" + d.Installed.LockedVersion

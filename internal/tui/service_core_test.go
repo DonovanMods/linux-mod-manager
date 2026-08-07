@@ -2608,6 +2608,15 @@ func TestCoreProviderGetModDetails_NotInstalled(t *testing.T) {
 	assert.Equal(t, "https://example.com/a", d.SourceURL)
 	assert.Equal(t, "https://example.com/a.jpg", d.PictureURL)
 	assert.Contains(t, d.Description, "Full description.", "Description must come through core.CleanChangelog, not be dropped")
+	// #86 review finding: the design's decision 2 ("Description is
+	// HTML-cleaned in BOTH interfaces") was enforced CLI-side only -
+	// mirrors mod_show_golden_test.go:136's own NotContains("<p>")
+	// assertion. Contains("Full description.") alone holds whether or not
+	// CleanChangelog actually ran (a bare mod.Description passes it too),
+	// so replacing coreProvider.GetModDetails' core.CleanChangelog(mod.
+	// Description) with a bare mod.Description passed the entire
+	// internal/tui package until this assertion was added.
+	assert.NotContains(t, d.Description, "<p>", "raw HTML tags must not reach the TUI, matching mod show's own cleaning")
 	assert.Equal(t, int64(42), d.Endorsements)
 	assert.True(t, d.HasEndorsements)
 	assert.Nil(t, d.Installed)
@@ -2621,16 +2630,29 @@ func TestCoreProviderGetModDetails_NotInstalled(t *testing.T) {
 // NOT the zero value (UpdateNotify is), so a string(...) conversion and a
 // policyToString call would visibly disagree - "auto" vs. a control
 // character - making this test fail loudly if the wrong one is ever used.
+//
+// Also closes all SIX InstalledDetails fields the join produces (#86
+// review, Minor finding: this test used to assert only Version/Profile/
+// UpdatePolicy - 3 of 6 - so deleting ConvertPaks, Locked, or LockedVersion
+// from coreProvider.GetModDetails' mapping still passed the whole package).
+// The fixture is a compile-deploy game with a pak-kind FileID (so
+// ConvertPaks applies and is non-nil) and a locked profile ref whose target
+// differs from the installed version (so Locked/LockedVersion are both
+// exercised, not left at their zero values).
 func TestCoreProviderGetModDetails_InstalledUsesPolicyToString(t *testing.T) {
 	provider, svc, game, netSrc := newCoreDetailsFixture(t)
+	game.DeployMode = domain.DeployCompile
 	netSrc.addMod(game.ID, &domain.Mod{ID: "modA", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
 	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
 		Mod:          domain.Mod{ID: "modA", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateAuto,
 		Enabled:      true,
+		FileIDs:      []string{"pak"},
+		ConvertPaks:  true,
 	}))
 	require.NoError(t, svc.NewProfileManager().AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modA", Version: "1.5"}))
+	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "modA", "1.2.3"))
 
 	d, err := provider.GetModDetails(context.Background(), tui.ModItem{ID: "modA", Source: "src", Name: "Mod A"})
 	require.NoError(t, err)
@@ -2638,6 +2660,10 @@ func TestCoreProviderGetModDetails_InstalledUsesPolicyToString(t *testing.T) {
 	assert.Equal(t, "auto", d.Installed.UpdatePolicy)
 	assert.Equal(t, "1.5", d.Installed.Version)
 	assert.Equal(t, "default", d.Installed.Profile)
+	assert.True(t, d.Installed.Locked)
+	assert.Equal(t, "1.2.3", d.Installed.LockedVersion)
+	require.NotNil(t, d.Installed.ConvertPaks, "a compile-deploy game with a pak merge source must report a non-nil ConvertPaks")
+	assert.True(t, *d.Installed.ConvertPaks)
 }
 
 // TestCoreProviderGetModDetails_MapsAuthRequiredError mirrors

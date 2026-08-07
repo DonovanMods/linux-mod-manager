@@ -167,6 +167,13 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 			CompileGame:     game.DeployMode == domain.DeployCompile,
 			GameConvertPaks: game.ConvertPaks,
 			HasPakSource:    p.svc.ModHasPakMergeSource(&mod),
+			// This row came from the installed-mods list, so its
+			// install-state fields above (Version/UpdatePolicy, plus
+			// Locked/LockedVersion set below) are genuine local install
+			// state - see ModItem.InstalledRow's own doc comment for why
+			// modDetailsFromItem gates on this instead of Status.
+			InstalledRow: true,
+			Profile:      profile,
 		}
 		// ModItem.LockedVersion is only ever populated alongside Locked
 		// (see that field's own doc comment) - an unlocked ref's Version is
@@ -397,6 +404,12 @@ func (p *coreProvider) installedModKeys() (map[string]bool, error) {
 
 // modsToItems maps source search results to renderable rows, marking each
 // as installed via domain.ModKey(sourceID, modID) against installedKeys.
+// Version here is always the SOURCE's own version for this mod - the
+// latest upstream, not necessarily what's installed - so an "installed"
+// status row deliberately leaves InstalledRow/Profile/UpdatePolicy/Locked/
+// LockedVersion at their zero values rather than approximating genuine
+// install state from data this function never fetched (see
+// ModItem.InstalledRow's own doc comment; #86 review).
 func (p *coreProvider) modsToItems(mods []domain.Mod, installedKeys map[string]bool) []ModItem {
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {

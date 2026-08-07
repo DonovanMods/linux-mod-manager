@@ -13,9 +13,22 @@ import (
 // TestOpenModDetails_PushesImmediatelyWithLocalData is the local-first
 // contract: the view must be on screen before the fetch resolves, seeded from
 // the row, so an offline user still sees what the list already knew.
+//
+// Asserts against the PUSHED CONTENT's own seeded data
+// (m.contextContent.(*modDetailsContent).details), not the rendered view:
+// m.View() also renders the status line ("Fetching details for
+// <name>…" - openSelectedModDetails, mutations.go), which contains
+// item.Name regardless of whether the panel itself was ever actually
+// seeded. Before this fix, replacing `seed := modDetailsFromItem(item)`
+// with `ModDetails{}` in openSelectedModDetails - total loss of local
+// seeding, the EXACT regression this test is named for - still passed
+// against the old `assert.Contains(t, m.View(), item.Name)` (#86 review
+// finding).
 func TestOpenModDetails_PushesImmediatelyWithLocalData(t *testing.T) {
 	m := sizedModelWithActions(t, &recordingActions{}, 100, 30)
 	m, _ = m.gotoScreen(ScreenInstalledMods)
+	item, ok := m.selectedMod()
+	require.True(t, ok)
 
 	m, cmd := m.openSelectedModDetails()
 
@@ -23,9 +36,12 @@ func TestOpenModDetails_PushesImmediatelyWithLocalData(t *testing.T) {
 	require.NotNil(t, cmd, "a fetch must be dispatched")
 	assert.Equal(t, ScreenInstalledMods, m.screen)
 	assert.True(t, m.action.running)
-	body := m.View()
-	item, _ := m.selectedMod()
-	assert.Contains(t, body, item.Name)
+
+	c, ok := m.contextContent.(*modDetailsContent)
+	require.True(t, ok)
+	assert.Equal(t, item.Name, c.details.Name, "the pushed panel must be seeded from the row, not empty")
+	assert.Equal(t, item.Version, c.details.Version, "the pushed panel must be seeded from the row, not empty")
+	assert.Equal(t, item.Author, c.details.Author, "the pushed panel must be seeded from the row, not empty")
 }
 
 // TestOpenModDetails_EnterBindingOnBothScreens: enter is the binding, and it
@@ -36,8 +52,16 @@ func TestOpenModDetails_PushesImmediatelyWithLocalData(t *testing.T) {
 // (mutations.go) must NOT fall back to m.selectedMod() (which only ever
 // reads m.mods/m.selected[ScreenInstalledMods]) on the Search screen - doing
 // so would open details for the Installed Mods row instead of the search
-// result under the cursor. Asserting the exact NAME shown, not just that
-// SOMETHING opened, is what makes this test catch that class of bug.
+// result under the cursor.
+//
+// Asserts against the pushed content's OWN seeded Name
+// (m.contextContent.(*modDetailsContent).details.Name), not just
+// m.View() - the same tautology TestOpenModDetails_PushesImmediatelyWithLocalData
+// above was strengthened against: the status line ("Fetching details for
+// <name>…") also contains wantName, so a bare `assert.Contains(t,
+// m.View(), wantName)` would pass even if the panel itself were seeded
+// with the WRONG row's data, as long as the status line still named the
+// right one.
 func TestOpenModDetails_EnterBindingOnBothScreens(t *testing.T) {
 	for _, screen := range []Screen{ScreenInstalledMods, ScreenSearch} {
 		m := sizedModelWithActions(t, &recordingActions{}, 100, 30)
@@ -56,6 +80,10 @@ func TestOpenModDetails_EnterBindingOnBothScreens(t *testing.T) {
 		}
 		m = updateWithMsg(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 		require.NotNil(t, m.contextContent, "enter must open details on %v", screen)
+
+		c, ok := m.contextContent.(*modDetailsContent)
+		require.True(t, ok)
+		assert.Equal(t, wantName, c.details.Name, "the pushed panel must be seeded from the row actually selected on %v, not a different screen's selection", screen)
 		assert.Contains(t, m.View(), wantName, "must show the row actually selected on %v, not a different screen's selection", screen)
 	}
 }
@@ -84,6 +112,37 @@ func TestOpenModDetails_SearchUsesSearchSelectionNotInstalledModsSelection(t *te
 	view := m.View()
 	assert.Contains(t, view, searchItem.Name, "must open the SEARCH selection")
 	assert.NotContains(t, view, installedItem.Name, "must not open the Installed Mods selection instead")
+}
+
+// TestOpenModDetails_SearchInstalledHitDoesNotFabricateInstalledBlock is the
+// Search-path regression test for the #86 review's Important 1 finding:
+// every other seed/failure test in this file opens details from
+// ScreenInstalledMods, which is exactly why the bug shipped unnoticed. A
+// Search result marked Status == "installed" (populatedSearchPage's index-0
+// entry - search_test.go) must still open with NO Installed block: it
+// carries the source's own Version (not necessarily what's installed) and
+// leaves InstalledRow/Profile/UpdatePolicy/Locked/LockedVersion at their
+// zero values, exactly like a real coreProvider.modsToItems row.
+func TestOpenModDetails_SearchInstalledHitDoesNotFabricateInstalledBlock(t *testing.T) {
+	m := sizedModelWithActions(t, &recordingActions{}, 100, 30)
+	m, _ = m.gotoScreen(ScreenSearch)
+	m.search.page = populatedSearchPage()
+	m.search.state = searchReady
+	m.selected[ScreenSearch] = 0
+
+	item := m.search.page.Results[0]
+	require.Equal(t, "installed", item.Status, "fixture must exercise the installed-looking search hit")
+	require.False(t, item.InstalledRow, "fixture must mirror a real Search result: InstalledRow stays false")
+
+	m, cmd := m.openSelectedModDetails()
+	require.NotNil(t, cmd)
+
+	c, ok := m.contextContent.(*modDetailsContent)
+	require.True(t, ok)
+	assert.Nil(t, c.details.Installed, "a Search hit must never seed a fabricated Installed block")
+
+	view := m.View()
+	assert.NotContains(t, view, "Installed:", "no Installed block must render for a Search-path open")
 }
 
 // TestOpenModDetails_EnterStillOpensDashboardMenu: the existing meaning of
@@ -164,6 +223,14 @@ func TestOpenModDetails_FailureKeepsLocalView(t *testing.T) {
 // above (which only checks the rendered view): this reaches into the pushed
 // content directly so a regression that narrows what's checked at render time
 // can't hide a wipe of fields the current body() happens not to show yet.
+//
+// Also asserts Installed survives, including a non-empty Profile - #86
+// review finding: this test used to check only Name/Version/Author,
+// missing exactly the block Important 1's fabricated-Installed-block bug
+// and its smaller "(profile: )" sibling both lived in. A prototype
+// Installed Mods row always seeds a non-nil Installed block with a
+// non-empty Profile (ModItem.InstalledRow/Profile, service.go's modItems);
+// this is the assertion that would have caught both.
 func TestOpenModDetails_FailurePreservesSeededFields(t *testing.T) {
 	m := sizedModelWithActions(t, &recordingActions{}, 100, 30)
 	m, _ = m.gotoScreen(ScreenInstalledMods)
@@ -173,6 +240,9 @@ func TestOpenModDetails_FailurePreservesSeededFields(t *testing.T) {
 	c, ok := m.contextContent.(*modDetailsContent)
 	require.True(t, ok)
 	seededName, seededVersion, seededAuthor := c.details.Name, c.details.Version, c.details.Author
+	require.NotNil(t, c.details.Installed, "an Installed Mods row must seed a non-nil Installed block")
+	seededInstalled := *c.details.Installed
+	require.NotEmpty(t, seededInstalled.Profile, "the seed must know the profile name, not blank it until the fetch lands")
 
 	// GetModDetails' documented contract: a failure is accompanied by a
 	// zero-value ModDetails{} - the resolver must never assign that over the
@@ -186,6 +256,8 @@ func TestOpenModDetails_FailurePreservesSeededFields(t *testing.T) {
 	assert.Equal(t, seededVersion, c.details.Version, "version must survive a failed fetch")
 	assert.Equal(t, seededAuthor, c.details.Author, "author must survive a failed fetch")
 	assert.Equal(t, item.Name, c.details.Name)
+	require.NotNil(t, c.details.Installed, "the seeded Installed block must survive a failed fetch")
+	assert.Equal(t, seededInstalled, *c.details.Installed, "Installed must survive a failed fetch unchanged")
 	assert.False(t, c.details.Fetching)
 	assert.Equal(t, "source unreachable", c.details.FetchErr)
 }
@@ -258,6 +330,37 @@ func TestOpenModDetails_FailureStatusLineStaysSingleLine(t *testing.T) {
 	view := m.View()
 	assert.LessOrEqual(t, lipgloss.Height(view), 30,
 		"a multi-line error must not push the view past the terminal's row budget")
+}
+
+// TestOpenModDetails_FetchErrStaysSingleLineInBody is the regression test
+// for the #86 review's Important 2 finding: resolveModDetailsFailed's
+// c.details.FetchErr = msg.err.Error() assignment was never singleLine'd,
+// only m.action.status was (see
+// TestOpenModDetails_FailureStatusLineStaysSingleLine above, a Task 7
+// finding, and its sibling doc comment - this is a DISTINCT defect, not a
+// re-fix). body() renders FetchErr as ONE slice element; clampLines
+// (contextview.go) counts slice ELEMENTS, so a 4-line string still counts
+// as 1, and truncateLines bounds display WIDTH, not line count - both
+// guards pass a multi-line FetchErr through untouched, and lipgloss renders
+// every embedded newline as its own physical row.
+//
+// MUST run at a SHORT terminal (~24 rows), not 30: Task 7's own review
+// concluded "clampLines absorbs it" - true only at 30 rows, where the
+// budget has enough slack that a few extra rows don't push the view past
+// the window. At 24 rows there is no such slack, and the bug is directly
+// visible in the rendered height.
+func TestOpenModDetails_FetchErrStaysSingleLineInBody(t *testing.T) {
+	m := sizedModelWithActions(t, &recordingActions{}, 100, 24)
+	m, _ = m.gotoScreen(ScreenInstalledMods)
+	m, _ = m.openSelectedModDetails()
+
+	multiLine := "line one\nline two\nline three\nline four"
+	updated, _ := m.Update(modDetailsFailedMsg{gen: m.action.gen, err: errors.New(multiLine)})
+	m = updated.(Model)
+
+	view := m.View()
+	assert.LessOrEqual(t, lipgloss.Height(view), 24,
+		"a multi-line FetchErr must not push the view past the 24-row terminal's budget")
 }
 
 // TestOpenModDetails_EscThenEnterReopensImmediately is the regression test
