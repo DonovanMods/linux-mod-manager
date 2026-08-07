@@ -396,15 +396,42 @@ func TestSwitchKeyEmptyProfileListIsNoop(t *testing.T) {
 	require.Nil(t, model.action.pending)
 }
 
-func TestSwitchKeyWrongScreenIsNoop(t *testing.T) {
+// TestSwitchKeyWrongScreenNeverPlansASwitch proves switchSelectedProfile's
+// own screen guard: enter on Installed Mods must never reach
+// PlanProfileSwitch, no matter what else it does. Before #86 this key was a
+// no-op everywhere but Dashboard/Profiles, so this test used to assert a nil
+// cmd outright (`require.Nil(t, cmd)`) - #86 repurposes enter on Installed
+// Mods to open mod details (see openSelectedModDetails), which legitimately
+// returns a non-nil fetch cmd, so Task 7's rewrite dropped that assertion.
+//
+// That rewrite went too far: it left three always-true assertions
+// (CurrentScreen unchanged, action.pending nil, PlanCalls empty - none of
+// which mod details touches either way) and nothing that actually proves
+// enter opened mod details rather than something else entirely. Routing
+// Select on Installed Mods to switchToProfileNamed("target") - literally
+// planning a profile switch, the exact thing this test is named to
+// forbid - still passed every one of those three (#86 review finding).
+// require.IsType below is what closes that gap: it fails unless enter
+// actually opened *modDetailsContent.
+//
+// Deliberately NOT `require.False(t, model.action.running)`: that would
+// fail for a legitimate reason - enter now starts a real fetch, so running
+// is true immediately after. Asserting the type of what was pushed is the
+// correct positive assertion, not "nothing happened".
+func TestSwitchKeyWrongScreenNeverPlansASwitch(t *testing.T) {
 	t.Parallel()
 
-	model := modelWithActions(t, &recordingActions{})
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
 	model.screen = ScreenInstalledMods
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	require.Equal(t, ScreenInstalledMods, updated.(Model).CurrentScreen())
-	require.Nil(t, cmd)
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	require.Equal(t, ScreenInstalledMods, model.CurrentScreen())
+	require.Nil(t, model.action.pending)
+	require.Empty(t, rec.PlanCalls, "must never call PlanProfileSwitch from Installed Mods")
+	require.IsType(t, &modDetailsContent{}, model.contextContent,
+		"enter must open mod details, not plan a profile switch")
 }
 
 func TestSwitchKeyInertWhileRunning(t *testing.T) {
@@ -946,6 +973,10 @@ func (f *fakeSwitchableProvider) Health(context.Context) (HealthView, error) {
 	return HealthView{}, nil
 }
 
+func (f *fakeSwitchableProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
+
 func (f *fakeSwitchableProvider) Profiles(context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(f.names))
 	for _, name := range f.names {
@@ -1072,6 +1103,9 @@ func (p *searchCancelProvider) Conflicts(context.Context) ([]ConflictItem, error
 	return nil, nil
 }
 func (p *searchCancelProvider) Health(context.Context) (HealthView, error) { return HealthView{}, nil }
+func (p *searchCancelProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // SetGame implements actions.go's optional gameRebinder hook.
 func (p *searchCancelProvider) SetGame(id string) error {
@@ -1127,10 +1161,14 @@ func TestSwitchDoneCancelsInFlightSearchAndDiscardsLateResult(t *testing.T) {
 func TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim(t *testing.T) {
 	t.Parallel()
 
-	// Height 60 keeps every help group uncapped (see
+	// Height 90 keeps every help group uncapped (see
 	// TestViewFitsTerminalBoundsWithHelpVisible's helpBodyBudget note), so
 	// this doesn't depend on which screen's group happens to render first.
-	model := sizedPrototypeModel(t, "wizardry", 120, 60)
+	// Bumped from 60 for #86 Task 7: the installed-mods/search groups' new
+	// Select entries pushed the full uncapped list to 57 lines, which
+	// height 60's budget (42) no longer covered - "switch profile" (the
+	// profiles group's first entry) fell one line past the cutoff.
+	model := sizedPrototypeModel(t, "wizardry", 120, 90)
 	model = updateWithRunes(t, model, "?")
 	view := model.View()
 
@@ -1152,34 +1190,81 @@ func TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim(t *testing.T
 // tester's follow-up guidance, 160 columns (not 80) is the normal case to
 // design and assert full clarity against — narrower terminals degrade via
 // truncation (see TestFooterFitsNarrowTerminalViaTruncation) rather than by
-// cramming the wording.
+// cramming the wording. Uses Installed Mods rather than the default
+// Dashboard screen since that's where these mutation keys actually apply
+// (see updateKey's per-key screen guards, mutations.go); the shared hint
+// text itself isn't screen-conditional (see footerLine's own "keep the
+// shared hints shared" doc comment), so which screen this asserts against
+// doesn't change the e/x/D/u wording being checked.
 func TestFooterHintNamesEachMutationAction(t *testing.T) {
 	t.Parallel()
 
 	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	model.screen = ScreenInstalledMods
 	view := model.View()
 
 	require.Contains(t, view, "e: enable/disable")
 	require.Contains(t, view, "x: uninstall")
 	require.Contains(t, view, "D: deploy")
-	require.Contains(t, view, "enter: switch")
 	require.NotContains(t, view, "mutate",
 		"the terse, unexplained 'mutate' wording must be gone")
+}
+
+// TestFooterSelectHintMatchesScreen is smoke round 2's finding 1: the old
+// "enter: switch" clause was hardcoded across every screen even though
+// Select ("enter") is context-dependent (updateKey's own Select case,
+// app.go) - on Installed Mods and Search it opens mod details (#86), not
+// "switch" (Profiles' meaning only), so the footer actively told the user
+// the wrong thing there and never mentioned details at all. The footer must
+// now say what "enter" actually does on the CURRENT screen.
+func TestFooterSelectHintMatchesScreen(t *testing.T) {
+	t.Parallel()
+
+	installed := sizedPrototypeModel(t, "wizardry", 160, 40)
+	installed.screen = ScreenInstalledMods
+	installedView := installed.View()
+	require.Contains(t, installedView, "enter: view details",
+		"Installed Mods footer must say what enter opens")
+	require.NotContains(t, installedView, "enter: switch",
+		"Installed Mods footer must not claim enter switches - that's Profiles' meaning")
+
+	search := sizedPrototypeModel(t, "wizardry", 160, 40)
+	search.screen = ScreenSearch
+	searchView := search.View()
+	require.Contains(t, searchView, "enter: view details",
+		"Search footer must say what enter opens")
+	require.NotContains(t, searchView, "enter: switch",
+		"Search footer must not claim enter switches - that's Profiles' meaning")
+
+	profiles := sizedPrototypeModel(t, "wizardry", 160, 40)
+	profiles.screen = ScreenProfiles
+	profilesView := profiles.View()
+	require.Contains(t, profilesView, "enter: switch",
+		"Profiles footer must still say switch - that meaning is unchanged")
 }
 
 // TestFooterFitsNarrowTerminalViaTruncation proves the footer degrades
 // gracefully at a narrower terminal: it must be hard-truncated to the
 // available width rather than left to lipgloss's automatic word-wrap, which
 // would silently grow the view past its fixed-height budget (see
-// contentChromeHeight's footerHeight == 1 assumption).
+// contentChromeHeight's footerHeight == 1 assumption). Swept across both the
+// Installed Mods and Profiles screens (the two screens whose footer "enter"
+// clause now differs, footerSelectHint) and both 80 and 160 columns, so a
+// screen-specific clause of either length can never grow the footer past
+// its fixed one-row budget.
 func TestFooterFitsNarrowTerminalViaTruncation(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 80, 24)
-	view := model.View()
+	for _, screen := range []Screen{ScreenInstalledMods, ScreenProfiles} {
+		for _, width := range []int{80, 160} {
+			model := sizedPrototypeModel(t, "wizardry", width, 24)
+			model.screen = screen
+			view := model.View()
 
-	require.Equal(t, 80, lipgloss.Width(view))
-	require.Equal(t, 24, lipgloss.Height(view))
+			require.Equal(t, width, lipgloss.Width(view))
+			require.Equal(t, 24, lipgloss.Height(view))
+		}
+	}
 }
 
 // --- Install from search ('i' on Search, blurred, a result selected) ---
@@ -1870,12 +1955,12 @@ func TestPrototypeInstallPlanReinstallForSkyUI(t *testing.T) {
 func TestHelpOverlayDocumentsInstallKey(t *testing.T) {
 	t.Parallel()
 
-	// Height 60 keeps every help group uncapped, same as
-	// TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim - the
-	// "search" group (which documents Install) isn't promoted to the front
-	// on the default Dashboard screen, so it needs enough budget to render
-	// at all.
-	model := sizedPrototypeModel(t, "wizardry", 160, 60)
+	// Height 90 keeps every help group uncapped, same as
+	// TestHelpOverlayDocumentsMutationKeysAndDropsStaleReadOnlyClaim (see
+	// its comment for the #86 Task 7 bump rationale) - the "search" group
+	// (which documents Install) isn't promoted to the front on the default
+	// Dashboard screen, so it needs enough budget to render at all.
+	model := sizedPrototypeModel(t, "wizardry", 160, 90)
 	model = updateWithRunes(t, model, "?")
 	view := model.View()
 

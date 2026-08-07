@@ -11,15 +11,16 @@ const (
 	ScreenSearch
 	ScreenProfiles
 	ScreenSources
-	// ScreenHealth is #224 Task 9's context-view host: the health home
-	// content (a full-width findings+conflicts table with a detail strip)
-	// when nothing is pushed, or whatever contextContent Model.pushContext
-	// last pushed (see contextview.go) - the landing zone a future
-	// mod-details story (#86) will reuse as its second implementation. #224
-	// Task 15 folded the former standalone ScreenConflicts (slot 6) into
-	// this screen's table - see healthTableRows/healthDetailPane's own doc
-	// comments - so ScreenHealth now occupies slot 6 (digit "6") instead of
-	// 7, and there is no separate Conflicts screen anymore.
+	// ScreenHealth renders the health home view (a full-width
+	// findings+conflicts table with a detail strip) - one screen among six,
+	// no longer special-cased as the context-view host: since #86 generalized
+	// contextview.go, ANY screen can host Model.pushContext's pushed content
+	// (see contextContent's own doc comment), rendering it over whatever
+	// screen pushed it instead of jumping the session to Health. #224 Task 15
+	// folded the former standalone ScreenConflicts (slot 6) into this
+	// screen's table - see healthTableRows/healthDetailPane's own doc
+	// comments - so ScreenHealth occupies slot 6 (digit "6") instead of 7,
+	// and there is no separate Conflicts screen anymore.
 	ScreenHealth
 )
 

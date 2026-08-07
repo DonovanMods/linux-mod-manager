@@ -35,6 +35,9 @@ func (f conflictsFakeProvider) Conflicts(context.Context) ([]ConflictItem, error
 	return f.conflicts, nil
 }
 func (f conflictsFakeProvider) Health(context.Context) (HealthView, error) { return HealthView{}, nil }
+func (f conflictsFakeProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // TestDashboardConflictCountWired proves Summary.Conflicts - populated from
 // the same Conflicts() fetch the Health screen's own table now renders, via
@@ -92,6 +95,9 @@ func (longConflictsProvider) Conflicts(context.Context) ([]ConflictItem, error) 
 	return conflicts, nil
 }
 func (longConflictsProvider) Health(context.Context) (HealthView, error) { return HealthView{}, nil }
+func (longConflictsProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // TestHealthConflictRowsFollowSelectionOnShortTerminals migrates the retired
 // conflicts_view_test.go's TestConflictsListFollowsSelectionOnShortTerminals
@@ -306,10 +312,14 @@ func TestDeployKeyDeclinedWithPushedContentOnHealth(t *testing.T) {
 
 	rec := &recordingActions{}
 	model := modelWithActions(t, rec)
-	model.screen = ScreenDashboard
+	// #86: pushContext no longer forces the screen to ScreenHealth, so this
+	// starts there directly - deployActiveProfile's own guard checks
+	// m.contextContent == nil only for ScreenHealth (mutations.go), and
+	// starting anywhere else wouldn't exercise that guard clause at all.
+	model.screen = ScreenHealth
 
 	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
-	model.pushContext(fake, ScreenDashboard)
+	model.pushContext(fake)
 	require.Equal(t, ScreenHealth, model.CurrentScreen())
 
 	updated, _ := model.Update(keyRunes("D"))

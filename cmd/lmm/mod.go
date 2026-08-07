@@ -10,7 +10,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -610,39 +609,34 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		return err
 	}
 
-	mod, err := svc.GetMod(ctx, modSource, game.ID, modID)
-	if err != nil {
-		return fmt.Errorf("mod not found: %w", err)
-	}
-
-	// #92: mod show works for any mod on the source, installed or not, so a
-	// resolveProfile failure is a real problem (mirrors every other mod
+	// #92/#86: mod show works for any mod on the source, installed or not,
+	// so a resolveProfile failure is a real problem (mirrors every other mod
 	// subcommand's error handling), but "not installed" is the ordinary
-	// case - GetInstalledMod failing just means the section below is
-	// omitted, not that the whole command errors.
+	// case - Service.ModDetail's own convention leaves Installed nil rather
+	// than erroring. Profile resolves BEFORE the detail call now that the
+	// composition lives in core (#86) - accepted deviation: when BOTH the
+	// profile and the mod ID are invalid, the profile error surfaces first.
 	profileName, err := resolveProfile(svc, game.ID, modProfile)
 	if err != nil {
 		return err
 	}
+
+	detail, err := svc.ModDetail(ctx, game, profileName, modSource, modID)
+	if err != nil {
+		return err
+	}
+	mod := detail.Mod
+
 	var installedInfo *modShowInstalled
-	if installed, instErr := svc.GetInstalledMod(modSource, modID, game.ID, profileName); instErr == nil {
-		info := modShowInstalled{
-			Version:      installed.Version,
-			Profile:      profileName,
-			UpdatePolicy: policyToString(installed.UpdatePolicy),
+	if detail.Installed != nil {
+		installedInfo = &modShowInstalled{
+			Version:       detail.Installed.Version,
+			Profile:       detail.Installed.Profile,
+			UpdatePolicy:  policyToString(detail.Installed.UpdatePolicy),
+			Locked:        detail.Installed.Locked,
+			LockedVersion: detail.Installed.LockedVersion,
+			ConvertPaks:   detail.Installed.ConvertPaks,
 		}
-		// Populate ConvertPaks only for merge-compile games with pak merge source
-		if game.DeployMode == domain.DeployCompile && svc.ModHasPakMergeSource(installed) {
-			v := installed.ConvertPaks
-			info.ConvertPaks = &v
-		}
-		if prof, perr := config.LoadProfile(svc.ConfigDir(), game.ID, profileName); perr == nil {
-			if ref := prof.FindRef(modSource, modID); ref != nil && ref.Locked {
-				info.Locked = true
-				info.LockedVersion = ref.Version
-			}
-		}
-		installedInfo = &info
 	}
 
 	if jsonOutput {
@@ -704,8 +698,12 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	if mod.Description != "" {
 		fmt.Println("Description:")
-		// Limit length for terminal; description can be long HTML
-		desc := strings.TrimSpace(mod.Description)
+		// #86: descriptions are source HTML. Clean them with the same shared
+		// cleaner the update flow and the TUI already use, so all three render
+		// identically. CleanChangelog trims for us, so no TrimSpace here.
+		// The cap stays: this is a one-shot terminal dump, unlike the TUI's
+		// details view, which scrolls the full text instead.
+		desc := core.CleanChangelog(mod.Description)
 		const maxDesc = 2000
 		if len(desc) > maxDesc {
 			desc = desc[:maxDesc] + "\n... (truncated; view on site for full description)"

@@ -129,3 +129,77 @@ func TestFooterMentionsHelpKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, model.footerLine(), "?: help")
 }
+
+// TestHelpViewEnterRowsDisambiguated is smoke round 2's finding 2, checked
+// against the CONTENT (an unsized model, helpBodyBudget's generous unsized
+// default - see TestHelpViewListsPerScreenGroups' own doc comment for why
+// that's the right size to assert content against): the "installed mods"
+// group used to render Select via helpEntry, which falls back to keys.go's
+// generic "enter"/"open" and never said WHAT opened; the "search" group
+// listed Submit ("enter: search") and Select ("enter: open") side by side
+// with the same key and no indication of which state each applies to.
+// Installed Mods now hand-writes Select's row like the dashboard's ("open
+// menu entry") and profiles' ("switch profile") groups already do for this
+// exact problem; Search hand-writes BOTH Submit's and Select's rows, each
+// naming its own state (Submit fires only while the query input is
+// focused; Select only once it's blurred with a result selected - see
+// openSelectedModDetails).
+func TestHelpViewEnterRowsDisambiguated(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model.showHelp = true
+	view := model.helpView()
+
+	require.Contains(t, view, "open mod details",
+		"installed mods and search help groups must say what enter opens")
+	require.Contains(t, view, "query input focused",
+		"search help group's submit row must say it only applies while the input is focused")
+}
+
+// TestHelpViewInstalledModsEnterRowSurvivesAtNormalSize proves the Installed
+// Mods "enter: open mod details" row actually reaches the rendered panel at
+// a normal terminal size (100x30), not just in helpGroups' unrendered data -
+// it's the group's first entry, so helpBodyBudget's "+N more" tail-collapse
+// (which starts biting well before the full grouped list at this size, per
+// TestHelpViewSearchEnterRowCollapsedAtNormalSize below) never reaches it.
+func TestHelpViewInstalledModsEnterRowSurvivesAtNormalSize(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	model.screen = ScreenInstalledMods
+	model = updateWithRunes(t, model, "?")
+
+	view := model.View()
+	require.Contains(t, view, "open mod details",
+		"installed mods help group must say what enter opens, at a normal terminal size")
+}
+
+// TestHelpViewSearchEnterRowCollapsedAtNormalSize documents a finding from
+// verifying the smoke-fix brief's request ("check the enter row actually
+// survives... at 100x30"): on the Search screen, Select's disambiguated row
+// ("open mod details...") is the group's LAST entry, and at 100x30 it does
+// NOT survive - helpBodyBudget's "+N more" tail-collapse swallows it before
+// rendering reaches it (Submit's row, earlier in the group, does survive).
+// This is a PRE-EXISTING helpBodyBudget limitation, not a regression from
+// this fix: the search group's entry COUNT is unchanged (8 before and
+// after - see helpGroups), only two of its existing entries' wording
+// changed. Left as-is per the brief's explicit instruction not to
+// restructure the help system to fix this without checking first; flagged
+// in this fix's own report instead.
+func TestHelpViewSearchEnterRowCollapsedAtNormalSize(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	model.screen = ScreenSearch
+	model = updateWithRunes(t, model, "?")
+
+	view := model.View()
+	require.Contains(t, view, "query input focused",
+		"submit's disambiguated row survives at 100x30 (earlier in the group)")
+	require.NotContains(t, view, "open mod details",
+		"select's disambiguated row is collapsed away by helpBodyBudget at 100x30 - a pre-existing limitation")
+	require.Regexp(t, `\+\d+ more`, view,
+		"the search group's tail is in fact collapsed at this size")
+}

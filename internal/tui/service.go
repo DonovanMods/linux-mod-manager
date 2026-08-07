@@ -159,6 +159,41 @@ type ModItem struct {
 	// "m" toggle, so an exmodz-only mod never shows a misleading "raw" flag
 	// and never has its (meaningless) ConvertPaks flag toggled.
 	HasPakSource bool
+	// Profile is the active profile name this row is installed in - only
+	// meaningful when InstalledRow is true (see that field's own doc
+	// comment). Populated by coreProvider's Overview mapping
+	// (service_core.go, from currentProfile()) and prototypeProvider's own
+	// Overview (service.go's modItems, from data.Profile.Name). Empty for a
+	// Search-derived ModItem, mirroring UpdatePolicy/Locked's own "only
+	// Overview populates it" convention above - this is what
+	// modDetailsFromItem seeds InstalledDetails.Profile from, fixing the
+	// "(profile: )" blank parenthetical a details view used to show until
+	// its background fetch landed (#86 review).
+	Profile string
+	// InstalledRow reports whether this ModItem's install-state fields -
+	// Version (as the INSTALLED version, not a search hit's latest
+	// upstream version), UpdatePolicy, Locked, LockedVersion, ConvertPaks,
+	// Profile - were populated from genuine local install state, i.e. this
+	// row came from Overview (the Installed Mods list) or its prototype
+	// equivalent, never from a Search result.
+	//
+	// modDetailsFromItem (service.go) gates its InstalledDetails seed on
+	// THIS field alone, never on Status: a Search hit for an
+	// already-installed mod also reports Status == "installed"
+	// (coreProvider's modsToItems, service_core.go) but carries the
+	// SOURCE's latest Version, not what's actually installed, and leaves
+	// UpdatePolicy/Locked/LockedVersion/Profile at their zero values (see
+	// those fields' own doc comments) - trusting Status there fabricated an
+	// Installed block from data that was never populated, showing a lying
+	// version number and a false "Lock: none" for the whole fetch window,
+	// permanently on a failed fetch (#86 review finding).
+	//
+	// Left at its zero value (false) is the SAFE default: any future
+	// ModItem-constructing screen that forgets to set this explicitly gets
+	// "no Installed block" rather than a silently fabricated one - the same
+	// "leave it nil rather than invent a placeholder" principle
+	// modDetailsFromItem already applies to Description/Category/URLs.
+	InstalledRow bool
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of
@@ -282,6 +317,76 @@ type SearchPage struct {
 	AttemptedCount int
 }
 
+// ModDetails is the mod-details view's render model (#86). Seeded locally
+// from the ModItem the user selected, then enriched in place by
+// GetModDetails - so the view opens instantly and fills in, rather than
+// blocking on a network round trip the user may not be able to complete.
+type ModDetails struct {
+	ID, Name, Version, Author string
+	Summary, Description      string
+	Category                  string
+	SourceURL, PictureURL     string
+	Endorsements              int64
+	HasEndorsements           bool
+
+	// Installed is nil when the mod is not installed in the active profile,
+	// matching `lmm mod show`'s omit rule.
+	Installed *InstalledDetails
+
+	// Fetching/FetchErr are set by the model's handler and resolvers, never
+	// by a provider; the view reads them to pick its render state.
+	Fetching bool
+	FetchErr string
+}
+
+// InstalledDetails mirrors core.InstalledDetail with the policy already
+// rendered to a display string - the TUI has no reason to carry a
+// domain.UpdatePolicy. A separate type because a view model is a rendering
+// contract, the convention every other TUI row type follows.
+type InstalledDetails struct {
+	Version       string
+	Profile       string
+	UpdatePolicy  string
+	Locked        bool
+	LockedVersion string
+	ConvertPaks   *bool // nil = not applicable, not "off"
+}
+
+// modDetailsFromItem seeds a details view from the row already on screen.
+// Everything here is local: no I/O, so the view can render on the very first
+// frame. Description/Category/SourceURL/PictureURL stay empty until the fetch
+// lands - inventing placeholders for them would be worse than a blank.
+//
+// The Installed block is gated on item.InstalledRow, NOT item.Status - see
+// InstalledRow's own doc comment for why Status can't be trusted here (an
+// installed mod found via Search also reports Status == "installed" but
+// carries none of the fields an Installed block needs). Leaving Installed
+// nil whenever InstalledRow is false is the same "don't invent a
+// placeholder" principle this function already applies to
+// Description/Category/URLs above.
+func modDetailsFromItem(item ModItem) ModDetails {
+	d := ModDetails{
+		ID: item.ID, Name: item.Name, Version: item.Version, Author: item.Author,
+		Summary:         item.Summary,
+		Endorsements:    item.Endorsements,
+		HasEndorsements: item.HasEndorsements,
+	}
+	if item.InstalledRow {
+		d.Installed = &InstalledDetails{
+			Version:       item.Version,
+			Profile:       item.Profile,
+			UpdatePolicy:  item.UpdatePolicy,
+			Locked:        item.Locked,
+			LockedVersion: item.LockedVersion,
+		}
+		if item.CompileGame && item.HasPakSource {
+			v := item.ConvertPaks
+			d.Installed.ConvertPaks = &v
+		}
+	}
+	return d
+}
+
 // DataProvider is the narrow, read-only boundary between the TUI and app
 // data. Implementations must be safe to call from a Bubble Tea command
 // goroutine.
@@ -339,6 +444,10 @@ type DataProvider interface {
 	// core.VerifyLocal) for the dashboard signal and the Health screen's
 	// initial content. Rides loadData like Conflicts.
 	Health(ctx context.Context) (HealthView, error)
+	// GetModDetails fetches full metadata for item's mod and joins local
+	// install state. A network call for remote sources - callers must run it
+	// off the render path (see mutations.go's openSelectedModDetails).
+	GetModDetails(ctx context.Context, item ModItem) (ModDetails, error)
 }
 
 // prototypeProvider serves the static demo data set. It must never touch
@@ -398,6 +507,31 @@ func (p *prototypeProvider) activeMods() []prototype.Mod {
 	return p.data.InstalledMods
 }
 
+// allMods is every prototype mod a details view can be opened on: the active
+// game's installed mods plus the search catalog - the two lists modItems is
+// fed from (Overview at service.go:427, Search at :550).
+func (p *prototypeProvider) allMods() []prototype.Mod {
+	return append(append([]prototype.Mod(nil), p.activeMods()...), p.data.SearchResults...)
+}
+
+// GetModDetails serves the mod-details view's DataProvider contract from the
+// canned data set: modDetailsFromItem seeds everything the row already
+// carries, then this fills in the network-only fields (Description,
+// SourceURL, PictureURL) from the matching prototype.Mod, if any - mirroring
+// coreProvider.GetModDetails' local-first-then-enrich shape without a real
+// fetch.
+func (p *prototypeProvider) GetModDetails(_ context.Context, item ModItem) (ModDetails, error) {
+	out := modDetailsFromItem(item)
+	for _, m := range p.allMods() {
+		if m.ID != item.ID {
+			continue
+		}
+		out.Description, out.SourceURL, out.PictureURL = m.Description, m.SourceURL, m.PictureURL
+		break
+	}
+	return out, nil
+}
+
 // setActiveMods replaces the ACTIVE game's installed-mods slice - the
 // write-back half of activeMods (see its doc comment), needed by the
 // operations that grow or shrink the list (UninstallMod, ApplyInstall,
@@ -444,7 +578,7 @@ func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, err
 			Updates:     p.data.Stats.Updates,
 			Conflicts:   p.data.Stats.Conflicts,
 			LastDeploy:  &lastDeploy,
-		}, modItems(mods), nil
+		}, modItems(mods, true, p.data.Profile.Name), nil
 	}
 
 	enabled := 0
@@ -460,7 +594,7 @@ func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, err
 		Enabled:     enabled,
 		Updates:     -1,
 		Conflicts:   -1,
-	}, modItems(mods), nil
+	}, modItems(mods, true, p.data.Profile.Name), nil
 }
 
 // ListGames returns the two canned games (see Data.AltGame's doc comment),
@@ -555,7 +689,7 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, page
 		pageSize = SearchPageSize
 	}
 
-	all := modItems(p.data.SearchResults)
+	all := modItems(p.data.SearchResults, false, "")
 	matched := make([]ModItem, 0, len(all))
 	for _, item := range all {
 		if strings.Contains(strings.ToLower(item.Name), strings.ToLower(query)) {
@@ -731,10 +865,25 @@ func (p *prototypeProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
 	return items, nil
 }
 
-func modItems(mods []prototype.Mod) []ModItem {
+// modItems maps prototype.Mod rows to ModItems, shared by Overview's two
+// installed-mods branches (both call sites above) and Search's
+// SearchResults path (:648) - the one function backs both lists, unlike
+// coreProvider's own Overview/modsToItems split (service_core.go), which
+// uses two SEPARATE mapping functions for exactly the reason installedRow
+// exists here: a Search-derived row must never claim genuine install state.
+//
+// installedRow must be true ONLY for the Overview call sites - it feeds
+// ModItem.InstalledRow, which modDetailsFromItem (above) gates its
+// Installed block on (#86 review finding). No canned SearchResults entry
+// currently sets Status: "installed", so this couldn't yet be observed from
+// --prototype mode alone, but the contract must hold regardless of what the
+// canned data happens to contain. profile is only stamped onto ModItem.
+// Profile when installedRow is true, matching Profile's own "empty for a
+// Search-derived ModItem" doc comment.
+func modItems(mods []prototype.Mod, installedRow bool, profile string) []ModItem {
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {
-		items = append(items, ModItem{
+		item := ModItem{
 			ID:              mod.ID,
 			Name:            mod.Name,
 			Author:          mod.Author,
@@ -749,7 +898,12 @@ func modItems(mods []prototype.Mod) []ModItem {
 			PreviousVersion: mod.PreviousVersion,
 			Locked:          mod.Locked,
 			LockedVersion:   mod.LockedVersion,
-		})
+			InstalledRow:    installedRow,
+		}
+		if installedRow {
+			item.Profile = profile
+		}
+		items = append(items, item)
 	}
 	return items
 }

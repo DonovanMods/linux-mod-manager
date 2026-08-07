@@ -38,6 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The verify engine itself (per-file/per-mod checks, `--fix` repairs, the
   deploy-convergence sweep) is now extracted into `internal/core`, shared
   unchanged between the CLI and this new TUI surface.
+- TUI: a mod details view with full `lmm mod show` parity — `enter` on a mod
+  in Installed Mods or Search opens it, `esc` returns. Opens instantly from
+  data already on screen and fills in description, category, and links from
+  the source in the background, so it stays useful offline (#86).
+
+### Changed
+
+- `lmm mod show` now strips HTML from a mod's description before printing
+  it, using the same cleaner the update flow and TUI already share — raw
+  `<p>` tags and `&amp;` entities no longer reach the terminal (#86).
+  `--json` output is unchanged: it stays the raw source markup.
 
 ### Fixed
 

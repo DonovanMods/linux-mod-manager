@@ -143,16 +143,13 @@ type Model struct {
 	// scan (or the initial local-tier load) succeeded. Set by Task 10's
 	// loadData wiring and the 'c'/'F' handlers Tasks 11/12 add.
 	healthErr string
-	// contextContent is ScreenHealth's pushed full-screen view (see
-	// contextview.go): nil means the screen renders the health home view;
-	// non-nil means it renders contextContent.Lines instead, and esc pops
-	// back to contextReturn via Model.popContext.
+	// contextContent is a pushed full-screen view any screen can host (see
+	// contextview.go, generalized in #86): nil means the current screen
+	// renders normally; non-nil means contextView() renders it instead, over
+	// whatever screen pushed it, and esc pops back via Model.popContext.
 	contextContent contextContent
-	// contextReturn is the screen popContext returns to once contextContent
-	// is cleared - the screen that called pushContext.
-	contextReturn Screen
-	search        searchModel
-	action        actionModel
+	search         searchModel
+	action         actionModel
 	// picker is the pending list-choice modal (see picker.go), if any.
 	// Sibling to action.pending: promptPicker/updatePickerKey/pickerView
 	// mirror promptAction/updatePendingActionKey/actionModalView's structure.
@@ -413,22 +410,17 @@ func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 // pressed Esc (smoke-test Finding 1). See gotoScreenFocused for the bindings
 // that DO focus.
 func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
-	// Navigating away from ScreenHealth implicitly pops any pushed
-	// contextContent (#224 Task 9 fix round 1, Finding 1): the pushed-
-	// content key routing in updateKey only offers keys to HandleKey while
-	// m.screen == ScreenHealth, so a global nav key the content declines
-	// (a digit, tab/shift-tab, a dashboard menu selection) would otherwise
-	// strand contextContent set while the session sits on a different
-	// screen - returning to Health later would then re-render the stale
-	// pushed content instead of the home view (see contextContent's own
-	// "with nothing pushed, ScreenHealth renders the health home view" doc
-	// comment). gotoScreen is the single choke point every navigation
-	// route funnels through (grep confirms it's the only non-init,
-	// non-contextview.go assignment to m.screen), so clearing here covers
-	// all of them without each call site needing its own guard.
-	if m.screen == ScreenHealth && screen != ScreenHealth && m.contextContent != nil {
+	// Navigating anywhere pops pushed content (#86: any screen can host it,
+	// so this is no longer Health-specific). gotoScreen is the single choke
+	// point every nav route funnels through, so one clear here covers them
+	// all - including pressing the digit for the screen you are already on.
+	if m.contextContent != nil {
+		// #86 Task 7 review finding: cancel any in-flight fetch the pushed
+		// content owns BEFORE dropping it - see cancelPushedContentFetch's
+		// own doc comment for why an abandoned fetch left running/enter dead
+		// otherwise.
+		m.cancelPushedContentFetch()
 		m.contextContent = nil
-		m.contextReturn = ScreenDashboard
 	}
 	m.screen = screen
 	return m, nil
@@ -787,6 +779,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.resolveFixHealthCheckFailure(msg)
+	case modDetailsFetchedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveModDetailsFetched(msg)
+	case modDetailsFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveModDetailsFailed(msg)
 	case policyChosenMsg:
 		return m.resolvePolicyChoice(msg)
 	case versionsFetchedMsg:
@@ -921,6 +923,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// isScreenDigit reports whether msg is one of the nav digits ("1".."6"), so
+// the pushed-content swallow rule can let navigation through.
+func isScreenDigit(msg tea.KeyMsg) bool {
+	if msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
+		return false
+	}
+	return msg.Runes[0] >= '1' && msg.Runes[0] <= rune('0'+len(screens))
+}
+
 // updateKey routes a keypress to whichever modal (if any) is currently
 // showing, then falls through to the outer per-screen switch below.
 //
@@ -954,23 +965,48 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updatePendingActionKey(msg)
 	}
 
-	// ScreenHealth's pushed context content (#224 Task 9, contextview.go)
-	// gets first crack at every key while it's up - mirroring the
-	// picker/inputModal/overlay/action.pending early-returns above, except
-	// scoped to a screen rather than a Model field, since contextContent is
-	// itself the screen's whole content when non-nil. Content that declines
-	// (handled=false) falls through to rule 8 and the outer switch below,
-	// same as any ordinary keypress; esc (Blur) is the host's own fallback,
-	// popping back to contextReturn only when the content itself didn't
-	// already consume it.
-	if m.screen == ScreenHealth && m.contextContent != nil {
+	// Pushed content gets first refusal on every key. Anything it declines is
+	// SWALLOWED rather than falling through to the screen underneath (#86) -
+	// otherwise arrows would move a selection the user can't see and e/x/u
+	// would mutate the row behind the view. Same rule updateOverlayKey
+	// already applies for the info overlay. The exits below are the keys that
+	// must keep working over any full-screen content: leave, navigate, quit,
+	// help.
+	if m.contextContent != nil {
 		if next, cmd, handled := m.contextContent.HandleKey(msg); handled {
 			m.contextContent = next
 			return m, cmd
 		}
-		if key.Matches(msg, m.keys.Blur) {
+		switch {
+		case key.Matches(msg, m.keys.Blur):
+			// #86 Task 7 review finding: cancel any in-flight fetch the
+			// pushed content owns BEFORE popping - see
+			// cancelPushedContentFetch's own doc comment.
+			m.cancelPushedContentFetch()
 			m.popContext()
 			return m, nil
+		case m.isQuitKey(msg):
+			// fall through to the outer switch's quit handling
+		case key.Matches(msg, m.keys.Help),
+			key.Matches(msg, m.keys.NextScreen), key.Matches(msg, m.keys.PrevScreen),
+			isScreenDigit(msg):
+			// fall through: navigation and help stay available
+		default:
+			// LOAD-BEARING: this default case is what swallows Search's own
+			// focus key ("/") while content is pushed - it is not in any of
+			// the exit cases above. That is what makes "a focused search
+			// input and pushed content cannot co-occur" an actual invariant
+			// rather than a coincidence: without this, "/" over pushed
+			// content would fall through to the outer switch, focus the
+			// search input underneath a view the user can still see full of
+			// mod details, and updateKey's focused-input branch (below)
+			// would then start eating every keystroke as search input
+			// instead of this view's own HandleKey - reintroducing exactly
+			// the "acting on the row/screen underneath a pushed view" bug
+			// class this whole swallow rule exists to retire (#86 review -
+			// recorded here so a later cleanup pass doesn't "simplify" this
+			// default away).
+			return m, nil // swallowed
 		}
 	}
 
@@ -1077,12 +1113,14 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(1)
 		return m.afterSearchSelectionMove()
 	case key.Matches(msg, m.keys.Select):
-		// Select ("enter") is context-dependent: it opens a dashboard menu
-		// entry everywhere except Profiles, where Task 7 repurposes it to
-		// switch to the selected (non-active) profile - see mutations.go's
-		// switchSelectedProfile.
-		if m.screen == ScreenProfiles {
+		// Select ("enter") is context-dependent: Profiles switches to the
+		// selected profile, Installed Mods and Search open the selected mod's
+		// details (#86), and everywhere else it opens a dashboard menu entry.
+		switch m.screen {
+		case ScreenProfiles:
 			return m.switchSelectedProfile()
+		case ScreenInstalledMods, ScreenSearch:
+			return m.openSelectedModDetails()
 		}
 		return m.openSelectedMenuEntry()
 	case key.Matches(msg, m.keys.ToggleEnable):
@@ -1109,13 +1147,22 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// other binding's bare key.Matches, specifically so it can sit ahead of
 	// CreateProfile's unconditional one in this switch without stealing "c"
 	// on ScreenProfiles - a Go "switch true" takes the FIRST case whose
-	// condition holds, so on ScreenHealth (no pushed context) this case wins
-	// outright, and everywhere else (including ScreenHealth WITH pushed
-	// context, where the guard's own contextContent check is what disqualifies
-	// it) the condition is false and control falls through to CreateProfile's
-	// case exactly as it did before this task - CreateProfile's own internal
-	// screen guard (createProfilePrompt, mutations.go) still no-ops it on any
-	// screen but Profiles, so nothing about its pre-existing behavior changes.
+	// condition holds, so on ScreenHealth with nothing pushed this case wins
+	// outright, and everywhere else the condition is false and control falls
+	// through to CreateProfile's case - CreateProfile's own internal screen
+	// guard (createProfilePrompt, mutations.go) still no-ops it on any screen
+	// but Profiles.
+	//
+	// The m.contextContent == nil half of this guard is now DEAD CODE, kept
+	// as defense-in-depth: #86's pushed-content swallow rule (updateKey,
+	// above - "Pushed content gets first refusal on every key") means "c"
+	// never reaches this outer switch at all while content is pushed on ANY
+	// screen, including Health - the swallow happens earlier, before
+	// updateKey's per-screen switch is ever entered. This inline check used
+	// to be load-bearing (pre-#86, pushed content on Health fell through to
+	// this exact switch); it is retained rather than removed because it
+	// costs nothing and would matter again if the swallow rule were ever
+	// relaxed.
 	case key.Matches(msg, m.keys.FullCheck) && m.screen == ScreenHealth && m.contextContent == nil:
 		return m.runFullHealthCheck()
 	// FixHealth ("F", Task 12) has no other screen claiming the same key
@@ -1212,9 +1259,48 @@ func (m Model) View() string {
 // guidance, 160 columns (not 80) is the normal case the full wording is
 // designed for; narrower terminals are expected to lose some trailing hints
 // to truncation rather than the wording being shortened to fit them.
+//
+// Smoke round 2, finding 1: the "enter: switch" clause used to be
+// hardcoded for every screen, but Select ("enter") is context-dependent
+// (updateKey's own doc comment on its Select case) - on Installed Mods and
+// Search it now opens mod details (#86), not "switch" (that's Profiles'
+// meaning only), so a screen-independent string was actively wrong there.
+// footerSelectHint() isolates just that one clause per screen; every other
+// hint in the line stays a single shared string, matching this function's
+// "keep the shared hints shared" contract. The clause sits in the same
+// position it always has (immediately before "q: quit"), so its length
+// change doesn't reorder or newly threaten any OTHER hint's survival under
+// truncation - only "q: quit" sits after it, and every variant below still
+// fits well inside the 160-column design target (see footerSelectHint's
+// doc comment for the longest case).
 func (m Model) footerLine() string {
-	hint := "?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: check updates  enter: switch  q: quit"
+	hint := fmt.Sprintf(
+		"?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: check updates  %s  q: quit",
+		m.footerSelectHint(),
+	)
 	return truncate(m.theme.Help.Render(hint), m.availableWidth())
+}
+
+// footerSelectHint returns the footer's "enter: ..." clause for the
+// CURRENT screen, mirroring updateKey's own Select dispatch (app.go) and
+// helpGroups' hand-written per-screen rows for the same key: Profiles
+// switches to the highlighted profile; Installed Mods and Search open the
+// selected mod's details (#86); everywhere else (Dashboard, Sources,
+// Health) falls through to openSelectedMenuEntry, which only does
+// something on Dashboard - "open" is kept as the generic fallback there
+// rather than a screen-specific phrase, since Health/Sources have no
+// menu-entry meaning for it at all. Longest case is "enter: view details"
+// (18 chars) vs the old always-"enter: switch" (13 chars); the full footer
+// line with it is still well under the 160-column design target.
+func (m Model) footerSelectHint() string {
+	switch m.screen {
+	case ScreenProfiles:
+		return "enter: switch"
+	case ScreenInstalledMods, ScreenSearch:
+		return "enter: view details"
+	default:
+		return "enter: open"
+	}
 }
 
 // CurrentScreen exposes the selected screen for tests.
@@ -1407,6 +1493,13 @@ func (m Model) screenView() string {
 		return m.actionModalView()
 	}
 
+	// Pushed content renders over whatever screen pushed it (#86). Placed
+	// after the picker/inputModal returns above so modals still outrank it,
+	// matching updateKey's own precedence.
+	if m.contextContent != nil {
+		return m.contextView()
+	}
+
 	switch m.state {
 	case stateLoading:
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
@@ -1441,7 +1534,7 @@ func (m Model) screenView() string {
 	case ScreenSources:
 		return m.sourcesView()
 	case ScreenHealth:
-		return m.healthScreenView()
+		return m.healthHomeView()
 	default:
 		return m.dashboardView()
 	}
@@ -2124,28 +2217,6 @@ func (m Model) conflictRowStyle(c ConflictItem) lipgloss.Style {
 	return m.theme.WarningText
 }
 
-// healthScreenView renders ScreenHealth (#224 Task 9): the pushed
-// contextContent's chrome when one is pushed (contextview.go's host
-// contract - "the host owns chrome (panel, title, nav) and clamping"), or
-// the health home view otherwise.
-func (m Model) healthScreenView() string {
-	if m.contextContent == nil {
-		return m.healthHomeView()
-	}
-
-	width := m.availableWidth()
-	height := m.availableContentHeight()
-	contentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
-
-	lines := []string{m.theme.PanelTitle.Render(m.contextContent.Title())}
-	lines = append(lines, m.contextContent.Lines(contentWidth, max(contentBudget-1, 1))...)
-	lines = m.truncateLines(lines, contentWidth)
-	lines = m.clampLines(lines, contentBudget)
-
-	return m.panelWithHeight(width, height).Render(strings.Join(lines, "\n"))
-}
-
 // healthHomeView renders the Health screen's home content: a full-width
 // columnar table, one row per finding (STATUS | MOD | FILE | VERSION |
 // NOTE), followed by a compact detail strip for the selected row -
@@ -2741,6 +2812,12 @@ func (m Model) helpGroups() []helpGroup {
 	installedMods := helpGroup{
 		name: "installed mods",
 		entries: []string{
+			// Select is #86's enter-opens-details binding. Hand-written
+			// (not helpEntry) for the same reason the dashboard's and
+			// profiles' own rows above are: keys.go's Select.Help() is the
+			// generic "enter"/"open" shared across every screen it applies
+			// to, and never says WHAT it opens - smoke round 2's finding 2.
+			helpRow(m.keys.Select.Help().Key, "open mod details"),
 			helpEntry(m.keys.ToggleEnable),
 			helpEntry(m.keys.Uninstall),
 			helpEntry(m.keys.Deploy),
@@ -2778,12 +2855,26 @@ func (m Model) helpGroups() []helpGroup {
 		name: "search",
 		entries: []string{
 			helpEntry(m.keys.Search),
-			helpEntry(m.keys.Submit),
+			// Submit and Select share the same physical key ("enter") but
+			// fire in mutually exclusive states (updateKey's focused-input
+			// branch handles Submit before the outer switch that handles
+			// Select is ever reached - see that branch's own key.Matches
+			// case): Submit only while the query input is focused, Select
+			// only once it's blurred with a result row selected. Smoke
+			// round 2's finding 2: listing both via helpEntry rendered
+			// "enter / search" next to "enter / open" with nothing saying
+			// which state either applies to, so both are hand-written here
+			// instead, each naming its own state explicitly.
+			helpRow(m.keys.Submit.Help().Key, "search (query input focused)"),
 			helpEntry(m.keys.Blur),
 			helpEntry(m.keys.NextPage),
 			helpEntry(m.keys.PrevPage),
 			helpEntry(m.keys.CycleSource),
 			helpEntry(m.keys.Install),
+			// Select is #86's enter-opens-details binding - fires with the
+			// input blurred and a result selected, mirroring Install's own
+			// scoping (see openSelectedModDetails).
+			helpRow(m.keys.Select.Help().Key, "open mod details (input blurred, result selected)"),
 		},
 	}
 
@@ -2854,14 +2945,14 @@ func (m Model) helpGroups() []helpGroup {
 		ScreenSources:       sources.name,
 		ScreenHealth:        health.name,
 	}
-	// #224 Task 9 fix round 1, Finding 2: while ScreenHealth has pushed
-	// content (contextview.go), the promoted group is the CONTENT's own
-	// HelpGroup() - the static "health" group's bindings don't describe
-	// whatever the pushed content actually shows, so consulting it here
-	// (rather than leaving HelpGroup() an orphaned interface member) is the
-	// whole point of that method existing. The static "health" group stays
-	// in fixed, unpromoted, further down the list.
-	if m.screen == ScreenHealth && m.contextContent != nil {
+	// #224 Task 9 fix round 1, Finding 2, generalized in #86: while any
+	// screen has pushed content (contextview.go), the promoted group is the
+	// CONTENT's own HelpGroup() - the ambient screen's static bindings don't
+	// describe whatever the pushed content actually shows, so consulting it
+	// here (rather than leaving HelpGroup() an orphaned interface member) is
+	// the whole point of that method existing. The pushing screen's own
+	// static group stays in fixed, unpromoted, further down the list.
+	if m.contextContent != nil {
 		return append([]helpGroup{global, m.contextContent.HelpGroup()}, fixed...)
 	}
 
@@ -2888,16 +2979,16 @@ func (m Model) helpGroups() []helpGroup {
 // same as before Task 9.
 func (m Model) helpBodyBudget() int {
 	if m.height == 0 {
-		// Bumped 40->50 in Task 4: the full uncapped group list was already
-		// at 41 lines after Task 3's conflicts group (silently one past the
-		// old 40 default), and the installed-mods group's two new
-		// MoveDown/MoveUp entries pushed it further past 40, to 43 -
-		// TestHelpViewListsPerScreenGroups depends on this staying
-		// "generous" enough to render every group's content, per this
-		// method's own doc comment. 50 leaves headroom above today's 43 for
-		// the next few tasks' bindings, rather than needing a re-bump for
-		// every single addition.
-		return 50
+		// Bumped 40->50 in Task 4 (see the history above this line for that
+		// jump's own accounting), then 50->65 for #86 Task 7: the two new
+		// Select entries (installed mods + search groups, documenting
+		// enter-opens-details) pushed the full uncapped group list to 57
+		// lines, one past 50. TestHelpViewListsPerScreenGroups depends on
+		// this staying "generous" enough to render every group's content,
+		// per this method's own doc comment. 65 leaves headroom above
+		// today's 57 for the next few tasks' bindings, rather than needing a
+		// re-bump for every single addition.
+		return 65
 	}
 	status := 0
 	if m.hasVisibleStatus() {

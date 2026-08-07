@@ -1035,7 +1035,18 @@ func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
 // which proves the (now sole) entry opens ScreenHealth for both theme
 // variants.
 
-func TestEnterOutsideDashboardIsANoop(t *testing.T) {
+// TestEnterOnInstalledModsDoesNotChangeNavScreen used to be named
+// TestEnterOutsideDashboardIsANoop and assert enter was a no-op outside the
+// dashboard - true before #86, which repurposes enter on Installed Mods to
+// open the mod details view (openSelectedModDetails), a real, non-no-op
+// action. The name went stale (it now asserts the opposite of what it
+// claims), but the ONE assertion that survives - CurrentScreen() is
+// unchanged - still guards something real: opening details must not move
+// the highlighted nav-bar entry, only push content over the current screen.
+// Renamed to say that instead (its sibling in mutations_test.go,
+// TestSwitchKeyWrongScreenNeverPlansASwitch, was renamed for the same
+// reason at the same time and this one was missed - #86 review finding).
+func TestEnterOnInstalledModsDoesNotChangeNavScreen(t *testing.T) {
 	t.Parallel()
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
@@ -1046,7 +1057,7 @@ func TestEnterOutsideDashboardIsANoop(t *testing.T) {
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 }
 
-// stubProvider is a no-op DataProvider implementing all 8 methods with their
+// stubProvider is a no-op DataProvider implementing all 9 methods with their
 // zero value (empty Summary/nil slice/nil error throughout) - meant to be
 // embedded by a test fake that only needs to override the ONE method its
 // test actually exercises, instead of restating every other method just to
@@ -1076,6 +1087,9 @@ func (stubProvider) DeployedFiles(string, string) ([]string, error)    { return 
 func (stubProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
 func (stubProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
 func (stubProvider) Health(context.Context) (HealthView, error)        { return HealthView{}, nil }
+func (stubProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // failingProvider embeds stubProvider and overrides only Overview - the ONE
 // method that matters here: loadData (app.go) calls Overview first and
@@ -1286,6 +1300,10 @@ func (r *recordingProvider) Conflicts(context.Context) ([]ConflictItem, error) {
 
 func (r *recordingProvider) Health(ctx context.Context) (HealthView, error) {
 	return r.delegate.Health(ctx)
+}
+
+func (r *recordingProvider) GetModDetails(ctx context.Context, item ModItem) (ModDetails, error) {
+	return r.delegate.GetModDetails(ctx, item)
 }
 
 func (r *recordingProvider) ListGames() ([]GameInfo, error) {
