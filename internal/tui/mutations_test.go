@@ -942,6 +942,10 @@ func (f *fakeSwitchableProvider) Conflicts(context.Context) ([]ConflictItem, err
 	return nil, nil
 }
 
+func (f *fakeSwitchableProvider) Health(context.Context) (HealthView, error) {
+	return HealthView{}, nil
+}
+
 func (f *fakeSwitchableProvider) Profiles(context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(f.names))
 	for _, name := range f.names {
@@ -1067,6 +1071,7 @@ func (p *searchCancelProvider) ListGames() ([]GameInfo, error)                 {
 func (p *searchCancelProvider) Conflicts(context.Context) ([]ConflictItem, error) {
 	return nil, nil
 }
+func (p *searchCancelProvider) Health(context.Context) (HealthView, error) { return HealthView{}, nil }
 
 // SetGame implements actions.go's optional gameRebinder hook.
 func (p *searchCancelProvider) SetGame(id string) error {
@@ -3450,4 +3455,31 @@ func TestChangelogPickedDroppedWhenOverlayAlreadyOpen(t *testing.T) {
 
 	require.Nil(t, cmd)
 	require.Equal(t, "Existing 1.0 → 1.1", m.overlay.title, "an already-open overlay must not be replaced")
+}
+
+// TestHealthFixResultLinesExcludesOkRowsFromRemaining guards
+// healthFixResultLines directly against a regression the 2026-08-07 smoke
+// feedback fix (#224) could easily introduce: now that HealthView.Findings
+// keeps quiet-ok rows (healthView no longer filters them), a fix-results
+// HealthView can legitimately mix a fixed_* row, a plain "ok" row (a
+// healthy mod that needed no repair at all), and a still-outstanding
+// unfixable row (e.g. "skipped") in the SAME Findings slice. The overlay
+// must still show only "what got fixed" (fixed_* rows) and "what's still
+// wrong" (unfixable-excluded outstanding rows) - the ok row must not
+// drown that list under a bogus "remaining" entry.
+func TestHealthFixResultLinesExcludesOkRowsFromRemaining(t *testing.T) {
+	t.Parallel()
+
+	findings := []HealthFinding{
+		{ModID: "x", ModName: "X", FileID: "f1", Status: "fixed_stale_deployment"},
+		{ModID: "y", ModName: "Y", FileID: "f2", Status: "ok"},
+		{ModID: "z", ModName: "Z", Status: "missing", Note: "locked"},
+	}
+
+	lines := healthFixResultLines(findings)
+
+	require.Equal(t, []string{
+		"✓ X: FIXED STALE DEPLOYMENT",
+		"✗ Z: MISSING — locked",
+	}, lines, "the ok row must not appear in the overlay at all; a genuinely outstanding row still must")
 }

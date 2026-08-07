@@ -8,14 +8,14 @@
   │ > PROFILE  survival                                                      │  
   │ > MODS     42 INSTALLED / 39 ENABLED                                     │  
   │ > ALERTS   3 UPDATES // 2 CONFLICT                                       │  
+  │ > Health: 0 issue(s), 2 warning(s) (local)                               │  
   │ > DEPLOY   3H AGO                                                        │  
   │                                                                          │  
   │ > RUN SPELLBOOK SCAN                                                     │  
   │   QUERY ARCHIVE INDEX                                                    │  
   │   LOAD PROFILE ROSTER                                                    │  
   │   SCRY SOURCE REGISTRY                                                   │  
-  │   ASK CONFLICT ORACLE                                                    │  
-  │                                                                          │  
+  │   VERIFY INTEGRITY                                                       │  
   │                                                                          │  
   │                                                                          │  
   ╰──────────────────────────────────────────────────────────────────────────╯  

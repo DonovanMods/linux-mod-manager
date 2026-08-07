@@ -706,18 +706,21 @@ func TestStaleActionDrainTimeoutIsNoop(t *testing.T) {
 // ("Planning switch…"/"Planning install…"/"Checking for updates…" - see
 // switchSelectedProfile/installSelectedSearchResult/checkForUpdates in
 // mutations.go) sets m.action.draining via startQuit exactly like quitting
-// mid-mutation does, but the six plan/check result/failure messages
+// mid-mutation does, but the original plan/check result/failure messages
 // (planResultMsg/planFailedMsg, installPlanResultMsg/installPlanFailedMsg,
 // checkUpdatesResultMsg/checkUpdatesFailedMsg) never checked draining - so
 // quit blocked for the full actionDrainTimeout (~5s) even though the
 // awaited step had already finished, unlike actionDoneMsg/actionFailedMsg's
 // own immediate resolution (TestQuitWhileRunningDrainsUntilActionSettles/
-// -Fails above). Table covers all six: each arrives fresh (passing its own
-// gen check) while draining is already true and must resolve straight to
-// tea.Quit - and, since the app is exiting, WITHOUT opening the
-// confirmation modal or writing the status line these messages normally
-// produce (resolveDrainedQuit in actions.go, shared with actionDoneMsg/
-// actionFailedMsg's own drain branch, bypasses both).
+// -Fails above). Table covers every plan/check message pair since added
+// to the same resolveDrainedQuit contract - including (#224 Task 11/12)
+// fullHealthCheckResultMsg/fullHealthCheckFailedMsg and
+// fixHealthCheckResultMsg/fixHealthCheckFailedMsg: each arrives fresh
+// (passing its own gen check) while draining is already true and must
+// resolve straight to tea.Quit - and, since the app is exiting, WITHOUT
+// opening the confirmation modal or writing the status line these messages
+// normally produce (resolveDrainedQuit in actions.go, shared with
+// actionDoneMsg/actionFailedMsg's own drain branch, bypasses both).
 func TestQuitDrainResolvesImmediatelyOnFreshPlanOrCheckMsg(t *testing.T) {
 	t.Parallel()
 
@@ -742,6 +745,27 @@ func TestQuitDrainResolvesImmediatelyOnFreshPlanOrCheckMsg(t *testing.T) {
 		}},
 		{"checkUpdatesFailedMsg", func(gen int) tea.Msg {
 			return checkUpdatesFailedMsg{gen: gen, err: errors.New("boom")}
+		}},
+		// fullHealthCheckResultMsg/fullHealthCheckFailedMsg (#224 Task 11) are
+		// the SAME "PLAN/CHECK step settling mid-drain" shape checkForUpdates
+		// established - extending this table's coverage to them, rather than a
+		// separate one-off test, follows resolveDrainedQuit's own doc comment.
+		{"fullHealthCheckResultMsg", func(gen int) tea.Msg {
+			return fullHealthCheckResultMsg{gen: gen, view: HealthView{Full: true}}
+		}},
+		{"fullHealthCheckFailedMsg", func(gen int) tea.Msg {
+			return fullHealthCheckFailedMsg{gen: gen, err: errors.New("boom")}
+		}},
+		// fixHealthCheckResultMsg/fixHealthCheckFailedMsg (#224 Task 12) are
+		// the SAME shape again - the fix-mode (Full tier, fix=true)
+		// RunHealthCheck result/failure pair - and settle mid-drain via the
+		// identical resolveDrainedQuit branch (resolveFixHealthCheckResult/
+		// resolveFixHealthCheckFailure in mutations.go).
+		{"fixHealthCheckResultMsg", func(gen int) tea.Msg {
+			return fixHealthCheckResultMsg{gen: gen, view: HealthView{Full: true}}
+		}},
+		{"fixHealthCheckFailedMsg", func(gen int) tea.Msg {
+			return fixHealthCheckFailedMsg{gen: gen, err: errors.New("boom")}
 		}},
 	}
 

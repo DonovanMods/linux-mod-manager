@@ -322,14 +322,14 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 	// untouched in that case).
 	target := version
 	if version != "" {
-		// sourceMappedMod (verify.go): mod.Mod's GameID is the LMM game ID
+		// core.SourceMappedMod: mod.Mod's GameID is the LMM game ID
 		// (installed rows persist normalized IDs), but Service.GetModFiles -
 		// which ResolveModVersion calls into - forwards straight to the
 		// source with no game-ID translation, unlike Service.GetMod. Sources
 		// like NexusMods address games by their own domain, so an unmapped
 		// GameID would silently query the wrong upstream game whenever this
 		// game's per-source mapping differs from its LMM ID.
-		if _, err := service.ResolveModVersion(ctx, modSource, sourceMappedMod(game, &mod.Mod), version); err != nil {
+		if _, err := service.ResolveModVersion(ctx, modSource, core.SourceMappedMod(game, &mod.Mod), version); err != nil {
 			return err
 		}
 	} else {
@@ -565,7 +565,7 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 
 	if len(files) == 0 {
 		gameCache := svc.GetGameCache(game)
-		if game.DeployMode == domain.DeployCompile && hasRetainedSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
+		if game.DeployMode == domain.DeployCompile && core.HasRetainedCompileSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
 			fmt.Println("  No files of its own - this mod participates in the profile's merged pak.")
 			fmt.Printf("  (See zzz_LMM_Merged_P.pak; run `lmm verify` to check the merged pak is up to date)\n")
 			return nil

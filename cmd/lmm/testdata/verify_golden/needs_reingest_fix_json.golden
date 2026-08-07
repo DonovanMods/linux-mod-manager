@@ -1,0 +1,35 @@
+{
+  "game_id": "icarus",
+  "profile": "default",
+  "files": [
+    {
+      "mod_id": "merged-pak",
+      "mod_name": "Icarus Merged Pak",
+      "file_id": "",
+      "status": "stale_compile",
+      "note": "base pak updated"
+    },
+    {
+      "mod_id": "bear-mount",
+      "mod_name": "Bear Mount",
+      "file_id": "",
+      "status": "version_unverifiable"
+    },
+    {
+      "mod_id": "bear-mount",
+      "mod_name": "Bear Mount",
+      "file_id": "exmodz-file-id",
+      "status": "no_checksum",
+      "note": "file exmodz-file-id not found in mod"
+    },
+    {
+      "mod_id": "legacy-pak-mod",
+      "mod_name": "legacy-pak-mod",
+      "file_id": "LegacyMod.pak",
+      "status": "fixed_needs_reingest",
+      "note": "re-ingested with retained source for pak conversion"
+    }
+  ],
+  "issues": 0,
+  "warnings": 3
+}

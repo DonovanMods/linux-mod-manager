@@ -176,6 +176,12 @@ type ActionProvider interface {
 	// exact mechanism and error wording. Outcome.Message is `exported "<name>"
 	// to <path>`.
 	ExportProfile(ctx context.Context, name, path string) (ActionOutcome, error)
+
+	// RunHealthCheck runs the verify engine on demand: full=true adds the
+	// network version pass ('c'); fix=true applies CLI --fix semantics
+	// behind the Health screen's confirmation ('F', always full). progress
+	// receives one line per VerifyEvProgress / RepairDetail / Finding event.
+	RunHealthCheck(ctx context.Context, full, fix bool, progress func(ActionProgress)) (HealthView, error)
 }
 
 // ActionOutcome is what the TUI status line renders after a successful
@@ -1038,4 +1044,40 @@ func (p *prototypeProvider) ApplyImport(_ context.Context, _ []byte, progress fu
 // the user's disk during a --prototype demo session.
 func (p *prototypeProvider) ExportProfile(_ context.Context, name, path string) (ActionOutcome, error) {
 	return ActionOutcome{Message: fmt.Sprintf("exported %q to %s", name, path)}, nil
+}
+
+// RunHealthCheck emits the brief's own fake progress sequence
+// (fakeProgressTicks, prefixed "checking" - #224 Task 8), then returns the
+// SAME canned findings Health does for a dry run (full or not - the
+// prototype has no real Local/Full distinction to demo, so both read
+// identically, Full simply echoing the caller's own full argument like the
+// real coreProvider's opts.Tier does). fix=true instead returns
+// prototypeHealthFixedFindings - the same Checked count, but each canned
+// problem row flipped to its resolved shape (2026-08-07 smoke feedback,
+// Copilot round 11: this used to return an EMPTIED view - Checked: 0, no
+// rows - simulating "everything fixed" by simulating nothing having been
+// checked, which contradicted the Health screen's "OK rows included, per
+// checked file" convention once the OK-rows model landed). Warnings drops
+// from 2 to 1 - matching the real engine's own convention that a resolved
+// fixed_stale_deployment row no longer counts as a warning, while the
+// still-unfixable conversion_failed row does (cmd/lmm/verify.go's doc
+// comment). Neither branch mutates the shared prototypeHealthFindings/
+// prototypeHealthFixedFindings slices themselves - each returns a
+// defensive copy, mirroring Health's own.
+func (p *prototypeProvider) RunHealthCheck(_ context.Context, full, fix bool, progress func(ActionProgress)) (HealthView, error) {
+	fakeProgressTicks(progress, "checking")
+	if fix {
+		return HealthView{
+			Findings: append([]HealthFinding(nil), prototypeHealthFixedFindings...),
+			Warnings: 1,
+			Full:     full,
+			Checked:  prototypeHealthChecked,
+		}, nil
+	}
+	return HealthView{
+		Findings: append([]HealthFinding(nil), prototypeHealthFindings...),
+		Warnings: 2,
+		Full:     full,
+		Checked:  prototypeHealthChecked,
+	}, nil
 }

@@ -16,20 +16,21 @@ type KeyMap struct {
 	InstalledMods key.Binding
 	Profiles      key.Binding
 	Sources       key.Binding
-	// ConflictsScreen is Task 3's direct-jump binding to ScreenConflicts,
-	// mirroring SearchScreen's own "named screen, separate from the plain
-	// Dashboard/InstalledMods/Profiles/Sources bindings" shape (both name a
-	// specific screen a user might reach some other way too - SearchScreen
-	// via "/", ConflictsScreen has no such alternate entry point yet).
-	ConflictsScreen key.Binding
-	Select          key.Binding
-	Submit          key.Binding
-	Blur            key.Binding
-	NextPage        key.Binding
-	PrevPage        key.Binding
-	CycleSource     key.Binding
-	ConfirmAction   key.Binding
-	CancelAction    key.Binding
+	// HealthScreen is Task 9's direct-jump binding to ScreenHealth (#224) -
+	// no other entry point reaches it directly. Task 15 folded the former
+	// standalone ScreenConflicts screen (and its own "6" ConflictsScreen
+	// binding) into ScreenHealth's table, moving this binding from "7" to
+	// "6" - the digit now names the screen's new slot 6 position (see
+	// navigation.go's screens slice).
+	HealthScreen  key.Binding
+	Select        key.Binding
+	Submit        key.Binding
+	Blur          key.Binding
+	NextPage      key.Binding
+	PrevPage      key.Binding
+	CycleSource   key.Binding
+	ConfirmAction key.Binding
+	CancelAction  key.Binding
 	// ToggleEnable, Uninstall, and Deploy are Phase 5a's Installed
 	// Mods/Dashboard mutation bindings (see mutations.go). Profile switch
 	// deliberately has no binding of its own here - it reuses Select
@@ -146,6 +147,25 @@ type KeyMap struct {
 	// mod on the Installed Mods screen. Lowercase per the single-screen
 	// non-destructive-toggle convention (see ToggleEnable's "e").
 	ConvertToggle key.Binding
+	// FullCheck is Task 11's Health-screen full (network) verify binding
+	// (#224, see mutations.go's runFullHealthCheck): fires on ScreenHealth
+	// with no pushed context content, dispatching RunHealthCheck's Full tier
+	// behind the standard single-flight action machinery - no confirm modal
+	// (it mutates nothing), mirroring CheckUpdates' own "fetch, don't
+	// confirm" shape. Deliberately reuses "c", already CreateProfile's key
+	// on ScreenProfiles - see updateKey's own doc comment on how the two
+	// coexist without collision (the screens never overlap).
+	FullCheck key.Binding
+	// FixHealth is Task 12's Health-screen batch-fix binding (#224, see
+	// mutations.go's fixHealthPrompt): opens the standard confirmation modal
+	// summarizing what a fix pass will attempt (counts by category), then
+	// runs RunHealthCheck's Full tier with fix=true - ALWAYS the Full tier,
+	// mirroring CLI --fix parity (the version pass is part of --fix, not an
+	// optional extra). Capital "F" - unlike FullCheck's "c", no other screen
+	// claims it, so no compound guard is needed in updateKey's switch (the
+	// screen/pushed-context checks live inside fixHealthPrompt itself, like
+	// every other non-colliding binding's handler).
+	FixHealth key.Binding
 }
 
 // DefaultKeyMap returns the shared key bindings shown in help and used by tests.
@@ -199,9 +219,9 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("5"),
 			key.WithHelp("5", "sources"),
 		),
-		ConflictsScreen: key.NewBinding(
+		HealthScreen: key.NewBinding(
 			key.WithKeys("6"),
-			key.WithHelp("6", "conflicts"),
+			key.WithHelp("6", "health"),
 		),
 		Select: key.NewBinding(
 			key.WithKeys("enter"),
@@ -314,6 +334,14 @@ func DefaultKeyMap() KeyMap {
 		ConvertToggle: key.NewBinding(
 			key.WithKeys("m"),
 			key.WithHelp("m", "toggle pak conversion"),
+		),
+		FullCheck: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "full health check"),
+		),
+		FixHealth: key.NewBinding(
+			key.WithKeys("F"),
+			key.WithHelp("F", "fix findings"),
 		),
 	}
 }

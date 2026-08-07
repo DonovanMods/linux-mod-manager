@@ -109,10 +109,15 @@ func (m Model) uninstallSelectedMod() (Model, tea.Cmd) {
 
 // deployActiveProfile handles 'D' on Dashboard or Installed Mods
 // (task-7-brief.md's Keybindings section), and - since Phase 6b Task 3's
-// review fix wave - on the Conflicts screen too: its stale-conflict detail
-// hint reads "deploy (D) to apply" (conflictsDetailPane, app.go), so the
-// key it names must actually fire there rather than being a silent no-op.
-// Same confirmation modal and machinery on all three screens; no other
+// review fix wave - on ScreenHealth too (with nothing pushed): a stale
+// conflict's remedy copy reads "deploy (D) to apply" (conflictNoteText/
+// conflictDetailHint, app.go - originally the standalone Conflicts screen's
+// own conflictsDetailPane hint, folded into the Health table by #224 Task
+// 15), so the key it names must actually fire there rather than being a
+// silent no-op. The Health guard mirrors FullCheck/FixHealth's own
+// "ScreenHealth, no pushed context" shape (updateKey, app.go) - pushed
+// context content is a different full-screen view with no deploy remedy to
+// act on. Same confirmation modal and machinery on all screens; no other
 // behavior differs by screen. Unlike the mod-scoped actions above,
 // deploying doesn't depend on any row selection, so an empty mods list is
 // not a no-op case here - deploying zero enabled mods is a valid (if
@@ -121,7 +126,8 @@ func (m Model) uninstallSelectedMod() (Model, tea.Cmd) {
 // this task's scope keeps DataProvider frozen, so it isn't "cheaply
 // available" per the brief's own qualifier.
 func (m Model) deployActiveProfile() (Model, tea.Cmd) {
-	deployScreen := m.screen == ScreenDashboard || m.screen == ScreenInstalledMods || m.screen == ScreenConflicts
+	deployScreen := m.screen == ScreenDashboard || m.screen == ScreenInstalledMods ||
+		(m.screen == ScreenHealth && m.contextContent == nil)
 	if !deployScreen || m.actions == nil {
 		return m, nil
 	}
@@ -1504,6 +1510,478 @@ func (m Model) resolveCheckUpdatesFailure(msg checkUpdatesFailedMsg) (Model, tea
 	return m, nil
 }
 
+// --- Health: 'c' full (network) check (#224 Task 11) ---
+
+// fullHealthCheckResultMsg carries a successful Full-tier RunHealthCheck
+// result, tagged with the generation established when the check was
+// dispatched (see runFullHealthCheck) so a superseded result is discarded -
+// mirrors checkUpdatesResultMsg's own gen-tag reasoning in full.
+type fullHealthCheckResultMsg struct {
+	gen  int
+	view HealthView
+}
+
+// fullHealthCheckFailedMsg carries a failed Full-tier RunHealthCheck call,
+// tagged like fullHealthCheckResultMsg.
+type fullHealthCheckFailedMsg struct {
+	gen int
+	err error
+}
+
+// runFullHealthCheck handles 'c' on ScreenHealth (updateKey's own compound
+// guard - m.screen == ScreenHealth && m.contextContent == nil - already
+// keeps this from ever firing while ScreenHealth has pushed context content
+// or on any other screen, where "c" is instead CreateProfile; the screen/
+// actions checks below are defense-in-depth, matching every other mutation
+// handler's own "TUI-level check repeats the caller's guard" convention -
+// see deleteSelectedProfile's doc comment): a no-op with no ActionProvider
+// or while another action/plan is already in flight (buildAction's own
+// "busy" convention - checked directly here rather than via buildAction
+// itself, since this dispatches a custom result message, not the generic
+// actionDoneMsg/actionKind pair - see the other plan/check messages'
+// precedent already established in mutations.go).
+//
+// Deliberately hand-rolls buildAction's own gen/cancel/progress-channel
+// bookkeeping instead of calling it: buildAction ties its result to
+// actionDoneMsg{kind, outcome} for the generic confirmation-modal flow, but
+// this action has no modal and needs to store a whole HealthView (not just
+// an ActionOutcome string) plus a bespoke status line - exactly the shape
+// checkForUpdates/resolveCheckUpdatesResult already use for the identical
+// reason, extended here with the SAME progress pump buildAction wires
+// (ch/waitForActionProgress/tea.Batch) since, unlike CheckUpdates, the Full
+// tier genuinely streams progress.
+func (m Model) runFullHealthCheck() (Model, tea.Cmd) {
+	if m.screen != ScreenHealth || m.contextContent != nil || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.action.cancel = cancel
+	m.action.gen++
+	gen := m.action.gen
+	m.action.running = true
+	m.action.status = "Running full health check…"
+	m.action.statusIsError = false
+
+	ch := make(chan ActionProgress, 1)
+	m.action.progressCh = ch
+
+	actionCmd := func() tea.Msg {
+		view, err := m.actions.RunHealthCheck(ctx, true, false, func(p ActionProgress) { sendActionProgress(ch, p) })
+		close(ch)
+		if err != nil {
+			return fullHealthCheckFailedMsg{gen: gen, err: err}
+		}
+		return fullHealthCheckResultMsg{gen: gen, view: view}
+	}
+	return m, tea.Batch(actionCmd, waitForActionProgress(ch, gen))
+}
+
+// resolveFullHealthCheckResult handles a fresh fullHealthCheckResultMsg:
+// stores the returned view as the Health screen's new content (m.health,
+// healthAt stamped at m.now() - matching dataLoadedMsg's own "stamp at
+// receipt" convention, see healthAt's doc comment), clears any stale scan
+// error, and folds Issues/Warnings into the dashboard's summary signal
+// (mirroring dataLoadedMsg's identical Health tie-in in app.go). The status
+// line reports the outcome directly - task-11-brief.md's exact wording -
+// rather than going through formatOutcomeStatus, since there is no
+// ActionOutcome here to format.
+func (m Model) resolveFullHealthCheckResult(msg fullHealthCheckResultMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	// Mirrors actionDoneMsg's own progress clear (app.go): this action can
+	// stream "checking versions N/M" ticks (runFullHealthCheck's progress
+	// pump), so leaving a stale one behind would let it wrongly surface as
+	// the NEXT action's status line - statusLine prefers a running action's
+	// progress.Line over its own stored status, and not every action posts
+	// one of its own (#224 Copilot round 3 finding).
+	m.action.progress = ActionProgress{}
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	// Mirrors resolveCheckUpdatesResult's identical drain-first check (Copilot
+	// PR #63 finding): the app is exiting, so none of the state below - the
+	// new view, the summary counts, the status line - would ever be seen.
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+
+	view := msg.view
+	m.health = view
+	now := m.now()
+	m.healthAt = &now
+	m.healthErr = ""
+	m.summary.HealthIssues, m.summary.HealthWarnings = view.Issues, view.Warnings
+	// Mirrors dataLoadedMsg's identical clamp after its own m.health
+	// assignment (app.go): a fresh view can be SHORTER than whatever was
+	// selected on the old one (e.g. this same check resolved several
+	// findings away), and without this the Health screen's selection can
+	// walk off the end of the new list - healthDetailPane's own bounds
+	// check would then fall through to "No selection." (#224 Copilot round
+	// 3 finding).
+	m.clampSelections()
+
+	if view.Issues == 0 && view.Warnings == 0 {
+		m.action.status = "full check: all OK"
+	} else {
+		m.action.status = fmt.Sprintf("full check: %d issue(s), %d warning(s)", view.Issues, view.Warnings)
+	}
+	m.action.statusIsError = false
+	return m, nil
+}
+
+// resolveFullHealthCheckFailure handles a fresh fullHealthCheckFailedMsg:
+// status line error, no modal, and - unlike a success - m.health/healthAt
+// are left completely untouched (task-11-brief.md: "on failure... KEEP the
+// previous view"), matching dataLoadedMsg's own "a failed scan leaves the
+// last known-good view in place" posture (app.go).
+func (m Model) resolveFullHealthCheckFailure(msg fullHealthCheckFailedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	// See resolveFullHealthCheckResult's identical clear, above, for why a
+	// failure must not leave a stale progress tick behind either (#224
+	// Copilot round 3 finding).
+	m.action.progress = ActionProgress{}
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+	m.action.status = singleLine(msg.err.Error())
+	m.action.statusIsError = true
+	return m, nil
+}
+
+// --- Health: 'F' batch fix behind confirmation (#224 Task 12) ---
+
+// healthUnfixableStatus reports whether status is one of the four the
+// verify engine's fix mode can never touch (task-12-brief.md's exact list):
+// "skipped" (the row couldn't even be checked), "version_unverifiable" and
+// "file_count_mismatch" (both diagnostic-only - no repair exists for
+// either), and "ok" (already fine, including a kept lock-pending note row -
+// see HealthView's own doc comment on why those survive the quiet-ok
+// filter). Every other status - including ones the engine happens not to
+// actually repair today, like "stale_compile"/"conversion_failed" - counts
+// as "actionable" for the fix-prompt's own gating purposes; this predicate
+// is deliberately the brief's literal four-status list, not a mirror of
+// core/verify.go's real repair coverage.
+//
+// Also excludes any fixed_* status (fixed_stale_deployment,
+// fixed_needs_reingest today - same prefix check healthStatusClass uses,
+// app.go, to bucket a resolved row into its "ok" tint): a row already
+// repaired by a prior fix run is exactly as unactionable as "ok" itself, and
+// without this a view containing only fixed_*/ok rows after a successful
+// fix would still let 'F' open an empty "Fix N finding(s)?" modal (Copilot
+// round 6 finding, #224).
+func healthUnfixableStatus(status string) bool {
+	if strings.HasPrefix(status, "fixed_") {
+		return true
+	}
+	switch status {
+	case "skipped", "version_unverifiable", "file_count_mismatch", "ok":
+		return true
+	default:
+		return false
+	}
+}
+
+// healthFixableFindings filters findings down to the ones fixHealthPrompt
+// counts as actionable - see healthUnfixableStatus's own doc comment for
+// exactly which statuses that excludes. nil in, nil out (an empty/unscanned
+// view's zero-value Findings needs no special-casing here).
+func healthFixableFindings(findings []HealthFinding) []HealthFinding {
+	var out []HealthFinding
+	for _, f := range findings {
+		if !healthUnfixableStatus(f.Status) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// healthFixCategoryLine renders one status class's confirmation-modal detail
+// line for n findings of that status - task-12-brief.md's exact phrasings
+// for the four statuses it names outright (missing/version_mismatch/
+// stale_deployment/needs_reingest, the ones the CLI --fix pass genuinely
+// repairs), plus a "no_checksum" line following the same voice (the CLI's
+// own redownload-to-backfill repair, healthRemedy's "run a fix (F) to
+// backfill" wording, app.go). A status with no specific phrasing (e.g.
+// "stale_compile"/"conversion_failed" - see healthFixableFindings' own doc
+// comment for why those still reach here) falls back to a generic "<n>
+// <status, spaces for underscores> finding(s)" line rather than guessing at
+// remedy copy fix mode doesn't actually provide.
+func healthFixCategoryLine(status string, n int) string {
+	switch status {
+	case "missing":
+		return fmt.Sprintf("%d missing file(s) — re-download", n)
+	case "no_checksum":
+		return fmt.Sprintf("%d missing checksum(s) — backfill", n)
+	case "stale_deployment":
+		word := "deployment"
+		if n != 1 {
+			word = "deployments"
+		}
+		return fmt.Sprintf("%d stale %s — remove", n, word)
+	case "version_mismatch":
+		word := "mismatch"
+		if n != 1 {
+			word = "mismatches"
+		}
+		return fmt.Sprintf("%d version %s — re-key records (locked mods refused)", n, word)
+	case "needs_reingest":
+		if n == 1 {
+			return "1 pak needs re-ingest"
+		}
+		return fmt.Sprintf("%d paks need re-ingest", n)
+	default:
+		return fmt.Sprintf("%d %s finding(s)", n, strings.ReplaceAll(status, "_", " "))
+	}
+}
+
+// healthFixDetailLines groups findings (already filtered to the actionable
+// set by healthFixableFindings) by Status and renders one
+// healthFixCategoryLine per status class present, in FIRST-APPEARANCE order
+// - task-12-brief.md: "one per status class present"; actionModalView's own
+// "+N more" collapsing (actions.go) handles anything past the modal's
+// display budget, so no capping happens here.
+func healthFixDetailLines(findings []HealthFinding) []string {
+	counts := make(map[string]int, len(findings))
+	var order []string
+	for _, f := range findings {
+		if _, seen := counts[f.Status]; !seen {
+			order = append(order, f.Status)
+		}
+		counts[f.Status]++
+	}
+	lines := make([]string, len(order))
+	for i, status := range order {
+		lines[i] = healthFixCategoryLine(status, counts[status])
+	}
+	return lines
+}
+
+// healthFixResultLine renders one finding as a fix-results overlay row: a
+// "✓" line for a fixed_* row (Status itself already says what was fixed -
+// core/verify.go only ever produces "fixed_stale_deployment"/
+// "fixed_needs_reingest"), a "✗" line for anything still outstanding
+// (Note appended after an em dash when present, e.g. a locked mod's
+// version_mismatch/"locked" refusal).
+func healthFixResultLine(f HealthFinding) string {
+	glyph := "✗"
+	if strings.HasPrefix(f.Status, "fixed_") {
+		glyph = "✓"
+	}
+	line := fmt.Sprintf("%s %s: %s", glyph, healthFindingSubject(f), healthStatusLabel(f.Status))
+	if f.Note != "" {
+		line += " — " + f.Note
+	}
+	return line
+}
+
+// healthFixResultLines renders the fix-results info overlay's lines from a
+// completed fix pass's returned HealthView.Findings (task-12-brief.md:
+// "overlay lists the returned view's fixed_* rows and remaining findings" -
+// reusing applyUpdatesSequentially's ResultLines/"update results" overlay
+// shape, actions.go/app.go, as the layout reference). Two passes, not one:
+// every fixed_* row first, then every other still-actionable row (an
+// unfixable status - healthUnfixableStatus - is dropped entirely here, same
+// as it never entered the confirmation modal's counts) - so "what got
+// fixed" always reads before "what's still wrong" regardless of the
+// underlying Findings order.
+func healthFixResultLines(findings []HealthFinding) []string {
+	var lines []string
+	for _, f := range findings {
+		if strings.HasPrefix(f.Status, "fixed_") {
+			lines = append(lines, healthFixResultLine(f))
+		}
+	}
+	for _, f := range findings {
+		if !strings.HasPrefix(f.Status, "fixed_") && !healthUnfixableStatus(f.Status) {
+			lines = append(lines, healthFixResultLine(f))
+		}
+	}
+	return lines
+}
+
+// fixHealthCheckResultMsg carries a successful fix-mode (Full tier, fix=true)
+// RunHealthCheck result, tagged with the generation established when the fix
+// was confirmed (see fixHealthPrompt) so a superseded result is discarded -
+// mirrors fullHealthCheckResultMsg's own gen-tag reasoning in full. A
+// dedicated message rather than the generic actionDoneMsg/ActionOutcome pair
+// every other confirmation modal produces: RunHealthCheck returns a whole
+// HealthView, which actionDoneMsg has no field for (see actionFixHealth's
+// own doc comment, actions.go).
+type fixHealthCheckResultMsg struct {
+	gen  int
+	view HealthView
+}
+
+// fixHealthCheckFailedMsg carries a failed fix-mode RunHealthCheck call,
+// tagged like fixHealthCheckResultMsg.
+type fixHealthCheckFailedMsg struct {
+	gen int
+	err error
+}
+
+// fixHealthPrompt handles 'F' on ScreenHealth (task-12-brief.md): a no-op on
+// any other screen, with pushed context content, with no ActionProvider
+// configured, or while another action/confirmation is already in flight -
+// mirrors runFullHealthCheck's own guard shape in full (no inline compound
+// switch-case guard is needed here - see keys.go's FixHealth doc comment for
+// why, unlike FullCheck's "c" collision with CreateProfile).
+//
+// Counts the CURRENT view's (m.health, not a fresh scan - "F" fixes what's
+// already on screen, "c" is how you refresh it first) actionable findings
+// via healthFixableFindings. An empty result - either healthAt is nil (no
+// scan has ever run) or every finding is one of the four fix can never touch
+// - refuses on the status line ("nothing fixable — run a full check (c)
+// first", statusIsError true: like resolveVersionsFetched's "no versions
+// reported" refusal, this names a concrete remedy the user should press
+// next, not just "nothing to do").
+//
+// Otherwise opens the standard y/n confirmation modal (title "Fix N
+// finding(s)?", one detail line per status class - healthFixDetailLines).
+// Confirming does NOT go through buildAction: it hand-rolls the identical
+// gen/cancel/progress-pump bookkeeping buildAction would (mirroring
+// runFullHealthCheck's own precedent, extended here with a confirm modal in
+// front of it) because RunHealthCheck's result is a whole HealthView, not
+// the ActionOutcome buildAction's do parameter requires - see
+// fixHealthCheckResultMsg's own doc comment. The RunHealthCheck call itself
+// is ALWAYS full=true, fix=true: this is the enforcement point T8's review
+// deferred to this task - CLI `verify --fix` parity includes the version
+// pass, so a Local-tier fix would silently skip repairs the CLI's own --fix
+// performs, without ever being asked to.
+func (m Model) fixHealthPrompt() (Model, tea.Cmd) {
+	if m.screen != ScreenHealth || m.contextContent != nil || m.actions == nil {
+		return m, nil
+	}
+	if m.action.running || m.action.pending != nil {
+		return m, nil
+	}
+
+	findings := healthFixableFindings(m.health.Findings)
+	if len(findings) == 0 {
+		m.action.status = "nothing fixable — run a full check (c) first"
+		m.action.statusIsError = true
+		return m, nil
+	}
+
+	title := fmt.Sprintf("Fix %d finding(s)?", len(findings))
+	detail := healthFixDetailLines(findings)
+
+	if m.action.cancel != nil {
+		m.action.cancel()
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.action.cancel = cancel
+	m.action.gen++
+	gen := m.action.gen
+
+	ch := make(chan ActionProgress, 1)
+	m.action.progressCh = ch
+
+	pa := pendingAction{
+		kind:   actionFixHealth,
+		title:  title,
+		detail: detail,
+		confirm: func() tea.Cmd {
+			actionCmd := func() tea.Msg {
+				// ALWAYS full=true, fix=true - see this method's own doc
+				// comment for why a Local-tier fix is never an option here.
+				view, err := m.actions.RunHealthCheck(ctx, true, true, func(p ActionProgress) { sendActionProgress(ch, p) })
+				close(ch)
+				if err != nil {
+					return fixHealthCheckFailedMsg{gen: gen, err: err}
+				}
+				return fixHealthCheckResultMsg{gen: gen, view: view}
+			}
+			return tea.Batch(actionCmd, waitForActionProgress(ch, gen))
+		},
+	}
+	return m.promptAction(pa), nil
+}
+
+// resolveFixHealthCheckResult handles a fresh fixHealthCheckResultMsg:
+// stores the returned view exactly like resolveFullHealthCheckResult does
+// (m.health/healthAt/healthErr, summary counts) - including a LOCKED mod's
+// version_mismatch row, which the engine returns unchanged rather than
+// rewriting to a fixed_* status (an engine refusal, not this task's own
+// filtering - see healthFixResultLines' doc comment). Additionally opens the
+// fix-results info overlay (task-12-brief.md: the update-results overlay
+// pattern) listing the fixed_* rows first, then whatever's still
+// outstanding, and returns the ordinary data refresh (m.loadData) so the
+// Health screen and dashboard both pick up the change - see the
+// documented decay this causes on dataLoadedMsg's own health assignment
+// (app.go).
+func (m Model) resolveFixHealthCheckResult(msg fixHealthCheckResultMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	// See resolveFullHealthCheckResult's identical clear for why (#224
+	// Copilot round 3 finding): the fix flow's own progress pump can stream
+	// the same "checking versions N/M" ticks (it always requests the Full
+	// tier - see fixHealthPrompt's own doc comment), so this settle needs
+	// the same clear.
+	m.action.progress = ActionProgress{}
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+
+	view := msg.view
+	m.health = view
+	now := m.now()
+	m.healthAt = &now
+	m.healthErr = ""
+	m.summary.HealthIssues, m.summary.HealthWarnings = view.Issues, view.Warnings
+	// See resolveFullHealthCheckResult's identical clamp for why (#224
+	// Copilot round 3 finding): a fix can resolve findings away, leaving the
+	// new view SHORTER than whatever was selected on the old one.
+	m.clampSelections()
+
+	if view.Issues == 0 && view.Warnings == 0 {
+		m.action.status = "fix: all OK"
+	} else {
+		m.action.status = fmt.Sprintf("fix: %d issue(s), %d warning(s)", view.Issues, view.Warnings)
+	}
+	m.action.statusIsError = false
+
+	if lines := healthFixResultLines(view.Findings); len(lines) > 0 && m.overlay == nil {
+		m.overlay = &infoOverlay{title: "fix results", lines: lines}
+	}
+
+	return m, m.loadData
+}
+
+// resolveFixHealthCheckFailure handles a fresh fixHealthCheckFailedMsg:
+// status line error, no overlay, and m.health/healthAt left completely
+// untouched - mirroring resolveFullHealthCheckFailure's own "keep the
+// previous view" posture in full.
+func (m Model) resolveFixHealthCheckFailure(msg fixHealthCheckFailedMsg) (Model, tea.Cmd) {
+	m.action.running = false
+	// See resolveFullHealthCheckFailure's identical clear for why (#224
+	// Copilot round 3 finding).
+	m.action.progress = ActionProgress{}
+	if m.action.cancel != nil {
+		m.action.cancel()
+		m.action.cancel = nil
+	}
+	if m.action.draining {
+		return m.resolveDrainedQuit()
+	}
+	m.action.status = singleLine(msg.err.Error())
+	m.action.statusIsError = true
+	return m, nil
+}
+
 // updateDetailLines renders an UpdatesView as the "Apply N update(s)?"
 // modal's detail lines: one "<name> <from> → <to>" line per update (the
 // machinery's own "+N more" collapsing, actionModalView, applies here
@@ -2016,10 +2494,17 @@ func (m Model) resolveGameSwitch(msg gameChosenMsg) (Model, tea.Cmd) {
 	// answer 'v' on the new game's Installed Mods list.
 	m.lastUpdates = nil
 
-	m.summary = Summary{Updates: -1, Conflicts: -1}
+	m.summary = Summary{Updates: -1, Conflicts: -1, HealthIssues: -1, HealthWarnings: -1}
 	m.mods = nil
 	m.profiles = nil
 	m.conflicts = nil
+	// Health (#224 Task 10 fix round 1): the OLD game's findings/scan-age
+	// are just as stale as mods/profiles/conflicts above - left standing,
+	// ScreenHealth's home view would render the wrong game's data during
+	// the stateLoading window until the fresh loadData below lands.
+	m.health = HealthView{}
+	m.healthAt = nil
+	m.healthErr = ""
 	for screen := range m.selected {
 		m.selected[screen] = 0
 	}

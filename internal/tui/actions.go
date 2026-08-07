@@ -74,6 +74,20 @@ const (
 	// covers both, exactly like actionSetPolicy above.
 	actionSetLock
 	actionUnlock
+	// actionFixHealth is Task 12's Health-screen batch-fix action kind (#224,
+	// see mutations.go's fixHealthPrompt). Unlike every other pendingAction
+	// above, the modal built for it does NOT run through buildAction: its
+	// underlying call is ActionProvider.RunHealthCheck, which returns a whole
+	// HealthView rather than an ActionOutcome, so it can't produce an
+	// actionDoneMsg the generic handler (app.go) knows how to store into
+	// m.health - fixHealthPrompt hand-rolls the same gen/cancel/progress-pump
+	// bookkeeping buildAction would (mirroring runFullHealthCheck's own
+	// precedent for the identical reason), dispatching a bespoke
+	// fixHealthCheckResultMsg/fixHealthCheckFailedMsg pair instead. This kind
+	// exists purely so the pending modal is self-documenting like every other
+	// pendingAction's kind field - nothing reads it (no actionDoneMsg is ever
+	// built with it).
+	actionFixHealth
 )
 
 // pendingAction is a caller-built (Task 7) description of one mutation
@@ -577,14 +591,18 @@ func (m Model) startQuit() (Model, tea.Cmd) {
 // modal, or updating the status line for a process that's about to exit -
 // just clear draining and quit now instead of racing actionDrainTimeout.
 // Shared by every message that can arrive mid-drain: actionDoneMsg/
-// actionFailedMsg (a running MUTATION settling) in app.go, and the six
-// plan/check messages - planResultMsg/planFailedMsg, installPlanResultMsg/
-// installPlanFailedMsg, checkUpdatesResultMsg/checkUpdatesFailedMsg (a
-// PLAN/CHECK step settling) - via their resolve* handlers in mutations.go
-// (Copilot PR #63 finding: those six never checked draining at all, so quit
-// blocked for the full actionDrainTimeout even though the awaited step had
-// already finished). Callers must check m.action.draining themselves before
-// calling this - it unconditionally clears the flag and quits.
+// actionFailedMsg (a running MUTATION settling) in app.go, and every
+// plan/check message pair - planResultMsg/planFailedMsg,
+// installPlanResultMsg/installPlanFailedMsg, checkUpdatesResultMsg/
+// checkUpdatesFailedMsg, (#224 Task 11) fullHealthCheckResultMsg/
+// fullHealthCheckFailedMsg, and (#224 Task 12) fixHealthCheckResultMsg/
+// fixHealthCheckFailedMsg (each a PLAN/CHECK step settling) - via their
+// resolve* handlers in mutations.go (Copilot PR #63 finding: the original
+// set never checked draining at all, so quit blocked for the full
+// actionDrainTimeout even though the awaited step had already finished;
+// every pair added since follows the same contract from the start).
+// Callers must check m.action.draining themselves before calling this - it
+// unconditionally clears the flag and quits.
 func (m Model) resolveDrainedQuit() (Model, tea.Cmd) {
 	m.action.draining = false
 	return m, tea.Quit

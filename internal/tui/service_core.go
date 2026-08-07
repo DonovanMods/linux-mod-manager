@@ -1882,3 +1882,102 @@ func (p *coreProvider) ExportProfile(_ context.Context, name, path string) (Acti
 
 	return ActionOutcome{Message: fmt.Sprintf("exported %q to %s", name, path)}, nil
 }
+
+// Health runs the verify engine's LOCAL tier (disk/DB only - never the
+// network) for the dashboard signal and the Health screen's initial content
+// (#224 Task 8). Mirrors Conflicts' own "ride every ordinary loadData
+// refresh" contract (DataProvider.Health's doc comment) rather than
+// Updates/CheckUpdates' explicit-user-action gate: the Local tier is a
+// plain, cheap DB/cache walk, not a network round trip.
+func (p *coreProvider) Health(ctx context.Context) (HealthView, error) {
+	game := p.currentGame()
+	res, err := p.svc.Verify(ctx, game, p.currentProfile(), core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	if err != nil {
+		return HealthView{}, fmt.Errorf("checking health for %s/%s: %w", game.ID, p.currentProfile(), err)
+	}
+	return healthView(res, false), nil
+}
+
+// RunHealthCheck runs the verify engine on demand (#224 Task 8): full=true
+// selects the Full tier (adds the network version pass), fix=true applies
+// CLI --fix semantics. The two are independent knobs here - opts.Tier only
+// moves off VerifyLocal when full is true, regardless of fix - matching the
+// design's actual CLI parity point exactly: `lmm verify --fix` itself
+// always runs the Full tier (cmd/lmm/verify.go never offers a --fix-without-
+// network mode), so it is the Health screen's 'F' binding (ActionProvider.
+// RunHealthCheck's own doc comment: "always full") that is responsible for
+// invoking this with full=true whenever fix=true - not this method
+// second-guessing its caller.
+//
+// Progress mapping (nil-safe, checked once per event like every other
+// coreProvider streaming method's onProgress closure - e.g.
+// ApplyProfileSwitch's onProgress above): VerifyEvProgress (a version-pass
+// tick), VerifyEvFinding (a reported row), and VerifyEvRepairDetail/
+// VerifyEvSyncWarning (both already-formatted sub-lines) each compose one
+// status-line entry. VerifyEvBegin/VerifyEvVerbose carry nothing worth a
+// line and fall through unmapped.
+//
+// A VerifyEvProgress tick fires at the TOP of every version-pass mod
+// iteration, INCLUDING mods the pass then silently skips (local-source/
+// manual/no-fileIDs - see versionPass' own doc comment in verify.go) - so
+// the LAST tick a caller observes can linger on a skipped mod with no
+// finding ever following it. Harmless for this status-line consumer (the
+// next real tick, or the run's completion, simply supersedes it), but worth
+// knowing if a future caller ever tries to correlate the final tick with a
+// specific outcome.
+func (p *coreProvider) RunHealthCheck(ctx context.Context, full, fix bool, progress func(ActionProgress)) (HealthView, error) {
+	game := p.currentGame()
+	profile := p.currentProfile()
+	opts := core.VerifyOptions{Tier: core.VerifyLocal, Fix: fix}
+	if full {
+		opts.Tier = core.VerifyFull
+	}
+
+	res, err := p.svc.Verify(ctx, game, profile, opts, func(ev core.VerifyEvent) {
+		if progress == nil {
+			return
+		}
+		switch ev.Kind {
+		case core.VerifyEvProgress:
+			progress(ActionProgress{Line: fmt.Sprintf("checking versions %d/%d: %s", ev.Index, ev.Total, ev.ModName)})
+		case core.VerifyEvFinding:
+			// Reuses healthFindingSubject's ModName -> ModID -> FileID
+			// fallback (app.go, #224 Copilot round 1) rather than ev.Finding.
+			// ModName alone - a modless convergence finding (e.g. a dangling
+			// cache-rooted symlink's stale_deployment row) carries no ModName
+			// at all, which used to render a bare "stale_deployment: " line
+			// (#224 Copilot round 2). core.VerifyFinding and HealthFinding
+			// share the same ModID/ModName/FileID shape by design (see
+			// HealthFinding's own doc comment), so this converts field-for-
+			// field rather than duplicating the fallback logic.
+			subject := healthFindingSubject(HealthFinding{ModID: ev.Finding.ModID, ModName: ev.Finding.ModName, FileID: ev.Finding.FileID})
+			progress(ActionProgress{Line: fmt.Sprintf("%s: %s", ev.Finding.Status, subject)})
+		case core.VerifyEvRepairDetail, core.VerifyEvSyncWarning:
+			progress(ActionProgress{Line: ev.Detail})
+		}
+	})
+	if err != nil {
+		return HealthView{}, fmt.Errorf("checking health for %s/%s: %w", game.ID, profile, err)
+	}
+	return healthView(res, full), nil
+}
+
+// healthView maps a core.VerifyResult to the TUI's HealthView.
+//
+// 2026-08-07 smoke feedback (user override, #224): this used to drop
+// quiet-ok rows (Status "ok" with an empty Note) as "nothing to show" - the
+// same convention the CLI's own verify TABLE summary applies - but the
+// CLI's row-by-row output (`lmm verify`) prints a `+ <name> - OK` line per
+// checked file regardless, and the user rightly expects the Health screen
+// to match that, not the summary. Every row the engine reports - the
+// quiet-ok rows AND the lock-pending "ok" rows (ok status with a non-empty
+// Note, e.g. "lock pending convergence...") - is now kept verbatim. Shared
+// by Health (always full=false, the Local tier) and RunHealthCheck (full
+// mirrors the caller's own tier choice).
+func healthView(res *core.VerifyResult, full bool) HealthView {
+	v := HealthView{Issues: res.Issues, Warnings: res.Warnings, Full: full, Checked: res.Checked, Findings: make([]HealthFinding, 0, len(res.Findings))}
+	for _, f := range res.Findings {
+		v.Findings = append(v.Findings, HealthFinding{ModID: f.ModID, ModName: f.ModName, FileID: f.FileID, Status: f.Status, Note: f.Note, Recorded: f.Recorded, Effective: f.Effective, Version: f.Version})
+	}
+	return v
+}

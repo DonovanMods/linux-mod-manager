@@ -1,6 +1,6 @@
                                                                                                                         
   LMM // Linux Mod Manager                                                                                              
-  •1• Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources  [6] Conflicts                               
+  •1• Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources  [6] Health                                  
                                                                                                                         
   ┌───────────────────────────────────────────────────────┐ ┌────────────────────────────────────────────────────────┐  
   │ ACTIVE PROFILE                                        │ │ OPERATIONS                                             │  
@@ -8,9 +8,9 @@
   │                                                       │ │   Search Archives                                      │  
   │ Game     Skyrim Special Edition                       │ │   Profiles                                             │  
   │ Enabled  39                                           │ │   Sources                                              │  
-  │ Updates  3                                            │ │   Consult Conflict Oracle                              │  
+  │ Updates  3                                            │ │   Verify Integrity                                     │  
+  │ Health: 0 issue(s), 2 warning(s) (local)              │ │                                                        │  
   │ Deploy   3h ago                                       │ │                                                        │  
-  │                                                       │ │                                                        │  
   │                                                       │ │                                                        │  
   │                                                       │ │                                                        │  
   │                                                       │ │                                                        │  

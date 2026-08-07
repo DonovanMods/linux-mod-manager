@@ -1,0 +1,21 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "files": [
+    {
+      "mod_id": "mod1",
+      "mod_name": "Mod One",
+      "file_id": "",
+      "status": "version_mismatch",
+      "note": "locked"
+    },
+    {
+      "mod_id": "mod1",
+      "mod_name": "Mod One",
+      "file_id": "2",
+      "status": "ok"
+    }
+  ],
+  "issues": 1,
+  "warnings": 0
+}

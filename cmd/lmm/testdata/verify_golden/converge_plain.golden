@@ -1,0 +1,8 @@
+Verifying cached mods...
+
++ Mod One (a.esp) - OK
+? gone.esp - STALE DEPLOYMENT (no longer provided by local/mod1)
+? stray.pak - STALE DEPLOYMENT (dangling link into lmm cache)
+
+0 issue(s), 2 warning(s) found.
+Run with --fix to re-download missing files, populate missing checksums, repair version-record mismatches, and remove stale lmm-deployed files.

@@ -28,18 +28,19 @@ sources interactively, inspect the source registry, and manage mods in
 place - enable/disable, uninstall, deploy, switch profiles, install from
 search results, check for updates (with changelogs and rollback), reorder
 load order, resolve file conflicts, edit update policies, view deployed
-files, purge a profile, switch games, and create/delete/export/import
-profiles - with every mutating action behind a confirmation prompt.
+files, purge a profile, switch games, verify integrity and fix findings,
+and create/delete/export/import profiles - with every mutating action
+behind a confirmation prompt.
 
 Always operates on the game's active profile; there is no -p/--profile
 flag (switch profiles from inside the TUI instead).
 
 Press ? at any time for in-app help listing every keybinding, 1-6 to jump
-directly to a screen (dashboard, installed mods, search, profiles,
-sources, conflicts), and tab/shift-tab (or h/l) to cycle screens. Search
-results scroll infinitely rather than paginating: n/p jump the selection
-forward/back by a paneful of rows (triggering a refill near the end of
-what's loaded), not to the next/previous page.
+directly to a screen (dashboard, installed mods, search, profiles, sources,
+health - which also reports file conflicts), and tab/shift-tab (or h/l) to
+cycle screens. Search results scroll infinitely rather than paginating: n/p
+jump the selection forward/back by a paneful of rows (triggering a refill
+near the end of what's loaded), not to the next/previous page.
 
 Colored output respects both --no-color and the NO_COLOR environment
 variable, matching the CLI's own color handling.
