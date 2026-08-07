@@ -70,10 +70,24 @@ func TestHealthHomeViewRendersFindingsAndHeaderAge(t *testing.T) {
 
 // TestHealthHomeViewEmptyState covers a fresh session that hasn't scanned
 // yet: healthAt is nil (its zero value) and m.health carries no findings.
+// Deliberately skips sizedPrototypeModel's Init()/loadData round trip (#224
+// Task 10 wired DataProvider.Health into loadData, and the prototype
+// provider's own Health() returns a canned non-empty view - see
+// prototypeHealthFindings - so running a real load here would defeat the
+// "hasn't scanned yet" premise); sizing the model directly via
+// WindowSizeMsg leaves m.health/m.healthAt/m.healthErr at their zero
+// values instead.
 func TestHealthHomeViewEmptyState(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 100, 24)
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	sized, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	model = sized.(Model)
+	// Skips Init()/loadData (see doc comment above), so state must be
+	// stamped ready by hand - otherwise View() renders the "Consulting the
+	// archives..." loading screen instead of ScreenHealth's content.
+	model.state = stateReady
 	model.screen = ScreenHealth
 
 	view := model.View()

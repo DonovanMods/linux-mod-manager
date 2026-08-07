@@ -29,6 +29,17 @@ type Summary struct {
 	Enabled     int
 	Updates     int // -1 = unknown (no update check has run)
 	Conflicts   int // -1 = unknown
+	// HealthIssues and HealthWarnings are the dashboard's Health signal
+	// (#224 Task 10) - the LOCAL verify tier's issue/warning counts, ridden
+	// on the same ordinary loadData refresh as Conflicts above (see
+	// DataProvider.Health's doc comment: cheap disk/DB read, never gated
+	// behind an explicit user action like Updates). -1 = unknown, mirroring
+	// Conflicts' own sentinel - set on a scan failure (loadData wraps
+	// DataProvider.Health in its own error capture, unlike Conflicts'
+	// early-return-fails-the-whole-load pattern: a bad scan must not stop
+	// the rest of the dashboard from loading) as well as before the very
+	// first load ever completes.
+	HealthIssues, HealthWarnings int
 	// LastDeploy is the timestamp of the active profile's most recent deploy
 	// (#106a's dashboard "Last deploy" row), or nil when the profile has
 	// never been deployed (a truly-unknown value surfaces as an error from

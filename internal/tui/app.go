@@ -244,6 +244,15 @@ type dataLoadedMsg struct {
 	mods      []ModItem
 	profiles  []ProfileItem
 	conflicts []ConflictItem
+	// health and healthErr carry loadData's DataProvider.Health result
+	// (#224 Task 10): healthErr == "" means health is the fresh view to
+	// store (Update stamps healthAt alongside it); a non-empty healthErr
+	// means the scan failed and health is the zero value - Update leaves
+	// the Model's existing m.health untouched in that case (a transient
+	// scan hiccup doesn't erase the last known-good findings) and instead
+	// records the message on healthErr and the status line.
+	health    HealthView
+	healthErr string
 }
 
 // loadFailedMsg carries an error from a failed DataProvider load, tagged
@@ -292,7 +301,7 @@ func NewModel(options Options) (Model, error) {
 		// preserve check below (`m.summary.Updates >= 0`) can't mistake
 		// "no load has happened yet" for "a check already found zero
 		// updates" on the very first load.
-		summary: Summary{Updates: -1, Conflicts: -1},
+		summary: Summary{Updates: -1, Conflicts: -1, HealthIssues: -1, HealthWarnings: -1},
 		search:  newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize(), options.GameName),
 		// sources is seeded synchronously (like search's source list above)
 		// rather than through loadData/dataLoadedMsg: SourceInfos is a
@@ -336,6 +345,9 @@ func (m Model) dashboardMenu() []menuItem {
 			{label: "QUERY ARCHIVE INDEX", target: ScreenSearch, hasTarget: true},
 			{label: "LOAD PROFILE ROSTER", target: ScreenProfiles, hasTarget: true},
 			{label: "SCRY SOURCE REGISTRY", target: ScreenSources, hasTarget: true},
+			// Verify Integrity (#224 Task 10) sits before the Oracle entry,
+			// same ordering as the default variant below.
+			{label: "VERIFY INTEGRITY", target: ScreenHealth, hasTarget: true},
 			// Targetless until Phase 6b shipped ScreenConflicts; the wiring
 			// lagged behind the screen and Enter silently no-opped (user
 			// smoke find, PR #113).
@@ -347,6 +359,12 @@ func (m Model) dashboardMenu() []menuItem {
 		{label: "Search Archives", target: ScreenSearch, hasTarget: true},
 		{label: "Profiles", target: ScreenProfiles, hasTarget: true},
 		{label: "Sources", target: ScreenSources, hasTarget: true},
+		// #224 Task 10: jumps straight to the Health screen (ScreenHealth),
+		// mirroring the Conflicts entry right below it - both are "go look
+		// at a standing signal" jumps, not search-style explicit intent, so
+		// this uses the same plain gotoScreen path (openSelectedMenuEntry
+		// only special-cases ScreenSearch).
+		{label: "Verify Integrity", target: ScreenHealth, hasTarget: true},
 		{label: "Consult Conflict Oracle", target: ScreenConflicts, hasTarget: true},
 	}
 }
@@ -462,7 +480,24 @@ func (m Model) loadData() tea.Msg {
 	// current count once this returns - never the "?" unknown sentinel.
 	summary.Conflicts = len(conflicts)
 
-	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles, conflicts: conflicts}
+	// Health rides the same ordinary refresh (#224 Task 10), fetched AFTER
+	// Conflicts above - but wrapped in its own error capture rather than
+	// Overview/Profiles/Conflicts' early-return pattern: a failed verify
+	// scan is not a reason to fail the WHOLE dashboard load. On success,
+	// Summary.HealthIssues/HealthWarnings take the view's real counts;
+	// on failure they stay at the "-1 unknown" sentinel and the message
+	// rides dataLoadedMsg.healthErr instead - Update (below) is what turns
+	// that into the status-line error and healthErr display.
+	summary.HealthIssues, summary.HealthWarnings = -1, -1
+	health, healthErr := m.provider.Health(m.ctx)
+	var healthErrMsg string
+	if healthErr != nil {
+		healthErrMsg = singleLine(healthErr.Error())
+	} else {
+		summary.HealthIssues, summary.HealthWarnings = health.Issues, health.Warnings
+	}
+
+	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles, conflicts: conflicts, health: health, healthErr: healthErrMsg}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -497,6 +532,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mods = msg.mods
 		m.profiles = msg.profiles
 		m.conflicts = msg.conflicts
+		// Health (#224 Task 10): a successful scan replaces m.health and
+		// stamps healthAt at receipt time (m.now(), matching healthAt's own
+		// doc comment); a failed one leaves the last known-good m.health/
+		// healthAt exactly as they were - only healthErr and the status
+		// line change - see dataLoadedMsg.health's doc comment for why.
+		if msg.healthErr == "" {
+			m.health = msg.health
+			now := m.now()
+			m.healthAt = &now
+		}
+		m.healthErr = msg.healthErr
+		if msg.healthErr != "" {
+			// Spec error posture: "health shows ?, error on the status
+			// line" - setIdleStatus (not an unconditional overwrite, unlike
+			// actionFailedMsg's own status write) so a status line already
+			// genuinely owned by something else (a running action, a just-
+			// settled outcome/error) is never stomped by a background scan
+			// hiccup landing in the same refresh cycle.
+			m.setIdleStatus(msg.healthErr, true)
+		}
 		m.clampSelections()
 		return m, nil
 	case actionDoneMsg:
@@ -1375,6 +1430,7 @@ func (m Model) partyDashboardView() string {
 		m.theme.PanelTitle.Render("QUEST LOG"),
 		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(countLabel(m.summary.Updates))),
 		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
+		m.healthDashboardLine(),
 		fmt.Sprintf("Last deploy: %s", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 	}, topBudget)
 
@@ -1406,6 +1462,7 @@ func (m Model) terminalDashboardView() string {
 		fmt.Sprintf("> PROFILE  %s", m.summary.ProfileName),
 		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.summary.Installed, m.summary.Enabled),
 		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", m.theme.WarningText.Render(countLabel(m.summary.Updates)), m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
+		fmt.Sprintf("> %s", m.healthDashboardLine()),
 		fmt.Sprintf("> DEPLOY   %s", strings.ToUpper(lastDeployLabel(m.now(), m.summary.LastDeploy))),
 		"",
 	}
@@ -1436,6 +1493,7 @@ func (m Model) commanderDashboardView() string {
 		fmt.Sprintf("Game     %s", m.summary.GameName),
 		fmt.Sprintf("Enabled  %d", m.summary.Enabled),
 		fmt.Sprintf("Updates  %s", countLabel(m.summary.Updates)),
+		m.healthDashboardLine(),
 		fmt.Sprintf("Deploy   %s", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 	}, contentBudget)
 	rightLines := m.clampLines(
@@ -1466,6 +1524,7 @@ func (m Model) crtDashboardView() string {
 		fmt.Sprintf("▓ %-10s %s", "PROFILE", m.summary.ProfileName),
 		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.summary.Enabled, m.summary.Installed),
 		fmt.Sprintf("▓ %-10s %s updates, %s conflict", "SIGNAL", countLabel(m.summary.Updates), countLabel(m.summary.Conflicts)),
+		fmt.Sprintf("▓ %s", m.healthDashboardLine()),
 		fmt.Sprintf("▓ %-10s %s", "DEPLOY", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 		"",
 	}
@@ -2820,6 +2879,32 @@ func countLabel(n int) string {
 		return "?"
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// healthDashboardLine renders the dashboard's Health signal row (#224 Task
+// 10): "?" (mirroring countLabel's own "-1 = unknown" convention) before
+// the first LOCAL-tier scan lands, "OK" once a scan finds nothing, or its
+// issue/warning counts otherwise. Every non-"?" case names the verify tier
+// the counts came from - "(local)" for the ordinary dashboard refresh
+// (loadData's DataProvider.Health call), "(full)" once the Health screen's
+// own explicit full/network check (ActionProvider.RunHealthCheck, Tasks
+// 11/12) has updated the same m.health/m.summary state (m.health.Full).
+// Shared verbatim by every dashboardView layout below rather than each one
+// adapting its own casing/prefix convention - the phrasing is pinned by
+// spec, not layout-specific flavor text.
+func (m Model) healthDashboardLine() string {
+	issues, warnings := m.summary.HealthIssues, m.summary.HealthWarnings
+	if issues < 0 || warnings < 0 {
+		return "Health: ?"
+	}
+	tier := "local"
+	if m.health.Full {
+		tier = "full"
+	}
+	if issues == 0 && warnings == 0 {
+		return fmt.Sprintf("Health: OK (%s)", tier)
+	}
+	return fmt.Sprintf("Health: %d issue(s), %d warning(s) (%s)", issues, warnings, tier)
 }
 
 // lastDeployLabel renders Summary.LastDeploy (#106a's dashboard "Last

@@ -667,21 +667,23 @@ func TestCommanderDashboardRowsDoNotWrapAtNarrowWidths(t *testing.T) {
 	require.LessOrEqual(t, lipgloss.Height(model.screenView()), model.availableContentHeight())
 }
 
-// At 80x16 (content budget 9, panel content budget 7) the commander left
-// panel's seven lines - #106a added "Deploy" as the seventh - fit exactly,
-// so no clamping may occur: any budget fudge (an earlier fix subtracted an
-// extra 1) clamps them to shorter plus "+N more" and silently hides the
-// Enabled/Updates/Deploy lines (#42). Only the left panel mentions "Updates"
-// — the commander menu rows do not — so its presence pins the whole panel
-// rendering unclamped. Originally pinned at the 80x8 floor height when the
-// panel had six lines (see git history); #106a's new row no longer fits
-// unclamped at that floor, so this now uses the next size up (80x16) where
-// all seven lines fit exactly.
+// At 80x17 (content budget 10, panel content budget 8) the commander left
+// panel's eight lines - #224 Task 10 added "Health" as the eighth - fit
+// exactly, so no clamping may occur: any budget fudge (an earlier fix
+// subtracted an extra 1) clamps them to shorter plus "+N more" and silently
+// hides the Enabled/Updates/Health/Deploy lines (#42). Only the left panel
+// mentions "Updates" — the commander menu rows do not — so its presence
+// pins the whole panel rendering unclamped. Originally pinned at the 80x8
+// floor height when the panel had six lines, then bumped to 80x16 when
+// #106a added "Deploy" as the seventh (see git history); Task 10's new row
+// no longer fits unclamped at that size, so this now uses the next size up
+// (80x17) where all eight lines fit exactly.
 func TestCommanderDashboardFloorHeightKeepsWholeLeftPanel(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "dos", 80, 16)
+	model := sizedPrototypeModel(t, "dos", 80, 17)
 	require.Contains(t, model.screenView(), "Updates")
+	require.Contains(t, model.screenView(), "Health")
 	require.Contains(t, model.screenView(), "Deploy")
 }
 
@@ -1038,9 +1040,10 @@ func TestDashboardEnterOnOracleEntryOpensConflicts(t *testing.T) {
 
 			model := sizedPrototypeModel(t, themeName, 100, 30)
 
-			// Move to the last entry (Conflict Oracle). 4 presses:
-			// Installed Mods -> Search -> Profiles -> Sources -> Oracle.
-			for range 4 {
+			// Move to the last entry (Conflict Oracle). 5 presses:
+			// Installed Mods -> Search -> Profiles -> Sources ->
+			// Verify Integrity (#224 Task 10) -> Oracle.
+			for range 5 {
 				model = updateWithRunes(t, model, "j")
 			}
 			opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
