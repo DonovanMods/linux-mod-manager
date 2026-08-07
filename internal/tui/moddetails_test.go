@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -114,4 +115,101 @@ func TestModDetailsContent_ShortBodyDoesNotScroll(t *testing.T) {
 
 func TestModDetailsContent_TitleIsModName(t *testing.T) {
 	assert.Equal(t, "Mod A", newModDetailsContent(testDetails(), DefaultKeyMap()).Title())
+}
+
+// detailsWithDescriptionLines builds a minimal ModDetails whose body is
+// precisely controllable: the fixed header line plus exactly n description
+// lines (when n > 0), with no other optional fields to blur the count.
+func detailsWithDescriptionLines(n int) ModDetails {
+	d := ModDetails{ID: "a", Name: "N", Version: "1.0", Author: "X"}
+	if n > 0 {
+		lines := make([]string, n)
+		for i := range lines {
+			lines[i] = fmt.Sprintf("line %d", i)
+		}
+		d.Description = strings.Join(lines, "\n")
+	}
+	return d
+}
+
+// TestModDetailsContent_LinesNeverExceedsHeight pins the invariant the #86
+// review demanded: len(Lines(w, h)) <= h always, for every offset and every
+// body length - including the boundaries where the body is shorter than,
+// equal to, and one line longer than the requested height, which is exactly
+// where off-by-ones hide. Before the fix, a scrolled (non-bottomed-out) body
+// longer than height returned height+1 lines: the body filled height, and
+// the "↓ N more" indicator was appended on top instead of budgeted within it.
+func TestModDetailsContent_LinesNeverExceedsHeight(t *testing.T) {
+	for _, height := range []int{1, 2, 3, 5, 10} {
+		bodyLensToTry := map[int]bool{0: true, 1: true, height: true, height + 1: true, height * 3: true}
+		if height > 1 {
+			bodyLensToTry[height-1] = true
+		}
+		for bodyLines := range bodyLensToTry {
+			t.Run(fmt.Sprintf("height=%d/descLines=%d", height, bodyLines), func(t *testing.T) {
+				c := newModDetailsContent(detailsWithDescriptionLines(bodyLines), DefaultKeyMap())
+				total := len(c.body())
+
+				// Sweep every offset from 0 through past the end - HandleKey's
+				// Down branch increments c.offset unboundedly and relies on
+				// Lines itself to clamp, so Lines must hold the invariant for
+				// out-of-range offsets too, not just in-range ones.
+				for offset := 0; offset <= total+2; offset++ {
+					c.offset = offset
+					got := c.Lines(80, height)
+					assert.LessOrEqualf(t, len(got), height,
+						"offset=%d height=%d total=%d body-lines returned %d: %v",
+						offset, height, total, len(got), got)
+				}
+			})
+		}
+	}
+}
+
+// TestModDetailsContent_IndicatorReflectsRealRemainingCount is the other
+// half of the review finding: when the indicator IS shown, its count must be
+// the real number of remaining body lines, not a number derived from a
+// clamp that already discarded some of them.
+func TestModDetailsContent_IndicatorReflectsRealRemainingCount(t *testing.T) {
+	c := newModDetailsContent(detailsWithDescriptionLines(50), DefaultKeyMap())
+	total := len(c.body())
+
+	const height = 10
+	got := c.Lines(80, height)
+	require.Len(t, got, height, "indicator must be budgeted within height, not appended on top")
+
+	last := got[len(got)-1]
+	require.True(t, strings.HasPrefix(last, "↓ "), "expected an indicator line, got %q", last)
+
+	// height-1 body lines are shown ahead of the indicator (the indicator
+	// itself occupies the height-th slot), so this many remain.
+	wantRemaining := total - (height - 1)
+	assert.Equal(t, fmt.Sprintf("↓ %d more", wantRemaining), last)
+}
+
+// TestModDetailsContent_HostRenderNoDoubleClamp is the end-to-end proof the
+// review asked for: rendering through the real host (contextView, via
+// screenView) must show the view's own "↓ N more" indicator, and must NOT
+// show clampLines' generic "+N more" tail. Before the fix, Lines()
+// over-produced by one line whenever scrolled short of the bottom, so
+// contextView's own clampLines fired a second time and replaced the
+// content's honest, correct count with a misleading one derived from the
+// clamp's own math. A unit test on Lines alone would not catch this - only
+// the full render pipeline does.
+func TestModDetailsContent_HostRenderNoDoubleClamp(t *testing.T) {
+	model := sizedPrototypeModel(t, "wizardry", 100, 24)
+
+	d := testDetails()
+	descLines := make([]string, 200)
+	for i := range descLines {
+		descLines[i] = fmt.Sprintf("description line %d", i)
+	}
+	d.Description = strings.Join(descLines, "\n")
+
+	model.pushContext(newModDetailsContent(d, model.keys))
+	view := model.screenView()
+
+	assert.Regexp(t, `↓ \d+ more`, view, "the view's own indicator must survive the host's render")
+	assert.NotRegexp(t, `\+\d+ more`, view,
+		"a generic '+N more' tail means clampLines double-clamped over this view's own indicator")
 }

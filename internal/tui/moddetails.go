@@ -97,7 +97,9 @@ func (c *modDetailsContent) body() []string {
 	return lines
 }
 
-// maxOffset is the largest first-visible-line index that still fills height.
+// maxOffset is the largest first-visible-line index that still fills height:
+// the offset at which exactly `height` body lines remain, so the final
+// screenful needs no "↓ N more" indicator and no trailing blank space.
 func (c *modDetailsContent) maxOffset(height int) int {
 	over := len(c.body()) - height
 	if over < 0 {
@@ -106,19 +108,31 @@ func (c *modDetailsContent) maxOffset(height int) int {
 	return over
 }
 
+// Lines returns AT MOST height lines, always - windowedRows' own indicator
+// convention (clamp.go), which this previously violated: the "↓ N more" row
+// used to be appended ON TOP of a full height of body lines, so a scrolled,
+// non-bottomed-out view returned height+1 lines. That over-production made
+// the host's own clampLines (contextview.go) fire a second time, discarding
+// this view's honest count in favor of a generic, clamp-derived "+N more"
+// tail. The indicator is now budgeted INSIDE height: when the remaining body
+// fits, it's returned as-is (no indicator, matching maxOffset's own
+// definition of "fits" above); otherwise only height-1 body lines are shown,
+// making room for the indicator as the height-th line.
 func (c *modDetailsContent) Lines(width, height int) []string {
 	body := c.body()
 	if height < 1 {
 		height = 1
 	}
 	offset := min(max(c.offset, 0), c.maxOffset(height))
-	end := min(offset+height, len(body))
-	visible := append([]string(nil), body[offset:end]...)
+	remaining := len(body) - offset
 
-	// Scroll affordance, matching windowedRows' own indicator convention.
-	if more := len(body) - end; more > 0 {
-		visible = append(visible, fmt.Sprintf("↓ %d more", more))
+	if remaining <= height {
+		return append([]string(nil), body[offset:]...)
 	}
+
+	end := offset + height - 1
+	visible := append([]string(nil), body[offset:end]...)
+	visible = append(visible, fmt.Sprintf("↓ %d more", len(body)-end))
 	return visible
 }
 
