@@ -140,7 +140,7 @@ func TestVerify_LocalWalk_StatusesAndCounts(t *testing.T) {
 	// walks the rows in DB order, same as the CLI's own loop does today).
 	byFileID := map[string]core.VerifyFinding{
 		"ok-file":          {ModID: "mod-ok", ModName: "Mod OK", FileID: "ok-file", Status: "ok"},
-		"missing-file":     {ModID: "mod-missing", ModName: "Mod Missing", FileID: "missing-file", Status: "missing"},
+		"missing-file":     {ModID: "mod-missing", ModName: "Mod Missing", FileID: "missing-file", Status: "missing", Version: "1.0"},
 		"no-checksum-file": {ModID: "mod-no-checksum", ModName: "Mod No Checksum", FileID: "no-checksum-file", Status: "no_checksum"},
 		"gone-file":        {ModID: "mod-gone", FileID: "gone-file", Status: "skipped"},
 	}
@@ -349,7 +349,7 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 		// --- version pass (runs before the per-file walk) ---
 		{ModID: "unreachable-mod", ModName: "Unreachable", Status: "skipped", Note: "could not check version: boom"},
 		{ModID: "unverifiable-mod", ModName: "Unverifiable", Status: "version_unverifiable"},
-		{ModID: "mismatch-mod", ModName: "Mismatch", Status: "version_mismatch"},
+		{ModID: "mismatch-mod", ModName: "Mismatch", Status: "version_mismatch", Recorded: "1.0", Effective: "2.0"},
 		{ModID: "locked-mod", ModName: "Locked", Status: "ok", Note: "lock pending convergence (installed v1.0, locked v2.0)"},
 		// --- per-file walk (DB/checksum insertion order) ---
 		{ModID: "reachable-mod", ModName: "Reachable", FileID: "f1", Status: "ok"},
@@ -360,8 +360,8 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 	}
 	require.Equal(t, wantFindings, result.Findings)
 
-	// The version_mismatch finding's event carries the Recorded/Effective
-	// extras (not persisted on VerifyFinding itself).
+	// The version_mismatch finding's event carries the same Recorded/
+	// Effective values as the VerifyFinding row itself (wantFindings above).
 	var mismatchEvent *core.VerifyEvent
 	var progressEvents []core.VerifyEvent
 	for i := range events {
@@ -383,6 +383,60 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 		require.Equal(t, 5, ev.Total)
 		require.Equal(t, wantModNames[i], ev.ModName)
 	}
+}
+
+// TestVerify_VersionMismatchFinding_CarriesRecordedEffective is the TUI
+// layout-rework (#224 follow-up) TDD guard: the Health screen's VERSION
+// column needs the recorded/effective versions directly on VerifyFinding,
+// not just the VerifyEvent's extras (which a non-progress-subscribed caller
+// never sees) - see VerifyFinding.Recorded/Effective's own doc comment.
+func TestVerify_VersionMismatchFinding_CarriesRecordedEffective(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	src := &scriptedVersionSource{
+		mockSource:   newMockSource("vsrc"),
+		filesByModID: map[string][]domain.DownloadableFile{"mismatch-mod": {{ID: "f1", Version: "2.0", IsPrimary: true}}},
+	}
+	svc.RegisterSource(src)
+
+	seedVerifyMod(t, svc, game, "vsrc", "mismatch-mod", "Mismatch", "1.0", []string{"f1"}, true)
+	require.NoError(t, svc.SaveFileChecksum("vsrc", "mismatch-mod", game.ID, "default", "f1", "checksum-mismatch"))
+
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	require.NoError(t, err)
+
+	mismatch, ok := findFindingByStatus(result.Findings, "version_mismatch")
+	require.True(t, ok, "expected a version_mismatch row")
+	require.Equal(t, "1.0", mismatch.Recorded, "VerifyFinding.Recorded must carry the pre-repair recorded version")
+	require.Equal(t, "2.0", mismatch.Effective, "VerifyFinding.Effective must carry the source-reported version")
+}
+
+// TestVerify_MissingFinding_CarriesVersion is the TUI layout-rework (#224
+// follow-up) TDD guard: the Health screen's VERSION column needs the
+// installed mod's recorded version directly on a "missing" VerifyFinding,
+// mirroring the VerifyEvent.Version extra the CLI already renders from.
+func TestVerify_MissingFinding_CarriesVersion(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	seedVerifyMod(t, svc, game, "src", "missing-mod", "Missing Mod", "1.5", []string{"missing-file"}, false)
+	require.NoError(t, svc.SaveFileChecksum("src", "missing-mod", game.ID, "default", "missing-file", "checksum-missing"))
+
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, nil)
+	require.NoError(t, err)
+
+	missing, ok := findFindingByStatus(result.Findings, "missing")
+	require.True(t, ok, "expected a missing row")
+	require.Equal(t, "1.5", missing.Version, "VerifyFinding.Version must carry the installed mod's recorded version")
 }
 
 // TestVerify_CompileGameStatuses is the #224 Task 3 DeployCompile fixture:
@@ -939,7 +993,7 @@ func TestVerify_Fix_SourceLocal_NoRepairAttempted(t *testing.T) {
 
 	require.Equal(t, 1, result.Issues, "no repair was attempted - the missing issue stands")
 	require.Equal(t, 0, result.Warnings)
-	require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "missing"}}, result.Findings)
+	require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "missing", Version: "1.0"}}, result.Findings)
 	require.Empty(t, repairDetails(events), "SourceLocal must never reach a redownload attempt")
 }
 
@@ -1626,7 +1680,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 		"wolfmod:exmodz-file":      {ModID: "wolfmod", ModName: "wolfmod", FileID: "exmodz-file", Status: "no_checksum"},
 		"badpak:pak":               {ModID: "badpak", ModName: "badpak", FileID: "pak", Status: "no_checksum"},
 		"legacypak:pak":            {ModID: "legacypak", ModName: "Legacy Pak", FileID: "pak", Status: "needs_reingest", Note: "pak predates conversion support - run 'lmm verify --fix' to re-ingest"},
-		"missing-mod:missing-file": {ModID: "missing-mod", ModName: "Missing Mod", FileID: "missing-file", Status: "missing"},
+		"missing-mod:missing-file": {ModID: "missing-mod", ModName: "Missing Mod", FileID: "missing-file", Status: "missing", Version: "1.0"},
 	}
 	var perFileRows []core.VerifyFinding
 	for _, f := range files {

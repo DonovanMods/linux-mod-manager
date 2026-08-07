@@ -2209,9 +2209,16 @@ func (m Model) healthScreenView() string {
 	return m.panelWithHeight(width, height).Render(strings.Join(lines, "\n"))
 }
 
-// healthHomeView renders the Health screen's home content (#224 Task 9):
-// every finding from the most recent verify scan, one row each, mirroring
-// conflictsView's two-pane list/detail shape.
+// healthHomeView renders the Health screen's home content: a full-width
+// columnar table, one row per finding (STATUS | MOD | FILE | VERSION |
+// NOTE), followed by a compact detail strip for the selected row -
+// mirroring modsView/modRow's full-width table conventions (proportional
+// clamped column widths, truncate() on every field, m.row()'s selection
+// highlight, m.windowedRows' scroll-follow-selection) rather than the
+// two-pane list/detail shape this screen used before (#224 layout rework,
+// user request): verify findings are tabular data, and a side detail box
+// mostly empty except for 2-4 short lines wasted half the screen's width
+// that the Installed Mods screen puts to use as real columns.
 //
 // 2026-08-07 smoke feedback (#224): Findings now carries EVERY row the
 // engine reported, quiet-ok included (HealthView's own doc comment), so the
@@ -2237,30 +2244,46 @@ func (m Model) healthHomeView() string {
 		}, "\n"))
 	}
 
-	// Two-pane list/detail layout, mirroring conflictsView's own width math
-	// (see its doc comment) - leftWidth + gap + rightWidth sums to exactly
-	// width.
-	gap := 1
-	leftWidth := max((width-gap)/2, 1)
-	rightWidth := max(width-gap-leftWidth, 1)
-	paneContentHeight := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
+	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.panelWithHeight(leftWidth, height).Render(m.healthListPane(leftWidth, paneContentHeight)),
-		" ",
-		m.panelWithHeight(rightWidth, height).Render(m.healthDetailPane(rightWidth, paneContentHeight)),
-	)
+	header := []string{
+		m.theme.PanelTitle.Render("HEALTH"),
+		m.theme.MutedText.Render(truncate(fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full, m.health.Checked, len(m.health.Findings) > 0)), innerWidth)),
+	}
+
+	// The detail strip is a fixed-cap 4 lines (healthDetailPane's own doc
+	// comment) - computed first so the table's budget below is whatever's
+	// left after header + one blank separator + the strip, matching
+	// modsView's own budget-then-windowedRows shape (app.go).
+	const detailCap = 4
+	detail := m.healthDetailPane(innerWidth, detailCap)
+	detailLines := strings.Split(detail, "\n")
+
+	tableBudget := max(contentBudget-len(header)-1-len(detailLines), 0)
+	table := m.healthTableRows(width, tableBudget)
+
+	rows := make([]string, 0, len(header)+len(table)+1+len(detailLines))
+	rows = append(rows, header...)
+	rows = append(rows, table...)
+	rows = append(rows, "")
+	rows = append(rows, detailLines...)
+	rows = m.truncateLines(rows, innerWidth)
+	rows = m.clampLines(rows, contentBudget)
+
+	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
 // healthFindingSubject returns the best available human-readable identifier
 // for a HealthFinding, in order: ModName, then ModID, then FileID. Some
 // findings genuinely carry no mod at all - e.g. a stale_deployment row for a
 // dangling cache link (#224 Copilot round 1) - so callers that assumed
-// ModName was always populated rendered a blank/stray label. The three
-// health surfaces that show a finding's subject (healthListPane's row
-// label, healthDetailPane's "Mod:" line, healthFixResultLine's overlay row
-// in mutations.go) all share this one fallback so their behavior can't
-// drift apart.
+// ModName was always populated rendered a blank/stray label. The two health
+// surfaces that show a finding's SUBJECT (as opposed to a table's own
+// separate MOD column, which never falls back to FileID - see
+// healthFindingModLabel) - healthDetailPane's "Mod:" line and
+// healthFixResultLine's overlay row in mutations.go - share this one
+// fallback so their behavior can't drift apart.
 func healthFindingSubject(f HealthFinding) string {
 	if f.ModName != "" {
 		return f.ModName
@@ -2271,42 +2294,136 @@ func healthFindingSubject(f HealthFinding) string {
 	return f.FileID
 }
 
-// healthListPane renders the header (title + "last scan: ..." age line) and
-// the selectable "[glyph] STATUS  MOD (FILE)" rows, tinted by
-// healthStatusClass. Windowed/scroll-follow-selection like
-// conflictsListPane (#42).
-func (m Model) healthListPane(width, maxLines int) string {
-	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
-
-	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	rows := []string{
-		m.theme.PanelTitle.Render("HEALTH"),
-		m.theme.MutedText.Render(truncate(fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full, m.health.Checked, len(m.health.Findings) > 0)), innerWidth)),
+// healthFindingModLabel is the Health table's MOD column value: ModName,
+// then ModID, blank otherwise - deliberately NOT falling all the way back to
+// FileID the way healthFindingSubject does, since FileID has its own
+// dedicated FILE column here (#224 layout rework) and repeating it in MOD
+// too would be redundant now that the two are separate fields instead of
+// one combined "subject (file)" list-row label.
+func healthFindingModLabel(f HealthFinding) string {
+	if f.ModName != "" {
+		return f.ModName
 	}
-
-	budget := max(maxLines-len(rows), 0)
-	rowFor := func(i int) string {
-		f := m.health.Findings[i]
-		subject := healthFindingSubject(f)
-		label := subject
-		// Only append "(FileID)" when it adds information beyond the
-		// subject already shown - avoids the redundant "X (X)" shape when
-		// healthFindingSubject's own fallback already returned the FileID
-		// (e.g. a mod-less stale_deployment row, #224 Copilot round 1).
-		if f.FileID != "" && f.FileID != subject {
-			label = fmt.Sprintf("%s (%s)", subject, f.FileID)
-		}
-		line := fmt.Sprintf("%s %s  %s", m.healthGlyph(f.Status), healthStatusLabel(f.Status), label)
-		return m.row(i, truncate(line, max(innerWidth-prefixWidth, 1)))
-	}
-	rows = append(rows, m.windowedRows(len(m.health.Findings), m.selected[ScreenHealth], budget, rowFor)...)
-	return strings.Join(rows, "\n")
+	return f.ModID
 }
 
-// healthDetailPane renders the selected finding's fields plus a per-status
-// remedy line (healthRemedy), reusing the CLI's own phrasings (cmd/lmm/
-// verify.go's renderVerifyFinding/renderVerifySkipped) wherever the fields
-// HealthFinding carries are enough to reconstruct them.
+// healthFindingVersionText is the Health table's VERSION column value: for
+// version_mismatch, "recorded→effective" (VerifyFinding.Recorded/Effective,
+// #224 follow-up plumbing - see core.VerifyFinding's own doc comment); for
+// missing, the recorded version (VerifyFinding.Version) when the engine
+// supplied one, else blank; every other status has no version-pass data at
+// all, so it's always blank.
+func healthFindingVersionText(f HealthFinding) string {
+	switch f.Status {
+	case "version_mismatch":
+		return fmt.Sprintf("%s→%s", f.Recorded, f.Effective)
+	case "missing":
+		return f.Version
+	default:
+		return ""
+	}
+}
+
+// healthColumnWidths computes the Health table's STATUS|MOD|FILE|VERSION|
+// NOTE column widths from the panel's available content width, mirroring
+// modRow's clamp-then-truncate scheme (a proportional, floored-and-capped
+// share of avail per column) rather than inventing a second one. Unlike
+// modRow - which always renders all 5 of its columns and lets its
+// absorbing NAME column shrink toward its own floor - a narrow terminal
+// here instead drops whole columns, NOTE first then VERSION: a Health row's
+// primary value is STATUS/MOD/FILE, and a column squeezed down to 1-2
+// legible runes is worse than not showing it at all (#224 layout rework).
+func (m Model) healthColumnWidths(width int) (statusW, modW, fileW, versionW, noteW int, showVersion, showNote bool) {
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+	const minStatus = 8
+	const minMod = 10
+	const minFile = 8
+	const minVersion = 7
+	const minNote = 10
+
+	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth, 1)
+
+	statusW = min(22, max(avail/6, minStatus))
+	modW = min(24, max(avail/4, minMod))
+	fileW = min(18, max(avail/6, minFile))
+	versionW = min(11, max(avail/10, minVersion))
+
+	fixed := statusW + modW + fileW + versionW
+
+	showVersion, showNote = true, true
+	// 5 columns -> 4 separating gaps.
+	noteW = avail - fixed - 4
+	if noteW < minNote {
+		showNote, noteW = false, 0
+		// 4 columns -> 3 separating gaps.
+		if fixed+3 > avail {
+			showVersion, versionW = false, 0
+		}
+	}
+	return
+}
+
+// healthStatusStyle returns the STATUS column's tint (healthStatusClass's
+// three buckets): text-color only, since a columnar STATUS field has no
+// room for the old two-pane list's separate leading "[glyph]" marker
+// (healthGlyph, removed by #224's layout rework) - the class distinction now
+// lives entirely in color, matching modRow/searchResultsPane's own
+// "pad-then-style" convention for a themed column value. "fine" renders
+// untinted - theme.Theme has no dedicated success style, only Warning/
+// DangerText (see Theme's own field list).
+func (m Model) healthStatusStyle(status string) lipgloss.Style {
+	switch healthStatusClass(status) {
+	case "danger":
+		return m.theme.DangerText
+	case "warning":
+		return m.theme.WarningText
+	default:
+		return lipgloss.NewStyle()
+	}
+}
+
+// healthTableRows renders the Health table's selectable STATUS|MOD|FILE|
+// VERSION|NOTE rows: STATUS uppercase and tinted (healthStatusStyle), MOD
+// via healthFindingModLabel, FILE the raw FileID (may be blank), VERSION via
+// healthFindingVersionText (column dropped entirely on a narrow terminal -
+// see healthColumnWidths), NOTE truncated to whatever width remains (dropped
+// before VERSION on an even narrower terminal). Windowed/scroll-follow-
+// selection like modsView's own list (m.windowedRows) - the full-width
+// columnar replacement for the old two-pane healthListPane.
+func (m Model) healthTableRows(width, budget int) []string {
+	statusW, modW, fileW, versionW, noteW, showVersion, showNote := m.healthColumnWidths(width)
+	rowFor := func(i int) string {
+		f := m.health.Findings[i]
+		status := m.healthStatusStyle(f.Status).Render(fmt.Sprintf("%-*s", statusW, truncate(healthStatusLabel(f.Status), statusW)))
+		parts := []string{
+			status,
+			fmt.Sprintf("%-*s", modW, truncate(healthFindingModLabel(f), modW)),
+			fmt.Sprintf("%-*s", fileW, truncate(f.FileID, fileW)),
+		}
+		if showVersion {
+			parts = append(parts, fmt.Sprintf("%-*s", versionW, truncate(healthFindingVersionText(f), versionW)))
+		}
+		if showNote {
+			parts = append(parts, truncate(f.Note, noteW))
+		}
+		return m.row(i, strings.Join(parts, " "))
+	}
+	return m.windowedRows(len(m.health.Findings), m.selected[ScreenHealth], budget, rowFor)
+}
+
+// healthDetailPane renders a compact 3-4 line detail strip for the selected
+// finding: a "Mod:    <subject> — <STATUS>" line (healthFindingSubject's
+// full ModName/ModID/FileID fallback, unlike the table's own MOD column -
+// so a mod-less finding's subject still reads as its FileID here, exactly
+// as it did in the pre-rework two-pane detail pane), an optional
+// "File:   <FileID>" line, an optional "Note:   <Note>" line shown in
+// FULL (not clipped to the table's narrower NOTE column - only to width,
+// same Width()-constrained-panel safety truncation every line here gets,
+// #42), and the per-status remedy line (healthRemedy) - replacing the old
+// two-pane's side DETAIL pane (#224 layout rework). width is the caller's
+// already-computed CONTENT width (healthHomeView's innerWidth) - unlike the
+// pre-rework version, this is no longer rendered inside its own bordered
+// panel, so it does not subtract the panel's frame size itself.
 func (m Model) healthDetailPane(width, maxLines int) string {
 	idx := m.selected[ScreenHealth]
 	if idx < 0 || idx >= len(m.health.Findings) {
@@ -2314,20 +2431,18 @@ func (m Model) healthDetailPane(width, maxLines int) string {
 	}
 	f := m.health.Findings[idx]
 
-	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	innerWidth := max(width, 1)
 	lines := []string{
-		m.theme.PanelTitle.Render("DETAIL"),
-		truncate(fmt.Sprintf("Mod:    %s", healthFindingSubject(f)), innerWidth),
+		truncate(fmt.Sprintf("Mod:    %s — %s", healthFindingSubject(f), healthStatusLabel(f.Status)), innerWidth),
 	}
 	if f.FileID != "" {
 		lines = append(lines, truncate(fmt.Sprintf("File:   %s", f.FileID), innerWidth))
 	}
-	lines = append(lines, truncate(fmt.Sprintf("Status: %s", healthStatusLabel(f.Status)), innerWidth))
 	if f.Note != "" {
 		lines = append(lines, truncate(fmt.Sprintf("Note:   %s", f.Note), innerWidth))
 	}
 	if remedy := healthRemedy(f); remedy != "" {
-		lines = append(lines, "", truncate(m.theme.MutedText.Render(remedy), innerWidth))
+		lines = append(lines, truncate(m.theme.MutedText.Render(remedy), innerWidth))
 	}
 
 	if len(lines) > maxLines {
@@ -2337,16 +2452,16 @@ func (m Model) healthDetailPane(width, maxLines int) string {
 }
 
 // healthStatusClass buckets a HealthFinding.Status into the three tint
-// classes the list/detail panes use: "danger" for the two statuses that mean
-// a file/version is actually wrong, "fine" for a healthy (lock-pending "ok")
-// row OR a resolved fixed_* row (a successful --fix repair - "fixed_" prefix
-// covers both fixed_stale_deployment and fixed_needs_reingest, #224 Copilot
-// round 2: these used to fall into "warning" and so tinted/glyphed like an
-// outstanding problem in the post-fix list, even though they mean the
-// opposite), and "warning" for everything else - the broad "needs attention
-// but isn't broken" middle ground (needs_reingest, no_checksum,
-// version_unverifiable, stale_compile, conversion_failed, stale_deployment,
-// file_count_mismatch, skipped, ...).
+// classes the table/detail strip use (healthStatusStyle): "danger" for the
+// two statuses that mean a file/version is actually wrong, "fine" for a
+// healthy (lock-pending "ok") row OR a resolved fixed_* row (a successful
+// --fix repair - "fixed_" prefix covers both fixed_stale_deployment and
+// fixed_needs_reingest, #224 Copilot round 2: these used to fall into
+// "warning" and so tinted/glyphed like an outstanding problem in the
+// post-fix list, even though they mean the opposite), and "warning" for
+// everything else - the broad "needs attention but isn't broken" middle
+// ground (needs_reingest, no_checksum, version_unverifiable, stale_compile,
+// conversion_failed, stale_deployment, file_count_mismatch, skipped, ...).
 func healthStatusClass(status string) string {
 	switch {
 	case status == "missing" || status == "version_mismatch":
@@ -2358,26 +2473,6 @@ func healthStatusClass(status string) string {
 	}
 }
 
-// healthGlyph renders the tinted leading marker for a list row, mirroring
-// the CLI's own colorRed("X")/colorGreen("+")/colorYellow("?") convention
-// (cmd/lmm/verify.go's renderVerifyFinding) for the danger/warning classes.
-// "fine" gets no tint at all - unlike the CLI, which DOES color its "+" OK
-// glyph green via colorGreen, theme.Theme has no dedicated "success" text
-// style (only WarningText/DangerText - see its own field list), and adding
-// one is out of this task's file list (navigation.go/contextview.go/
-// keys.go/app.go/health_screen_test.go). Untinted is the closest available
-// approximation, not a deliberate parity claim with the CLI's own styling.
-func (m Model) healthGlyph(status string) string {
-	switch healthStatusClass(status) {
-	case "danger":
-		return m.theme.DangerText.Render("X")
-	case "fine":
-		return "+"
-	default:
-		return m.theme.WarningText.Render("?")
-	}
-}
-
 // healthStatusLabel renders a Status value ("version_mismatch") as display
 // text ("VERSION MISMATCH"), matching the CLI's own uppercase wording for
 // the same statuses (cmd/lmm/verify.go).
@@ -2385,15 +2480,14 @@ func healthStatusLabel(status string) string {
 	return strings.ToUpper(strings.ReplaceAll(status, "_", " "))
 }
 
-// healthRemedy returns the detail pane's per-status remedy line, reusing the
-// CLI's own phrasings (cmd/lmm/verify.go's renderVerifyFinding/
+// healthRemedy returns the detail strip's per-status remedy line, reusing
+// the CLI's own phrasings (cmd/lmm/verify.go's renderVerifyFinding/
 // renderVerifySkipped) wherever HealthFinding carries enough to reconstruct
-// them - Recorded/Effective/Version/ExpectedCount (CLI-only VerifyEvent
-// extras, not copied into HealthFinding - see healthView's doc comment in
-// service_core.go) are dropped rather than guessed at. "(F)" names Task 12's
-// fix binding, which does not exist yet on this task's branch - the copy is
-// written now so it reads correctly the moment that binding lands, mirroring
-// the brief's own needs_reingest example.
+// them - ExpectedCount (a CLI-only VerifyEvent extra with no HealthFinding
+// counterpart) is dropped rather than guessed at; Recorded/Effective/
+// Version (#224 follow-up plumbing) ARE on HealthFinding now but the table's
+// own VERSION column (healthFindingVersionText) already shows them, so this
+// remedy copy doesn't repeat them. "(F)" names Task 12's fix binding.
 //
 // 2026-08-07 smoke feedback (#224): a quiet-ok row (Status "ok", no Note)
 // used to return "" here - it never reached the detail pane before, since

@@ -1977,7 +1977,7 @@ func (p *coreProvider) RunHealthCheck(ctx context.Context, full, fix bool, progr
 func healthView(res *core.VerifyResult, full bool) HealthView {
 	v := HealthView{Issues: res.Issues, Warnings: res.Warnings, Full: full, Checked: res.Checked, Findings: make([]HealthFinding, 0, len(res.Findings))}
 	for _, f := range res.Findings {
-		v.Findings = append(v.Findings, HealthFinding{ModID: f.ModID, ModName: f.ModName, FileID: f.FileID, Status: f.Status, Note: f.Note})
+		v.Findings = append(v.Findings, HealthFinding{ModID: f.ModID, ModName: f.ModName, FileID: f.FileID, Status: f.Status, Note: f.Note, Recorded: f.Recorded, Effective: f.Effective, Version: f.Version})
 	}
 	return v
 }

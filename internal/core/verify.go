@@ -31,8 +31,20 @@ type VerifyOptions struct {
 // VerifyFinding is one reported row - a per-file or per-mod outcome from a
 // verify run. FileID/Note are blank when the finding isn't about a single
 // file (e.g. a mod-level file-count-mismatch row).
+//
+// Recorded/Effective/Version mirror the identically-named VerifyEvent extras
+// (Recorded/Effective for version_mismatch, Version for missing) - additive
+// fields (TUI layout rework, #224 follow-up) so a caller that only has the
+// final VerifyResult (not a progress listener) can still render them, e.g.
+// the Health screen's VERSION column. resolveLast clears them whenever a
+// row's Status resolves away from missing/version_mismatch, so a repaired
+// row never carries a stale pre-repair value. The CLI's own text/JSON
+// rendering is untouched by these fields - it still reads the VerifyEvent
+// extras (text mode) or copies VerifyFinding by named field (JSON mode, see
+// verifyFileJSON in cmd/lmm/verify.go), never a bare struct copy.
 type VerifyFinding struct {
 	ModID, ModName, FileID, Status, Note string
+	Recorded, Effective, Version         string
 }
 
 // VerifyResult is the accumulated outcome of a Verify run.
@@ -102,10 +114,19 @@ func (r *verifyRun) finding(f VerifyFinding, extras VerifyEvent) {
 
 // resolveLast rewrites the most recently appended finding's Status/Note in
 // place - used by a --fix repair that resolves the row it just reported
-// (e.g. "missing" -> "ok" after a successful re-download).
+// (e.g. "missing" -> "ok" after a successful re-download). When the new
+// status leaves the missing/version_mismatch family entirely (repaired, or
+// demoted to no_checksum), the row's Recorded/Effective/Version extras are
+// cleared too - they described the pre-repair state, so a resolved row
+// (e.g. "ok") must not keep reporting it. A row that stays missing (failed
+// retry) or stays version_mismatch (refused/failed repair) keeps its
+// extras, since it's still the same unresolved condition.
 func (r *verifyRun) resolveLast(status, note string) {
 	last := &r.result.Findings[len(r.result.Findings)-1]
 	last.Status, last.Note = status, note
+	if status != "missing" && status != "version_mismatch" {
+		last.Recorded, last.Effective, last.Version = "", "", ""
+	}
 }
 
 // Verify runs the verify engine for game/profile per opts, reporting
@@ -404,7 +425,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 		cacheExists := gameCache.Exists(r.game.ID, mod.SourceID, mod.ID, mod.Version)
 		if !cacheExists {
 			r.result.Issues++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing"}, VerifyEvent{Version: mod.Version})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing", Version: mod.Version}, VerifyEvent{Version: mod.Version})
 			// #224 Task 4: ported verbatim from doVerify (originally lines
 			// 765-799).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
@@ -606,7 +627,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if effective != mod.Version {
 			recorded := mod.Version
 			r.result.Issues++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch"}, VerifyEvent{Recorded: recorded, Effective: effective})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch", Recorded: recorded, Effective: effective}, VerifyEvent{Recorded: recorded, Effective: effective})
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
 				// #97 (Task 8): a locked ref's Version is the lock's
 				// TARGET, not a repairable mistake - rewriting it here

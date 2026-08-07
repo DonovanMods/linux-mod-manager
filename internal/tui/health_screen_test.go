@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/require"
 )
 
@@ -157,15 +158,27 @@ func TestHealthViewRendersSubjectFallbackForModlessFinding(t *testing.T) {
 // (the engine emits it after a --fix re-ingests a pak - verify.go's
 // resolveLast("fixed_needs_reingest", ...) call) so the detail pane fell to
 // the default empty remedy with no explanation, and (3) healthStatusClass
-// bucketed every fixed_* status as "warning", so a resolved row tinted/
-// glyphed exactly like an outstanding problem in the post-fix list. Both
-// fixed_stale_deployment and fixed_needs_reingest must read "resolved" in
-// the detail pane and render the untinted "fine" glyph ("+"), never the
-// "warning" class's "?" glyph.
+// bucketed every fixed_* status as "warning", so a resolved row tinted like
+// an outstanding problem in the post-fix table. Both fixed_stale_deployment
+// and fixed_needs_reingest must read "resolved" in the detail strip and
+// carry the "fine" class (healthStatusStyle's untinted case), never
+// "warning" - checked directly against healthStatusClass/healthStatusStyle
+// rather than a glyph substring: #224's layout rework replaced the old
+// two-pane list's leading "[glyph] LABEL" row with a columnar STATUS field
+// tinted by color alone (see healthStatusStyle's own doc comment), and a
+// plain-text view render can't observe ANSI color in this package's non-TTY
+// test environment (lipgloss only emits escape codes for a TTY output,
+// mirrored by search_test.go's own WarningText-Transform workaround for the
+// same reason).
 func TestHealthFixedStatusesRenderAsResolved(t *testing.T) {
 	t.Parallel()
 
+	require.Equal(t, "fine", healthStatusClass("fixed_stale_deployment"))
+	require.Equal(t, "fine", healthStatusClass("fixed_needs_reingest"))
+
 	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	require.Equal(t, lipgloss.NewStyle(), model.healthStatusStyle("fixed_stale_deployment"), "the 'fine' class must render untinted, not the 'warning' class's style")
+
 	model.health = HealthView{
 		Findings: []HealthFinding{
 			{ModID: "a", ModName: "Mod A", FileID: "f1", Status: "fixed_stale_deployment"},
@@ -177,14 +190,12 @@ func TestHealthFixedStatusesRenderAsResolved(t *testing.T) {
 	model.selected[ScreenHealth] = 0
 	view := model.View()
 	require.Contains(t, view, "resolved", "fixed_stale_deployment must show the resolved remedy")
-	require.Contains(t, view, "+ FIXED STALE DEPLOYMENT", "a resolved row must render the 'fine' glyph, not the 'warning' glyph")
-	require.NotContains(t, view, "? FIXED STALE DEPLOYMENT")
+	require.Contains(t, view, "FIXED STALE DEPLOYMENT", "the table's STATUS column must show the uppercase label")
 
 	model.selected[ScreenHealth] = 1
 	view = model.View()
 	require.Contains(t, view, "resolved", "fixed_needs_reingest must show the resolved remedy")
-	require.Contains(t, view, "+ FIXED NEEDS REINGEST", "a resolved row must render the 'fine' glyph, not the 'warning' glyph")
-	require.NotContains(t, view, "? FIXED NEEDS REINGEST")
+	require.Contains(t, view, "FIXED NEEDS REINGEST", "the table's STATUS column must show the uppercase label")
 }
 
 // TestHealthHomeViewEmptyState covers a fresh session that hasn't scanned
@@ -222,6 +233,141 @@ func TestHealthHomeViewEmptyState(t *testing.T) {
 	view = model.View()
 	require.Contains(t, view, "no findings (full)")
 	require.NotContains(t, view, "run a full check (c)", "a full-tier empty state must not hint at running the full check it just ran")
+}
+
+// --- #224 layout rework: full-width columnar table + detail strip ---
+
+// TestHealthTableRow_VersionMismatchShowsRecordedArrowEffective is the
+// VERSION column's core proof for version_mismatch: core.VerifyFinding's
+// Recorded/Effective (plumbed through HealthFinding, #224 follow-up) render
+// as "recorded→effective" in the table row, alongside the ordinary STATUS/
+// MOD/FILE columns the old two-pane list never showed side by side.
+func TestHealthTableRow_VersionMismatchShowsRecordedArrowEffective(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model.health = HealthView{Findings: []HealthFinding{
+		{ModID: "mismatch-mod", ModName: "Mismatch Mod", FileID: "f1", Status: "version_mismatch", Recorded: "1.2", Effective: "1.4"},
+	}}
+
+	rows := model.healthTableRows(160, 5)
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0], "Mismatch Mod", "MOD column")
+	require.Contains(t, rows[0], "f1", "FILE column")
+	require.Contains(t, rows[0], "VERSION MISMATCH", "STATUS column, uppercase")
+	require.Contains(t, rows[0], "1.2→1.4", "VERSION column: recorded→effective")
+}
+
+// TestHealthTableRow_MissingShowsVersionWithNoArrow covers the VERSION
+// column's other source: a "missing" row shows VerifyFinding.Version
+// verbatim (no arrow - there's no "effective" side to a missing file).
+func TestHealthTableRow_MissingShowsVersionWithNoArrow(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model.health = HealthView{Findings: []HealthFinding{
+		{ModID: "a", ModName: "A", FileID: "f1", Status: "missing", Version: "1.5"},
+	}}
+
+	rows := model.healthTableRows(160, 5)
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0], "1.5")
+	require.NotContains(t, rows[0], "→", "a missing row's VERSION column has no recorded/effective arrow")
+}
+
+// TestHealthTableRow_ModColumnDoesNotFallBackToFileID proves the table's MOD
+// column (healthFindingModLabel) deliberately stops at ModID, unlike the
+// detail strip's healthFindingSubject - a modless finding (only FileID set)
+// must render a blank MOD column, not repeat the FILE column's value there
+// too (the old two-pane list combined subject+file into one "X (Y)" label;
+// the table has separate columns for each, so no combining is needed and
+// would just be redundant).
+func TestHealthTableRow_ModColumnDoesNotFallBackToFileID(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model.health = HealthView{Findings: []HealthFinding{
+		{FileID: "stray.pak", Status: "stale_deployment"},
+	}}
+
+	rows := model.healthTableRows(160, 5)
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0], "stray.pak")
+	require.NotContains(t, rows[0], "stray.pak (stray.pak)")
+}
+
+// TestHealthTableNoteTruncatesButDetailStripShowsFull proves the table's
+// NOTE column truncates an overlong note to its own (narrower) column width
+// while the detail strip below shows it in full - "full" meaning not
+// clipped to the table's column, still safety-truncated to the panel's
+// overall content width like every other line in a Width()-constrained
+// panel (#42) - see healthDetailPane's own doc comment.
+func TestHealthTableNoteTruncatesButDetailStripShowsFull(t *testing.T) {
+	t.Parallel()
+
+	longNote := strings.Repeat("x", 60)
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	model.health = HealthView{Findings: []HealthFinding{
+		{ModID: "a", ModName: "A", FileID: "f1", Status: "no_checksum", Note: longNote},
+	}}
+	model.screen = ScreenHealth
+	model.selected[ScreenHealth] = 0
+
+	rows := model.healthTableRows(model.availableWidth(), 5)
+	require.Len(t, rows, 1)
+	require.NotContains(t, rows[0], longNote, "an overlong note must not survive uncut in the table's NOTE column")
+
+	contentWidth := model.availableWidth() - model.theme.Panel.GetHorizontalFrameSize()
+	detail := model.healthDetailPane(contentWidth, 4)
+	require.Contains(t, detail, "Note:   "+longNote, "the detail strip must show the note in full, not clipped to the table's NOTE column width")
+	require.Contains(t, detail, "no checksum recorded — run a fix (F) to backfill", "the detail strip must also show the remedy copy")
+}
+
+// TestHealthColumnWidths_DropsNoteThenVersionOnNarrowTerminal is the #224
+// layout rework's narrow-terminal degradation proof: NOTE is the first
+// column dropped as the panel narrows, VERSION the second - never MOD/FILE/
+// STATUS, which carry a row's primary identity (healthColumnWidths' own doc
+// comment).
+func TestHealthColumnWidths_DropsNoteThenVersionOnNarrowTerminal(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+
+	_, _, _, _, _, showVersion, showNote := model.healthColumnWidths(160)
+	require.True(t, showVersion, "a wide terminal shows every column")
+	require.True(t, showNote, "a wide terminal shows every column")
+
+	_, _, _, _, _, showVersion, showNote = model.healthColumnWidths(50)
+	require.True(t, showVersion, "VERSION must still show once NOTE alone has been dropped")
+	require.False(t, showNote, "NOTE must be the first column dropped on a narrow terminal")
+
+	_, _, _, _, _, showVersion, showNote = model.healthColumnWidths(40)
+	require.False(t, showVersion, "VERSION must be dropped next once dropping NOTE alone isn't enough")
+	require.False(t, showNote)
+}
+
+// TestHealthScreenNarrowTerminalDoesNotOverflow guards the #42 contract
+// (TestDashboardLayoutsDoNotOverflowNarrowTerminals' own reasoning) for the
+// new full-width table + detail strip: neither the rendered width nor the
+// rendered height may exceed the screen's own budget, even at a narrow
+// width that drops the NOTE/VERSION columns and a long mod name/note that
+// would otherwise auto-wrap inside the bordered panel.
+func TestHealthScreenNarrowTerminalDoesNotOverflow(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 40, 24)
+	model.health = HealthView{Findings: []HealthFinding{
+		{ModID: "a", ModName: "A Reasonably Long Mod Name For Testing", FileID: "f1", Status: "version_mismatch", Recorded: "1.2", Effective: "1.4", Note: "some diagnostic note text that runs long"},
+	}}
+	model.screen = ScreenHealth
+
+	view := model.screenView()
+	require.LessOrEqual(t, lipgloss.Width(view), model.availableWidth())
+	require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight())
 }
 
 // fakeContextContent is a test-local contextContent implementation - the

@@ -212,8 +212,13 @@ type ConflictItem struct {
 // render model in this file (ConflictItem/SwitchPlanView/etc.) that keeps
 // its own copy instead of exposing internal/core types across the provider
 // boundary.
+// Recorded/Effective/Version mirror core.VerifyFinding's identically-named
+// additive fields (TUI layout rework, #224 follow-up): Recorded/Effective
+// for a version_mismatch row, Version for a missing row - feeding the Health
+// screen's VERSION column (app.go's healthFindingVersion).
 type HealthFinding struct {
 	ModID, ModName, FileID, Status, Note string
+	Recorded, Effective, Version         string
 }
 
 // HealthView is DataProvider.Health/ActionProvider.RunHealthCheck's result:

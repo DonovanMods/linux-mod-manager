@@ -203,7 +203,7 @@ func TestHealthProvider_Local_NeverTouchesNetwork(t *testing.T) {
 	assert.Equal(t, 2, view.Checked, "both mod-ok's and mod-missing's files were checked")
 	require.Equal(t, []HealthFinding{
 		{ModID: "mod-ok", ModName: "Mod OK", FileID: "ok-file", Status: "ok"},
-		{ModID: "mod-missing", ModName: "Mod Missing", FileID: "missing-file", Status: "missing"},
+		{ModID: "mod-missing", ModName: "Mod Missing", FileID: "missing-file", Status: "missing", Version: "1.0"},
 	}, view.Findings, "mod-ok's quiet-ok row must be kept alongside mod-missing's real finding")
 }
 
