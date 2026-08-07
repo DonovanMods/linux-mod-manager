@@ -27,8 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TUI: a Health screen (screen `6`) — a Dashboard `Health: ...` signal
   line summarizing the local-tier verify scan, a full-width
   STATUS/MOD/FILE/VERSION/NOTE table combining verify findings (OK rows
-  included, per checked file) with file-conflict rows (`CONFLICT`/`STALE
-CONFLICT`, tinted by severity) with a compact detail strip below, an
+  included, per checked file) with file-conflict rows
+  (`CONFLICT`/`STALE CONFLICT`, tinted by severity) with a compact
+  detail strip below, an
   explicit full (network) check (`c`), a batch fix (`F`) that runs the
   same repairs as `lmm verify --fix` behind a confirmation summarizing
   what it will attempt, by finding type, and `D` to deploy in place for a
