@@ -103,6 +103,101 @@ func TestModDetail_LockJoinedFromProfileYAML(t *testing.T) {
 	assert.Equal(t, "1.2.3", detail.Installed.LockedVersion)
 }
 
+// seedModDetailInstalledPak records modID as installed in the "default"
+// profile with fileIDs set on the DB row (consulted by ModHasPakMergeSource),
+// then explicitly sets convert_paks via SetModConvertPaks - SaveInstalledMod
+// never writes that column itself (internal/storage/db/mods.go: "the schema
+// default covers first insert, and SetModConvertPaks is the only writer"),
+// so passing ConvertPaks on the InstalledMod literal alone would silently
+// leave the DB row at its schema default (true) regardless of the argument.
+func seedModDetailInstalledPak(t *testing.T, svc *core.Service, game *domain.Game, modID, version string, fileIDs []string, convertPaks bool) {
+	t.Helper()
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       modID,
+			SourceID: "src",
+			Name:     "Mod A",
+			Version:  version,
+			GameID:   game.ID,
+		},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      fileIDs,
+	}))
+	require.NoError(t, svc.SetModConvertPaks("src", modID, game.ID, "default", convertPaks))
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+		SourceID: "src",
+		ModID:    modID,
+		Version:  version,
+		FileIDs:  fileIDs,
+	}))
+}
+
+// TestModDetail_ConvertPaks covers the three-state ConvertPaks distinction
+// at the core seam both mod show and the TUI now share: nil means "does not
+// apply to this mod at all" (not a DeployCompile game, or the mod has no
+// pak-kind merge source per ModHasPakMergeSource), while a non-nil pointer
+// distinguishes "applies, and is off" from "applies, and is on" -
+// conflating any of these three would mislead either interface's render
+// (mirrors the TUI-side internal/tui.TestModDetailsFromItem_ConvertPaks,
+// which only covers the ModItem->ModDetails leg, not this DB-join leg).
+func TestModDetail_ConvertPaks(t *testing.T) {
+	t.Run("not applicable when not a compile-deploy game", func(t *testing.T) {
+		svc, game, src := newModDetailTestService(t)
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+		seedModDetailInstalledPak(t, svc, game, "a", "1.5", []string{"pak"}, true)
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err)
+		require.NotNil(t, detail.Installed)
+		assert.Nil(t, detail.Installed.ConvertPaks, "nil = not applicable, not \"off\"")
+	})
+
+	t.Run("not applicable when the mod has no pak merge source", func(t *testing.T) {
+		svc, game, src := newModDetailTestService(t)
+		game.DeployMode = domain.DeployCompile
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+		seedModDetailInstalledPak(t, svc, game, "a", "1.5", []string{"exmodz-file"}, true)
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err)
+		require.NotNil(t, detail.Installed)
+		assert.Nil(t, detail.Installed.ConvertPaks, "nil = not applicable, not \"off\"")
+	})
+
+	t.Run("applies and is on", func(t *testing.T) {
+		svc, game, src := newModDetailTestService(t)
+		game.DeployMode = domain.DeployCompile
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+		seedModDetailInstalledPak(t, svc, game, "a", "1.5", []string{"pak"}, true)
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err)
+		require.NotNil(t, detail.Installed)
+		require.NotNil(t, detail.Installed.ConvertPaks)
+		assert.True(t, *detail.Installed.ConvertPaks)
+	})
+
+	t.Run("applies and is off", func(t *testing.T) {
+		svc, game, src := newModDetailTestService(t)
+		game.DeployMode = domain.DeployCompile
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+		seedModDetailInstalledPak(t, svc, game, "a", "1.5", []string{"pak"}, false)
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err)
+		require.NotNil(t, detail.Installed)
+		require.NotNil(t, detail.Installed.ConvertPaks, "a non-nil pointer to false must survive")
+		assert.False(t, *detail.Installed.ConvertPaks)
+	})
+}
+
 // TestModDetail_UnknownModErrors: a source lookup failure is a real error.
 func TestModDetail_UnknownModErrors(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
