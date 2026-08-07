@@ -1532,8 +1532,8 @@ type fullHealthCheckFailedMsg struct {
 // or while another action/plan is already in flight (buildAction's own
 // "busy" convention - checked directly here rather than via buildAction
 // itself, since this dispatches a custom result message, not the generic
-// actionDoneMsg/actionKind pair - see the six plan/check messages'
-// precedent in mutations.go, extended here to eight).
+// actionDoneMsg/actionKind pair - see the other plan/check messages'
+// precedent already established in mutations.go).
 //
 // Deliberately hand-rolls buildAction's own gen/cancel/progress-channel
 // bookkeeping instead of calling it: buildAction ties its result to

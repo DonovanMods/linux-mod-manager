@@ -30,7 +30,7 @@ type Summary struct {
 	Updates     int // -1 = unknown (no update check has run)
 	Conflicts   int // -1 = unknown
 	// HealthIssues and HealthWarnings are the dashboard's Health signal
-	// (#224 Task 10) - the LOCAL verify tier's issue/warning counts, ridden
+	// (#224 Task 10) - the LOCAL verify tier's issue/warning counts, riding
 	// on the same ordinary loadData refresh as Conflicts above (see
 	// DataProvider.Health's doc comment: cheap disk/DB read, never gated
 	// behind an explicit user action like Updates). -1 = unknown, mirroring
