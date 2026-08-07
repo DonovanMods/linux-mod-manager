@@ -291,7 +291,9 @@ Keys: `tab`/`h`/`l` cycle screens (landing on Search this way does not focus
 the input), `1`–`6` jump directly (`3` focuses search immediately, like `/`;
 `5` opens Sources, `6` opens Health, which also reports file conflicts),
 `↑↓`/`j`/`k` move, `enter`
-open/select (on Profiles, switch to the selected profile; selecting "Search
+open/select (on Installed Mods or Search, opens a full mod details view
+with `lmm mod show` field parity — `↑↓` scroll the description, `esc`
+returns; on Profiles, switch to the selected profile; selecting "Search
 Archives" from the Dashboard menu also focuses search — explicit search
 intent focuses, passive cycling doesn't), `/` focus search from anywhere,
 type query, `enter` to search, `esc` unfocus (clears focus; afterward `s`

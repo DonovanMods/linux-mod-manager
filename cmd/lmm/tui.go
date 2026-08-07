@@ -28,9 +28,10 @@ sources interactively, inspect the source registry, and manage mods in
 place - enable/disable, uninstall, deploy, switch profiles, install from
 search results, check for updates (with changelogs and rollback), reorder
 load order, resolve file conflicts, edit update policies, view deployed
-files, purge a profile, switch games, verify integrity and fix findings,
-and create/delete/export/import profiles - with every mutating action
-behind a confirmation prompt.
+files, view full mod details (enter on Installed Mods or Search, with
+lmm mod show field parity), purge a profile, switch games, verify
+integrity and fix findings, and create/delete/export/import profiles -
+with every mutating action behind a confirmation prompt.
 
 Always operates on the game's active profile; there is no -p/--profile
 flag (switch profiles from inside the TUI instead).
