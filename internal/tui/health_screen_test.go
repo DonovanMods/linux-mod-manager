@@ -97,6 +97,41 @@ func TestHealthViewRendersSubjectFallbackForModlessFinding(t *testing.T) {
 	require.Contains(t, view, "Mod:    stray.pak", "detail pane's Mod: line must fall back to the FileID")
 }
 
+// TestHealthFixedStatusesRenderAsResolved covers two Copilot round-2
+// findings together: (1) healthRemedy had no case for fixed_needs_reingest
+// (the engine emits it after a --fix re-ingests a pak - verify.go's
+// resolveLast("fixed_needs_reingest", ...) call) so the detail pane fell to
+// the default empty remedy with no explanation, and (3) healthStatusClass
+// bucketed every fixed_* status as "warning", so a resolved row tinted/
+// glyphed exactly like an outstanding problem in the post-fix list. Both
+// fixed_stale_deployment and fixed_needs_reingest must read "resolved" in
+// the detail pane and render the untinted "fine" glyph ("+"), never the
+// "warning" class's "?" glyph.
+func TestHealthFixedStatusesRenderAsResolved(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 160, 40)
+	model.health = HealthView{
+		Findings: []HealthFinding{
+			{ModID: "a", ModName: "Mod A", FileID: "f1", Status: "fixed_stale_deployment"},
+			{ModID: "b", ModName: "Mod B", FileID: "f2", Status: "fixed_needs_reingest"},
+		},
+	}
+	model.screen = ScreenHealth
+
+	model.selected[ScreenHealth] = 0
+	view := model.View()
+	require.Contains(t, view, "resolved", "fixed_stale_deployment must show the resolved remedy")
+	require.Contains(t, view, "+ FIXED STALE DEPLOYMENT", "a resolved row must render the 'fine' glyph, not the 'warning' glyph")
+	require.NotContains(t, view, "? FIXED STALE DEPLOYMENT")
+
+	model.selected[ScreenHealth] = 1
+	view = model.View()
+	require.Contains(t, view, "resolved", "fixed_needs_reingest must show the resolved remedy")
+	require.Contains(t, view, "+ FIXED NEEDS REINGEST", "a resolved row must render the 'fine' glyph, not the 'warning' glyph")
+	require.NotContains(t, view, "? FIXED NEEDS REINGEST")
+}
+
 // TestHealthHomeViewEmptyState covers a fresh session that hasn't scanned
 // yet: healthAt is nil (its zero value) and m.health carries no findings.
 // Deliberately skips sizedPrototypeModel's Init()/loadData round trip (#224
@@ -106,6 +141,11 @@ func TestHealthViewRendersSubjectFallbackForModlessFinding(t *testing.T) {
 // "hasn't scanned yet" premise); sizing the model directly via
 // WindowSizeMsg leaves m.health/m.healthAt/m.healthErr at their zero
 // values instead.
+//
+// Also covers the tier-aware variant (#224 Copilot round 2): after a
+// successful FULL check (m.health.Full true) the "run a full check (c)"
+// hint is misleading - the user just ran one - so the full-tier empty state
+// must drop the hint entirely rather than repeat the local-tier copy.
 func TestHealthHomeViewEmptyState(t *testing.T) {
 	t.Parallel()
 
@@ -122,6 +162,11 @@ func TestHealthHomeViewEmptyState(t *testing.T) {
 	view := model.View()
 	require.Contains(t, view, "no scan yet")
 	require.Contains(t, view, "no findings (local) — run a full check (c)")
+
+	model.health.Full = true
+	view = model.View()
+	require.Contains(t, view, "no findings (full)")
+	require.NotContains(t, view, "run a full check (c)", "a full-tier empty state must not hint at running the full check it just ran")
 }
 
 // fakeContextContent is a test-local contextContent implementation - the

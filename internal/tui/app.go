@@ -2220,14 +2220,17 @@ func (m Model) healthHomeView() string {
 	height := m.availableContentHeight()
 
 	if len(m.health.Findings) == 0 {
-		tier := "local"
+		// Tier-aware (#224 Copilot round 2): after a successful FULL check
+		// the "run a full check (c)" hint is misleading - the user just ran
+		// one - so only the local-tier empty state offers it.
+		empty := "no findings (local) — run a full check (c)"
 		if m.health.Full {
-			tier = "full"
+			empty = "no findings (full)"
 		}
 		return m.panelWithHeight(width, height).Render(strings.Join([]string{
 			m.theme.PanelTitle.Render("HEALTH"),
 			m.theme.MutedText.Render(fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full))),
-			m.theme.MutedText.Render(fmt.Sprintf("no findings (%s) — run a full check (c)", tier)),
+			m.theme.MutedText.Render(empty),
 		}, "\n"))
 	}
 
@@ -2333,15 +2336,19 @@ func (m Model) healthDetailPane(width, maxLines int) string {
 // healthStatusClass buckets a HealthFinding.Status into the three tint
 // classes the list/detail panes use: "danger" for the two statuses that mean
 // a file/version is actually wrong, "fine" for a healthy (lock-pending "ok")
-// row, and "warning" for everything else - the broad "needs attention but
-// isn't broken" middle ground (needs_reingest, no_checksum,
+// row OR a resolved fixed_* row (a successful --fix repair - "fixed_" prefix
+// covers both fixed_stale_deployment and fixed_needs_reingest, #224 Copilot
+// round 2: these used to fall into "warning" and so tinted/glyphed like an
+// outstanding problem in the post-fix list, even though they mean the
+// opposite), and "warning" for everything else - the broad "needs attention
+// but isn't broken" middle ground (needs_reingest, no_checksum,
 // version_unverifiable, stale_compile, conversion_failed, stale_deployment,
 // file_count_mismatch, skipped, ...).
 func healthStatusClass(status string) string {
-	switch status {
-	case "missing", "version_mismatch":
+	switch {
+	case status == "missing" || status == "version_mismatch":
 		return "danger"
-	case "ok":
+	case status == "ok" || strings.HasPrefix(status, "fixed_"):
 		return "fine"
 	default:
 		return "warning"
@@ -2402,7 +2409,7 @@ func healthRemedy(f HealthFinding) string {
 		return fmt.Sprintf("deploying raw; fix the mod or run 'lmm mod convert %s off' to silence", f.ModID)
 	case "stale_deployment":
 		return "run a fix (F) to remove"
-	case "fixed_stale_deployment":
+	case "fixed_stale_deployment", "fixed_needs_reingest":
 		return "resolved"
 	case "file_count_mismatch":
 		return "expected content from a download but the cache has 0 files"

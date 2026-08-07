@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -277,6 +278,38 @@ func TestHealthProvider_RunHealthCheck_Fix_ResolvesMissingFile(t *testing.T) {
 	assert.Equal(t, 0, view.Warnings)
 	assert.Empty(t, view.Findings, "the repaired row is quiet-ok and filtered out")
 	assert.NotEmpty(t, progress, "the repair detail line must stream to progress")
+}
+
+// TestHealthProvider_RunHealthCheck_FindingProgressUsesSubjectFallback
+// covers a Copilot round-2 finding (item 4): RunHealthCheck's VerifyEvFinding
+// progress mapping rendered "<status>: <ModName>" verbatim, which produced a
+// bare "stale_deployment: " line for a modless convergence finding (a
+// dangling cache-rooted symlink with no owning mod - see
+// TestHealthViewRendersSubjectFallbackForModlessFinding in
+// health_screen_test.go, the same real case, for the list/detail pane side
+// of this). The fix must reuse healthFindingSubject's ModName -> ModID ->
+// FileID fallback so the progress line falls back to the FileID instead.
+func TestHealthProvider_RunHealthCheck_FindingProgressUsesSubjectFallback(t *testing.T) {
+	_, actions, svc, game := newHealthProviderFixture(t)
+
+	cacheRoot := svc.GetGameCachePath(game)
+	target := filepath.Join(cacheRoot, game.ID, "src-stray", "1.0", "stray.pak")
+	require.NoError(t, os.Symlink(target, filepath.Join(game.ModPath, "stray.pak")))
+
+	var progress []string
+	view, err := actions.RunHealthCheck(context.Background(), false, false, func(p ActionProgress) {
+		progress = append(progress, p.Line)
+	})
+	require.NoError(t, err)
+
+	require.Len(t, view.Findings, 1)
+	assert.Equal(t, "stale_deployment", view.Findings[0].Status)
+	assert.Equal(t, "stray.pak", view.Findings[0].FileID)
+
+	assert.Contains(t, progress, "stale_deployment: stray.pak", "the modless finding's progress line must fall back to the FileID: %v", progress)
+	for _, line := range progress {
+		assert.NotEqual(t, "stale_deployment: ", line, "must not render a blank ModName subject")
+	}
 }
 
 // TestHealthView_FiltersQuietOkKeepsLockPending unit-tests healthView

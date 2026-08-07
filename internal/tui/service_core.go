@@ -1941,7 +1941,17 @@ func (p *coreProvider) RunHealthCheck(ctx context.Context, full, fix bool, progr
 		case core.VerifyEvProgress:
 			progress(ActionProgress{Line: fmt.Sprintf("checking versions %d/%d: %s", ev.Index, ev.Total, ev.ModName)})
 		case core.VerifyEvFinding:
-			progress(ActionProgress{Line: fmt.Sprintf("%s: %s", ev.Finding.Status, ev.Finding.ModName)})
+			// Reuses healthFindingSubject's ModName -> ModID -> FileID
+			// fallback (app.go, #224 Copilot round 1) rather than ev.Finding.
+			// ModName alone - a modless convergence finding (e.g. a dangling
+			// cache-rooted symlink's stale_deployment row) carries no ModName
+			// at all, which used to render a bare "stale_deployment: " line
+			// (#224 Copilot round 2). core.VerifyFinding and HealthFinding
+			// share the same ModID/ModName/FileID shape by design (see
+			// HealthFinding's own doc comment), so this converts field-for-
+			// field rather than duplicating the fallback logic.
+			subject := healthFindingSubject(HealthFinding{ModID: ev.Finding.ModID, ModName: ev.Finding.ModName, FileID: ev.Finding.FileID})
+			progress(ActionProgress{Line: fmt.Sprintf("%s: %s", ev.Finding.Status, subject)})
 		case core.VerifyEvRepairDetail, core.VerifyEvSyncWarning:
 			progress(ActionProgress{Line: ev.Detail})
 		}
