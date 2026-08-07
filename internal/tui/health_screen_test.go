@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -412,6 +413,54 @@ func TestHealthTableRowsFlexToFullWidthAtWideTerminal(t *testing.T) {
 	// size, not just the old capped column sum.
 	innerWidth := width - model.theme.Panel.GetHorizontalFrameSize()
 	require.Equal(t, innerWidth, rowWidth, "rendered row width must equal the panel's full content width")
+}
+
+// TestHealthTableRowsAllOKRowsCarryVisibleRightSideContent is the 2026-08-07
+// smoke feedback round 3's RED-then-GREEN proof: 3ee970c already made
+// healthColumnWidths consume the full content width, but that padding is
+// invisible whitespace - a healthy profile's OK rows carry no VERSION and no
+// NOTE, so the row's VISIBLE (trimmed) text still stopped at FILE and the
+// table still read as narrow, exactly like Installed Mods would if
+// author/version were ever blank. The fix is content, not geometry: an
+// empty NOTE cell must fall back to short per-status text (healthNoteCell)
+// and an empty VERSION cell must fall back to an em dash placeholder, so
+// every row's visible content reaches as far right as Installed Mods' rows
+// do (modRow's status/author/version are always populated).
+func TestHealthTableRowsAllOKRowsCarryVisibleRightSideContent(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+
+	model.health = HealthView{Findings: []HealthFinding{
+		{ModID: "101", ModName: "SkyUI", FileID: "main", Status: "ok"},
+		{ModID: "bear-mount", ModName: "Bear Mount", FileID: "bm.esp", Status: "ok", Note: "lock pending convergence at v2.0"},
+	}}
+	model.conflicts = nil
+
+	const width = 160
+	statusW, modW, fileW, _, _, showVersion, showNote := model.healthColumnWidths(width)
+	require.True(t, showVersion, "a wide terminal shows every column")
+	require.True(t, showNote, "a wide terminal shows every column")
+
+	rows := model.healthTableRows(width, 10)
+	require.Len(t, rows, 2)
+
+	// oldContentEnd is where a row's visible text used to stop: prefix +
+	// STATUS + gap + MOD + gap + FILE, with VERSION/NOTE rendering as blank
+	// padding beyond it. Every row's trimmed width must now reach past this
+	// point.
+	oldContentEnd := 2 /* m.row's "> "/"  " prefix */ + statusW + 1 + modW + 1 + fileW
+	for i, r := range rows {
+		trimmed := strings.TrimRight(ansi.Strip(r), " ")
+		require.Greater(t, lipgloss.Width(trimmed), oldContentEnd, "row %d: visible content must extend past FILE into VERSION/NOTE", i)
+	}
+
+	require.Contains(t, ansi.Strip(rows[0]), "no action needed", "a Note-less OK row must get the short default NOTE text")
+	require.Contains(t, ansi.Strip(rows[0]), "—", "a Version-less row must get the em-dash VERSION placeholder")
+
+	require.Contains(t, ansi.Strip(rows[1]), "lock pending convergence at v2.0", "an OK row WITH a Note must keep it")
+	require.NotContains(t, ansi.Strip(rows[1]), "no action needed", "a Note-bearing OK row must not also get the default NOTE text")
 }
 
 // TestHealthScreenNarrowTerminalDoesNotOverflow guards the #42 contract

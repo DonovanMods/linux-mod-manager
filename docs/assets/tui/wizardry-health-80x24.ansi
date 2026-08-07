@@ -5,11 +5,11 @@
   ╭──────────────────────────────────────────────────────────────────────────╮  
   │ HEALTH                                                                   │  
   │ last scan: local, just now — 3 checked, 2 conflict(s)                    │  
-  │ > STALE DEPL… SkyUI      main              cache content differs from w… │  
-  │   CONVERSION… Bear Mount                   pak-to-exmod conversion fail… │  
-  │   OK          Immersive… main                                            │  
-  │   STALE CONF… USSEP      meshes/a…         load order says USSEP should… │  
-  │   CONFLICT    USSEP      textures…         owned by USSEP — reorder (J/… │  
+  │ > STALE DEPL… SkyUI      main      —       cache content differs from w… │  
+  │   CONVERSION… Bear Mount           —       pak-to-exmod conversion fail… │  
+  │   OK          Immersive… main      —       no action needed              │  
+  │   STALE CONF… USSEP      meshes/a… —       load order says USSEP should… │  
+  │   CONFLICT    USSEP      textures… —       owned by USSEP — reorder (J/… │  
   │                                                                          │  
   │ Mod:    SkyUI — STALE DEPLOYMENT                                         │  
   │ File:   main                                                             │  

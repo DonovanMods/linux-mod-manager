@@ -2282,6 +2282,52 @@ func healthFindingVersionText(f HealthFinding) string {
 	}
 }
 
+// healthVersionCell is the Health table's VERSION column value: version, or
+// an em dash placeholder when a row carries no version-pass data at all
+// (healthFindingVersionText's default branch, or a conflict row, which never
+// has one). 2026-08-07 smoke feedback round 3: a blank VERSION cell was
+// invisible whitespace even after healthColumnWidths started padding every
+// column to the full content width (3ee970c) - the row's VISIBLE text still
+// stopped at FILE, so the table still read as narrow. The placeholder gives
+// the column a visible anchor the way modRow's version column always has
+// one, mirroring the common table convention for "no value here".
+func healthVersionCell(version string) string {
+	if version == "" {
+		return "—"
+	}
+	return version
+}
+
+// healthNoteCell is the Health table's NOTE column value for a finding row:
+// the finding's own Note when set - this covers e.g. an "ok" row carrying a
+// lock-pending advisory (TestHealthHomeViewRendersFindingsAndHeaderAge's
+// Bear Mount fixture), which must keep its real note rather than the
+// fallback below - otherwise a short per-status default derived from
+// healthRemedy, so the cell is never blank. "ok" gets its own short "no
+// action needed" rather than healthRemedy's fuller "OK — no action needed":
+// the STATUS column already reads OK, so repeating it here would be
+// redundant (unlike the detail pane's remedy line, which has no STATUS
+// column next to it). Every other status reuses healthRemedy's existing
+// sentence verbatim - it's still subject to the same truncate() cutoff as
+// every other NOTE value once healthTableRows renders it, so a long remedy
+// clips exactly as any other overlong NOTE would.
+//
+// 2026-08-07 smoke feedback round 3: a Note-less row's NOTE cell used to
+// render as blank padding even after healthColumnWidths started consuming
+// the full content width (3ee970c) - the row's VISIBLE text stopped well
+// short of the panel's right edge, so a healthy profile's table still read
+// as narrow. This closes that gap the same way healthVersionCell does for
+// VERSION.
+func healthNoteCell(f HealthFinding) string {
+	if f.Note != "" {
+		return f.Note
+	}
+	if f.Status == "ok" {
+		return "no action needed"
+	}
+	return healthRemedy(f)
+}
+
 // healthColumnWidths computes the Health table's STATUS|MOD|FILE|VERSION|
 // NOTE column widths from the panel's available content width, mirroring
 // modRow/modsView's full-width convention: the whole panel's content width
@@ -2392,8 +2438,9 @@ func (m Model) healthTotalRows() int {
 // conflictStatusLabel/conflictNoteText's own doc comments), MOD the
 // load-order winner (not the owner - the winner is what a reader most wants
 // to know at a glance, mirroring the pre-fold Conflicts screen's own WINNER
-// column), FILE the contested path, VERSION always blank (conflicts carry no
-// version data), NOTE conflictNoteText's compact remedy. The combined index
+// column), FILE the contested path, VERSION the em dash placeholder
+// (healthVersionCell - conflicts carry no version data, same as any other
+// versionless row), NOTE conflictNoteText's compact remedy. The combined index
 // space (healthTotalRows) means m.windowedRows scrolls/follows selection
 // across BOTH kinds of row exactly as if they were one list, because they
 // are one list from this function's perspective.
@@ -2410,7 +2457,7 @@ func (m Model) healthTableRows(width, budget int) []string {
 			mod = healthFindingModLabel(f)
 			file = f.FileID
 			version = healthFindingVersionText(f)
-			note = f.Note
+			note = healthNoteCell(f)
 		} else {
 			c := m.conflicts[i-numFindings]
 			style = m.conflictRowStyle(c)
@@ -2425,7 +2472,7 @@ func (m Model) healthTableRows(width, budget int) []string {
 			fmt.Sprintf("%-*s", fileW, truncate(file, fileW)),
 		}
 		if showVersion {
-			parts = append(parts, fmt.Sprintf("%-*s", versionW, truncate(version, versionW)))
+			parts = append(parts, fmt.Sprintf("%-*s", versionW, truncate(healthVersionCell(version), versionW)))
 		}
 		if showNote {
 			// Padded like every other column (#224 smoke feedback fix #3),
@@ -2433,6 +2480,13 @@ func (m Model) healthTableRows(width, budget int) []string {
 			// the panel's full width, so the selection highlight (m.row's
 			// background) fell short of the right edge instead of spanning
 			// full width the way an Installed Mods row always does.
+			//
+			// Left-aligned ("%-*s"), NOT right-aligned like modRow's own
+			// last column (version, "%*s"): modRow's version is a short,
+			// bounded value where right-anchoring gives a clean numeric
+			// edge, but NOTE is prose (healthNoteCell's remedy sentences) -
+			// right-aligning would ragged its LEFT edge instead and fight
+			// readability, so left alignment is the correct anchor here.
 			parts = append(parts, fmt.Sprintf("%-*s", noteW, truncate(note, noteW)))
 		}
 		return m.row(i, strings.Join(parts, " "))
