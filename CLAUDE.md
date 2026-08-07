@@ -8,6 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Branch model (git-flow-lite):** `main` holds released, tagged states only. `develop` is the integration branch — story branches (`feat/…`, `fix/…`) fork from `develop` and PR back into `develop` with an explicit `--base develop` (`main` is still the default branch, so a forgotten flag targets protected `main` and gets caught). Both branches are protected: PRs required, Copilot review, no force-push/deletion; the develop ruleset has a repository-admin bypass reserved for post-release fast-forward syncs, trivial hotfix back-merges, and (last resort) history repair. Full release and hotfix flows are documented in [docs/plans/2026-07-30-develop-branch-workflow-design.md](docs/plans/2026-07-30-develop-branch-workflow-design.md).
 
+**Issues close on merge into `develop`, not at release.** The tracker answers "what's left to build," so an issue whose work is merged is done — holding it open until the release tag would surface finished work on every "check for relevant open issues first" pass. Release traceability lives in `CHANGELOG.md` instead: entries carry their issue number and move from `[Unreleased]` into a dated `vX.Y.Z` section at release, which makes it a complete issue→release index. Don't duplicate that in issue state or milestones.
+
+Because `main` is the default branch, a PR's `Fixes #N` will **not** auto-close on a develop merge — **close the issue manually**, with a comment naming the merge commit and noting it is merged but not yet released (e.g. "Fixed in #229, merged to `develop` as 2a791cb. Ships with the next release batch."). Revisit this policy if the project starts taking bug reports from other people: for an external reporter, "closed" reads as "I can go download it," and a close-on-develop sends them hunting through a release that doesn't have the fix.
+
 ## Before Development
 
 **ALWAYS run `/dev-init` at the start of every new session.** This skill reads the required directive files and ensures consistent development practices.
@@ -146,4 +150,3 @@ When in doubt, bump MINOR for a batch containing any new functionality, PATCH fo
 In-flight plan documents live in `docs/plans/`; completed plans are kept for historical reference in [docs/plans/archive/](docs/plans/archive/) (the original v1.0 implementation plan is [2026-01-22-lmm-implementation.md](docs/plans/archive/2026-01-22-lmm-implementation.md)). Follow TDD: write failing test → implement → verify pass.
 
 Both the CLI and TUI interfaces should be equally considered first-class interfaces. As such, functional modifications should be reflected in both (new commands, change in core functionality, etc.) when appropriate.
-
