@@ -1551,7 +1551,7 @@ type fullHealthCheckFailedMsg struct {
 // (ch/waitForActionProgress/tea.Batch) since, unlike CheckUpdates, the Full
 // tier genuinely streams progress.
 func (m Model) runFullHealthCheck() (Model, tea.Cmd) {
-	if m.screen != ScreenHealth || m.actions == nil {
+	if m.screen != ScreenHealth || m.contextContent != nil || m.actions == nil {
 		return m, nil
 	}
 	if m.action.running || m.action.pending != nil {

@@ -791,6 +791,33 @@ func TestFullCheckKeyDeclinedWithPushedContentOnHealth(t *testing.T) {
 	require.NotNil(t, model.contextContent, "the pushed content must remain")
 }
 
+// TestRunFullHealthCheckDirectCallRefusedWithPushedContent proves
+// runFullHealthCheck's own defense-in-depth guard (mutations.go doc comment:
+// "mirrors updateKey's own... m.contextContent == nil... defense-in-depth"),
+// independent of updateKey's inline compound switch-case guard that
+// TestFullCheckKeyDeclinedWithPushedContentOnHealth already covers - this
+// calls runFullHealthCheck directly, bypassing that outer guard entirely, so
+// a mismatch between the doc comment and the implementation (Copilot PR #227
+// round 9 finding) would show up here even though the key-dispatch test
+// above stays green.
+func TestRunFullHealthCheckDirectCallRefusedWithPushedContent(t *testing.T) {
+	t.Parallel()
+
+	rec := &recordingActions{}
+	model := modelWithActions(t, rec)
+	model.screen = ScreenDashboard
+
+	fake := &fakeContextContent{title: "FAKE DETAIL", lines: []string{"fake line"}}
+	model.pushContext(fake, ScreenDashboard)
+	require.Equal(t, ScreenHealth, model.CurrentScreen())
+
+	updated, cmd := model.runFullHealthCheck()
+	require.Nil(t, cmd)
+	require.False(t, updated.action.running, "a direct call must not start the action while context content is pushed")
+	require.Empty(t, rec.RunHealthCheckCalls, "runFullHealthCheck must not dispatch a full check while context content is pushed")
+	require.NotNil(t, updated.contextContent, "the pushed content must remain")
+}
+
 // TestFullCheckProgressTicksReachStatusLine drives the FULL pump pipeline
 // through Model.Update, mirroring
 // TestActionProgressStreamsWhileRunningThenActionDoneClearsIt's identical
