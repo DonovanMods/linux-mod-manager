@@ -1588,6 +1588,13 @@ func (m Model) runFullHealthCheck() (Model, tea.Cmd) {
 // ActionOutcome here to format.
 func (m Model) resolveFullHealthCheckResult(msg fullHealthCheckResultMsg) (Model, tea.Cmd) {
 	m.action.running = false
+	// Mirrors actionDoneMsg's own progress clear (app.go): this action can
+	// stream "checking versions N/M" ticks (runFullHealthCheck's progress
+	// pump), so leaving a stale one behind would let it wrongly surface as
+	// the NEXT action's status line - statusLine prefers a running action's
+	// progress.Line over its own stored status, and not every action posts
+	// one of its own (#224 Copilot round 3 finding).
+	m.action.progress = ActionProgress{}
 	if m.action.cancel != nil {
 		m.action.cancel()
 		m.action.cancel = nil
@@ -1605,6 +1612,14 @@ func (m Model) resolveFullHealthCheckResult(msg fullHealthCheckResultMsg) (Model
 	m.healthAt = &now
 	m.healthErr = ""
 	m.summary.HealthIssues, m.summary.HealthWarnings = view.Issues, view.Warnings
+	// Mirrors dataLoadedMsg's identical clamp after its own m.health
+	// assignment (app.go): a fresh view can be SHORTER than whatever was
+	// selected on the old one (e.g. this same check resolved several
+	// findings away), and without this the Health screen's selection can
+	// walk off the end of the new list - healthDetailPane's own bounds
+	// check would then fall through to "No selection." (#224 Copilot round
+	// 3 finding).
+	m.clampSelections()
 
 	if view.Issues == 0 && view.Warnings == 0 {
 		m.action.status = "full check: all OK"
@@ -1622,6 +1637,10 @@ func (m Model) resolveFullHealthCheckResult(msg fullHealthCheckResultMsg) (Model
 // last known-good view in place" posture (app.go).
 func (m Model) resolveFullHealthCheckFailure(msg fullHealthCheckFailedMsg) (Model, tea.Cmd) {
 	m.action.running = false
+	// See resolveFullHealthCheckResult's identical clear, above, for why a
+	// failure must not leave a stale progress tick behind either (#224
+	// Copilot round 3 finding).
+	m.action.progress = ActionProgress{}
 	if m.action.cancel != nil {
 		m.action.cancel()
 		m.action.cancel = nil
@@ -1886,6 +1905,12 @@ func (m Model) fixHealthPrompt() (Model, tea.Cmd) {
 // (app.go).
 func (m Model) resolveFixHealthCheckResult(msg fixHealthCheckResultMsg) (Model, tea.Cmd) {
 	m.action.running = false
+	// See resolveFullHealthCheckResult's identical clear for why (#224
+	// Copilot round 3 finding): the fix flow's own progress pump can stream
+	// the same "checking versions N/M" ticks (it always requests the Full
+	// tier - see fixHealthPrompt's own doc comment), so this settle needs
+	// the same clear.
+	m.action.progress = ActionProgress{}
 	if m.action.cancel != nil {
 		m.action.cancel()
 		m.action.cancel = nil
@@ -1900,6 +1925,10 @@ func (m Model) resolveFixHealthCheckResult(msg fixHealthCheckResultMsg) (Model, 
 	m.healthAt = &now
 	m.healthErr = ""
 	m.summary.HealthIssues, m.summary.HealthWarnings = view.Issues, view.Warnings
+	// See resolveFullHealthCheckResult's identical clamp for why (#224
+	// Copilot round 3 finding): a fix can resolve findings away, leaving the
+	// new view SHORTER than whatever was selected on the old one.
+	m.clampSelections()
 
 	if view.Issues == 0 && view.Warnings == 0 {
 		m.action.status = "fix: all OK"
@@ -1921,6 +1950,9 @@ func (m Model) resolveFixHealthCheckResult(msg fixHealthCheckResultMsg) (Model, 
 // previous view" posture in full.
 func (m Model) resolveFixHealthCheckFailure(msg fixHealthCheckFailedMsg) (Model, tea.Cmd) {
 	m.action.running = false
+	// See resolveFullHealthCheckFailure's identical clear for why (#224
+	// Copilot round 3 finding).
+	m.action.progress = ActionProgress{}
 	if m.action.cancel != nil {
 		m.action.cancel()
 		m.action.cancel = nil

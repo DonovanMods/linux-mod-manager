@@ -570,6 +570,55 @@ func TestFullCheckProgressTicksReachStatusLine(t *testing.T) {
 	require.NotNil(t, reissue, "a fresh tick must re-issue the listener")
 }
 
+// TestFullHealthCheckSettleClearsStaleProgressLine proves resolveFullHealthCheckResult
+// and resolveFullHealthCheckFailure clear m.action.progress on settle, mirroring
+// actionDoneMsg/actionFailedMsg's own clearing (app.go) - Copilot round 3 finding:
+// without this, a leftover "checking versions..." tick from the JUST-SETTLED full
+// check survives into the NEXT action's own run (statusLine prefers a running
+// action's progress.Line over its stored status text - see statusLine's own doc
+// comment - and some actions, like actionSetPolicy, never post a progress tick of
+// their own), so the stale tick would wrongly surface as that next action's status
+// line instead of nothing/its own text.
+func TestFullHealthCheckSettleClearsStaleProgressLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		msg  func(gen int) tea.Msg
+	}{
+		{"result", func(gen int) tea.Msg {
+			return fullHealthCheckResultMsg{gen: gen, view: HealthView{Full: true}}
+		}},
+		{"failure", func(gen int) tea.Msg {
+			return fullHealthCheckFailedMsg{gen: gen, err: errors.New("network unreachable")}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			model := modelWithActions(t, &recordingActions{})
+			model.screen = ScreenHealth
+			model.action.gen = 7
+			model.action.running = true
+			model.action.progress = ActionProgress{Line: "checking versions 1/2: Foo", Percent: 50}
+
+			updated, _ := model.Update(tt.msg(7))
+			model = updated.(Model)
+			require.False(t, model.action.running)
+			require.Empty(t, model.action.progress.Line, "settling a full health check must clear the stale progress line")
+
+			// Simulate the NEXT action starting without ever posting a progress
+			// tick of its own (statusLine's "some actions emit none" case) - the
+			// stale tick from the settled check above must not resurface.
+			model.action.running = true
+			require.NotContains(t, model.statusLine(), "checking versions",
+				"a stale progress tick from a settled full health check must not surface as the next action's status line")
+		})
+	}
+}
+
 // --- Task 12: 'F' batch fix behind confirmation ---
 
 // TestFixHealthKeyOpensModalWithCategoryDetail proves 'F' on ScreenHealth
@@ -722,6 +771,108 @@ func TestFixHealthConfirmDispatchesFullFixModeAndLandsView(t *testing.T) {
 
 	require.NotNil(t, refresh, "a successful fix must return the ordinary data refresh")
 	require.IsType(t, dataLoadedMsg{}, refresh())
+}
+
+// TestFixHealthCheckSettleClearsStaleProgressLine is
+// TestFullHealthCheckSettleClearsStaleProgressLine's own sibling for the 'F'
+// fix flow's resolvers (Copilot round 3 finding): resolveFixHealthCheckResult
+// and resolveFixHealthCheckFailure must clear m.action.progress on settle
+// exactly like the full-check pair above, or a stale "checking versions..."
+// tick from a just-settled fix survives into whatever action runs next.
+func TestFixHealthCheckSettleClearsStaleProgressLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		msg  func(gen int) tea.Msg
+	}{
+		{"result", func(gen int) tea.Msg {
+			return fixHealthCheckResultMsg{gen: gen, view: HealthView{Full: true}}
+		}},
+		{"failure", func(gen int) tea.Msg {
+			return fixHealthCheckFailedMsg{gen: gen, err: errors.New("network unreachable")}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			model := modelWithActions(t, &recordingActions{})
+			model.screen = ScreenHealth
+			model.action.gen = 9
+			model.action.running = true
+			model.action.progress = ActionProgress{Line: "checking versions 1/2: Foo", Percent: 50}
+
+			updated, _ := model.Update(tt.msg(9))
+			model = updated.(Model)
+			require.False(t, model.action.running)
+			require.Empty(t, model.action.progress.Line, "settling a fix health check must clear the stale progress line")
+
+			model.action.running = true
+			require.NotContains(t, model.statusLine(), "checking versions",
+				"a stale progress tick from a settled fix health check must not surface as the next action's status line")
+		})
+	}
+}
+
+// TestHealthCheckResultClampsSelectionOnShorterFindingsList proves both
+// success resolvers (resolveFullHealthCheckResult, resolveFixHealthCheckResult)
+// clamp the Health screen's selection exactly like dataLoadedMsg's own
+// clampSelections call does (app.go) - Copilot round 3 finding: overwriting
+// m.health with a SHORTER findings list (e.g. a fix resolving several
+// findings down to a handful) without reclamping leaves a selection index
+// from the old, longer list pointing past the end of the new one, so
+// healthDetailPane's bounds check (idx >= len(m.health.Findings)) falls
+// through to "No selection." even though the new list is non-empty.
+func TestHealthCheckResultClampsSelectionOnShorterFindingsList(t *testing.T) {
+	t.Parallel()
+
+	longFindings := []HealthFinding{
+		{ModID: "a", ModName: "A", Status: "missing"},
+		{ModID: "b", ModName: "B", Status: "missing"},
+		{ModID: "c", ModName: "C", Status: "missing"},
+		{ModID: "d", ModName: "D", Status: "missing"},
+		{ModID: "e", ModName: "E", Status: "missing"},
+	}
+	shortView := HealthView{Findings: []HealthFinding{
+		{ModID: "a", ModName: "A", Status: "missing"},
+		{ModID: "b", ModName: "B", Status: "missing"},
+	}}
+
+	tests := []struct {
+		name string
+		msg  func(gen int) tea.Msg
+	}{
+		{"full check", func(gen int) tea.Msg {
+			return fullHealthCheckResultMsg{gen: gen, view: shortView}
+		}},
+		{"fix check", func(gen int) tea.Msg {
+			return fixHealthCheckResultMsg{gen: gen, view: shortView}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			model := modelWithActions(t, &recordingActions{})
+			model.screen = ScreenHealth
+			model.health = HealthView{Findings: longFindings}
+			model.selected[ScreenHealth] = len(longFindings) - 1
+			model.action.gen = 11
+			model.action.running = true
+
+			updated, _ := model.Update(tt.msg(11))
+			model = updated.(Model)
+
+			require.Equal(t, len(shortView.Findings)-1, model.selected[ScreenHealth],
+				"selection must clamp to the new, shorter findings list")
+			detail := model.healthDetailPane(80, 20)
+			require.NotContains(t, detail, "No selection.")
+			require.Contains(t, detail, "B", "the clamped selection must land on a real finding, not walk off the end")
+		})
+	}
 }
 
 // TestFixHealthResultOverlaySubjectFallbackForModlessFinding proves the fix
