@@ -374,6 +374,34 @@ func TestActionDoneSingleWarningOutcomeOpensNoOverlay(t *testing.T) {
 	require.Equal(t, `Enabled "SkyUI" — link method fell back to copy`, m.action.status)
 }
 
+// TestActionDoneMultiWarningOutcomeReplacesStaleReadOnlyOverlay guards the
+// Copilot PR #258 finding: a read-only overlay CAN be open when an action
+// settles (promptOverlay deliberately doesn't gate on m.action.running - the
+// Files overlay is the reachable case), and a plain m.overlay == nil guard
+// would silently drop the warnings overlay there, leaving the outcome stuck
+// at the unreadable "(N warnings)" count - the exact information loss #253
+// exists to fix. The warnings overlay must replace a stale read-only overlay;
+// it defers ONLY to the update-results overlay the same handler just opened.
+func TestActionDoneMultiWarningOutcomeReplacesStaleReadOnlyOverlay(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 1
+	model.action.running = true
+	model.overlay = &infoOverlay{title: "Files — SkyUI", lines: []string{"Data/SkyUI.esp"}}
+
+	warnings := []string{"warn a", "warn b"}
+	updated, _ := model.Update(actionDoneMsg{gen: 1, kind: actionDeploy, outcome: ActionOutcome{
+		Message:  "Deployed 2 mod(s)",
+		Warnings: warnings,
+	}})
+	m := updated.(Model)
+
+	require.NotNil(t, m.overlay)
+	require.Equal(t, "warnings", m.overlay.title, "a stale read-only overlay must not swallow the warnings")
+	require.Equal(t, warnings, m.overlay.lines)
+}
+
 // TestActionDoneResultLinesKeepPriorityOverWarningsOverlay pins the overlay
 // priority when an outcome carries BOTH ResultLines and 2+ Warnings (today
 // only the apply-updates batch can): the pre-existing "update results"

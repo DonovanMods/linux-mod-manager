@@ -593,8 +593,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// this should never actually refuse, but costs nothing to check.
 		// The quit-drain path above already returned before this point, so
 		// draining never reaches here either.
+		openedResultsOverlay := false
 		if len(msg.outcome.ResultLines) > 0 && m.overlay == nil {
 			m.overlay = &infoOverlay{title: "update results", lines: msg.outcome.ResultLines}
+			openedResultsOverlay = true
 		}
 		// #253: a multi-warning outcome auto-opens the same overlay listing
 		// every warning in full. The threshold is deliberately the SAME "> 1"
@@ -606,10 +608,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and opens nothing: that is the guard against throwing a modal at a
 		// lone benign note (mergeDiagnostics folds Notes in alongside real
 		// warnings), so no benign/severe classification is needed. The
-		// m.overlay == nil guard doubles as priority: an update batch's
-		// ResultLines overlay (above) keeps its per-item record, and the
-		// warnings defer to it.
-		if len(msg.outcome.Warnings) > 1 && m.overlay == nil {
+		// warnings defer ONLY to the ResultLines overlay this same handler
+		// just opened (the update batch's per-item record keeps priority) -
+		// NOT to any overlay that happens to be up: a read-only overlay CAN
+		// be open when an action settles (promptOverlay deliberately doesn't
+		// gate on m.action.running - the Files overlay is the reachable
+		// case), and deferring to it would silently re-lose the warnings
+		// (Copilot PR #258 finding), so a stale overlay is replaced instead.
+		if len(msg.outcome.Warnings) > 1 && !openedResultsOverlay {
 			m.overlay = &infoOverlay{title: "warnings", lines: msg.outcome.Warnings}
 		}
 		// A fresh switch's target must rebind the session's active-profile
