@@ -587,14 +587,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a scrollable info overlay titled "update results" listing each
 		// mod's own "✓ .../✗ ..." line. Placed AFTER the status-line
 		// assignment (the count summary is kept, not replaced) and guarded
-		// on m.overlay == nil, defensively, exactly like resolveChangelogPicked
-		// guards against clobbering an existing overlay - the modal/overlay
-		// machinery is idle whenever an action resolves, by construction, so
-		// this should never actually refuse, but costs nothing to check.
-		// The quit-drain path above already returned before this point, so
-		// draining never reaches here either.
+		// on m.overlay == nil, exactly like resolveChangelogPicked guards
+		// against clobbering an existing overlay. The MODAL machinery
+		// (pending/picker/inputModal) is idle whenever an action resolves,
+		// by construction - but a read-only overlay CAN be up, since
+		// promptOverlay deliberately doesn't gate on m.action.running (the
+		// Files overlay is the reachable case, Copilot PR #258), so this
+		// guard can genuinely refuse, leaving the overlay the user is
+		// reading in place. That tradeoff is acceptable here and NOT for
+		// the warnings block below - see its comment for why the stakes
+		// differ. The quit-drain path above already returned before this
+		// point, so draining never reaches here either.
+		openedResultsOverlay := false
 		if len(msg.outcome.ResultLines) > 0 && m.overlay == nil {
 			m.overlay = &infoOverlay{title: "update results", lines: msg.outcome.ResultLines}
+			openedResultsOverlay = true
+		}
+		// #253: a multi-warning outcome auto-opens the same overlay listing
+		// every warning in full. The threshold is deliberately the SAME "> 1"
+		// formatOutcomeStatus collapses at, so the overlay opens exactly when
+		// the status line has degraded to a bare "(N warnings)" count and the
+		// text would otherwise be unrecoverable - on a merged-pak game those
+		// warnings are the ONLY report of a cross-mod asset conflict anywhere
+		// in the app. A single warning still renders inline after the em dash
+		// and opens nothing: that is the guard against throwing a modal at a
+		// lone benign note (mergeDiagnostics folds Notes in alongside real
+		// warnings), so no benign/severe classification is needed. The
+		// warnings defer ONLY to the ResultLines overlay this same handler
+		// just opened (the update batch's per-item record keeps priority) -
+		// NOT to any overlay that happens to be up: a read-only overlay CAN
+		// be open when an action settles (promptOverlay deliberately doesn't
+		// gate on m.action.running - the Files overlay is the reachable
+		// case), and deferring to it would silently re-lose the warnings
+		// (Copilot PR #258 finding), so a stale overlay is replaced instead.
+		if len(msg.outcome.Warnings) > 1 && !openedResultsOverlay {
+			m.overlay = &infoOverlay{title: "warnings", lines: msg.outcome.Warnings}
 		}
 		// A fresh switch's target must rebind the session's active-profile
 		// providers BEFORE the refresh below reads them (see rebindProfile

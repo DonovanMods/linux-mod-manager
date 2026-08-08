@@ -653,7 +653,10 @@ func (m Model) clampSelections() {
 // status text (rule 4): the outcome's own Message, plus its single warning
 // appended after an em dash, or an "(N warnings)" count suffix when there is
 // more than one — chosen so the status line never grows past one line
-// regardless of how many warnings a flow reports.
+// regardless of how many warnings a flow reports. The collapsed text isn't
+// lost: app.go's actionDoneMsg handler auto-opens the warnings info overlay
+// at the same "> 1" threshold (#253), so the count suffix stays the one-row
+// summary and the overlay carries the full text.
 func formatOutcomeStatus(outcome ActionOutcome) string {
 	switch len(outcome.Warnings) {
 	case 0:
