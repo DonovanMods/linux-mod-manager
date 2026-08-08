@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DonovanMods/go-unrealpak"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -21,7 +22,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -1072,7 +1072,7 @@ func isConvertEligiblePakFile(game *domain.Game, fileName string) bool {
 // pakchunks, which carry only cooked .uasset/.uexp assets and no JSON at all.
 //
 // This pak is also the direct source of base table *content* (#175): Compile
-// reads each patched table straight out of it via internal/unrealpak, so a
+// reads each patched table straight out of it via go-unrealpak, so a
 // compile is always week-correct by construction (there's no separate dump
 // to go stale relative to the install) and works entirely offline.
 func resolveBasePak(game *domain.Game) (string, error) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
+	"github.com/DonovanMods/go-unrealpak"
 )
 
 func TestNormalizeEntry(t *testing.T) {

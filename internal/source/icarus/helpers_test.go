@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
+	"github.com/DonovanMods/go-unrealpak"
 )
 
 // writeTestBasePak builds a stored, unencrypted version-11 pak holding one

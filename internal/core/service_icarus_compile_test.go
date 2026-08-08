@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/go-unrealpak"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"github.com/stretchr/testify/require"
 )
 
