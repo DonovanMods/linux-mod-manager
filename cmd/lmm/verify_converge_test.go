@@ -214,3 +214,97 @@ func TestDoVerify_Fix_StaleDeployment_SecondRunClean(t *testing.T) {
 	assert.NotContains(t, out2, "STALE DEPLOYMENT", "a second --fix run must not re-report anything")
 	assert.Contains(t, out2, "All files verified OK.", "a second --fix run must be genuinely clean")
 }
+
+// --- #217: convergence must run even with no checksummed files ---
+//
+// setupDoVerifyEmptyProfileConvergeTest builds the #217 shape: a profile
+// with NO installed mods at all, but a game dir still holding a dangling
+// symlink into the game's cache root (e.g. left behind after uninstalling
+// everything, or manual cache surgery). The sweep needs no installed mods,
+// so verify must not early-return before it.
+func setupDoVerifyEmptyProfileConvergeTest(t *testing.T) (*cobra.Command, *core.Service, *domain.Game, string) {
+	t.Helper()
+
+	svc, game, _ := setupDoInstallTest(t)
+
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	cacheRoot := svc.GetGameCachePath(game)
+	strayTarget := filepath.Join(cacheRoot, game.ID, "stray-src", "1.0", "stray.pak")
+	strayLink := filepath.Join(game.ModPath, "stray.pak")
+	require.NoError(t, os.Symlink(strayTarget, strayLink))
+
+	verifyProfile = "default"
+	t.Cleanup(func() { verifyProfile = "" })
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	return cmd, svc, game, strayLink
+}
+
+// TestDoVerify_EmptyProfile_ConvergenceStillRuns guards #217's plain-verify
+// half: with zero checksummed files the command still runs the convergence
+// sweep, reports the dangling link as a STALE DEPLOYMENT warning (with the
+// --fix hint), and mutates nothing.
+func TestDoVerify_EmptyProfile_ConvergenceStillRuns(t *testing.T) {
+	cmd, svc, game, strayLink := setupDoVerifyEmptyProfileConvergeTest(t)
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "No installed mods to verify.")
+	assert.Contains(t, out, "stray.pak - STALE DEPLOYMENT")
+	assert.Contains(t, out, "1 warning(s)")
+	assert.Contains(t, out, "--fix")
+
+	_, err := os.Lstat(strayLink)
+	assert.NoError(t, err, "plain verify must not sweep the dangling link")
+
+	jsonOutput = true
+	outJSON := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	var result verifyJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	assert.Equal(t, 0, result.Issues)
+	assert.Equal(t, 1, result.Warnings)
+	require.Len(t, result.Files, 1)
+	assert.Equal(t, "stale_deployment", result.Files[0].Status)
+	assert.Equal(t, "stray.pak", result.Files[0].FileID)
+
+}
+
+// TestDoVerify_Fix_EmptyProfile_SweepsDanglingLink guards #217's --fix half:
+// the dangling link is actually removed and reported as fixed, and a second
+// run comes back with nothing to report.
+func TestDoVerify_Fix_EmptyProfile_SweepsDanglingLink(t *testing.T) {
+	cmd, svc, game, strayLink := setupDoVerifyEmptyProfileConvergeTest(t)
+
+	oldJSON, oldFix := jsonOutput, verifyFix
+	jsonOutput, verifyFix = false, true
+	t.Cleanup(func() { jsonOutput, verifyFix = oldJSON, oldFix })
+
+	out := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out, "Fixed: removed stray.pak")
+
+	_, err := os.Lstat(strayLink)
+	assert.True(t, os.IsNotExist(err), "verify --fix must sweep the dangling link")
+
+	// Second run: converged, nothing to report beyond the no-mods line.
+	out2 := captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+	assert.Contains(t, out2, "No installed mods to verify.")
+	assert.NotContains(t, out2, "STALE DEPLOYMENT")
+	assert.NotContains(t, out2, "Fixed:")
+
+}

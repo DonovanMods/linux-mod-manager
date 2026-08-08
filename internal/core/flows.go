@@ -19,7 +19,7 @@ import (
 // ReorderProfileMods persists mods as gameID/profileName's new load order
 // (via ProfileManager.ReorderMods) and syncs the merged pak (#197: a
 // load-order change is a documented regeneration trigger, since profile
-// load order IS merge-application order - see enabledExmodzSources). The
+// load order IS merge-application order - see enabledMergeSources). The
 // single seam cmd/lmm and internal/tui both call, replacing their
 // previous direct pm.ReorderMods(...) calls (CLI+TUI parity).
 //
@@ -2934,7 +2934,7 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 		for _, im := range installedMods {
 			installedIDs[domain.ModKey(im.SourceID, im.ID)] = true
 		}
-		plan.Dependencies, plan.MissingDependencies, plan.CycleDetected, plan.DependencyWarnings = s.resolveInstallDependencies(ctx, sourceID, mod, installedIDs)
+		plan.Dependencies, plan.MissingDependencies, plan.CycleDetected, plan.DependencyWarnings = s.resolveInstallDependencies(ctx, sourceID, game.ID, mod, installedIDs)
 	}
 
 	files, err := s.GetModFiles(ctx, sourceID, mod)
@@ -3010,7 +3010,16 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 // OTHER error degrades the same way (the plan still succeeds) but is also
 // appended to warnings, since it represents an actual failure the caller
 // couldn't otherwise tell apart from "this mod genuinely has none".
-func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID string, target *domain.Mod, installedIDs map[string]bool) (deps []domain.Mod, missing []domain.ModReference, cycleDetected bool, warnings []string) {
+//
+// gameID is the LMM game id (game.ID), NOT a mod's stamped GameID: sources
+// stamp their own SOURCE-DOMAIN id onto the mods they return (e.g. NexusMods
+// echoes "skyrimspecialedition"), and Service.GetMod translates an LMM id
+// into that domain id via game.SourceIDs. Feeding a stamped id back into
+// GetMod (#230) only worked while s.games[<source-domain-id>] happened to
+// miss - LMM ids are user-chosen in games.yaml, so a collision with another
+// game's LMM id would translate the already-translated id and silently fetch
+// dependencies from the wrong game.
+func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID, gameID string, target *domain.Mod, installedIDs map[string]bool) (deps []domain.Mod, missing []domain.ModReference, cycleDetected bool, warnings []string) {
 	visited := make(map[string]bool)
 	stack := make(map[string]bool) // keys currently being visited (cycle detection)
 
@@ -3048,11 +3057,7 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID strin
 				continue
 			}
 
-			gameIDForFetch := target.GameID
-			if gameIDForFetch == "" {
-				gameIDForFetch = mod.GameID
-			}
-			depMod, err := s.GetMod(ctx, sourceID, gameIDForFetch, ref.ModID)
+			depMod, err := s.GetMod(ctx, sourceID, gameID, ref.ModID)
 			if err != nil {
 				// Dependency not available on this source (e.g. an external
 				// requirement like SKSE).
@@ -4146,12 +4151,22 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 
 	var downloadedFileIDs []string
 	var checksums []fileChecksum
+
+	// Resolve the source to check MergeCompiler capability for .pak gating (#221)
+	src, err := s.GetSource(plan.SourceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
+	}
+	_, isMergeCompiler := src.(source.MergeCompiler)
+
 	// compiledFiles accumulates every file this loop actually compiled (game
 	// DeployCompile + a ".exmodz" file - the same condition
 	// DownloadModToCache itself gates on), re-derived here rather than read
 	// back from DownloadModToCache's result since flows.go already has
 	// everything the condition needs. Drives the InstallCompiling
 	// announcement below in place of the generic InstallExtracting one.
+	// #221: convert-eligible .pak files are only included if the source
+	// implements MergeCompiler, matching the ingest path's predicate.
 	var compiledFiles []*domain.DownloadableFile
 	filesTotal := len(plan.Files)
 	for i := range plan.Files {
@@ -4195,7 +4210,16 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		result.FilesDeployed += downloadResult.FilesExtracted
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
 
-		if game.DeployMode == domain.DeployCompile && isExmodzFile(file.FileName) {
+		// Copilot round 1 (PR #222): compiledFiles collects BOTH kinds -
+		// .exmodz files and convert-eligible .pak files alike - so the
+		// InstallCompiling/"Retaining ... for merge" messaging below (and
+		// in cmd/lmm/install.go's InstallCompiling case) fires for a
+		// convert-eligible raw pak exactly as it does for a native
+		// .exmodz; len(compiledFiles) > 0 doesn't care which kind matched.
+		// #221: gate .pak files on MergeCompiler capability, matching the
+		// ingest path's predicate. .exmodz files are still included because
+		// they hard-error later if the source lacks MergeCompiler.
+		if game.DeployMode == domain.DeployCompile && (isExmodzFile(file.FileName) || (isMergeCompiler && isConvertEligiblePakFile(game, file.FileName))) {
 			compiledFiles = append(compiledFiles, file)
 		}
 	}

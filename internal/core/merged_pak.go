@@ -58,7 +58,79 @@ type MergedFingerprintEntry struct {
 	SourceID string
 	ModID    string
 	Version  string
-	Checksum string // MD5 of the retained .exmodz bytes (md5File)
+	Checksum string // MD5 of the retained source bytes (md5File)
+	Kind     string `json:",omitempty"` // source.MergeSourcePak for retained paks; empty/exmodz otherwise (#221)
+
+	// Outcome fields (#221): recorded AFTER the merge, ignored by input
+	// equality - a failed conversion retries only when an INPUT changes
+	// (pak bytes, base pak, membership), not on every sync.
+	Converted  bool   `json:",omitempty"`
+	FailReason string `json:",omitempty"`
+}
+
+// mergeSourceKind classifies a retained-source fileID (#221). Download-path
+// icarus fileIDs are literally "pak"/"exmodz"; import-path fileIDs are the
+// archive's own filename. Unknown kinds default to exmodz - the only kind
+// that existed before #221.
+func mergeSourceKind(fileID string) string {
+	lower := strings.ToLower(fileID)
+	if lower == "pak" || strings.HasSuffix(lower, ".pak") {
+		return source.MergeSourcePak
+	}
+	return source.MergeSourceExmodz
+}
+
+// ModHasPakMergeSource reports whether mod carries at least one pak-kind
+// (source.MergeSourcePak) merge-source fileID, as opposed to being
+// exmodz-only (#221 round-4 fix). Pure classification over mod.FileIDs via
+// mergeSourceKind - no cache lookups or retained-source disk checks (unlike
+// enabledMergeSources, which additionally confirms ingest actually RETAINED
+// something). Callers that only need "does pak-conversion state have any
+// effect on this mod at all" - e.g. the TUI deciding whether to show the
+// "raw" flag or honor the convert-toggle key - want this cheaper check, not
+// enabledMergeSources' full retained-file resolution.
+func (s *Service) ModHasPakMergeSource(mod *domain.InstalledMod) bool {
+	if mod == nil {
+		return false
+	}
+	for _, fileID := range mod.FileIDs {
+		if mergeSourceKind(fileID) == source.MergeSourcePak {
+			return true
+		}
+	}
+	return false
+}
+
+// fingerprintInputs strips outcome fields and normalizes Kind so equality
+// judges inputs only. Kind "" and "exmodz" are the same input (pre-#221
+// markers wrote no Kind).
+func fingerprintInputs(f MergedFingerprint) MergedFingerprint {
+	out := MergedFingerprint{BaseIndexHash: f.BaseIndexHash, Mods: make([]MergedFingerprintEntry, len(f.Mods))}
+	for i, m := range f.Mods {
+		kind := m.Kind
+		if kind == "" {
+			kind = source.MergeSourceExmodz
+		}
+		out.Mods[i] = MergedFingerprintEntry{SourceID: m.SourceID, ModID: m.ModID, Version: m.Version, Checksum: m.Checksum, Kind: kind}
+	}
+	return out
+}
+
+// failedRefsFromFingerprint extracts the "ModRef -> failure reason" map
+// reconcilePakManifests needs, from an ALREADY-COMPUTED fingerprint (#221).
+// Used by syncMergedPak's fast path, which trusts the STORED fingerprint's
+// recorded outcomes rather than re-running MergeCompile just to relearn
+// what it already reported on the run that produced fp - the merge inputs
+// are unchanged (that's why the fast path was taken), so a mod's prior
+// conversion success/failure still holds.
+func failedRefsFromFingerprint(fp MergedFingerprint) map[string]string {
+	failed := make(map[string]string, len(fp.Mods))
+	for _, m := range fp.Mods {
+		if !m.Converted {
+			failed[m.SourceID+":"+m.ModID] = m.FailReason
+		}
+	}
+	return failed
 }
 
 // marshalMergedFingerprint renders f deterministically: encoding/json
@@ -88,18 +160,18 @@ func marshalMergedFingerprint(f MergedFingerprint) ([]byte, error) {
 // against the stored marker" needs, since the marker itself IS the
 // marshaled form.
 func mergedFingerprintsEqual(a, b MergedFingerprint) (bool, error) {
-	aBytes, err := marshalMergedFingerprint(a)
+	aBytes, err := marshalMergedFingerprint(fingerprintInputs(a))
 	if err != nil {
 		return false, err
 	}
-	bBytes, err := marshalMergedFingerprint(b)
+	bBytes, err := marshalMergedFingerprint(fingerprintInputs(b))
 	if err != nil {
 		return false, err
 	}
 	return bytes.Equal(aBytes, bBytes), nil
 }
 
-// enabledExmodzSources returns every enabled mod's retained .exmodz files
+// enabledMergeSources returns every enabled mod's retained merge-source files
 // for game+profileName, in PROFILE LOAD ORDER (the merge-application order,
 // #197 design) - the exact input MergeCompile needs. Only files that were
 // actually retained (cache.RetainedSourceName present in the mod's cache
@@ -110,7 +182,7 @@ func mergedFingerprintsEqual(a, b MergedFingerprint) (bool, error) {
 // while an import-compiled entry's is keyed by its own archive filename
 // (see Task 2/3's ingest branches) - FileIDs is the one list that already
 // carries whichever identity applies, for either origin.
-func (s *Service) enabledExmodzSources(game *domain.Game, profileName string) ([]source.MergeSource, error) {
+func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]source.MergeSource, error) {
 	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile mods: %w", err)
@@ -125,37 +197,44 @@ func (s *Service) enabledExmodzSources(game *domain.Game, profileName string) ([
 		for _, fileID := range mod.FileIDs {
 			retainedPath := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retainedPath); statErr != nil {
-				continue // not a retained exmodz file (a plain .pak's fileID, or nothing ingested)
+				continue // not a retained merge source (nothing ingested for this fileID - a legacy-ingest pak, or a non-convert-eligible one)
+			}
+			kind := mergeSourceKind(fileID)
+			if kind == source.MergeSourcePak && (!game.ConvertPaks || !mod.ConvertPaks) {
+				continue // opted out (game- or mod-level): stays raw-deployed (#221)
 			}
 			sources = append(sources, source.MergeSource{
 				ModRef:     mod.SourceID + ":" + mod.ID,
-				ExmodzPath: retainedPath,
+				ModName:    mod.Name,
+				SourcePath: retainedPath,
+				Kind:       kind,
 			})
 		}
 	}
 	return sources, nil
 }
 
-// EnabledExmodzSourcesForTest exposes enabledExmodzSources to external
+// EnabledMergeSourcesForTest exposes enabledMergeSources to external
 // (core_test package) tests - the method itself stays unexported since it
 // is an internal implementation detail of syncMergedPak, not part of
 // Service's public API.
-func (s *Service) EnabledExmodzSourcesForTest(game *domain.Game, profileName string) ([]source.MergeSource, error) {
-	return s.enabledExmodzSources(game, profileName)
+func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName string) ([]source.MergeSource, error) {
+	return s.enabledMergeSources(game, profileName)
 }
 
 // syncMergedPak regenerates game+profileName's merged pak if its recorded
 // fingerprint no longer matches the CURRENT enabled-mod set/order/versions/
 // base pak (#197). Cheap when nothing changed: the fast path is one
-// directory read (enabledExmodzSources), one base-pak footer read
+// directory read (enabledMergeSources), one base-pak footer read
 // (basePakIndexHash - never the pak's full content), and N small MD5s
 // (md5File over each retained .exmodz - real files here are small, see
 // #175's own research on real base-table sizes), then a byte comparison.
 // Safe to call unconditionally from ANY mutation flow regardless of game
 // type - it no-ops immediately for a non-DeployCompile game.
 //
-// Zero enabled exmodz sources uninstalls any existing merged pak instead of
-// generating an empty one (#197 design decision 2's "uninstall-to-zero"
+// Zero enabled merge sources (exmodz or convert-eligible pak, #221)
+// uninstalls any existing merged pak instead of generating an empty one
+// (#197 design decision 2's "uninstall-to-zero"
 // requirement) - Installer.Uninstall on the synthetic merged-pak mod is
 // idempotent when there is nothing deployed (linker.Undeploy tolerates an
 // already-absent path, matching every other uninstall in this codebase),
@@ -186,7 +265,14 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		if derr := gameCache.Delete(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion); derr != nil {
 			return nil, fmt.Errorf("clearing merged pak cache entry: %w", derr)
 		}
-		return nil, nil
+		// An all-opted-out (or all-disabled) profile must still flip any
+		// previously-CONVERTED pak mod back to raw deploy (#221) - there is
+		// no merged pak anymore to claim its content.
+		reconWarnings, rerr := s.reconcilePakManifests(ctx, game, profileName, installer, nil)
+		if rerr != nil {
+			return nil, fmt.Errorf("reconciling pak manifests: %w", rerr)
+		}
+		return reconWarnings, nil
 	}
 
 	basePakPath, err := resolveBasePak(game)
@@ -208,13 +294,33 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 			// path; if it's missing, redeploy the EXISTING cache content
 			// (self-healing) rather than re-merging - the inputs haven't
 			// changed, so there is nothing new to compute.
-			if _, statErr := os.Stat(deployedPath); statErr == nil {
-				return nil, nil // fast path: nothing changed, and it's actually deployed
+			if _, statErr := os.Stat(deployedPath); statErr != nil {
+				if err := installer.Install(ctx, game, syntheticMod, profileName); err != nil {
+					return nil, fmt.Errorf("redeploying merged pak: %w", err)
+				}
 			}
-			if err := installer.Install(ctx, game, syntheticMod, profileName); err != nil {
-				return nil, fmt.Errorf("redeploying merged pak: %w", err)
+			// #221 fix: reconcile unconditionally even on this fast path.
+			// Inputs are unchanged, so stored's own outcome fields (which
+			// mods converted vs failed) are still authoritative - no need to
+			// re-run MergeCompile to learn what it already reported last
+			// time. Skipping reconcile entirely here (as before this fix)
+			// is exactly what let a PRIOR partial failure - e.g. a per-mod
+			// Uninstall/Install that failed after reconcile had already
+			// started, or was never reached because syncMergedPak errored
+			// out earlier in a previous run - go permanently unretried: the
+			// fingerprint becomes "current" as soon as it's committed
+			// (before reconcile even runs, in the non-fast path below), so
+			// every later call would keep hitting this same fast path and
+			// never look at per-mod manifest state again. Reconcile's own
+			// pre-checks are cheap (a stat plus a couple of manifest/file-
+			// list reads per enabled pak mod) and no-op once truly
+			// converged, so running it here is not a meaningful cost on the
+			// common "nothing to do" path.
+			reconWarnings, rerr := s.reconcilePakManifests(ctx, game, profileName, installer, failedRefsFromFingerprint(stored))
+			if rerr != nil {
+				return nil, fmt.Errorf("reconciling pak manifests: %w", rerr)
 			}
-			return nil, nil
+			return reconWarnings, nil
 		}
 	}
 
@@ -233,11 +339,23 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
 	outputPath := filepath.Join(stagePath, mergedPakFileName)
-	mergeWarnings, err := mc.MergeCompile(ctx, basePakPath, sources, outputPath)
+	mergeWarnings, mergeFailed, err := mc.MergeCompile(ctx, basePakPath, sources, outputPath)
 	if err != nil {
-		return nil, fmt.Errorf("merging %d exmodz mod(s): %w", len(sources), err)
+		return nil, fmt.Errorf("merging %d merge source(s): %w", len(sources), err)
 	}
 	warnings = mergeWarnings
+
+	failedByRef := make(map[string]string, len(mergeFailed))
+	for _, f := range mergeFailed {
+		failedByRef[f.ModRef] = f.Reason
+	}
+	for i := range current.Mods {
+		ref := current.Mods[i].SourceID + ":" + current.Mods[i].ModID
+		if reason, bad := failedByRef[ref]; bad {
+			current.Mods[i].Converted = false
+			current.Mods[i].FailReason = reason
+		}
+	}
 
 	fingerprintBytes, err := marshalMergedFingerprint(current)
 	if err != nil {
@@ -254,6 +372,12 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	if err := installer.Install(ctx, game, syntheticMod, profileName); err != nil {
 		return warnings, fmt.Errorf("deploying merged pak: %w", err)
 	}
+
+	reconWarnings, rerr := s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
+	if rerr != nil {
+		return warnings, fmt.Errorf("reconciling pak manifests: %w", rerr)
+	}
+	warnings = append(warnings, reconWarnings...)
 	return warnings, nil
 }
 
@@ -265,6 +389,298 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 // non-DeployCompile game and is a cheap fast-path when nothing changed.
 func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileName string) ([]string, error) {
 	return s.syncMergedPak(ctx, game, profileName)
+}
+
+// reconcilePakManifests aligns every enabled pak mod's cache manifest with
+// the merge outcome (#221): a mod whose pak CONVERTED has members=nil (the
+// merged pak claims its content; the raw copy must not deploy - flipping it
+// undeploys any raw link), while a failed or opted-out mod has its raw pak
+// as the sole member (raw deploy, today's behavior). Flips are followed by
+// the matching installer action so the game dir converges immediately: the
+// first-install transient (raw deployed, then first sync converts) is
+// healed here, not left for the next verify.
+func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) (warnings []string, err error) {
+	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("loading profile mods: %w", err)
+	}
+	gameCache := s.GetGameCache(game)
+	for i := range mods {
+		mod := &mods[i]
+		if !mod.Enabled {
+			continue
+		}
+		for _, fileID := range mod.FileIDs {
+			if mergeSourceKind(fileID) != source.MergeSourcePak {
+				continue
+			}
+			versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+			retained := filepath.Join(versionDir, cache.RetainedSourceName(fileID))
+			if _, statErr := os.Stat(retained); statErr != nil {
+				continue // nothing retained (legacy ingest): Task 11's needs_reingest covers it
+			}
+			ref := mod.SourceID + ":" + mod.ID
+			_, failed := failedByRef[ref]
+			participating := game.ConvertPaks && mod.ConvertPaks && !failed
+
+			manifests, merr := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+			if merr != nil {
+				return warnings, merr
+			}
+			// FileManifests keys its map by fileID directly (see
+			// internal/storage/cache/cache.go's fileManifestsAt) - no FileID
+			// field on FileManifest itself.
+			existing := manifests[fileID]
+			currentMembers, recorded := existing.Members, existing.Recorded
+
+			if participating {
+				if recorded && len(currentMembers) == 0 {
+					continue // already converged
+				}
+				// #221 partial-failure fix: Uninstall FIRST, mark SECOND.
+				// Installer.Uninstall targets cache.ListFiles' full on-disk
+				// union, never the manifest, so its correctness does not
+				// depend on the mark having already flipped - unlike the
+				// raw-fallback branch below, reordering here is safe. It
+				// also closes the window a mark-then-uninstall order would
+				// leave open: if Uninstall fails, the mark is never
+				// written, so this mod's manifest still reads "raw"
+				// (non-empty currentMembers) and the "already converged"
+				// check above stays false - the NEXT reconcile pass (any
+				// later sync, including the fast path) retries. Uninstall
+				// is idempotent (linker.Undeploy tolerates an already-
+				// absent path), so a retry after a PARTIAL Uninstall - or
+				// one that actually succeeded but errored on DB bookkeeping
+				// - is always safe, never a double-apply: the raw copy is
+				// never claimed as "gone" (members=nil) before it actually
+				// is.
+				// Single-mod Installer.Uninstall, not UninstallBatch - no
+				// before/after hooks run for this undeploy (hooks are only
+				// wired through the batch path's BatchOptions). User-observable:
+				// a game's uninstall/before_each/after_each hooks never fire
+				// for this reconcile-driven raw-pak takedown.
+				if uerr := installer.Uninstall(ctx, game, &mod.Mod, profileName); uerr != nil {
+					return warnings, fmt.Errorf("undeploying raw pak for %s: %w", ref, uerr)
+				}
+				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, nil); werr != nil {
+					return warnings, fmt.Errorf("flipping %s to merged-claimed: %w", ref, werr)
+				}
+			} else {
+				// #241 fix: claim ONLY the member(s) belonging to THIS
+				// fileID, never gameCache.ListFiles' entry-wide union.
+				// deployableFiles unions every recorded manifest's members
+				// before narrowing (internal/core/deployable.go), so a mod
+				// carrying a SECOND pak fileID would have had the first
+				// fileID's member claimed as if it belonged to the second
+				// too. ListFiles still supplies the candidates;
+				// rawPakMembers narrows them to this fileID's own member(s)
+				// by content identity with its retained source - see its
+				// doc comment for why that is the one attribution that
+				// survives a convert flip.
+				files, lerr := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+				if lerr != nil {
+					return warnings, lerr
+				}
+				members, aerr := rawPakMembers(versionDir, retained, files)
+				if aerr != nil {
+					return warnings, aerr
+				}
+				// #221 partial-failure fix: a manifest-shape match alone
+				// (recorded + matching member set) does not prove the raw
+				// pak is ACTUALLY deployed - the mark below must be written
+				// BEFORE Install (Installer.Install's deployableFiles
+				// narrowing reads THIS manifest to decide what to deploy,
+				// so writing the target members first is what makes Install
+				// deploy the right file at all; unlike the participating
+				// branch above, this order can't be flipped). That means a
+				// PRIOR pass's Install could have failed AFTER the mark was
+				// already written, leaving the manifest saying "raw" while
+				// nothing is actually on disk - a shape-only check would
+				// then treat that as converged forever. Confirming every
+				// claimed member is actually present under game.ModPath
+				// (mirroring syncMergedPak's own outer fast-path stat
+				// check for the merged artifact) closes that gap: the next
+				// reconcile pass retries instead of masking it.
+				if recorded && len(members) > 0 && sameMemberSet(currentMembers, members) && allMembersDeployed(game.ModPath, currentMembers) {
+					continue // already converged (raw)
+				}
+				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, members); werr != nil {
+					return warnings, fmt.Errorf("flipping %s to raw-deploy: %w", ref, werr)
+				}
+				// Single-mod Installer.Install, not InstallBatch - same hook
+				// gap as the Uninstall call above: no install hooks run for
+				// this reconcile-driven raw-pak fallback deploy.
+				if ierr := installer.Install(ctx, game, &mod.Mod, profileName); ierr != nil {
+					return warnings, fmt.Errorf("deploying raw pak for %s: %w", ref, ierr)
+				}
+			}
+		}
+	}
+	return warnings, nil
+}
+
+// allMembersDeployed reports whether every one of members (version-dir-
+// relative paths, as recorded by a cache manifest) is actually present
+// under modPath - the on-disk confirmation reconcilePakManifests' raw-
+// fallback branch needs so it never trusts recorded manifest shape alone
+// as proof of a completed deploy (#221).
+func allMembersDeployed(modPath string, members []string) bool {
+	for _, m := range members {
+		if _, err := os.Stat(filepath.Join(modPath, m)); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// rawPakMembers returns the version-dir-relative cache members that belong
+// to ONE pak fileID (#241): the candidate entry files whose content matches
+// the fileID's retained source at retainedPath. Ingest stages a
+// convert-eligible pak's deployable copy from the SAME bytes as its
+// retained source (DownloadModToCache and Import both copy the one archive
+// to both names), and that copy is the only member a pak fileID ever
+// contributes - so content identity with the retained source IS the
+// cache's fileID->member attribution. It is also the only attribution that
+// survives a convert flip: the participating branch's members=nil mark
+// erases the ingest-time manifest, so the way BACK to raw cannot simply
+// read the mapping from FileManifests.
+//
+// Size is compared before hashing, so unrelated candidates (sibling
+// fileIDs' members) are skipped without reading their bytes; the retained
+// source itself is hashed at most once. Two pak fileIDs with byte-identical
+// content would each claim both copies - degenerate but harmless: the
+// claimed union (what deploy and prune consume) is identical either way.
+func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]string, error) {
+	retainedInfo, err := os.Stat(retainedPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading retained source: %w", err)
+	}
+	var retainedSum string
+	var members []string
+	for _, f := range candidates {
+		fullPath := filepath.Join(versionDir, f)
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading cache member %s: %w", f, err)
+		}
+		if info.Size() != retainedInfo.Size() {
+			continue
+		}
+		if retainedSum == "" {
+			if retainedSum, err = md5File(retainedPath); err != nil {
+				return nil, fmt.Errorf("hashing retained source: %w", err)
+			}
+		}
+		sum, err := md5File(fullPath)
+		if err != nil {
+			return nil, fmt.Errorf("hashing cache member %s: %w", f, err)
+		}
+		if sum == retainedSum {
+			members = append(members, f)
+		}
+	}
+	return members, nil
+}
+
+// sameMemberSet reports whether a and b claim the same members, ignoring
+// order: the two sides come from different producers (a manifest read back
+// in mark-time order vs a fresh ListFiles walk), and "same claim" is a set
+// property. Duplicates are counted, not collapsed, so a doubled entry on
+// one side can never mask a missing one.
+func sameMemberSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, m := range a {
+		counts[m]++
+	}
+	for _, m := range b {
+		if counts[m] == 0 {
+			return false
+		}
+		counts[m]--
+	}
+	return true
+}
+
+// ReconcilePakManifestsForTest exposes reconcilePakManifests to external
+// (core_test package) fault-injection tests, which need to pass a caller-
+// constructed Installer wrapping a fault-injecting linker directly - the
+// same installer parameter production syncMergedPak already threads
+// through, just supplied by the test instead of GetInstallerForProfile.
+// The method itself stays unexported; this mirrors EnabledMergeSourcesForTest
+// above.
+func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) ([]string, error) {
+	return s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
+}
+
+// MergedPakOutcomes returns the stored merge fingerprint's per-mod entries
+// (with #221 conversion outcomes), if a merged pak exists for game+profile.
+func (s *Service) MergedPakOutcomes(game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
+	gameCache := s.GetGameCache(game)
+	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	fp, ok := readMergedFingerprint(cachePath)
+	if !ok {
+		return nil, false
+	}
+	return normalizeOutcomes(fp.Mods), true
+}
+
+// normalizeOutcomes forces a trivially-successful outcome on every non-pak
+// entry (#221 C1 fix): conversion failure is definitionally a pak-kind
+// concern (mergeSourceKind(fileID) == source.MergeSourcePak), but a
+// pre-#221 fingerprint marker unmarshals its (exmodz-only, at the time)
+// entries as Kind:"", Converted:false - those fields didn't exist yet, and
+// fingerprintInputs/mergedFingerprintsEqual deliberately never regenerate
+// them for an unchanged profile (input equality ignores outcomes). Without
+// this normalization, every consumer of MergedPakOutcomes (verify's
+// conversion_failed rows, status's conversion-failure counts) would report
+// a spurious, permanent "CONVERSION FAILED" for every exmodz mod on any
+// profile that predates #221 - forever, since nothing ever rewrites the
+// stored marker's outcome fields for inputs that haven't changed. Kind==""
+// is the legacy shape; Kind==MergeSourceExmodz is the current one - both
+// are non-pak and therefore always trivially "converted".
+func normalizeOutcomes(mods []MergedFingerprintEntry) []MergedFingerprintEntry {
+	out := make([]MergedFingerprintEntry, len(mods))
+	for i, m := range mods {
+		if m.Kind != source.MergeSourcePak {
+			m.Converted = true
+			m.FailReason = ""
+		}
+		out[i] = m
+	}
+	return out
+}
+
+// PakNeedsReingest reports whether mod's fileID is a convert-eligible pak
+// whose cache entry predates #221 pak retention (deployable pak present, no
+// retained source) - the lazy-migration detector verify --fix uses to heal a
+// pre-#221 pak install (design §6): the widened ingest predicate (Task 9)
+// retains the source on redownload, and the next SyncMergedPak picks it up.
+// Gated on BOTH game- and mod-level ConvertPaks (like enabledMergeSources'
+// own participation gate) so a legacy/opted-out mod is never touched.
+func (s *Service) PakNeedsReingest(game *domain.Game, mod *domain.InstalledMod, fileID string) (bool, error) {
+	if game.DeployMode != domain.DeployCompile || !game.ConvertPaks || !mod.ConvertPaks {
+		return false, nil
+	}
+	if mergeSourceKind(fileID) != source.MergeSourcePak {
+		return false, nil
+	}
+	gameCache := s.GetGameCache(game)
+	versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if _, err := os.Stat(filepath.Join(versionDir, cache.RetainedSourceName(fileID))); err == nil {
+		return false, nil // already retained
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	// Only flag entries that actually exist (an entirely-missing cache entry
+	// is the MISSING status's business, not ours).
+	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if err != nil || len(files) == 0 {
+		return false, err
+	}
+	return true, nil
 }
 
 // readMergedFingerprint reads and decodes cachePath's stored merge
@@ -291,9 +707,9 @@ func readMergedFingerprint(cachePath string) (fp MergedFingerprint, ok bool) {
 // do" from "failed to compute" via the returned slice's length, exactly
 // like syncMergedPak's own zero-sources branch does.
 func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string) (MergedFingerprint, []source.MergeSource, error) {
-	sources, err := s.enabledExmodzSources(game, profileName)
+	sources, err := s.enabledMergeSources(game, profileName)
 	if err != nil {
-		return MergedFingerprint{}, nil, fmt.Errorf("listing enabled exmodz mods: %w", err)
+		return MergedFingerprint{}, nil, fmt.Errorf("listing enabled merge sources: %w", err)
 	}
 	if len(sources) == 0 {
 		return MergedFingerprint{}, sources, nil
@@ -310,12 +726,12 @@ func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string
 
 	current := MergedFingerprint{BaseIndexHash: liveHash}
 	for _, src := range sources {
-		sum, herr := md5File(src.ExmodzPath)
+		sum, herr := md5File(src.SourcePath)
 		if herr != nil {
-			return MergedFingerprint{}, sources, fmt.Errorf("hashing %s: %w", src.ExmodzPath, herr)
+			return MergedFingerprint{}, sources, fmt.Errorf("hashing %s: %w", src.SourcePath, herr)
 		}
 		sourceID, modID, _ := strings.Cut(src.ModRef, ":")
-		current.Mods = append(current.Mods, MergedFingerprintEntry{SourceID: sourceID, ModID: modID, Checksum: sum})
+		current.Mods = append(current.Mods, MergedFingerprintEntry{SourceID: sourceID, ModID: modID, Checksum: sum, Kind: src.Kind, Converted: true})
 	}
 
 	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)

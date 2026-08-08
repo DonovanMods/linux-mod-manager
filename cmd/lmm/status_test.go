@@ -328,3 +328,34 @@ func TestShowGameStatusJSON_AfterDeploy_IncludesLastDeploy(t *testing.T) {
 	require.NotNil(t, decoded.LastDeploy)
 	assert.WithinDuration(t, time.Now(), *decoded.LastDeploy, time.Minute)
 }
+
+// TestShowGameStatus_ConversionFailures_ShownInTextAndJSON is #221 design
+// §5's status surfacing pin: a merged-pak fingerprint recording one failed
+// conversion (Task 8's MergedPakOutcomes) must show up in both status
+// surfaces - a "pak conversion failures: N" text line pointing at 'lmm
+// verify', and the additive conversion_failures JSON field.
+func TestShowGameStatus_ConversionFailures_ShownInTextAndJSON(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	game.ConvertPaks = true
+
+	const modID, version, fileID = "raw-pak-mod", "1.0", "modfile.pak"
+	seedEnabledPakModCLI(t, svc, game, "fake-compiler", modID, version, fileID, []byte("pak-bytes"))
+
+	outcome := &pakOutcomeCompilerSource{
+		compilerInstallSource: compiler,
+		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
+	}
+	svc.RegisterSource(outcome)
+
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	textOut := captureStdout(t, func() error { return showGameStatus(svc, game.ID) })
+	assert.Contains(t, textOut, "pak conversion failures: 1")
+	assert.Contains(t, textOut, "lmm verify")
+
+	jsonOut := captureStdout(t, func() error { return showGameStatusJSON(svc, game.ID) })
+	var decoded statusGameDetailJSON
+	require.NoError(t, json.Unmarshal([]byte(jsonOut), &decoded))
+	assert.Equal(t, 1, decoded.ConversionFailures)
+}

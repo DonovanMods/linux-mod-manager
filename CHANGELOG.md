@@ -7,6 +7,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-08-08
+
+### Added
+
+- Icarus: prebuilt `.pak` mods are now converted into the merged pak at
+  merge time — rebased onto the game's current `data.pak` — instead of
+  deploying raw and being shadowed by it (#221). Paks that embed a
+  `data.EXMOD` manifest convert exactly; others are diff-derived against
+  the current base. Irreconcilable paks produce a per-mod error and fall
+  back to raw deploy.
+- `lmm mod convert <mod-id> <on|off>` and a per-game `convert_paks`
+  `games.yaml` setting (both on by default) control conversion — a pak
+  ships raw if either is off; the TUI toggles the per-mod setting with
+  `m`.
+- `lmm verify` reports `conversion_failed` and `needs_reingest` statuses
+  (plus `fixed_needs_reingest` once `--fix` repairs the latter); `--fix`
+  re-ingests pre-existing pak installs into the conversion pipeline.
+- JSON additions: `convert_paks` in `lmm list --json`, `lmm mod show
+--json`, and `lmm game list --json`.
+- TUI: a Health screen (screen `6`) — a Dashboard `Health: ...` signal
+  line summarizing the local-tier verify scan, a full-width
+  STATUS/MOD/FILE/VERSION/NOTE table combining verify findings (OK rows
+  included, per checked file) with file-conflict rows
+  (`CONFLICT`/`STALE CONFLICT`, tinted by severity) with a compact
+  detail strip below, an
+  explicit full (network) check (`c`), a batch fix (`F`) that runs the
+  same repairs as `lmm verify --fix` behind a confirmation summarizing
+  what it will attempt, by finding type, and `D` to deploy in place for a
+  stale conflict; the standalone Conflicts screen (formerly screen `6`)
+  is retired — its file-conflict reporting now lives here (#224).
+  The verify engine itself (per-file/per-mod checks, `--fix` repairs, the
+  deploy-convergence sweep) is now extracted into `internal/core`, shared
+  unchanged between the CLI and this new TUI surface.
+- TUI: a mod details view with full `lmm mod show` parity — `enter` on a mod
+  in Installed Mods or Search opens it, `esc` returns. Opens instantly from
+  data already on screen and fills in description, category, and links from
+  the source in the background, so it stays useful offline (#86).
+
+### Changed
+
+- `internal/unrealpak` is now the standalone module
+  [`github.com/DonovanMods/go-unrealpak`](https://github.com/DonovanMods/go-unrealpak),
+  consumed as a dependency. No behavior change — the package moved verbatim,
+  with its history, and gained a `unrealpak` CLI (`info`/`list`/`cat`/
+  `extract`/`build`) that lmm does not use. (#170)
+- `lmm mod show` now strips HTML from a mod's description before printing
+  it, using the same cleaner the update flow and TUI already share — raw
+  `<p>` tags and `&amp;` entities no longer reach the terminal (#86).
+  `--json` output is unchanged: it stays the raw source markup.
+
+### Fixed
+
+- Pak-manifest reconciliation now claims only the cache member(s) actually
+  belonging to the pak file ID being marked — matched by content against
+  that file ID's retained source — instead of the entry-wide cache union
+  (#241). A mod carrying a second pak-kind file ID (no real mod ships one
+  today) would previously have had the first file ID's pak silently
+  attributed to the second as well, feeding wrong provenance into
+  deploy/prune decisions.
+- TUI: the help panel's `+N more` collapse now drops rows by priority
+  instead of purely by position, so a screen's headline action (e.g. the
+  Search screen's `enter: open mod details` row, formerly last in its
+  group and swallowed entirely at a normal 100x30 terminal) stays
+  visible however large its group grows (#234). Only the current
+  screen's (or pushed content's) group gets this treatment — other
+  screens' rows still collapse positionally.
+- Source adapters no longer alias `Description` to a copy of `Summary`
+  (#235). CurseForge, custom `directory`, and custom `manifest` mods —
+  none of which carry a full description — now leave the field empty, so
+  `lmm mod show` and the TUI details view stop rendering the identical
+  paragraph under both headings; custom `api` sources keep a mapped
+  `description` but no longer fall back to the summary when it is
+  unmapped. JSON contract change: `lmm mod show --json`'s `description`
+  field is now empty for those sources instead of duplicating `summary`.
+- Closed the test gap that let #237 ship: a new env-gated golden test
+  (`ICARUS_GOLDEN_MOD_DIR`) compiles a real dual-form mod's `.EXMODZ`
+  with the full pipeline and asserts the resulting pak's virtual paths
+  match the author's own published `_P.pak` — the first check of
+  compiled output against an artifact not produced by lmm itself
+  (#242). Test-only; skips unless pointed at a local dual-form mod.
+- Install-plan dependency resolution now fetches dependencies using the
+  LMM game ID (translated through `source_ids` like every other fetch)
+  instead of feeding the source's own stamped game ID back into the
+  lookup (#230). The old path only worked while no configured LMM game
+  ID happened to equal another game's upstream domain (e.g. a game
+  literally named `skyrimspecialedition`); on such a collision,
+  dependencies were silently looked up in the wrong game and reported
+  missing.
+- `lmm mod show` and the TUI mod details view no longer report a mod as
+  not installed when the installed-state lookup fails outright (e.g. a
+  locked or corrupted database) — only a genuine "no such row" omits the
+  Installed section; any other database error now surfaces as an error
+  (#236).
+- `lmm verify --fix` now resolves a missing file's re-download URL against
+  the source-mapped game, not the LMM game ID (#228). On a game whose
+  `source_ids` maps to a different upstream domain (e.g. NexusMods
+  `skyrim-se` → `skyrimspecialedition`), the repair previously queried the
+  wrong game and failed. Sources with empty or identity mappings
+  (directory, local) were unaffected.
+- `lmm verify` no longer skips the deployment-convergence sweep when the
+  profile has no installed mods, so stray lmm-deployed files (e.g.
+  dangling cache symlinks left after uninstalling everything) are
+  reported — and removed with `--fix` (#217).
+- `lmm verify --json` now emits `"files": []` instead of `null` in the
+  one corner where a filtered (`lmm verify <mod-id>`) run matched no
+  rows, matching the empty-profile path's existing empty-array shape
+  (#224).
+
 ## [1.29.1] - 2026-08-07
 
 ### Fixed
@@ -1231,7 +1339,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.1...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.0...HEAD
+[1.30.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.1...v1.30.0
 [1.29.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.0...v1.29.1
 [1.29.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.28.0...v1.29.0
 [1.28.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.1...v1.28.0

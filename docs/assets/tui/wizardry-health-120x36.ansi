@@ -1,0 +1,36 @@
+                                                                                                                        
+  LMM // Linux Mod Manager                                                                                              
+  [1] Dashboard  [2] Installed Mods  [3] Search  [4] Profiles  [5] Sources  •6• Health                                  
+                                                                                                                        
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+  │ HEALTH                                                                                                           │  
+  │ last scan: local, just now — 3 checked, 2 conflict(s)                                                            │  
+  │ > STALE DEPLOYMENT   SkyUI                                          main          —           cache content dif… │  
+  │   CONVERSION FAILED  Bear Mount                                                   —           pak-to-exmod conv… │  
+  │   OK                 Immersive Armors                               main          —           no action needed   │  
+  │   STALE CONFLICT     USSEP                                          meshes/armor… —           load order says U… │  
+  │   CONFLICT           USSEP                                          textures/fro… —           owned by USSEP — … │  
+  │                                                                                                                  │  
+  │ Mod:    SkyUI — STALE DEPLOYMENT                                                                                 │  
+  │ File:   main                                                                                                     │  
+  │ Note:   cache content differs from what's deployed                                                               │  
+  │ run a fix (F) to remove                                                                                          │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  │                                                                                                                  │  
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+                                                                                                                        
+  ?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: c…  
+                                                                                                                        

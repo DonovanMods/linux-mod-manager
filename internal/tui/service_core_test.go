@@ -2548,6 +2548,158 @@ func TestCoreProviderActions_AvailableVersions_MapsAuthRequiredError(t *testing.
 	assert.Contains(t, err.Error(), "lmm auth login src")
 }
 
+// newCoreDetailsFixture returns a DataProvider wired to a real core.Service
+// with a registered netSource ("src") - GetModDetails' happy path needs a
+// real ModSource.GetMod to succeed, unlike newCoreProviderFixture's canned
+// "nexusmods" DB rows (no ModSource registered for that ID).
+func newCoreDetailsFixture(t *testing.T) (tui.DataProvider, *core.Service, *domain.Game, *netSource) {
+	t.Helper()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{
+		ID:          "test-game",
+		Name:        "Test Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+		LinkMethod:  domain.LinkSymlink,
+	}
+	require.NoError(t, svc.AddGame(game))
+
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+
+	netSrc := newNetSource(t, "src")
+	svc.RegisterSource(netSrc)
+
+	return tui.NewCoreProvider(svc, game, "default"), svc, game, netSrc
+}
+
+// TestCoreProviderGetModDetails_NotInstalled covers the not-installed happy
+// path: every source-side field (Task 2's core.Service.ModDetail plumbing)
+// reaches ModDetails, and Installed stays nil - matching modDetailsFromItem's
+// own "not installed" contract.
+func TestCoreProviderGetModDetails_NotInstalled(t *testing.T) {
+	provider, _, game, netSrc := newCoreDetailsFixture(t)
+	endorsements := int64(42)
+	netSrc.addMod(game.ID, &domain.Mod{
+		ID: "modA", SourceID: "src", GameID: game.ID,
+		Name: "Mod A", Version: "1.5", Author: "Author A",
+		Summary: "A summary.", Description: "<p>Full description.</p>",
+		Category: "Gameplay", SourceURL: "https://example.com/a", PictureURL: "https://example.com/a.jpg",
+		Endorsements: &endorsements,
+	})
+
+	d, err := provider.GetModDetails(context.Background(), tui.ModItem{ID: "modA", Source: "src", Name: "Mod A"})
+	require.NoError(t, err)
+	assert.Equal(t, "Mod A", d.Name)
+	assert.Equal(t, "1.5", d.Version)
+	assert.Equal(t, "Author A", d.Author)
+	assert.Equal(t, "A summary.", d.Summary)
+	assert.Equal(t, "Gameplay", d.Category)
+	assert.Equal(t, "https://example.com/a", d.SourceURL)
+	assert.Equal(t, "https://example.com/a.jpg", d.PictureURL)
+	assert.Contains(t, d.Description, "Full description.", "Description must come through core.CleanChangelog, not be dropped")
+	// #86 review finding: the design's decision 2 ("Description is
+	// HTML-cleaned in BOTH interfaces") was enforced CLI-side only -
+	// mirrors mod_show_golden_test.go:136's own NotContains("<p>")
+	// assertion. Contains("Full description.") alone holds whether or not
+	// CleanChangelog actually ran (a bare mod.Description passes it too),
+	// so replacing coreProvider.GetModDetails' core.CleanChangelog(mod.
+	// Description) with a bare mod.Description passed the entire
+	// internal/tui package until this assertion was added.
+	assert.NotContains(t, d.Description, "<p>", "raw HTML tags must not reach the TUI, matching mod show's own cleaning")
+	assert.Equal(t, int64(42), d.Endorsements)
+	assert.True(t, d.HasEndorsements)
+	assert.Nil(t, d.Installed)
+}
+
+// TestCoreProviderGetModDetails_InstalledUsesPolicyToString guards the bug
+// this task's brief flagged as the single most likely mistake: UpdatePolicy
+// is a domain.UpdatePolicy (an int), so InstalledDetails.UpdatePolicy MUST
+// come from policyToString, not a bare string(...) conversion (which would
+// compile and silently produce a garbage rune). UpdateAuto is deliberately
+// NOT the zero value (UpdateNotify is), so a string(...) conversion and a
+// policyToString call would visibly disagree - "auto" vs. a control
+// character - making this test fail loudly if the wrong one is ever used.
+//
+// Also closes all SIX InstalledDetails fields the join produces (#86
+// review, Minor finding: this test used to assert only Version/Profile/
+// UpdatePolicy - 3 of 6 - so deleting ConvertPaks, Locked, or LockedVersion
+// from coreProvider.GetModDetails' mapping still passed the whole package).
+// The fixture is a compile-deploy game with a pak-kind FileID (so
+// ConvertPaks applies and is non-nil) and a locked profile ref whose target
+// differs from the installed version (so Locked/LockedVersion are both
+// exercised, not left at their zero values).
+func TestCoreProviderGetModDetails_InstalledUsesPolicyToString(t *testing.T) {
+	provider, svc, game, netSrc := newCoreDetailsFixture(t)
+	game.DeployMode = domain.DeployCompile
+	netSrc.addMod(game.ID, &domain.Mod{ID: "modA", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: "modA", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateAuto,
+		Enabled:      true,
+		FileIDs:      []string{"pak"},
+		ConvertPaks:  true,
+	}))
+	require.NoError(t, svc.NewProfileManager().AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modA", Version: "1.5"}))
+	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "modA", "1.2.3"))
+
+	d, err := provider.GetModDetails(context.Background(), tui.ModItem{ID: "modA", Source: "src", Name: "Mod A"})
+	require.NoError(t, err)
+	require.NotNil(t, d.Installed)
+	assert.Equal(t, "auto", d.Installed.UpdatePolicy)
+	assert.Equal(t, "1.5", d.Installed.Version)
+	assert.Equal(t, "default", d.Installed.Profile)
+	assert.True(t, d.Installed.Locked)
+	assert.Equal(t, "1.2.3", d.Installed.LockedVersion)
+	require.NotNil(t, d.Installed.ConvertPaks, "a compile-deploy game with a pak merge source must report a non-nil ConvertPaks")
+	assert.True(t, *d.Installed.ConvertPaks)
+}
+
+// TestCoreProviderGetModDetails_MapsAuthRequiredError mirrors
+// TestCoreProviderActions_AvailableVersions_MapsAuthRequiredError: the same
+// shared mapNetworkError helper, exercised through GetModDetails' own
+// ModDetail call site.
+func TestCoreProviderGetModDetails_MapsAuthRequiredError(t *testing.T) {
+	provider, _, _, netSrc := newCoreDetailsFixture(t)
+	netSrc.getModErr = domain.ErrAuthRequired
+
+	_, err := provider.GetModDetails(context.Background(), tui.ModItem{ID: "modA", Source: "src", Name: "Mod A"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Authentication required for src")
+	assert.Contains(t, err.Error(), "lmm auth login src")
+}
+
+// TestCoreProviderGetModDetails_MapsNotSupportedError pins the GetModDetails
+// ErrNotSupported fallback wording (Copilot review finding on PR #233): the
+// notice must NOT point at 'lmm mod show', since that command now runs
+// through the exact same core.Service.ModDetail path (Task 2's extraction)
+// and would fail identically - that used to be the fallback text and was
+// self-defeating advice. Instead it must tell the user what they still have:
+// the seeded local fields (name/version/author/install state) stay visible
+// on the failure path (resolveModDetailsFailed, mutations.go); only the
+// source-side enrichment is missing.
+func TestCoreProviderGetModDetails_MapsNotSupportedError(t *testing.T) {
+	provider, _, _, netSrc := newCoreDetailsFixture(t)
+	netSrc.getModErr = fmt.Errorf("fetching: %w", source.ErrNotSupported)
+
+	_, err := provider.GetModDetails(context.Background(), tui.ModItem{ID: "modA", Source: "src", Name: "Mod A"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `source "src" does not support mod details`)
+	assert.Contains(t, err.Error(), "the fields already shown are everything known locally")
+	assert.NotContains(t, err.Error(), "mod show", "must not point at a CLI command that shares this exact failing path")
+}
+
 // --- Task 8: in-TUI game switcher ---
 
 // TestCoreProviderListGames guards ListGames' basic contract: every

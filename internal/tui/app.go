@@ -21,7 +21,7 @@ import (
 const defaultContentWidth = 76
 
 // menuItem is one dashboard menu entry. hasTarget is false for flavor-only
-// entries (like the Conflict Oracle) that have no screen yet.
+// entries that have no screen yet.
 type menuItem struct {
 	label     string
 	target    Screen
@@ -129,8 +129,27 @@ type Model struct {
 	// GetProfileConflicts), so it belongs in the ordinary load rather than a
 	// Phase 5b-style on-demand check.
 	conflicts []ConflictItem
-	search    searchModel
-	action    actionModel
+	// health backs the Health screen's home content (#224 Task 9) - the
+	// LOCAL-tier verify result from DataProvider.Health, fetched alongside
+	// mods/profiles/conflicts in loadData (Task 10's wiring; this task's
+	// healthHomeView renders whatever a caller has set here directly - see
+	// contextview.go's doc comments for the screen this backs).
+	health HealthView
+	// healthAt is when health was produced (m.now() at receipt) - nil means
+	// no scan has run yet, rendered as "no scan yet" rather than falling
+	// through lastDeployLabel's own "never" wording (see healthScanLabel).
+	healthAt *time.Time
+	// healthErr is the last scan failure's message, "" when the most recent
+	// scan (or the initial local-tier load) succeeded. Set by Task 10's
+	// loadData wiring and the 'c'/'F' handlers Tasks 11/12 add.
+	healthErr string
+	// contextContent is a pushed full-screen view any screen can host (see
+	// contextview.go, generalized in #86): nil means the current screen
+	// renders normally; non-nil means contextView() renders it instead, over
+	// whatever screen pushed it, and esc pops back via Model.popContext.
+	contextContent contextContent
+	search         searchModel
+	action         actionModel
 	// picker is the pending list-choice modal (see picker.go), if any.
 	// Sibling to action.pending: promptPicker/updatePickerKey/pickerView
 	// mirror promptAction/updatePendingActionKey/actionModalView's structure.
@@ -222,6 +241,15 @@ type dataLoadedMsg struct {
 	mods      []ModItem
 	profiles  []ProfileItem
 	conflicts []ConflictItem
+	// health and healthErr carry loadData's DataProvider.Health result
+	// (#224 Task 10): healthErr == "" means health is the fresh view to
+	// store (Update stamps healthAt alongside it); a non-empty healthErr
+	// means the scan failed and health is the zero value - Update leaves
+	// the Model's existing m.health untouched in that case (a transient
+	// scan hiccup doesn't erase the last known-good findings) and instead
+	// records the message on healthErr and the status line.
+	health    HealthView
+	healthErr string
 }
 
 // loadFailedMsg carries an error from a failed DataProvider load, tagged
@@ -270,7 +298,7 @@ func NewModel(options Options) (Model, error) {
 		// preserve check below (`m.summary.Updates >= 0`) can't mistake
 		// "no load has happened yet" for "a check already found zero
 		// updates" on the very first load.
-		summary: Summary{Updates: -1, Conflicts: -1},
+		summary: Summary{Updates: -1, Conflicts: -1, HealthIssues: -1, HealthWarnings: -1},
 		search:  newSearchModel(options.Provider, t.Panel.GetHorizontalFrameSize(), options.GameName),
 		// sources is seeded synchronously (like search's source list above)
 		// rather than through loadData/dataLoadedMsg: SourceInfos is a
@@ -285,7 +313,7 @@ func NewModel(options Options) (Model, error) {
 			ScreenSearch:        0,
 			ScreenProfiles:      0,
 			ScreenSources:       0,
-			ScreenConflicts:     0,
+			ScreenHealth:        0,
 		},
 	}, nil
 }
@@ -306,6 +334,14 @@ func NewPrototypeModel(options Options) (Model, error) {
 	return NewModel(options)
 }
 
+// dashboardMenu's two variants used to carry SEPARATE "Verify Integrity" and
+// "Consult Conflict Oracle"/"ASK CONFLICT ORACLE" entries, back when
+// ScreenHealth and ScreenConflicts were two different screens. #224 Task 15
+// folded conflict reporting into ScreenHealth's own table and retired
+// ScreenConflicts outright, which would have left both entries pointing at
+// the identical target - two menu rows for one destination reads as broken,
+// not thorough, so the Oracle entry is dropped rather than kept as a
+// redundant duplicate (the cleaner of the two options the fold allowed).
 func (m Model) dashboardMenu() []menuItem {
 	if m.layout == LayoutMonochromeTerminal {
 		return []menuItem{
@@ -313,10 +349,7 @@ func (m Model) dashboardMenu() []menuItem {
 			{label: "QUERY ARCHIVE INDEX", target: ScreenSearch, hasTarget: true},
 			{label: "LOAD PROFILE ROSTER", target: ScreenProfiles, hasTarget: true},
 			{label: "SCRY SOURCE REGISTRY", target: ScreenSources, hasTarget: true},
-			// Targetless until Phase 6b shipped ScreenConflicts; the wiring
-			// lagged behind the screen and Enter silently no-opped (user
-			// smoke find, PR #113).
-			{label: "ASK CONFLICT ORACLE", target: ScreenConflicts, hasTarget: true},
+			{label: "VERIFY INTEGRITY", target: ScreenHealth, hasTarget: true},
 		}
 	}
 	return []menuItem{
@@ -324,7 +357,13 @@ func (m Model) dashboardMenu() []menuItem {
 		{label: "Search Archives", target: ScreenSearch, hasTarget: true},
 		{label: "Profiles", target: ScreenProfiles, hasTarget: true},
 		{label: "Sources", target: ScreenSources, hasTarget: true},
-		{label: "Consult Conflict Oracle", target: ScreenConflicts, hasTarget: true},
+		// #224 Task 10: jumps straight to the Health screen (ScreenHealth) -
+		// a "go look at a standing signal" jump, not search-style explicit
+		// intent, so this uses the same plain gotoScreen path
+		// (openSelectedMenuEntry only special-cases ScreenSearch). Task 15's
+		// conflicts fold means this single entry now covers both verify
+		// findings and file conflicts.
+		{label: "Verify Integrity", target: ScreenHealth, hasTarget: true},
 	}
 }
 
@@ -371,6 +410,18 @@ func (m Model) openSelectedMenuEntry() (Model, tea.Cmd) {
 // pressed Esc (smoke-test Finding 1). See gotoScreenFocused for the bindings
 // that DO focus.
 func (m Model) gotoScreen(screen Screen) (Model, tea.Cmd) {
+	// Navigating anywhere pops pushed content (#86: any screen can host it,
+	// so this is no longer Health-specific). gotoScreen is the single choke
+	// point every nav route funnels through, so one clear here covers them
+	// all - including pressing the digit for the screen you are already on.
+	if m.contextContent != nil {
+		// #86 Task 7 review finding: cancel any in-flight fetch the pushed
+		// content owns BEFORE dropping it - see cancelPushedContentFetch's
+		// own doc comment for why an abandoned fetch left running/enter dead
+		// otherwise.
+		m.cancelPushedContentFetch()
+		m.contextContent = nil
+	}
 	m.screen = screen
 	return m, nil
 }
@@ -422,7 +473,24 @@ func (m Model) loadData() tea.Msg {
 	// current count once this returns - never the "?" unknown sentinel.
 	summary.Conflicts = len(conflicts)
 
-	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles, conflicts: conflicts}
+	// Health rides the same ordinary refresh (#224 Task 10), fetched AFTER
+	// Conflicts above - but wrapped in its own error capture rather than
+	// Overview/Profiles/Conflicts' early-return pattern: a failed verify
+	// scan is not a reason to fail the WHOLE dashboard load. On success,
+	// Summary.HealthIssues/HealthWarnings take the view's real counts;
+	// on failure they stay at the "-1 unknown" sentinel and the message
+	// rides dataLoadedMsg.healthErr instead - Update (below) is what turns
+	// that into the status-line error and healthErr display.
+	summary.HealthIssues, summary.HealthWarnings = -1, -1
+	health, healthErr := m.provider.Health(m.ctx)
+	var healthErrMsg string
+	if healthErr != nil {
+		healthErrMsg = singleLine(healthErr.Error())
+	} else {
+		summary.HealthIssues, summary.HealthWarnings = health.Issues, health.Warnings
+	}
+
+	return dataLoadedMsg{gen: m.loadGen, summary: summary, mods: mods, profiles: profiles, conflicts: conflicts, health: health, healthErr: healthErrMsg}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -457,6 +525,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mods = msg.mods
 		m.profiles = msg.profiles
 		m.conflicts = msg.conflicts
+		// Health (#224 Task 10): a successful scan replaces m.health and
+		// stamps healthAt at receipt time (m.now(), matching healthAt's own
+		// doc comment); a failed one leaves the last known-good m.health/
+		// healthAt exactly as they were - only healthErr and the status
+		// line change - see dataLoadedMsg.health's doc comment for why.
+		//
+		// #224 Task 12 cross-task ruling: this refresh is exactly what
+		// resolveFixHealthCheckResult's own m.loadData return triggers right
+		// after a batch fix stores its Full-tier result into m.health/
+		// healthAt - so the very next dataLoadedMsg to land REPLACES that
+		// just-stored Full view with a fresh LOCAL scan (this DataProvider.
+		// Health call is always Local-tier - Task 10's own dashboard-scan-is-
+		// Local seam, unchanged by this task). This decay is BY DESIGN, not a
+		// bug to fix later: "latest scan wins" is the one rule this screen
+		// has held since Task 10, and a completed mutation - fix included -
+		// invalidates whatever scan preceded it exactly like every other
+		// action's post-mutation refresh invalidates stale list/summary data.
+		// A caller that wanted the Full fix result to stick would need its
+		// own carve-out here; none exists, deliberately.
+		if msg.healthErr == "" {
+			m.health = msg.health
+			now := m.now()
+			m.healthAt = &now
+		}
+		m.healthErr = msg.healthErr
+		if msg.healthErr != "" {
+			// Spec error posture: "health shows ?, error on the status
+			// line" - setIdleStatus (not an unconditional overwrite, unlike
+			// actionFailedMsg's own status write) so a status line already
+			// genuinely owned by something else (a running action, a just-
+			// settled outcome/error) is never stomped by a background scan
+			// hiccup landing in the same refresh cycle.
+			m.setIdleStatus(msg.healthErr, true)
+		}
 		m.clampSelections()
 		return m, nil
 	case actionDoneMsg:
@@ -657,6 +759,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.resolveCheckUpdatesFailure(msg)
+	case fullHealthCheckResultMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveFullHealthCheckResult(msg)
+	case fullHealthCheckFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveFullHealthCheckFailure(msg)
+	case fixHealthCheckResultMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveFixHealthCheckResult(msg)
+	case fixHealthCheckFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveFixHealthCheckFailure(msg)
+	case modDetailsFetchedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveModDetailsFetched(msg)
+	case modDetailsFailedMsg:
+		if msg.gen != m.action.gen {
+			return m, nil
+		}
+		return m.resolveModDetailsFailed(msg)
 	case policyChosenMsg:
 		return m.resolvePolicyChoice(msg)
 	case versionsFetchedMsg:
@@ -791,6 +923,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// isScreenDigit reports whether msg is one of the nav digits ("1".."6"), so
+// the pushed-content swallow rule can let navigation through.
+func isScreenDigit(msg tea.KeyMsg) bool {
+	if msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
+		return false
+	}
+	return msg.Runes[0] >= '1' && msg.Runes[0] <= rune('0'+len(screens))
+}
+
 // updateKey routes a keypress to whichever modal (if any) is currently
 // showing, then falls through to the outer per-screen switch below.
 //
@@ -822,6 +963,51 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.action.pending != nil {
 		return m.updatePendingActionKey(msg)
+	}
+
+	// Pushed content gets first refusal on every key. Anything it declines is
+	// SWALLOWED rather than falling through to the screen underneath (#86) -
+	// otherwise arrows would move a selection the user can't see and e/x/u
+	// would mutate the row behind the view. Same rule updateOverlayKey
+	// already applies for the info overlay. The exits below are the keys that
+	// must keep working over any full-screen content: leave, navigate, quit,
+	// help.
+	if m.contextContent != nil {
+		if next, cmd, handled := m.contextContent.HandleKey(msg); handled {
+			m.contextContent = next
+			return m, cmd
+		}
+		switch {
+		case key.Matches(msg, m.keys.Blur):
+			// #86 Task 7 review finding: cancel any in-flight fetch the
+			// pushed content owns BEFORE popping - see
+			// cancelPushedContentFetch's own doc comment.
+			m.cancelPushedContentFetch()
+			m.popContext()
+			return m, nil
+		case m.isQuitKey(msg):
+			// fall through to the outer switch's quit handling
+		case key.Matches(msg, m.keys.Help),
+			key.Matches(msg, m.keys.NextScreen), key.Matches(msg, m.keys.PrevScreen),
+			isScreenDigit(msg):
+			// fall through: navigation and help stay available
+		default:
+			// LOAD-BEARING: this default case is what swallows Search's own
+			// focus key ("/") while content is pushed - it is not in any of
+			// the exit cases above. That is what makes "a focused search
+			// input and pushed content cannot co-occur" an actual invariant
+			// rather than a coincidence: without this, "/" over pushed
+			// content would fall through to the outer switch, focus the
+			// search input underneath a view the user can still see full of
+			// mod details, and updateKey's focused-input branch (below)
+			// would then start eating every keystroke as search input
+			// instead of this view's own HandleKey - reintroducing exactly
+			// the "acting on the row/screen underneath a pushed view" bug
+			// class this whole swallow rule exists to retire (#86 review -
+			// recorded here so a later cleanup pass doesn't "simplify" this
+			// default away).
+			return m, nil // swallowed
+		}
 	}
 
 	// Rule 8: any keypress that isn't a modal response (handled above,
@@ -918,8 +1104,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.gotoScreen(ScreenProfiles)
 	case key.Matches(msg, m.keys.Sources):
 		return m.gotoScreen(ScreenSources)
-	case key.Matches(msg, m.keys.ConflictsScreen):
-		return m.gotoScreen(ScreenConflicts)
+	case key.Matches(msg, m.keys.HealthScreen):
+		return m.gotoScreen(ScreenHealth)
 	case key.Matches(msg, m.keys.Up):
 		m.moveSelection(-1)
 		return m.afterSearchSelectionMove()
@@ -927,12 +1113,14 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(1)
 		return m.afterSearchSelectionMove()
 	case key.Matches(msg, m.keys.Select):
-		// Select ("enter") is context-dependent: it opens a dashboard menu
-		// entry everywhere except Profiles, where Task 7 repurposes it to
-		// switch to the selected (non-active) profile - see mutations.go's
-		// switchSelectedProfile.
-		if m.screen == ScreenProfiles {
+		// Select ("enter") is context-dependent: Profiles switches to the
+		// selected profile, Installed Mods and Search open the selected mod's
+		// details (#86), and everywhere else it opens a dashboard menu entry.
+		switch m.screen {
+		case ScreenProfiles:
 			return m.switchSelectedProfile()
+		case ScreenInstalledMods, ScreenSearch:
+			return m.openSelectedModDetails()
 		}
 		return m.openSelectedMenuEntry()
 	case key.Matches(msg, m.keys.ToggleEnable):
@@ -951,6 +1139,39 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.editSelectedModPolicy()
 	case key.Matches(msg, m.keys.Lock):
 		return m.editSelectedModLock()
+	case key.Matches(msg, m.keys.ConvertToggle):
+		return m.toggleSelectedModConvert()
+	// FullCheck and CreateProfile deliberately share the physical key "c"
+	// (#224 Task 11 - see keys.go's FullCheck doc comment): FullCheck's own
+	// case condition carries its screen/context guard INLINE, unlike every
+	// other binding's bare key.Matches, specifically so it can sit ahead of
+	// CreateProfile's unconditional one in this switch without stealing "c"
+	// on ScreenProfiles - a Go "switch true" takes the FIRST case whose
+	// condition holds, so on ScreenHealth with nothing pushed this case wins
+	// outright, and everywhere else the condition is false and control falls
+	// through to CreateProfile's case - CreateProfile's own internal screen
+	// guard (createProfilePrompt, mutations.go) still no-ops it on any screen
+	// but Profiles.
+	//
+	// The m.contextContent == nil half of this guard is now DEAD CODE, kept
+	// as defense-in-depth: #86's pushed-content swallow rule (updateKey,
+	// above - "Pushed content gets first refusal on every key") means "c"
+	// never reaches this outer switch at all while content is pushed on ANY
+	// screen, including Health - the swallow happens earlier, before
+	// updateKey's per-screen switch is ever entered. This inline check used
+	// to be load-bearing (pre-#86, pushed content on Health fell through to
+	// this exact switch); it is retained rather than removed because it
+	// costs nothing and would matter again if the swallow rule were ever
+	// relaxed.
+	case key.Matches(msg, m.keys.FullCheck) && m.screen == ScreenHealth && m.contextContent == nil:
+		return m.runFullHealthCheck()
+	// FixHealth ("F", Task 12) has no other screen claiming the same key
+	// (unlike FullCheck's "c"/CreateProfile collision above), so it needs no
+	// inline compound guard here - the screen and pushed-context checks live
+	// inside fixHealthPrompt itself, matching every other non-colliding
+	// binding's handler (e.g. Lock/ConvertToggle above).
+	case key.Matches(msg, m.keys.FixHealth):
+		return m.fixHealthPrompt()
 	case key.Matches(msg, m.keys.CreateProfile):
 		return m.createProfilePrompt()
 	case key.Matches(msg, m.keys.DeleteProfile):
@@ -1038,9 +1259,48 @@ func (m Model) View() string {
 // guidance, 160 columns (not 80) is the normal case the full wording is
 // designed for; narrower terminals are expected to lose some trailing hints
 // to truncation rather than the wording being shortened to fit them.
+//
+// Smoke round 2, finding 1: the "enter: switch" clause used to be
+// hardcoded for every screen, but Select ("enter") is context-dependent
+// (updateKey's own doc comment on its Select case) - on Installed Mods and
+// Search it now opens mod details (#86), not "switch" (that's Profiles'
+// meaning only), so a screen-independent string was actively wrong there.
+// footerSelectHint() isolates just that one clause per screen; every other
+// hint in the line stays a single shared string, matching this function's
+// "keep the shared hints shared" contract. The clause sits in the same
+// position it always has (immediately before "q: quit"), so its length
+// change doesn't reorder or newly threaten any OTHER hint's survival under
+// truncation - only "q: quit" sits after it, and every variant below still
+// fits well inside the 160-column design target (see footerSelectHint's
+// doc comment for the longest case).
 func (m Model) footerLine() string {
-	hint := "?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: check updates  enter: switch  q: quit"
+	hint := fmt.Sprintf(
+		"?: help  tab/h/l: screens  ↑↓/j/k: move  /: search  i: install  e: enable/disable · x: uninstall · D: deploy · u: check updates  %s  q: quit",
+		m.footerSelectHint(),
+	)
 	return truncate(m.theme.Help.Render(hint), m.availableWidth())
+}
+
+// footerSelectHint returns the footer's "enter: ..." clause for the
+// CURRENT screen, mirroring updateKey's own Select dispatch (app.go) and
+// helpGroups' hand-written per-screen rows for the same key: Profiles
+// switches to the highlighted profile; Installed Mods and Search open the
+// selected mod's details (#86); everywhere else (Dashboard, Sources,
+// Health) falls through to openSelectedMenuEntry, which only does
+// something on Dashboard - "open" is kept as the generic fallback there
+// rather than a screen-specific phrase, since Health/Sources have no
+// menu-entry meaning for it at all. Longest case is "enter: view details"
+// (18 chars) vs the old always-"enter: switch" (13 chars); the full footer
+// line with it is still well under the 160-column design target.
+func (m Model) footerSelectHint() string {
+	switch m.screen {
+	case ScreenProfiles:
+		return "enter: switch"
+	case ScreenInstalledMods, ScreenSearch:
+		return "enter: view details"
+	default:
+		return "enter: open"
+	}
 }
 
 // CurrentScreen exposes the selected screen for tests.
@@ -1098,8 +1358,12 @@ func (m Model) itemCount(screen Screen) int {
 		return len(m.profiles)
 	case ScreenSources:
 		return len(m.sources)
-	case ScreenConflicts:
-		return len(m.conflicts)
+	case ScreenHealth:
+		// #224 Task 15: findings then conflict rows, in that order - see
+		// healthTableRows/healthDetailPane's own doc comments for why the
+		// two are concatenated rather than kept as separate selectable
+		// lists.
+		return len(m.health.Findings) + len(m.conflicts)
 	default:
 		return len(m.dashboardMenu())
 	}
@@ -1229,6 +1493,13 @@ func (m Model) screenView() string {
 		return m.actionModalView()
 	}
 
+	// Pushed content renders over whatever screen pushed it (#86). Placed
+	// after the picker/inputModal returns above so modals still outrank it,
+	// matching updateKey's own precedence.
+	if m.contextContent != nil {
+		return m.contextView()
+	}
+
 	switch m.state {
 	case stateLoading:
 		return m.panelWithHeight(m.availableWidth(), m.availableContentHeight()).
@@ -1262,8 +1533,8 @@ func (m Model) screenView() string {
 		return m.profilesView()
 	case ScreenSources:
 		return m.sourcesView()
-	case ScreenConflicts:
-		return m.conflictsView()
+	case ScreenHealth:
+		return m.healthHomeView()
 	default:
 		return m.dashboardView()
 	}
@@ -1307,6 +1578,7 @@ func (m Model) partyDashboardView() string {
 		m.theme.PanelTitle.Render("QUEST LOG"),
 		fmt.Sprintf("%s updates available", m.theme.WarningText.Render(countLabel(m.summary.Updates))),
 		fmt.Sprintf("%s file conflict", m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
+		m.healthDashboardLine(),
 		fmt.Sprintf("Last deploy: %s", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 	}, topBudget)
 
@@ -1338,6 +1610,7 @@ func (m Model) terminalDashboardView() string {
 		fmt.Sprintf("> PROFILE  %s", m.summary.ProfileName),
 		fmt.Sprintf("> MODS     %d INSTALLED / %d ENABLED", m.summary.Installed, m.summary.Enabled),
 		fmt.Sprintf("> ALERTS   %s UPDATES // %s CONFLICT", m.theme.WarningText.Render(countLabel(m.summary.Updates)), m.theme.DangerText.Render(countLabel(m.summary.Conflicts))),
+		fmt.Sprintf("> %s", m.healthDashboardLine()),
 		fmt.Sprintf("> DEPLOY   %s", strings.ToUpper(lastDeployLabel(m.now(), m.summary.LastDeploy))),
 		"",
 	}
@@ -1368,6 +1641,7 @@ func (m Model) commanderDashboardView() string {
 		fmt.Sprintf("Game     %s", m.summary.GameName),
 		fmt.Sprintf("Enabled  %d", m.summary.Enabled),
 		fmt.Sprintf("Updates  %s", countLabel(m.summary.Updates)),
+		m.healthDashboardLine(),
 		fmt.Sprintf("Deploy   %s", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 	}, contentBudget)
 	rightLines := m.clampLines(
@@ -1375,7 +1649,7 @@ func (m Model) commanderDashboardView() string {
 		contentBudget)
 
 	// These half-width panels are narrow enough at small terminal widths that
-	// an overlong row ("> Consult Conflict Oracle" at width 40) would
+	// an overlong row ("> Verify Integrity" at width 40) would
 	// lipgloss-auto-wrap; truncateLines (see clamp.go) prevents that (#42).
 	leftContentWidth := max(leftWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
 	rightContentWidth := max(rightWidth-m.theme.Panel.GetHorizontalFrameSize(), 1)
@@ -1398,6 +1672,7 @@ func (m Model) crtDashboardView() string {
 		fmt.Sprintf("▓ %-10s %s", "PROFILE", m.summary.ProfileName),
 		fmt.Sprintf("▓ %-10s %d/%d", "MODS", m.summary.Enabled, m.summary.Installed),
 		fmt.Sprintf("▓ %-10s %s updates, %s conflict", "SIGNAL", countLabel(m.summary.Updates), countLabel(m.summary.Conflicts)),
+		fmt.Sprintf("▓ %s", m.healthDashboardLine()),
 		fmt.Sprintf("▓ %-10s %s", "DEPLOY", lastDeployLabel(m.now(), m.summary.LastDeploy)),
 		"",
 	}
@@ -1887,116 +2162,452 @@ func (m Model) sourcesView() string {
 	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
-// conflictsView renders the Conflicts screen (Task 3): every file conflict
-// GetProfileConflicts found for the active profile, one row each, sorted by
-// Path (the query's own contract - see core.GetProfileConflicts' doc
-// comment) - m.conflicts is stored in that order, so no re-sort is needed
-// here. Conflicts only surface for files the DB already knows were
-// deployed (ownership comes from deployed_files - see ConflictItem's own
-// doc comment), so a profile that has never been deployed reports none;
-// the empty-state copy below deliberately does not promise pre-deploy
-// detection.
-func (m Model) conflictsView() string {
+// conflictStatusLabel is the Health table's STATUS column value for a
+// conflict row (#224 Task 15's conflicts fold): "STALE CONFLICT" when the
+// DB's recorded owner disagrees with the current load-order winner (a
+// redeploy would change who wins - see ConflictItem's own doc comment),
+// plain "CONFLICT" otherwise.
+func conflictStatusLabel(c ConflictItem) string {
+	if c.Stale {
+		return "STALE CONFLICT"
+	}
+	return "CONFLICT"
+}
+
+// conflictNoteText is the Health table's NOTE column value for a conflict
+// row: names the current owner and how to change it (reorder) for an
+// in-sync conflict, or the stale-specific "redeploy to apply" remedy for a
+// stale one - the stale wording is byte-identical to the pre-fold Conflicts
+// screen's own detail-pane hint (conflictDetailHint's stale branch) since
+// it's already exactly what this column needs; the in-sync wording differs
+// (this column has no separate OWNER field the way the old two-pane list
+// did, so it names the owner inline).
+func conflictNoteText(c ConflictItem) string {
+	if c.Stale {
+		return fmt.Sprintf("load order says %s should win — deploy (D) to apply", c.Winner)
+	}
+	return fmt.Sprintf("owned by %s — reorder (J/K on Installed) to change the winner", c.Owner)
+}
+
+// conflictDetailHint is the Health detail strip's hint line for a selected
+// conflict row - byte-identical to the pre-fold Conflicts screen's own
+// conflictsDetailPane hint copy (task-3-brief.md's wording), preserved
+// verbatim by #224 Task 15's fold rather than replaced by conflictNoteText's
+// differently-worded in-sync branch (the two serve different UI: this is the
+// detail strip's own hint line, conflictNoteText is the table's compact NOTE
+// column).
+func conflictDetailHint(c ConflictItem) string {
+	if c.Stale {
+		return fmt.Sprintf("load order says %s should win — deploy (D) to apply", c.Winner)
+	}
+	return "reorder mods (J/K on installed) to change the winner"
+}
+
+// conflictRowStyle returns the Health table's STATUS-column tint for a
+// conflict row: DangerText when stale (the deployed file no longer matches
+// the load-order winner - a real, active problem), WarningText otherwise
+// (an ordinary conflict is expected, lower-severity information, not
+// necessarily wrong) - mirroring healthStatusStyle's own "text-color only,
+// pad-then-style" convention for the finding rows above it in the same
+// table.
+func (m Model) conflictRowStyle(c ConflictItem) lipgloss.Style {
+	if c.Stale {
+		return m.theme.DangerText
+	}
+	return m.theme.WarningText
+}
+
+// healthHomeView renders the Health screen's home content: a full-width
+// columnar table, one row per finding (STATUS | MOD | FILE | VERSION |
+// NOTE), followed by a compact detail strip for the selected row -
+// mirroring modsView/modRow's full-width table conventions (proportional
+// clamped column widths, truncate() on every field, m.row()'s selection
+// highlight, m.windowedRows' scroll-follow-selection) rather than the
+// two-pane list/detail shape this screen used before (#224 layout rework,
+// user request): verify findings are tabular data, and a side detail box
+// mostly empty except for 2-4 short lines wasted half the screen's width
+// that the Installed Mods screen puts to use as real columns.
+//
+// 2026-08-07 smoke feedback (#224): Findings now carries EVERY row the
+// engine reported, quiet-ok included (HealthView's own doc comment), so the
+// empty-state branch below only fires for a genuinely empty profile (0
+// mods checked) rather than "everything happened to be quiet-ok" - the
+// pre-fix behavior the user objected to.
+//
+// #224 Task 15: the empty-state branch now additionally requires m.conflicts
+// to be empty too - a profile with zero verify findings but an outstanding
+// file conflict still has real content to show, so the table renders in
+// that case even though Findings alone is empty. See healthTableRows/
+// healthDetailPane for how conflict rows are folded into the same table/
+// selection index space as findings.
+func (m Model) healthHomeView() string {
 	width := m.availableWidth()
 	height := m.availableContentHeight()
 
-	if len(m.conflicts) == 0 {
+	if len(m.health.Findings) == 0 && len(m.conflicts) == 0 {
+		// Tier-aware (#224 Copilot round 2): after a successful FULL check
+		// the "run a full check (c)" hint is misleading - the user just ran
+		// one - so only the local-tier empty state offers it.
+		empty := "no findings (local) — run a full check (c)"
+		if m.health.Full {
+			empty = "no findings (full)"
+		}
 		return m.panelWithHeight(width, height).Render(strings.Join([]string{
-			m.theme.PanelTitle.Render("CONFLICT ORACLE"),
-			m.theme.MutedText.Render("No conflicts detected."),
+			m.theme.PanelTitle.Render("HEALTH"),
+			m.theme.MutedText.Render(m.healthScanLine()),
+			m.theme.MutedText.Render(empty),
 		}, "\n"))
 	}
 
-	// Two-pane list/detail layout mirroring commanderDashboardView's width
-	// math: leftWidth + gap + rightWidth sums to EXACTLY width, so
-	// lipgloss.JoinHorizontal's result satisfies the "screenView uses
-	// availableWidth() exactly" invariant every other screen already meets.
-	gap := 1
-	leftWidth := max((width-gap)/2, 1)
-	rightWidth := max(width-gap-leftWidth, 1)
-	paneContentHeight := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
-
-	return lipgloss.JoinHorizontal(lipgloss.Top,
-		m.panelWithHeight(leftWidth, height).Render(m.conflictsListPane(leftWidth, paneContentHeight)),
-		" ",
-		m.panelWithHeight(rightWidth, height).Render(m.conflictsDetailPane(rightWidth, paneContentHeight)),
-	)
-}
-
-// conflictsListPane renders the selectable FILE/OWNER/WINNER rows, marking a
-// stale conflict (owner disagrees with the load-order winner - a redeploy
-// would change who wins) with a leading "!" so it's visible without opening
-// the detail pane. Column widths derive from the pane's actual content
-// width (mirroring searchResultsPane/profileRow's own proportional-with-
-// floor approach) so the columns can never sum past it; overflowing values
-// truncate rather than reaching lipgloss's automatic line-wrap, which would
-// silently break the exact-height layout invariant. The list has windowed
-// height (never exceeds budget) and scroll-follow-selection (selected row
-// stays visible when navigation walks past the fold, #42).
-func (m Model) conflictsListPane(width, maxLines int) string {
-	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
-	const markerWidth = 2 // "! "/"  " stale marker
-	const gaps = 2        // separating spaces between the 3 columns
-	const minPath = 8
-
+	contentBudget := max(height-m.theme.Panel.GetVerticalBorderSize(), 1)
 	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
-	avail := max(innerWidth-prefixWidth-markerWidth-gaps, minPath)
-	ownerWidth := min(14, max(avail/4, 1))
-	winnerWidth := min(14, max(avail/4, 1))
-	pathWidth := max(avail-ownerWidth-winnerWidth, minPath)
 
-	headerLine := fmt.Sprintf("  %-*s %-*s %s",
-		pathWidth, "FILE", ownerWidth, "OWNER", "WINNER")
-	rows := []string{
-		m.theme.PanelTitle.Render("CONFLICT ORACLE"),
-		m.theme.MutedText.Render(truncate(headerLine, innerWidth)),
+	header := []string{
+		m.theme.PanelTitle.Render("HEALTH"),
+		m.theme.MutedText.Render(truncate(m.healthScanLine(), innerWidth)),
 	}
 
-	budget := max(maxLines-len(rows), 0)
-	rowFor := func(i int) string {
-		c := m.conflicts[i]
-		marker := "  "
-		if c.Stale {
-			marker = m.theme.WarningText.Render("! ")
-		}
-		line := marker + fmt.Sprintf("%-*s %-*s %s",
-			pathWidth, truncate(c.Path, pathWidth),
-			ownerWidth, truncate(c.Owner, ownerWidth),
-			truncate(c.Winner, winnerWidth))
-		return m.row(i, line)
-	}
-	rows = append(rows, m.windowedRows(len(m.conflicts), m.selected[ScreenConflicts], budget, rowFor)...)
-	return strings.Join(rows, "\n")
+	// The detail strip is a fixed-cap 4 lines (healthDetailPane's own doc
+	// comment) - computed first so the table's budget below is whatever's
+	// left after header + one blank separator + the strip, matching
+	// modsView's own budget-then-windowedRows shape (app.go).
+	const detailCap = 4
+	detail := m.healthDetailPane(innerWidth, detailCap)
+	detailLines := strings.Split(detail, "\n")
+
+	tableBudget := max(contentBudget-len(header)-1-len(detailLines), 0)
+	table := m.healthTableRows(width, tableBudget)
+
+	rows := make([]string, 0, len(header)+len(table)+1+len(detailLines))
+	rows = append(rows, header...)
+	rows = append(rows, table...)
+	rows = append(rows, "")
+	rows = append(rows, detailLines...)
+	rows = m.truncateLines(rows, innerWidth)
+	rows = m.clampLines(rows, contentBudget)
+
+	return m.panelWithHeight(width, height).Render(strings.Join(rows, "\n"))
 }
 
-// conflictsDetailPane renders the fields for the currently selected
-// conflict: path/owner/winner, every other providing mod (AlsoIn), and a
-// hint line whose copy depends on Stale - task-3-brief.md's wording is used
-// verbatim since it's the only place in the TUI that explains what a stale
-// conflict means and how to resolve it.
-func (m Model) conflictsDetailPane(width, maxLines int) string {
-	idx := m.selected[ScreenConflicts]
-	if idx < 0 || idx >= len(m.conflicts) {
+// healthScanLine renders the Health header's full "last scan: ..." body:
+// healthScanLabel's tier/age/checked-count text, plus (#224 Task 15) a
+// trailing ", M conflict(s)" whenever m.conflicts is non-empty - keeping the
+// header honest now that the table below includes conflict rows alongside
+// verify findings. Shared by healthHomeView's empty-state and populated
+// branches so the two can never describe the scan differently.
+func (m Model) healthScanLine() string {
+	line := fmt.Sprintf("last scan: %s", healthScanLabel(m.now(), m.healthAt, m.health.Full, m.health.Checked, len(m.health.Findings) > 0))
+	if len(m.conflicts) > 0 {
+		line += fmt.Sprintf(", %d conflict(s)", len(m.conflicts))
+	}
+	return line
+}
+
+// healthFindingSubject returns the best available human-readable identifier
+// for a HealthFinding, in order: ModName, then ModID, then FileID. Some
+// findings genuinely carry no mod at all - e.g. a stale_deployment row for a
+// dangling cache link (#224 Copilot round 1) - so callers that assumed
+// ModName was always populated rendered a blank/stray label. The two health
+// surfaces that show a finding's SUBJECT (as opposed to a table's own
+// separate MOD column, which never falls back to FileID - see
+// healthFindingModLabel) - healthDetailPane's "Mod:" line and
+// healthFixResultLine's overlay row in mutations.go - share this one
+// fallback so their behavior can't drift apart.
+func healthFindingSubject(f HealthFinding) string {
+	if f.ModName != "" {
+		return f.ModName
+	}
+	if f.ModID != "" {
+		return f.ModID
+	}
+	return f.FileID
+}
+
+// healthFindingModLabel is the Health table's MOD column value: ModName,
+// then ModID, blank otherwise - deliberately NOT falling all the way back to
+// FileID the way healthFindingSubject does, since FileID has its own
+// dedicated FILE column here (#224 layout rework) and repeating it in MOD
+// too would be redundant now that the two are separate fields instead of
+// one combined "subject (file)" list-row label.
+func healthFindingModLabel(f HealthFinding) string {
+	if f.ModName != "" {
+		return f.ModName
+	}
+	return f.ModID
+}
+
+// healthFindingVersionText is the Health table's VERSION column value: for
+// version_mismatch, "recorded→effective" (VerifyFinding.Recorded/Effective,
+// #224 follow-up plumbing - see core.VerifyFinding's own doc comment); for
+// missing, the recorded version (VerifyFinding.Version) when the engine
+// supplied one, else blank; every other status has no version-pass data at
+// all, so it's always blank.
+func healthFindingVersionText(f HealthFinding) string {
+	switch f.Status {
+	case "version_mismatch":
+		return fmt.Sprintf("%s→%s", f.Recorded, f.Effective)
+	case "missing":
+		return f.Version
+	default:
+		return ""
+	}
+}
+
+// healthVersionCell is the Health table's VERSION column value: version, or
+// an em dash placeholder when a row carries no version-pass data at all
+// (healthFindingVersionText's default branch, or a conflict row, which never
+// has one). 2026-08-07 smoke feedback round 3: a blank VERSION cell was
+// invisible whitespace even after healthColumnWidths started padding every
+// column to the full content width (3ee970c) - the row's VISIBLE text still
+// stopped at FILE, so the table still read as narrow. The placeholder gives
+// the column a visible anchor the way modRow's version column always has
+// one, mirroring the common table convention for "no value here".
+func healthVersionCell(version string) string {
+	if version == "" {
+		return "—"
+	}
+	return version
+}
+
+// healthNoteCell is the Health table's NOTE column value for a finding row:
+// the finding's own Note when set - this covers e.g. an "ok" row carrying a
+// lock-pending advisory (TestHealthHomeViewRendersFindingsAndHeaderAge's
+// Bear Mount fixture), which must keep its real note rather than the
+// fallback below - otherwise a short per-status default derived from
+// healthRemedy, so the cell is never blank. "ok" gets its own short "no
+// action needed" rather than healthRemedy's fuller "OK — no action needed":
+// the STATUS column already reads OK, so repeating it here would be
+// redundant (unlike the detail pane's remedy line, which has no STATUS
+// column next to it). Every other status reuses healthRemedy's existing
+// sentence verbatim - it's still subject to the same truncate() cutoff as
+// every other NOTE value once healthTableRows renders it, so a long remedy
+// clips exactly as any other overlong NOTE would.
+//
+// 2026-08-07 smoke feedback round 3: a Note-less row's NOTE cell used to
+// render as blank padding even after healthColumnWidths started consuming
+// the full content width (3ee970c) - the row's VISIBLE text stopped well
+// short of the panel's right edge, so a healthy profile's table still read
+// as narrow. This closes that gap the same way healthVersionCell does for
+// VERSION.
+func healthNoteCell(f HealthFinding) string {
+	if f.Note != "" {
+		return f.Note
+	}
+	if f.Status == "ok" {
+		return "no action needed"
+	}
+	return healthRemedy(f)
+}
+
+// healthColumnWidths computes the Health table's STATUS|MOD|FILE|VERSION|
+// NOTE column widths from the panel's available content width, mirroring
+// modRow/modsView's full-width convention: the whole panel's content width
+// is always consumed, never just a capped sum (#224 smoke feedback fix #3 -
+// the earlier version capped modW/fileW at small literal maximums, e.g. an
+// 18-rune fileW cap, so a wide terminal's extra width could only ever grow
+// NOTE while MOD/FILE stayed pinned narrow; the row never "stretched to
+// fill" the way Installed Mods' rows do).
+//
+// MOD is the SOLE surplus absorber, exactly like modRow's own uncapped
+// NAME column (nameWidth = avail minus every other column) - not a
+// proportional split. #224 smoke feedback fix #5 (fourth width iteration,
+// diagnosed from a real 210-col screenshot): the previous version gave
+// NOTE 3 of 5 parts of the surplus and capped MOD's share along with it -
+// the inverse of modRow's model. Because NOTE is left-aligned prose that is
+// usually much shorter than its generous share, that surplus rendered as
+// ~100 columns of invisible trailing padding mid-row, while real mod names
+// (e.g. "Donovan's Larger Resource Stacks") truncated for want of the width
+// NOTE was silently holding. STATUS and VERSION stay intrinsic, like
+// modRow's own status/author/version columns: their values come from
+// short, bounded vocabularies ("STALE CONFLICT", "12.3.4→12.4.0"), so a
+// proportional-but-capped share is already generous. FILE and NOTE are
+// each bounded near their own typical content (min(literalCap, avail/N))
+// rather than left to grow - a file path or diagnostic note that overruns
+// its bound truncates in the table, but the detail strip below
+// (healthDetailPane) always renders the FULL text, so nothing is lost, only
+// deferred to where a reader who wants it already looks.
+//
+// Unlike modRow - which always renders all 5 of its columns and lets NAME
+// shrink toward its own floor - a narrow terminal here instead drops whole
+// columns, NOTE first then VERSION: a Health row's primary value is
+// STATUS/MOD/FILE, and a column squeezed down to 1-2 legible runes is worse
+// than not showing it at all (#224 layout rework).
+func (m Model) healthColumnWidths(width int) (statusW, modW, fileW, versionW, noteW int, showVersion, showNote bool) {
+	const prefixWidth = 2 // m.row()'s "> "/"  " selection marker
+	const minStatus = 8
+	const minMod = 10
+	const minFile = 8
+	const minVersion = 7
+	const minNote = 10
+
+	avail := max(width-m.theme.Panel.GetHorizontalFrameSize()-prefixWidth, 1)
+
+	statusW = min(22, max(avail/6, minStatus))
+	versionW = min(11, max(avail/10, minVersion))
+	fileW = min(24, max(avail/8, minFile))
+	noteW = min(32, max(avail/6, minNote))
+
+	showVersion, showNote = true, true
+
+	// 5 columns -> 4 separating gaps.
+	remaining := avail - statusW - fileW - versionW - noteW - 4
+	if remaining < minMod {
+		showNote, noteW = false, 0
+		// 4 columns -> 3 separating gaps.
+		remaining = avail - statusW - fileW - versionW - 3
+		if remaining < minMod {
+			showVersion, versionW = false, 0
+			// 3 columns -> 2 separating gaps.
+			remaining = avail - statusW - fileW - 2
+		}
+	}
+	modW = max(remaining, minMod)
+	return
+}
+
+// healthStatusStyle returns the STATUS column's tint (healthStatusClass's
+// three buckets): text-color only, since a columnar STATUS field has no
+// room for the old two-pane list's separate leading "[glyph]" marker
+// (healthGlyph, removed by #224's layout rework) - the class distinction now
+// lives entirely in color, matching modRow/searchResultsPane's own
+// "pad-then-style" convention for a themed column value. "fine" renders
+// untinted - theme.Theme has no dedicated success style, only Warning/
+// DangerText (see Theme's own field list).
+func (m Model) healthStatusStyle(status string) lipgloss.Style {
+	switch healthStatusClass(status) {
+	case "danger":
+		return m.theme.DangerText
+	case "warning":
+		return m.theme.WarningText
+	default:
+		return lipgloss.NewStyle()
+	}
+}
+
+// healthTotalRows is the Health table's/selection's full row count: verify
+// findings, then (#224 Task 15) file conflicts appended after them - the
+// same order healthTableRows renders rows in and healthDetailPane indexes
+// into, so m.selected[ScreenHealth] walks findings first, conflicts second,
+// with no gap or reordering between the two.
+func (m Model) healthTotalRows() int {
+	return len(m.health.Findings) + len(m.conflicts)
+}
+
+// healthTableRows renders the Health table's selectable STATUS|MOD|FILE|
+// VERSION|NOTE rows: a finding row's STATUS is uppercase and tinted
+// (healthStatusStyle), MOD via healthFindingModLabel, FILE the raw FileID
+// (may be blank), VERSION via healthFindingVersionText (column dropped
+// entirely on a narrow terminal - see healthColumnWidths), NOTE truncated to
+// whatever width remains (dropped before VERSION on an even narrower
+// terminal). Windowed/scroll-follow-selection like modsView's own list
+// (m.windowedRows) - the full-width columnar replacement for the old
+// two-pane healthListPane.
+//
+// #224 Task 15: after every finding row, one row per m.conflicts follows -
+// STATUS "CONFLICT" (warning tint) or "STALE CONFLICT" (danger tint,
+// conflictStatusLabel/conflictNoteText's own doc comments), MOD the
+// load-order winner (not the owner - the winner is what a reader most wants
+// to know at a glance, mirroring the pre-fold Conflicts screen's own WINNER
+// column), FILE the contested path, VERSION the em dash placeholder
+// (healthVersionCell - conflicts carry no version data, same as any other
+// versionless row), NOTE conflictNoteText's compact remedy. The combined index
+// space (healthTotalRows) means m.windowedRows scrolls/follows selection
+// across BOTH kinds of row exactly as if they were one list, because they
+// are one list from this function's perspective.
+func (m Model) healthTableRows(width, budget int) []string {
+	statusW, modW, fileW, versionW, noteW, showVersion, showNote := m.healthColumnWidths(width)
+	numFindings := len(m.health.Findings)
+	rowFor := func(i int) string {
+		var status, mod, file, version, note string
+		var style lipgloss.Style
+		if i < numFindings {
+			f := m.health.Findings[i]
+			style = m.healthStatusStyle(f.Status)
+			status = healthStatusLabel(f.Status)
+			mod = healthFindingModLabel(f)
+			file = f.FileID
+			version = healthFindingVersionText(f)
+			note = healthNoteCell(f)
+		} else {
+			c := m.conflicts[i-numFindings]
+			style = m.conflictRowStyle(c)
+			status = conflictStatusLabel(c)
+			mod = c.Winner
+			file = c.Path
+			note = conflictNoteText(c)
+		}
+		parts := []string{
+			style.Render(fmt.Sprintf("%-*s", statusW, truncate(status, statusW))),
+			fmt.Sprintf("%-*s", modW, truncate(mod, modW)),
+			fmt.Sprintf("%-*s", fileW, truncate(file, fileW)),
+		}
+		if showVersion {
+			parts = append(parts, fmt.Sprintf("%-*s", versionW, truncate(healthVersionCell(version), versionW)))
+		}
+		if showNote {
+			// Padded like every other column (#224 smoke feedback fix #3),
+			// not left ragged - a short note used to leave the row short of
+			// the panel's full width, so the selection highlight (m.row's
+			// background) fell short of the right edge instead of spanning
+			// full width the way an Installed Mods row always does.
+			//
+			// Left-aligned ("%-*s"), NOT right-aligned like modRow's own
+			// last column (version, "%*s"): modRow's version is a short,
+			// bounded value where right-anchoring gives a clean numeric
+			// edge, but NOTE is prose (healthNoteCell's remedy sentences) -
+			// right-aligning would ragged its LEFT edge instead and fight
+			// readability, so left alignment is the correct anchor here.
+			parts = append(parts, fmt.Sprintf("%-*s", noteW, truncate(note, noteW)))
+		}
+		return m.row(i, strings.Join(parts, " "))
+	}
+	return m.windowedRows(m.healthTotalRows(), m.selected[ScreenHealth], budget, rowFor)
+}
+
+// healthDetailPane renders a compact 3-4 line detail strip for the selected
+// row: a finding's "Mod:    <subject> — <STATUS>" line (healthFindingSubject's
+// full ModName/ModID/FileID fallback, unlike the table's own MOD column -
+// so a mod-less finding's subject still reads as its FileID here, exactly
+// as it did in the pre-rework two-pane detail pane), an optional
+// "File:   <FileID>" line, an optional "Note:   <Note>" line shown in
+// FULL (not clipped to the table's narrower NOTE column - only to width,
+// same Width()-constrained-panel safety truncation every line here gets,
+// #42), and the per-status remedy line (healthRemedy) - replacing the old
+// two-pane's side DETAIL pane (#224 layout rework). width is the caller's
+// already-computed CONTENT width (healthHomeView's innerWidth) - unlike the
+// pre-rework version, this is no longer rendered inside its own bordered
+// panel, so it does not subtract the panel's frame size itself.
+//
+// #224 Task 15: an index landing past the findings, in the conflicts range
+// (healthTotalRows), delegates to healthConflictDetailPane instead - the
+// pre-fold Conflicts screen's own detail pane logic (File/Owner/Winner/Also
+// in/hint), preserved so a selected conflict's full data (including the
+// alternates list no other surface shows) is still reachable now that it's
+// folded into this same table.
+func (m Model) healthDetailPane(width, maxLines int) string {
+	idx := m.selected[ScreenHealth]
+	numFindings := len(m.health.Findings)
+	if idx < 0 || idx >= m.healthTotalRows() {
 		return m.theme.MutedText.Render("No selection.")
 	}
-	c := m.conflicts[idx]
+	if idx >= numFindings {
+		return m.healthConflictDetailPane(m.conflicts[idx-numFindings], width, maxLines)
+	}
+	f := m.health.Findings[idx]
 
-	innerWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
+	innerWidth := max(width, 1)
 	lines := []string{
-		m.theme.PanelTitle.Render("DETAIL"),
-		truncate(fmt.Sprintf("File:   %s", c.Path), innerWidth),
-		truncate(fmt.Sprintf("Owner:  %s", c.Owner), innerWidth),
-		truncate(fmt.Sprintf("Winner: %s", c.Winner), innerWidth),
+		truncate(fmt.Sprintf("Mod:    %s — %s", healthFindingSubject(f), healthStatusLabel(f.Status)), innerWidth),
 	}
-	if len(c.AlsoIn) > 0 {
-		lines = append(lines, truncate("Also in: "+strings.Join(c.AlsoIn, ", "), innerWidth))
+	if f.FileID != "" {
+		lines = append(lines, truncate(fmt.Sprintf("File:   %s", f.FileID), innerWidth))
 	}
-
-	hint := "reorder mods (J/K on installed) to change the winner"
-	if c.Stale {
-		hint = fmt.Sprintf("load order says %s should win — deploy (D) to apply", c.Winner)
+	if f.Note != "" {
+		lines = append(lines, truncate(fmt.Sprintf("Note:   %s", f.Note), innerWidth))
 	}
-	lines = append(lines, "", truncate(m.theme.MutedText.Render(hint), innerWidth))
+	if remedy := healthRemedy(f); remedy != "" {
+		lines = append(lines, truncate(m.theme.MutedText.Render(remedy), innerWidth))
+	}
 
 	if len(lines) > maxLines {
 		lines = lines[:maxLines]
@@ -2004,32 +2615,186 @@ func (m Model) conflictsDetailPane(width, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
+// healthConflictDetailPane renders the detail strip for a selected conflict
+// row (#224 Task 15): the load-order winner and status (matching the
+// finding branch's own "Mod: <subject> — <STATUS>" shape above, for visual
+// consistency between the two kinds of row this one table now shows), the
+// contested file, the current deployed owner (with any other providing mods
+// - AlsoIn - appended to the same line rather than a fifth line of its own),
+// and the stale-aware hint (conflictDetailHint) - the pre-fold Conflicts
+// screen's own conflictsDetailPane content (task-3-brief.md's wording for
+// the hint, preserved verbatim), condensed from its original 4-6 lines down
+// to fit the detail strip's shared 4-line cap (healthHomeView's detailCap) -
+// a dedicated "Winner:" line is dropped since the Mod line above already
+// names the winner.
+func (m Model) healthConflictDetailPane(c ConflictItem, width, maxLines int) string {
+	innerWidth := max(width, 1)
+	ownerLine := fmt.Sprintf("Owner:  %s", c.Owner)
+	if len(c.AlsoIn) > 0 {
+		ownerLine += "  Also in: " + strings.Join(c.AlsoIn, ", ")
+	}
+	lines := []string{
+		truncate(fmt.Sprintf("Mod:    %s — %s", c.Winner, conflictStatusLabel(c)), innerWidth),
+		truncate(fmt.Sprintf("File:   %s", c.Path), innerWidth),
+		truncate(ownerLine, innerWidth),
+		truncate(m.theme.MutedText.Render(conflictDetailHint(c)), innerWidth),
+	}
+
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// healthStatusClass buckets a HealthFinding.Status into the three tint
+// classes the table/detail strip use (healthStatusStyle): "danger" for the
+// two statuses that mean a file/version is actually wrong, "fine" for a
+// healthy (lock-pending "ok") row OR a resolved fixed_* row (a successful
+// --fix repair - "fixed_" prefix covers both fixed_stale_deployment and
+// fixed_needs_reingest, #224 Copilot round 2: these used to fall into
+// "warning" and so tinted/glyphed like an outstanding problem in the
+// post-fix list, even though they mean the opposite), and "warning" for
+// everything else - the broad "needs attention but isn't broken" middle
+// ground (needs_reingest, no_checksum, version_unverifiable, stale_compile,
+// conversion_failed, stale_deployment, file_count_mismatch, skipped, ...).
+func healthStatusClass(status string) string {
+	switch {
+	case status == "missing" || status == "version_mismatch":
+		return "danger"
+	case status == "ok" || strings.HasPrefix(status, "fixed_"):
+		return "fine"
+	default:
+		return "warning"
+	}
+}
+
+// healthStatusLabel renders a Status value ("version_mismatch") as display
+// text ("VERSION MISMATCH"), matching the CLI's own uppercase wording for
+// the same statuses (cmd/lmm/verify.go).
+func healthStatusLabel(status string) string {
+	return strings.ToUpper(strings.ReplaceAll(status, "_", " "))
+}
+
+// healthRemedy returns the detail strip's per-status remedy line, reusing
+// the CLI's own phrasings (cmd/lmm/verify.go's renderVerifyFinding/
+// renderVerifySkipped) wherever HealthFinding carries enough to reconstruct
+// them - ExpectedCount (a CLI-only VerifyEvent extra with no HealthFinding
+// counterpart) is dropped rather than guessed at; Recorded/Effective/
+// Version (#224 follow-up plumbing) ARE on HealthFinding now but the table's
+// own VERSION column (healthFindingVersionText) already shows them, so this
+// remedy copy doesn't repeat them. "(F)" names Task 12's fix binding.
+//
+// 2026-08-07 smoke feedback (#224): a quiet-ok row (Status "ok", no Note)
+// used to return "" here - it never reached the detail pane before, since
+// healthView dropped it outright. Now that it's a selectable row, "" would
+// render as a blank line where every other status has SOME remedy copy, so
+// it gets its own plain "nothing to do" line in the same voice.
+func healthRemedy(f HealthFinding) string {
+	switch f.Status {
+	case "missing":
+		return "file missing from cache — run a fix (F) to redownload"
+	case "no_checksum":
+		return "no checksum recorded — run a fix (F) to backfill"
+	case "needs_reingest":
+		return "run a fix (F) to re-ingest"
+	case "version_unverifiable":
+		return "recorded file ID(s) no longer found upstream; reinstall the mod or run 'lmm update' to adopt the current version"
+	case "version_mismatch":
+		return "source reports a different version than recorded; run 'lmm update' or a fix (F)"
+	case "stale_compile":
+		return "run 'lmm update --all' to fix"
+	case "conversion_failed":
+		return fmt.Sprintf("deploying raw; fix the mod or run 'lmm mod convert %s off' to silence", f.ModID)
+	case "stale_deployment":
+		return "run a fix (F) to remove"
+	case "fixed_stale_deployment", "fixed_needs_reingest":
+		return "resolved"
+	case "file_count_mismatch":
+		return "expected content from a download but the cache has 0 files"
+	case "ok":
+		if f.Note != "" {
+			return fmt.Sprintf("%s — run 'lmm profile apply'", f.Note)
+		}
+		return "OK — no action needed"
+	case "skipped":
+		return "could not check — see note above"
+	default:
+		return ""
+	}
+}
+
+// healthScanLabel renders the Health screen's header line body: "no scan
+// yet" when at is nil (no scan has run this session), otherwise "<tier>,
+// <age> — N checked" reusing lastDeployLabel's own relative-age computation
+// (its nil branch is unreachable here since at != nil is already checked) -
+// "local"/"full" names the verify tier the reported findings came from
+// (HealthView.Full).
+//
+// 2026-08-07 smoke feedback (#224): the "N checked" suffix is new - it
+// names how many rows the verify engine considered (HealthView.Checked),
+// giving the header some content even when every row is quiet-ok. The
+// suffix is omitted only when checked is 0 AND hasFindings is false - a
+// genuinely empty profile - so a real scan's header always says what it
+// looked at.
+func healthScanLabel(now time.Time, at *time.Time, full bool, checked int, hasFindings bool) string {
+	if at == nil {
+		return "no scan yet"
+	}
+	tier := "local"
+	if full {
+		tier = "full"
+	}
+	label := fmt.Sprintf("%s, %s", tier, lastDeployLabel(now, at))
+	if checked == 0 && !hasFindings {
+		return label
+	}
+	return fmt.Sprintf("%s — %d checked", label, checked)
+}
+
 // helpGroup is one labeled section of the help panel: a screen name (or
 // "global") plus the key entries that apply to it. Group labels are
 // lowercase per Task 9's copy convention (see helpGroups).
 type helpGroup struct {
 	name    string
-	entries []string
+	entries []helpItem
+}
+
+// helpItem is one row of a helpGroup plus its collapse priority: keep marks
+// a screen's headline action so helpView's "+N more" cap drops unmarked
+// rows first (#234) instead of tail-dropping purely by position - which
+// used to swallow the search group's LAST entry (enter: open mod details)
+// at a normal 100x30 size. The marker only takes effect while the row's
+// group is promoted (see helpView); an unpromoted group's headline can't
+// force itself into another screen's help window.
+type helpItem struct {
+	text string
+	keep bool
+}
+
+// kept returns a copy of the item marked as its group's headline action.
+func (i helpItem) kept() helpItem {
+	i.keep = true
+	return i
 }
 
 // helpRow formats a single help-panel row: left-aligned key (16 chars),
 // space, description.
-func helpRow(key, desc string) string {
-	return fmt.Sprintf("%-16s %s", key, desc)
+func helpRow(key, desc string) helpItem {
+	return helpItem{text: fmt.Sprintf("%-16s %s", key, desc)}
 }
 
 // helpEntry formats one keybinding as a help-panel row, reusing the
 // binding's own key.WithHelp key/description from keys.go rather than
 // restating it - the single source of truth for "what does this key do"
 // stays in DefaultKeyMap.
-func helpEntry(kb key.Binding) string {
+func helpEntry(kb key.Binding) helpItem {
 	h := kb.Help()
 	return helpRow(h.Key, h.Desc)
 }
 
 // helpGroups builds the full, ordered set of help groups: "global" always
 // first, then every screen group that has entries, in a fixed order
-// (dashboard, installed mods, search, profiles, conflicts, sources), with
+// (dashboard, installed mods, search, profiles, sources, health), with
 // the CURRENT screen's group promoted to immediately follow global. Each
 // screen's list
 // mirrors updateKey's dispatch guards in mutations.go (e.g. Files/Policy/
@@ -2037,7 +2802,7 @@ func helpEntry(kb key.Binding) string {
 func (m Model) helpGroups() []helpGroup {
 	global := helpGroup{
 		name: "global",
-		entries: []string{
+		entries: []helpItem{
 			helpEntry(m.keys.Quit),
 			helpEntry(m.keys.Help),
 			helpEntry(m.keys.NextScreen),
@@ -2049,13 +2814,13 @@ func (m Model) helpGroups() []helpGroup {
 
 	dashboard := helpGroup{
 		name: "dashboard",
-		entries: []string{
+		entries: []helpItem{
 			// Select ("enter") is context-dependent (see updateKey): on
 			// the Dashboard it opens the selected menu entry
 			// (openSelectedMenuEntry), so the description is written out
 			// here rather than reusing keys.go's generic "open" - the same
 			// ad-hoc shape as the profiles group's "switch profile" below.
-			helpRow(m.keys.Select.Help().Key, "open menu entry"),
+			helpRow(m.keys.Select.Help().Key, "open menu entry").kept(),
 			helpEntry(m.keys.Deploy),
 			helpEntry(m.keys.CheckUpdates),
 			helpEntry(m.keys.Purge),
@@ -2064,7 +2829,13 @@ func (m Model) helpGroups() []helpGroup {
 
 	installedMods := helpGroup{
 		name: "installed mods",
-		entries: []string{
+		entries: []helpItem{
+			// Select is #86's enter-opens-details binding. Hand-written
+			// (not helpEntry) for the same reason the dashboard's and
+			// profiles' own rows above are: keys.go's Select.Help() is the
+			// generic "enter"/"open" shared across every screen it applies
+			// to, and never says WHAT it opens - smoke round 2's finding 2.
+			helpRow(m.keys.Select.Help().Key, "open mod details").kept(),
 			helpEntry(m.keys.ToggleEnable),
 			helpEntry(m.keys.Uninstall),
 			helpEntry(m.keys.Deploy),
@@ -2075,6 +2846,10 @@ func (m Model) helpGroups() []helpGroup {
 			// mutations.go's editSelectedModLock) - listed beside Policy since
 			// both open an item-scoped picker with no separate confirm modal.
 			helpEntry(m.keys.Lock),
+			// ConvertToggle is #221's pak-to-exmod conversion toggle (see
+			// mutations.go's toggleSelectedModConvert) - listed beside Policy/
+			// Lock since it's a third item-scoped, no-confirm-modal mutation.
+			helpEntry(m.keys.ConvertToggle),
 			helpEntry(m.keys.Purge),
 			// MoveDown/MoveUp are Task 4's load-order reorder keys (see
 			// mutations.go's moveSelectedMod).
@@ -2096,26 +2871,47 @@ func (m Model) helpGroups() []helpGroup {
 
 	search := helpGroup{
 		name: "search",
-		entries: []string{
+		entries: []helpItem{
 			helpEntry(m.keys.Search),
-			helpEntry(m.keys.Submit),
+			// Submit and Select share the same physical key ("enter") but
+			// fire in mutually exclusive states (updateKey's focused-input
+			// branch handles Submit before the outer switch that handles
+			// Select is ever reached - see that branch's own key.Matches
+			// case): Submit only while the query input is focused, Select
+			// only once it's blurred with a result row selected. Smoke
+			// round 2's finding 2: listing both via helpEntry rendered
+			// "enter / search" next to "enter / open" with nothing saying
+			// which state either applies to, so both are hand-written here
+			// instead, each naming its own state explicitly. Both are the
+			// screen's headline actions - the two mutually exclusive things
+			// enter does here - so both are kept() ahead of the collapse
+			// (#234): Submit's row happens to sit early enough to survive
+			// positionally at 100x30 today, but that's an accident of entry
+			// count, not a guarantee.
+			helpRow(m.keys.Submit.Help().Key, "search (query input focused)").kept(),
 			helpEntry(m.keys.Blur),
 			helpEntry(m.keys.NextPage),
 			helpEntry(m.keys.PrevPage),
 			helpEntry(m.keys.CycleSource),
 			helpEntry(m.keys.Install),
+			// Select is #86's enter-opens-details binding - fires with the
+			// input blurred and a result selected, mirroring Install's own
+			// scoping (see openSelectedModDetails). kept() is #234's actual
+			// fix: this row is the group's LAST entry, and the positional
+			// tail-collapse used to swallow it at a normal 100x30 size.
+			helpRow(m.keys.Select.Help().Key, "open mod details (input blurred, result selected)").kept(),
 		},
 	}
 
 	profiles := helpGroup{
 		name: "profiles",
-		entries: []string{
+		entries: []helpItem{
 			// Select ("enter") is context-dependent (see updateKey): on
 			// Profiles it switches, not "open" like keys.go's generic
 			// Select.Help() says elsewhere - so this one entry is written
 			// out rather than reusing helpEntry, matching the actual
 			// behavior on this screen.
-			helpRow(m.keys.Select.Help().Key, "switch profile"),
+			helpRow(m.keys.Select.Help().Key, "switch profile").kept(),
 			helpEntry(m.keys.CreateProfile),
 			helpEntry(m.keys.DeleteProfile),
 			// ImportProfile is Task 9's import binding (see mutations.go's
@@ -2127,42 +2923,64 @@ func (m Model) helpGroups() []helpGroup {
 		},
 	}
 
-	// conflicts lists Deploy (the review fix wave extended
-	// deployActiveProfile's screen guard here, so the stale-conflict hint's
-	// "deploy (D) to apply" names a key that actually fires - mirroring how
-	// dashboard/installedMods above list the same binding) plus Up/Down -
-	// documented here unlike every OTHER screen (where they're left to the
-	// footer's generic "↑↓/j/k: move" hint) because selecting a row IS this
-	// screen's core interaction: it's what reveals the detail pane's stale/
-	// in-sync hint copy, not just a cosmetic highlight.
-	conflicts := helpGroup{
-		name: "conflicts",
-		entries: []string{
-			helpEntry(m.keys.Up),
-			helpEntry(m.keys.Down),
-			helpEntry(m.keys.Deploy),
-		},
-	}
-
 	// sources is Task 4's Sources-screen group (#75): just the scope toggle
 	// - Up/Down are left to the footer's generic hint like every screen
-	// other than conflicts above.
+	// other than health below.
 	sources := helpGroup{
 		name: "sources",
-		entries: []string{
+		entries: []helpItem{
 			helpEntry(m.keys.ToggleAllSources),
 		},
 	}
 
-	fixed := []helpGroup{dashboard, installedMods, search, profiles, conflicts, sources}
+	// health is Task 9's Health-screen group (#224): unlike every other
+	// screen group above, it lists its OWN jump-to-screen key (HealthScreen,
+	// "6") rather than leaving that to the global group's generic "1-6"
+	// entry - without it the group would start life empty and read as
+	// broken rather than "grows later". FullCheck ("c", Task 11) and
+	// FixHealth ("F", Task 12) fill it out.
+	//
+	// #224 Task 15's conflicts fold folded the retired standalone Conflicts
+	// screen's own help group in here too: Up/Down - documented here unlike
+	// most OTHER screens (left to the footer's generic "↑↓/j/k: move" hint)
+	// because selecting a row IS this screen's core interaction, for both
+	// findings and conflict rows now - it's what reveals the detail strip's
+	// remedy/stale hint copy, not just a cosmetic highlight - and Deploy,
+	// since the stale-conflict remedy names "deploy (D) to apply" and this
+	// key must actually fire from here (deployActiveProfile's own screen
+	// guard, mutations.go) for that remedy to be actionable in place.
+	health := helpGroup{
+		name: "health",
+		entries: []helpItem{
+			helpEntry(m.keys.HealthScreen),
+			helpEntry(m.keys.Up),
+			helpEntry(m.keys.Down),
+			helpEntry(m.keys.FullCheck),
+			helpEntry(m.keys.FixHealth),
+			helpEntry(m.keys.Deploy),
+		},
+	}
+
+	fixed := []helpGroup{dashboard, installedMods, search, profiles, sources, health}
 	screenGroupName := map[Screen]string{
 		ScreenDashboard:     dashboard.name,
 		ScreenInstalledMods: installedMods.name,
 		ScreenSearch:        search.name,
 		ScreenProfiles:      profiles.name,
-		ScreenConflicts:     conflicts.name,
 		ScreenSources:       sources.name,
+		ScreenHealth:        health.name,
 	}
+	// #224 Task 9 fix round 1, Finding 2, generalized in #86: while any
+	// screen has pushed content (contextview.go), the promoted group is the
+	// CONTENT's own HelpGroup() - the ambient screen's static bindings don't
+	// describe whatever the pushed content actually shows, so consulting it
+	// here (rather than leaving HelpGroup() an orphaned interface member) is
+	// the whole point of that method existing. The pushing screen's own
+	// static group stays in fixed, unpromoted, further down the list.
+	if m.contextContent != nil {
+		return append([]helpGroup{global, m.contextContent.HelpGroup()}, fixed...)
+	}
+
 	if name, ok := screenGroupName[m.screen]; ok {
 		for i, g := range fixed {
 			if g.name == name {
@@ -2186,16 +3004,16 @@ func (m Model) helpGroups() []helpGroup {
 // same as before Task 9.
 func (m Model) helpBodyBudget() int {
 	if m.height == 0 {
-		// Bumped 40->50 in Task 4: the full uncapped group list was already
-		// at 41 lines after Task 3's conflicts group (silently one past the
-		// old 40 default), and the installed-mods group's two new
-		// MoveDown/MoveUp entries pushed it further past 40, to 43 -
-		// TestHelpViewListsPerScreenGroups depends on this staying
-		// "generous" enough to render every group's content, per this
-		// method's own doc comment. 50 leaves headroom above today's 43 for
-		// the next few tasks' bindings, rather than needing a re-bump for
-		// every single addition.
-		return 50
+		// Bumped 40->50 in Task 4 (see the history above this line for that
+		// jump's own accounting), then 50->65 for #86 Task 7: the two new
+		// Select entries (installed mods + search groups, documenting
+		// enter-opens-details) pushed the full uncapped group list to 57
+		// lines, one past 50. TestHelpViewListsPerScreenGroups depends on
+		// this staying "generous" enough to render every group's content,
+		// per this method's own doc comment. 65 leaves headroom above
+		// today's 57 for the next few tasks' bindings, rather than needing a
+		// re-bump for every single addition.
+		return 65
 	}
 	status := 0
 	if m.hasVisibleStatus() {
@@ -2214,14 +3032,20 @@ func (m Model) helpView() string {
 	width := m.availableWidth()
 	panelContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 
-	var body []string
+	// The keep marker is honored only for the promoted group - index 1,
+	// immediately after "global", per helpGroups' ordering contract (the
+	// current screen's group, or pushed content's HelpGroup()). Any other
+	// group's headline describes a screen the user is NOT on, and letting
+	// it survive would force header-less rows from distant groups into the
+	// few visible lines at the current screen's expense (#234).
+	var body []helpItem
 	for i, g := range m.helpGroups() {
 		if i > 0 {
-			body = append(body, "")
+			body = append(body, helpItem{})
 		}
-		body = append(body, truncate(m.theme.PanelTitle.Render(g.name), panelContentWidth))
+		body = append(body, helpItem{text: truncate(m.theme.PanelTitle.Render(g.name), panelContentWidth)})
 		for _, e := range g.entries {
-			body = append(body, truncate(e, panelContentWidth))
+			body = append(body, helpItem{text: truncate(e.text, panelContentWidth), keep: e.keep && i == 1})
 		}
 	}
 
@@ -2229,11 +3053,36 @@ func (m Model) helpView() string {
 	budget := m.helpBodyBudget()
 	if len(body) > budget {
 		shown := max(budget-1, 0)
-		more := len(body) - shown
-		lines = append(lines, body[:shown]...)
-		lines = append(lines, truncate(m.theme.MutedText.Render(fmt.Sprintf("+%d more", more)), panelContentWidth))
+		// Drop by priority, not position (#234): walk from the tail
+		// dropping unkept rows first, so a kept headline row survives
+		// wherever it sits in its group; only when fewer than `shown` rows
+		// are unkept does a second pass reach the kept ones. Survivors
+		// render in their original order, so the "+N more" tail can stand
+		// in for rows dropped from the middle, not just below it.
+		drop := len(body) - shown
+		dropped := make([]bool, len(body))
+		for i := len(body) - 1; i >= 0 && drop > 0; i-- {
+			if !body[i].keep {
+				dropped[i] = true
+				drop--
+			}
+		}
+		for i := len(body) - 1; i >= 0 && drop > 0; i-- {
+			if !dropped[i] {
+				dropped[i] = true
+				drop--
+			}
+		}
+		for i, item := range body {
+			if !dropped[i] {
+				lines = append(lines, item.text)
+			}
+		}
+		lines = append(lines, truncate(m.theme.MutedText.Render(fmt.Sprintf("+%d more", len(body)-shown)), panelContentWidth))
 	} else {
-		lines = append(lines, body...)
+		for _, item := range body {
+			lines = append(lines, item.text)
+		}
 	}
 
 	return m.panel(width).Render(strings.Join(lines, "\n"))
@@ -2289,18 +3138,32 @@ func (m Model) modRow(index, width int, mod ModItem) string {
 	return m.row(index, line)
 }
 
-// modFlags renders the per-mod flag column: "lck" or "pin" (left-aligned in
-// the first 3 columns) and "*" (the last column) for a mod actually updated
-// THIS session - not merely checked. "lck" (#97) outranks "pin" in the
-// 3-char slot - a locked+pinned mod shows "lck" ("lock wins the slot and
-// the UI names the lock"); the mod's pin state is untouched and stays
-// visible in the P picker and mod actions, it just doesn't get its own
-// glyph here when a lock is also set. The wire string "pin" (not the CLI's
-// "pinned") matches ModItem.UpdatePolicy's documented values - see
+// modFlags renders the per-mod flag column: "lck", "pin", or "raw"
+// (left-aligned in the first 3 columns) and "*" (the last column) for a mod
+// actually updated THIS session - not merely checked. "lck" (#97) outranks
+// "pin" in the 3-char slot - a locked+pinned mod shows "lck" ("lock wins the
+// slot and the UI names the lock"); the mod's pin state is untouched and
+// stays visible in the P picker and mod actions, it just doesn't get its own
+// glyph here when a lock is also set. "raw" (#221) is the lowest-precedence
+// flag: a mod on a merge-compile game (ModItem.CompileGame) that actually
+// HAS a pak merge source (ModItem.HasPakSource) and whose prebuilt pak
+// deploys unconverted shows "raw" ONLY when neither lck nor pin already
+// claimed the slot - it names a state (this mod's prebuilt .pak ships
+// unconverted into the merge) rather than a user-set marker like the other
+// two, so it defers to both. An exmodz-only mod (HasPakSource false) never
+// shows "raw" regardless of the conversion flags - it has no pak to leave
+// unconverted, so the flag would be meaningless (#221 round-4 fix). Deploy
+// truth needs BOTH the per-mod flag (ModItem.ConvertPaks) AND the active
+// game's own flag (ModItem.GameConvertPaks) to be on before a pak actually
+// converts - mirroring the README's "either one is enough to keep a pak
+// raw" ([Pak conversion (Icarus)](README.md#pak-conversion-icarus)) - so
+// among pak-source mods "raw" shows whenever EITHER is off, not just the
+// per-mod one. The wire string "pin" (not the
+// CLI's "pinned") matches ModItem.UpdatePolicy's documented values - see
 // service_core.go's policyToString for why the two interfaces differ. The
 // fixed "%-3s %s" shape always fills exactly flagsWidth (5) columns -
-// "lck *", "pin *", "pin  ", "    *", or "     " - so the flag and the
-// marker can appear independently, together, or not at all without ever
+// "lck *", "pin *", "pin  ", "raw  ", "    *", or "     " - so the flag and
+// the marker can appear independently, together, or not at all without ever
 // shifting the author/version columns that follow (mirrors the pin-only
 // column's own fixed-width reasoning above modRow).
 func (m Model) modFlags(mod ModItem) string {
@@ -2310,6 +3173,8 @@ func (m Model) modFlags(mod ModItem) string {
 		flag = "lck" // lock wins the slot ("the UI names the lock"); pin state stays visible in the P picker and mod actions
 	case mod.UpdatePolicy == "pin":
 		flag = "pin"
+	case mod.CompileGame && mod.HasPakSource && !(mod.GameConvertPaks && mod.ConvertPaks):
+		flag = "raw"
 	}
 	marker := " "
 	if m.wasUpdatedThisSession(mod) {
@@ -2482,6 +3347,32 @@ func countLabel(n int) string {
 		return "?"
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// healthDashboardLine renders the dashboard's Health signal row (#224 Task
+// 10): "?" (mirroring countLabel's own "-1 = unknown" convention) before
+// the first LOCAL-tier scan lands, "OK" once a scan finds nothing, or its
+// issue/warning counts otherwise. Every non-"?" case names the verify tier
+// the counts came from - "(local)" for the ordinary dashboard refresh
+// (loadData's DataProvider.Health call), "(full)" once the Health screen's
+// own explicit full/network check (ActionProvider.RunHealthCheck, Tasks
+// 11/12) has updated the same m.health/m.summary state (m.health.Full).
+// Shared verbatim by every dashboardView layout below rather than each one
+// adapting its own casing/prefix convention - the phrasing is pinned by
+// spec, not layout-specific flavor text.
+func (m Model) healthDashboardLine() string {
+	issues, warnings := m.summary.HealthIssues, m.summary.HealthWarnings
+	if issues < 0 || warnings < 0 {
+		return "Health: ?"
+	}
+	tier := "local"
+	if m.health.Full {
+		tier = "full"
+	}
+	if issues == 0 && warnings == 0 {
+		return fmt.Sprintf("Health: OK (%s)", tier)
+	}
+	return fmt.Sprintf("Health: %d issue(s), %d warning(s) (%s)", issues, warnings, tier)
 }
 
 // lastDeployLabel renders Summary.LastDeploy (#106a's dashboard "Last

@@ -1014,8 +1014,8 @@ func (s *compilerMockSource) ValidateSource(sourceFilePath string) error {
 
 // MergeCompile is never exercised by this file's tests (they only drive
 // ingest, not a merge), but is required to satisfy source.MergeCompiler.
-func (s *compilerMockSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
-	return nil, os.WriteFile(outputPath, []byte("merged"), 0o644)
+func (s *compilerMockSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
+	return nil, nil, os.WriteFile(outputPath, []byte("merged"), 0o644)
 }
 
 var _ source.MergeCompiler = (*compilerMockSource)(nil)

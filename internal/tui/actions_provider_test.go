@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -706,6 +707,37 @@ func TestPrototypeProviderActions_AvailableVersions_ReturnsCannedList(t *testing
 	assert.Equal(t, []string{"1.2", "1.1", "1.0"}, versions)
 }
 
+// TestPrototypeProviderActions_RunHealthCheck_FixKeepsCheckedRows is a
+// Copilot round-11 finding (real, #224): RunHealthCheck(fix=true) used to
+// return an emptied HealthView (Checked: 0, no Findings at all) -
+// simulating "every problem resolved" by simulating nothing having been
+// checked in the first place. That contradicts the Health screen's own "OK
+// rows included, per checked file" convention (established once the
+// OK-rows model landed): a --prototype fix demo rendered as if the fix pass
+// never scanned anything, instead of showing the canned problems resolved.
+// This proves the post-fix canned view keeps a non-zero Checked count and
+// non-empty Findings, including at least one resolved "fixed_*" row.
+func TestPrototypeProviderActions_RunHealthCheck_FixKeepsCheckedRows(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	view, err := actions.RunHealthCheck(context.Background(), true, true, func(ActionProgress) {})
+	require.NoError(t, err)
+
+	assert.Positive(t, view.Checked, "a --fix pass still reports how many files it checked, same as the pre-fix canned view")
+	require.NotEmpty(t, view.Findings, "a --fix demo must still show what it checked, not an emptied view")
+
+	var sawFixed bool
+	for _, f := range view.Findings {
+		if strings.HasPrefix(f.Status, "fixed_") {
+			sawFixed = true
+		}
+		assert.NotEqual(t, "stale_deployment", f.Status, "the canned stale_deployment row must flip to its fixed_ equivalent after --fix")
+	}
+	assert.True(t, sawFixed, "at least one canned row must show as resolved (fixed_*) after --fix")
+}
+
 func requireModByID(t *testing.T, mods []ModItem, id string) ModItem {
 	t.Helper()
 	for _, m := range mods {
@@ -742,6 +774,14 @@ type recordingActions struct {
 	// []ModItem (mirroring the other *Calls fields) since both the mod
 	// identity and the chosen policy string matter to those tests.
 	SetPolicyCalls []struct{ ModID, Policy string }
+	// SetConvertPaksCalls records each SetConvertPaks call as {modID,
+	// enabled} - #221's toggle wiring tests assert against this, mirroring
+	// SetPolicyCalls' own struct-per-call shape immediately above (two
+	// arguments matter here too).
+	SetConvertPaksCalls []struct {
+		ModID   string
+		Enabled bool
+	}
 	// SetLockCalls records each SetLock call as {modID, version} - Task 6's
 	// lock wiring tests assert against this, mirroring SetPolicyCalls' own
 	// struct-per-call shape above (two arguments matter here too).
@@ -795,9 +835,16 @@ type recordingActions struct {
 	// here, not just one).
 	ExportCalls []struct{ Name, Path string }
 
+	// RunHealthCheckCalls records each RunHealthCheck call's {full, fix}
+	// arguments - #224 Task 8's Health-screen wiring tests assert against
+	// this, mirroring SetConvertPaksCalls' own struct-per-call shape above
+	// (two arguments matter here too).
+	RunHealthCheckCalls []struct{ Full, Fix bool }
+
 	EnableOutcome, DisableOutcome, UninstallOutcome, DeployOutcome, ApplyOutcome ActionOutcome
 	ApplyInstallOutcome, ApplyUpdateOutcome                                      ActionOutcome
 	SetPolicyOutcome                                                             ActionOutcome
+	SetConvertPaksOutcome                                                        ActionOutcome
 	SetLockOutcome, UnlockOutcome                                                ActionOutcome
 	CreateProfileOutcome, DeleteProfileOutcome                                   ActionOutcome
 	PurgeOutcome                                                                 ActionOutcome
@@ -810,6 +857,9 @@ type recordingActions struct {
 	ApplyImportOutcome                                                           ActionOutcome
 	ExportOutcome                                                                ActionOutcome
 	AvailableVersionsOut                                                         []string
+	// RunHealthCheckOutcome is what RunHealthCheck returns for every call -
+	// #224 Task 8's Health-screen wiring tests assert against this.
+	RunHealthCheckOutcome HealthView
 
 	// ApplySwitchTicks/ApplyInstallTicks/ApplyUpdateTicks/PurgeTicks, if
 	// set, are replayed through the matching method's progress callback (in
@@ -822,10 +872,15 @@ type recordingActions struct {
 	PurgeTicks        []ActionProgress
 	RollbackTicks     []ActionProgress
 	ApplyImportTicks  []ActionProgress
+	// RunHealthCheckTicks, if set, is replayed through RunHealthCheck's
+	// progress callback (in order) whenever it's non-nil - mirrors the other
+	// *Ticks fields immediately above.
+	RunHealthCheckTicks []ActionProgress
 
 	EnableErr, DisableErr, UninstallErr, DeployErr, PlanErr, ApplyErr error
 	PlanInstallErr, ApplyInstallErr, CheckUpdatesErr, ApplyUpdateErr  error
 	SetPolicyErr                                                      error
+	SetConvertPaksErr                                                 error
 	SetLockErr, UnlockErr, AvailableVersionsErr                       error
 	CreateProfileErr, DeleteProfileErr                                error
 	PurgeErr                                                          error
@@ -834,6 +889,9 @@ type recordingActions struct {
 	RollbackErr                                                       error
 	PlanImportErr, ApplyImportErr                                     error
 	ExportErr                                                         error
+	// RunHealthCheckErr is returned by every RunHealthCheck call - #224 Task
+	// 8's error-path wiring tests assert against this.
+	RunHealthCheckErr error
 
 	// ApplyUpdateErrByID, if set, overrides ApplyUpdateOutcome/ApplyUpdateErr
 	// for a specific UpdateItem.ID - lets a Task 5 test simulate a
@@ -913,6 +971,15 @@ func (r *recordingActions) ApplyUpdate(_ context.Context, u UpdateItem, progress
 func (r *recordingActions) SetUpdatePolicy(_ context.Context, item ModItem, policy string) (ActionOutcome, error) {
 	r.SetPolicyCalls = append(r.SetPolicyCalls, struct{ ModID, Policy string }{item.ID, policy})
 	return r.SetPolicyOutcome, r.SetPolicyErr
+}
+
+// SetConvertPaks implements ActionProvider (#221).
+func (r *recordingActions) SetConvertPaks(_ context.Context, item ModItem, enabled bool) (ActionOutcome, error) {
+	r.SetConvertPaksCalls = append(r.SetConvertPaksCalls, struct {
+		ModID   string
+		Enabled bool
+	}{item.ID, enabled})
+	return r.SetConvertPaksOutcome, r.SetConvertPaksErr
 }
 
 // SetLock implements ActionProvider (Task 6).
@@ -999,6 +1066,17 @@ func (r *recordingActions) ExportProfile(_ context.Context, name, path string) (
 	return r.ExportOutcome, r.ExportErr
 }
 
+// RunHealthCheck implements ActionProvider (#224 Task 8).
+func (r *recordingActions) RunHealthCheck(_ context.Context, full, fix bool, progress func(ActionProgress)) (HealthView, error) {
+	r.RunHealthCheckCalls = append(r.RunHealthCheckCalls, struct{ Full, Fix bool }{full, fix})
+	for _, p := range r.RunHealthCheckTicks {
+		if progress != nil {
+			progress(p)
+		}
+	}
+	return r.RunHealthCheckOutcome, r.RunHealthCheckErr
+}
+
 // failingActions implements ActionProvider with every method returning a
 // fixed error (Err, or a generic one if Err is unset) - for Tasks 6-7 to
 // verify error-path UI (status line rendering, modal dismissal) without
@@ -1056,6 +1134,10 @@ func (f failingActions) SetUpdatePolicy(context.Context, ModItem, string) (Actio
 	return ActionOutcome{}, f.err()
 }
 
+func (f failingActions) SetConvertPaks(context.Context, ModItem, bool) (ActionOutcome, error) {
+	return ActionOutcome{}, f.err()
+}
+
 func (f failingActions) SetLock(context.Context, ModItem, string) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
 }
@@ -1098,6 +1180,10 @@ func (f failingActions) ApplyImport(context.Context, []byte, func(ActionProgress
 
 func (f failingActions) ExportProfile(context.Context, string, string) (ActionOutcome, error) {
 	return ActionOutcome{}, f.err()
+}
+
+func (f failingActions) RunHealthCheck(context.Context, bool, bool, func(ActionProgress)) (HealthView, error) {
+	return HealthView{}, f.err()
 }
 
 func TestRecordingActionsRecordsCallsAndReturnsConfiguredOutcomes(t *testing.T) {

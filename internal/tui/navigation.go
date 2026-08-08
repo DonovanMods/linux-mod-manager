@@ -11,7 +11,17 @@ const (
 	ScreenSearch
 	ScreenProfiles
 	ScreenSources
-	ScreenConflicts
+	// ScreenHealth renders the health home view (a full-width
+	// findings+conflicts table with a detail strip) - one screen among six,
+	// no longer special-cased as the context-view host: since #86 generalized
+	// contextview.go, ANY screen can host Model.pushContext's pushed content
+	// (see contextContent's own doc comment), rendering it over whatever
+	// screen pushed it instead of jumping the session to Health. #224 Task 15
+	// folded the former standalone ScreenConflicts (slot 6) into this
+	// screen's table - see healthTableRows/healthDetailPane's own doc
+	// comments - so ScreenHealth occupies slot 6 (digit "6") instead of 7,
+	// and there is no separate Conflicts screen anymore.
+	ScreenHealth
 )
 
 var screens = []Screen{
@@ -20,7 +30,7 @@ var screens = []Screen{
 	ScreenSearch,
 	ScreenProfiles,
 	ScreenSources,
-	ScreenConflicts,
+	ScreenHealth,
 }
 
 // String returns a human-readable screen name.
@@ -36,8 +46,8 @@ func (s Screen) String() string {
 		return "Profiles"
 	case ScreenSources:
 		return "Sources"
-	case ScreenConflicts:
-		return "Conflicts"
+	case ScreenHealth:
+		return "Health"
 	default:
 		return fmt.Sprintf("Screen(%d)", s)
 	}

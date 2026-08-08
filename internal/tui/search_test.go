@@ -534,6 +534,10 @@ func (noSourcesProvider) Search(context.Context, string, string, int, int) (Sear
 func (noSourcesProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
 func (noSourcesProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
 func (noSourcesProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
+func (noSourcesProvider) Health(context.Context) (HealthView, error)        { return HealthView{}, nil }
+func (noSourcesProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // TestZeroRealSourcesShowsConfiguredSourcesDiagnosticOnConstruction also
 // guards #58 item 5's wording-parity fix: the TUI's diagnostic must match

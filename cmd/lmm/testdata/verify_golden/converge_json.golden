@@ -1,0 +1,28 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "files": [
+    {
+      "mod_id": "mod1",
+      "mod_name": "Mod One",
+      "file_id": "a.esp",
+      "status": "ok"
+    },
+    {
+      "mod_id": "mod1",
+      "mod_name": "",
+      "file_id": "gone.esp",
+      "status": "stale_deployment",
+      "note": "no longer provided by local/mod1"
+    },
+    {
+      "mod_id": "",
+      "mod_name": "",
+      "file_id": "stray.pak",
+      "status": "stale_deployment",
+      "note": "dangling link into lmm cache"
+    }
+  ],
+  "issues": 0,
+  "warnings": 2
+}

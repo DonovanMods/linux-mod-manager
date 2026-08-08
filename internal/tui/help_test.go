@@ -24,7 +24,7 @@ func TestHelpViewListsPerScreenGroups(t *testing.T) {
 	view := model.helpView()
 
 	for _, want := range []string{
-		"global", "dashboard", "installed mods", "search", "profiles", "conflicts",
+		"global", "dashboard", "installed mods", "search", "profiles", "health",
 		"files", "policy", "purge", "game", "new profile", "delete profile",
 		// changelog is fix-wave-2 finding #1's list-scoped changelog viewer
 		// ('v' on Installed Mods, outside any modal - viewSelectedModChangelog,
@@ -65,24 +65,29 @@ func TestHelpViewCurrentScreenGroupFirst(t *testing.T) {
 	require.Less(t, installedIdx, profilesIdx, "installed mods group should render before profiles when on Installed Mods")
 }
 
-// TestHelpViewConflictsGroupPromotedOnConflictsScreen mirrors
-// TestHelpViewCurrentScreenGroupFirst for Task 3's new "conflicts" group: a
-// Conflicts-screen user sees it promoted to immediately follow "global",
-// ahead of the fixed dashboard/installed mods/search/profiles order.
-func TestHelpViewConflictsGroupPromotedOnConflictsScreen(t *testing.T) {
+// TestHelpViewHealthGroupPromotedOnHealthScreen mirrors
+// TestHelpViewCurrentScreenGroupFirst for the "health" group: a
+// Health-screen user (nothing pushed) sees it promoted to immediately
+// follow "global", ahead of the fixed dashboard/installed mods/search/
+// profiles order. Formerly TestHelpViewConflictsGroupPromotedOnConflictsScreen,
+// which proved the same promotion for the standalone Conflicts screen's own
+// "conflicts" group before #224 Task 15 retired that screen and folded its
+// group's still-relevant content (Up/Down/Deploy) into "health" - see
+// helpGroups' own doc comment on the health group.
+func TestHelpViewHealthGroupPromotedOnHealthScreen(t *testing.T) {
 	t.Parallel()
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
-	model.screen = ScreenConflicts
+	model.screen = ScreenHealth
 	model.showHelp = true
 
 	view := model.helpView()
-	conflictsIdx := strings.Index(view, "conflicts")
+	healthIdx := strings.Index(view, "health")
 	dashboardIdx := strings.Index(view, "dashboard")
-	require.NotEqual(t, -1, conflictsIdx, "conflicts header missing")
+	require.NotEqual(t, -1, healthIdx, "health header missing")
 	require.NotEqual(t, -1, dashboardIdx, "dashboard header missing")
-	require.Less(t, conflictsIdx, dashboardIdx, "conflicts group should render before dashboard when on Conflicts")
+	require.Less(t, healthIdx, dashboardIdx, "health group should render before dashboard when on Health")
 }
 
 // TestHelpViewCapsWithMoreTailAtSmallHeight exercises the height-capped
@@ -123,4 +128,83 @@ func TestFooterMentionsHelpKey(t *testing.T) {
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
 	require.NoError(t, err)
 	require.Contains(t, model.footerLine(), "?: help")
+}
+
+// TestHelpViewEnterRowsDisambiguated is smoke round 2's finding 2, checked
+// against the CONTENT (an unsized model, helpBodyBudget's generous unsized
+// default - see TestHelpViewListsPerScreenGroups' own doc comment for why
+// that's the right size to assert content against): the "installed mods"
+// group used to render Select via helpEntry, which falls back to keys.go's
+// generic "enter"/"open" and never said WHAT opened; the "search" group
+// listed Submit ("enter: search") and Select ("enter: open") side by side
+// with the same key and no indication of which state each applies to.
+// Installed Mods now hand-writes Select's row like the dashboard's ("open
+// menu entry") and profiles' ("switch profile") groups already do for this
+// exact problem; Search hand-writes BOTH Submit's and Select's rows, each
+// naming its own state (Submit fires only while the query input is
+// focused; Select only once it's blurred with a result selected - see
+// openSelectedModDetails).
+func TestHelpViewEnterRowsDisambiguated(t *testing.T) {
+	t.Parallel()
+
+	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
+	require.NoError(t, err)
+	model.showHelp = true
+	view := model.helpView()
+
+	require.Contains(t, view, "open mod details",
+		"installed mods and search help groups must say what enter opens")
+	require.Contains(t, view, "query input focused",
+		"search help group's submit row must say it only applies while the input is focused")
+}
+
+// TestHelpViewInstalledModsEnterRowSurvivesAtNormalSize proves the Installed
+// Mods "enter: open mod details" row actually reaches the rendered panel at
+// a normal terminal size (100x30), not just in helpGroups' unrendered data -
+// it's the group's first entry, so helpBodyBudget's "+N more" tail-collapse
+// (which starts biting well before the full grouped list at this size, per
+// TestHelpViewSearchEnterRowSurvivesCollapseAtNormalSize below) never
+// reaches it - and since #234 it is also marked kept(), so it would survive
+// even if later entries were reordered above it.
+func TestHelpViewInstalledModsEnterRowSurvivesAtNormalSize(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	model.screen = ScreenInstalledMods
+	model = updateWithRunes(t, model, "?")
+
+	view := model.View()
+	require.Contains(t, view, "open mod details",
+		"installed mods help group must say what enter opens, at a normal terminal size")
+}
+
+// TestHelpViewSearchEnterRowSurvivesCollapseAtNormalSize is #234's
+// regression test, deliberately inverted from the characterization test
+// (TestHelpViewSearchEnterRowCollapsedAtNormalSize) that used to pin the
+// bug it fixes: on the Search screen, Select's disambiguated row ("open mod
+// details...") is the group's LAST entry, and at 100x30 helpBodyBudget's
+// "+N more" tail-collapse used to swallow it before rendering reached it -
+// the screen's headline action was undiscoverable from its own help panel.
+// The collapse now drops by priority, not position: rows marked kept() in
+// the promoted (current-screen) group survive wherever they sit, so BOTH of
+// the search group's hand-written headline rows - Submit's ("query input
+// focused") and Select's ("open mod details...") - must render. The
+// "+N more" tail must ALSO still be present: the rows survive because the
+// collapse prefers them, not because the budget grew - a raised budget
+// would regress the terminal-bounds invariant
+// (TestHelpViewCapsWithMoreTailAtSmallHeight) instead.
+func TestHelpViewSearchEnterRowSurvivesCollapseAtNormalSize(t *testing.T) {
+	t.Parallel()
+
+	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	model.screen = ScreenSearch
+	model = updateWithRunes(t, model, "?")
+
+	view := model.View()
+	require.Contains(t, view, "query input focused",
+		"submit's disambiguated row must survive the collapse at 100x30")
+	require.Contains(t, view, "open mod details",
+		"select's disambiguated row (the screen's headline action) must survive the collapse at 100x30 (#234)")
+	require.Regexp(t, `\+\d+ more`, view,
+		"the search group's tail must still collapse at this size - survival comes from priority, not a raised budget")
 }

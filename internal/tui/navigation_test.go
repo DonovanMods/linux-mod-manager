@@ -10,7 +10,7 @@ func TestScreenAtClampsOutOfRangeIndexes(t *testing.T) {
 	t.Parallel()
 
 	require.Equal(t, ScreenDashboard, screenAt(-1))
-	require.Equal(t, ScreenConflicts, screenAt(len(screens)))
+	require.Equal(t, ScreenHealth, screenAt(len(screens)))
 	require.Equal(t, ScreenInstalledMods, screenAt(1))
 }
 

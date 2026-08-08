@@ -33,6 +33,7 @@ func (d *DB) migrate() error {
 		migrateV9,
 		migrateV10,
 		migrateV11,
+		migrateV12,
 	}
 
 	for i := version; i < len(migrations); i++ {
@@ -186,5 +187,13 @@ func migrateV10(d *DB) error {
 // matter was added to installed_mods in v9 instead.
 func migrateV11(d *DB) error {
 	_, err := d.Exec(`DROP TABLE IF EXISTS mod_cache`)
+	return err
+}
+
+func migrateV12(d *DB) error {
+	// #221: per-mod pak-to-exmod conversion opt-out. Default 1 = convert
+	// (paks join the merged pak); 0 = deploy raw. Deliberately excluded
+	// from SaveInstalledMod's upsert so reinstall preserves the user's choice.
+	_, err := d.Exec(`ALTER TABLE installed_mods ADD COLUMN convert_paks INTEGER DEFAULT 1`)
 	return err
 }

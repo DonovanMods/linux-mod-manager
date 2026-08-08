@@ -739,7 +739,7 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 	// #197 postsmoke seam-audit fix: toAdd/toRemove change profile.Mods
 	// MEMBERSHIP directly (AddMod/RemoveMod) - membership, not just the DB
 	// Enabled flag, is what GetInstalledModsInProfileOrder (and so
-	// enabledExmodzSources) requires, so this is a genuine merge-input
+	// enabledMergeSources) requires, so this is a genuine merge-input
 	// change with no other seam to catch it.
 	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)

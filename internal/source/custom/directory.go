@@ -155,7 +155,6 @@ func applyMetadata(mod *domain.Mod, info *metadata.Info) {
 	}
 	mod.Version = info.Version
 	mod.Summary = info.Summary
-	mod.Description = info.Summary
 	mod.Author = info.Author
 }
 

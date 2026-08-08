@@ -1,0 +1,10 @@
+Verifying cached mods...
+
+? Icarus Merged Pak - RECOMPILE NEEDED (base pak updated - run 'lmm update --all' to fix)
+? Bear Mount - VERSION UNVERIFIABLE (recorded file ID(s) no longer found upstream; reinstall the mod or run 'lmm update' to adopt the current version)
+? Bear Mount (exmodz-file-id) - NO CHECKSUM
+  Re-download to populate checksum failed: file exmodz-file-id not found in mod
+? legacy-pak-mod (LegacyMod.pak) - NEEDS REINGEST (pak predates conversion support - run 'lmm verify --fix' to re-ingest)
+  Re-ingested for pak conversion
+
+0 issue(s), 3 warning(s) found.

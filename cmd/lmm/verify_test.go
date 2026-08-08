@@ -1728,6 +1728,53 @@ func TestDoVerify_Fix_Redownload_MapsGameIDPerSourceMapping(t *testing.T) {
 	assert.Equal(t, "mapped-domain", src.receivedGameFileIDs[1], "redownloadModFile must translate GameID through game.SourceIDs, same rule as Service.GetMod and the version-record pre-pass")
 }
 
+// TestDoVerify_Fix_Redownload_MapsGameIDForDownloadURL is the download-side
+// half of the sibling test above, and guards #228: redownloadModFile mapped
+// its GetModFiles lookup but then handed the RAW installed mod (&mod.Mod,
+// GameID = the LMM game ID) to Service.DownloadMod, which forwards it
+// straight to src.GetDownloadURL with no translation of its own. On any game
+// whose per-source mapping differs from its LMM ID, the repair therefore
+// resolved the download URL against the wrong upstream game. The fixture
+// stages no content for file "2", so the HTTP fetch still 404s - but
+// GetDownloadURL is reached (and recorded) before that, which is all this
+// pins.
+func TestDoVerify_Fix_Redownload_MapsGameIDForDownloadURL(t *testing.T) {
+	cmd, svc, game, src := setupDoVerifyRedownloadTest(t)
+	game.SourceIDs["test-src"] = "mapped-domain"
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	_ = captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	require.Len(t, src.receivedGameDownloadIDs, 1, "expected GetDownloadURL exactly once, for the MISSING file's repair")
+	assert.Equal(t, "mapped-domain", src.receivedGameDownloadIDs[0], "the --fix re-download must resolve its URL against the source-mapped game, same rule as its own GetModFiles lookup")
+}
+
+// TestDoVerify_Fix_Redownload_EmptyMappingKeepsLMMGameIDForDownloadURL is the
+// #228 fix's companion guard, mirroring the GetModFiles-side test above: an
+// empty per-source mapping value means "this source applies to any game"
+// (directory sources declare `donovan-mods: ""`), so it must NOT blank out
+// the LMM game ID on the way to GetDownloadURL either.
+func TestDoVerify_Fix_Redownload_EmptyMappingKeepsLMMGameIDForDownloadURL(t *testing.T) {
+	cmd, svc, game, src := setupDoVerifyRedownloadTest(t)
+	game.SourceIDs["test-src"] = ""
+
+	oldJSON := jsonOutput
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	_ = captureStdout(t, func() error {
+		return doVerify(cmd, svc, game, nil)
+	})
+
+	require.Len(t, src.receivedGameDownloadIDs, 1)
+	assert.Equal(t, game.ID, src.receivedGameDownloadIDs[0], "an empty per-source mapping must keep the LMM game ID, not blank it out")
+}
+
 // TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure is the NO
 // CHECKSUM half of audit Finding 7: same missing-download fixture, but
 // with the cache entry actually present (so the file reads as NO

@@ -569,7 +569,7 @@ func TestService_ApplyUpdate_ProgressEvents(t *testing.T) {
 // GAME's own ID (game.ID) throughout, never a possibly-different GameID a
 // source's GetMod stamps onto the freshly-fetched newMod (mirroring how a
 // source like NexusMods may map/rewrite GameID for querying purposes - see
-// resolveInstallDependencies' gameIDForFetch comment in flows.go). Traced:
+// resolveInstallDependencies' gameID doc comment in flows.go). Traced:
 // unlike ApplyInstall's SaveInstalledMod (an INSERT that writes a mod's
 // GameID column and therefore needs explicit normalization),
 // ApplyModUpdate/SetModLinkMethod/UpsertMod are all UPDATES keyed by the
@@ -612,7 +612,7 @@ func TestService_ApplyUpdate_GameIDNormalization(t *testing.T) {
 // gameIDStampingSource wraps multiFileDownloadSource but stamps a
 // caller-chosen (mismatched) GameID onto every Mod GetMod returns, simulating
 // a source that maps/rewrites GameID for its own querying purposes (see
-// resolveInstallDependencies' gameIDForFetch comment in flows.go).
+// resolveInstallDependencies' gameID doc comment in flows.go).
 type gameIDStampingSource struct {
 	*multiFileDownloadSource
 	stampGameID string

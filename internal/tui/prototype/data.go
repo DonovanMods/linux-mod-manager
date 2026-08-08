@@ -88,6 +88,13 @@ type Mod struct {
 	Endorsements    int64
 	HasEndorsements bool
 
+	// Description/SourceURL/PictureURL feed the mod details view (#86). Only
+	// a few entries set them; the view's omit-when-empty rules are exactly
+	// what the sparse entries exercise.
+	Description string
+	SourceURL   string
+	PictureURL  string
+
 	// Dependencies/Conflicts/SizeBytes feed prototypeProvider.PlanInstall's
 	// fake plan (actions_provider.go) for a SearchResults entry: canned
 	// dependency/conflict display lines and a declared download size. Every
@@ -158,7 +165,17 @@ func Load() Data {
 			LastDeploy: time.Now().Add(-3 * time.Hour),
 		},
 		InstalledMods: []Mod{
-			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true, UpdatePolicy: "auto", AvailableVersion: "5.3", Changelog: "Fixed a crash when opening the inventory with a controller.\nAdded a compatibility patch for the newest SKSE build.\nMinor MCM menu polish."},
+			// skyui is the details view's "rich" demo entry (#86): a
+			// multi-paragraph Description plus both SourceURL and
+			// PictureURL, so --prototype mode can show the full render
+			// path. Every other InstalledMods entry deliberately leaves
+			// these three unset (the "sparse" path), matching the file's
+			// existing "never invent a phantom X" convention.
+			{ID: "skyui", Name: "SkyUI", Source: "nexusmods", Author: "schlangster", Version: "5.2", Status: "installed", Summary: "Immersive user interface overhaul.", Downloads: 12_500_000, Endorsements: 850_000, HasEndorsements: true, UpdatePolicy: "auto", AvailableVersion: "5.3", Changelog: "Fixed a crash when opening the inventory with a controller.\nAdded a compatibility patch for the newest SKSE build.\nMinor MCM menu polish.",
+				Description: "SkyUI replaces Skyrim's default controller-oriented interface with one built for mouse and keyboard.\n\nIt also ships the MCM (Mod Configuration Menu) framework that most other mods depend on for their own settings screens, so most modded setups install it early.",
+				SourceURL:   "https://www.nexusmods.com/skyrimspecialedition/mods/12604",
+				PictureURL:  "https://staticdelivery.nexusmods.com/mods/1704/images/12604/12604-1234567890.jpg",
+			},
 			{ID: "ussep", Name: "USSEP", Source: "nexusmods", Author: "Arthmoor", Version: "4.3", Status: "update", Summary: "Unofficial Skyrim Special Edition Patch.", Downloads: 11_000_000, Endorsements: 420_000, HasEndorsements: true, UpdatePolicy: "notify", AvailableVersion: "4.4"},
 			{ID: "skse-address-library", Name: "SKSE Address Library", Source: "nexusmods", Author: "meh321", Version: "11", Status: "installed", Summary: "Address library for SKSE plugins.", Downloads: 8_900_000, Endorsements: 150_000, HasEndorsements: true, PreviousVersion: "10"},
 			{ID: "immersive-armors", Name: "Immersive Armors", Source: "nexusmods", Author: "hothtrooper44", Version: "8.1", Status: "conflict", Summary: "Adds hundreds of new armor variants.", Downloads: 6_700_000, Endorsements: 380_000, HasEndorsements: true},

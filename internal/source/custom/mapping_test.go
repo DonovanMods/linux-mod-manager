@@ -77,6 +77,29 @@ func TestMapMod(t *testing.T) {
 	assert.Equal(t, "https://x.test/mods/77", mod.SourceURL)
 }
 
+// TestMapModDescription (#235): a mapped description flows through; an
+// unmapped or missing one stays empty instead of falling back to Summary,
+// which made every surface showing both render the same paragraph twice.
+func TestMapModDescription(t *testing.T) {
+	doc := jsonDoc(t, `{"id": 1, "name": "X", "blurb": "short text", "body": "the real full description"}`)
+
+	t.Run("mapped description flows through", func(t *testing.T) {
+		mapping := map[string]string{"id": "id", "name": "name", "summary": "blurb", "description": "body"}
+		mod, err := mapMod(doc, mapping, "s")
+		require.NoError(t, err)
+		assert.Equal(t, "short text", mod.Summary)
+		assert.Equal(t, "the real full description", mod.Description)
+	})
+
+	t.Run("unmapped description stays empty, not aliased to summary", func(t *testing.T) {
+		mapping := map[string]string{"id": "id", "name": "name", "summary": "blurb"}
+		mod, err := mapMod(doc, mapping, "s")
+		require.NoError(t, err)
+		assert.Equal(t, "short text", mod.Summary)
+		assert.Empty(t, mod.Description, "Description must not be a copy of Summary (#235)")
+	})
+}
+
 func TestMapModRequiredFields(t *testing.T) {
 	mapping := map[string]string{"id": "id", "name": "name"}
 

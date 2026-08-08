@@ -516,6 +516,13 @@ type fakeInstallSource struct {
 	// (or didn't apply) the game's per-source ID mapping before calling in.
 	receivedGameFileIDs []string
 
+	// receivedGameDownloadIDs records the mod.GameID GetDownloadURL was
+	// actually called with, in call order - the download-side twin of
+	// receivedGameFileIDs. Service.DownloadMod forwards its mod straight to
+	// the source with no game-ID translation of its own (#228), so callers
+	// driving a download off an installed row must map it themselves.
+	receivedGameDownloadIDs []string
+
 	// getModFilesErr, when set, makes GetModFiles return this error
 	// instead of a normal lookup - for tests exercising a "source
 	// unreachable" path (nil by default, so every other test is unaffected).
@@ -580,6 +587,7 @@ func (s *fakeInstallSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([
 	return s.files[mod.ID], nil
 }
 func (s *fakeInstallSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	s.receivedGameDownloadIDs = append(s.receivedGameDownloadIDs, mod.GameID)
 	return s.srv.URL + "/" + fileID, nil
 }
 func (s *fakeInstallSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {

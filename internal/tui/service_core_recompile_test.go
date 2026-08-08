@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/go-unrealpak"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/tui"
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,17 +58,17 @@ func (s *recompileFakeSource) ValidateSource(sourceFilePath string) error {
 
 // MergeCompile concatenates every source's bytes - enough to prove a
 // merge/regen actually happened and used the retained content.
-func (s *recompileFakeSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
+func (s *recompileFakeSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
 	s.compileCalls++
 	var out []byte
 	for _, src := range sources {
-		data, err := os.ReadFile(src.ExmodzPath)
+		data, err := os.ReadFile(src.SourcePath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, data...)
 	}
-	return nil, os.WriteFile(outputPath, out, 0o644)
+	return nil, nil, os.WriteFile(outputPath, out, 0o644)
 }
 
 var (

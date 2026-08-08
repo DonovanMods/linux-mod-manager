@@ -29,6 +29,17 @@ type Summary struct {
 	Enabled     int
 	Updates     int // -1 = unknown (no update check has run)
 	Conflicts   int // -1 = unknown
+	// HealthIssues and HealthWarnings are the dashboard's Health signal
+	// (#224 Task 10) - the LOCAL verify tier's issue/warning counts, riding
+	// on the same ordinary loadData refresh as Conflicts above (see
+	// DataProvider.Health's doc comment: cheap disk/DB read, never gated
+	// behind an explicit user action like Updates). -1 = unknown, mirroring
+	// Conflicts' own sentinel - set on a scan failure (loadData wraps
+	// DataProvider.Health in its own error capture, unlike Conflicts'
+	// early-return-fails-the-whole-load pattern: a bad scan must not stop
+	// the rest of the dashboard from loading) as well as before the very
+	// first load ever completes.
+	HealthIssues, HealthWarnings int
 	// LastDeploy is the timestamp of the active profile's most recent deploy
 	// (#106a's dashboard "Last deploy" row), or nil when the profile has
 	// never been deployed (a truly-unknown value surfaces as an error from
@@ -107,6 +118,82 @@ type ModItem struct {
 	// SetLock's doc comment). Empty whenever Locked is false, mirroring
 	// PreviousVersion's own "empty means nothing to show" convention.
 	LockedVersion string
+	// ConvertPaks reports the #221 per-mod pak-to-exmod conversion flag -
+	// populated by coreProvider's Overview mapping (domain.InstalledMod.
+	// ConvertPaks) and left at the zero value in prototypeProvider (prototype.
+	// Mod carries no ConvertPaks state), mirroring UpdatePolicy/Locked's own
+	// "only Overview populates it" convention above. Meaningful only when
+	// CompileGame is true.
+	ConvertPaks bool
+	// CompileGame is true when the active game's DeployMode is
+	// domain.DeployCompile - gates the "m" toggle (mutations.go's
+	// toggleSelectedModConvert) and the "raw" flag column (app.go's
+	// modFlags): a non-compile game's ConvertPaks value has no effect, so
+	// the toggle refuses synchronously rather than silently writing a flag
+	// that does nothing.
+	CompileGame bool
+	// GameConvertPaks mirrors the active game's own convert_paks setting
+	// (domain.Game.ConvertPaks) - the OTHER of the two levels #221's Pak
+	// conversion (Icarus) README section documents ("either one is enough
+	// to keep a pak raw"). Populated by coreProvider's Overview mapping
+	// (service_core.go) from the game already in scope there, and left at
+	// the zero value in prototypeProvider (modItems - service.go), mirroring
+	// ConvertPaks' own "prototype.Mod carries no state for this" convention
+	// immediately above. Meaningful only when CompileGame is true - app.go's
+	// modFlags and service_core.go's SetConvertPaks both read it alongside
+	// ConvertPaks rather than ConvertPaks alone, so a game-level
+	// convert_paks: false is reflected in the TUI exactly like the CLI
+	// already reflects it (cmd/lmm/mod.go's doModConvert).
+	GameConvertPaks bool
+	// HasPakSource reports whether this mod has at least one pak-kind
+	// merge-source file (core.Service.ModHasPakMergeSource) - i.e. whether
+	// ConvertPaks/GameConvertPaks have any deploy-time effect on it at all
+	// (#221 round-4 fix). An exmodz-only mod's conversion flags are
+	// meaningless: there is no pak to convert or leave raw. Populated by
+	// coreProvider's Overview mapping (service_core.go); left at the zero
+	// value in prototypeProvider (modItems - service.go), mirroring
+	// ConvertPaks/GameConvertPaks' own "prototype.Mod carries no state for
+	// this" convention above. Meaningful only when CompileGame is true -
+	// app.go's modFlags and mutations.go's toggleSelectedModConvert both
+	// require it alongside CompileGame before honoring the "raw" flag or the
+	// "m" toggle, so an exmodz-only mod never shows a misleading "raw" flag
+	// and never has its (meaningless) ConvertPaks flag toggled.
+	HasPakSource bool
+	// Profile is the active profile name this row is installed in - only
+	// meaningful when InstalledRow is true (see that field's own doc
+	// comment). Populated by coreProvider's Overview mapping
+	// (service_core.go, from currentProfile()) and prototypeProvider's own
+	// Overview (service.go's modItems, from data.Profile.Name). Empty for a
+	// Search-derived ModItem, mirroring UpdatePolicy/Locked's own "only
+	// Overview populates it" convention above - this is what
+	// modDetailsFromItem seeds InstalledDetails.Profile from, fixing the
+	// "(profile: )" blank parenthetical a details view used to show until
+	// its background fetch landed (#86 review).
+	Profile string
+	// InstalledRow reports whether this ModItem's install-state fields -
+	// Version (as the INSTALLED version, not a search hit's latest
+	// upstream version), UpdatePolicy, Locked, LockedVersion, ConvertPaks,
+	// Profile - were populated from genuine local install state, i.e. this
+	// row came from Overview (the Installed Mods list) or its prototype
+	// equivalent, never from a Search result.
+	//
+	// modDetailsFromItem (service.go) gates its InstalledDetails seed on
+	// THIS field alone, never on Status: a Search hit for an
+	// already-installed mod also reports Status == "installed"
+	// (coreProvider's modsToItems, service_core.go) but carries the
+	// SOURCE's latest Version, not what's actually installed, and leaves
+	// UpdatePolicy/Locked/LockedVersion/Profile at their zero values (see
+	// those fields' own doc comments) - trusting Status there fabricated an
+	// Installed block from data that was never populated, showing a lying
+	// version number and a false "Lock: none" for the whole fetch window,
+	// permanently on a failed fetch (#86 review finding).
+	//
+	// Left at its zero value (false) is the SAFE default: any future
+	// ModItem-constructing screen that forgets to set this explicitly gets
+	// "no Installed block" rather than a silently fabricated one - the same
+	// "leave it nil rather than invent a placeholder" principle
+	// modDetailsFromItem already applies to Description/Category/URLs.
+	InstalledRow bool
 }
 
 // SourceInfo is one renderable source-registry row, mirroring the columns of
@@ -154,6 +241,44 @@ type ConflictItem struct {
 	Stale  bool
 }
 
+// HealthFinding is one renderable row from a verify run, mirroring
+// core.VerifyFinding's shape exactly (#224 Task 8) - a thin TUI-facing copy
+// rather than a reuse of the core type, matching every other DataProvider
+// render model in this file (ConflictItem/SwitchPlanView/etc.) that keeps
+// its own copy instead of exposing internal/core types across the provider
+// boundary.
+// Recorded/Effective/Version mirror core.VerifyFinding's identically-named
+// additive fields (TUI layout rework, #224 follow-up): Recorded/Effective
+// for a version_mismatch row, Version for a missing row - feeding the Health
+// screen's VERSION column (app.go's healthFindingVersion).
+type HealthFinding struct {
+	ModID, ModName, FileID, Status, Note string
+	Recorded, Effective, Version         string
+}
+
+// HealthView is DataProvider.Health/ActionProvider.RunHealthCheck's result:
+// the dashboard signal (coreProvider.Health, Local tier) and the Health
+// screen's content (coreProvider.RunHealthCheck, Local or Full tier, dry-run
+// or --fix).
+//
+// 2026-08-07 smoke feedback (user override, #224): Findings used to drop
+// quiet-ok rows (Status "ok" with an empty Note) as "nothing to show" - but
+// that left a healthy profile's Health screen rendering only a bare "last
+// scan"/"no findings" pair, with no indication of what was actually
+// checked, unlike the CLI's `lmm verify`, which prints a `+ <name> - OK` row
+// per checked file. Findings now KEEPS every row the verify engine reports,
+// quiet-ok included - see healthView's own doc comment in service_core.go.
+type HealthView struct {
+	Findings         []HealthFinding
+	Issues, Warnings int
+	Full             bool // true when produced by the Full (network) tier
+	// Checked mirrors core.VerifyResult.Checked - the number of rows the
+	// verify engine considered this run, feeding the Health header's "N
+	// checked" suffix (healthScanLabel, app.go). Additive (#224 smoke
+	// feedback, 2026-08-07).
+	Checked int
+}
+
 // GameInfo is one renderable configured-game row for the in-TUI game
 // switcher (Task 8's 'g' binding - see mutations.go's openGameSwitcher).
 // Mirrors ProfileItem's shape: just enough to render a picker option and
@@ -190,6 +315,76 @@ type SearchPage struct {
 	// supports search" notice instead of the ordinary zero-results copy -
 	// see searchView's zero-results branch.
 	AttemptedCount int
+}
+
+// ModDetails is the mod-details view's render model (#86). Seeded locally
+// from the ModItem the user selected, then enriched in place by
+// GetModDetails - so the view opens instantly and fills in, rather than
+// blocking on a network round trip the user may not be able to complete.
+type ModDetails struct {
+	ID, Name, Version, Author string
+	Summary, Description      string
+	Category                  string
+	SourceURL, PictureURL     string
+	Endorsements              int64
+	HasEndorsements           bool
+
+	// Installed is nil when the mod is not installed in the active profile,
+	// matching `lmm mod show`'s omit rule.
+	Installed *InstalledDetails
+
+	// Fetching/FetchErr are set by the model's handler and resolvers, never
+	// by a provider; the view reads them to pick its render state.
+	Fetching bool
+	FetchErr string
+}
+
+// InstalledDetails mirrors core.InstalledDetail with the policy already
+// rendered to a display string - the TUI has no reason to carry a
+// domain.UpdatePolicy. A separate type because a view model is a rendering
+// contract, the convention every other TUI row type follows.
+type InstalledDetails struct {
+	Version       string
+	Profile       string
+	UpdatePolicy  string
+	Locked        bool
+	LockedVersion string
+	ConvertPaks   *bool // nil = not applicable, not "off"
+}
+
+// modDetailsFromItem seeds a details view from the row already on screen.
+// Everything here is local: no I/O, so the view can render on the very first
+// frame. Description/Category/SourceURL/PictureURL stay empty until the fetch
+// lands - inventing placeholders for them would be worse than a blank.
+//
+// The Installed block is gated on item.InstalledRow, NOT item.Status - see
+// InstalledRow's own doc comment for why Status can't be trusted here (an
+// installed mod found via Search also reports Status == "installed" but
+// carries none of the fields an Installed block needs). Leaving Installed
+// nil whenever InstalledRow is false is the same "don't invent a
+// placeholder" principle this function already applies to
+// Description/Category/URLs above.
+func modDetailsFromItem(item ModItem) ModDetails {
+	d := ModDetails{
+		ID: item.ID, Name: item.Name, Version: item.Version, Author: item.Author,
+		Summary:         item.Summary,
+		Endorsements:    item.Endorsements,
+		HasEndorsements: item.HasEndorsements,
+	}
+	if item.InstalledRow {
+		d.Installed = &InstalledDetails{
+			Version:       item.Version,
+			Profile:       item.Profile,
+			UpdatePolicy:  item.UpdatePolicy,
+			Locked:        item.Locked,
+			LockedVersion: item.LockedVersion,
+		}
+		if item.CompileGame && item.HasPakSource {
+			v := item.ConvertPaks
+			d.Installed.ConvertPaks = &v
+		}
+	}
+	return d
 }
 
 // DataProvider is the narrow, read-only boundary between the TUI and app
@@ -245,6 +440,14 @@ type DataProvider interface {
 	// count and cache size; if refreshes ever feel slow on very large mod
 	// sets, memoizing per (mod, version) manifest is the obvious lever.
 	Conflicts(ctx context.Context) ([]ConflictItem, error)
+	// Health runs the LOCAL verify tier (disk/DB only - never the network;
+	// core.VerifyLocal) for the dashboard signal and the Health screen's
+	// initial content. Rides loadData like Conflicts.
+	Health(ctx context.Context) (HealthView, error)
+	// GetModDetails fetches full metadata for item's mod and joins local
+	// install state. A network call for remote sources - callers must run it
+	// off the render path (see mutations.go's openSelectedModDetails).
+	GetModDetails(ctx context.Context, item ModItem) (ModDetails, error)
 }
 
 // prototypeProvider serves the static demo data set. It must never touch
@@ -304,6 +507,31 @@ func (p *prototypeProvider) activeMods() []prototype.Mod {
 	return p.data.InstalledMods
 }
 
+// allMods is every prototype mod a details view can be opened on: the active
+// game's installed mods plus the search catalog - the two lists modItems is
+// fed from (Overview at service.go:427, Search at :550).
+func (p *prototypeProvider) allMods() []prototype.Mod {
+	return append(append([]prototype.Mod(nil), p.activeMods()...), p.data.SearchResults...)
+}
+
+// GetModDetails serves the mod-details view's DataProvider contract from the
+// canned data set: modDetailsFromItem seeds everything the row already
+// carries, then this fills in the network-only fields (Description,
+// SourceURL, PictureURL) from the matching prototype.Mod, if any - mirroring
+// coreProvider.GetModDetails' local-first-then-enrich shape without a real
+// fetch.
+func (p *prototypeProvider) GetModDetails(_ context.Context, item ModItem) (ModDetails, error) {
+	out := modDetailsFromItem(item)
+	for _, m := range p.allMods() {
+		if m.ID != item.ID {
+			continue
+		}
+		out.Description, out.SourceURL, out.PictureURL = m.Description, m.SourceURL, m.PictureURL
+		break
+	}
+	return out, nil
+}
+
 // setActiveMods replaces the ACTIVE game's installed-mods slice - the
 // write-back half of activeMods (see its doc comment), needed by the
 // operations that grow or shrink the list (UninstallMod, ApplyInstall,
@@ -350,7 +578,7 @@ func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, err
 			Updates:     p.data.Stats.Updates,
 			Conflicts:   p.data.Stats.Conflicts,
 			LastDeploy:  &lastDeploy,
-		}, modItems(mods), nil
+		}, modItems(mods, true, p.data.Profile.Name), nil
 	}
 
 	enabled := 0
@@ -366,7 +594,7 @@ func (p *prototypeProvider) Overview(_ context.Context) (Summary, []ModItem, err
 		Enabled:     enabled,
 		Updates:     -1,
 		Conflicts:   -1,
-	}, modItems(mods), nil
+	}, modItems(mods, true, p.data.Profile.Name), nil
 }
 
 // ListGames returns the two canned games (see Data.AltGame's doc comment),
@@ -461,7 +689,7 @@ func (p *prototypeProvider) Search(_ context.Context, source, query string, page
 		pageSize = SearchPageSize
 	}
 
-	all := modItems(p.data.SearchResults)
+	all := modItems(p.data.SearchResults, false, "")
 	matched := make([]ModItem, 0, len(all))
 	for _, item := range all {
 		if strings.Contains(strings.ToLower(item.Name), strings.ToLower(query)) {
@@ -570,6 +798,61 @@ func (p *prototypeProvider) Conflicts(_ context.Context) ([]ConflictItem, error)
 	return items, nil
 }
 
+// prototypeHealthFindings is the canned #224 Task 8 demo Health view - one
+// stale_deployment row, one conversion_failed row, and (2026-08-07 smoke
+// feedback) one quiet-ok row so --prototype also demos the CLI-parity shape
+// a healthy mod now renders as, mirroring prototypeAvailableVersions' own
+// "fixed shared canned list, no per-mod/per-game variation needed"
+// precedent (actions_provider.go). prototypeProvider.RunHealthCheck's
+// fix=true branch returns an emptied copy (every row resolved) rather than
+// mutating this shared slice in place - see that method's own doc comment.
+var prototypeHealthFindings = []HealthFinding{
+	{ModID: "101", ModName: "SkyUI", FileID: "main", Status: "stale_deployment", Note: "cache content differs from what's deployed"},
+	{ModID: "bear-mount", ModName: "Bear Mount", Status: "conversion_failed", Note: "pak-to-exmod conversion failed: unsupported UE version"},
+	{ModID: "202", ModName: "Immersive Armors", FileID: "main", Status: "ok"},
+}
+
+// prototypeHealthChecked is the canned Checked count (#224 smoke feedback,
+// 2026-08-07) backing the Health header's "N checked" suffix - one per
+// prototypeHealthFindings row, since the demo has no separate "checked but
+// unreported" mods to account for.
+var prototypeHealthChecked = len(prototypeHealthFindings)
+
+// prototypeHealthFixedFindings is prototypeHealthFindings' post-"--fix" demo
+// shape (2026-08-07 smoke feedback, Copilot round 11): RunHealthCheck's
+// fix=true branch used to return an emptied HealthView (Checked: 0, no
+// Findings), which contradicted the Health screen's own "OK rows included,
+// per checked file" convention once the OK-rows model landed - a
+// --prototype fix demo rendered as though nothing had been checked at all.
+// This instead mirrors the real engine's own --fix convention
+// (cmd/lmm/verify.go's doc comment): the stale_deployment row flips to
+// "fixed_stale_deployment", carrying its Note over unchanged (the
+// stale-deployment reason is "populated on both" statuses per that same
+// doc comment); the conversion_failed row is left as-is, since no
+// "fixed_conversion_failed" status exists - conversion failures aren't
+// --fix-repairable (internal/core/verify.go only ever emits
+// "conversion_failed", never a fixed_ counterpart); the ok row is
+// untouched. Checked stays prototypeHealthChecked - a --fix pass resolves
+// what it already found, it doesn't check MORE files than the initial scan
+// did.
+var prototypeHealthFixedFindings = []HealthFinding{
+	{ModID: "101", ModName: "SkyUI", FileID: "main", Status: "fixed_stale_deployment", Note: "cache content differs from what's deployed"},
+	{ModID: "bear-mount", ModName: "Bear Mount", Status: "conversion_failed", Note: "pak-to-exmod conversion failed: unsupported UE version"},
+	{ModID: "202", ModName: "Immersive Armors", FileID: "main", Status: "ok"},
+}
+
+// Health returns the canned demo Health view (#224 Task 8) so --prototype
+// mode can demo the Health screen's initial content without touching disk,
+// network, DB, or APIs - mirroring every other prototypeProvider read
+// (Conflicts/Profiles/etc. above).
+func (p *prototypeProvider) Health(_ context.Context) (HealthView, error) {
+	return HealthView{
+		Findings: append([]HealthFinding(nil), prototypeHealthFindings...),
+		Warnings: 2,
+		Checked:  prototypeHealthChecked,
+	}, nil
+}
+
 func (p *prototypeProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
 	items := make([]ProfileItem, 0, len(p.data.Profiles))
 	for _, profile := range p.data.Profiles {
@@ -582,10 +865,25 @@ func (p *prototypeProvider) Profiles(_ context.Context) ([]ProfileItem, error) {
 	return items, nil
 }
 
-func modItems(mods []prototype.Mod) []ModItem {
+// modItems maps prototype.Mod rows to ModItems, shared by Overview's two
+// installed-mods branches (both call sites above) and Search's
+// SearchResults path (:648) - the one function backs both lists, unlike
+// coreProvider's own Overview/modsToItems split (service_core.go), which
+// uses two SEPARATE mapping functions for exactly the reason installedRow
+// exists here: a Search-derived row must never claim genuine install state.
+//
+// installedRow must be true ONLY for the Overview call sites - it feeds
+// ModItem.InstalledRow, which modDetailsFromItem (above) gates its
+// Installed block on (#86 review finding). No canned SearchResults entry
+// currently sets Status: "installed", so this couldn't yet be observed from
+// --prototype mode alone, but the contract must hold regardless of what the
+// canned data happens to contain. profile is only stamped onto ModItem.
+// Profile when installedRow is true, matching Profile's own "empty for a
+// Search-derived ModItem" doc comment.
+func modItems(mods []prototype.Mod, installedRow bool, profile string) []ModItem {
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {
-		items = append(items, ModItem{
+		item := ModItem{
 			ID:              mod.ID,
 			Name:            mod.Name,
 			Author:          mod.Author,
@@ -600,7 +898,12 @@ func modItems(mods []prototype.Mod) []ModItem {
 			PreviousVersion: mod.PreviousVersion,
 			Locked:          mod.Locked,
 			LockedVersion:   mod.LockedVersion,
-		})
+			InstalledRow:    installedRow,
+		}
+		if installedRow {
+			item.Profile = profile
+		}
+		items = append(items, item)
 	}
 	return items
 }

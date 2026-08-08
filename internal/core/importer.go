@@ -33,7 +33,7 @@ type ImportResult struct {
 	// ".exmodz" branch, where it is the archive's own filename (Import has
 	// no other stable identity to retain under; see that branch's own doc
 	// comment). Callers MUST fold this into the InstalledMod/ModReference's
-	// FileIDs (#197 C1 fix): enabledExmodzSources walks FileIDs to find each
+	// FileIDs (#197 C1 fix): enabledMergeSources walks FileIDs to find each
 	// mod's retained source, and a row whose FileIDs never includes this
 	// value is invisible to every future merge - silently, forever, since
 	// it is also excluded from the staleness fingerprint on both sides of
@@ -118,20 +118,38 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	var fileCount int
 	var retainedFileID string
 
+	// mergeEligible (.exmodz) has no other valid interpretation for a
+	// DeployCompile game - an unresolvable MergeCompiler is a hard error.
+	// convertEligiblePak (.pak) DOES have one - the legacy extract/copy path
+	// below - so a resolver failure there falls through instead of erroring
+	// the whole import (#221 I1 fix, mirrors DownloadModToCache's identical
+	// fix): resolveMergeCompiler is a GAME-level lookup (Import has no
+	// per-archive source pinned the way a download does), so "no
+	// MergeCompiler-capable source configured for this game" is exactly the
+	// same "fall through for a pak, still hard-error for an exmodz" case as
+	// the download path's "this specific source lacks MergeCompiler".
+	mergeEligible := isExmodzFile(filename)
+	var mc source.MergeCompiler
+	var mcErr error
+	if game.DeployMode == domain.DeployCompile && (mergeEligible || isConvertEligiblePakFile(game, filename)) {
+		if i.resolveMergeCompiler == nil {
+			mcErr = fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not Service.NewImporter) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
+		} else {
+			mc, mcErr = i.resolveMergeCompiler(game.ID)
+		}
+	}
+	convertEligiblePak := mcErr == nil && isConvertEligiblePakFile(game, filename)
+
 	// Handle based on game's deploy mode
-	if game.DeployMode == domain.DeployCompile && isExmodzFile(filename) {
+	if game.DeployMode == domain.DeployCompile && (mergeEligible || convertEligiblePak) {
 		// Validate mode (#197): Import has no real source file ID the way a
 		// download does (DownloadableFile.ID is resolved later, outside
 		// Import, only when --id was given), so the retained source is
 		// keyed by the archive's own filename instead - stable across
 		// re-imports of the same name, and the ONLY identity Import ever
 		// has for this content.
-		if i.resolveMergeCompiler == nil {
-			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not Service.NewImporter) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
-		}
-		mc, err := i.resolveMergeCompiler(game.ID)
-		if err != nil {
-			return nil, err
+		if mcErr != nil {
+			return nil, mcErr
 		}
 		if err := mc.ValidateSource(archivePath); err != nil {
 			return nil, fmt.Errorf("validating %s: %w", filename, err)
@@ -158,10 +176,21 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		if err := copyFileStreaming(archivePath, retainedPath); err != nil {
 			return nil, fmt.Errorf("retaining %s: %w", filename, err)
 		}
+		// pak (#221): ALSO keep a deployable copy as the sole member, so the
+		// default state is raw-deploy until the first successful merge
+		// flips the manifest - mirrors DownloadModToCache's identical
+		// widening. exmodz keeps fileCount 0 (#197: merged-only, no per-mod
+		// deployment artifact).
+		if convertEligiblePak {
+			deployablePath := filepath.Join(stagePath, filename)
+			if err := copyFileStreaming(archivePath, deployablePath); err != nil {
+				return nil, fmt.Errorf("staging deployable pak %s: %w", filename, err)
+			}
+			fileCount = 1
+		}
 		if err := commitStagedCache(cachePath, stagePath); err != nil {
 			return nil, err
 		}
-		fileCount = 0
 		retainedFileID = filename
 	} else if game.DeployMode == domain.DeployCopy {
 		// Copy mode: just copy the file as-is to cache (don't extract)

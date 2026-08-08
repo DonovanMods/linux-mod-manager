@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/go-unrealpak"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -52,20 +52,20 @@ func (s *compilerInstallSource) ValidateSource(sourceFilePath string) error {
 // prove a merge/regen actually happened and used the retained content,
 // without needing a real base pak table to patch (mirrors
 // internal/core/service_icarus_compile_test.go's fakeCompilerSource).
-func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
+func (s *compilerInstallSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
 	s.compileCalls++
 	if s.mergeErr != nil {
-		return nil, s.mergeErr
+		return nil, nil, s.mergeErr
 	}
 	var out []byte
 	for _, src := range sources {
-		data, err := os.ReadFile(src.ExmodzPath)
+		data, err := os.ReadFile(src.SourcePath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, data...)
 	}
-	return s.mergeWarnings, os.WriteFile(outputPath, out, 0o644)
+	return s.mergeWarnings, nil, os.WriteFile(outputPath, out, 0o644)
 }
 
 // TestDoInstall_DeployCompile_AnnouncesRetaining guards #190 item 1: an
@@ -336,4 +336,45 @@ func TestDoInstallBatch_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *testi
 
 	assert.Equal(t, 2, strings.Count(out, "installed; merged pak sync FAILED — see warning above"))
 	assert.NotContains(t, out, "Installed (merged pak updated)")
+}
+
+// TestDoDeploy_DeployCompile_ConversionFailureSurfaces is the #221 deploy-
+// flow pin: a pak-conversion failure (source.MergeFailure) discovered by
+// DeployProfile's own end-of-loop SyncMergedPak call (internal/core/flows.go)
+// must reach the user, not get swallowed by any phase in between. Drives the
+// REAL doDeploy CLI seam with a MergeCompiler that fails one enabled pak
+// mod's conversion, and proves the resulting "... pak conversion failed:
+// ... - deploying raw" warning (the same text internal/source/icarus/merge.go
+// emits for a real failure) lands on stderr via core.DeployWarning.
+func TestDoDeploy_DeployCompile_ConversionFailureSurfaces(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	game.ConvertPaks = true
+
+	const modID, version, fileID = "raw-pak-mod", "1.0", "modfile.pak"
+	seedEnabledPakModCLI(t, svc, game, "fake-compiler", modID, version, fileID, []byte("pak-bytes"))
+
+	outcome := &pakOutcomeCompilerSource{
+		compilerInstallSource: compiler,
+		failRefs:              map[string]string{"fake-compiler:" + modID: "table X not present in current base"},
+	}
+	svc.RegisterSource(outcome)
+
+	deployProfile = "default"
+	t.Cleanup(func() { deployProfile = "" })
+
+	oldStderr := os.Stderr
+	r, w, pipeErr := os.Pipe()
+	require.NoError(t, pipeErr)
+	os.Stderr = w
+	_, err := captureStdoutErr(t, func() error {
+		return doDeploy(context.Background(), svc, game, nil)
+	})
+	_ = w.Close()
+	os.Stderr = oldStderr
+	require.NoError(t, err)
+
+	var stderrBuf bytes.Buffer
+	_, _ = stderrBuf.ReadFrom(r)
+	assert.Contains(t, stderrBuf.String(), "pak conversion failed")
+	assert.Contains(t, stderrBuf.String(), "deploying raw")
 }

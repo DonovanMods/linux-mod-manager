@@ -3,11 +3,11 @@
   [1]  [2]  [3]  [4]  •5• Sources  [6]                                          
                                                                                 
   ╭──────────────────────────────────────────────────────────────────────────╮  
-  │ SOURCE REGISTRY                                                          │  
+  │ SOURCE REGISTRY — Skyrim Special Edition  (a shows all)                  │  
   │   ID                   TYPE         AUTH   CAPABILITIES                  │  
-  │ > curseforge           built-in     n/a    search,updates                │  
-  │   local-mods           directory    n/a    search,updates                │  
-  │   nexusmods            built-in     yes    search,deps,updates,auth      │  
+  │ > nexusmods            built-in     yes    search,deps,updates,auth      │  
+  │                                                                          │  
+  │                                                                          │  
   │                                                                          │  
   │                                                                          │  
   │                                                                          │  

@@ -5,10 +5,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/DonovanMods/go-unrealpak"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 )
 
 // TestMergeCompile_FieldLevelMergeAcrossMods is the crux of #197: two mods
@@ -25,12 +26,15 @@ func TestMergeCompile_FieldLevelMergeAcrossMods(t *testing.T) {
 	modB := writeTestExmodzFile(t, `{"name":"Health Mod","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseHealth":800}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	warnings, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:speed-mod", ExmodzPath: modA},
-		{ModRef: "icarus:health-mod", ExmodzPath: modB},
+	warnings, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+		{ModRef: "icarus:speed-mod", SourcePath: modA},
+		{ModRef: "icarus:health-mod", SourcePath: modB},
 	}, outputPath)
 	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 	if len(warnings) != 0 {
 		t.Errorf("warnings = %v, want none (no asset collision in this fixture)", warnings)
@@ -69,11 +73,15 @@ func TestMergeCompile_DifferentTablesFromDifferentMods(t *testing.T) {
 	modB := writeTestExmodzFile(t, `{"name":"Item Mod","Rows":[{"CurrentFile":"Items-D_ItemsStatic.json","File_Items":[{"Name":"Item_Saddle","Weight":1}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:mount-mod", ExmodzPath: modA},
-		{ModRef: "icarus:item-mod", ExmodzPath: modB},
-	}, outputPath); err != nil {
+	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+		{ModRef: "icarus:mount-mod", SourcePath: modA},
+		{ModRef: "icarus:item-mod", SourcePath: modB},
+	}, outputPath)
+	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 
 	r, err := unrealpak.Open(outputPath)
@@ -112,11 +120,15 @@ func TestMergeCompile_SameRowSameField_LastWins(t *testing.T) {
 	modB := writeTestExmodzFile(t, `{"name":"B","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Bear","BaseMovementSpeed":400}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:a", ExmodzPath: modA},
-		{ModRef: "icarus:b", ExmodzPath: modB},
-	}, outputPath); err != nil {
+	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+		{ModRef: "icarus:a", SourcePath: modA},
+		{ModRef: "icarus:b", SourcePath: modB},
+	}, outputPath)
+	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 
 	r, err := unrealpak.Open(outputPath)
@@ -150,12 +162,15 @@ func TestMergeCompile_AssetCollision_LastWinsWithWarning(t *testing.T) {
 	})
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	warnings, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:a", ExmodzPath: modA},
-		{ModRef: "icarus:b", ExmodzPath: modB},
+	warnings, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+		{ModRef: "icarus:a", SourcePath: modA},
+		{ModRef: "icarus:b", SourcePath: modB},
 	}, outputPath)
 	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %v, want exactly 1 asset-collision warning", warnings)
@@ -194,11 +209,15 @@ func TestMergeCompile_ContentAddingModComposesWithPatchMod(t *testing.T) {
 	addMod := writeTestExmodzFile(t, `{"name":"NewSpecies","Rows":[{"CurrentFile":"AI-D_AIGrowth.json","File_Items":[{"Name":"Mount_Wolf","BaseMovementSpeed":320}]}]}`, nil)
 
 	outputPath := filepath.Join(t.TempDir(), "merged_P.pak")
-	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
-		{ModRef: "icarus:patch", ExmodzPath: patchMod},
-		{ModRef: "icarus:add", ExmodzPath: addMod},
-	}, outputPath); err != nil {
+	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{
+		{ModRef: "icarus:patch", SourcePath: patchMod},
+		{ModRef: "icarus:add", SourcePath: addMod},
+	}, outputPath)
+	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 
 	r, err := unrealpak.Open(outputPath)
@@ -237,8 +256,12 @@ func TestMergeCompile_SingleSource_MatchesCompile(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	mergeOut := filepath.Join(t.TempDir(), "merge_P.pak")
-	if _, err := MergeCompile(context.Background(), basePak, []source.MergeSource{{ModRef: "icarus:bear-mount", ExmodzPath: exmodzPath}}, mergeOut); err != nil {
+	_, failed, err := MergeCompile(context.Background(), basePak, []source.MergeSource{{ModRef: "icarus:bear-mount", SourcePath: exmodzPath}}, mergeOut)
+	if err != nil {
 		t.Fatalf("MergeCompile: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want none", failed)
 	}
 
 	cr, err := unrealpak.Open(compileOut)
@@ -284,5 +307,216 @@ func TestValidateSource_MalformedExmodz_Errors(t *testing.T) {
 	}
 	if err := ValidateSource(path); err == nil {
 		t.Error("ValidateSource: got nil error, want a failure for a non-zip file")
+	}
+}
+
+func TestMergeCompilePakSource(t *testing.T) {
+	dir := t.TempDir()
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+	})
+	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowA","XP":99}]}`
+	pakPath := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json": []byte(modTable),
+	})
+	out := filepath.Join(dir, "merged.pak")
+
+	warnings, failed, err := MergeCompile(context.Background(), basePath, []MergeSource{
+		{ModRef: "icarus:pakmod", SourcePath: pakPath, Kind: source.MergeSourcePak},
+	}, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(failed) != 0 || len(warnings) != 0 {
+		t.Fatalf("unexpected failed/warnings: %v / %v", failed, warnings)
+	}
+	merged, err := unrealpak.Open(out)
+	if err != nil {
+		t.Fatalf("opening merged: %v", err)
+	}
+	defer merged.Close()
+	data, err := merged.ReadFile("data/Test/D_Growth.json")
+	if err != nil {
+		t.Fatalf("merged table missing: %v", err)
+	}
+	if !strings.Contains(string(data), `"XP":99`) {
+		t.Fatalf("converted change not applied: %s", data)
+	}
+}
+
+func TestMergeCompilePakFailureSkipsModOnly(t *testing.T) {
+	dir := t.TempDir()
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+	})
+	// Irreconcilable pak: its table does not exist in the current base.
+	badPak := buildTestPak(t, dir, "bad.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Removed/D_Gone.json": []byte(testBaseTable),
+	})
+	goodTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{},"Rows":[{"Name":"RowB","XP":77}]}`
+	goodPak := buildTestPak(t, dir, "good.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json": []byte(goodTable),
+	})
+	out := filepath.Join(dir, "merged.pak")
+
+	warnings, failed, err := MergeCompile(context.Background(), basePath, []MergeSource{
+		{ModRef: "icarus:bad", SourcePath: badPak, Kind: source.MergeSourcePak},
+		{ModRef: "icarus:good", SourcePath: goodPak, Kind: source.MergeSourcePak},
+	}, out)
+	if err != nil {
+		t.Fatalf("per-mod failure must not be fatal: %v", err)
+	}
+	if len(failed) != 1 || failed[0].ModRef != "icarus:bad" {
+		t.Fatalf("want icarus:bad failed, got %+v", failed)
+	}
+	var haveWarning bool
+	for _, w := range warnings {
+		if strings.Contains(w, "icarus:bad") && strings.Contains(w, "deploying raw") {
+			haveWarning = true
+		}
+	}
+	if !haveWarning {
+		t.Fatalf("want a deploying-raw warning for icarus:bad, got %v", warnings)
+	}
+	merged, err := unrealpak.Open(out)
+	if err != nil {
+		t.Fatalf("opening merged: %v", err)
+	}
+	defer merged.Close()
+	data, err := merged.ReadFile("data/Test/D_Growth.json")
+	if err != nil {
+		t.Fatalf("good mod's table missing: %v", err)
+	}
+	if !strings.Contains(string(data), `"XP":77`) {
+		t.Fatalf("good mod's change not applied: %s", data)
+	}
+	if _, err := merged.ReadFile("data/Removed/D_Gone.json"); err == nil {
+		t.Fatal("failed mod's table must not be in the merged pak")
+	}
+}
+
+func TestValidateSourcePak(t *testing.T) {
+	dir := t.TempDir()
+	pakPath := buildTestPak(t, dir, "ok.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json": []byte(testBaseTable),
+	})
+	if err := ValidateSource(pakPath); err != nil {
+		t.Fatalf("valid pak rejected: %v", err)
+	}
+	badPath := filepath.Join(dir, "not-a.pak")
+	if err := os.WriteFile(badPath, []byte("junk"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSource(badPath); err == nil {
+		t.Fatal("junk .pak must fail validation")
+	}
+}
+
+// TestMergeCompileWarningsPreferModName proves user-facing warnings identify
+// mods by display name when MergeSource.ModName is set, while MergeFailure
+// keeps ModRef as the machine identity. Existing tests cover the fallback:
+// with no ModName, warnings show the ModRef.
+func TestMergeCompileWarningsPreferModName(t *testing.T) {
+	dir := t.TempDir()
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+	})
+	// Divergent Defaults triggers the inexpressible-top-level-key warning.
+	modTable := `{"RowStruct":"/Script/Icarus.Growth","Defaults":{"X":1},"Rows":[{"Name":"RowA","XP":99}]}`
+	pakPath := buildTestPak(t, dir, "mod.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Test/D_Growth.json": []byte(modTable),
+	})
+	// Irreconcilable pak triggers the deploying-raw warning.
+	badPak := buildTestPak(t, dir, "bad.pak", "../../../Icarus/Content/", map[string][]byte{
+		"data/Removed/D_Gone.json": []byte(testBaseTable),
+	})
+	out := filepath.Join(dir, "merged.pak")
+
+	warnings, failed, err := MergeCompile(context.Background(), basePath, []MergeSource{
+		{ModRef: "icarus:pakmod", ModName: "Combined QOL", SourcePath: pakPath, Kind: source.MergeSourcePak},
+		{ModRef: "icarus:badmod", ModName: "Broken Mod", SourcePath: badPak, Kind: source.MergeSourcePak},
+	}, out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var haveDiff, haveRaw bool
+	for _, w := range warnings {
+		if strings.Contains(w, "icarus:pakmod") || strings.Contains(w, "icarus:badmod") {
+			t.Errorf("warning shows ModRef instead of ModName: %s", w)
+		}
+		if strings.Contains(w, "mod Combined QOL:") && strings.Contains(w, "Defaults") {
+			haveDiff = true
+		}
+		if strings.Contains(w, "mod Broken Mod:") && strings.Contains(w, "deploying raw") {
+			haveRaw = true
+		}
+	}
+	if !haveDiff {
+		t.Errorf("want a Defaults-differs warning naming Combined QOL, got %v", warnings)
+	}
+	if !haveRaw {
+		t.Errorf("want a deploying-raw warning naming Broken Mod, got %v", warnings)
+	}
+	if len(failed) != 1 || failed[0].ModRef != "icarus:badmod" {
+		t.Fatalf("MergeFailure must keep ModRef as machine identity, got %+v", failed)
+	}
+}
+
+// TestApplyBundleAssetCollisionKeyedByRef proves asset-collision detection
+// uses the stable ModRef identity, not the display label: two DIFFERENT
+// mods sharing a display name still cross-warn (with refs appended for
+// disambiguation), while the same mod re-setting its own asset stays quiet.
+func TestApplyBundleAssetCollisionKeyedByRef(t *testing.T) {
+	dir := t.TempDir()
+	basePath := buildTestPak(t, dir, "data.pak", "../../../Icarus/Content/Data/", map[string][]byte{
+		"Test/D_Growth.json": []byte(testBaseTable),
+	})
+	base, err := unrealpak.Open(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer base.Close()
+
+	tables := map[string][]byte{}
+	assets := map[string][]byte{}
+	owner := map[string]mergeOwner{}
+	bundle := func(data string) *ExmodzBundle {
+		return &ExmodzBundle{Diff: &ExmodDiff{}, Assets: map[string][]byte{"mod/foo.uasset": []byte(data)}}
+	}
+
+	w, err := applyBundle(base, tables, assets, owner, bundle("a"), "icarus:a", "Same Name")
+	if err != nil || len(w) != 0 {
+		t.Fatalf("first apply: warnings %v, err %v", w, err)
+	}
+	// Same mod re-sets its own asset: no self-warning.
+	w, err = applyBundle(base, tables, assets, owner, bundle("a2"), "icarus:a", "Same Name")
+	if err != nil || len(w) != 0 {
+		t.Fatalf("same-mod re-apply must not warn: %v, err %v", w, err)
+	}
+	// Different mod, identical display name: must still warn, with refs
+	// appended so the message distinguishes the two parties.
+	w, err = applyBundle(base, tables, assets, owner, bundle("b"), "icarus:b", "Same Name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w) != 1 {
+		t.Fatalf("want exactly one collision warning, got %v", w)
+	}
+	if !strings.Contains(w[0], "icarus:a") || !strings.Contains(w[0], "icarus:b") {
+		t.Fatalf("identical-name collision must disambiguate by ref: %s", w[0])
+	}
+	if string(assets["mod/foo.uasset"]) != "b" {
+		t.Fatal("last-applied must win")
+	}
+	// Different mod, different name: warning renders names only.
+	w, err = applyBundle(base, tables, assets, owner, bundle("c"), "icarus:c", "Other Mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w) != 1 || !strings.Contains(w[0], "Same Name") || !strings.Contains(w[0], "Other Mod") {
+		t.Fatalf("want a name-rendered collision warning, got %v", w)
+	}
+	if strings.Contains(w[0], "icarus:b") || strings.Contains(w[0], "icarus:c") {
+		t.Fatalf("distinct names need no ref disambiguation: %s", w[0])
 	}
 }

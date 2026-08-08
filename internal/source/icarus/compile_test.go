@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
+	"github.com/DonovanMods/go-unrealpak"
 )
 
 func writeTestExmodzFile(t *testing.T, manifestJSON string, assets map[string][]byte) string {

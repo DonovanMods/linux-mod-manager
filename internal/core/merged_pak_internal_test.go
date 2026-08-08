@@ -1,6 +1,13 @@
 package core
 
-import "testing"
+import (
+	"os"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+)
 
 func TestMergedFingerprint_Deterministic(t *testing.T) {
 	f := MergedFingerprint{
@@ -104,5 +111,94 @@ func TestMergedFingerprintsEqual_EmptyModsBothSides(t *testing.T) {
 	}
 	if !eq {
 		t.Errorf("nil vs empty Mods slice must still compare equal (both marshal to the same JSON array shape)")
+	}
+}
+
+func TestMergeSourceKind(t *testing.T) {
+	tests := map[string]string{
+		"pak":          source.MergeSourcePak,
+		"MyMod.PAK":    source.MergeSourcePak,
+		"exmodz":       source.MergeSourceExmodz,
+		"MyMod.exmodz": source.MergeSourceExmodz,
+		"weird.zip":    source.MergeSourceExmodz, // unknown retained kind: today's behavior
+	}
+	for fileID, want := range tests {
+		if got := mergeSourceKind(fileID); got != want {
+			t.Errorf("mergeSourceKind(%q) = %q, want %q", fileID, got, want)
+		}
+	}
+}
+
+func TestModHasPakMergeSource(t *testing.T) {
+	tests := []struct {
+		name string
+		mod  *domain.InstalledMod
+		want bool
+	}{
+		{"nil mod", nil, false},
+		{"no FileIDs", &domain.InstalledMod{}, false},
+		{"exmodz-only FileIDs", &domain.InstalledMod{FileIDs: []string{"exmodz"}}, false},
+		{"pak FileID", &domain.InstalledMod{FileIDs: []string{"pak"}}, true},
+		{"import-path .pak filename", &domain.InstalledMod{FileIDs: []string{"MyMod.PAK"}}, true},
+		{"mixed FileIDs, one pak", &domain.InstalledMod{FileIDs: []string{"exmodz", "pak"}}, true},
+	}
+	svc := &Service{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := svc.ModHasPakMergeSource(tt.mod); got != tt.want {
+				t.Errorf("ModHasPakMergeSource(%+v) = %v, want %v", tt.mod, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFingerprintEqualityIgnoresOutcomes(t *testing.T) {
+	a := MergedFingerprint{BaseIndexHash: "h", Mods: []MergedFingerprintEntry{
+		{SourceID: "icarus", ModID: "m", Version: "1", Checksum: "c", Kind: source.MergeSourcePak, Converted: true},
+	}}
+	b := MergedFingerprint{BaseIndexHash: "h", Mods: []MergedFingerprintEntry{
+		{SourceID: "icarus", ModID: "m", Version: "1", Checksum: "c", Kind: source.MergeSourcePak, Converted: false, FailReason: "x"},
+	}}
+	eq, err := mergedFingerprintsEqual(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eq {
+		t.Fatal("outcome fields must not affect input equality (retry only when inputs change)")
+	}
+
+	c := b
+	c.Mods = []MergedFingerprintEntry{{SourceID: "icarus", ModID: "m", Version: "2", Checksum: "c", Kind: source.MergeSourcePak}}
+	eq, err = mergedFingerprintsEqual(a, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eq {
+		t.Fatal("input fields (Version) must affect equality")
+	}
+}
+
+func TestReadOldFingerprintMarkerCompat(t *testing.T) {
+	// A pre-#221 marker has no Kind/Converted/FailReason - it must read
+	// fine and compare EQUAL to a current computation with the same inputs
+	// (Kind "" vs "exmodz" must not force a spurious regen).
+	dir := t.TempDir()
+	old := []byte(`{"BaseIndexHash":"h","Mods":[{"SourceID":"icarus","ModID":"m","Version":"1","Checksum":"c"}]}`)
+	if err := os.WriteFile(cache.MergeFingerprintPath(dir), old, 0644); err != nil {
+		t.Fatal(err)
+	}
+	stored, ok := readMergedFingerprint(dir)
+	if !ok {
+		t.Fatal("old marker unreadable")
+	}
+	current := MergedFingerprint{BaseIndexHash: "h", Mods: []MergedFingerprintEntry{
+		{SourceID: "icarus", ModID: "m", Version: "1", Checksum: "c", Kind: source.MergeSourceExmodz, Converted: true},
+	}}
+	eq, err := mergedFingerprintsEqual(current, stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eq {
+		t.Fatal("pre-#221 marker must not trigger a regen for unchanged exmodz inputs")
 	}
 }

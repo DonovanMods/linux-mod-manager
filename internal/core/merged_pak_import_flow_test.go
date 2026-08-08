@@ -68,16 +68,16 @@ func (s *importFlowCompilerSource) ValidateSource(sourceFilePath string) error {
 	_, err := os.Stat(sourceFilePath)
 	return err
 }
-func (s *importFlowCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, error) {
+func (s *importFlowCompilerSource) MergeCompile(ctx context.Context, basePakPath string, sources []source.MergeSource, outputPath string) ([]string, []source.MergeFailure, error) {
 	var out []byte
 	for _, src := range sources {
-		data, err := os.ReadFile(src.ExmodzPath)
+		data, err := os.ReadFile(src.SourcePath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, data...)
 	}
-	return nil, os.WriteFile(outputPath, out, 0o644)
+	return nil, nil, os.WriteFile(outputPath, out, 0o644)
 }
 
 var (

@@ -461,6 +461,10 @@ func (longSourcesProvider) Search(context.Context, string, string, int, int) (Se
 func (longSourcesProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
 func (longSourcesProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
 func (longSourcesProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
+func (longSourcesProvider) Health(context.Context) (HealthView, error)        { return HealthView{}, nil }
+func (longSourcesProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // TestSourcesViewFitsPanelWidthNarrowTerminal guards that sourcesView rows
 // truncate to the panel's content width (not the full terminal width) to

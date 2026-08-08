@@ -266,6 +266,20 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 			return fmt.Errorf("status: last deploy time: %w", err)
 		}
 		out.LastDeploy = lastDeploy
+
+		// #221: surface pak-conversion failures in status too (design §5),
+		// not just verify - a count read straight from the merged pak's
+		// stored fingerprint (MergedPakOutcomes), same source verify's own
+		// "conversion_failed" rows use.
+		if game.DeployMode == domain.DeployCompile {
+			if outcomes, ok := service.MergedPakOutcomes(game, defaultProfile.Name); ok {
+				for _, entry := range outcomes {
+					if !entry.Converted {
+						out.ConversionFailures++
+					}
+				}
+			}
+		}
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
@@ -301,6 +315,12 @@ type statusGameDetailJSON struct {
 	// time, is what makes this an additive change existing consumers can
 	// ignore entirely.
 	LastDeploy *time.Time `json:"last_deploy,omitempty"`
+	// ConversionFailures is the active profile's count of pak-conversion
+	// failures (#221 design §5) - mods whose prebuilt .pak could not be
+	// converted into the merged pak on the last sync and stay raw-deployed
+	// instead ('lmm verify' reports each one by name). Zero/omitted for a
+	// non-DeployCompile game or a profile with none.
+	ConversionFailures int `json:"conversion_failures,omitempty"`
 }
 
 type statusProfileJSON struct {
@@ -409,6 +429,22 @@ func showGameStatus(service *core.Service, gameID string) error {
 			deployDisplay = colorGreen(deployDisplay)
 		}
 		fmt.Printf("  Last Deploy: %s\n", deployDisplay)
+
+		// #221 design §5: surface pak-conversion failures here too, not just
+		// 'lmm verify' - only when there's actually something to report.
+		if game.DeployMode == domain.DeployCompile {
+			if outcomes, ok := service.MergedPakOutcomes(game, defaultProfile.Name); ok {
+				var failures int
+				for _, entry := range outcomes {
+					if !entry.Converted {
+						failures++
+					}
+				}
+				if failures > 0 {
+					fmt.Printf("  pak conversion failures: %d (see 'lmm verify')\n", failures)
+				}
+			}
+		}
 	}
 
 	return nil

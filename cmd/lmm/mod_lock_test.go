@@ -145,9 +145,9 @@ func TestDoModLock_ExplicitVersion_WritesLockedAndVersionToProfile(t *testing.T)
 // address games by their own domain (e.g. "skyrimspecialedition"), so
 // whenever a game's per-source mapping differs from its LMM ID, version
 // resolution would silently query the wrong upstream game. The fix is the
-// same one verify.go already applies for exactly this reason
-// (sourceMappedMod, used at verify.go:302/998): pass
-// sourceMappedMod(game, &mod.Mod) instead of &mod.Mod.
+// same one the verify engine already applies for exactly this reason
+// (core.SourceMappedMod, internal/core/verify_helpers.go): pass
+// core.SourceMappedMod(game, &mod.Mod) instead of &mod.Mod.
 //
 // setupDoModLockTest's fixture maps game.SourceIDs["src"] to "g1" - the SAME
 // as game.ID - which is exactly why none of the existing lock tests caught

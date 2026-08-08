@@ -111,7 +111,11 @@ func TestNewPrototypeModelRejectsInvalidTheme(t *testing.T) {
 func TestNavMarksCurrentScreenWithoutColor(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "wizardry", 100, 30)
+	// 110 cols (Task 9): the 7th screen (Health) pushed tier 1's full nav
+	// past 100 cols' 96-cell availableWidth(), which used to be comfortably
+	// wide enough for the pre-Health 6-screen nav - see nav()'s own tier
+	// doc comment.
+	model := sizedPrototypeModel(t, "wizardry", 110, 30)
 	model.theme.Selected = model.theme.Selected.Transform(func(s string) string { return "«" + s + "»" })
 	model.screen = ScreenSearch
 
@@ -181,8 +185,8 @@ func TestNavMarkerAddsNoWidth(t *testing.T) {
 	model := sizedPrototypeModel(t, "wizardry", lipgloss.Width(unmarked)+4, 24)
 	require.Equal(t, lipgloss.Width(unmarked), model.availableWidth(),
 		"width sanity: this terminal width must make the unmarked nav an exact fit")
-	model.screen = ScreenConflicts
-	require.Contains(t, model.View(), fmt.Sprintf("•%d• %s", len(screens), ScreenConflicts),
+	model.screen = ScreenHealth
+	require.Contains(t, model.View(), fmt.Sprintf("•%d• %s", len(screens), ScreenHealth),
 		"zero-growth marker: the last label must survive intact at the exact-fit width")
 
 	// (2) Zero growth everywhere: whichever screen is current, the nav
@@ -651,7 +655,7 @@ func TestDashboardLayoutsFitHeightBudgetOnShortTerminals(t *testing.T) {
 
 // Commander's half-width panels are narrow enough at small widths (40x12:
 // panel width ~19, content ~15) that an untruncated menu label like
-// "> Consult Conflict Oracle" lipgloss-auto-wraps into two physical lines
+// "> Verify Integrity" lipgloss-auto-wraps into two physical lines
 // inside the panel. clampLines counts logical lines, so a wrapped row slips
 // past the clamp and silently grows the view over the height budget (#42);
 // the fix is per-line truncation to the panel's content width, the same
@@ -663,21 +667,23 @@ func TestCommanderDashboardRowsDoNotWrapAtNarrowWidths(t *testing.T) {
 	require.LessOrEqual(t, lipgloss.Height(model.screenView()), model.availableContentHeight())
 }
 
-// At 80x16 (content budget 9, panel content budget 7) the commander left
-// panel's seven lines - #106a added "Deploy" as the seventh - fit exactly,
-// so no clamping may occur: any budget fudge (an earlier fix subtracted an
-// extra 1) clamps them to shorter plus "+N more" and silently hides the
-// Enabled/Updates/Deploy lines (#42). Only the left panel mentions "Updates"
-// — the commander menu rows do not — so its presence pins the whole panel
-// rendering unclamped. Originally pinned at the 80x8 floor height when the
-// panel had six lines (see git history); #106a's new row no longer fits
-// unclamped at that floor, so this now uses the next size up (80x16) where
-// all seven lines fit exactly.
+// At 80x17 (content budget 10, panel content budget 8) the commander left
+// panel's eight lines - #224 Task 10 added "Health" as the eighth - fit
+// exactly, so no clamping may occur: any budget fudge (an earlier fix
+// subtracted an extra 1) clamps them to shorter plus "+N more" and silently
+// hides the Enabled/Updates/Health/Deploy lines (#42). Only the left panel
+// mentions "Updates" — the commander menu rows do not — so its presence
+// pins the whole panel rendering unclamped. Originally pinned at the 80x8
+// floor height when the panel had six lines, then bumped to 80x16 when
+// #106a added "Deploy" as the seventh (see git history); Task 10's new row
+// no longer fits unclamped at that size, so this now uses the next size up
+// (80x17) where all eight lines fit exactly.
 func TestCommanderDashboardFloorHeightKeepsWholeLeftPanel(t *testing.T) {
 	t.Parallel()
 
-	model := sizedPrototypeModel(t, "dos", 80, 16)
+	model := sizedPrototypeModel(t, "dos", 80, 17)
 	require.Contains(t, model.screenView(), "Updates")
+	require.Contains(t, model.screenView(), "Health")
 	require.Contains(t, model.screenView(), "Deploy")
 }
 
@@ -1017,38 +1023,30 @@ func TestDashboardEnterOpensSelectedMenuEntry(t *testing.T) {
 	require.True(t, opened.(Model).search.input.Focused(), "dashboard menu's explicit Search Archives entry must auto-focus")
 }
 
-// TestDashboardEnterOnOracleEntryOpensConflicts replaces the old
-// ...StaysPut test, which pinned Enter-on-Oracle as a NO-OP with the
-// comment "no screen exists for it yet". Phase 6b shipped ScreenConflicts
-// (v1.14.0) but neither the menu entry's target nor this test was updated,
-// so the stale pin silently protected a dead menu entry until a user smoke
-// test caught it (PR #113 round). Both dashboardMenu variants (default
-// "Consult Conflict Oracle" and amber's "ASK CONFLICT ORACLE") must
-// navigate.
-func TestDashboardEnterOnOracleEntryOpensConflicts(t *testing.T) {
-	t.Parallel()
+// TestDashboardEnterOnOracleEntryOpensConflicts used to prove the dashboard
+// menu's "Consult Conflict Oracle"/"ASK CONFLICT ORACLE" entry opened the
+// standalone Conflicts screen. #224 Task 15 folded conflict reporting into
+// the Health screen's own table and retired ScreenConflicts, which would
+// have left this entry pointing at the exact same target as "Verify
+// Integrity" right above it - dashboardMenu drops the now-redundant entry
+// entirely rather than keep two rows for one destination (see its own doc
+// comment for the full rationale). This test's coverage now lives in
+// health_dashboard_test.go's TestDashboardMenuVerifyIntegrityEntryOpensHealth,
+// which proves the (now sole) entry opens ScreenHealth for both theme
+// variants.
 
-	for _, themeName := range []string{"wizardry", "amber"} {
-		t.Run(themeName, func(t *testing.T) {
-			t.Parallel()
-
-			model := sizedPrototypeModel(t, themeName, 100, 30)
-
-			// Move to the last entry (Conflict Oracle). 4 presses:
-			// Installed Mods -> Search -> Profiles -> Sources -> Oracle.
-			for range 4 {
-				model = updateWithRunes(t, model, "j")
-			}
-			opened, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-			require.Equal(t, ScreenConflicts, opened.(Model).CurrentScreen(),
-				"the Oracle menu entry must open the Conflicts screen")
-			require.False(t, opened.(Model).search.input.Focused(),
-				"conflicts is not a search-intent entry — no input focus")
-		})
-	}
-}
-
-func TestEnterOutsideDashboardIsANoop(t *testing.T) {
+// TestEnterOnInstalledModsDoesNotChangeNavScreen used to be named
+// TestEnterOutsideDashboardIsANoop and assert enter was a no-op outside the
+// dashboard - true before #86, which repurposes enter on Installed Mods to
+// open the mod details view (openSelectedModDetails), a real, non-no-op
+// action. The name went stale (it now asserts the opposite of what it
+// claims), but the ONE assertion that survives - CurrentScreen() is
+// unchanged - still guards something real: opening details must not move
+// the highlighted nav-bar entry, only push content over the current screen.
+// Renamed to say that instead (its sibling in mutations_test.go,
+// TestSwitchKeyWrongScreenNeverPlansASwitch, was renamed for the same
+// reason at the same time and this one was missed - #86 review finding).
+func TestEnterOnInstalledModsDoesNotChangeNavScreen(t *testing.T) {
 	t.Parallel()
 
 	model, err := NewPrototypeModel(Options{Theme: "wizardry"})
@@ -1059,7 +1057,7 @@ func TestEnterOutsideDashboardIsANoop(t *testing.T) {
 	require.Equal(t, ScreenInstalledMods, opened.(Model).CurrentScreen())
 }
 
-// stubProvider is a no-op DataProvider implementing all 8 methods with their
+// stubProvider is a no-op DataProvider implementing all 9 methods with their
 // zero value (empty Summary/nil slice/nil error throughout) - meant to be
 // embedded by a test fake that only needs to override the ONE method its
 // test actually exercises, instead of restating every other method just to
@@ -1088,6 +1086,10 @@ func (stubProvider) Search(context.Context, string, string, int, int) (SearchPag
 func (stubProvider) DeployedFiles(string, string) ([]string, error)    { return nil, nil }
 func (stubProvider) ListGames() ([]GameInfo, error)                    { return nil, nil }
 func (stubProvider) Conflicts(context.Context) ([]ConflictItem, error) { return nil, nil }
+func (stubProvider) Health(context.Context) (HealthView, error)        { return HealthView{}, nil }
+func (stubProvider) GetModDetails(context.Context, ModItem) (ModDetails, error) {
+	return ModDetails{}, nil
+}
 
 // failingProvider embeds stubProvider and overrides only Overview - the ONE
 // method that matters here: loadData (app.go) calls Overview first and
@@ -1294,6 +1296,14 @@ func (r *recordingProvider) DeployedFiles(sourceID, modID string) ([]string, err
 
 func (r *recordingProvider) Conflicts(context.Context) ([]ConflictItem, error) {
 	return r.ConflictsResult, r.ConflictsErr
+}
+
+func (r *recordingProvider) Health(ctx context.Context) (HealthView, error) {
+	return r.delegate.Health(ctx)
+}
+
+func (r *recordingProvider) GetModDetails(ctx context.Context, item ModItem) (ModDetails, error) {
+	return r.delegate.GetModDetails(ctx, item)
 }
 
 func (r *recordingProvider) ListGames() ([]GameInfo, error) {

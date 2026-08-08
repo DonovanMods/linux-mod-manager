@@ -623,3 +623,17 @@ func TestNexusMods_ValidateKey_WrongKeyAgainstAuthenticatedReceiver(t *testing.T
 	err = nm.ValidateKey(context.Background(), "good-key")
 	assert.NoError(t, err)
 }
+
+// TestModDataToDomain_RealDescriptionFlowsThrough pins the other side of #235:
+// NexusMods is the one source whose API returns a genuine full description,
+// and it must keep flowing into domain.Mod untouched.
+func TestModDataToDomain_RealDescriptionFlowsThrough(t *testing.T) {
+	mod := modDataToDomain(ModData{
+		ModID:       1,
+		Summary:     "short summary",
+		Description: "the real full description",
+	}, "starrupture")
+
+	assert.Equal(t, "short summary", mod.Summary)
+	assert.Equal(t, "the real full description", mod.Description)
+}

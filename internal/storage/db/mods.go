@@ -38,6 +38,8 @@ func decodeFileIDs(raw *string) ([]string, error) {
 // callers always pass the default policy, so honoring it here would silently
 // reset a user-set --pin/--auto policy on reinstall. Policy changes go through
 // UpdateModPolicy. A first-time insert still uses the policy passed in.
+// Similarly, convert_paks is never written here - the schema default covers first
+// insert, and SetModConvertPaks is the only writer, so reinstall can't reset it.
 func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 	tx, err := d.Begin()
 	if err != nil {
@@ -85,7 +87,7 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 // GetInstalledMods returns all installed mods for a game/profile combination
 func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.InstalledMod, err error) {
 	rows, err := d.Query(`
-		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url
+		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks
 		FROM installed_mods
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY installed_at ASC
@@ -107,7 +109,7 @@ func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.Install
 			&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 			&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
 			&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
-			&mod.Summary, &mod.SourceURL,
+			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scanning installed mod: %w", err)
@@ -213,6 +215,29 @@ func (d *DB) UpdateModPolicy(sourceID, modID, gameID, profileName string, policy
 	return nil
 }
 
+// SetModConvertPaks sets the per-mod pak-conversion flag (#221).
+func (d *DB) SetModConvertPaks(sourceID, modID, gameID, profileName string, convert bool) error {
+	result, err := d.Exec(`
+		UPDATE installed_mods SET convert_paks = ?
+		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
+	`, convert, sourceID, modID, gameID, profileName)
+	if err != nil {
+		return fmt.Errorf("updating mod convert_paks: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		// A driver error here must not be read as "0 rows affected" -
+		// that would misreport a real DB failure as domain.ErrModNotFound.
+		return fmt.Errorf("updating mod convert_paks: checking rows affected: %w", err)
+	}
+	if rows == 0 {
+		return domain.ErrModNotFound
+	}
+
+	return nil
+}
+
 // SetModEnabled enables or disables a mod
 func (d *DB) SetModEnabled(sourceID, modID, gameID, profileName string, enabled bool) error {
 	result, err := d.Exec(`
@@ -267,14 +292,14 @@ func (d *DB) GetInstalledMod(sourceID, modID, gameID, profileName string) (*doma
 	err := d.QueryRow(`
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author,
 		       update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download,
-		       summary, source_url
+		       summary, source_url, convert_paks
 		FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(
 		&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 		&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
 		&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
-		&mod.Summary, &mod.SourceURL,
+		&mod.Summary, &mod.SourceURL, &mod.ConvertPaks,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

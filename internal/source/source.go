@@ -161,13 +161,33 @@ type MergeCompiler interface {
 	// order), against basePakPath's tables, and writes the merged result to
 	// outputPakPath. Returns non-fatal warnings (e.g. same-path asset
 	// collisions - last-applied wins) alongside a nil error; a nil error
-	// with warnings is still a fully-written, deployable pak.
-	MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) (warnings []string, err error)
+	// with warnings is still a fully-written, deployable pak. Pak-kind
+	// sources that cannot be converted are skipped per-mod and reported in
+	// failed (#221) - only exmodz-source errors and I/O failures are fatal.
+	MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) (warnings []string, failed []MergeFailure, err error)
 }
+
+// Merge-source kinds (#221). An empty Kind means MergeSourceExmodz - every
+// pre-#221 constructor built exmodz-only sources and never set a kind.
+const (
+	MergeSourceExmodz = "exmodz"
+	MergeSourcePak    = "pak"
+)
 
 // MergeSource identifies one mod's contribution to a merge, in the order it
 // must be applied (profile load order).
 type MergeSource struct {
-	ModRef     string // "sourceID:modID" - identity used in collision warnings
-	ExmodzPath string // the retained source archive to read
+	ModRef     string // "sourceID:modID" - machine identity (MergeFailure, ownership tracking)
+	ModName    string // display name preferred over ModRef in user-facing warnings; may be empty
+	SourcePath string // the retained source archive to read (.exmodz, or a raw .pak eligible for conversion - #221)
+	Kind       string // MergeSourceExmodz (default when empty) or MergeSourcePak
+}
+
+// MergeFailure records one source that could not participate in a merge
+// (#221: an irreconcilable pak). The merge itself still succeeds - the
+// failed mod is skipped and falls back to raw deploy; core uses this list
+// to reconcile cache manifests and record outcomes in the fingerprint.
+type MergeFailure struct {
+	ModRef string
+	Reason string
 }

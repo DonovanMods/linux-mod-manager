@@ -34,13 +34,21 @@ func TestGenerateThemeSnapshots(t *testing.T) {
 
 	sizes := []struct{ width, height int }{{80, 24}, {120, 36}}
 
+	// #224 Task 15 retired ScreenConflicts (its file-conflict reporting
+	// folded into ScreenHealth's own table) and moved ScreenHealth into its
+	// former slot 6 - "health" replaces the old "conflicts" slug entry
+	// rather than being appended. This is a Go map (iteration order
+	// undefined, and capture below looks entries up by key rather than
+	// ranging over them), so what matters is that its KEY SET keeps tracking
+	// navigation.go's screens slice - not the order these entries are
+	// written in.
 	slugs := map[Screen]string{
 		ScreenDashboard:     "dashboard",
 		ScreenInstalledMods: "installed-mods",
 		ScreenSearch:        "search",
 		ScreenProfiles:      "profiles",
 		ScreenSources:       "sources",
-		ScreenConflicts:     "conflicts",
+		ScreenHealth:        "health",
 	}
 
 	// capture builds a model for themeName, sizes it, navigates to screen via

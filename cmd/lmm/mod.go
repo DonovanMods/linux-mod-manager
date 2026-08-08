@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -144,6 +144,27 @@ Examples:
 	RunE: runModShow,
 }
 
+var modConvertCmd = &cobra.Command{
+	Use:   "convert <mod-id> <on|off>",
+	Short: "Enable or disable pak-to-exmod conversion for a mod",
+	Long: `Control whether a prebuilt .pak mod is converted into the profile's
+merged pak (rebased onto the game's current data.pak) or deployed raw.
+
+Only meaningful for merge-compile games (deploy_mode: compile) whose game
+config has convert_paks enabled (the default). Conversion is on by default
+for every mod; turn it off to keep a specific mod's prebuilt pak deployed
+as-is.
+
+This is a metadata write, not a deploy: run 'lmm deploy' (or any merge-pak
+mutation) afterward to re-sync the merged pak.
+
+Examples:
+  lmm mod convert 12345 off --game icarus
+  lmm mod convert 12345 on --game icarus`,
+	Args: cobra.ExactArgs(2),
+	RunE: runModConvert,
+}
+
 func init() {
 	modCmd.PersistentFlags().StringVarP(&modSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured)")
 	modCmd.PersistentFlags().StringVarP(&modProfile, "profile", "p", "", "profile (default: active profile)")
@@ -159,6 +180,7 @@ func init() {
 	modCmd.AddCommand(modDisableCmd)
 	modCmd.AddCommand(modFilesCmd)
 	modCmd.AddCommand(modShowCmd)
+	modCmd.AddCommand(modConvertCmd)
 	rootCmd.AddCommand(modCmd)
 }
 
@@ -299,14 +321,14 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 	// untouched in that case).
 	target := version
 	if version != "" {
-		// sourceMappedMod (verify.go): mod.Mod's GameID is the LMM game ID
+		// core.SourceMappedMod: mod.Mod's GameID is the LMM game ID
 		// (installed rows persist normalized IDs), but Service.GetModFiles -
 		// which ResolveModVersion calls into - forwards straight to the
 		// source with no game-ID translation, unlike Service.GetMod. Sources
 		// like NexusMods address games by their own domain, so an unmapped
 		// GameID would silently query the wrong upstream game whenever this
 		// game's per-source mapping differs from its LMM ID.
-		if _, err := service.ResolveModVersion(ctx, modSource, sourceMappedMod(game, &mod.Mod), version); err != nil {
+		if _, err := service.ResolveModVersion(ctx, modSource, core.SourceMappedMod(game, &mod.Mod), version); err != nil {
 			return err
 		}
 	} else {
@@ -542,7 +564,7 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 
 	if len(files) == 0 {
 		gameCache := svc.GetGameCache(game)
-		if game.DeployMode == domain.DeployCompile && hasRetainedSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
+		if game.DeployMode == domain.DeployCompile && core.HasRetainedCompileSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
 			fmt.Println("  No files of its own - this mod participates in the profile's merged pak.")
 			fmt.Printf("  (See zzz_LMM_Merged_P.pak; run `lmm verify` to check the merged pak is up to date)\n")
 			return nil
@@ -577,6 +599,7 @@ type modShowInstalled struct {
 	UpdatePolicy  string `json:"update_policy"`
 	Locked        bool   `json:"locked"`
 	LockedVersion string `json:"locked_version,omitempty"`
+	ConvertPaks   *bool  `json:"convert_paks,omitempty"` // #221: pak-to-exmod conversion; present only for merge-compile games
 }
 
 func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
@@ -586,34 +609,34 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		return err
 	}
 
-	mod, err := svc.GetMod(ctx, modSource, game.ID, modID)
-	if err != nil {
-		return fmt.Errorf("mod not found: %w", err)
-	}
-
-	// #92: mod show works for any mod on the source, installed or not, so a
-	// resolveProfile failure is a real problem (mirrors every other mod
+	// #92/#86: mod show works for any mod on the source, installed or not,
+	// so a resolveProfile failure is a real problem (mirrors every other mod
 	// subcommand's error handling), but "not installed" is the ordinary
-	// case - GetInstalledMod failing just means the section below is
-	// omitted, not that the whole command errors.
+	// case - Service.ModDetail's own convention leaves Installed nil rather
+	// than erroring. Profile resolves BEFORE the detail call now that the
+	// composition lives in core (#86) - accepted deviation: when BOTH the
+	// profile and the mod ID are invalid, the profile error surfaces first.
 	profileName, err := resolveProfile(svc, game.ID, modProfile)
 	if err != nil {
 		return err
 	}
+
+	detail, err := svc.ModDetail(ctx, game, profileName, modSource, modID)
+	if err != nil {
+		return err
+	}
+	mod := detail.Mod
+
 	var installedInfo *modShowInstalled
-	if installed, instErr := svc.GetInstalledMod(modSource, modID, game.ID, profileName); instErr == nil {
-		info := modShowInstalled{
-			Version:      installed.Version,
-			Profile:      profileName,
-			UpdatePolicy: policyToString(installed.UpdatePolicy),
+	if detail.Installed != nil {
+		installedInfo = &modShowInstalled{
+			Version:       detail.Installed.Version,
+			Profile:       detail.Installed.Profile,
+			UpdatePolicy:  policyToString(detail.Installed.UpdatePolicy),
+			Locked:        detail.Installed.Locked,
+			LockedVersion: detail.Installed.LockedVersion,
+			ConvertPaks:   detail.Installed.ConvertPaks,
 		}
-		if prof, perr := config.LoadProfile(svc.ConfigDir(), game.ID, profileName); perr == nil {
-			if ref := prof.FindRef(modSource, modID); ref != nil && ref.Locked {
-				info.Locked = true
-				info.LockedVersion = ref.Version
-			}
-		}
-		installedInfo = &info
 	}
 
 	if jsonOutput {
@@ -675,8 +698,12 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	if mod.Description != "" {
 		fmt.Println("Description:")
-		// Limit length for terminal; description can be long HTML
-		desc := strings.TrimSpace(mod.Description)
+		// #86: descriptions are source HTML. Clean them with the same shared
+		// cleaner the update flow and the TUI already use, so all three render
+		// identically. CleanChangelog trims for us, so no TrimSpace here.
+		// The cap stays: this is a one-shot terminal dump, unlike the TUI's
+		// details view, which scrolls the full text instead.
+		desc := core.CleanChangelog(mod.Description)
 		const maxDesc = 2000
 		if len(desc) > maxDesc {
 			desc = desc[:maxDesc] + "\n... (truncated; view on site for full description)"
@@ -711,7 +738,80 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		} else {
 			fmt.Println("  Lock: none")
 		}
+		if installedInfo.ConvertPaks != nil {
+			convertState := "on"
+			if !*installedInfo.ConvertPaks {
+				convertState = "off"
+			}
+			fmt.Printf("  Pak conversion: %s\n", convertState)
+		}
 	}
 
+	return nil
+}
+
+func runModConvert(cmd *cobra.Command, args []string) error {
+	var convert bool
+	switch strings.ToLower(args[1]) {
+	case "on":
+		convert = true
+	case "off":
+		convert = false
+	default:
+		return fmt.Errorf("second argument must be on|off, got %q", args[1])
+	}
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doModConvert(service, game, args[0], convert)
+	})
+}
+
+func doModConvert(service *core.Service, game *domain.Game, modID string, convert bool) error {
+	var err error
+	modSource, err = resolveSource(service, game, modSource, false)
+	if err != nil {
+		return err
+	}
+
+	profileName, err := resolveProfile(service, game.ID, modProfile)
+	if err != nil {
+		return err
+	}
+
+	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	if err != nil {
+		if errors.Is(err, domain.ErrModNotFound) {
+			return fmt.Errorf("mod not found: %s", modID)
+		}
+		return fmt.Errorf("looking up mod %s: %w", modID, err)
+	}
+
+	// Pak conversion only applies to mods with a pak-kind merge source.
+	// Exmodz-only mods have no pak to convert or leave raw, so reject the request.
+	if !service.ModHasPakMergeSource(mod) {
+		return fmt.Errorf("mod %s has no pak merge source: pak conversion does not apply", modID)
+	}
+
+	if err := service.SetModConvertPaks(modSource, modID, game.ID, profileName, convert); err != nil {
+		return fmt.Errorf("setting pak conversion for %s: %w", mod.Name, err)
+	}
+
+	state := "on"
+	if !convert {
+		state = "off"
+	}
+	fmt.Printf("%s %s pak conversion: %s\n", colorGreen("✓"), mod.Name, state)
+	switch {
+	case game.DeployMode != domain.DeployCompile:
+		fmt.Println("  note: this game is not merge-compile (deploy_mode: compile); the flag has no effect until it is")
+	case !game.ConvertPaks:
+		// Copilot round 1 (PR #222): the generic "run 'lmm deploy'" hint is
+		// misleading here - the game-level convert_paks: false in
+		// games.yaml disables conversion for every mod, so no deploy will
+		// convert this one no matter what the per-mod flag says until the
+		// game flag is flipped back on.
+		fmt.Println("  note: per-mod setting saved, but this game's convert_paks: false in games.yaml currently disables pak conversion for the whole game")
+	default:
+		fmt.Println("  run 'lmm deploy' to re-sync the merged pak")
+	}
 	return nil
 }

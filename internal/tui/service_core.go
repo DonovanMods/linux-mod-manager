@@ -163,6 +163,17 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 			Status:          installedModStatus(mod),
 			UpdatePolicy:    policyToString(mod.UpdatePolicy),
 			PreviousVersion: mod.PreviousVersion,
+			ConvertPaks:     mod.ConvertPaks,
+			CompileGame:     game.DeployMode == domain.DeployCompile,
+			GameConvertPaks: game.ConvertPaks,
+			HasPakSource:    p.svc.ModHasPakMergeSource(&mod),
+			// This row came from the installed-mods list, so its
+			// install-state fields above (Version/UpdatePolicy, plus
+			// Locked/LockedVersion set below) are genuine local install
+			// state - see ModItem.InstalledRow's own doc comment for why
+			// modDetailsFromItem gates on this instead of Status.
+			InstalledRow: true,
+			Profile:      profile,
 		}
 		// ModItem.LockedVersion is only ever populated alongside Locked
 		// (see that field's own doc comment) - an unlocked ref's Version is
@@ -393,6 +404,12 @@ func (p *coreProvider) installedModKeys() (map[string]bool, error) {
 
 // modsToItems maps source search results to renderable rows, marking each
 // as installed via domain.ModKey(sourceID, modID) against installedKeys.
+// Version here is always the SOURCE's own version for this mod - the
+// latest upstream, not necessarily what's installed - so an "installed"
+// status row deliberately leaves InstalledRow/Profile/UpdatePolicy/Locked/
+// LockedVersion at their zero values rather than approximating genuine
+// install state from data this function never fetched (see
+// ModItem.InstalledRow's own doc comment; #86 review).
 func (p *coreProvider) modsToItems(mods []domain.Mod, installedKeys map[string]bool) []ModItem {
 	items := make([]ModItem, 0, len(mods))
 	for _, mod := range mods {
@@ -1187,9 +1204,11 @@ func updateProgressLine(modName string, p core.DeployProgress) (ActionProgress, 
 // mirroring cmd/lmm/search.go's capabilityGapNotice, naming sourceID plus
 // capability (what the source can't do) and fallback (the correct CLI
 // command for the ACTUAL action the caller was performing - see the review
-// finding this fixes below). Everything else is wrapped with %w under
-// action, a short present-participle label (e.g. "planning install of
-// SkyUI").
+// finding this fixes below - or, when no CLI command would fare any better
+// because it shares the same failing path, what the caller can already rely
+// on locally instead; see GetModDetails' own fallback below for that case).
+// Everything else is wrapped with %w under action, a short
+// present-participle label (e.g. "planning install of SkyUI").
 //
 // mapNetworkError is deliberately unexported and only called through the
 // per-action wrappers below (mapInstallNetworkError/mapUpdateNetworkError):
@@ -1605,6 +1624,33 @@ func (p *coreProvider) SetUpdatePolicy(_ context.Context, item ModItem, policy s
 	return ActionOutcome{Message: fmt.Sprintf("%s update policy: %s", item.Name, policy)}, nil
 }
 
+// SetConvertPaks persists item's #221 pak-to-exmod conversion flag via
+// svc.SetModConvertPaks - a local DB write, no network call, no hooks
+// (mirroring SetUpdatePolicy immediately above). The merged pak isn't
+// regenerated here; the message says so, matching the CLI's `lmm mod
+// convert` wording (cmd/lmm/mod.go's doModConvert) - convergence happens on
+// the next deploy/merge sync. When the ACTIVE game's own convert_paks is
+// false (domain.Game.ConvertPaks), the generic "(deploy to apply)" trailer
+// is misleading - no deploy will convert this mod no matter what the
+// per-mod flag says until the game flag is flipped back on (Copilot round 1
+// on PR #222 fixed the identical wording trap in doModConvert; this mirrors
+// that fix for the TUI's own status line).
+func (p *coreProvider) SetConvertPaks(_ context.Context, item ModItem, enabled bool) (ActionOutcome, error) {
+	game := p.currentGame()
+	if err := p.svc.SetModConvertPaks(item.Source, item.ID, game.ID, p.currentProfile(), enabled); err != nil {
+		return ActionOutcome{}, fmt.Errorf("setting pak conversion for %s: %w", item.Name, err)
+	}
+	state := "on"
+	if !enabled {
+		state = "off"
+	}
+	trailer := "(deploy to apply)"
+	if !game.ConvertPaks {
+		trailer = "(this game's convert_paks: false currently disables conversion for the whole game)"
+	}
+	return ActionOutcome{Message: fmt.Sprintf("%s pak conversion: %s %s", item.Name, state, trailer)}, nil
+}
+
 // SetLock locks item at version (""=the ref's current recorded version) via
 // ProfileManager.SetModLock - a local profile YAML write, no network call,
 // no hooks (mirroring SetUpdatePolicy's own "local write" shape above and
@@ -1651,6 +1697,57 @@ func (p *coreProvider) AvailableVersions(ctx context.Context, item ModItem) ([]s
 		return nil, mapNetworkError(action, item.Source, "version resolution", "pin it instead (P)", err)
 	}
 	return versions, nil
+}
+
+// GetModDetails fetches item's mod via core.Service.ModDetail (Task 2),
+// which joins the source-side fetch with whatever local install state the
+// active profile has, then overlays that onto modDetailsFromItem's local
+// seed - so a field the source doesn't report (or a fetch that fails) still
+// leaves the row-derived values in place rather than blanking them. A
+// network call for remote sources; mapped through mapNetworkError like
+// AvailableVersions above. The fallback does NOT point at 'lmm mod show':
+// that command now runs through this exact same core.Service.ModDetail path
+// (Task 2's extraction), so on a genuine ErrNotSupported it would fail
+// identically - pointing at it would be advice sending the user to an
+// equally-doomed command (Copilot review finding on PR #233). Instead the
+// fallback tells the user what they still have: the failure lands on
+// resolveModDetailsFailed's degrade-in-place path (mutations.go), which
+// leaves the seeded local fields - name/version/author/install state -
+// visible; only the source-side enrichment (description) is missing.
+func (p *coreProvider) GetModDetails(ctx context.Context, item ModItem) (ModDetails, error) {
+	action := fmt.Sprintf("fetching details for %s", item.Name)
+	game := p.currentGame()
+	detail, err := p.svc.ModDetail(ctx, game, p.currentProfile(), item.Source, item.ID)
+	if err != nil {
+		return ModDetails{}, mapNetworkError(action, item.Source, "mod details",
+			"the fields already shown are everything known locally", err)
+	}
+
+	out := modDetailsFromItem(item)
+	mod := detail.Mod
+	out.Name, out.Version, out.Author = mod.Name, mod.Version, mod.Author
+	out.Summary, out.Category = mod.Summary, mod.Category
+	out.SourceURL, out.PictureURL = mod.SourceURL, mod.PictureURL
+	// Same shared cleaner the CLI's mod show and the update flow use, so all
+	// three surfaces render a source's markup identically (#86).
+	out.Description = core.CleanChangelog(mod.Description)
+	if mod.Endorsements != nil {
+		out.Endorsements, out.HasEndorsements = *mod.Endorsements, true
+	}
+
+	if detail.Installed != nil {
+		out.Installed = &InstalledDetails{
+			Version:       detail.Installed.Version,
+			Profile:       detail.Installed.Profile,
+			UpdatePolicy:  policyToString(detail.Installed.UpdatePolicy),
+			Locked:        detail.Installed.Locked,
+			LockedVersion: detail.Installed.LockedVersion,
+			ConvertPaks:   detail.Installed.ConvertPaks,
+		}
+	} else {
+		out.Installed = nil
+	}
+	return out, nil
 }
 
 // CreateProfile creates a new, empty profile via ProfileManager.Create - a
@@ -1850,4 +1947,103 @@ func (p *coreProvider) ExportProfile(_ context.Context, name, path string) (Acti
 	}
 
 	return ActionOutcome{Message: fmt.Sprintf("exported %q to %s", name, path)}, nil
+}
+
+// Health runs the verify engine's LOCAL tier (disk/DB only - never the
+// network) for the dashboard signal and the Health screen's initial content
+// (#224 Task 8). Mirrors Conflicts' own "ride every ordinary loadData
+// refresh" contract (DataProvider.Health's doc comment) rather than
+// Updates/CheckUpdates' explicit-user-action gate: the Local tier is a
+// plain, cheap DB/cache walk, not a network round trip.
+func (p *coreProvider) Health(ctx context.Context) (HealthView, error) {
+	game := p.currentGame()
+	res, err := p.svc.Verify(ctx, game, p.currentProfile(), core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	if err != nil {
+		return HealthView{}, fmt.Errorf("checking health for %s/%s: %w", game.ID, p.currentProfile(), err)
+	}
+	return healthView(res, false), nil
+}
+
+// RunHealthCheck runs the verify engine on demand (#224 Task 8): full=true
+// selects the Full tier (adds the network version pass), fix=true applies
+// CLI --fix semantics. The two are independent knobs here - opts.Tier only
+// moves off VerifyLocal when full is true, regardless of fix - matching the
+// design's actual CLI parity point exactly: `lmm verify --fix` itself
+// always runs the Full tier (cmd/lmm/verify.go never offers a --fix-without-
+// network mode), so it is the Health screen's 'F' binding (ActionProvider.
+// RunHealthCheck's own doc comment: "always full") that is responsible for
+// invoking this with full=true whenever fix=true - not this method
+// second-guessing its caller.
+//
+// Progress mapping (nil-safe, checked once per event like every other
+// coreProvider streaming method's onProgress closure - e.g.
+// ApplyProfileSwitch's onProgress above): VerifyEvProgress (a version-pass
+// tick), VerifyEvFinding (a reported row), and VerifyEvRepairDetail/
+// VerifyEvSyncWarning (both already-formatted sub-lines) each compose one
+// status-line entry. VerifyEvBegin/VerifyEvVerbose carry nothing worth a
+// line and fall through unmapped.
+//
+// A VerifyEvProgress tick fires at the TOP of every version-pass mod
+// iteration, INCLUDING mods the pass then silently skips (local-source/
+// manual/no-fileIDs - see versionPass' own doc comment in verify.go) - so
+// the LAST tick a caller observes can linger on a skipped mod with no
+// finding ever following it. Harmless for this status-line consumer (the
+// next real tick, or the run's completion, simply supersedes it), but worth
+// knowing if a future caller ever tries to correlate the final tick with a
+// specific outcome.
+func (p *coreProvider) RunHealthCheck(ctx context.Context, full, fix bool, progress func(ActionProgress)) (HealthView, error) {
+	game := p.currentGame()
+	profile := p.currentProfile()
+	opts := core.VerifyOptions{Tier: core.VerifyLocal, Fix: fix}
+	if full {
+		opts.Tier = core.VerifyFull
+	}
+
+	res, err := p.svc.Verify(ctx, game, profile, opts, func(ev core.VerifyEvent) {
+		if progress == nil {
+			return
+		}
+		switch ev.Kind {
+		case core.VerifyEvProgress:
+			progress(ActionProgress{Line: fmt.Sprintf("checking versions %d/%d: %s", ev.Index, ev.Total, ev.ModName)})
+		case core.VerifyEvFinding:
+			// Reuses healthFindingSubject's ModName -> ModID -> FileID
+			// fallback (app.go, #224 Copilot round 1) rather than ev.Finding.
+			// ModName alone - a modless convergence finding (e.g. a dangling
+			// cache-rooted symlink's stale_deployment row) carries no ModName
+			// at all, which used to render a bare "stale_deployment: " line
+			// (#224 Copilot round 2). core.VerifyFinding and HealthFinding
+			// share the same ModID/ModName/FileID shape by design (see
+			// HealthFinding's own doc comment), so this converts field-for-
+			// field rather than duplicating the fallback logic.
+			subject := healthFindingSubject(HealthFinding{ModID: ev.Finding.ModID, ModName: ev.Finding.ModName, FileID: ev.Finding.FileID})
+			progress(ActionProgress{Line: fmt.Sprintf("%s: %s", ev.Finding.Status, subject)})
+		case core.VerifyEvRepairDetail, core.VerifyEvSyncWarning:
+			progress(ActionProgress{Line: ev.Detail})
+		}
+	})
+	if err != nil {
+		return HealthView{}, fmt.Errorf("checking health for %s/%s: %w", game.ID, profile, err)
+	}
+	return healthView(res, full), nil
+}
+
+// healthView maps a core.VerifyResult to the TUI's HealthView.
+//
+// 2026-08-07 smoke feedback (user override, #224): this used to drop
+// quiet-ok rows (Status "ok" with an empty Note) as "nothing to show" - the
+// same convention the CLI's own verify TABLE summary applies - but the
+// CLI's row-by-row output (`lmm verify`) prints a `+ <name> - OK` line per
+// checked file regardless, and the user rightly expects the Health screen
+// to match that, not the summary. Every row the engine reports - the
+// quiet-ok rows AND the lock-pending "ok" rows (ok status with a non-empty
+// Note, e.g. "lock pending convergence...") - is now kept verbatim. Shared
+// by Health (always full=false, the Local tier) and RunHealthCheck (full
+// mirrors the caller's own tier choice).
+func healthView(res *core.VerifyResult, full bool) HealthView {
+	v := HealthView{Issues: res.Issues, Warnings: res.Warnings, Full: full, Checked: res.Checked, Findings: make([]HealthFinding, 0, len(res.Findings))}
+	for _, f := range res.Findings {
+		v.Findings = append(v.Findings, HealthFinding{ModID: f.ModID, ModName: f.ModName, FileID: f.FileID, Status: f.Status, Note: f.Note, Recorded: f.Recorded, Effective: f.Effective, Version: f.Version})
+	}
+	return v
 }
