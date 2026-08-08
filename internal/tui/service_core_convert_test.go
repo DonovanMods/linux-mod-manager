@@ -23,11 +23,11 @@ import (
 // the two independently constructed instances always observe the same
 // underlying DB/filesystem truth - letting this test mutate via one and
 // re-read via the other. Unlike newRecompileActionsFixture
-// (service_core_recompile_test.go), no merge-compiler source is registered
-// and no base pak is written: this test never deploys or merges anything,
-// so that machinery would be pure overhead - mirrors cmd/lmm/mod_convert_
-// test.go's setupDoModConvertTest, the CLI's own lightweight convert
-// fixture.
+// (service_core_recompile_test.go), no base pak is written: this test never
+// deploys or merges anything. A merge-compiler source IS registered (#256:
+// HasPakSource classification resolves the game's MergeCompiler source),
+// but stays otherwise inert - mirrors cmd/lmm/mod_convert_test.go's
+// setupDoModConvertTest, the CLI's own lightweight convert fixture.
 func newConvertActionsFixture(t *testing.T) (tui.ActionProvider, tui.DataProvider, *core.Service, *domain.Game) {
 	t.Helper()
 
@@ -47,8 +47,10 @@ func newConvertActionsFixture(t *testing.T) (tui.ActionProvider, tui.DataProvide
 		LinkMethod:  domain.LinkSymlink,
 		DeployMode:  domain.DeployCompile,
 		ConvertPaks: true,
+		SourceIDs:   map[string]string{"fake-compiler": "icarus"},
 	}
 	require.NoError(t, svc.AddGame(game))
+	svc.RegisterSource(&recompileFakeSource{})
 
 	pm := svc.NewProfileManager()
 	_, err = pm.Create(game.ID, "default")

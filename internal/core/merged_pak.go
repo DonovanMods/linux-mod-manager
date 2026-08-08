@@ -14,13 +14,14 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 )
 
-// mergedPakModID/mergedPakVersion/mergedPakFileName identify the merged pak
-// as a synthetic, singleton "mod" per (game, profile) - domain.SourceMerged
-// is the matching sourceID. This reuses Installer.Install/Uninstall and
-// cache.Cache verbatim (#197 design decision 2) rather than a parallel
-// deploy/tracking mechanism: zero schema changes, and the SAME
-// deployed_files ownership (and #168-class residue risk) as every other
-// deployed file.
+// mergedPakModID/mergedPakVersion identify the merged pak as a synthetic,
+// singleton "mod" per (game, profile) - domain.SourceMerged is the matching
+// sourceID. This reuses Installer.Install/Uninstall and cache.Cache
+// verbatim (#197 design decision 2) rather than a parallel deploy/tracking
+// mechanism: zero schema changes, and the SAME deployed_files ownership
+// (and #168-class residue risk) as every other deployed file. The merged
+// artifact's on-disk FILENAME is the compile source's business, not core's
+// (#256): mc.MergedArtifactName() supplies it wherever it's needed.
 const (
 	mergedPakModID = "merged-pak"
 	// mergedPakVersion is fixed ("merged", not a real upstream version) -
@@ -28,17 +29,6 @@ const (
 	// every regeneration REPLACES it outright (mirrors #166's directory-
 	// source "replace, don't overlay" precedent) rather than versioning it.
 	mergedPakVersion = "merged"
-	// mergedPakFileName sorts LAST among files UE mounts from a profile's
-	// mods directory: paks mount in filename-sort order and a later mount
-	// wins same-path conflicts (this repo's own icarusContentMountPoint doc
-	// comment, and #197's issue body, both note this) - "zzz" is a
-	// long-standing UE-modding convention for "load last, highest
-	// priority", so the merged pak's authoritative combined table state can
-	// never be silently shadowed by a plain prebuilt .pak mod that happens
-	// to also carry a table override. "LMM" makes the file greppable as
-	// lmm-owned; "_P" matches this codebase's existing override-pak suffix
-	// convention (compiledFileName).
-	mergedPakFileName = "zzz_LMM_Merged_P.pak"
 )
 
 // MergedFingerprint captures everything a merged pak was built from (#197):
@@ -59,7 +49,7 @@ type MergedFingerprintEntry struct {
 	ModID    string
 	Version  string
 	Checksum string // MD5 of the retained source bytes (md5File)
-	Kind     string `json:",omitempty"` // source.MergeSourcePak for retained paks; empty/exmodz otherwise (#221)
+	Kind     string `json:",omitempty"` // source-defined convertible kind for retained paks; empty/native otherwise (#221, opaque to core since #256)
 
 	// Outcome fields (#221): recorded AFTER the merge, ignored by input
 	// equality - a failed conversion retries only when an INPUT changes
@@ -68,33 +58,41 @@ type MergedFingerprintEntry struct {
 	FailReason string `json:",omitempty"`
 }
 
-// mergeSourceKind classifies a retained-source fileID (#221). Download-path
-// icarus fileIDs are literally "pak"/"exmodz"; import-path fileIDs are the
-// archive's own filename. Unknown kinds default to exmodz - the only kind
-// that existed before #221.
-func mergeSourceKind(fileID string) string {
-	lower := strings.ToLower(fileID)
-	if lower == "pak" || strings.HasSuffix(lower, ".pak") {
-		return source.MergeSourcePak
-	}
-	return source.MergeSourceExmodz
-}
+// mergeSourceClassifier is the one sliver of source.MergeCompiler the
+// package-level fingerprint helpers need: ClassifyMergeSource as a function
+// value (a method value like mc.ClassifyMergeSource assigns directly).
+// Kept narrow so the helpers stay pure and tests can exercise fingerprint
+// semantics without constructing a full source (#256).
+type mergeSourceClassifier func(id string) (kind string, convertible bool)
 
-// ModHasPakMergeSource reports whether mod carries at least one pak-kind
-// (source.MergeSourcePak) merge-source fileID, as opposed to being
-// exmodz-only (#221 round-4 fix). Pure classification over mod.FileIDs via
-// mergeSourceKind - no cache lookups or retained-source disk checks (unlike
-// enabledMergeSources, which additionally confirms ingest actually RETAINED
-// something). Callers that only need "does pak-conversion state have any
-// effect on this mod at all" - e.g. the TUI deciding whether to show the
-// "raw" flag or honor the convert-toggle key - want this cheaper check, not
-// enabledMergeSources' full retained-file resolution.
-func (s *Service) ModHasPakMergeSource(mod *domain.InstalledMod) bool {
-	if mod == nil {
+// ModHasPakMergeSource reports whether mod carries at least one
+// convertible-kind (raw pak) merge-source fileID, as opposed to being
+// native/exmodz-only (#221 round-4 fix). Classification over mod.FileIDs
+// via the game's compile source (#256) - no cache lookups or
+// retained-source disk checks (unlike enabledMergeSources, which
+// additionally confirms ingest actually RETAINED something). Callers that
+// only need "does pak-conversion state have any effect on this mod at all"
+// - e.g. the TUI deciding whether to show the "raw" flag or honor the
+// convert-toggle key - want this cheaper check, not enabledMergeSources'
+// full retained-file resolution. A game with no (or an ambiguous)
+// merge-compiler source has no merge sources of any kind, so resolution
+// failure is simply false, not an error. Deliberately NOT gated on
+// game.DeployMode: `lmm mod convert` persists the per-mod flag on
+// non-compile games too (with an advisory that it has no effect there,
+// TestModConvertCommand_NonCompileGame), so classification must answer
+// for any game whose compile source resolves - matching the pre-#256
+// static behavior. Callers that only care about compile games gate on
+// DeployMode themselves.
+func (s *Service) ModHasPakMergeSource(game *domain.Game, mod *domain.InstalledMod) bool {
+	if game == nil || mod == nil {
+		return false
+	}
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
 		return false
 	}
 	for _, fileID := range mod.FileIDs {
-		if mergeSourceKind(fileID) == source.MergeSourcePak {
+		if _, convertible := mc.ClassifyMergeSource(fileID); convertible {
 			return true
 		}
 	}
@@ -102,14 +100,15 @@ func (s *Service) ModHasPakMergeSource(mod *domain.InstalledMod) bool {
 }
 
 // fingerprintInputs strips outcome fields and normalizes Kind so equality
-// judges inputs only. Kind "" and "exmodz" are the same input (pre-#221
-// markers wrote no Kind).
-func fingerprintInputs(f MergedFingerprint) MergedFingerprint {
+// judges inputs only. A legacy pre-#221 marker entry's empty Kind and the
+// source's own default kind are the same input - classify("") returns that
+// default (icarus: "exmodz"), per the ClassifyMergeSource contract.
+func fingerprintInputs(f MergedFingerprint, classify mergeSourceClassifier) MergedFingerprint {
 	out := MergedFingerprint{BaseIndexHash: f.BaseIndexHash, Mods: make([]MergedFingerprintEntry, len(f.Mods))}
 	for i, m := range f.Mods {
 		kind := m.Kind
 		if kind == "" {
-			kind = source.MergeSourceExmodz
+			kind, _ = classify(kind)
 		}
 		out.Mods[i] = MergedFingerprintEntry{SourceID: m.SourceID, ModID: m.ModID, Version: m.Version, Checksum: m.Checksum, Kind: kind}
 	}
@@ -159,12 +158,12 @@ func marshalMergedFingerprint(f MergedFingerprint) ([]byte, error) {
 // inputs, by comparing their marshaled bytes - exactly what "compare
 // against the stored marker" needs, since the marker itself IS the
 // marshaled form.
-func mergedFingerprintsEqual(a, b MergedFingerprint) (bool, error) {
-	aBytes, err := marshalMergedFingerprint(fingerprintInputs(a))
+func mergedFingerprintsEqual(a, b MergedFingerprint, classify mergeSourceClassifier) (bool, error) {
+	aBytes, err := marshalMergedFingerprint(fingerprintInputs(a, classify))
 	if err != nil {
 		return false, err
 	}
-	bBytes, err := marshalMergedFingerprint(fingerprintInputs(b))
+	bBytes, err := marshalMergedFingerprint(fingerprintInputs(b, classify))
 	if err != nil {
 		return false, err
 	}
@@ -189,6 +188,13 @@ func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]
 	}
 
 	gameCache := s.GetGameCache(game)
+	// The compile source is resolved lazily, on the first retained file
+	// found (#256): classification is its business now, but a profile with
+	// nothing retained has nothing to classify, and must keep working -
+	// exactly as it did pre-#256 - even for a game whose MergeCompiler
+	// source isn't configured (syncMergedPak's uninstall-to-zero path runs
+	// unconditionally from every mutation flow).
+	var mc source.MergeCompiler
 	var sources []source.MergeSource
 	for _, mod := range mods {
 		if !mod.Enabled {
@@ -199,8 +205,14 @@ func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]
 			if _, statErr := os.Stat(retainedPath); statErr != nil {
 				continue // not a retained merge source (nothing ingested for this fileID - a legacy-ingest pak, or a non-convert-eligible one)
 			}
-			kind := mergeSourceKind(fileID)
-			if kind == source.MergeSourcePak && (!game.ConvertPaks || !mod.ConvertPaks) {
+			if mc == nil {
+				var mcErr error
+				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+					return nil, mcErr
+				}
+			}
+			kind, convertible := mc.ClassifyMergeSource(fileID)
+			if convertible && (!game.ConvertPaks || !mod.ConvertPaks) {
 				continue // opted out (game- or mod-level): stays raw-deployed (#221)
 			}
 			sources = append(sources, source.MergeSource{
@@ -225,8 +237,8 @@ func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName stri
 // syncMergedPak regenerates game+profileName's merged pak if its recorded
 // fingerprint no longer matches the CURRENT enabled-mod set/order/versions/
 // base pak (#197). Cheap when nothing changed: the fast path is one
-// directory read (enabledMergeSources), one base-pak footer read
-// (basePakIndexHash - never the pak's full content), and N small MD5s
+// directory read (enabledMergeSources), one base-artifact fingerprint read
+// (mc.FingerprintBase - for Icarus a pak footer, never the full content), and N small MD5s
 // (md5File over each retained .exmodz - real files here are small, see
 // #175's own research on real base-table sizes), then a byte comparison.
 // Safe to call unconditionally from ANY mutation flow regardless of game
@@ -275,15 +287,24 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		return reconWarnings, nil
 	}
 
-	basePakPath, err := resolveBasePak(game)
+	// Non-empty sources imply a resolvable compile source (enabledMergeSources
+	// already consulted it to classify them), so resolving here - earlier
+	// than pre-#256, which only needed the source on the slow path below -
+	// cannot newly fail a flow that used to succeed.
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		return nil, err
+	}
+
+	basePakPath, err := mc.ResolveBaseArtifact(game)
 	if err != nil {
 		return nil, err
 	}
 
 	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
-	deployedPath := filepath.Join(game.ModPath, mergedPakFileName)
+	deployedPath := filepath.Join(game.ModPath, mc.MergedArtifactName())
 	if stored, ok := readMergedFingerprint(cachePath); ok {
-		if eq, eqErr := mergedFingerprintsEqual(current, stored); eqErr == nil && eq {
+		if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr == nil && eq {
 			// #197 I5 fix: an unchanged fingerprint alone doesn't guarantee
 			// the pak is actually deployed - a PRIOR call's Install could
 			// have failed AFTER the fingerprint was already committed
@@ -324,11 +345,6 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
-	mc, err := s.mergeCompilerSourceForGame(game.ID)
-	if err != nil {
-		return nil, err
-	}
-
 	stagePath := cachePath + ".staging"
 	if err := os.RemoveAll(stagePath); err != nil {
 		return nil, fmt.Errorf("clearing merged pak staging: %w", err)
@@ -338,7 +354,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	}
 	defer os.RemoveAll(stagePath) //nolint:errcheck
 
-	outputPath := filepath.Join(stagePath, mergedPakFileName)
+	outputPath := filepath.Join(stagePath, mc.MergedArtifactName())
 	mergeWarnings, mergeFailed, err := mc.MergeCompile(ctx, basePakPath, sources, outputPath)
 	if err != nil {
 		return nil, fmt.Errorf("merging %d merge source(s): %w", len(sources), err)
@@ -405,19 +421,32 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 		return nil, fmt.Errorf("loading profile mods: %w", err)
 	}
 	gameCache := s.GetGameCache(game)
+	// Lazily resolved, like enabledMergeSources (#256): only a mod with a
+	// retained file has anything to classify, so a profile with nothing
+	// retained never needs (and pre-#256 never consulted) the compile
+	// source - the retained-stat therefore runs BEFORE classification,
+	// flipping the pre-#256 order of two independent, side-effect-free
+	// filters.
+	var mc source.MergeCompiler
 	for i := range mods {
 		mod := &mods[i]
 		if !mod.Enabled {
 			continue
 		}
 		for _, fileID := range mod.FileIDs {
-			if mergeSourceKind(fileID) != source.MergeSourcePak {
-				continue
-			}
 			versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
 			retained := filepath.Join(versionDir, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retained); statErr != nil {
 				continue // nothing retained (legacy ingest): Task 11's needs_reingest covers it
+			}
+			if mc == nil {
+				var mcErr error
+				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+					return warnings, mcErr
+				}
+			}
+			if _, convertible := mc.ClassifyMergeSource(fileID); !convertible {
+				continue
 			}
 			ref := mod.SourceID + ":" + mod.ID
 			_, failed := failedByRef[ref]
@@ -495,7 +524,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 					// it. Without this, the mark below would record an EMPTY
 					// member set and Install would deploy nothing, silently
 					// - the raw fallback's whole purpose defeated.
-					restoredName, herr := restoreRawPakCopy(versionDir, retained, fileID, mod.ID)
+					restoredName, herr := restoreRawPakCopy(mc, versionDir, retained, fileID, mod.ID)
 					if herr != nil {
 						return warnings, fmt.Errorf("restoring pruned raw pak for %s: %w", ref, herr)
 					}
@@ -601,20 +630,25 @@ func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]stri
 // rawPakRestoreName picks the on-disk name restoreRawPakCopy publishes a
 // healed deployable pak copy under (#250). An import-path fileID IS the
 // original archive filename (Importer.Import stages the deployable copy
-// under exactly that name), so the restore is name-exact. A download-path
-// fileID (the literal icarus "pak") never carried the deployable name: it
-// came from the download URL's basename at ingest time, the convert flip
-// erased the manifest that recorded it, and nothing else durably stores it
-// - so a deterministic mod-scoped name in Icarus's "_P.pak" override
-// convention (the old compiledFileName convention) is synthesized instead.
-// Both inputs are source-controlled, so both are Base'd before use as a
-// path component.
-func rawPakRestoreName(fileID, modID string) string {
+// under exactly that name), so the restore is name-exact - detected by
+// asking the compile source whether the fileID names one of its
+// convertible artifacts (#256: the format test lives behind the seam). A
+// download-path fileID (the literal icarus "pak") never carried the
+// deployable name: it came from the download URL's basename at ingest
+// time, the convert flip erased the manifest that recorded it, and
+// nothing else durably stores it - so the source synthesizes its
+// deterministic mod-scoped fallback name instead
+// (mc.RestoredArtifactName; Icarus's "_P.pak" override convention). The
+// import-vs-download provenance SPLIT stays in core - it follows from how
+// ingest keys fileIDs, which is uniform across games - while both format
+// questions inside it are the source's. Both inputs are
+// source-controlled, so both are Base'd before use as a path component.
+func rawPakRestoreName(mc source.MergeCompiler, fileID, modID string) string {
 	base := filepath.Base(fileID)
-	if strings.EqualFold(filepath.Ext(base), ".pak") {
+	if mc.IsConvertibleArtifact(base) {
 		return base
 	}
-	return filepath.Base(modID) + "_P.pak"
+	return mc.RestoredArtifactName(filepath.Base(modID))
 }
 
 // restoreRawPakCopy re-creates fileID's deployable pak copy in versionDir
@@ -626,8 +660,8 @@ func rawPakRestoreName(fileID, modID string) string {
 // (rawPakMembers just matched nothing), and it could be a sibling fileID's
 // claimed member - failing loudly beats corrupting it, and the next
 // reconcile pass retries.
-func restoreRawPakCopy(versionDir, retainedPath, fileID, modID string) (string, error) {
-	name := rawPakRestoreName(fileID, modID)
+func restoreRawPakCopy(mc source.MergeCompiler, versionDir, retainedPath, fileID, modID string) (string, error) {
+	name := rawPakRestoreName(mc, fileID, modID)
 	target := filepath.Join(versionDir, name)
 	if _, err := os.Stat(target); err == nil {
 		return "", fmt.Errorf("restore target %s already exists with content not matching the retained source; refusing to overwrite", name)
@@ -675,6 +709,9 @@ func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain
 
 // MergedPakOutcomes returns the stored merge fingerprint's per-mod entries
 // (with #221 conversion outcomes), if a merged pak exists for game+profile.
+// The game's compile source interprets the stored Kind strings (#256); a
+// stored fingerprint implies a source produced it, so failing to resolve
+// one now (unconfigured since) reads as "no outcomes available".
 func (s *Service) MergedPakOutcomes(game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
 	gameCache := s.GetGameCache(game)
 	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
@@ -682,27 +719,31 @@ func (s *Service) MergedPakOutcomes(game *domain.Game, profileName string) ([]Me
 	if !ok {
 		return nil, false
 	}
-	return normalizeOutcomes(fp.Mods), true
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		return nil, false
+	}
+	return normalizeOutcomes(fp.Mods, mc.ClassifyMergeSource), true
 }
 
-// normalizeOutcomes forces a trivially-successful outcome on every non-pak
-// entry (#221 C1 fix): conversion failure is definitionally a pak-kind
-// concern (mergeSourceKind(fileID) == source.MergeSourcePak), but a
-// pre-#221 fingerprint marker unmarshals its (exmodz-only, at the time)
-// entries as Kind:"", Converted:false - those fields didn't exist yet, and
-// fingerprintInputs/mergedFingerprintsEqual deliberately never regenerate
-// them for an unchanged profile (input equality ignores outcomes). Without
-// this normalization, every consumer of MergedPakOutcomes (verify's
+// normalizeOutcomes forces a trivially-successful outcome on every
+// non-convertible entry (#221 C1 fix): conversion failure is definitionally
+// a convertible-kind concern, but a pre-#221 fingerprint marker unmarshals
+// its (exmodz-only, at the time) entries as Kind:"", Converted:false -
+// those fields didn't exist yet, and fingerprintInputs/
+// mergedFingerprintsEqual deliberately never regenerate them for an
+// unchanged profile (input equality ignores outcomes). Without this
+// normalization, every consumer of MergedPakOutcomes (verify's
 // conversion_failed rows, status's conversion-failure counts) would report
 // a spurious, permanent "CONVERSION FAILED" for every exmodz mod on any
 // profile that predates #221 - forever, since nothing ever rewrites the
 // stored marker's outcome fields for inputs that haven't changed. Kind==""
-// is the legacy shape; Kind==MergeSourceExmodz is the current one - both
-// are non-pak and therefore always trivially "converted".
-func normalizeOutcomes(mods []MergedFingerprintEntry) []MergedFingerprintEntry {
+// is the legacy shape and the current native kind is the modern one - the
+// classifier maps both to non-convertible, therefore trivially "converted".
+func normalizeOutcomes(mods []MergedFingerprintEntry, classify mergeSourceClassifier) []MergedFingerprintEntry {
 	out := make([]MergedFingerprintEntry, len(mods))
 	for i, m := range mods {
-		if m.Kind != source.MergeSourcePak {
+		if _, convertible := classify(m.Kind); !convertible {
 			m.Converted = true
 			m.FailReason = ""
 		}
@@ -722,7 +763,11 @@ func (s *Service) PakNeedsReingest(game *domain.Game, mod *domain.InstalledMod, 
 	if game.DeployMode != domain.DeployCompile || !game.ConvertPaks || !mod.ConvertPaks {
 		return false, nil
 	}
-	if mergeSourceKind(fileID) != source.MergeSourcePak {
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		return false, err
+	}
+	if _, convertible := mc.ClassifyMergeSource(fileID); !convertible {
 		return false, nil
 	}
 	gameCache := s.GetGameCache(game)
@@ -773,11 +818,17 @@ func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string
 		return MergedFingerprint{}, sources, nil
 	}
 
-	basePakPath, err := resolveBasePak(game)
+	// Non-empty sources imply enabledMergeSources already resolved the
+	// compile source, so this cannot newly fail (#256).
+	mc, err := s.mergeCompilerForGame(game)
 	if err != nil {
 		return MergedFingerprint{}, sources, err
 	}
-	liveHash, err := basePakIndexHash(basePakPath)
+	basePakPath, err := mc.ResolveBaseArtifact(game)
+	if err != nil {
+		return MergedFingerprint{}, sources, err
+	}
+	liveHash, err := mc.FingerprintBase(basePakPath)
 	if err != nil {
 		return MergedFingerprint{}, sources, fmt.Errorf("reading base pak for merge fingerprint: %w", err)
 	}
@@ -826,6 +877,13 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 		return nil, nil
 	}
 
+	// Non-empty sources imply currentMergedFingerprint already resolved the
+	// compile source, so this cannot newly fail (#256).
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		return nil, err
+	}
+
 	gameCache := s.GetGameCache(game)
 	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
 	stored, ok := readMergedFingerprint(cachePath)
@@ -836,7 +894,7 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 	// the real cause is a missing artifact.
 	reason := "base pak updated"
 	if ok {
-		if eq, eqErr := mergedFingerprintsEqual(current, stored); eqErr == nil && eq {
+		if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr == nil && eq {
 			// #197 I5 fix: mirrors syncMergedPak's identical fast-path
 			// check - a matching fingerprint alone doesn't prove the pak
 			// is actually deployed (a prior failed Install, or a purge
@@ -844,7 +902,7 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 			// this, `lmm update`/`lmm verify` would report "up to date"
 			// for a profile whose game directory doesn't actually hold
 			// the merged pak at all - the exact wedge this fix closes.
-			if _, statErr := os.Stat(filepath.Join(game.ModPath, mergedPakFileName)); statErr == nil {
+			if _, statErr := os.Stat(filepath.Join(game.ModPath, mc.MergedArtifactName())); statErr == nil {
 				return nil, nil
 			}
 			reason = "not deployed"
@@ -855,7 +913,7 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 		InstalledMod: domain.InstalledMod{
 			Mod: domain.Mod{
 				ID: mergedPakModID, SourceID: domain.SourceMerged,
-				Name: "Icarus Merged Pak", Version: mergedPakVersion, GameID: game.ID,
+				Name: mc.MergedArtifactLabel(), Version: mergedPakVersion, GameID: game.ID,
 			},
 		},
 		NewVersion:      mergedPakVersion,
@@ -873,12 +931,20 @@ func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string)
 // protects against).
 func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, progress func(DeployProgress)) (*UpdateApplyResult, error) {
 	result := &UpdateApplyResult{}
+	// Resolved up front: the Applied entry below reports the merged
+	// artifact by the name only the compile source knows (#256), and a
+	// regen request for a game without one is a misconfiguration worth
+	// failing loud on before touching anything.
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		return result, err
+	}
 	warnings, err := s.syncMergedPak(ctx, game, profileName)
 	if err != nil {
 		return result, err
 	}
 	result.Warnings = warnings
-	result.Applied = []string{mergedPakFileName}
+	result.Applied = []string{mc.MergedArtifactName()}
 	if progress != nil {
 		progress(DeployProgress{Phase: UpdateDownloadDone})
 	}
