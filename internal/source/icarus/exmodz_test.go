@@ -45,7 +45,8 @@ func TestParseExmodz(t *testing.T) {
 	if bundle.Diff == nil || bundle.Diff.Name != "Bear Mount" {
 		t.Fatalf("Diff = %+v", bundle.Diff)
 	}
-	asset, ok := bundle.Assets["Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.uasset"]
+	// Keyed by the wrapper-stripped, Content-relative path (#237).
+	asset, ok := bundle.Assets["ASS/ITM/SK_ITM_Saddle_Bear.uasset"]
 	if !ok {
 		t.Fatalf("Assets missing expected key; got keys: %v", mapKeys(bundle.Assets))
 	}
@@ -93,7 +94,7 @@ func TestParseExmodz_NormalizesBackslashNames(t *testing.T) {
 	if bundle.Diff == nil || bundle.Diff.Name != "Bear Mount" {
 		t.Fatalf("Diff = %+v", bundle.Diff)
 	}
-	asset, ok := bundle.Assets["Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.uasset"]
+	asset, ok := bundle.Assets["ASS/ITM/SK_ITM_Saddle_Bear.uasset"]
 	if !ok {
 		t.Fatalf("Assets missing expected forward-slash key; got keys: %v", mapKeys(bundle.Assets))
 	}
@@ -133,7 +134,7 @@ func TestParseExmodz_MatchesCaseInsensitively(t *testing.T) {
 	if bundle.Diff == nil || bundle.Diff.Name != "Bear Mount" {
 		t.Fatalf("Diff = %+v", bundle.Diff)
 	}
-	if _, ok := bundle.Assets["Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.UASSET"]; !ok {
+	if _, ok := bundle.Assets["ASS/ITM/SK_ITM_Saddle_Bear.UASSET"]; !ok {
 		t.Fatalf("Assets missing case-varying key (original case preserved); got keys: %v", mapKeys(bundle.Assets))
 	}
 }
@@ -388,5 +389,61 @@ func TestParseExmodz_TotalAssetsSizeAccumulationIsOverflowSafe(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "per-entry cap") {
 		t.Errorf("error %q fired from the per-entry check, meaning uint64 overflow bypassed the total-cap check", err)
+	}
+}
+
+// Every real .EXMODZ wraps its bundled assets in a single directory named
+// after the mod, and that wrapper is stripped when the mod is compiled: the
+// dual-form mod Crys_Lvl120Cap_M25 ships
+// "Crys_Lvl120Cap_M25/data/Character/C_PlayerTalentGrowth.uasset" in its
+// .EXMODZ and mounts the same asset at "Icarus/Content/data/Character/
+// C_PlayerTalentGrowth.uasset" in its own published _P.pak. Carrying the
+// wrapper through into the output pak puts every bundled asset one directory
+// below the base asset it is meant to override, so the game silently ignores
+// it (#237).
+func TestParseExmodz_StripsModNameWrapper(t *testing.T) {
+	bundle, err := ParseExmodz(buildTestExmodz(t))
+	if err != nil {
+		t.Fatalf("ParseExmodz: %v", err)
+	}
+	if _, ok := bundle.Assets["Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.uasset"]; ok {
+		t.Errorf("asset key kept the %q wrapper; it must be stripped so the asset "+
+			"overrides the base game's own path", "Bear_Mount/")
+	}
+	asset, ok := bundle.Assets["ASS/ITM/SK_ITM_Saddle_Bear.uasset"]
+	if !ok {
+		t.Fatalf("Assets missing wrapper-stripped key; got keys: %v", mapKeys(bundle.Assets))
+	}
+	if string(asset) != "fake-uasset-bytes" {
+		t.Errorf("asset content = %q", asset)
+	}
+}
+
+// Only the mod's own wrapper is stripped. An .EXMODZ whose assets already sit
+// at their Content-relative path must be left exactly as authored - stripping
+// a leading segment unconditionally would corrupt those instead.
+func TestParseExmodz_LeavesUnwrappedAssetPathUnchanged(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("Extracted Mods/Bear_Mount.EXMOD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write([]byte(`{"name":"Bear Mount","Rows":[]}`)) //nolint:errcheck
+	assetW, err := zw.Create("ASS/ITM/SK_ITM_Saddle_Bear.uasset")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetW.Write([]byte("fake-uasset-bytes")) //nolint:errcheck
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle, err := ParseExmodz(buf.Bytes())
+	if err != nil {
+		t.Fatalf("ParseExmodz: %v", err)
+	}
+	if _, ok := bundle.Assets["ASS/ITM/SK_ITM_Saddle_Bear.uasset"]; !ok {
+		t.Fatalf("unwrapped asset path was modified; got keys: %v", mapKeys(bundle.Assets))
 	}
 }
