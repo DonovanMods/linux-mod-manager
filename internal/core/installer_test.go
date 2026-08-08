@@ -402,6 +402,40 @@ func TestInstaller_Uninstall_AbsentCacheEntry_CleansTrackingWithoutError(t *test
 	require.Empty(t, rows, "stale tracking rows must still be cleared when the cache entry is gone")
 }
 
+// TestInstaller_Uninstall_AbsentCacheEntry_RemovesTrackedDeployedFiles
+// (#260 review follow-up): with the cache entry gone, the deployment can
+// still be fully on disk - a copy/hardlink deploy owns real files, not
+// links back into the cache. Uninstall must fall back to the DB's tracked
+// deployed paths and remove them, not silently orphan them while erasing
+// the only record that they were ours.
+func TestInstaller_Uninstall_AbsentCacheEntry_RemovesTrackedDeployedFiles(t *testing.T) {
+	modCache := cache.New(t.TempDir())
+	gameDir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkCopy}
+	mod := &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g"}
+
+	// A copy-linked deployment whose cache entry has since been removed:
+	// the deployed file is real and still present.
+	deployedPath := filepath.Join(gameDir, "data", "a.esp")
+	require.NoError(t, os.MkdirAll(filepath.Dir(deployedPath), 0755))
+	require.NoError(t, os.WriteFile(deployedPath, []byte("copied"), 0644))
+	require.NoError(t, database.SaveDeployedFile("g", "default", "data/a.esp", "src", "1"))
+
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkCopy), database)
+	require.NoError(t, inst.Uninstall(context.Background(), game, mod, "default"))
+
+	_, err = os.Stat(deployedPath)
+	require.True(t, os.IsNotExist(err), "the tracked deployed file must be removed via the DB fallback")
+
+	rows, err := database.GetDeployedFilesForMod("g", "default", "src", "1")
+	require.NoError(t, err)
+	require.Empty(t, rows)
+}
+
 func TestInstaller_Install_DeployFailureRollsBackAndClearsDB(t *testing.T) {
 	// When Deploy fails after some files are deployed, roll back all deployed
 	// files and clear DB records so disk and DB stay consistent.
