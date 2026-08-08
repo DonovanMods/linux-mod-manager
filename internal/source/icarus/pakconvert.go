@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
+	"github.com/DonovanMods/go-unrealpak"
 )
 
 // entryClass classifies one mod-pak entry for pak→exmod conversion (#221).

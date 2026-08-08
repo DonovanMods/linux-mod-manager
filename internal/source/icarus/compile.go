@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
+	"github.com/DonovanMods/go-unrealpak"
 )
 
 // Compile reads exmodzPath's .EXMOD diff, applies it to the game's base data
@@ -16,7 +16,7 @@ import (
 // Base tables are read directly out of basePakPath — the installed game's own
 // Content/Data/data.pak — so they are always week-correct by construction and
 // the whole operation is offline. That pak stores 40 tables uncompressed and
-// compresses the other 258 with Zlib, all of which internal/unrealpak reads
+// compresses the other 258 with Zlib, all of which go-unrealpak reads
 // with the standard library (#175). basePakPath is also what resolves a bare,
 // hyphen-flattened CurrentFile to a real mount path.
 //
@@ -27,7 +27,7 @@ import (
 //
 // The compiled pak's mount point and table-entry paths (icarusContentMountPoint,
 // icarusDataTablePrefix below) are Icarus-specific and deliberately live here
-// rather than in internal/unrealpak, which stays game-agnostic — see
+// rather than in go-unrealpak, which stays game-agnostic — see
 // unrealpak.Writer's WithMountPoint. They are not guessed: both were
 // confirmed against two real, working prebuilt Icarus mod paks (#178; see
 // docs/plans/2026-08-01-icarus-zlib-pivot.md's pak-divergence-report.md).

@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/DonovanMods/go-unrealpak"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/unrealpak"
 )
 
 // MergeSource is a type alias (not a distinct type) for source.MergeSource

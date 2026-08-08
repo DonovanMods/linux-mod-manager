@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `internal/unrealpak` is now the standalone module
+  [`github.com/DonovanMods/go-unrealpak`](https://github.com/DonovanMods/go-unrealpak),
+  consumed as a dependency. No behavior change — the package moved verbatim,
+  with its history, and gained a `unrealpak` CLI (`info`/`list`/`cat`/
+  `extract`/`build`) that lmm does not use. (#170)
 - `lmm mod show` now strips HTML from a mod's description before printing
   it, using the same cleaner the update flow and TUI already share — raw
   `<p>` tags and `&amp;` entities no longer reach the terminal (#86).
