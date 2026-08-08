@@ -1000,6 +1000,7 @@ func (m *mockSourceWithDownloads) Close() {
 // takes DownloadModToCache's ordinary copy path, and a later .exmodz
 // re-download that takes its validate+retain (#197) path.
 type compilerMockSource struct {
+	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
 	*mockSourceWithDownloads
 }
 

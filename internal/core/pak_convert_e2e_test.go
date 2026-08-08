@@ -80,9 +80,9 @@ func TestPakConvertEndToEnd(t *testing.T) {
 
 	require.Len(t, rec.lastSources, 2, "MergeCompile must receive both mods")
 	require.Equal(t, "fake-compiler:exmod", rec.lastSources[0].ModRef, "profile load order: exmod first")
-	require.Equal(t, source.MergeSourceExmodz, rec.lastSources[0].Kind)
+	require.Equal(t, "exmodz", rec.lastSources[0].Kind)
 	require.Equal(t, "fake-compiler:pakmod", rec.lastSources[1].ModRef, "profile load order: pakmod second")
-	require.Equal(t, source.MergeSourcePak, rec.lastSources[1].Kind)
+	require.Equal(t, "pak", rec.lastSources[1].Kind)
 
 	manifests, err := gameCache.FileManifests(game.ID, "fake-compiler", "pakmod", "1.0")
 	require.NoError(t, err)
@@ -202,12 +202,12 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	require.Equal(t, 1, rec.compileCalls)
 
 	require.Len(t, rec.lastSources, 1)
-	require.Equal(t, source.MergeSourceExmodz, rec.lastSources[0].Kind, "MergeCompile must receive Kind set even for a pure-exmodz profile (#221 regression net)")
+	require.Equal(t, "exmodz", rec.lastSources[0].Kind, "MergeCompile must receive Kind set even for a pure-exmodz profile (#221 regression net)")
 
 	outcomes, ok := svc.MergedPakOutcomes(game, "default")
 	require.True(t, ok)
 	require.Len(t, outcomes, 1)
-	require.Equal(t, source.MergeSourceExmodz, outcomes[0].Kind)
+	require.Equal(t, "exmodz", outcomes[0].Kind)
 	require.True(t, outcomes[0].Converted)
 	require.Empty(t, outcomes[0].FailReason)
 

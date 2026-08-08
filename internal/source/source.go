@@ -150,6 +150,17 @@ type DownloadHeaderProvider interface {
 // mods patch the same table). Replaces #196's Compiler interface, which
 // this source no longer implements: there is no more per-mod compiled
 // artifact to produce.
+//
+// This interface is the complete contract a DeployCompile game must
+// implement (#256): the merge operations (ValidateSource, MergeCompile)
+// plus the format vocabulary core needs to orchestrate them without knowing
+// the game's artifact format itself - where the base artifact lives
+// (ResolveBaseArtifact), how to fingerprint it (FingerprintBase), which
+// files are convertible raw artifacts (IsConvertibleArtifact,
+// ClassifyMergeSource), and what the merged output is called
+// (MergedArtifactName, MergedArtifactLabel). A second compile-mode game is
+// a new source package implementing these methods plus one registration
+// line; internal/core never changes.
 type MergeCompiler interface {
 	// ValidateSource parses/validates sourceFilePath (the retained,
 	// not-yet-merged source archive) without compiling anything - called at
@@ -158,29 +169,63 @@ type MergeCompiler interface {
 	ValidateSource(sourceFilePath string) error
 
 	// MergeCompile applies every entry in sources, in order (profile load
-	// order), against basePakPath's tables, and writes the merged result to
-	// outputPakPath. Returns non-fatal warnings (e.g. same-path asset
-	// collisions - last-applied wins) alongside a nil error; a nil error
-	// with warnings is still a fully-written, deployable pak. Pak-kind
-	// sources that cannot be converted are skipped per-mod and reported in
-	// failed (#221) - only exmodz-source errors and I/O failures are fatal.
-	MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource, outputPakPath string) (warnings []string, failed []MergeFailure, err error)
-}
+	// order), against the base artifact's tables, and writes the merged
+	// result to outputPath. Returns non-fatal warnings (e.g. same-path
+	// asset collisions - last-applied wins) alongside a nil error; a nil
+	// error with warnings is still a fully-written, deployable artifact.
+	// Convertible-kind sources that cannot be converted are skipped per-mod
+	// and reported in failed (#221) - only native-source errors and I/O
+	// failures are fatal.
+	MergeCompile(ctx context.Context, baseArtifactPath string, sources []MergeSource, outputPath string) (warnings []string, failed []MergeFailure, err error)
 
-// Merge-source kinds (#221). An empty Kind means MergeSourceExmodz - every
-// pre-#221 constructor built exmodz-only sources and never set a kind.
-const (
-	MergeSourceExmodz = "exmodz"
-	MergeSourcePak    = "pak"
-)
+	// ResolveBaseArtifact locates the installed game's base artifact - the
+	// input every merge applies against (Icarus: the game's own
+	// Content/Data/data.pak). Errors when the artifact cannot be found
+	// under the game's install path.
+	ResolveBaseArtifact(game *domain.Game) (string, error)
+
+	// FingerprintBase returns an opaque fingerprint of the base artifact at
+	// baseArtifactPath: cheap to compute, changing exactly when the base
+	// content changes. Core stores it in merge fingerprints to detect a
+	// game-update-invalidated merge; it never interprets the value.
+	FingerprintBase(baseArtifactPath string) (string, error)
+
+	// IsConvertibleArtifact reports whether fileName names a raw, prebuilt
+	// game artifact this source can convert into a merge source (#221;
+	// Icarus: a ".pak" file). Pure format test - core owns the
+	// DeployCompile/ConvertPaks policy gates that decide whether such a
+	// file actually enters the merge-convert pipeline.
+	IsConvertibleArtifact(fileName string) bool
+
+	// ClassifyMergeSource maps a retained-source identity - a fileID, an
+	// imported archive's filename, or a Kind string previously recorded on
+	// a merge fingerprint - to the source-defined kind string core
+	// round-trips (MergeSource.Kind, fingerprint entries) and whether that
+	// kind is a convertible raw artifact (subject to the ConvertPaks
+	// opt-out and per-mod conversion outcomes) as opposed to the source's
+	// native mergeable format. Must accept the empty string (legacy
+	// fingerprints recorded no Kind) and classify it as the native kind.
+	ClassifyMergeSource(id string) (kind string, convertible bool)
+
+	// MergedArtifactName names the single merged output artifact core
+	// deploys into the game's mod directory. The name is a deploy contract:
+	// it must stay stable across merges (core stats/replaces it by name),
+	// and any load-order significance it carries (Icarus: sorts last so it
+	// wins) is entirely the source's concern.
+	MergedArtifactName() string
+
+	// MergedArtifactLabel is the user-facing display name for the merged
+	// artifact's synthetic mod row (verify/update output).
+	MergedArtifactLabel() string
+}
 
 // MergeSource identifies one mod's contribution to a merge, in the order it
 // must be applied (profile load order).
 type MergeSource struct {
 	ModRef     string // "sourceID:modID" - machine identity (MergeFailure, ownership tracking)
 	ModName    string // display name preferred over ModRef in user-facing warnings; may be empty
-	SourcePath string // the retained source archive to read (.exmodz, or a raw .pak eligible for conversion - #221)
-	Kind       string // MergeSourceExmodz (default when empty) or MergeSourcePak
+	SourcePath string // the retained source archive to read (native diff, or a convertible raw artifact - #221)
+	Kind       string // source-defined kind from ClassifyMergeSource; empty means the source's native kind (#256)
 }
 
 // MergeFailure records one source that could not participate in a merge

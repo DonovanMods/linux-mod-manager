@@ -120,25 +120,33 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 	// mergeEligible (.exmodz) has no other valid interpretation for a
 	// DeployCompile game - an unresolvable MergeCompiler is a hard error.
-	// convertEligiblePak (.pak) DOES have one - the legacy extract/copy path
-	// below - so a resolver failure there falls through instead of erroring
-	// the whole import (#221 I1 fix, mirrors DownloadModToCache's identical
-	// fix): resolveMergeCompiler is a GAME-level lookup (Import has no
-	// per-archive source pinned the way a download does), so "no
+	// convertEligiblePak (a raw pak) DOES have one - the legacy extract/copy
+	// path below - so a resolver failure there falls through instead of
+	// erroring the whole import (#221 I1 fix, mirrors DownloadModToCache's
+	// identical fix): resolveMergeCompiler is a GAME-level lookup (Import
+	// has no per-archive source pinned the way a download does), so "no
 	// MergeCompiler-capable source configured for this game" is exactly the
 	// same "fall through for a pak, still hard-error for an exmodz" case as
 	// the download path's "this specific source lacks MergeCompiler".
+	//
+	// #256: whether filename IS a convertible artifact is now the compile
+	// source's call (mc.IsConvertibleArtifact), so resolution is attempted
+	// for any non-exmodz import into a convert_paks game - the pre-#256
+	// static ".pak" pre-filter no longer exists in core. Resolution is a
+	// pure registry lookup, so the wider trigger changes nothing
+	// observable: a non-convertible filename still ends up with
+	// convertEligiblePak == false and the exact same fall-through.
 	mergeEligible := isExmodzFile(filename)
 	var mc source.MergeCompiler
 	var mcErr error
-	if game.DeployMode == domain.DeployCompile && (mergeEligible || isConvertEligiblePakFile(game, filename)) {
+	if game.DeployMode == domain.DeployCompile && (mergeEligible || game.ConvertPaks) {
 		if i.resolveMergeCompiler == nil {
 			mcErr = fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not Service.NewImporter) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
 		} else {
 			mc, mcErr = i.resolveMergeCompiler(game.ID)
 		}
 	}
-	convertEligiblePak := mcErr == nil && isConvertEligiblePakFile(game, filename)
+	convertEligiblePak := mcErr == nil && mc != nil && isConvertEligibleArtifact(game, mc, filename)
 
 	// Handle based on game's deploy mode
 	if game.DeployMode == domain.DeployCompile && (mergeEligible || convertEligiblePak) {

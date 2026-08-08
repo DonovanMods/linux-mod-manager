@@ -166,7 +166,7 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 			ConvertPaks:     mod.ConvertPaks,
 			CompileGame:     game.DeployMode == domain.DeployCompile,
 			GameConvertPaks: game.ConvertPaks,
-			HasPakSource:    p.svc.ModHasPakMergeSource(&mod),
+			HasPakSource:    p.svc.ModHasPakMergeSource(game, &mod),
 			// This row came from the installed-mods list, so its
 			// install-state fields above (Version/UpdatePolicy, plus
 			// Locked/LockedVersion set below) are genuine local install

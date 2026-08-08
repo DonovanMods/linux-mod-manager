@@ -32,6 +32,7 @@ import (
 // because a single mod must offer BOTH a pak and an exmodz file so
 // PlanInstall/ApplyInstall can drive a real mixed selection end to end.
 type variantExclusivitySource struct {
+	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
 	*mockSourceWithDownloads
 	files map[string][]domain.DownloadableFile // mod.ID -> served files, verbatim
 }

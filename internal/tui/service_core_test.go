@@ -2642,6 +2642,10 @@ func TestCoreProviderGetModDetails_NotInstalled(t *testing.T) {
 func TestCoreProviderGetModDetails_InstalledUsesPolicyToString(t *testing.T) {
 	provider, svc, game, netSrc := newCoreDetailsFixture(t)
 	game.DeployMode = domain.DeployCompile
+	// #256: the ConvertPaks detail field classifies pak-kind fileIDs via
+	// the game's MergeCompiler source, so this compile-game test maps one.
+	game.SourceIDs = map[string]string{"fake-compiler": game.ID}
+	svc.RegisterSource(&recompileFakeSource{})
 	netSrc.addMod(game.ID, &domain.Mod{ID: "modA", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
 	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
 		Mod:          domain.Mod{ID: "modA", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"},
