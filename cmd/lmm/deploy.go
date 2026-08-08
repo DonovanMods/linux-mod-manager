@@ -185,9 +185,10 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		case core.DeployMergeSynced:
 			// #255: the post-sync footer naming the merged artifact. Fires
 			// only after the deploy loop (some per-mod event has already
-			// printed the header), and its Total is the merge-participant
-			// count, not the deploy total - so it must not fall through to
-			// printDeployHeaderOnce below.
+			// printed the header), and its Total counts the mods the merged
+			// artifact actually carries (raw fallbacks excluded - they ride
+			// RawFallbacks), not the deploy total - so it must not fall
+			// through to printDeployHeaderOnce below.
 			fmt.Printf("\nMerged %d mod(s) → %s", p.Total, p.Detail)
 			if p.RawFallbacks > 0 {
 				fmt.Printf(" (%d deployed raw)", p.RawFallbacks)

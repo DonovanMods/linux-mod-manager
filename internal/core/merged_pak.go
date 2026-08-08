@@ -715,9 +715,13 @@ func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain
 // opt-out (#221) - is DeployModRaw (it deploys its raw copy individually);
 // everything else is the zero DeployModIndividual. Keyed by
 // domain.ModKey(sourceID, modID), the same "sourceID:modID" form
-// MergeSource.ModRef carries. Returns nil for a non-compile game and on any
-// resolution failure - classification is a readout, never a reason to fail
-// the deploy, and the zero class is always a safe rendering default.
+// MergeSource.ModRef carries. Best-effort by design - classification is a
+// readout, never a reason to fail the deploy, and the zero class is always
+// a safe rendering default: a non-compile game or an enabledMergeSources
+// failure returns nil, and a compiler-resolution failure mid-walk (only
+// reachable when nothing enabled is retained but a mod in mods still holds
+// a retained file, e.g. a disabled mod under --all with no compile source
+// configured) returns the classes computed so far.
 func (s *Service) classifyCompileDeployMods(game *domain.Game, profileName string, mods []*domain.InstalledMod) map[string]DeployModClass {
 	if game.DeployMode != domain.DeployCompile {
 		return nil
