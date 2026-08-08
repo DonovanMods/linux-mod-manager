@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last exmodz/pak mod, or a profile that never merged — no longer fails
   every subsequent sync/deploy/purge with a loud
   `removing merged pak: ... no such file or directory` error (#260).
+
 ## [1.30.0] - 2026-08-08
 
 ### Added
