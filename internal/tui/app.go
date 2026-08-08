@@ -596,6 +596,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.outcome.ResultLines) > 0 && m.overlay == nil {
 			m.overlay = &infoOverlay{title: "update results", lines: msg.outcome.ResultLines}
 		}
+		// #253: a multi-warning outcome auto-opens the same overlay listing
+		// every warning in full. The threshold is deliberately the SAME "> 1"
+		// formatOutcomeStatus collapses at, so the overlay opens exactly when
+		// the status line has degraded to a bare "(N warnings)" count and the
+		// text would otherwise be unrecoverable - on a merged-pak game those
+		// warnings are the ONLY report of a cross-mod asset conflict anywhere
+		// in the app. A single warning still renders inline after the em dash
+		// and opens nothing: that is the guard against throwing a modal at a
+		// lone benign note (mergeDiagnostics folds Notes in alongside real
+		// warnings), so no benign/severe classification is needed. The
+		// m.overlay == nil guard doubles as priority: an update batch's
+		// ResultLines overlay (above) keeps its per-item record, and the
+		// warnings defer to it.
+		if len(msg.outcome.Warnings) > 1 && m.overlay == nil {
+			m.overlay = &infoOverlay{title: "warnings", lines: msg.outcome.Warnings}
+		}
 		// A fresh switch's target must rebind the session's active-profile
 		// providers BEFORE the refresh below reads them (see rebindProfile
 		// and profileRebinder in actions.go) - otherwise Profiles() keeps
