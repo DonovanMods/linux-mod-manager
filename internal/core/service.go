@@ -137,7 +137,7 @@ func (s *Service) ValidateInstallFileSelection(sourceID string, files []domain.D
 		}
 	}
 	if native && other {
-		return fmt.Errorf("raw pak and native merge archive are alternate forms of the same mod - select one")
+		return fmt.Errorf("raw artifact and native merge archive are alternate forms of the same mod - select one")
 	}
 	return nil
 }

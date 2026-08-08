@@ -156,7 +156,8 @@ type DownloadHeaderProvider interface {
 // plus the format vocabulary core needs to orchestrate them without knowing
 // the game's artifact format itself - where the base artifact lives
 // (ResolveBaseArtifact), how to fingerprint it (FingerprintBase), which
-// files are convertible raw artifacts (IsConvertibleArtifact,
+// files are the source's native merge format (IsNativeMergeSource), which
+// are convertible raw artifacts (IsConvertibleArtifact,
 // ClassifyMergeSource), and what the merged output is called
 // (MergedArtifactName, MergedArtifactLabel). A second compile-mode game is
 // a new source package implementing these methods plus one registration

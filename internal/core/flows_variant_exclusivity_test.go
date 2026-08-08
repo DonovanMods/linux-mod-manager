@@ -142,7 +142,7 @@ func TestApplyInstall_StrictPath_TargetFileIDs_MixedVariants_Rejected(t *testing
 
 	opts := core.InstallOptions{TargetFileIDs: []string{"pak", "exmodz"}}
 	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
-	require.ErrorContains(t, err, "raw pak and native merge archive are alternate forms of the same mod - select one")
+	require.ErrorContains(t, err, "raw artifact and native merge archive are alternate forms of the same mod - select one")
 
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)
@@ -167,7 +167,7 @@ func TestApplyInstall_StrictPath_CallerSuppliedMixedVariantFiles_Rejected(t *tes
 	plan.Files = mc.files["mod1"]
 
 	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
-	require.ErrorContains(t, err, "raw pak and native merge archive are alternate forms of the same mod - select one")
+	require.ErrorContains(t, err, "raw artifact and native merge archive are alternate forms of the same mod - select one")
 
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)
@@ -204,7 +204,7 @@ func TestApplyInstall_BatchPath_TargetFileIDs_MixedVariants_Rejected(t *testing.
 
 	opts := core.InstallOptions{TargetFileIDs: []string{"pak", "exmodz"}}
 	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
-	require.ErrorContains(t, err, "raw pak and native merge archive are alternate forms of the same mod - select one")
+	require.ErrorContains(t, err, "raw artifact and native merge archive are alternate forms of the same mod - select one")
 
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)
