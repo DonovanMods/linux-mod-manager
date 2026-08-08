@@ -204,7 +204,7 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 	return srcs, nil
 }
 
-// compilerSourceForGame resolves the sole Compiler-capable source
+// mergeCompilerSourceForGame resolves the sole MergeCompiler-capable source
 // registered for gameID (#173). The download path pins its MergeCompiler
 // check to the specific source a file was downloaded from
 // (DownloadModToCache's src.(source.MergeCompiler) check); Importer.Import

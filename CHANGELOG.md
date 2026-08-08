@@ -16,8 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which now states the complete contract a second compile-mode game would
   implement (#256). The one user-visible change: rejecting a mixed
   pak+exmodz install selection now names the two colliding files
-  (`Mod_P.pak and Mod.exmodz are alternate forms of the same mod - select
-one`) instead of the generic wording.
+  (e.g. `Mod_P.pak and Mod.exmodz`) instead of the generic wording.
 
 ### Fixed
 

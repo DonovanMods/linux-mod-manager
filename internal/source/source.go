@@ -158,8 +158,9 @@ type DownloadHeaderProvider interface {
 // (ResolveBaseArtifact), how to fingerprint it (FingerprintBase), which
 // files are the source's native merge format (IsNativeMergeSource), which
 // are convertible raw artifacts (IsConvertibleArtifact,
-// ClassifyMergeSource), and what the merged output is called
-// (MergedArtifactName, MergedArtifactLabel). A second compile-mode game is
+// ClassifyMergeSource), what the merged output is called
+// (MergedArtifactName, MergedArtifactLabel), and what a healed raw-fallback
+// copy is called (RestoredArtifactName). A second compile-mode game is
 // a new source package implementing these methods plus one registration
 // line; internal/core never changes.
 type MergeCompiler interface {
