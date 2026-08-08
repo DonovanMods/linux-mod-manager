@@ -466,27 +466,34 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 					return warnings, fmt.Errorf("flipping %s to merged-claimed: %w", ref, werr)
 				}
 			} else {
-				// Assumes one pak-kind fileID per mod (today's only real
-				// shape): members claims EVERY file in the cache entry
-				// (gameCache.ListFiles' full union), not just this fileID's
-				// own file. deployableFiles unions every recorded
-				// manifest's members before narrowing (internal/core/
-				// deployable.go), so if a mod ever carried a SECOND pak
-				// fileID, this branch's mark would double-claim the first
-				// fileID's member as if it belonged to the second too.
-				members, lerr := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+				// #241 fix: claim ONLY the member(s) belonging to THIS
+				// fileID, never gameCache.ListFiles' entry-wide union.
+				// deployableFiles unions every recorded manifest's members
+				// before narrowing (internal/core/deployable.go), so a mod
+				// carrying a SECOND pak fileID would have had the first
+				// fileID's member claimed as if it belonged to the second
+				// too. ListFiles still supplies the candidates;
+				// rawPakMembers narrows them to this fileID's own member(s)
+				// by content identity with its retained source - see its
+				// doc comment for why that is the one attribution that
+				// survives a convert flip.
+				files, lerr := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 				if lerr != nil {
 					return warnings, lerr
 				}
+				members, aerr := rawPakMembers(versionDir, retained, files)
+				if aerr != nil {
+					return warnings, aerr
+				}
 				// #221 partial-failure fix: a manifest-shape match alone
-				// (recorded + member count) does not prove the raw pak is
-				// ACTUALLY deployed - the mark below must be written BEFORE
-				// Install (Installer.Install's deployableFiles narrowing
-				// reads THIS manifest to decide what to deploy, so writing
-				// the target members first is what makes Install deploy
-				// the right file at all; unlike the participating branch
-				// above, this order can't be flipped). That means a PRIOR
-				// pass's Install could have failed AFTER the mark was
+				// (recorded + matching member set) does not prove the raw
+				// pak is ACTUALLY deployed - the mark below must be written
+				// BEFORE Install (Installer.Install's deployableFiles
+				// narrowing reads THIS manifest to decide what to deploy,
+				// so writing the target members first is what makes Install
+				// deploy the right file at all; unlike the participating
+				// branch above, this order can't be flipped). That means a
+				// PRIOR pass's Install could have failed AFTER the mark was
 				// already written, leaving the manifest saying "raw" while
 				// nothing is actually on disk - a shape-only check would
 				// then treat that as converged forever. Confirming every
@@ -494,7 +501,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				// (mirroring syncMergedPak's own outer fast-path stat
 				// check for the merged artifact) closes that gap: the next
 				// reconcile pass retries instead of masking it.
-				if recorded && len(currentMembers) == len(members) && len(members) > 0 && allMembersDeployed(game.ModPath, currentMembers) {
+				if recorded && len(members) > 0 && sameMemberSet(currentMembers, members) && allMembersDeployed(game.ModPath, currentMembers) {
 					continue // already converged (raw)
 				}
 				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, members); werr != nil {
@@ -522,6 +529,77 @@ func allMembersDeployed(modPath string, members []string) bool {
 		if _, err := os.Stat(filepath.Join(modPath, m)); err != nil {
 			return false
 		}
+	}
+	return true
+}
+
+// rawPakMembers returns the version-dir-relative cache members that belong
+// to ONE pak fileID (#241): the candidate entry files whose content matches
+// the fileID's retained source at retainedPath. Ingest stages a
+// convert-eligible pak's deployable copy from the SAME bytes as its
+// retained source (DownloadModToCache and Import both copy the one archive
+// to both names), and that copy is the only member a pak fileID ever
+// contributes - so content identity with the retained source IS the
+// cache's fileID->member attribution. It is also the only attribution that
+// survives a convert flip: the participating branch's members=nil mark
+// erases the ingest-time manifest, so the way BACK to raw cannot simply
+// read the mapping from FileManifests.
+//
+// Size is compared before hashing, so unrelated candidates (sibling
+// fileIDs' members) are skipped without reading their bytes; the retained
+// source itself is hashed at most once. Two pak fileIDs with byte-identical
+// content would each claim both copies - degenerate but harmless: the
+// claimed union (what deploy and prune consume) is identical either way.
+func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]string, error) {
+	retainedInfo, err := os.Stat(retainedPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading retained source: %w", err)
+	}
+	var retainedSum string
+	var members []string
+	for _, f := range candidates {
+		fullPath := filepath.Join(versionDir, f)
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading cache member %s: %w", f, err)
+		}
+		if info.Size() != retainedInfo.Size() {
+			continue
+		}
+		if retainedSum == "" {
+			if retainedSum, err = md5File(retainedPath); err != nil {
+				return nil, fmt.Errorf("hashing retained source: %w", err)
+			}
+		}
+		sum, err := md5File(fullPath)
+		if err != nil {
+			return nil, fmt.Errorf("hashing cache member %s: %w", f, err)
+		}
+		if sum == retainedSum {
+			members = append(members, f)
+		}
+	}
+	return members, nil
+}
+
+// sameMemberSet reports whether a and b claim the same members, ignoring
+// order: the two sides come from different producers (a manifest read back
+// in mark-time order vs a fresh ListFiles walk), and "same claim" is a set
+// property. Duplicates are counted, not collapsed, so a doubled entry on
+// one side can never mask a missing one.
+func sameMemberSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, m := range a {
+		counts[m]++
+	}
+	for _, m := range b {
+		if counts[m] == 0 {
+			return false
+		}
+		counts[m]--
 	}
 	return true
 }
