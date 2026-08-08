@@ -123,33 +123,41 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	// (mc.IsNativeMergeSource - the seam-routed successor to core's static
 	// ".exmodz" test) or a convertible artifact (mc.IsConvertibleArtifact)
 	// is the compile source's call, so the compiler is resolved up front
-	// for every DeployCompile import. Resolution is a pure registry
-	// lookup; when it fails, nothing can define either format, so BOTH
-	// predicates are false and the import falls through to the legacy
-	// extract/copy path: a raw pak or plain zip behaves exactly as before
-	// (#221 I1 fix - "unsupported archive format" for the pak, a normal
-	// extract for the zip), and a native archive - unextractable, since
-	// the Extractor is extension-keyed - still fails loud with
-	// "unsupported archive format" rather than the old compiler-specific
-	// message, and still caches nothing.
+	// for EVERY DeployCompile import, and a resolution failure is a hard
+	// error for every one of them - not just the native case the old
+	// static test could single out. Falling through instead would be
+	// unsafe: with no compiler, core cannot tell a native merge archive
+	// from anything else, and the legacy extract path CONTENT-SNIFFS zip
+	// magic (detectFormatFromPath), so a real, zip-backed native archive
+	// would be silently extracted and cached without ValidateSource -
+	// exactly the "never silently cache an unvalidated native archive"
+	// invariant the resolver error protects. This supersedes #221 I1's
+	// import-side pak fall-through: that was safe only while core itself
+	// knew which files were native. (The DOWNLOAD path's I1 fall-through
+	// stands - it pins eligibility to the file's own source, a per-archive
+	// signal Import does not have.) The resolver error names the fix
+	// ("map a source implementing source.MergeCompiler"), which is
+	// accurate for any import into a compile game whose compiler is
+	// missing or ambiguous.
 	//
-	// A NIL RESOLVER is different: core.NewImporter (no Service context)
-	// cannot answer the format question for ANY file, and unlike a
-	// misconfigured game there is a correct importer to use instead - so a
-	// DeployCompile import through a standalone Importer fails loud
-	// unconditionally. Production only ever constructs the service-backed
-	// importer (Service.NewImporter); this path is reachable only by
-	// direct core.NewImporter use.
+	// A NIL RESOLVER fails the same way for the same reason, with its own
+	// message: core.NewImporter (no Service context) cannot answer the
+	// format question for ANY file, and there is a correct importer to use
+	// instead. Production only ever constructs the service-backed importer
+	// (Service.NewImporter); this path is reachable only by direct
+	// core.NewImporter use.
 	var mc source.MergeCompiler
-	var mcErr error
 	if game.DeployMode == domain.DeployCompile {
 		if i.resolveMergeCompiler == nil {
 			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not Service.NewImporter) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
 		}
-		mc, mcErr = i.resolveMergeCompiler(game.ID)
+		var mcErr error
+		if mc, mcErr = i.resolveMergeCompiler(game.ID); mcErr != nil {
+			return nil, mcErr
+		}
 	}
-	mergeEligible := mcErr == nil && mc != nil && mc.IsNativeMergeSource(filename)
-	convertEligiblePak := mcErr == nil && mc != nil && isConvertEligibleArtifact(game, mc, filename)
+	mergeEligible := mc != nil && mc.IsNativeMergeSource(filename)
+	convertEligiblePak := mc != nil && isConvertEligibleArtifact(game, mc, filename)
 
 	// Handle based on game's deploy mode
 	if game.DeployMode == domain.DeployCompile && (mergeEligible || convertEligiblePak) {

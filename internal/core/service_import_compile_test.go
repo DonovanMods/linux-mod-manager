@@ -176,20 +176,11 @@ func TestImportMod_DeployCompile_ZipPassthroughUnaffected(t *testing.T) {
 // TestImportMod_DeployCompile_NoCompilerSourceFailsLoud pins the "never
 // silently cache an unvalidated .exmodz" requirement (#173/#197): a
 // DeployCompile game with no MergeCompiler-capable source mapped in its
-// SourceIDs must fail loud, creating no cache entry.
-//
-// #256 amended WHICH loud failure this is: with the ".exmodz" test moved
-// behind the MergeCompiler seam (IsNativeMergeSource), a game whose
-// compiler cannot be resolved has nothing left that can define "native",
-// so the import falls through to the legacy path - where the
-// extension-keyed Extractor rejects the unknown ".exmodz" suffix as
-// "unsupported archive format" before anything is staged or cached. The
-// pre-#256 compiler-specific message required core itself to know the
-// extension, which is the leak #256 closes; the invariant that matters -
-// loud failure, nothing cached - is unchanged. (The resolver-nil variant
-// below, TestImportMod_DeployCompile_StandaloneImporterFailsLoud, keeps
-// its original message: a standalone Importer fails every DeployCompile
-// import up front, no format question needed.)
+// SourceIDs must fail loud with an actionable error instead of falling
+// through to extract/copy. (#256: the failure now happens up front - the
+// compiler is resolved for every DeployCompile import, since only it can
+// say which files are native - but the message still names the compiler
+// gap and nothing is ever cached, same as always.)
 func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
@@ -214,37 +205,33 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.Contains(t, err.Error(), "unsupported archive format")
+	require.Contains(t, err.Error(), "compiler")
 
 	_, statErr := os.Stat(filepath.Join(cfg.CacheDir, game.ID))
 	require.True(t, os.IsNotExist(statErr), "no cache entry should have been created")
 }
 
-// TestImportMod_DeployCompile_PakNoCompilerSourceFallsThrough is the I1 fix
-// (final whole-branch review of #221) for the import path, mirroring
+// TestImportMod_DeployCompile_PakNoCompilerSourceFailsLoud mirrors
 // TestImportMod_DeployCompile_NoCompilerSourceFailsLoud's setup (a
-// DeployCompile game with NO MergeCompiler-capable source mapped) but for a
-// .pak filename instead of .exmodz: isConvertEligiblePakFile only checked
-// game flags (DeployMode + ConvertPaks), so this scenario used to enter the
-// validate+retain branch and hard-error on resolveMergeCompiler's failure -
-// exactly like the exmodz case above, even though a .pak (unlike an
-// .exmodz) has another valid interpretation once eligibility is properly
-// gated on actual resolver success.
+// DeployCompile game with NO MergeCompiler-capable source mapped) for a
+// .pak filename: like every other import into such a game, it must fail
+// loud on the compiler-resolution error, caching nothing.
 //
-// Unlike the download path (DownloadModToCache's copy fallback triggers
-// unconditionally whenever the file isn't a recognized archive, regardless
-// of deploy mode), Import has no such unconditional fallback outside
-// DeployCopy - a DeployCompile game importing any unrecognized, non-archive
-// format (a raw .pak included) has always ended in "unsupported archive
-// format" once it misses the compile branch, pre-#221 included (a .pak
-// import for Icarus simply wasn't a supported scenario before #221 existed
-// at all). So the observable fix here is not "the import now succeeds" (it
-// can't - Import genuinely has nothing else to do with a raw .pak) but "the
-// import fails with the SAME, accurate, pre-#221-consistent 'unsupported
-// archive format' error instead of a MISLEADING 'no merge-compiler-capable
-// source configured' one" - and, just as importantly, no cache entry or
-// retained source is created for a mod that was never actually ingested.
-func TestImportMod_DeployCompile_PakNoCompilerSourceFallsThrough(t *testing.T) {
+// History: #221 I1 made this exact case fall through to the legacy path
+// (whose "unsupported archive format" error it then reported), because the
+// resolver message was misleading while core could statically single out
+// .exmodz as the only file kind that truly REQUIRED the compiler. #256
+// moved that knowledge behind the seam (IsNativeMergeSource), which
+// removes the basis for the carve-out: with no resolvable compiler, core
+// cannot tell a raw pak from a native merge archive, and falling through
+// would let the legacy path's zip-content-sniffing extractor silently
+// ingest a real native archive unvalidated. Failing every import of a
+// compiler-less compile game with the actionable resolver message ("map a
+// source implementing source.MergeCompiler") is now both the safe and the
+// accurate behavior. The download path's I1 fall-through is unchanged -
+// it keys on the file's own source, a per-archive signal Import lacks
+// (TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath).
+func TestImportMod_DeployCompile_PakNoCompilerSourceFailsLoud(t *testing.T) {
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
@@ -268,8 +255,7 @@ func TestImportMod_DeployCompile_PakNoCompilerSourceFallsThrough(t *testing.T) {
 	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.Contains(t, err.Error(), "unsupported archive format", "must fall through to the legacy path's own error, not the misleading MergeCompiler-resolution one")
-	require.NotContains(t, err.Error(), "compiler", "must NOT report a MergeCompiler-resolution failure once eligibility correctly fell through")
+	require.Contains(t, err.Error(), "merge-compiler-capable source", "must fail loud on the actionable compiler-resolution error, never reach the sniffing legacy path")
 
 	_, statErr := os.Stat(filepath.Join(cfg.CacheDir, game.ID))
 	require.True(t, os.IsNotExist(statErr), "no cache entry (and no retained source) should have been created")
