@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TUI: a mutation that completes with two or more warnings now auto-opens a
+  scrollable overlay listing every warning in full, instead of collapsing
+  them to an unreadable `(N warnings)` status suffix — on merged-pak games
+  (Icarus) those warnings are the only report of cross-mod asset conflicts
+  anywhere in the app. The one-row `(N warnings)` summary stays on the
+  status line, and a single warning still renders inline with no overlay
+  (#253).
+- Icarus: cache pruning no longer deletes a converted pak's deployable
+  copy when a sibling file of the same mod+version is downloaded or
+  re-ingested (#250). The copy is unclaimed by design while the merged
+  pak carries the mod's content, but it is still the designated
+  raw-fallback artifact — pruning it left a later conversion opt-out or
+  merge failure deploying nothing, silently. Pruning now exempts any
+  unclaimed file whose content matches a retained source, and the raw
+  fallback additionally self-heals entries already damaged by released
+  versions: the deployable copy is restored from the retained source
+  (under its original archive name for imports, or a `<mod-id>_P.pak`
+  name for catalog downloads, where the original name is unrecoverable)
+  and redeployed.
 - Uninstalling a mod whose cache entry is absent is now a no-op removal
   (still clearing tracking rows and sweeping empty directories) instead of
   an error. In particular, a DeployCompile profile with zero merge sources
@@ -16,7 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last exmodz/pak mod, or a profile that never merged — no longer fails
   every subsequent sync/deploy/purge with a loud
   `removing merged pak: ... no such file or directory` error (#260).
-
 ## [1.30.0] - 2026-08-08
 
 ### Added
