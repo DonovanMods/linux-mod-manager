@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Internal: all Unreal/Icarus format knowledge (base-pak location, pak
+  fingerprinting, the `.pak` convert test, the native `.exmodz` test,
+  merge-source kinds, and the merged/restored artifact filenames) moved
+  out of `internal/core` and behind the `source.MergeCompiler` interface,
+  which now states the complete contract a second compile-mode game would
+  implement (#256). The one user-visible change: rejecting a mixed
+  pak+exmodz install selection now names the two colliding files
+  (e.g. `Mod_P.pak and Mod.exmodz`) instead of the generic wording.
+
 ### Fixed
 
 - TUI: a mutation that completes with two or more warnings now auto-opens a

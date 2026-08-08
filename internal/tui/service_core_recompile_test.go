@@ -20,6 +20,8 @@ import (
 // internal/core/service_icarus_compile_test.go's fakeCompilerSource at the
 // TUI layer.
 type recompileFakeSource struct {
+	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+
 	validateCalls int
 	compileCalls  int
 }

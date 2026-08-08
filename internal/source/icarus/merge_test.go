@@ -322,7 +322,7 @@ func TestMergeCompilePakSource(t *testing.T) {
 	out := filepath.Join(dir, "merged.pak")
 
 	warnings, failed, err := MergeCompile(context.Background(), basePath, []MergeSource{
-		{ModRef: "icarus:pakmod", SourcePath: pakPath, Kind: source.MergeSourcePak},
+		{ModRef: "icarus:pakmod", SourcePath: pakPath, Kind: MergeSourcePak},
 	}, out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -360,8 +360,8 @@ func TestMergeCompilePakFailureSkipsModOnly(t *testing.T) {
 	out := filepath.Join(dir, "merged.pak")
 
 	warnings, failed, err := MergeCompile(context.Background(), basePath, []MergeSource{
-		{ModRef: "icarus:bad", SourcePath: badPak, Kind: source.MergeSourcePak},
-		{ModRef: "icarus:good", SourcePath: goodPak, Kind: source.MergeSourcePak},
+		{ModRef: "icarus:bad", SourcePath: badPak, Kind: MergeSourcePak},
+		{ModRef: "icarus:good", SourcePath: goodPak, Kind: MergeSourcePak},
 	}, out)
 	if err != nil {
 		t.Fatalf("per-mod failure must not be fatal: %v", err)
@@ -433,8 +433,8 @@ func TestMergeCompileWarningsPreferModName(t *testing.T) {
 	out := filepath.Join(dir, "merged.pak")
 
 	warnings, failed, err := MergeCompile(context.Background(), basePath, []MergeSource{
-		{ModRef: "icarus:pakmod", ModName: "Combined QOL", SourcePath: pakPath, Kind: source.MergeSourcePak},
-		{ModRef: "icarus:badmod", ModName: "Broken Mod", SourcePath: badPak, Kind: source.MergeSourcePak},
+		{ModRef: "icarus:pakmod", ModName: "Combined QOL", SourcePath: pakPath, Kind: MergeSourcePak},
+		{ModRef: "icarus:badmod", ModName: "Broken Mod", SourcePath: badPak, Kind: MergeSourcePak},
 	}, out)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

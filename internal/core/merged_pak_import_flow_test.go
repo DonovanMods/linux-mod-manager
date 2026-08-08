@@ -21,6 +21,8 @@ import (
 // GetMod/GetModFiles as source.ErrNotSupported, ApplyImport's download
 // loop needs a working GetMod->GetModFiles->DownloadMod chain end to end.
 type importFlowCompilerSource struct {
+	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+
 	mod      *domain.Mod
 	fileName string
 	server   *httptest.Server
