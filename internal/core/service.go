@@ -1064,10 +1064,10 @@ func commitStagedCache(cachePath, stagePath string) error {
 // before "exmodz") - those must NOT be routed through this function's own
 // validate+retain branch as an exmodz, since MergeCompile expects an exmodz
 // diff, not a whole pak (#136 review, Task 13 fix round 1). A prebuilt pak
-// gets its OWN eligibility check instead - isConvertEligiblePakFile (#221) -
+// gets its OWN eligibility check instead - isConvertEligibleArtifact (#221) -
 // which the same validate+retain branch also widens for: a convert-eligible
 // pak still enters ingest's validate+retain machinery (a different
-// isExmodzFile-vs-isConvertEligiblePakFile Kind, not a different branch),
+// isExmodzFile-vs-isConvertEligibleArtifact Kind, not a different branch),
 // while a non-eligible pak (ConvertPaks off, or a non-DeployCompile game)
 // falls through to the pre-compile extract/copy logic unchanged, exactly as
 // if DeployMode were not DeployCompile at all.
