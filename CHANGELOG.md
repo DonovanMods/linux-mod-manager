@@ -64,6 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   visible however large its group grows (#234). Only the current
   screen's (or pushed content's) group gets this treatment — other
   screens' rows still collapse positionally.
+- Closed the test gap that let #237 ship: a new env-gated golden test
+  (`ICARUS_GOLDEN_MOD_DIR`) compiles a real dual-form mod's `.EXMODZ`
+  with the full pipeline and asserts the resulting pak's virtual paths
+  match the author's own published `_P.pak` — the first check of
+  compiled output against an artifact not produced by lmm itself
+  (#242). Test-only; skips unless pointed at a local dual-form mod.
 - Install-plan dependency resolution now fetches dependencies using the
   LMM game ID (translated through `source_ids` like every other fetch)
   instead of feeding the source's own stamped game ID back into the
