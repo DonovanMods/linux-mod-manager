@@ -74,6 +74,16 @@ func (s *Icarus) FingerprintBase(baseArtifactPath string) (string, error) {
 	return r.IndexHash(), nil
 }
 
+// IsNativeMergeSource reports whether fileName names this source's NATIVE
+// merge-source format - a ".exmodz" archive (case-insensitive), the diff
+// format MergeCompile consumes directly without conversion. Pure format
+// test, the exact mirror of IsConvertibleArtifact (pre-#256 core's
+// isExmodzFile); core owns the DeployCompile policy gates and the
+// "native archive from a non-compile-capable source" hard error.
+func (s *Icarus) IsNativeMergeSource(fileName string) bool {
+	return strings.HasSuffix(strings.ToLower(fileName), ".exmodz")
+}
+
 // IsConvertibleArtifact reports whether fileName names a prebuilt .pak this
 // source can convert into a merge source (#221). Pure format test
 // (case-insensitive ".pak" suffix, mirroring pre-#256 core's

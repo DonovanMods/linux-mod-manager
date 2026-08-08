@@ -63,6 +63,9 @@ func (formatOnlyCompilerSource) ResolveBaseArtifact(*domain.Game) (string, error
 	return "", os.ErrNotExist
 }
 func (formatOnlyCompilerSource) FingerprintBase(string) (string, error) { return "", os.ErrNotExist }
+func (formatOnlyCompilerSource) IsNativeMergeSource(fileName string) bool {
+	return strings.HasSuffix(strings.ToLower(fileName), ".exmodz")
+}
 func (formatOnlyCompilerSource) IsConvertibleArtifact(fileName string) bool {
 	return strings.HasSuffix(strings.ToLower(fileName), ".pak")
 }

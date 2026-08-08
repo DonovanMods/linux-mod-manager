@@ -36,6 +36,10 @@ func (fakeMergeFormat) FingerprintBase(basePakPath string) (string, error) {
 	return r.IndexHash(), nil
 }
 
+func (fakeMergeFormat) IsNativeMergeSource(fileName string) bool {
+	return strings.HasSuffix(strings.ToLower(fileName), ".exmodz")
+}
+
 func (fakeMergeFormat) IsConvertibleArtifact(fileName string) bool {
 	return strings.HasSuffix(strings.ToLower(fileName), ".pak")
 }

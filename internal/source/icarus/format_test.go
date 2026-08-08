@@ -102,6 +102,25 @@ func TestIsConvertibleArtifact(t *testing.T) {
 	}
 }
 
+func TestIsNativeMergeSource(t *testing.T) {
+	tests := map[string]bool{
+		"Bear_Mount.exmodz": true,
+		"Bear_Mount.EXMODZ": true, // case-insensitive
+		"MyMod.pak":         false,
+		"MyMod.zip":         false,
+		// Bare "exmodz" is a download-path fileID, not a filename - this
+		// predicate backs ingest routing on FILENAMES (pre-#256 core's
+		// isExmodzFile), which was suffix-only, and stays that way.
+		"exmodz": false,
+	}
+	s := newFormatTestSource()
+	for fileName, want := range tests {
+		if got := s.IsNativeMergeSource(fileName); got != want {
+			t.Errorf("IsNativeMergeSource(%q) = %v, want %v", fileName, got, want)
+		}
+	}
+}
+
 func TestClassifyMergeSource(t *testing.T) {
 	tests := map[string]struct {
 		kind        string

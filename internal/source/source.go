@@ -190,6 +190,14 @@ type MergeCompiler interface {
 	// game-update-invalidated merge; it never interprets the value.
 	FingerprintBase(baseArtifactPath string) (string, error)
 
+	// IsNativeMergeSource reports whether fileName names this source's
+	// NATIVE merge-source format (Icarus: a ".exmodz" archive) - the diff
+	// format MergeCompile consumes directly, with no other valid
+	// interpretation at ingest. Pure format test, the mirror of
+	// IsConvertibleArtifact - core owns the DeployCompile policy gates and
+	// routes native files into validate+retain instead of extract/copy.
+	IsNativeMergeSource(fileName string) bool
+
 	// IsConvertibleArtifact reports whether fileName names a raw, prebuilt
 	// game artifact this source can convert into a merge source (#221;
 	// Icarus: a ".pak" file). Pure format test - core owns the

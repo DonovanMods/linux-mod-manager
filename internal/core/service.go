@@ -124,19 +124,20 @@ func (s *Service) ValidateInstallFileSelection(sourceID string, files []domain.D
 	if err != nil {
 		return nil
 	}
-	if _, ok := src.(source.MergeCompiler); !ok {
+	mc, ok := src.(source.MergeCompiler)
+	if !ok {
 		return nil
 	}
-	var exmodz, other bool
+	var native, other bool
 	for _, f := range files {
-		if isExmodzFile(f.FileName) {
-			exmodz = true
+		if mc.IsNativeMergeSource(f.FileName) {
+			native = true
 		} else {
 			other = true
 		}
 	}
-	if exmodz && other {
-		return fmt.Errorf("pak and exmodz are alternate forms of the same mod - select one")
+	if native && other {
+		return fmt.Errorf("raw pak and native merge archive are alternate forms of the same mod - select one")
 	}
 	return nil
 }
@@ -612,7 +613,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	// hard-errors when src lacks MergeCompiler (see the !ok check below).
 	mc, isMergeCompiler := src.(source.MergeCompiler)
 	convertEligiblePak := isMergeCompiler && isConvertEligibleArtifact(game, mc, safeFileName)
-	if game.DeployMode == domain.DeployCompile && (isExmodzFile(safeFileName) || convertEligiblePak) {
+	if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak) {
 		if !isMergeCompiler {
 			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement MergeCompiler", src.ID(), game.ID)
 		}
@@ -1058,21 +1059,34 @@ func commitStagedCache(cachePath, stagePath string) error {
 	return nil
 }
 
-// isExmodzFile reports whether fileName is a compile-eligible archive
-// (case-insensitive ".exmodz" suffix). DeployCompile games can also serve
-// plain, already-built ".pak" files (icarus.GetModFiles enumerates "pak"
-// before "exmodz") - those must NOT be routed through this function's own
-// validate+retain branch as an exmodz, since MergeCompile expects an exmodz
-// diff, not a whole pak (#136 review, Task 13 fix round 1). A prebuilt pak
-// gets its OWN eligibility check instead - isConvertEligibleArtifact (#221) -
-// which the same validate+retain branch also widens for: a convert-eligible
-// pak still enters ingest's validate+retain machinery (a different
-// isExmodzFile-vs-isConvertEligibleArtifact Kind, not a different branch),
-// while a non-eligible pak (ConvertPaks off, or a non-DeployCompile game)
-// falls through to the pre-compile extract/copy logic unchanged, exactly as
-// if DeployMode were not DeployCompile at all.
-func isExmodzFile(fileName string) bool {
-	return strings.HasSuffix(strings.ToLower(fileName), ".exmodz")
+// isNativeMergeFile reports whether fileName is the game's compile source's
+// NATIVE merge-source format (#256 - the seam-routed successor to the old
+// static isExmodzFile ".exmodz" test). DeployCompile games can also serve
+// plain, already-built raw paks (icarus.GetModFiles enumerates "pak"
+// before "exmodz") - those must NOT be routed through ingest's
+// validate+retain branch as a native archive, since MergeCompile expects a
+// native diff, not a whole pak (#136 review, Task 13 fix round 1); a
+// prebuilt pak gets its OWN eligibility check instead,
+// isConvertEligibleArtifact (#221), a different Kind through the same
+// validate+retain branch.
+//
+// mc is the file's own source's MergeCompiler view (nil when that source
+// doesn't implement it). When mc is nil, the GAME's sole compile source is
+// consulted instead, so the "native archive served by a non-compile-capable
+// source" hard error in DownloadModToCache stays reachable on mixed-source
+// games. With no compiler resolvable anywhere, nothing can define "native"
+// and this returns false - such files take the legacy extract/copy path,
+// where an unextractable native archive still fails loud
+// ("unsupported archive format"), just without the compile-specific message.
+func (s *Service) isNativeMergeFile(game *domain.Game, mc source.MergeCompiler, fileName string) bool {
+	if mc == nil {
+		gmc, err := s.mergeCompilerForGame(game)
+		if err != nil {
+			return false
+		}
+		mc = gmc
+	}
+	return mc.IsNativeMergeSource(fileName)
 }
 
 // isConvertEligibleArtifact reports whether fileName is a prebuilt raw

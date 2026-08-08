@@ -176,8 +176,20 @@ func TestImportMod_DeployCompile_ZipPassthroughUnaffected(t *testing.T) {
 // TestImportMod_DeployCompile_NoCompilerSourceFailsLoud pins the "never
 // silently cache an unvalidated .exmodz" requirement (#173/#197): a
 // DeployCompile game with no MergeCompiler-capable source mapped in its
-// SourceIDs must fail loud with an actionable error instead of falling
-// through to extract/copy.
+// SourceIDs must fail loud, creating no cache entry.
+//
+// #256 amended WHICH loud failure this is: with the ".exmodz" test moved
+// behind the MergeCompiler seam (IsNativeMergeSource), a game whose
+// compiler cannot be resolved has nothing left that can define "native",
+// so the import falls through to the legacy path - where the
+// extension-keyed Extractor rejects the unknown ".exmodz" suffix as
+// "unsupported archive format" before anything is staged or cached. The
+// pre-#256 compiler-specific message required core itself to know the
+// extension, which is the leak #256 closes; the invariant that matters -
+// loud failure, nothing cached - is unchanged. (The resolver-nil variant
+// below, TestImportMod_DeployCompile_StandaloneImporterFailsLoud, keeps
+// its original message: a standalone Importer fails every DeployCompile
+// import up front, no format question needed.)
 func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	installDir := t.TempDir()
 	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
@@ -202,7 +214,7 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.Contains(t, err.Error(), "compiler")
+	require.Contains(t, err.Error(), "unsupported archive format")
 
 	_, statErr := os.Stat(filepath.Join(cfg.CacheDir, game.ID))
 	require.True(t, os.IsNotExist(statErr), "no cache entry should have been created")

@@ -49,7 +49,7 @@ type MergedFingerprintEntry struct {
 	ModID    string
 	Version  string
 	Checksum string // MD5 of the retained source bytes (md5File)
-	Kind     string `json:",omitempty"` // source.MergeSourcePak for retained paks; empty/exmodz otherwise (#221)
+	Kind     string `json:",omitempty"` // source-defined convertible kind for retained paks; empty/native otherwise (#221, opaque to core since #256)
 
 	// Outcome fields (#221): recorded AFTER the merge, ignored by input
 	// equality - a failed conversion retries only when an INPUT changes

@@ -4217,9 +4217,11 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		// convert-eligible raw pak exactly as it does for a native
 		// .exmodz; len(compiledFiles) > 0 doesn't care which kind matched.
 		// #221: gate raw files on MergeCompiler capability, matching the
-		// ingest path's predicate. .exmodz files are still included because
-		// they hard-error later if the source lacks MergeCompiler.
-		if game.DeployMode == domain.DeployCompile && (isExmodzFile(file.FileName) || (isMergeCompiler && isConvertEligibleArtifact(game, mc, file.FileName))) {
+		// ingest path's predicate. Native merge archives are still included
+		// when only the GAME's compile source (not this file's own source)
+		// recognizes them - isNativeMergeFile's fallback - because ingest
+		// hard-errors on exactly that mismatch later (#256).
+		if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, file.FileName) || (isMergeCompiler && isConvertEligibleArtifact(game, mc, file.FileName))) {
 			compiledFiles = append(compiledFiles, file)
 		}
 	}
