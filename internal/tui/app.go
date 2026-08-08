@@ -2756,20 +2756,38 @@ func healthScanLabel(now time.Time, at *time.Time, full bool, checked int, hasFi
 // lowercase per Task 9's copy convention (see helpGroups).
 type helpGroup struct {
 	name    string
-	entries []string
+	entries []helpItem
+}
+
+// helpItem is one row of a helpGroup plus its collapse priority: keep marks
+// a screen's headline action so helpView's "+N more" cap drops unmarked
+// rows first (#234) instead of tail-dropping purely by position - which
+// used to swallow the search group's LAST entry (enter: open mod details)
+// at a normal 100x30 size. The marker only takes effect while the row's
+// group is promoted (see helpView); an unpromoted group's headline can't
+// force itself into another screen's help window.
+type helpItem struct {
+	text string
+	keep bool
+}
+
+// kept returns a copy of the item marked as its group's headline action.
+func (i helpItem) kept() helpItem {
+	i.keep = true
+	return i
 }
 
 // helpRow formats a single help-panel row: left-aligned key (16 chars),
 // space, description.
-func helpRow(key, desc string) string {
-	return fmt.Sprintf("%-16s %s", key, desc)
+func helpRow(key, desc string) helpItem {
+	return helpItem{text: fmt.Sprintf("%-16s %s", key, desc)}
 }
 
 // helpEntry formats one keybinding as a help-panel row, reusing the
 // binding's own key.WithHelp key/description from keys.go rather than
 // restating it - the single source of truth for "what does this key do"
 // stays in DefaultKeyMap.
-func helpEntry(kb key.Binding) string {
+func helpEntry(kb key.Binding) helpItem {
 	h := kb.Help()
 	return helpRow(h.Key, h.Desc)
 }
@@ -2784,7 +2802,7 @@ func helpEntry(kb key.Binding) string {
 func (m Model) helpGroups() []helpGroup {
 	global := helpGroup{
 		name: "global",
-		entries: []string{
+		entries: []helpItem{
 			helpEntry(m.keys.Quit),
 			helpEntry(m.keys.Help),
 			helpEntry(m.keys.NextScreen),
@@ -2796,13 +2814,13 @@ func (m Model) helpGroups() []helpGroup {
 
 	dashboard := helpGroup{
 		name: "dashboard",
-		entries: []string{
+		entries: []helpItem{
 			// Select ("enter") is context-dependent (see updateKey): on
 			// the Dashboard it opens the selected menu entry
 			// (openSelectedMenuEntry), so the description is written out
 			// here rather than reusing keys.go's generic "open" - the same
 			// ad-hoc shape as the profiles group's "switch profile" below.
-			helpRow(m.keys.Select.Help().Key, "open menu entry"),
+			helpRow(m.keys.Select.Help().Key, "open menu entry").kept(),
 			helpEntry(m.keys.Deploy),
 			helpEntry(m.keys.CheckUpdates),
 			helpEntry(m.keys.Purge),
@@ -2811,13 +2829,13 @@ func (m Model) helpGroups() []helpGroup {
 
 	installedMods := helpGroup{
 		name: "installed mods",
-		entries: []string{
+		entries: []helpItem{
 			// Select is #86's enter-opens-details binding. Hand-written
 			// (not helpEntry) for the same reason the dashboard's and
 			// profiles' own rows above are: keys.go's Select.Help() is the
 			// generic "enter"/"open" shared across every screen it applies
 			// to, and never says WHAT it opens - smoke round 2's finding 2.
-			helpRow(m.keys.Select.Help().Key, "open mod details"),
+			helpRow(m.keys.Select.Help().Key, "open mod details").kept(),
 			helpEntry(m.keys.ToggleEnable),
 			helpEntry(m.keys.Uninstall),
 			helpEntry(m.keys.Deploy),
@@ -2853,7 +2871,7 @@ func (m Model) helpGroups() []helpGroup {
 
 	search := helpGroup{
 		name: "search",
-		entries: []string{
+		entries: []helpItem{
 			helpEntry(m.keys.Search),
 			// Submit and Select share the same physical key ("enter") but
 			// fire in mutually exclusive states (updateKey's focused-input
@@ -2864,8 +2882,13 @@ func (m Model) helpGroups() []helpGroup {
 			// round 2's finding 2: listing both via helpEntry rendered
 			// "enter / search" next to "enter / open" with nothing saying
 			// which state either applies to, so both are hand-written here
-			// instead, each naming its own state explicitly.
-			helpRow(m.keys.Submit.Help().Key, "search (query input focused)"),
+			// instead, each naming its own state explicitly. Both are the
+			// screen's headline actions - the two mutually exclusive things
+			// enter does here - so both are kept() ahead of the collapse
+			// (#234): Submit's row happens to sit early enough to survive
+			// positionally at 100x30 today, but that's an accident of entry
+			// count, not a guarantee.
+			helpRow(m.keys.Submit.Help().Key, "search (query input focused)").kept(),
 			helpEntry(m.keys.Blur),
 			helpEntry(m.keys.NextPage),
 			helpEntry(m.keys.PrevPage),
@@ -2873,20 +2896,22 @@ func (m Model) helpGroups() []helpGroup {
 			helpEntry(m.keys.Install),
 			// Select is #86's enter-opens-details binding - fires with the
 			// input blurred and a result selected, mirroring Install's own
-			// scoping (see openSelectedModDetails).
-			helpRow(m.keys.Select.Help().Key, "open mod details (input blurred, result selected)"),
+			// scoping (see openSelectedModDetails). kept() is #234's actual
+			// fix: this row is the group's LAST entry, and the positional
+			// tail-collapse used to swallow it at a normal 100x30 size.
+			helpRow(m.keys.Select.Help().Key, "open mod details (input blurred, result selected)").kept(),
 		},
 	}
 
 	profiles := helpGroup{
 		name: "profiles",
-		entries: []string{
+		entries: []helpItem{
 			// Select ("enter") is context-dependent (see updateKey): on
 			// Profiles it switches, not "open" like keys.go's generic
 			// Select.Help() says elsewhere - so this one entry is written
 			// out rather than reusing helpEntry, matching the actual
 			// behavior on this screen.
-			helpRow(m.keys.Select.Help().Key, "switch profile"),
+			helpRow(m.keys.Select.Help().Key, "switch profile").kept(),
 			helpEntry(m.keys.CreateProfile),
 			helpEntry(m.keys.DeleteProfile),
 			// ImportProfile is Task 9's import binding (see mutations.go's
@@ -2903,7 +2928,7 @@ func (m Model) helpGroups() []helpGroup {
 	// other than health below.
 	sources := helpGroup{
 		name: "sources",
-		entries: []string{
+		entries: []helpItem{
 			helpEntry(m.keys.ToggleAllSources),
 		},
 	}
@@ -2926,7 +2951,7 @@ func (m Model) helpGroups() []helpGroup {
 	// guard, mutations.go) for that remedy to be actionable in place.
 	health := helpGroup{
 		name: "health",
-		entries: []string{
+		entries: []helpItem{
 			helpEntry(m.keys.HealthScreen),
 			helpEntry(m.keys.Up),
 			helpEntry(m.keys.Down),
@@ -3007,14 +3032,20 @@ func (m Model) helpView() string {
 	width := m.availableWidth()
 	panelContentWidth := max(width-m.theme.Panel.GetHorizontalFrameSize(), 1)
 
-	var body []string
+	// The keep marker is honored only for the promoted group - index 1,
+	// immediately after "global", per helpGroups' ordering contract (the
+	// current screen's group, or pushed content's HelpGroup()). Any other
+	// group's headline describes a screen the user is NOT on, and letting
+	// it survive would force header-less rows from distant groups into the
+	// few visible lines at the current screen's expense (#234).
+	var body []helpItem
 	for i, g := range m.helpGroups() {
 		if i > 0 {
-			body = append(body, "")
+			body = append(body, helpItem{})
 		}
-		body = append(body, truncate(m.theme.PanelTitle.Render(g.name), panelContentWidth))
+		body = append(body, helpItem{text: truncate(m.theme.PanelTitle.Render(g.name), panelContentWidth)})
 		for _, e := range g.entries {
-			body = append(body, truncate(e, panelContentWidth))
+			body = append(body, helpItem{text: truncate(e.text, panelContentWidth), keep: e.keep && i == 1})
 		}
 	}
 
@@ -3022,11 +3053,36 @@ func (m Model) helpView() string {
 	budget := m.helpBodyBudget()
 	if len(body) > budget {
 		shown := max(budget-1, 0)
-		more := len(body) - shown
-		lines = append(lines, body[:shown]...)
-		lines = append(lines, truncate(m.theme.MutedText.Render(fmt.Sprintf("+%d more", more)), panelContentWidth))
+		// Drop by priority, not position (#234): walk from the tail
+		// dropping unkept rows first, so a kept headline row survives
+		// wherever it sits in its group; only when fewer than `shown` rows
+		// are unkept does a second pass reach the kept ones. Survivors
+		// render in their original order, so the "+N more" tail can stand
+		// in for rows dropped from the middle, not just below it.
+		drop := len(body) - shown
+		dropped := make([]bool, len(body))
+		for i := len(body) - 1; i >= 0 && drop > 0; i-- {
+			if !body[i].keep {
+				dropped[i] = true
+				drop--
+			}
+		}
+		for i := len(body) - 1; i >= 0 && drop > 0; i-- {
+			if !dropped[i] {
+				dropped[i] = true
+				drop--
+			}
+		}
+		for i, item := range body {
+			if !dropped[i] {
+				lines = append(lines, item.text)
+			}
+		}
+		lines = append(lines, truncate(m.theme.MutedText.Render(fmt.Sprintf("+%d more", len(body)-shown)), panelContentWidth))
 	} else {
-		lines = append(lines, body...)
+		for _, item := range body {
+			lines = append(lines, item.text)
+		}
 	}
 
 	return m.panel(width).Render(strings.Join(lines, "\n"))
