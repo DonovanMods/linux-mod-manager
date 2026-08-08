@@ -457,7 +457,19 @@ func (p *prototypeProvider) DeployProfile(_ context.Context) (ActionOutcome, err
 			deployed++
 		}
 	}
-	return ActionOutcome{Message: fmt.Sprintf("Deployed %d mod(s)", deployed)}, nil
+	// Canned merge-time diagnostics (#253), surfaced on every prototype
+	// deploy so --prototype demo mode actually exercises the multi-warning
+	// auto-open overlay path (actionDoneMsg, app.go) - the same rationale as
+	// prototypeAllSourcesWarning (service.go): without these, no prototype
+	// mutation ever crosses formatOutcomeStatus's "> 1" collapse threshold,
+	// leaving the overlay unreachable in the one mode meant to demo every UI
+	// state. Like that constant, the strings exist purely to exercise the
+	// rendering path; they name assets no canned mod actually bundles.
+	warnings := []string{
+		`asset "textures/armor/steel.dds" is bundled by both SkyUI and Ordinator - Ordinator wins (last-applied, per profile load order)`,
+		`asset "textures/armor/steel_n.dds" is bundled by both SkyUI and Ordinator - Ordinator wins (last-applied, per profile load order)`,
+	}
+	return ActionOutcome{Message: fmt.Sprintf("Deployed %d mod(s)", deployed), Warnings: warnings}, nil
 }
 
 // activeProfileName returns the canned Profiles entry currently marked

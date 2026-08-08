@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TUI: a mutation that completes with two or more warnings now auto-opens a
+  scrollable overlay listing every warning in full, instead of collapsing
+  them to an unreadable `(N warnings)` status suffix — on merged-pak games
+  (Icarus) those warnings are the only report of cross-mod asset conflicts
+  anywhere in the app. The one-row `(N warnings)` summary stays on the
+  status line, and a single warning still renders inline with no overlay
+  (#253).
 - Icarus: cache pruning no longer deletes a converted pak's deployable
   copy when a sibling file of the same mod+version is downloaded or
   re-ingested (#250). The copy is unclaimed by design while the merged
