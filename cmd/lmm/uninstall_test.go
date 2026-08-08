@@ -104,11 +104,12 @@ func TestUninstallCmd_GameNotFound(t *testing.T) {
 }
 
 // setupDoUninstallTest builds a *core.Service plus a mod that will fail to
-// undeploy (its cache directory was never created, so
-// Installer.Uninstall's cache.ListFiles call fails deterministically) and
-// resets the uninstall command's package-level flag globals to sane
-// defaults for calling doUninstall directly. Callers set globals.verbose
-// themselves.
+// undeploy (a regular file sits at the deploy destination, so the symlink
+// linker's Undeploy fails deterministically with "not a symlink" - an absent
+// cache entry no longer works as the failure fixture, since #260 made that a
+// documented no-op) and resets the uninstall command's package-level flag
+// globals to sane defaults for calling doUninstall directly. Callers set
+// globals.verbose themselves.
 func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
 
@@ -130,6 +131,10 @@ func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
+	require.NoError(t, svc.GetGameCache(game).Store("g1", "src", "1", "1.0", "plugin.esp", []byte("data")))
+	// The undeploy obstruction: a foreign regular file where the symlink
+	// linker expects its own link.
+	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "plugin.esp"), []byte("not a symlink"), 0644))
 	pm := svc.NewProfileManager()
 	_, err = pm.Create("g1", "default")
 	require.NoError(t, err)

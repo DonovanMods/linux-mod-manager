@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (under its original archive name for imports, or a `<mod-id>_P.pak`
   name for catalog downloads, where the original name is unrecoverable)
   and redeployed.
+- Uninstalling a mod whose cache entry is absent is now a no-op removal
+  (still clearing tracking rows and sweeping empty directories) instead of
+  an error. In particular, a DeployCompile profile with zero merge sources
+  and no merged-pak cache entry — the steady state after disabling the
+  last exmodz/pak mod, or a profile that never merged — no longer fails
+  every subsequent sync/deploy/purge with a loud
+  `removing merged pak: ... no such file or directory` error (#260).
 
 ## [1.30.0] - 2026-08-08
 

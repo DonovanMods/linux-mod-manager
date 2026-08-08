@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -430,9 +431,27 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 	// removal must cover anything that might ever have been linked, including
 	// stale unclaimed files a pre-fix deploy linked. Narrowing this would
 	// strand those links forever.
+	//
+	// An absent cache entry is not an error (#260): uninstall must stay
+	// idempotent when the entry is already gone - the steady state
+	// syncMergedPak's zero branch and purge --uninstall leave behind. The
+	// deployment can still be fully on disk, though (a copy/hardlink deploy
+	// owns real files, not links back into the cache), so fall back to the
+	// DB's tracked deployed paths rather than orphaning them while erasing
+	// the only record that they were ours. Ownership rows upsert on
+	// overwrite ("new mod takes ownership"), so the fallback never removes
+	// a path another mod has since claimed.
 	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
-		return fmt.Errorf("listing cached files: %w", err)
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("listing cached files: %w", err)
+		}
+		files = nil
+		if i.db != nil {
+			if files, err = i.db.GetDeployedFilesForMod(game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+				return fmt.Errorf("listing tracked deployed files: %w", err)
+			}
+		}
 	}
 
 	// Undeploy each file
