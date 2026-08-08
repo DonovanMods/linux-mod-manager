@@ -65,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   literally named `skyrimspecialedition`); on such a collision,
   dependencies were silently looked up in the wrong game and reported
   missing.
+- `lmm mod show` and the TUI mod details view no longer report a mod as
+  not installed when the installed-state lookup fails outright (e.g. a
+  locked or corrupted database) — only a genuine "no such row" omits the
+  Installed section; any other database error now surfaces as an error
+  (#236).
 - `lmm verify --fix` now resolves a missing file's re-download URL against
   the source-mapped game, not the LMM game ID (#228). On a game whose
   `source_ids` maps to a different upstream domain (e.g. NexusMods

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -45,12 +46,16 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 	}
 	detail := &ModDetail{Mod: mod}
 
-	// A GetInstalledMod failure means "not installed" - the ordinary case for
-	// a mod browsed from search - so it omits the block rather than failing
-	// the whole call (verbatim from doModShow's own convention).
+	// Only a genuine "not installed" - the ordinary case for a mod browsed
+	// from search - omits the Installed block. Any other failure is a real
+	// DB error and must surface rather than masquerade as an uninstalled
+	// mod, which the user cannot tell apart from an absence (#236).
 	installed, err := s.GetInstalledMod(sourceID, modID, game.ID, profile)
-	if err != nil {
+	switch {
+	case errors.Is(err, domain.ErrModNotFound):
 		return detail, nil
+	case err != nil:
+		return nil, fmt.Errorf("loading installed mod: %w", err)
 	}
 
 	info := &InstalledDetail{
