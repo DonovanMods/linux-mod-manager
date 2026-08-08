@@ -67,6 +67,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows, matching the empty-profile path's existing empty-array shape
   (#224).
 
+## [1.29.1] - 2026-08-07
+
+### Fixed
+
+- Icarus mods that bundle prebuilt assets in their `.exmodz` now place those
+  assets where the game actually looks. Every real `.exmodz` nests its
+  `.uasset`/`.uexp` files in a directory named after the mod, and that wrapper
+  was being carried into the compiled pak — so each bundled asset landed one
+  directory below the base asset it was meant to override and the game
+  silently ignored it. A mod whose entire effect is assets (no data-table
+  rows) installed, deployed, and verified OK while doing nothing at all. The
+  wrapper is now stripped when it matches the manifest name, leaving bundles
+  that already store Content-relative paths untouched. Affects both
+  single-mod compiles and the merged pak; reinstall or redeploy affected
+  Icarus mods to pick up corrected artifacts. (#237)
+
 ## [1.29.0] - 2026-08-05
 
 ### Added
@@ -1275,7 +1291,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.1...HEAD
+[1.29.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.0...v1.29.1
 [1.29.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.28.0...v1.29.0
 [1.28.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.1...v1.28.0
 [1.27.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.27.0...v1.27.1

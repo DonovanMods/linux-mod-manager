@@ -16,7 +16,10 @@ func writeTestExmodzFile(t *testing.T, manifestJSON string, assets map[string][]
 	path := filepath.Join(t.TempDir(), "mod.exmodz")
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	w, _ := zw.Create("Extracted Mods/Test.EXMOD")
+	// Named to match the "Bear_Mount/" wrapper the asset fixtures below use:
+	// a real .EXMODZ nests its assets in a directory named after the manifest,
+	// and that pairing is what exercises the #237 wrapper strip.
+	w, _ := zw.Create("Extracted Mods/Bear_Mount.EXMOD")
 	w.Write([]byte(manifestJSON)) //nolint:errcheck
 	for name, data := range assets {
 		aw, _ := zw.Create(name)
@@ -64,7 +67,7 @@ func TestCompile_AppliesDiffAndBundlesAssets(t *testing.T) {
 		t.Errorf("patched data table = %s, want BaseMovementSpeed 235", patched)
 	}
 
-	asset, err := r.ReadFile("Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.uasset")
+	asset, err := r.ReadFile("ASS/ITM/SK_ITM_Saddle_Bear.uasset")
 	if err != nil {
 		t.Fatalf("ReadFile bundled asset: %v", err)
 	}
@@ -111,8 +114,13 @@ func TestCompile_MountsAtTheGamesDataLoaderPath(t *testing.T) {
 	if _, err := r.ReadFile("AI/D_AIGrowth.json"); err == nil {
 		t.Error("patched table must NOT also exist at the unprefixed path")
 	}
-	if _, err := r.ReadFile("Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.uasset"); err != nil {
-		t.Errorf("bundled asset must keep its own unprefixed path: %v", err)
+	// Assets get no "data/" prefix, and their own "<Mod>/" wrapper is stripped
+	// so they land exactly where the base asset they override lives (#237).
+	if _, err := r.ReadFile("ASS/ITM/SK_ITM_Saddle_Bear.uasset"); err != nil {
+		t.Errorf("bundled asset must land at its wrapper-stripped path: %v", err)
+	}
+	if _, err := r.ReadFile("Bear_Mount/ASS/ITM/SK_ITM_Saddle_Bear.uasset"); err == nil {
+		t.Error("bundled asset must NOT also exist under its .EXMODZ wrapper directory")
 	}
 }
 
