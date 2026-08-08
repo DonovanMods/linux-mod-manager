@@ -620,6 +620,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// gate on m.action.running - the Files overlay is the reachable
 		// case), and deferring to it would silently re-lose the warnings
 		// (Copilot PR #258 finding), so a stale overlay is replaced instead.
+		// This deferral loses nothing (#259): the update batch embeds its
+		// success-emitted warnings INSIDE ResultLines as a trailing section
+		// (applyUpdatesSequentially, mutations.go), so the overlay that wins
+		// already carries them.
 		if len(msg.outcome.Warnings) > 1 && !openedResultsOverlay {
 			m.overlay = &infoOverlay{title: "warnings", lines: msg.outcome.Warnings}
 		}

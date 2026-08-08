@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TUI: warnings emitted by successful updates in an apply-updates batch are
+  now readable — they render as a trailing section (blank separator, one
+  line per distinct warning) inside the same "update results" overlay that
+  lists each update's ✓/✗ line, instead of being folded into an aggregate
+  the overlay never showed. Identical warnings repeated across the batch
+  (a merged-pak recompile re-emits the same profile-level asset-conflict
+  diagnostics for every update that triggers it) are deduped on exact text,
+  and the status line's one-row `(N warnings)` count matches the deduped
+  section (#259).
 - Deploy output on a compile-mode game (Icarus) no longer presents merged
   mods as individual deployments (#255). The header drops the misleading
   `using <method>` claim, each mod's `✓` line is labeled by how its content
