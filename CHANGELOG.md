@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Pak-manifest reconciliation now claims only the cache member(s) actually
+  belonging to the pak file ID being marked — matched by content against
+  that file ID's retained source — instead of the entry-wide cache union
+  (#241). A mod carrying a second pak-kind file ID (no real mod ships one
+  today) would previously have had the first file ID's pak silently
+  attributed to the second as well, feeding wrong provenance into
+  deploy/prune decisions.
 - TUI: the help panel's `+N more` collapse now drops rows by priority
   instead of purely by position, so a screen's headline action (e.g. the
   Search screen's `enter: open mod details` row, formerly last in its

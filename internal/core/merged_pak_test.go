@@ -334,6 +334,78 @@ func TestReconcilePakManifests_ConvertedPath_UninstallFailureRetries(t *testing.
 	require.Empty(t, manifests["pak"].Members, "the retry must converge to merged-claimed")
 }
 
+// TestReconcilePakManifests_TwoPakFileIDs_EachClaimsOwnMember proves the
+// #241 fix: the raw-fallback branch must claim ONLY the member(s) belonging
+// to the fileID being marked, never the entry-wide cache union. No real mod
+// carries two pak-kind fileIDs today, so this constructs the synthetic shape
+// the assumption breaks under: one mod, two pak fileIDs, each with its own
+// retained source and deployable copy, both manifests in the post-convert
+// state (members=nil - the state a flip BACK to raw starts from, where the
+// ingest-time attribution has already been erased). Pre-#241, reconcile
+// marked each fileID with gameCache.ListFiles' full union, double-claiming
+// the sibling's member.
+//
+// Member names are deliberately unrelated to the fileIDs (the download path
+// names members after DownloadableFile.FileName, which bears no relation to
+// the fileID), and both paks are the SAME size with different content, so
+// only content identity with the fileID's own retained source can attribute
+// them - not name matching, not size matching.
+func TestReconcilePakManifests_TwoPakFileIDs_EachClaimsOwnMember(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	// game.ConvertPaks stays false: every pak fileID takes the raw-fallback
+	// branch (opted out at game level), no failedByRef needed.
+
+	const (
+		sourceID   = "fake-compiler"
+		modID      = "twopak"
+		version    = "1.0"
+		mainFileID = "pak"      // download-path shape: the literal icarus fileID
+		liteFileID = "lite.pak" // a hypothetical second pak variant ("lite" build)
+	)
+	// Same length, different bytes - size alone cannot tell them apart.
+	mainContent := []byte("main-pak-bytes")
+	liteContent := []byte("lite-pak-bytes")
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(mainFileID), mainContent))
+	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, "MainMod.pak", mainContent))
+	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(liteFileID), liteContent))
+	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, "LiteMod.pak", liteContent))
+
+	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, mainFileID, nil))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, liteFileID, nil))
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{mainFileID, liteFileID},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{mainFileID, liteFileID}}))
+
+	gc := svc.GetGameCache(game)
+	inst := core.NewInstaller(gc, linker.New(game.LinkMethod), nil)
+	_, err := svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
+	require.NoError(t, err)
+
+	manifests, err := gameCache.FileManifests(game.ID, sourceID, modID, version)
+	require.NoError(t, err)
+	require.Equal(t, []string{"MainMod.pak"}, manifests[mainFileID].Members,
+		"each pak fileID's manifest must claim exactly its own member, not the entry-wide union (#241)")
+	require.Equal(t, []string{"LiteMod.pak"}, manifests[liteFileID].Members,
+		"the second pak fileID must not double-claim the first's member (#241)")
+
+	// Both raw paks must still actually deploy - narrowing the claim must
+	// not narrow the deployed set.
+	_, err = os.Stat(filepath.Join(game.ModPath, "MainMod.pak"))
+	require.NoError(t, err, "the first fileID's raw pak must be deployed")
+	_, err = os.Stat(filepath.Join(game.ModPath, "LiteMod.pak"))
+	require.NoError(t, err, "the second fileID's raw pak must be deployed")
+}
+
 // TestReconcilePakManifests_RawFallbackPath_InstallFailureRetries proves
 // the #221 fix for the raw-fallback branch: a manifest that already
 // records the target ("raw") member shape is not trusted as proof of an
