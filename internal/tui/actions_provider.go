@@ -211,12 +211,15 @@ type ActionOutcome struct {
 	// (mutations.go), the apply-updates batch's confirm-time body, populates
 	// this today - one "✓ <name> <from> → <to>" line per successful update,
 	// one "✗ <name>: <error>" line per failed one, in the SAME order the
-	// batch was applied. Every other ActionProvider call leaves this nil,
-	// same as ImportedProfile's own "" zero value above - app.go's
-	// actionDoneMsg handler treats a nil/empty ResultLines as "nothing to
-	// show" and opens no overlay for it. This is a TUI-side struct, not part
-	// of the ActionProvider interface itself, so adding it required no
-	// interface/method change on either provider (coreProvider/
+	// batch was applied, plus (#259) one trailing section - a blank
+	// separator, then one line per distinct success-emitted warning - when
+	// any successful update carried Warnings (see applyUpdatesSequentially's
+	// doc comment for why they must ride here). Every other ActionProvider
+	// call leaves this nil, same as ImportedProfile's own "" zero value
+	// above - app.go's actionDoneMsg handler treats a nil/empty ResultLines
+	// as "nothing to show" and opens no overlay for it. This is a TUI-side
+	// struct, not part of the ActionProvider interface itself, so adding it
+	// required no interface/method change on either provider (coreProvider/
 	// prototypeProvider): renderers besides the update batch's are free to
 	// ignore it entirely.
 	ResultLines []string
@@ -450,6 +453,28 @@ func (p *prototypeProvider) UninstallMod(_ context.Context, item ModItem) (Actio
 	return ActionOutcome{Message: fmt.Sprintf("Uninstalled %q", item.Name)}, nil
 }
 
+// prototypeMergeWarnings returns the canned merge-time diagnostics (#253),
+// surfaced on every prototype deploy AND every successful prototype update
+// (#259) so --prototype demo mode actually exercises both multi-warning
+// paths in actionDoneMsg (app.go): the auto-open warnings overlay (deploy)
+// and the update-results overlay's trailing warnings section (update batch -
+// applyUpdatesSequentially). Same rationale as prototypeAllSourcesWarning
+// (service.go): without these, no prototype mutation ever crosses
+// formatOutcomeStatus's "> 1" collapse threshold, leaving those states
+// unreachable in the one mode meant to demo every UI state. The strings
+// exist purely to exercise the rendering paths; they name assets no canned
+// mod actually bundles. Deliberately IDENTICAL on every call - like the real
+// profile-level merge diagnostics a per-update recompile re-emits verbatim -
+// so a multi-update prototype batch also demos the section's exact-text
+// dedupe (one section, not one copy per mod). Returns a fresh slice per
+// call so no caller ever aliases another outcome's Warnings.
+func prototypeMergeWarnings() []string {
+	return []string{
+		`asset "textures/armor/steel.dds" is bundled by both SkyUI and Ordinator - Ordinator wins (last-applied, per profile load order)`,
+		`asset "textures/armor/steel_n.dds" is bundled by both SkyUI and Ordinator - Ordinator wins (last-applied, per profile load order)`,
+	}
+}
+
 func (p *prototypeProvider) DeployProfile(_ context.Context) (ActionOutcome, error) {
 	deployed := 0
 	for _, mod := range p.activeMods() {
@@ -457,19 +482,7 @@ func (p *prototypeProvider) DeployProfile(_ context.Context) (ActionOutcome, err
 			deployed++
 		}
 	}
-	// Canned merge-time diagnostics (#253), surfaced on every prototype
-	// deploy so --prototype demo mode actually exercises the multi-warning
-	// auto-open overlay path (actionDoneMsg, app.go) - the same rationale as
-	// prototypeAllSourcesWarning (service.go): without these, no prototype
-	// mutation ever crosses formatOutcomeStatus's "> 1" collapse threshold,
-	// leaving the overlay unreachable in the one mode meant to demo every UI
-	// state. Like that constant, the strings exist purely to exercise the
-	// rendering path; they name assets no canned mod actually bundles.
-	warnings := []string{
-		`asset "textures/armor/steel.dds" is bundled by both SkyUI and Ordinator - Ordinator wins (last-applied, per profile load order)`,
-		`asset "textures/armor/steel_n.dds" is bundled by both SkyUI and Ordinator - Ordinator wins (last-applied, per profile load order)`,
-	}
-	return ActionOutcome{Message: fmt.Sprintf("Deployed %d mod(s)", deployed), Warnings: warnings}, nil
+	return ActionOutcome{Message: fmt.Sprintf("Deployed %d mod(s)", deployed), Warnings: prototypeMergeWarnings()}, nil
 }
 
 // activeProfileName returns the canned Profiles entry currently marked
@@ -784,7 +797,9 @@ func (p *prototypeProvider) CheckUpdates(_ context.Context) (UpdatesView, error)
 // ApplyUpdate emits the brief's own fake progress sequence, then bumps the
 // matching InstalledMods entry's Version to u.ToVersion and clears its
 // AvailableVersion - so a repeated CheckUpdates no longer reports it,
-// mirroring a real update's "already up to date" outcome.
+// mirroring a real update's "already up to date" outcome. The canned merge
+// warnings demo #259's results-overlay warnings section - see
+// prototypeMergeWarnings' doc comment.
 func (p *prototypeProvider) ApplyUpdate(_ context.Context, u UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
 	idx := p.findInstalledIndex(u.Source, u.ID)
 	if idx < 0 {
@@ -798,7 +813,7 @@ func (p *prototypeProvider) ApplyUpdate(_ context.Context, u UpdateItem, progres
 	mods[idx].AvailableVersion = ""
 	mods[idx].Status = "installed"
 
-	return ActionOutcome{Message: fmt.Sprintf("Updated %q to %s", u.Name, u.ToVersion)}, nil
+	return ActionOutcome{Message: fmt.Sprintf("Updated %q to %s", u.Name, u.ToVersion), Warnings: prototypeMergeWarnings()}, nil
 }
 
 // isValidUpdatePolicy reports whether policy is one of the three strings

@@ -406,7 +406,12 @@ func TestActionDoneMultiWarningOutcomeReplacesStaleReadOnlyOverlay(t *testing.T)
 // priority when an outcome carries BOTH ResultLines and 2+ Warnings (today
 // only the apply-updates batch can): the pre-existing "update results"
 // overlay wins, and the warnings overlay defers rather than clobbering the
-// batch's per-item record.
+// batch's per-item record. This deferral is lossless since #259: the batch
+// embeds its success-emitted warnings inside ResultLines as a trailing
+// section (applyUpdatesSequentially), so the winning overlay already carries
+// them - this test's hand-built outcome deliberately omits that section
+// because the priority decision is what's pinned here, not the lines'
+// content.
 func TestActionDoneResultLinesKeepPriorityOverWarningsOverlay(t *testing.T) {
 	t.Parallel()
 

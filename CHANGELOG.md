@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TUI: warnings emitted by successful updates in an apply-updates batch are
+  now readable — they render as a trailing section (blank separator, one
+  line per distinct warning) inside the same "update results" overlay that
+  lists each update's ✓/✗ line, instead of being folded into an aggregate
+  the overlay never showed. Identical warnings repeated across the batch
+  (a merged-pak recompile re-emits the same profile-level asset-conflict
+  diagnostics for every update that triggers it) are deduped on exact text,
+  and the status line's one-row `(N warnings)` count matches the deduped
+  section (#259).
 - TUI: a mutation that completes with two or more warnings now auto-opens a
   scrollable overlay listing every warning in full, instead of collapsing
   them to an unreadable `(N warnings)` status suffix — on merged-pak games

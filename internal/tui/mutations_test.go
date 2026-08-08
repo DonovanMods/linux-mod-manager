@@ -2652,6 +2652,142 @@ func TestApplyUpdatesSequentiallyResultLines_CtxCancelledSkipsRemainder(t *testi
 	require.Equal(t, []string{"✓ SkyUI 5.2 → 5.3"}, outcome.ResultLines)
 }
 
+// --- #259: success-emitted warnings must be readable inside the results overlay ---
+
+// TestApplyUpdatesSequentially_SuccessWarningsAppendedAsSection guards #259's
+// fix. Warnings emitted by SUCCESSFUL updates (on a merged-pak game, the
+// merge-time asset-conflict diagnostics a recompile surfaces) used to be
+// folded into the aggregate Warnings slice only - unreadable, because the
+// "update results" overlay keeps priority over the warnings overlay (pinned
+// by TestActionDoneResultLinesKeepPriorityOverWarningsOverlay) and a success's
+// ResultLines entry is just its ✓ line. The batch must instead append them to
+// ResultLines as one trailing section - a blank separator, then one line per
+// distinct warning - so the ONE overlay the actionDoneMsg handler opens
+// carries them.
+func TestApplyUpdatesSequentially_SuccessWarningsAppendedAsSection(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+	rec := &recordingActions{
+		UpdatesViewOut: UpdatesView{Updates: updates},
+		ApplyUpdateOutcomeByID: map[string]ActionOutcome{
+			"skyui": {Message: `Updated "SkyUI" to 5.3`, Warnings: []string{
+				`asset "a.uasset" is bundled by both SkyUI and Ordinator`,
+				`asset "b.uasset" is bundled by both SkyUI and Ordinator`,
+			}},
+			"ussep": {Message: `Updated "USSEP" to 4.4`, Warnings: []string{
+				`asset "c.uasset" is bundled by both USSEP and Ordinator`,
+			}},
+		},
+	}
+
+	outcome, err := applyUpdatesSequentially(context.Background(), rec, updates, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"✓ SkyUI 5.2 → 5.3",
+		"✓ USSEP 4.3 → 4.4",
+		"",
+		`asset "a.uasset" is bundled by both SkyUI and Ordinator`,
+		`asset "b.uasset" is bundled by both SkyUI and Ordinator`,
+		`asset "c.uasset" is bundled by both USSEP and Ordinator`,
+	}, outcome.ResultLines)
+	require.Equal(t, []string{
+		`asset "a.uasset" is bundled by both SkyUI and Ordinator`,
+		`asset "b.uasset" is bundled by both SkyUI and Ordinator`,
+		`asset "c.uasset" is bundled by both USSEP and Ordinator`,
+	}, outcome.Warnings, "the aggregate Warnings must keep the status line's '(N warnings)' count in step with the section")
+}
+
+// TestApplyUpdatesSequentially_FailuresAndSuccessWarningsBothReadable (#259):
+// a batch carrying BOTH ✗ failures and success-emitted warnings must render
+// both in ResultLines, without duplicating the failure text - a failure's
+// synthesized "<name>: <err>" warning stays OUT of the trailing section
+// (which holds success-emitted warnings only), because the failure already
+// has its own ✗ line in the same overlay.
+func TestApplyUpdatesSequentially_FailuresAndSuccessWarningsBothReadable(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+	rec := &recordingActions{
+		UpdatesViewOut: UpdatesView{Updates: updates},
+		ApplyUpdateOutcomeByID: map[string]ActionOutcome{
+			"skyui": {Message: `Updated "SkyUI" to 5.3`, Warnings: []string{
+				`asset "a.uasset" is bundled by both SkyUI and Ordinator`,
+				`asset "b.uasset" is bundled by both SkyUI and Ordinator`,
+			}},
+		},
+		ApplyUpdateErrByID: map[string]error{"ussep": errors.New("connection refused")},
+	}
+
+	outcome, err := applyUpdatesSequentially(context.Background(), rec, updates, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"✓ SkyUI 5.2 → 5.3",
+		"✗ USSEP: connection refused",
+		"",
+		`asset "a.uasset" is bundled by both SkyUI and Ordinator`,
+		`asset "b.uasset" is bundled by both SkyUI and Ordinator`,
+	}, outcome.ResultLines)
+	require.Equal(t, []string{
+		`asset "a.uasset" is bundled by both SkyUI and Ordinator`,
+		`asset "b.uasset" is bundled by both SkyUI and Ordinator`,
+		"USSEP: connection refused",
+	}, outcome.Warnings, "the failure still reaches the aggregate Warnings exactly once, in batch order")
+}
+
+// TestApplyUpdatesSequentially_SuccessWarningsDedupedOnExactText (#259): a
+// multi-update batch on a merged-pak game re-runs the profile merge once per
+// update, so the SAME profile-level conflict text repeats once per successful
+// update. Dedupe on EXACT text (never a prefix or fuzzy match - a
+// genuinely-distinct warning must never collapse into an unrelated one) keeps
+// one line per distinct warning in first-occurrence order, in BOTH the
+// trailing section and the aggregate Warnings - so the status line's count
+// matches what the overlay shows.
+func TestApplyUpdatesSequentially_SuccessWarningsDedupedOnExactText(t *testing.T) {
+	t.Parallel()
+
+	updates := []UpdateItem{
+		{Source: "nexusmods", ID: "skyui", Name: "SkyUI", FromVersion: "5.2", ToVersion: "5.3"},
+		{Source: "nexusmods", ID: "ussep", Name: "USSEP", FromVersion: "4.3", ToVersion: "4.4"},
+	}
+	sharedA := `asset "a.uasset" is bundled by both SkyUI and Ordinator`
+	rec := &recordingActions{
+		UpdatesViewOut: UpdatesView{Updates: updates},
+		ApplyUpdateOutcomeByID: map[string]ActionOutcome{
+			"skyui": {Message: `Updated "SkyUI" to 5.3`, Warnings: []string{
+				sharedA,
+				`asset "a.uasset" is bundled by both SkyUI and Requiem`,
+			}},
+			"ussep": {Message: `Updated "USSEP" to 4.4`, Warnings: []string{
+				sharedA,
+				`asset "c.uasset" is bundled by both USSEP and Ordinator`,
+			}},
+		},
+	}
+
+	outcome, err := applyUpdatesSequentially(context.Background(), rec, updates, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"✓ SkyUI 5.2 → 5.3",
+		"✓ USSEP 4.3 → 4.4",
+		"",
+		sharedA,
+		`asset "a.uasset" is bundled by both SkyUI and Requiem`,
+		`asset "c.uasset" is bundled by both USSEP and Ordinator`,
+	}, outcome.ResultLines, "the repeated warning collapses to one line; near-identical text (same prefix, different tail) must NOT collapse")
+	require.Equal(t, []string{
+		sharedA,
+		`asset "a.uasset" is bundled by both SkyUI and Requiem`,
+		`asset "c.uasset" is bundled by both USSEP and Ordinator`,
+	}, outcome.Warnings)
+}
+
 // TestActionDoneOpensUpdateResultsOverlay is the end-to-end happy path:
 // confirming the apply-updates batch, once it resolves, opens a scrollable
 // info overlay titled "update results" listing each update's own outcome
@@ -3038,7 +3174,21 @@ func TestPrototypeUpdatesEndToEndKeyFlow(t *testing.T) {
 	updated, refreshCmd := model.Update(doneMsg)
 	model = updated.(Model)
 	require.NotNil(t, refreshCmd)
-	require.Equal(t, "Applied 2 update(s)", model.action.status)
+	// #259: each canned prototype update emits the same two merge warnings
+	// (prototypeMergeWarnings), deduped across the batch to exactly two -
+	// counted on the one-row status line, readable in full inside the
+	// results overlay's trailing section below.
+	require.Equal(t, "Applied 2 update(s) (2 warnings)", model.action.status)
+	require.NotContains(t, model.action.status, "\n", "status must stay one line")
+	require.NotNil(t, model.overlay)
+	require.Equal(t, "update results", model.overlay.title)
+	require.Equal(t, []string{
+		"✓ SkyUI 5.2 → 5.3",
+		"✓ USSEP 4.3 → 4.4",
+		"",
+		`asset "textures/armor/steel.dds" is bundled by both SkyUI and Ordinator - Ordinator wins (last-applied, per profile load order)`,
+		`asset "textures/armor/steel_n.dds" is bundled by both SkyUI and Ordinator - Ordinator wins (last-applied, per profile load order)`,
+	}, model.overlay.lines, "the per-mod record plus ONE deduped warnings section - not one copy per update")
 
 	loadedMsg := refreshCmd()
 	require.IsType(t, dataLoadedMsg{}, loadedMsg, "the updates flow never triggers the install-only search-refresh batching")
