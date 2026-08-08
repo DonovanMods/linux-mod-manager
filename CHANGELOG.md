@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Install-plan dependency resolution now fetches dependencies using the
+  LMM game ID (translated through `source_ids` like every other fetch)
+  instead of feeding the source's own stamped game ID back into the
+  lookup (#230). The old path only worked while no configured LMM game
+  ID happened to equal another game's upstream domain (e.g. a game
+  literally named `skyrimspecialedition`); on such a collision,
+  dependencies were silently looked up in the wrong game and reported
+  missing.
 - `lmm verify --fix` now resolves a missing file's re-download URL against
   the source-mapped game, not the LMM game ID (#228). On a game whose
   `source_ids` maps to a different upstream domain (e.g. NexusMods
