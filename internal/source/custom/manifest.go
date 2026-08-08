@@ -260,14 +260,13 @@ func (m *Manifest) TypeLabel() string { return "manifest" }
 // searchMods / the callers, not here.
 func (m *Manifest) toMod(mm manifestMod) domain.Mod {
 	mod := domain.Mod{
-		ID:          mm.ID,
-		SourceID:    m.id,
-		Name:        mm.Name,
-		Version:     mm.Version,
-		Author:      mm.Author,
-		Summary:     mm.Summary,
-		Description: mm.Summary,
-		SourceURL:   mm.URL,
+		ID:        mm.ID,
+		SourceID:  m.id,
+		Name:      mm.Name,
+		Version:   mm.Version,
+		Author:    mm.Author,
+		Summary:   mm.Summary,
+		SourceURL: mm.URL,
 	}
 	if mm.UpdatedAt != "" {
 		if ts, err := time.Parse(time.RFC3339, mm.UpdatedAt); err == nil {

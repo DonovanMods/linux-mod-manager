@@ -363,13 +363,15 @@ func modToDomain(data Mod, gameID string) domain.Mod {
 	}
 
 	return domain.Mod{
-		ID:           strconv.Itoa(data.ID),
-		SourceID:     "curseforge",
-		Name:         data.Name,
-		Version:      version,
-		Author:       author,
-		Summary:      data.Summary,
-		Description:  data.Summary, // CurseForge API doesn't include full description in mod response
+		ID:       strconv.Itoa(data.ID),
+		SourceID: "curseforge",
+		Name:     data.Name,
+		Version:  version,
+		Author:   author,
+		Summary:  data.Summary,
+		// Description deliberately left empty: the mod response has no full
+		// description, and copying Summary made every surface showing both
+		// render the same text twice (#235).
 		GameID:       gameID,
 		Category:     category,
 		Downloads:    data.DownloadCount,

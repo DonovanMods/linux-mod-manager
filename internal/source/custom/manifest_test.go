@@ -302,6 +302,15 @@ func TestManifestSearch(t *testing.T) {
 		assert.Equal(t, "Makes things cooler", mod.Summary)
 		assert.Equal(t, "skyrim", mod.GameID)
 	})
+
+	t.Run("description is not aliased to summary (#235)", func(t *testing.T) {
+		res, err := m.Search(ctx, source.SearchQuery{Query: "cool", GameID: "skyrim"})
+		require.NoError(t, err)
+		require.Len(t, res.Mods, 1)
+		assert.Equal(t, "Makes things cooler", res.Mods[0].Summary)
+		assert.Empty(t, res.Mods[0].Description,
+			"the manifest schema has no description field; Description must stay empty, not copy Summary")
+	})
 }
 
 func TestManifestGetMod(t *testing.T) {

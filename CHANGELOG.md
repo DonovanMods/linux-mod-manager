@@ -64,6 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   today) would previously have had the first file ID's pak silently
   attributed to the second as well, feeding wrong provenance into
   deploy/prune decisions.
+- Source adapters no longer alias `Description` to a copy of `Summary`
+  (#235). CurseForge, custom `directory`, and custom `manifest` mods —
+  none of which carry a full description — now leave the field empty, so
+  `lmm mod show` and the TUI details view stop rendering the identical
+  paragraph under both headings; custom `api` sources keep a mapped
+  `description` but no longer fall back to the summary when it is
+  unmapped. JSON contract change: `lmm mod show --json`'s `description`
+  field is now empty for those sources instead of duplicating `summary`.
 - Closed the test gap that let #237 ship: a new env-gated golden test
   (`ICARUS_GOLDEN_MOD_DIR`) compiles a real dual-form mod's `.EXMODZ`
   with the full pipeline and asserts the resulting pak's virtual paths
