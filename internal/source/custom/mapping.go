@@ -90,9 +90,6 @@ func mapMod(doc any, mapping map[string]string, sourceID string) (domain.Mod, er
 	mod.Author = pathString(doc, mapping, "author")
 	mod.Summary = pathString(doc, mapping, "summary")
 	mod.Description = pathString(doc, mapping, "description")
-	if mod.Description == "" {
-		mod.Description = mod.Summary
-	}
 	mod.SourceURL = pathString(doc, mapping, "url")
 	mod.PictureURL = pathString(doc, mapping, "picture_url")
 

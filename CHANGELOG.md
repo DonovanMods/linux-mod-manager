@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Source adapters no longer alias `Description` to a copy of `Summary`
+  (#235). CurseForge, custom `directory`, and custom `manifest` mods —
+  none of which carry a full description — now leave the field empty, so
+  `lmm mod show` and the TUI details view stop rendering the identical
+  paragraph under both headings; custom `api` sources keep a mapped
+  `description` but no longer fall back to the summary when it is
+  unmapped. JSON contract change: `lmm mod show --json`'s `description`
+  field is now empty for those sources instead of duplicating `summary`.
 - Install-plan dependency resolution now fetches dependencies using the
   LMM game ID (translated through `source_ids` like every other fetch)
   instead of feeding the source's own stamped game ID back into the
