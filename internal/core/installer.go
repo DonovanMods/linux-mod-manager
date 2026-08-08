@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -430,8 +431,13 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 	// removal must cover anything that might ever have been linked, including
 	// stale unclaimed files a pre-fix deploy linked. Narrowing this would
 	// strand those links forever.
+	//
+	// An absent cache entry is "nothing to undeploy", not an error (#260):
+	// uninstall must stay idempotent when the entry is already gone - the
+	// steady state syncMergedPak's zero branch and purge --uninstall leave
+	// behind - while still clearing tracking rows and sweeping empty dirs.
 	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
-	if err != nil {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("listing cached files: %w", err)
 	}
 

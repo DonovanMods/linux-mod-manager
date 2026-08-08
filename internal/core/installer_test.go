@@ -373,6 +373,35 @@ func (f *conditionalFailingLinker) Deploy(src, dst string) error {
 	return f.Linker.Deploy(src, dst)
 }
 
+// TestInstaller_Uninstall_AbsentCacheEntry_CleansTrackingWithoutError (#260):
+// uninstalling a mod whose cache entry no longer exists must treat the empty
+// entry as "nothing to undeploy" - succeeding, and still clearing any stale
+// DB tracking rows - rather than failing on ListFiles' lstat error. This is
+// the steady state syncMergedPak's zero branch lands in after its first
+// zero-pass deletes the merged-pak entry.
+func TestInstaller_Uninstall_AbsentCacheEntry_CleansTrackingWithoutError(t *testing.T) {
+	modCache := cache.New(t.TempDir())
+	gameDir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+	mod := &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g"}
+
+	// A stale tracking row left behind by a deploy whose cache entry has
+	// since been removed out from under it.
+	require.NoError(t, database.SaveDeployedFile("g", "default", "a.esp", "src", "1"))
+
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), database)
+	require.NoError(t, inst.Uninstall(context.Background(), game, mod, "default"),
+		"an absent cache entry means nothing to undeploy, not an error")
+
+	rows, err := database.GetDeployedFilesForMod("g", "default", "src", "1")
+	require.NoError(t, err)
+	require.Empty(t, rows, "stale tracking rows must still be cleared when the cache entry is gone")
+}
+
 func TestInstaller_Install_DeployFailureRollsBackAndClearsDB(t *testing.T) {
 	// When Deploy fails after some files are deployed, roll back all deployed
 	// files and clear DB records so disk and DB stay consistent.
