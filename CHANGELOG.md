@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Internal: all Unreal/Icarus format knowledge (base-pak location, pak
+  fingerprinting, the `.pak` convert test, the native `.exmodz` test,
+  merge-source kinds, and the merged artifact's filename) moved out of
+  `internal/core` and behind the `source.MergeCompiler` interface, which
+  now states the complete contract a second compile-mode game would
+  implement (#256). No user-visible change.
+
 ### Fixed
 
 - TUI: a mutation that completes with two or more warnings now auto-opens a

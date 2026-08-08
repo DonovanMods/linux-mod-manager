@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DonovanMods/go-unrealpak"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -125,19 +124,20 @@ func (s *Service) ValidateInstallFileSelection(sourceID string, files []domain.D
 	if err != nil {
 		return nil
 	}
-	if _, ok := src.(source.MergeCompiler); !ok {
+	mc, ok := src.(source.MergeCompiler)
+	if !ok {
 		return nil
 	}
-	var exmodz, other bool
+	var native, other bool
 	for _, f := range files {
-		if isExmodzFile(f.FileName) {
-			exmodz = true
+		if mc.IsNativeMergeSource(f.FileName) {
+			native = true
 		} else {
 			other = true
 		}
 	}
-	if exmodz && other {
-		return fmt.Errorf("pak and exmodz are alternate forms of the same mod - select one")
+	if native && other {
+		return fmt.Errorf("raw artifact and native merge archive are alternate forms of the same mod - select one")
 	}
 	return nil
 }
@@ -204,9 +204,8 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 // check to the specific source a file was downloaded from
 // (DownloadModToCache's src.(source.MergeCompiler) check); Importer.Import
 // has no such per-archive source to key off of, so it resolves against
-// every source the game maps in its registry instead — matching
-// resolveBasePak's v1 scope of "Icarus only", at most one of a game's
-// configured sources implements MergeCompiler today. Zero is the expected
+// every source the game maps in its registry instead — at most one of a
+// game's configured sources implements MergeCompiler today. Zero is the expected
 // failure when the game (or its MergeCompiler source) isn't configured;
 // more than one is treated as ambiguous rather than picking arbitrarily —
 // both fail loud instead of letting an .exmodz import silently skip
@@ -222,6 +221,35 @@ func (s *Service) mergeCompilerSourceForGame(gameID string) (source.MergeCompile
 			compilers = append(compilers, c)
 		}
 	}
+	return soleMergeCompiler(gameID, compilers)
+}
+
+// mergeCompilerForGame is mergeCompilerSourceForGame for callers that
+// already hold the *domain.Game (#256): it resolves against the game
+// struct's own source map instead of re-looking the game up in s.games, so
+// merged-pak paths that always received their game as a parameter keep
+// working for a game value that was never registered with the service (a
+// distinction only tests exercise today). Same 0/1/many contract.
+func (s *Service) mergeCompilerForGame(game *domain.Game) (source.MergeCompiler, error) {
+	var compilers []source.MergeCompiler
+	for id := range game.SourceIDs {
+		src, err := s.registry.Get(id)
+		if err != nil {
+			continue // unregistered: silently skipped, matching SourcesForGame
+		}
+		if c, ok := src.(source.MergeCompiler); ok {
+			compilers = append(compilers, c)
+		}
+	}
+	return soleMergeCompiler(game.ID, compilers)
+}
+
+// soleMergeCompiler enforces the "exactly one compile-capable source per
+// game" contract shared by both resolvers above: zero is the expected
+// failure when the game's MergeCompiler source isn't configured; more than
+// one is treated as ambiguous rather than picking arbitrarily - both fail
+// loud instead of letting a compile-path operation silently skip.
+func soleMergeCompiler(gameID string, compilers []source.MergeCompiler) (source.MergeCompiler, error) {
 	switch len(compilers) {
 	case 0:
 		return nil, fmt.Errorf("game %q requires DeployCompile but has no merge-compiler-capable source configured (map a source implementing source.MergeCompiler in the game's sources)", gameID)
@@ -576,16 +604,16 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 
 	// convertEligiblePak requires BOTH the game's own eligibility (deploy
 	// mode + ConvertPaks) AND this specific src implementing MergeCompiler
-	// (#221 I1 fix): isConvertEligiblePakFile alone only checks game flags,
-	// so a .pak served by a source that does NOT implement MergeCompiler
+	// (#221 I1 fix): the game flags alone don't decide, so a raw pak served
+	// by a source that does NOT implement MergeCompiler
 	// (a mixed-source game, or a misconfigured/non-icarus source) must fall
 	// through to the legacy extract/copy path below - exactly as it did
 	// before #221 - rather than hard-erroring the whole download. Unlike a
 	// .exmodz file, which has no other valid interpretation and so still
 	// hard-errors when src lacks MergeCompiler (see the !ok check below).
 	mc, isMergeCompiler := src.(source.MergeCompiler)
-	convertEligiblePak := isMergeCompiler && isConvertEligiblePakFile(game, safeFileName)
-	if game.DeployMode == domain.DeployCompile && (isExmodzFile(safeFileName) || convertEligiblePak) {
+	convertEligiblePak := isMergeCompiler && isConvertEligibleArtifact(game, mc, safeFileName)
+	if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak) {
 		if !isMergeCompiler {
 			return nil, fmt.Errorf("source %q: game %q requires DeployCompile but source does not implement MergeCompiler", src.ID(), game.ID)
 		}
@@ -1031,70 +1059,58 @@ func commitStagedCache(cachePath, stagePath string) error {
 	return nil
 }
 
-// isExmodzFile reports whether fileName is a compile-eligible archive
-// (case-insensitive ".exmodz" suffix). DeployCompile games can also serve
-// plain, already-built ".pak" files (icarus.GetModFiles enumerates "pak"
-// before "exmodz") - those must NOT be routed through this function's own
-// validate+retain branch as an exmodz, since MergeCompile expects an exmodz
-// diff, not a whole pak (#136 review, Task 13 fix round 1). A prebuilt pak
-// gets its OWN eligibility check instead - isConvertEligiblePakFile (#221) -
-// which the same validate+retain branch also widens for: a convert-eligible
-// pak still enters ingest's validate+retain machinery (a different
-// isExmodzFile-vs-isConvertEligiblePakFile Kind, not a different branch),
-// while a non-eligible pak (ConvertPaks off, or a non-DeployCompile game)
-// falls through to the pre-compile extract/copy logic unchanged, exactly as
-// if DeployMode were not DeployCompile at all.
-func isExmodzFile(fileName string) bool {
-	return strings.HasSuffix(strings.ToLower(fileName), ".exmodz")
-}
-
-// isConvertEligiblePakFile reports whether fileName is a prebuilt .pak that
-// should enter the merge-convert pipeline (#221): DeployCompile game with
-// convert_paks enabled. The per-MOD opt-out is consulted at merge-membership
-// time (enabledMergeSources), not here - ingest state is identical either
-// way (retained + raw-deployable), only participation differs. This checks
-// only game-level flags - callers (DownloadModToCache, Importer.Import) must
-// ALSO confirm the actual source/resolver implements source.MergeCompiler
-// before treating a pak as convert-eligible; a source that doesn't falls
-// through to the legacy extract/copy path instead (#221 I1 fix).
-func isConvertEligiblePakFile(game *domain.Game, fileName string) bool {
-	return game.DeployMode == domain.DeployCompile && game.ConvertPaks &&
-		strings.HasSuffix(strings.ToLower(fileName), ".pak")
-}
-
-// resolveBasePak locates the currently-installed game's base pak for
-// DeployCompile sources. v1 scope: Icarus only, one known pak filename
-// pattern — extend this if a second DeployCompile-using game is ever added
-// rather than generalizing speculatively now. The relative path below is
-// Task 1's empirically-confirmed finding (docs/plans/icarus-pak-format-findings.md),
-// recorded before this function was written, not an assumption made here: the
-// JSON data tables live in Content/Data/data.pak, NOT in the Content/Paks
-// pakchunks, which carry only cooked .uasset/.uexp assets and no JSON at all.
+// isNativeMergeFile reports whether fileName is the game's compile source's
+// NATIVE merge-source format (#256 - the seam-routed successor to the old
+// static isExmodzFile ".exmodz" test). DeployCompile games can also serve
+// plain, already-built raw paks (icarus.GetModFiles enumerates "pak"
+// before "exmodz") - those must NOT be routed through ingest's
+// validate+retain branch as a native archive, since MergeCompile expects a
+// native diff, not a whole pak (#136 review, Task 13 fix round 1); a
+// prebuilt pak gets its OWN eligibility check instead,
+// isConvertEligibleArtifact (#221), a different Kind through the same
+// validate+retain branch.
 //
-// This pak is also the direct source of base table *content* (#175): Compile
-// reads each patched table straight out of it via go-unrealpak, so a
-// compile is always week-correct by construction (there's no separate dump
-// to go stale relative to the install) and works entirely offline.
-func resolveBasePak(game *domain.Game) (string, error) {
-	candidate := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
-	if _, err := os.Stat(candidate); err != nil {
-		return "", fmt.Errorf("locating base pak for %q: %w", game.ID, err)
+// mc is the file's own source's MergeCompiler view (nil when that source
+// doesn't implement it). When mc is nil, the GAME's sole compile source is
+// consulted instead, so the "native archive served by a non-compile-capable
+// source" hard error in DownloadModToCache stays reachable on mixed-source
+// games. With no compiler resolvable anywhere, nothing can define "native"
+// and this returns false - such files take the legacy extract/copy path,
+// preserving #221 I1's protected download fall-through for the non-compile
+// source's paks and zips. Known residual, accepted deliberately: because
+// the legacy Extractor content-sniffs zip magic, a REAL native archive
+// downloaded in that doubly-broken state (a game whose SourceIDs map no
+// compiler at all - icarus is always registered, so only a hand-edited map
+// gets here - AND a foreign source serving native archives) is ingested as
+// a plain archive without ValidateSource. The import path has no such
+// residual: Importer.Import hard-errors on an unresolvable compiler, since
+// it has no per-archive source contract forcing a fall-through.
+func (s *Service) isNativeMergeFile(game *domain.Game, mc source.MergeCompiler, fileName string) bool {
+	if mc == nil {
+		gmc, err := s.mergeCompilerForGame(game)
+		if err != nil {
+			return false
+		}
+		mc = gmc
 	}
-	return candidate, nil
+	return mc.IsNativeMergeSource(fileName)
 }
 
-// basePakIndexHash opens basePakPath and returns its footer IndexHash
-// (#196) - cheap (footer + primary-index region only; unrealpak.Open never
-// reads a pak's actual file payloads), matching the base pak Compile itself
-// already opens to read patched tables from, so this adds no new I/O
-// pattern to the compile path.
-func basePakIndexHash(basePakPath string) (string, error) {
-	r, err := unrealpak.Open(basePakPath)
-	if err != nil {
-		return "", fmt.Errorf("reading base pak for compile fingerprint: %w", err)
-	}
-	defer r.Close() //nolint:errcheck
-	return r.IndexHash(), nil
+// isConvertEligibleArtifact reports whether fileName is a prebuilt raw
+// artifact that should enter the merge-convert pipeline (#221): DeployCompile
+// game with convert_paks enabled, and a file the game's compile-capable
+// source says it can convert (mc.IsConvertibleArtifact - the format half of
+// the pre-#256 isConvertEligiblePakFile, now behind the MergeCompiler seam;
+// the policy half stays here). The per-MOD opt-out is consulted at
+// merge-membership time (enabledMergeSources), not here - ingest state is
+// identical either way (retained + raw-deployable), only participation
+// differs. mc must be the source/resolver actually serving the file: a
+// source that does not implement source.MergeCompiler falls through to the
+// legacy extract/copy path instead (#221 I1 fix), which callers express by
+// never reaching this check without one.
+func isConvertEligibleArtifact(game *domain.Game, mc source.MergeCompiler, fileName string) bool {
+	return game.DeployMode == domain.DeployCompile && game.ConvertPaks &&
+		mc.IsConvertibleArtifact(fileName)
 }
 
 // GetGame retrieves a game by ID

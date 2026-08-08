@@ -4157,7 +4157,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	if err != nil {
 		return nil, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
 	}
-	_, isMergeCompiler := src.(source.MergeCompiler)
+	mc, isMergeCompiler := src.(source.MergeCompiler)
 
 	// compiledFiles accumulates every file this loop actually compiled (game
 	// DeployCompile + a ".exmodz" file - the same condition
@@ -4211,15 +4211,17 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
 
 		// Copilot round 1 (PR #222): compiledFiles collects BOTH kinds -
-		// .exmodz files and convert-eligible .pak files alike - so the
+		// .exmodz files and convert-eligible raw files alike - so the
 		// InstallCompiling/"Retaining ... for merge" messaging below (and
 		// in cmd/lmm/install.go's InstallCompiling case) fires for a
 		// convert-eligible raw pak exactly as it does for a native
 		// .exmodz; len(compiledFiles) > 0 doesn't care which kind matched.
-		// #221: gate .pak files on MergeCompiler capability, matching the
-		// ingest path's predicate. .exmodz files are still included because
-		// they hard-error later if the source lacks MergeCompiler.
-		if game.DeployMode == domain.DeployCompile && (isExmodzFile(file.FileName) || (isMergeCompiler && isConvertEligiblePakFile(game, file.FileName))) {
+		// #221: gate raw files on MergeCompiler capability, matching the
+		// ingest path's predicate. Native merge archives are still included
+		// when only the GAME's compile source (not this file's own source)
+		// recognizes them - isNativeMergeFile's fallback - because ingest
+		// hard-errors on exactly that mismatch later (#256).
+		if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, file.FileName) || (isMergeCompiler && isConvertEligibleArtifact(game, mc, file.FileName))) {
 			compiledFiles = append(compiledFiles, file)
 		}
 	}

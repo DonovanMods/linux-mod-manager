@@ -63,7 +63,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		Profile:      profile,
 		UpdatePolicy: installed.UpdatePolicy,
 	}
-	if game.DeployMode == domain.DeployCompile && s.ModHasPakMergeSource(installed) {
+	if game.DeployMode == domain.DeployCompile && s.ModHasPakMergeSource(game, installed) {
 		v := installed.ConvertPaks
 		info.ConvertPaks = &v
 	}

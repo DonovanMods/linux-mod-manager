@@ -37,6 +37,8 @@ func writeFakeBasePak(t *testing.T, path string) {
 // needs to prove Service validates and retains (never compiles a per-mod
 // pak) when DeployMode is DeployCompile (#197: merged-only).
 type fakeCompilerSource struct {
+	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
+
 	downloadURL   string
 	compileCalls  int
 	validateCalls int

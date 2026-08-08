@@ -21,8 +21,13 @@ import (
 // skips a mod's fileIDs that have no retained source (a plain .pak).
 func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *testing.T) {
 	svc := newFlowsTestService(t)
-	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
+	// #256: enabledMergeSources classifies retained fileIDs via the game's
+	// MergeCompiler source instead of a static suffix test in core, so this
+	// fixture now maps and registers one.
+	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile,
+		SourceIDs: map[string]string{"fake-compiler": "icarus"}}
 	require.NoError(t, svc.AddGame(game))
+	svc.RegisterSource(&fakeCompilerSource{})
 
 	gameCache := svc.GetGameCache(game)
 

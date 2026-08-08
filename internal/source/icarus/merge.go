@@ -89,7 +89,7 @@ func MergeCompile(ctx context.Context, basePakPath string, sources []MergeSource
 		if label == "" {
 			label = src.ModRef
 		}
-		if src.Kind == source.MergeSourcePak {
+		if src.Kind == MergeSourcePak {
 			bundle, convWarnings, cerr := convertPakToBundle(src.SourcePath, base, baseFold)
 			if cerr != nil {
 				failed = append(failed, source.MergeFailure{ModRef: src.ModRef, Reason: cerr.Error()})
