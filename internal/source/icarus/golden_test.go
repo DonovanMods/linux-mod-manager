@@ -144,7 +144,14 @@ func readVirtualPathSet(t *testing.T, pakPath string) map[string]string {
 	set := make(map[string]string)
 	for _, f := range r.Files() {
 		full := path.Join(r.MountPoint(), f.Path)
-		set[strings.ToLower(full)] = full
+		folded := strings.ToLower(full)
+		// Two entries differing only by case would collapse into one key and
+		// could hide a divergence; UE couldn't distinguish them either, so a
+		// pak like that is malformed — refuse it rather than compare loosely.
+		if prev, ok := set[folded]; ok {
+			t.Fatalf("%s: case-insensitive path collision between %q and %q", pakPath, prev, full)
+		}
+		set[folded] = full
 	}
 	if len(set) == 0 {
 		t.Fatalf("%s holds no entries", pakPath)
