@@ -226,6 +226,15 @@ type MergeCompiler interface {
 	// MergedArtifactLabel is the user-facing display name for the merged
 	// artifact's synthetic mod row (verify/update output).
 	MergedArtifactLabel() string
+
+	// RestoredArtifactName names the deployable raw-fallback copy core
+	// synthesizes when healing a prune-damaged cache entry whose original
+	// artifact name is unrecoverable (#250; Icarus: "<modID>_P.pak").
+	// Deterministic per mod - the same mod must always restore to the same
+	// name, since the name is on-disk state existing installs depend on.
+	// Core passes a path-safe (Base'd) modID and uses the result as a
+	// filename within the mod's own cache entry.
+	RestoredArtifactName(modID string) string
 }
 
 // MergeSource identifies one mod's contribution to a merge, in the order it

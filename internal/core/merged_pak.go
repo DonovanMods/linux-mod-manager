@@ -518,7 +518,7 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 					// it. Without this, the mark below would record an EMPTY
 					// member set and Install would deploy nothing, silently
 					// - the raw fallback's whole purpose defeated.
-					restoredName, herr := restoreRawPakCopy(versionDir, retained, fileID, mod.ID)
+					restoredName, herr := restoreRawPakCopy(mc, versionDir, retained, fileID, mod.ID)
 					if herr != nil {
 						return warnings, fmt.Errorf("restoring pruned raw pak for %s: %w", ref, herr)
 					}
@@ -624,20 +624,25 @@ func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]stri
 // rawPakRestoreName picks the on-disk name restoreRawPakCopy publishes a
 // healed deployable pak copy under (#250). An import-path fileID IS the
 // original archive filename (Importer.Import stages the deployable copy
-// under exactly that name), so the restore is name-exact. A download-path
-// fileID (the literal icarus "pak") never carried the deployable name: it
-// came from the download URL's basename at ingest time, the convert flip
-// erased the manifest that recorded it, and nothing else durably stores it
-// - so a deterministic mod-scoped name in Icarus's "_P.pak" override
-// convention (the old compiledFileName convention) is synthesized instead.
-// Both inputs are source-controlled, so both are Base'd before use as a
-// path component.
-func rawPakRestoreName(fileID, modID string) string {
+// under exactly that name), so the restore is name-exact - detected by
+// asking the compile source whether the fileID names one of its
+// convertible artifacts (#256: the format test lives behind the seam). A
+// download-path fileID (the literal icarus "pak") never carried the
+// deployable name: it came from the download URL's basename at ingest
+// time, the convert flip erased the manifest that recorded it, and
+// nothing else durably stores it - so the source synthesizes its
+// deterministic mod-scoped fallback name instead
+// (mc.RestoredArtifactName; Icarus's "_P.pak" override convention). The
+// import-vs-download provenance SPLIT stays in core - it follows from how
+// ingest keys fileIDs, which is uniform across games - while both format
+// questions inside it are the source's. Both inputs are
+// source-controlled, so both are Base'd before use as a path component.
+func rawPakRestoreName(mc source.MergeCompiler, fileID, modID string) string {
 	base := filepath.Base(fileID)
-	if strings.EqualFold(filepath.Ext(base), ".pak") {
+	if mc.IsConvertibleArtifact(base) {
 		return base
 	}
-	return filepath.Base(modID) + "_P.pak"
+	return mc.RestoredArtifactName(filepath.Base(modID))
 }
 
 // restoreRawPakCopy re-creates fileID's deployable pak copy in versionDir
@@ -649,8 +654,8 @@ func rawPakRestoreName(fileID, modID string) string {
 // (rawPakMembers just matched nothing), and it could be a sibling fileID's
 // claimed member - failing loudly beats corrupting it, and the next
 // reconcile pass retries.
-func restoreRawPakCopy(versionDir, retainedPath, fileID, modID string) (string, error) {
-	name := rawPakRestoreName(fileID, modID)
+func restoreRawPakCopy(mc source.MergeCompiler, versionDir, retainedPath, fileID, modID string) (string, error) {
+	name := rawPakRestoreName(mc, fileID, modID)
 	target := filepath.Join(versionDir, name)
 	if _, err := os.Stat(target); err == nil {
 		return "", fmt.Errorf("restore target %s already exists with content not matching the retained source; refusing to overwrite", name)

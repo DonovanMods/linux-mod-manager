@@ -128,16 +128,21 @@ func (s *Service) ValidateInstallFileSelection(sourceID string, files []domain.D
 	if !ok {
 		return nil
 	}
+	// The colliding filenames are captured for the error: naming the actual
+	// files keeps the message format-agnostic (the vocabulary comes from
+	// the selection itself, not a hardcoded format list) and tells the user
+	// WHICH two files collided, not just that a collision happened (#256).
 	var native, other bool
+	var nativeName, otherName string
 	for _, f := range files {
 		if mc.IsNativeMergeSource(f.FileName) {
-			native = true
+			native, nativeName = true, f.FileName
 		} else {
-			other = true
+			other, otherName = true, f.FileName
 		}
 	}
 	if native && other {
-		return fmt.Errorf("raw artifact and native merge archive are alternate forms of the same mod - select one")
+		return fmt.Errorf("%s and %s are alternate forms of the same mod - select one", otherName, nativeName)
 	}
 	return nil
 }

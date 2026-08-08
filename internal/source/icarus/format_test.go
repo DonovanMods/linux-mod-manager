@@ -143,6 +143,16 @@ func TestClassifyMergeSource(t *testing.T) {
 	}
 }
 
+func TestRestoredArtifactName(t *testing.T) {
+	// The exact shape is on-disk state (#250): a heal-restored raw-fallback
+	// copy for existing installs is published under <mod-id>_P.pak, "_P"
+	// being UE's override-pak suffix convention - byte-identical names must
+	// come out of the seam or already-healed caches would orphan.
+	if got := newFormatTestSource().RestoredArtifactName("cool-mod"); got != "cool-mod_P.pak" {
+		t.Errorf("RestoredArtifactName = %q, want %q", got, "cool-mod_P.pak")
+	}
+}
+
 func TestMergedArtifactName(t *testing.T) {
 	// The exact name is a deploy contract (#197): it must sort last among
 	// mounted paks ("zzz"), be greppable as lmm-owned, and keep the "_P"

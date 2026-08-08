@@ -54,3 +54,5 @@ func (fakeMergeFormat) ClassifyMergeSource(id string) (string, bool) {
 
 func (fakeMergeFormat) MergedArtifactName() string  { return "zzz_LMM_Merged_P.pak" }
 func (fakeMergeFormat) MergedArtifactLabel() string { return "Icarus Merged Pak" }
+
+func (fakeMergeFormat) RestoredArtifactName(modID string) string { return modID + "_P.pak" }

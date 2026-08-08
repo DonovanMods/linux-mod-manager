@@ -118,3 +118,13 @@ func (s *Icarus) MergedArtifactName() string { return mergedPakFileName }
 // MergedArtifactLabel is the user-facing display name for the merged
 // artifact's synthetic mod row (verify/update output).
 func (s *Icarus) MergedArtifactLabel() string { return "Icarus Merged Pak" }
+
+// RestoredArtifactName names the deployable raw-fallback copy synthesized
+// when core heals a prune-damaged cache entry whose original artifact name
+// is unrecoverable (#250: download-path fileIDs never carried it - the
+// name came from the download URL's basename at ingest, and the convert
+// flip erased the manifest that recorded it). A deterministic mod-scoped
+// name in the "_P.pak" override convention (see mergedPakFileName's doc)
+// keeps healed installs stable: the same mod always restores to the same
+// name, which is on-disk state existing installs already depend on.
+func (s *Icarus) RestoredArtifactName(modID string) string { return modID + "_P.pak" }

@@ -74,6 +74,9 @@ func (formatOnlyCompilerSource) ClassifyMergeSource(id string) (string, bool) {
 }
 func (formatOnlyCompilerSource) MergedArtifactName() string  { return "zzz_LMM_Merged_P.pak" }
 func (formatOnlyCompilerSource) MergedArtifactLabel() string { return "Icarus Merged Pak" }
+func (formatOnlyCompilerSource) RestoredArtifactName(modID string) string {
+	return modID + "_P.pak"
+}
 
 func TestMergedFingerprint_Deterministic(t *testing.T) {
 	f := MergedFingerprint{
