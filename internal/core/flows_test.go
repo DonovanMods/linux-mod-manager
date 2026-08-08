@@ -806,21 +806,25 @@ func TestService_UninstallMod_ProfileDesyncWarnsAndContinues(t *testing.T) {
 
 // TestService_UninstallMod_UndeployFailure_RecordedAsNoteWithHistoricalPrefix
 // guards the exact text (including its historical "Warning: " prefix) of the
-// undeploy-failure diagnostic. The mod is never actually cached, so
-// Installer.Uninstall's cache.ListFiles call fails deterministically
-// (directory does not exist) without relying on filesystem permissions. The
-// profile is pre-seeded so profile removal succeeds silently, isolating this
-// one diagnostic.
+// undeploy-failure diagnostic. A regular file sits where the symlink linker
+// expects its own link, so linker.Undeploy fails deterministically ("not a
+// symlink") without relying on filesystem permissions. (An absent cache
+// entry no longer works as the failure fixture here: since #260 that is a
+// documented no-op, not an error.) The profile is pre-seeded so profile
+// removal succeeds silently, isolating this one diagnostic.
 func TestService_UninstallMod_UndeployFailure_RecordedAsNoteWithHistoricalPrefix(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	// No cache files stored (files: nil) - Installer.Uninstall's
-	// cache.ListFiles call fails because the mod's cache directory was
-	// never created.
-	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, nil)
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{
+		"plugin.esp": []byte("data"),
+	})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	// A foreign regular file at the deploy destination: Undeploy refuses to
+	// remove anything that is not its own symlink.
+	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "plugin.esp"), []byte("not a symlink"), 0644))
 
 	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
 	require.NoError(t, err, "an undeploy failure must not fail the uninstall")

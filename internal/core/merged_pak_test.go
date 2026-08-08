@@ -211,6 +211,62 @@ func TestSyncMergedPak_ZeroEnabledMods_UninstallsExistingPak(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "disabling the last exmodz mod must remove the deployed merged pak")
 }
 
+// TestSyncMergedPak_ZeroEnabledMods_SecondZeroSyncSucceeds (#260 repro
+// shape 1): the first zero-pass uninstalls the pak AND deletes the merged
+// cache entry, so "zero sources + no merged entry" is the steady state after
+// disabling the last merge source. Every later mutation flow re-runs
+// syncMergedPak on that profile - the second zero-pass must succeed, not
+// fail on the absent entry. (The test above stops after the first zero-pass
+// and so never saw this.)
+func TestSyncMergedPak_ZeroEnabledMods_SecondZeroSyncSucceeds(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
+
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SetModEnabled("fake-compiler", "bear-mount", game.ID, "default", false))
+
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err, "first zero-pass: undeploys the pak and deletes the merged entry")
+
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err, "second zero-pass must tolerate the already-absent merged entry")
+	require.Empty(t, warnings)
+}
+
+// TestSyncMergedPak_NeverMerged_ZeroSources (#260 repro shape 2): a fresh
+// DeployCompile game whose first synced profile has zero merge sources (e.g.
+// the first install is a plain non-pak file) has never had a merged-pak
+// cache entry at all - the very first sync must succeed.
+func TestSyncMergedPak_NeverMerged_ZeroSources(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err, "a profile that never merged has no entry to remove - not an error")
+	require.Empty(t, warnings)
+}
+
+// TestPurgeMergedPak_AbsentCacheEntry (#260 repro shape 3): PurgeMergedPak
+// routes through the same Installer.Uninstall and must likewise tolerate an
+// absent merged-pak cache entry (e.g. purge --uninstall already deleted it,
+// or the profile never merged).
+func TestPurgeMergedPak_AbsentCacheEntry(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+
+	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true),
+		"purging a never-merged profile must be a no-op, not an error")
+
+	// And again after a full merge/purge cycle: --uninstall deletes the
+	// entry, so a repeat purge sees the same absent-entry state.
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true))
+	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true),
+		"a repeat purge after --uninstall must tolerate the already-deleted entry")
+}
+
 // TestSyncMergedPak_RegeneratesOnBaseHashChange proves a base-pak refresh
 // (the "Friday problem", generalized from #196 to the merged model) still
 // triggers regeneration.
