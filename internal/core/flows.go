@@ -2934,7 +2934,7 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 		for _, im := range installedMods {
 			installedIDs[domain.ModKey(im.SourceID, im.ID)] = true
 		}
-		plan.Dependencies, plan.MissingDependencies, plan.CycleDetected, plan.DependencyWarnings = s.resolveInstallDependencies(ctx, sourceID, mod, installedIDs)
+		plan.Dependencies, plan.MissingDependencies, plan.CycleDetected, plan.DependencyWarnings = s.resolveInstallDependencies(ctx, sourceID, game.ID, mod, installedIDs)
 	}
 
 	files, err := s.GetModFiles(ctx, sourceID, mod)
@@ -3010,7 +3010,16 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 // OTHER error degrades the same way (the plan still succeeds) but is also
 // appended to warnings, since it represents an actual failure the caller
 // couldn't otherwise tell apart from "this mod genuinely has none".
-func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID string, target *domain.Mod, installedIDs map[string]bool) (deps []domain.Mod, missing []domain.ModReference, cycleDetected bool, warnings []string) {
+//
+// gameID is the LMM game id (game.ID), NOT a mod's stamped GameID: sources
+// stamp their own SOURCE-DOMAIN id onto the mods they return (e.g. NexusMods
+// echoes "skyrimspecialedition"), and Service.GetMod translates an LMM id
+// into that domain id via game.SourceIDs. Feeding a stamped id back into
+// GetMod (#230) only worked while s.games[<source-domain-id>] happened to
+// miss - LMM ids are user-chosen in games.yaml, so a collision with another
+// game's LMM id would translate the already-translated id and silently fetch
+// dependencies from the wrong game.
+func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID, gameID string, target *domain.Mod, installedIDs map[string]bool) (deps []domain.Mod, missing []domain.ModReference, cycleDetected bool, warnings []string) {
 	visited := make(map[string]bool)
 	stack := make(map[string]bool) // keys currently being visited (cycle detection)
 
@@ -3048,11 +3057,7 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID strin
 				continue
 			}
 
-			gameIDForFetch := target.GameID
-			if gameIDForFetch == "" {
-				gameIDForFetch = mod.GameID
-			}
-			depMod, err := s.GetMod(ctx, sourceID, gameIDForFetch, ref.ModID)
+			depMod, err := s.GetMod(ctx, sourceID, gameID, ref.ModID)
 			if err != nil {
 				// Dependency not available on this source (e.g. an external
 				// requirement like SKSE).

@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Install-plan dependency resolution now fetches dependencies using the
+  LMM game ID (translated through `source_ids` like every other fetch)
+  instead of feeding the source's own stamped game ID back into the
+  lookup (#230). The old path only worked while no configured LMM game
+  ID happened to equal another game's upstream domain (e.g. a game
+  literally named `skyrimspecialedition`); on such a collision,
+  dependencies were silently looked up in the wrong game and reported
+  missing.
 - `lmm mod show` and the TUI mod details view no longer report a mod as
   not installed when the installed-state lookup fails outright (e.g. a
   locked or corrupted database) — only a genuine "no such row" omits the
