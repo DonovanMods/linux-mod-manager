@@ -174,7 +174,7 @@ func (c *modDetailsContent) HandleKey(msg tea.KeyMsg) (contextContent, tea.Cmd, 
 func (c *modDetailsContent) HelpGroup() helpGroup {
 	return helpGroup{
 		name: "mod details",
-		entries: []string{
+		entries: []helpItem{
 			helpRow("↑/↓", "scroll"),
 			helpRow("esc", "back"),
 		},
