@@ -2,10 +2,12 @@ package core_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -205,4 +207,59 @@ func TestModDetail_UnknownModErrors(t *testing.T) {
 	_, err := svc.ModDetail(context.Background(), game, "default", "src", "nope")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mod not found")
+}
+
+// TestModDetail_DBErrorPropagates (#236): only a genuine "not installed"
+// (domain.ErrModNotFound) may omit the Installed block; any other
+// GetInstalledMod failure must propagate as an error, never be rendered as
+// "not installed" - a locked/corrupted DB silently reading as an uninstalled
+// mod is indistinguishable from a real absence on both surfaces. The
+// corruption vector: a NULL installed_at fails GetInstalledMod's Scan into a
+// non-pointer time.Time, written through a second raw handle on the same DB
+// file (converge_test.go's seam), since the typed API can't produce a bad row.
+func TestModDetail_DBErrorPropagates(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   dataDir,
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	src := newMockSource("src")
+	svc.RegisterSource(src)
+	src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod: domain.Mod{
+			ID:       "a",
+			SourceID: "src",
+			Name:     "Mod A",
+			Version:  "1.5",
+			GameID:   game.ID,
+		},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+
+	rawDB, err := db.New(filepath.Join(dataDir, "lmm.db"))
+	require.NoError(t, err)
+	_, err = rawDB.Exec(`UPDATE installed_mods SET installed_at = NULL WHERE source_id = 'src' AND mod_id = 'a'`)
+	require.NoError(t, err)
+	require.NoError(t, rawDB.Close())
+
+	// Guard: the corruption must actually yield a real (non-not-found) error
+	// from the underlying lookup - otherwise a schema change could silently
+	// turn this into a passing-for-the-wrong-reason test.
+	_, gerr := svc.GetInstalledMod("src", "a", game.ID, "default")
+	require.Error(t, gerr)
+	require.NotErrorIs(t, gerr, domain.ErrModNotFound)
+
+	detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+	require.Error(t, err, "a real DB failure must surface, not read as \"not installed\"")
+	assert.NotErrorIs(t, err, domain.ErrModNotFound)
+	assert.Nil(t, detail)
 }
