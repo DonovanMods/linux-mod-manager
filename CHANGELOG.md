@@ -10,11 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Internal: all Unreal/Icarus format knowledge (base-pak location, pak
-  fingerprinting, the `.pak` convert test, merge-source kinds, and the
-  merged artifact's filename) moved out of `internal/core` and behind the
-  `source.MergeCompiler` interface, which now states the complete contract
-  a second compile-mode game would implement (#256). No user-visible
-  change.
+  fingerprinting, the `.pak` convert test, the native `.exmodz` test,
+  merge-source kinds, and the merged artifact's filename) moved out of
+  `internal/core` and behind the `source.MergeCompiler` interface, which
+  now states the complete contract a second compile-mode game would
+  implement (#256). No user-visible change.
+
+### Fixed
+
+- TUI: a mutation that completes with two or more warnings now auto-opens a
+  scrollable overlay listing every warning in full, instead of collapsing
+  them to an unreadable `(N warnings)` status suffix — on merged-pak games
+  (Icarus) those warnings are the only report of cross-mod asset conflicts
+  anywhere in the app. The one-row `(N warnings)` summary stays on the
+  status line, and a single warning still renders inline with no overlay
+  (#253).
+- Icarus: cache pruning no longer deletes a converted pak's deployable
+  copy when a sibling file of the same mod+version is downloaded or
+  re-ingested (#250). The copy is unclaimed by design while the merged
+  pak carries the mod's content, but it is still the designated
+  raw-fallback artifact — pruning it left a later conversion opt-out or
+  merge failure deploying nothing, silently. Pruning now exempts any
+  unclaimed file whose content matches a retained source, and the raw
+  fallback additionally self-heals entries already damaged by released
+  versions: the deployable copy is restored from the retained source
+  (under its original archive name for imports, or a `<mod-id>_P.pak`
+  name for catalog downloads, where the original name is unrecoverable)
+  and redeployed.
 
 ## [1.30.0] - 2026-08-08
 

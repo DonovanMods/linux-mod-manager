@@ -508,6 +508,22 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				if aerr != nil {
 					return warnings, aerr
 				}
+				if len(members) == 0 {
+					// #250 heal: no cache member matches the retained
+					// source - the deployable copy was pruned while this pak
+					// was converted (members=nil made it unclaimed, and
+					// released PruneUnclaimed versions deleted it on any
+					// sibling-file re-ingest). The retained source still
+					// holds the exact bytes, so restore the copy and claim
+					// it. Without this, the mark below would record an EMPTY
+					// member set and Install would deploy nothing, silently
+					// - the raw fallback's whole purpose defeated.
+					restoredName, herr := restoreRawPakCopy(versionDir, retained, fileID, mod.ID)
+					if herr != nil {
+						return warnings, fmt.Errorf("restoring pruned raw pak for %s: %w", ref, herr)
+					}
+					members = []string{restoredName}
+				}
 				// #221 partial-failure fix: a manifest-shape match alone
 				// (recorded + matching member set) does not prove the raw
 				// pak is ACTUALLY deployed - the mark below must be written
@@ -603,6 +619,48 @@ func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]stri
 		}
 	}
 	return members, nil
+}
+
+// rawPakRestoreName picks the on-disk name restoreRawPakCopy publishes a
+// healed deployable pak copy under (#250). An import-path fileID IS the
+// original archive filename (Importer.Import stages the deployable copy
+// under exactly that name), so the restore is name-exact. A download-path
+// fileID (the literal icarus "pak") never carried the deployable name: it
+// came from the download URL's basename at ingest time, the convert flip
+// erased the manifest that recorded it, and nothing else durably stores it
+// - so a deterministic mod-scoped name in Icarus's "_P.pak" override
+// convention (the old compiledFileName convention) is synthesized instead.
+// Both inputs are source-controlled, so both are Base'd before use as a
+// path component.
+func rawPakRestoreName(fileID, modID string) string {
+	base := filepath.Base(fileID)
+	if strings.EqualFold(filepath.Ext(base), ".pak") {
+		return base
+	}
+	return filepath.Base(modID) + "_P.pak"
+}
+
+// restoreRawPakCopy re-creates fileID's deployable pak copy in versionDir
+// from its retained source at retainedPath and returns the restored name
+// (#250) - the heal for a cache entry a released PruneUnclaimed damaged
+// (deployable copy missing, retained source present, manifest still in the
+// post-convert members=nil state). It refuses to overwrite an existing
+// file at the target name: such a file necessarily holds DIFFERENT content
+// (rawPakMembers just matched nothing), and it could be a sibling fileID's
+// claimed member - failing loudly beats corrupting it, and the next
+// reconcile pass retries.
+func restoreRawPakCopy(versionDir, retainedPath, fileID, modID string) (string, error) {
+	name := rawPakRestoreName(fileID, modID)
+	target := filepath.Join(versionDir, name)
+	if _, err := os.Stat(target); err == nil {
+		return "", fmt.Errorf("restore target %s already exists with content not matching the retained source; refusing to overwrite", name)
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("checking restore target %s: %w", name, err)
+	}
+	if err := copyFileStreaming(retainedPath, target); err != nil {
+		return "", fmt.Errorf("restoring deployable copy %s: %w", name, err)
+	}
+	return name, nil
 }
 
 // sameMemberSet reports whether a and b claim the same members, ignoring

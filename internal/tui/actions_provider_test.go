@@ -129,6 +129,24 @@ func TestPrototypeProviderActions_DeployProfile_ReturnsPlausibleOutcome(t *testi
 	assert.NotEmpty(t, outcome.Message)
 }
 
+// TestPrototypeProviderActions_DeployProfile_CannedMultiWarningDemo guards
+// #253's demo-mode parity: the prototype deploy must return MORE than one
+// warning so --prototype actually exercises the multi-warning auto-open
+// overlay path (actionDoneMsg, app.go) - the same rationale as
+// prototypeAllSourcesWarning (service.go), without which no prototype
+// mutation would ever cross formatOutcomeStatus's collapse threshold and the
+// overlay would be unreachable in the one mode meant to demo every UI state.
+func TestPrototypeProviderActions_DeployProfile_CannedMultiWarningDemo(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	outcome, err := actions.DeployProfile(context.Background())
+	require.NoError(t, err)
+	assert.Greater(t, len(outcome.Warnings), 1,
+		"the prototype deploy must demo the multi-warning overlay threshold")
+}
+
 func TestPrototypeProviderActions_PlanProfileSwitch_ComputesFakeConsistentPlan(t *testing.T) {
 	t.Parallel()
 

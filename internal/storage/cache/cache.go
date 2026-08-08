@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -323,6 +325,19 @@ func HasRetainedSource(versionDir string) (bool, error) {
 // versionDir makes the whole call a no-op. Reserved (ReservedPrefix) entries
 // are never candidates. Callers invoke it on a STAGING directory at commit
 // time, so a prune can never race a deploy.
+//
+// An unclaimed file whose content matches a retained source is EXEMPT
+// (#250): "unclaimed" has two distinct causes prune must tell apart.
+// Stale/superseded content - #210's actual target - matches no retained
+// source. A converted pak's deployable copy, by contrast, is unclaimed only
+// because a successful merge suppressed it (its manifest reads members=nil;
+// the merged pak claims its content), yet it remains the designated
+// raw-fallback artifact an opt-out or failed merge must be able to
+// redeploy. Content identity with the retained source is the one signal
+// that separates the two: ingest stages the deployable copy from the SAME
+// bytes as the retained source, and the convert flip erases the manifest
+// that once recorded the mapping (see internal/core's rawPakMembers, which
+// relies on the same attribution to find the way back to raw).
 func PruneUnclaimed(versionDir string) error {
 	manifests, err := fileManifestsAt(versionDir)
 	if err != nil {
@@ -346,11 +361,11 @@ func PruneUnclaimed(versionDir string) error {
 			claimed[member] = true
 		}
 	}
-	hasRetained, err := HasRetainedSource(versionDir)
+	retained, err := retainedSourceRefs(versionDir)
 	if err != nil {
 		return fmt.Errorf("checking retained source for prune: %w", err)
 	}
-	if !hasRetained {
+	if len(retained) == 0 {
 		return nil
 	}
 	files, err := walkEntries(versionDir, false) // same walker ListFiles uses
@@ -361,12 +376,104 @@ func PruneUnclaimed(versionDir string) error {
 		if claimed[f] {
 			continue
 		}
+		suppressed, err := matchesRetainedSource(filepath.Join(versionDir, f), retained)
+		if err != nil {
+			return fmt.Errorf("matching %s against retained sources for prune: %w", f, err)
+		}
+		if suppressed {
+			continue // a converted pak's raw-fallback copy, not stale debris (#250)
+		}
 		if err := os.Remove(filepath.Join(versionDir, f)); err != nil {
 			return fmt.Errorf("pruning unclaimed %s: %w", f, err)
 		}
 	}
 	removeEmptyDirs(versionDir)
 	return nil
+}
+
+// retainedSourceRef tracks one retained compile source during a prune pass:
+// full path, size, and its MD5, computed lazily (at most once, and only if
+// some unclaimed candidate's size matches - the common all-claimed entry
+// never hashes anything).
+type retainedSourceRef struct {
+	path string
+	size int64
+	sum  string
+}
+
+// retainedSourceRefs lists versionDir's retained compile sources (every
+// entry named by RetainedSourceName, for any fileID) with their sizes -
+// PruneUnclaimed's gate (#210: at least one must exist) and its #250
+// content-identity exemption both read from this. A missing versionDir is
+// not an error - it reports empty, same as an entry with none.
+func retainedSourceRefs(versionDir string) ([]retainedSourceRef, error) {
+	entries, err := os.ReadDir(versionDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var refs []retainedSourceRef
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), retainedSourcePrefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		refs = append(refs, retainedSourceRef{path: filepath.Join(versionDir, entry.Name()), size: info.Size()})
+	}
+	return refs, nil
+}
+
+// matchesRetainedSource reports whether the file at fullPath is
+// byte-identical to one of the entry's retained sources: size compared
+// first, MD5 only on a size match, each side hashed at most once. The MD5
+// (not a cryptographic guarantee - fine for self-owned cache bookkeeping)
+// mirrors internal/core's md5File attribution convention (#241).
+func matchesRetainedSource(fullPath string, retained []retainedSourceRef) (bool, error) {
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return false, err
+	}
+	var fileSum string
+	for i := range retained {
+		if info.Size() != retained[i].size {
+			continue
+		}
+		if retained[i].sum == "" {
+			if retained[i].sum, err = md5File(retained[i].path); err != nil {
+				return false, err
+			}
+		}
+		if fileSum == "" {
+			if fileSum, err = md5File(fullPath); err != nil {
+				return false, err
+			}
+		}
+		if fileSum == retained[i].sum {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// md5File returns the hex MD5 of path's content. Duplicates internal/core's
+// helper of the same name (core depends on this package, so importing it
+// back would cycle); used only for prune's content-identity check above.
+func md5File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close() //nolint:errcheck
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // removeEmptyDirs removes every empty subdirectory under versionDir

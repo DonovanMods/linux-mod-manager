@@ -633,3 +633,36 @@ func TestPruneUnclaimed_NeverTouchesReservedEntries(t *testing.T) {
 	_, err := os.Stat(filepath.Join(dir, cache.RetainedSourceName("exmodz")))
 	require.NoError(t, err, "reserved entries are never pruned")
 }
+
+// TestPruneUnclaimed_KeepsUnclaimedFileMatchingRetainedSource proves the
+// #250 fix: an unclaimed file whose content matches a retained source is
+// NOT stale debris - it is the retained source's own deployable copy,
+// currently suppressed because the merged pak claims its content
+// (members=nil), and it is still the designated raw-fallback artifact.
+// Pruning it left an opt-out/failed-merge fallback with nothing to deploy.
+// Content identity (not name, not size alone) is the test: the genuinely
+// stale file below has the SAME size as the retained pak source but
+// different bytes, and must still be pruned.
+func TestPruneUnclaimed_KeepsUnclaimedFileMatchingRetainedSource(t *testing.T) {
+	c := cache.New(t.TempDir())
+	pakBytes := []byte("prebuilt-pak-bytes")
+	staleBytes := []byte("stale-pak-bytes123") // same length as pakBytes, different content
+	require.Len(t, staleBytes, len(pakBytes), "fixture invariant: size alone must not distinguish the two")
+
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "SuperMod_P.pak", pakBytes)) // suppressed raw-fallback copy, unclaimed
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "stale.pak", staleBytes))    // genuine debris, unclaimed
+	require.NoError(t, c.Store("g", "s", "m", "1.0", "claimed.txt", []byte("sibling-content")))
+	dir := c.ModPath("g", "s", "m", "1.0")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("pak")), pakBytes, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, cache.RetainedSourceName("exmodz")), []byte("exmodz-zip"), 0o644))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "pak", nil)) // converted: the merged pak claims its content
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "exmodz", nil))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "sibling", []string{"claimed.txt"}))
+
+	require.NoError(t, cache.PruneUnclaimed(dir))
+
+	files, err := c.ListFiles("g", "s", "m", "1.0")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"SuperMod_P.pak", "claimed.txt"}, files,
+		"the converted pak's deployable copy matches its retained source and must survive (#250); the same-size stale file must still be pruned")
+}
