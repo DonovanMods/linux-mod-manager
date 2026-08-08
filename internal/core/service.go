@@ -1076,8 +1076,15 @@ func commitStagedCache(cachePath, stagePath string) error {
 // source" hard error in DownloadModToCache stays reachable on mixed-source
 // games. With no compiler resolvable anywhere, nothing can define "native"
 // and this returns false - such files take the legacy extract/copy path,
-// where an unextractable native archive still fails loud
-// ("unsupported archive format"), just without the compile-specific message.
+// preserving #221 I1's protected download fall-through for the non-compile
+// source's paks and zips. Known residual, accepted deliberately: because
+// the legacy Extractor content-sniffs zip magic, a REAL native archive
+// downloaded in that doubly-broken state (a game whose SourceIDs map no
+// compiler at all - icarus is always registered, so only a hand-edited map
+// gets here - AND a foreign source serving native archives) is ingested as
+// a plain archive without ValidateSource. The import path has no such
+// residual: Importer.Import hard-errors on an unresolvable compiler, since
+// it has no per-archive source contract forcing a fall-through.
 func (s *Service) isNativeMergeFile(game *domain.Game, mc source.MergeCompiler, fileName string) bool {
 	if mc == nil {
 		gmc, err := s.mergeCompilerForGame(game)
