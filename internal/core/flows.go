@@ -964,6 +964,54 @@ const (
 	// (4-space indent, matching ApplyProfileSwitch's own SwitchInstallNote
 	// convention).
 	ImportNote
+
+	// --- #255: compile-mode deploy readout, extending this same enum
+	// (the established "extend, don't fork" convention above). ---
+
+	// DeployMergeSynced fires once per DeployProfile on a DeployCompile
+	// game, after the post-loop merged-artifact sync succeeds with a
+	// merged artifact in place. It does not fire when the profile has no
+	// merge participants (nothing merged, nothing to report) or when the
+	// sync itself fails (that path emits a DeployWarning instead). Total
+	// carries the number of mods whose content the merged artifact
+	// carries; Detail names the artifact file
+	// (source.MergeCompiler.MergedArtifactName - the format is the
+	// source's business, never core's, #256); RawFallbacks counts
+	// participant mods that fell back to an individual raw deploy (failed
+	// conversion). No single mod is in scope (Index/ModName/ModID are
+	// zero). The same readout is recorded on DeployResult
+	// (MergedArtifact/MergedMods/RawFallbacks) for callers with no
+	// progress stream.
+	DeployMergeSynced
+)
+
+// DeployModClass classifies how a DeployDeployed mod's content reaches the
+// game directory on a DeployCompile game (#255), so callers stop rendering
+// merge participants - which individually deploy zero files by design
+// (#197) - as ordinary per-mod deployments. Classification happens BEFORE
+// the deploy loop (from enabledMergeSources), so it cannot know this sync's
+// conversion outcomes yet: an opted-in pak that goes on to fail conversion
+// is optimistically DeployModMerged here, and the correction is carried by
+// the existing conversion-failure warning plus DeployMergeSynced's
+// RawFallbacks count (issue #255's decided option (b); the stored
+// fingerprint is deliberately NOT consulted pre-loop - it describes the
+// previous sync, which is wrong on first deploy and after input changes).
+type DeployModClass int
+
+const (
+	// DeployModIndividual (the zero value): an ordinary mod deploying its
+	// own files - every mod on a non-compile game, and a loose-file mod
+	// in a compile profile.
+	DeployModIndividual DeployModClass = iota
+	// DeployModMerged: a merge participant - its content reaches the game
+	// via the profile-level merged artifact built after the deploy loop;
+	// its own install step deploys nothing (native merge sources) or its
+	// raw copy is claimed by the merge (converted artifacts).
+	DeployModMerged
+	// DeployModRaw: a convertible artifact excluded from the merge by the
+	// game- or mod-level ConvertPaks opt-out (#221) - it deploys raw,
+	// individually.
+	DeployModRaw
 )
 
 // DeployProgress reports incremental status during DeployProfile. Index and
@@ -1024,6 +1072,18 @@ type DeployProgress struct {
 	// InstallResult.FilesDeployed, which only ever tracks the STRICT path's
 	// primary. Zero for every other phase.
 	FilesExtracted int
+
+	// --- #255: compile-mode deploy readout fields ---
+
+	// ModClass classifies how ModName's content reaches the game
+	// directory on a DeployCompile game - set on DeployDeployed only;
+	// zero (DeployModIndividual) for every other phase and on non-compile
+	// games. See DeployModClass.
+	ModClass DeployModClass
+	// RawFallbacks carries DeployMergeSynced's count of participant mods
+	// that fell back to an individual raw deploy. Zero for every other
+	// phase.
+	RawFallbacks int
 }
 
 // DeployResult reports the outcome of DeployProfile. As with UninstallResult
@@ -1074,6 +1134,18 @@ type DeployResult struct {
 	Skipped  []string
 	Warnings []string
 	Notes    []string
+
+	// MergedArtifact/MergedMods/RawFallbacks mirror the DeployMergeSynced
+	// event for callers with no progress stream (#255 - the TUI passes
+	// nil): the merged artifact's file name
+	// (source.MergeCompiler.MergedArtifactName), how many mods' content it
+	// carries, and how many participants fell back to an individual raw
+	// deploy (failed conversion). All zero when the deploy produced/kept
+	// no merged artifact: non-compile games, or a compile profile with no
+	// merge participants.
+	MergedArtifact string
+	MergedMods     int
+	RawFallbacks   int
 }
 
 // errNoDeployFiles mirrors cmd/lmm's errNoDownloadableFiles for the
@@ -1793,6 +1865,12 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 	// appended to at the natural point, unchanged.
 	var deferredWarnings []DeployProgress
 
+	// #255: on a compile game, classify each mod up front so its
+	// DeployDeployed event can say whether it deploys files individually or
+	// rides the merged artifact built after the loop (nil map - and
+	// therefore the zero class - everywhere else).
+	modClasses := s.classifyCompileDeployMods(game, profileName, modsToDeploy)
+
 	total := len(modsToDeploy)
 	for idx, mod := range modsToDeploy {
 		// Task 6 item d (cancel-then-drain): checked between mods, never
@@ -1856,6 +1934,7 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		result.Deployed++
 		evt := base
 		evt.Phase = DeployDeployed
+		evt.ModClass = modClasses[domain.ModKey(mod.SourceID, mod.ID)]
 		emit(evt)
 
 		if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
@@ -1891,6 +1970,10 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 			result.Warnings = append(result.Warnings, w)
 			emit(DeployProgress{Phase: DeployWarning, Detail: w})
 		}
+		// #255: the sync succeeded, so the just-written fingerprint is the
+		// authoritative record of what the merged artifact carries - report
+		// it (result fields + one DeployMergeSynced event).
+		s.recordMergeOutcome(game, profileName, result, emit)
 	}
 
 	for _, w := range deferredWarnings {
@@ -4157,7 +4240,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	if err != nil {
 		return nil, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
 	}
-	_, isMergeCompiler := src.(source.MergeCompiler)
+	mc, isMergeCompiler := src.(source.MergeCompiler)
 
 	// compiledFiles accumulates every file this loop actually compiled (game
 	// DeployCompile + a ".exmodz" file - the same condition
@@ -4211,15 +4294,17 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
 
 		// Copilot round 1 (PR #222): compiledFiles collects BOTH kinds -
-		// .exmodz files and convert-eligible .pak files alike - so the
+		// .exmodz files and convert-eligible raw files alike - so the
 		// InstallCompiling/"Retaining ... for merge" messaging below (and
 		// in cmd/lmm/install.go's InstallCompiling case) fires for a
 		// convert-eligible raw pak exactly as it does for a native
 		// .exmodz; len(compiledFiles) > 0 doesn't care which kind matched.
-		// #221: gate .pak files on MergeCompiler capability, matching the
-		// ingest path's predicate. .exmodz files are still included because
-		// they hard-error later if the source lacks MergeCompiler.
-		if game.DeployMode == domain.DeployCompile && (isExmodzFile(file.FileName) || (isMergeCompiler && isConvertEligiblePakFile(game, file.FileName))) {
+		// #221: gate raw files on MergeCompiler capability, matching the
+		// ingest path's predicate. Native merge archives are still included
+		// when only the GAME's compile source (not this file's own source)
+		// recognizes them - isNativeMergeFile's fallback - because ingest
+		// hard-errors on exactly that mismatch later (#256).
+		if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, file.FileName) || (isMergeCompiler && isConvertEligibleArtifact(game, mc, file.FileName))) {
 			compiledFiles = append(compiledFiles, file)
 		}
 	}

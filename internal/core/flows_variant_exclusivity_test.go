@@ -32,6 +32,7 @@ import (
 // because a single mod must offer BOTH a pak and an exmodz file so
 // PlanInstall/ApplyInstall can drive a real mixed selection end to end.
 type variantExclusivitySource struct {
+	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
 	*mockSourceWithDownloads
 	files map[string][]domain.DownloadableFile // mod.ID -> served files, verbatim
 }
@@ -141,7 +142,7 @@ func TestApplyInstall_StrictPath_TargetFileIDs_MixedVariants_Rejected(t *testing
 
 	opts := core.InstallOptions{TargetFileIDs: []string{"pak", "exmodz"}}
 	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
-	require.ErrorContains(t, err, "pak and exmodz are alternate forms of the same mod - select one")
+	require.ErrorContains(t, err, "Mod_P.pak and Mod.exmodz are alternate forms of the same mod - select one")
 
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)
@@ -166,7 +167,7 @@ func TestApplyInstall_StrictPath_CallerSuppliedMixedVariantFiles_Rejected(t *tes
 	plan.Files = mc.files["mod1"]
 
 	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
-	require.ErrorContains(t, err, "pak and exmodz are alternate forms of the same mod - select one")
+	require.ErrorContains(t, err, "Mod_P.pak and Mod.exmodz are alternate forms of the same mod - select one")
 
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)
@@ -203,7 +204,7 @@ func TestApplyInstall_BatchPath_TargetFileIDs_MixedVariants_Rejected(t *testing.
 
 	opts := core.InstallOptions{TargetFileIDs: []string{"pak", "exmodz"}}
 	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
-	require.ErrorContains(t, err, "pak and exmodz are alternate forms of the same mod - select one")
+	require.ErrorContains(t, err, "Mod_P.pak and Mod.exmodz are alternate forms of the same mod - select one")
 
 	require.Equal(t, 0, mc.DownloadCount(), "no download may happen for a rejected mixed selection")
 	gameCache := svc.GetGameCache(game)

@@ -295,6 +295,141 @@ func TestFormatOutcomeStatusWarningSuffix(t *testing.T) {
 		formatOutcomeStatus(ActionOutcome{Message: "Deployed 3 mod(s)", Warnings: []string{"a", "b"}}))
 }
 
+// --- #253: multi-warning outcomes auto-open the warnings overlay ---
+
+// TestActionDoneMultiWarningOutcomeOpensWarningsOverlay is #253's decided
+// behavior end-to-end: an outcome whose Warnings crossed formatOutcomeStatus's
+// collapse threshold (> 1, where the status line degrades to a bare
+// "(N warnings)" count) auto-opens the info overlay listing every warning in
+// full - on a merged-pak game those collapsed warnings are the ONLY report of
+// a cross-mod asset conflict anywhere in the app, so they must stay readable.
+// The status line keeps the one-row count summary (the overlay is additive,
+// mirroring the update-results overlay), and dismissing the overlay has no
+// side effects: the mutation completed before it appeared.
+func TestActionDoneMultiWarningOutcomeOpensWarningsOverlay(t *testing.T) {
+	t.Parallel()
+
+	warnings := []string{
+		`asset "C_PlayerBlueprintGrowth.uasset" bundled by two mods - last wins`,
+		`asset "C_PlayerBlueprintGrowth.uexp" bundled by two mods - last wins`,
+	}
+	calls := 0
+	model := sizedModelWithActions(t, &recordingActions{}, 80, 24)
+	model.screen = ScreenDashboard
+	model, pa := model.buildAction(actionDeploy, "Deploy?", nil, "", func(context.Context, func(ActionProgress)) (ActionOutcome, error) {
+		calls++
+		return ActionOutcome{Message: "Deployed 2 mod(s)", Warnings: warnings}, nil
+	})
+	model = model.promptAction(pa)
+
+	confirmed, confirmCmd := model.Update(keyRunes("y"))
+	model = confirmed.(Model)
+	doneMsg := runActionCmd(t, confirmCmd)
+	require.IsType(t, actionDoneMsg{}, doneMsg)
+
+	updated, _ := model.Update(doneMsg)
+	model = updated.(Model)
+
+	require.NotNil(t, model.overlay, "a 2+-warning outcome must auto-open the warnings overlay")
+	require.Equal(t, "warnings", model.overlay.title)
+	require.Equal(t, warnings, model.overlay.lines, "every warning must be listed in full, in order")
+	require.Contains(t, model.action.status, "(2 warnings)", "the one-row count summary is kept, not replaced")
+	require.NotContains(t, model.action.status, "\n", "status must stay one line")
+
+	// The overlay renders at 80 columns within the content height budget.
+	view := model.overlayView()
+	require.Contains(t, view, "warnings")
+	for _, w := range warnings {
+		require.Contains(t, view, w)
+	}
+	require.LessOrEqual(t, lipgloss.Height(view), model.availableContentHeight(),
+		"overlay must never render taller than the content budget")
+
+	// Dismissal is side-effect free: the action already settled.
+	model = updateWithKeyType(t, model, tea.KeyEsc)
+	require.Nil(t, model.overlay)
+	require.Equal(t, 1, calls, "dismissing the overlay must not re-run the mutation")
+	require.False(t, model.action.running)
+	require.Contains(t, model.action.status, "(2 warnings)", "dismissal must leave the status summary alone")
+}
+
+// TestActionDoneSingleWarningOutcomeOpensNoOverlay is the other side of
+// #253's threshold: one warning still renders inline after the em dash
+// (fully readable, nothing unrecoverable), so no overlay opens - the guard
+// against throwing a modal at a lone benign note.
+func TestActionDoneSingleWarningOutcomeOpensNoOverlay(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 1
+	model.action.running = true
+
+	updated, _ := model.Update(actionDoneMsg{gen: 1, kind: actionEnable, outcome: ActionOutcome{
+		Message:  `Enabled "SkyUI"`,
+		Warnings: []string{"link method fell back to copy"},
+	}})
+	m := updated.(Model)
+
+	require.Nil(t, m.overlay, "a single-warning outcome renders inline and opens nothing")
+	require.Equal(t, `Enabled "SkyUI" — link method fell back to copy`, m.action.status)
+}
+
+// TestActionDoneMultiWarningOutcomeReplacesStaleReadOnlyOverlay guards the
+// Copilot PR #258 finding: a read-only overlay CAN be open when an action
+// settles (promptOverlay deliberately doesn't gate on m.action.running - the
+// Files overlay is the reachable case), and a plain m.overlay == nil guard
+// would silently drop the warnings overlay there, leaving the outcome stuck
+// at the unreadable "(N warnings)" count - the exact information loss #253
+// exists to fix. The warnings overlay must replace a stale read-only overlay;
+// it defers ONLY to the update-results overlay the same handler just opened.
+func TestActionDoneMultiWarningOutcomeReplacesStaleReadOnlyOverlay(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 1
+	model.action.running = true
+	model.overlay = &infoOverlay{title: "Files — SkyUI", lines: []string{"Data/SkyUI.esp"}}
+
+	warnings := []string{"warn a", "warn b"}
+	updated, _ := model.Update(actionDoneMsg{gen: 1, kind: actionDeploy, outcome: ActionOutcome{
+		Message:  "Deployed 2 mod(s)",
+		Warnings: warnings,
+	}})
+	m := updated.(Model)
+
+	require.NotNil(t, m.overlay)
+	require.Equal(t, "warnings", m.overlay.title, "a stale read-only overlay must not swallow the warnings")
+	require.Equal(t, warnings, m.overlay.lines)
+}
+
+// TestActionDoneResultLinesKeepPriorityOverWarningsOverlay pins the overlay
+// priority when an outcome carries BOTH ResultLines and 2+ Warnings (today
+// only the apply-updates batch can): the pre-existing "update results"
+// overlay wins, and the warnings overlay defers rather than clobbering the
+// batch's per-item record. This deferral is lossless since #259: the batch
+// embeds its success-emitted warnings inside ResultLines as a trailing
+// section (applyUpdatesSequentially), so the winning overlay already carries
+// them - this test's hand-built outcome deliberately omits that section
+// because the priority decision is what's pinned here, not the lines'
+// content.
+func TestActionDoneResultLinesKeepPriorityOverWarningsOverlay(t *testing.T) {
+	t.Parallel()
+
+	model := modelWithActions(t, &recordingActions{})
+	model.action.gen = 1
+	model.action.running = true
+
+	updated, _ := model.Update(actionDoneMsg{gen: 1, kind: actionUpdate, outcome: ActionOutcome{
+		Message:     "Applied 1 update(s)",
+		Warnings:    []string{"warn a", "warn b"},
+		ResultLines: []string{"✓ SkyUI 5.2 → 5.3", "✗ USSEP: boom"},
+	}})
+	m := updated.(Model)
+
+	require.NotNil(t, m.overlay)
+	require.Equal(t, "update results", m.overlay.title, "the batch's per-item record keeps priority")
+}
+
 // --- Rule 5: actionFailedMsg staleness + partial-mutation contract ---
 
 func TestFreshActionFailedMsgShowsErrorRefreshesAndKeepsScreen(t *testing.T) {

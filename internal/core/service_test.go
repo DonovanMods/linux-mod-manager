@@ -787,6 +787,69 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	require.True(t, os.IsNotExist(err), "the unclaimed compiled pak must actually be gone from disk")
 }
 
+// TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy reproduces
+// #250: a converted pak's manifest is deliberately members=nil (the merged
+// pak claims its content - reconcilePakManifests' participating branch), so
+// its deployable cache copy is unclaimed by every recorded manifest. A later
+// ingest of a SIBLING file ID into the same version directory opens
+// PruneUnclaimed's gate (staging is seeded from the existing entry, every
+// marker reads Recorded, retained sources are present) - and pre-fix, the
+// converted pak's copy was deleted as if it were stale pre-#197 content.
+// It is not stale: it is the designated raw-fallback artifact, and pruning
+// it left a later opt-out or failed merge deploying nothing, silently.
+func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	mock := &compilerMockSource{mockSourceWithDownloads: newMockSourceWithDownloads("test-compiler")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
+	require.NoError(t, svc.AddGame(game))
+	mod := &domain.Mod{ID: "123", SourceID: "test-compiler", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
+
+	gameCache := svc.GetGameCache(game)
+	dir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+
+	// Generation 1: the pak variant ingests via the validate+retain branch -
+	// a retained source plus a claimed deployable copy (#221's raw-deploy
+	// default state).
+	mock.AddDownload("pak", []byte("prebuilt-pak-bytes"))
+	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "pak", FileName: "Mod_P.pak"}, nil)
+	require.NoError(t, err)
+
+	manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
+	require.NoError(t, err)
+	require.Equal(t, []string{"Mod_P.pak"}, manifests["pak"].Members, "precondition: ingest claims the deployable pak copy")
+
+	// The first successful merge flips the pak's manifest to members=nil -
+	// the merged pak claims its content (reconcilePakManifests'
+	// participating branch). The copy is now unclaimed but NOT stale.
+	require.NoError(t, cache.MarkFileCompleteWithMembers(dir, "pak", nil))
+
+	// Generation 2: a sibling file ID of the same mod+version is ingested
+	// afterward (the issue's repro: an optional patch file, a verify --fix
+	// re-download, ...). This commit runs PruneUnclaimed with its gate open.
+	mock.AddDownload("exmodz", []byte("fake-exmodz-bytes"))
+	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "exmodz", FileName: "Mod.exmodz"}, nil)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(dir, "Mod_P.pak"))
+	require.NoError(t, err, "the converted pak's deployable copy is the designated raw-fallback artifact (#250) and must survive a sibling ingest's prune")
+	assert.Equal(t, "prebuilt-pak-bytes", string(data))
+
+	_, err = os.Stat(filepath.Join(dir, cache.RetainedSourceName("pak")))
+	require.NoError(t, err, "the pak's retained source must survive as before")
+	_, err = os.Stat(filepath.Join(dir, cache.RetainedSourceName("exmodz")))
+	require.NoError(t, err, "the sibling's retained source must survive as before")
+}
+
 // TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected is the
 // integration-level guard for the #96 round 2 review finding, reproducing its
 // probe exactly: an archive downloaded for file1 that smuggles in a member
@@ -1000,6 +1063,7 @@ func (m *mockSourceWithDownloads) Close() {
 // takes DownloadModToCache's ordinary copy path, and a later .exmodz
 // re-download that takes its validate+retain (#197) path.
 type compilerMockSource struct {
+	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
 	*mockSourceWithDownloads
 }
 

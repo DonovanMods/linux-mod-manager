@@ -20,9 +20,14 @@ import (
 func newModDetailTestService(t *testing.T) (*core.Service, *domain.Game, *mockSource) {
 	t.Helper()
 	svc := newFlowsTestService(t)
-	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		// #256: ModHasPakMergeSource classifies fileIDs via the game's
+		// MergeCompiler source instead of a static suffix test in core, so
+		// the DeployCompile subtests need one mapped and registered.
+		SourceIDs: map[string]string{"fake-compiler": "testgame"}}
 	src := newMockSource("src")
 	svc.RegisterSource(src)
+	svc.RegisterSource(&fakeCompilerSource{})
 	return svc, game, src
 }
 

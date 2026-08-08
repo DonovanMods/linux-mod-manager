@@ -32,6 +32,7 @@ func writeFakeBasePak(t *testing.T, path string) {
 // internal/core/service_icarus_compile_test.go's fakeCompilerSource, at the
 // CLI layer instead of core's).
 type compilerInstallSource struct {
+	fakeMergeFormat // #256: the format-vocabulary half of source.MergeCompiler
 	*fakeInstallSource
 	validateCalls int
 	compileCalls  int

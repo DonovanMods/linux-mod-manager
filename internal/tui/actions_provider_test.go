@@ -129,6 +129,24 @@ func TestPrototypeProviderActions_DeployProfile_ReturnsPlausibleOutcome(t *testi
 	assert.NotEmpty(t, outcome.Message)
 }
 
+// TestPrototypeProviderActions_DeployProfile_CannedMultiWarningDemo guards
+// #253's demo-mode parity: the prototype deploy must return MORE than one
+// warning so --prototype actually exercises the multi-warning auto-open
+// overlay path (actionDoneMsg, app.go) - the same rationale as
+// prototypeAllSourcesWarning (service.go), without which no prototype
+// mutation would ever cross formatOutcomeStatus's collapse threshold and the
+// overlay would be unreachable in the one mode meant to demo every UI state.
+func TestPrototypeProviderActions_DeployProfile_CannedMultiWarningDemo(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	outcome, err := actions.DeployProfile(context.Background())
+	require.NoError(t, err)
+	assert.Greater(t, len(outcome.Warnings), 1,
+		"the prototype deploy must demo the multi-warning overlay threshold")
+}
+
 func TestPrototypeProviderActions_PlanProfileSwitch_ComputesFakeConsistentPlan(t *testing.T) {
 	t.Parallel()
 
@@ -512,6 +530,35 @@ func TestPrototypeProviderActions_ApplyUpdate_UnknownModErrors(t *testing.T) {
 
 	_, err := actions.ApplyUpdate(context.Background(), UpdateItem{ID: "does-not-exist", Source: "nexusmods"}, nil)
 	assert.Error(t, err)
+}
+
+// TestPrototypeProviderActions_ApplyUpdate_CannedMultiWarningDemo guards
+// #259's demo-mode parity, mirroring
+// TestPrototypeProviderActions_DeployProfile_CannedMultiWarningDemo (#253): a
+// successful prototype update must return MORE than one canned merge warning
+// so --prototype exercises the update-results overlay's trailing warnings
+// section (applyUpdatesSequentially) - and the SAME canned text on every
+// update, so a multi-update batch demos the exact-text dedupe too (one
+// section, not one copy per mod - exactly how a real per-update recompile
+// repeats the profile-level merge diagnostics).
+func TestPrototypeProviderActions_ApplyUpdate_CannedMultiWarningDemo(t *testing.T) {
+	t.Parallel()
+
+	actions := NewPrototypeProvider().(ActionProvider)
+
+	view, err := actions.CheckUpdates(context.Background())
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(view.Updates), 2, "the canned set has two available updates (see prototype/data.go)")
+
+	first, err := actions.ApplyUpdate(context.Background(), view.Updates[0], nil)
+	require.NoError(t, err)
+	assert.Greater(t, len(first.Warnings), 1,
+		"the prototype update must demo the multi-warning results section")
+
+	second, err := actions.ApplyUpdate(context.Background(), view.Updates[1], nil)
+	require.NoError(t, err)
+	assert.Equal(t, first.Warnings, second.Warnings,
+		"identical canned text per update, so a batch demos exact-text dedupe")
 }
 
 // TestPrototypeRollbackSwapsVersions covers Task 6's rollback demo: the
@@ -898,6 +945,12 @@ type recordingActions struct {
 	// mid-batch update failure (one mod in a multi-update apply fails,
 	// others succeed) without needing per-call outcome sequencing.
 	ApplyUpdateErrByID map[string]error
+
+	// ApplyUpdateOutcomeByID, if set, overrides ApplyUpdateOutcome for a
+	// specific UpdateItem.ID's successful return - lets a #259 test give
+	// each update in a batch its own Warnings without per-call outcome
+	// sequencing. ApplyUpdateErrByID still wins for an ID present in both.
+	ApplyUpdateOutcomeByID map[string]ActionOutcome
 }
 
 func (r *recordingActions) EnableMod(_ context.Context, item ModItem) (ActionOutcome, error) {
@@ -964,6 +1017,9 @@ func (r *recordingActions) ApplyUpdate(_ context.Context, u UpdateItem, progress
 	}
 	if err, ok := r.ApplyUpdateErrByID[u.ID]; ok {
 		return ActionOutcome{}, err
+	}
+	if out, ok := r.ApplyUpdateOutcomeByID[u.ID]; ok {
+		return out, nil
 	}
 	return r.ApplyUpdateOutcome, r.ApplyUpdateErr
 }

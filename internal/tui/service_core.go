@@ -166,7 +166,7 @@ func (p *coreProvider) Overview(_ context.Context) (Summary, []ModItem, error) {
 			ConvertPaks:     mod.ConvertPaks,
 			CompileGame:     game.DeployMode == domain.DeployCompile,
 			GameConvertPaks: game.ConvertPaks,
-			HasPakSource:    p.svc.ModHasPakMergeSource(&mod),
+			HasPakSource:    p.svc.ModHasPakMergeSource(game, &mod),
 			// This row came from the installed-mods list, so its
 			// install-state fields above (Version/UpdatePolicy, plus
 			// Locked/LockedVersion set below) are genuine local install
@@ -814,6 +814,18 @@ func (p *coreProvider) DeployProfile(ctx context.Context) (ActionOutcome, error)
 	msg := fmt.Sprintf("Deployed %d mod(s)", result.Deployed)
 	if len(result.Skipped) > 0 {
 		msg += fmt.Sprintf(", %d failed", len(result.Skipped))
+	}
+	// #255: on a compile game the per-mod count alone misreads - most mods
+	// deploy nothing individually and one merged artifact carries them. The
+	// readout comes from DeployResult's own fields (progress is nil here, so
+	// there is no event stream) and stays in the one-row Message: routing it
+	// through Warnings would auto-open #253's 2+-warning overlay on every
+	// routine compile deploy.
+	if result.MergedArtifact != "" {
+		msg += fmt.Sprintf(" — merged %d → %s", result.MergedMods, result.MergedArtifact)
+		if result.RawFallbacks > 0 {
+			msg += fmt.Sprintf(" (%d raw)", result.RawFallbacks)
+		}
 	}
 	// result.Skipped carries one "<mod name>: <reason>" entry per mod that
 	// didn't deploy (see DeployResult.Skipped's doc comment); appended after

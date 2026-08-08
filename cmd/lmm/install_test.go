@@ -381,19 +381,21 @@ func TestPromptMultiSelection_Range(t *testing.T) {
 }
 
 // mixedPakExmodzValidate mirrors the shape of the real
-// Service.ValidateInstallFileSelection closure (#211): reject a selection
-// that mixes an exmodz file with any other file.
+// Service.ValidateInstallFileSelection closure (#211, message shape #256):
+// reject a selection that mixes an exmodz file with any other file, naming
+// the two colliding files the way production does.
 func mixedPakExmodzValidate(sel []domain.DownloadableFile) error {
 	var ex, other bool
+	var exName, otherName string
 	for _, f := range sel {
 		if strings.HasSuffix(strings.ToLower(f.FileName), ".exmodz") {
-			ex = true
+			ex, exName = true, f.FileName
 		} else {
-			other = true
+			other, otherName = true, f.FileName
 		}
 	}
 	if ex && other {
-		return fmt.Errorf("pak and exmodz are alternate forms of the same mod - select one")
+		return fmt.Errorf("%s and %s are alternate forms of the same mod - select one", otherName, exName)
 	}
 	return nil
 }
@@ -430,7 +432,7 @@ func TestSelectInstallFiles_FileFlagMixedRejected(t *testing.T) {
 	selected, err := selectInstallFilesFrom(strings.NewReader(""), files, mixedPakExmodzValidate)
 	require.Error(t, err)
 	assert.Nil(t, selected)
-	assert.Contains(t, err.Error(), "pak and exmodz are alternate forms of the same mod - select one")
+	assert.Contains(t, err.Error(), "Mod_P.pak and Mod.exmodz are alternate forms of the same mod - select one")
 }
 
 // TestSelectInstallFiles_EOFAfterRejectedSelection guards against a hang:

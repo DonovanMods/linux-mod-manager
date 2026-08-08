@@ -21,8 +21,13 @@ import (
 // skips a mod's fileIDs that have no retained source (a plain .pak).
 func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *testing.T) {
 	svc := newFlowsTestService(t)
-	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
+	// #256: enabledMergeSources classifies retained fileIDs via the game's
+	// MergeCompiler source instead of a static suffix test in core, so this
+	// fixture now maps and registers one.
+	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile,
+		SourceIDs: map[string]string{"fake-compiler": "icarus"}}
 	require.NoError(t, svc.AddGame(game))
+	svc.RegisterSource(&fakeCompilerSource{})
 
 	gameCache := svc.GetGameCache(game)
 
@@ -209,6 +214,62 @@ func TestSyncMergedPak_ZeroEnabledMods_UninstallsExistingPak(t *testing.T) {
 
 	_, err = os.Stat(deployedPath)
 	require.True(t, os.IsNotExist(err), "disabling the last exmodz mod must remove the deployed merged pak")
+}
+
+// TestSyncMergedPak_ZeroEnabledMods_SecondZeroSyncSucceeds (#260 repro
+// shape 1): the first zero-pass uninstalls the pak AND deletes the merged
+// cache entry, so "zero sources + no merged entry" is the steady state after
+// disabling the last merge source. Every later mutation flow re-runs
+// syncMergedPak on that profile - the second zero-pass must succeed, not
+// fail on the absent entry. (The test above stops after the first zero-pass
+// and so never saw this.)
+func TestSyncMergedPak_ZeroEnabledMods_SecondZeroSyncSucceeds(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
+
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SetModEnabled("fake-compiler", "bear-mount", game.ID, "default", false))
+
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err, "first zero-pass: undeploys the pak and deletes the merged entry")
+
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err, "second zero-pass must tolerate the already-absent merged entry")
+	require.Empty(t, warnings)
+}
+
+// TestSyncMergedPak_NeverMerged_ZeroSources (#260 repro shape 2): a fresh
+// DeployCompile game whose first synced profile has zero merge sources (e.g.
+// the first install is a plain non-pak file) has never had a merged-pak
+// cache entry at all - the very first sync must succeed.
+func TestSyncMergedPak_NeverMerged_ZeroSources(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err, "a profile that never merged has no entry to remove - not an error")
+	require.Empty(t, warnings)
+}
+
+// TestPurgeMergedPak_AbsentCacheEntry (#260 repro shape 3): PurgeMergedPak
+// routes through the same Installer.Uninstall and must likewise tolerate an
+// absent merged-pak cache entry (e.g. purge --uninstall already deleted it,
+// or the profile never merged).
+func TestPurgeMergedPak_AbsentCacheEntry(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+
+	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true),
+		"purging a never-merged profile must be a no-op, not an error")
+
+	// And again after a full merge/purge cycle: --uninstall deletes the
+	// entry, so a repeat purge sees the same absent-entry state.
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true))
+	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true),
+		"a repeat purge after --uninstall must tolerate the already-deleted entry")
 }
 
 // TestSyncMergedPak_RegeneratesOnBaseHashChange proves a base-pak refresh
@@ -444,4 +505,138 @@ func TestReconcilePakManifests_RawFallbackPath_InstallFailureRetries(t *testing.
 
 	_, statErr = os.Stat(deployedPath)
 	require.NoError(t, statErr, "the retry must actually deploy the raw pak")
+}
+
+// TestReconcilePakManifests_RawFallback_RestoresPrunedDeployableCopy proves
+// the #250 heal: a cache entry damaged by a released version's prune - the
+// deployable pak copy missing, the retained source still present, the
+// manifest in the post-convert members=nil state - must be RESTORED by the
+// raw-fallback branch, not silently marked empty. Pre-fix, rawPakMembers
+// found no member to claim, reconcile recorded an empty member set, and
+// Install deployed nothing - silently, forever.
+//
+// The restored copy's name depends on the fileID's origin: an import-path
+// fileID IS the original archive filename (ingest names the deployable copy
+// identically), so it restores byte- and name-exact; a download-path fileID
+// (the literal icarus "pak") never carried the original name - the manifest
+// flip erased it and nothing else records it - so a deterministic mod-scoped
+// name in Icarus's "_P.pak" override convention is synthesized.
+func TestReconcilePakManifests_RawFallback_RestoresPrunedDeployableCopy(t *testing.T) {
+	cases := []struct {
+		name         string
+		fileID       string
+		restoredName string
+	}{
+		{"download-shape fileID synthesizes a mod-scoped name", "pak", "dmgmod_P.pak"},
+		{"import-shape fileID restores its own archive name", "DamagedMod.pak", "DamagedMod.pak"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, game, _ := newMergedPakTestGame(t)
+			// game.ConvertPaks stays false: the pak takes the raw-fallback
+			// branch (the issue's "user opts out of conversion" leg).
+			const (
+				sourceID = "fake-compiler"
+				modID    = "dmgmod"
+				version  = "1.0"
+			)
+			pakBytes := []byte("prebuilt-pak-bytes")
+
+			gameCache := svc.GetGameCache(game)
+			require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(tc.fileID), pakBytes))
+			versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+			// The #250 damaged shape: converted manifest, no deployable copy.
+			require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, tc.fileID, nil))
+
+			require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+				Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
+				ProfileName:  "default",
+				Enabled:      true,
+				FileIDs:      []string{tc.fileID},
+				UpdatePolicy: domain.UpdateNotify,
+			}))
+			pm := svc.NewProfileManager()
+			require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{tc.fileID}}))
+
+			inst := core.NewInstaller(gameCache, linker.New(game.LinkMethod), nil)
+			_, err := svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
+			require.NoError(t, err)
+
+			manifests, err := gameCache.FileManifests(game.ID, sourceID, modID, version)
+			require.NoError(t, err)
+			require.Equal(t, []string{tc.restoredName}, manifests[tc.fileID].Members,
+				"the healed manifest must claim the restored copy, never an empty member set (#250)")
+
+			restored, err := os.ReadFile(filepath.Join(versionDir, tc.restoredName))
+			require.NoError(t, err, "the deployable copy must be restored into the cache entry from the retained source")
+			require.Equal(t, pakBytes, restored)
+
+			deployed, err := os.ReadFile(filepath.Join(game.ModPath, tc.restoredName))
+			require.NoError(t, err, "the restored raw pak must actually deploy - the silent-empty deploy is the bug")
+			require.Equal(t, pakBytes, deployed)
+
+			// A second pass must converge as a no-op, not loop re-restoring.
+			_, err = svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
+			require.NoError(t, err)
+			manifests, err = gameCache.FileManifests(game.ID, sourceID, modID, version)
+			require.NoError(t, err)
+			require.Equal(t, []string{tc.restoredName}, manifests[tc.fileID].Members, "the second pass must keep the healed claim stable")
+		})
+	}
+}
+
+// TestSyncMergedPak_OptOutAfterPrunedConvertedPak_RestoresRawDeploy is the
+// #250 heal driven through the full SyncMergedPak flow, matching the issue's
+// repro step 3 exactly: the user opts out of conversion game-wide AFTER a
+// released prune already deleted the converted pak's deployable copy. The
+// damaged state is seeded realistically: the merge DID happen once (that is
+// the only way the manifest flipped to members=nil), so the merged-pak
+// cache entry exists and its artifact is deployed. Zero merge sources
+// remain after the opt-out, so syncMergedPak takes its uninstall-to-zero
+// branch and reconciles - which must restore the raw deploy from the
+// retained source instead of deploying nothing. (An ABSENT merged entry in
+// this state trips the pre-existing, unrelated #260 instead.)
+func TestSyncMergedPak_OptOutAfterPrunedConvertedPak_RestoresRawDeploy(t *testing.T) {
+	svc, game, _ := newMergedPakTestGame(t)
+	// game.ConvertPaks stays false: opted out game-wide.
+
+	const (
+		sourceID = "fake-compiler"
+		modID    = "optout"
+		version  = "1.0"
+	)
+	pakBytes := []byte("prebuilt-pak-bytes")
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName("pak"), pakBytes))
+	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "pak", nil))
+
+	// The prior successful merge's leftovers: a merged-pak cache entry and
+	// its deployed artifact (a symlink into the cache - the profile's
+	// effective link method here, matching what Install actually leaves).
+	require.NoError(t, gameCache.Store(game.ID, domain.SourceMerged, "merged-pak", "merged", "zzz_LMM_Merged_P.pak", []byte("merged-bytes")))
+	mergedDeployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
+	require.NoError(t, os.Symlink(gameCache.GetFilePath(game.ID, domain.SourceMerged, "merged-pak", "merged", "zzz_LMM_Merged_P.pak"), mergedDeployedPath))
+
+	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"pak"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{"pak"}}))
+
+	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+
+	deployed, err := os.ReadFile(filepath.Join(game.ModPath, "optout_P.pak"))
+	require.NoError(t, err, "opting out after the prune must restore and deploy the raw pak (#250), not silently deploy nothing")
+	require.Equal(t, pakBytes, deployed)
+
+	_, err = os.Stat(mergedDeployedPath)
+	require.True(t, os.IsNotExist(err), "the opt-out must still remove the deployed merged pak (uninstall-to-zero)")
 }

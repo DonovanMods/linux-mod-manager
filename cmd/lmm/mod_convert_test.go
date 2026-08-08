@@ -31,7 +31,11 @@ func setupDoModConvertTest(t *testing.T) (*core.Service, *domain.Game, *fakeInst
 
 	src := newFakeInstallSource("src")
 	t.Cleanup(src.Close)
-	svc.RegisterSource(src)
+	// #256: convert-flag surfaces (list/mod show/mod convert) classify
+	// pak-kind fileIDs via the game's MergeCompiler source, so the
+	// registered "src" must implement it - wrapping the plain fake keeps
+	// callers stubbing through the returned inner fake (shared pointer).
+	svc.RegisterSource(&compilerInstallSource{fakeInstallSource: src})
 
 	game := &domain.Game{
 		ID:          "g1",

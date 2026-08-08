@@ -2297,10 +2297,29 @@ func (m Model) resolveChangelogPicked(msg changelogPickedMsg) (Model, tea.Cmd) {
 // behavior just above: those mods never ran, which isn't the same thing as
 // failing). app.go's actionDoneMsg handler renders these as a scrollable
 // info overlay titled "update results" once the batch resolves.
+//
+// #259: warnings emitted by SUCCESSFUL updates are appended to ResultLines
+// as one trailing section - a blank separator, then one line per distinct
+// warning - because the "update results" overlay keeps priority over #253's
+// warnings overlay (actionDoneMsg's openedResultsOverlay deferral), so any
+// warning NOT inside ResultLines would be unreadable: a success's own entry
+// is just its ✓ line. The section holds success-emitted warnings only - a
+// failure's synthesized "<name>: <error>" warning already has its ✗ line in
+// the same overlay and would render twice. These warnings are deduped on
+// EXACT text (first occurrence wins, batch order) in both the section and
+// the aggregate Warnings slice - keeping formatOutcomeStatus's "(N
+// warnings)" count in step with the section - because they are mostly
+// profile-LEVEL merge diagnostics ("asset X is bundled by both A and B"),
+// re-emitted verbatim by every update that re-runs the merge, not facts
+// about any one update; exact-match only, so distinct warnings that merely
+// share a prefix never collapse into each other. Failure warnings are never
+// deduped (their name prefix makes them distinct anyway).
 func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updates []UpdateItem, progress func(ActionProgress)) (ActionOutcome, error) {
 	applied := 0
 	var warnings []string
 	var resultLines []string
+	var successWarnings []string
+	seenSuccessWarnings := map[string]bool{}
 	for _, u := range updates {
 		if ctx.Err() != nil {
 			break
@@ -2325,8 +2344,19 @@ func applyUpdatesSequentially(ctx context.Context, actions ActionProvider, updat
 			continue
 		}
 		applied++
-		warnings = append(warnings, outcome.Warnings...)
+		for _, w := range outcome.Warnings {
+			if seenSuccessWarnings[w] {
+				continue
+			}
+			seenSuccessWarnings[w] = true
+			warnings = append(warnings, w)
+			successWarnings = append(successWarnings, w)
+		}
 		resultLines = append(resultLines, fmt.Sprintf("✓ %s %s", u.Name, u.VersionLabel()))
+	}
+	if len(successWarnings) > 0 {
+		resultLines = append(resultLines, "")
+		resultLines = append(resultLines, successWarnings...)
 	}
 	return ActionOutcome{
 		Message:     fmt.Sprintf("Applied %d update(s)", applied),

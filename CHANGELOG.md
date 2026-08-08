@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.1] - 2026-08-08
+
+### Changed
+
+- Internal: all Unreal/Icarus format knowledge (base-pak location, pak
+  fingerprinting, the `.pak` convert test, the native `.exmodz` test,
+  merge-source kinds, and the merged/restored artifact filenames) moved
+  out of `internal/core` and behind the `source.MergeCompiler` interface,
+  which now states the complete contract a second compile-mode game would
+  implement (#256). The one user-visible change: rejecting a mixed
+  pak+exmodz install selection now names the two colliding files
+  (e.g. `Mod_P.pak and Mod.exmodz`) instead of the generic wording.
+
+### Fixed
+
+- TUI: warnings emitted by successful updates in an apply-updates batch are
+  now readable — they render as a trailing section (blank separator, one
+  line per distinct warning) inside the same "update results" overlay that
+  lists each update's ✓/✗ line, instead of being folded into an aggregate
+  the overlay never showed. Identical warnings repeated across the batch
+  (a merged-pak recompile re-emits the same profile-level asset-conflict
+  diagnostics for every update that triggers it) are deduped on exact text,
+  and the status line's one-row `(N warnings)` count matches the deduped
+  section (#259).
+- Deploy output on a compile-mode game (Icarus) no longer presents merged
+  mods as individual deployments (#255). The header drops the misleading
+  `using <method>` claim, each mod's `✓` line is labeled by how its content
+  actually reaches the game directory — `(merged)` for merge participants,
+  `(raw)` for a conversion-opted-out pak, unlabeled for ordinary loose-file
+  mods — and a post-sync footer finally names the one artifact that really
+  deployed (`Merged N mod(s) → zzz_LMM_Merged_P.pak`, with a
+  `(N deployed raw)` count when conversions fell back). The TUI's deploy
+  status line reports the same readout (`Deployed N mod(s) — merged N → …`).
+  `Deployed: N` still counts merge participants, and non-compile deploy
+  output is unchanged, byte for byte.
+- TUI: a mutation that completes with two or more warnings now auto-opens a
+  scrollable overlay listing every warning in full, instead of collapsing
+  them to an unreadable `(N warnings)` status suffix — on merged-pak games
+  (Icarus) those warnings are the only report of cross-mod asset conflicts
+  anywhere in the app. The one-row `(N warnings)` summary stays on the
+  status line, and a single warning still renders inline with no overlay
+  (#253).
+- Icarus: cache pruning no longer deletes a converted pak's deployable
+  copy when a sibling file of the same mod+version is downloaded or
+  re-ingested (#250). The copy is unclaimed by design while the merged
+  pak carries the mod's content, but it is still the designated
+  raw-fallback artifact — pruning it left a later conversion opt-out or
+  merge failure deploying nothing, silently. Pruning now exempts any
+  unclaimed file whose content matches a retained source, and the raw
+  fallback additionally self-heals entries already damaged by released
+  versions: the deployable copy is restored from the retained source
+  (under its original archive name for imports, or a `<mod-id>_P.pak`
+  name for catalog downloads, where the original name is unrecoverable)
+  and redeployed.
+- Uninstalling a mod whose cache entry is absent is now a no-op removal
+  (still clearing tracking rows and sweeping empty directories) instead of
+  an error. In particular, a DeployCompile profile with zero merge sources
+  and no merged-pak cache entry — the steady state after disabling the
+  last exmodz/pak mod, or a profile that never merged — no longer fails
+  every subsequent sync/deploy/purge with a loud
+  `removing merged pak: ... no such file or directory` error (#260).
+
 ## [1.30.0] - 2026-08-08
 
 ### Added
@@ -1339,7 +1401,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive test coverage for core components
 - MIT License
 
-[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.0...HEAD
+[Unreleased]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.1...HEAD
+[1.30.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.30.0...v1.30.1
 [1.30.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.1...v1.30.0
 [1.29.1]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.29.0...v1.29.1
 [1.29.0]: https://github.com/DonovanMods/linux-mod-manager/compare/v1.28.0...v1.29.0
