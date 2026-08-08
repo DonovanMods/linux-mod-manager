@@ -57,6 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TUI: the help panel's `+N more` collapse now drops rows by priority
+  instead of purely by position, so a screen's headline action (e.g. the
+  Search screen's `enter: open mod details` row, formerly last in its
+  group and swallowed entirely at a normal 100x30 terminal) stays
+  visible however large its group grows (#234). Only the current
+  screen's (or pushed content's) group gets this treatment — other
+  screens' rows still collapse positionally.
 - Install-plan dependency resolution now fetches dependencies using the
   LMM game ID (translated through `source_ids` like every other fetch)
   instead of feeding the source's own stamped game ID back into the

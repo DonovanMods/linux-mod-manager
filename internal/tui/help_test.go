@@ -163,7 +163,9 @@ func TestHelpViewEnterRowsDisambiguated(t *testing.T) {
 // a normal terminal size (100x30), not just in helpGroups' unrendered data -
 // it's the group's first entry, so helpBodyBudget's "+N more" tail-collapse
 // (which starts biting well before the full grouped list at this size, per
-// TestHelpViewSearchEnterRowCollapsedAtNormalSize below) never reaches it.
+// TestHelpViewSearchEnterRowSurvivesCollapseAtNormalSize below) never
+// reaches it - and since #234 it is also marked kept(), so it would survive
+// even if later entries were reordered above it.
 func TestHelpViewInstalledModsEnterRowSurvivesAtNormalSize(t *testing.T) {
 	t.Parallel()
 
@@ -176,19 +178,22 @@ func TestHelpViewInstalledModsEnterRowSurvivesAtNormalSize(t *testing.T) {
 		"installed mods help group must say what enter opens, at a normal terminal size")
 }
 
-// TestHelpViewSearchEnterRowCollapsedAtNormalSize documents a finding from
-// verifying the smoke-fix brief's request ("check the enter row actually
-// survives... at 100x30"): on the Search screen, Select's disambiguated row
-// ("open mod details...") is the group's LAST entry, and at 100x30 it does
-// NOT survive - helpBodyBudget's "+N more" tail-collapse swallows it before
-// rendering reaches it (Submit's row, earlier in the group, does survive).
-// This is a PRE-EXISTING helpBodyBudget limitation, not a regression from
-// this fix: the search group's entry COUNT is unchanged (8 before and
-// after - see helpGroups), only two of its existing entries' wording
-// changed. Left as-is per the brief's explicit instruction not to
-// restructure the help system to fix this without checking first; flagged
-// in this fix's own report instead.
-func TestHelpViewSearchEnterRowCollapsedAtNormalSize(t *testing.T) {
+// TestHelpViewSearchEnterRowSurvivesCollapseAtNormalSize is #234's
+// regression test, deliberately inverted from the characterization test
+// (TestHelpViewSearchEnterRowCollapsedAtNormalSize) that used to pin the
+// bug it fixes: on the Search screen, Select's disambiguated row ("open mod
+// details...") is the group's LAST entry, and at 100x30 helpBodyBudget's
+// "+N more" tail-collapse used to swallow it before rendering reached it -
+// the screen's headline action was undiscoverable from its own help panel.
+// The collapse now drops by priority, not position: rows marked kept() in
+// the promoted (current-screen) group survive wherever they sit, so BOTH of
+// the search group's hand-written headline rows - Submit's ("query input
+// focused") and Select's ("open mod details...") - must render. The
+// "+N more" tail must ALSO still be present: the rows survive because the
+// collapse prefers them, not because the budget grew - a raised budget
+// would regress the terminal-bounds invariant
+// (TestHelpViewCapsWithMoreTailAtSmallHeight) instead.
+func TestHelpViewSearchEnterRowSurvivesCollapseAtNormalSize(t *testing.T) {
 	t.Parallel()
 
 	model := sizedPrototypeModel(t, "wizardry", 100, 30)
@@ -197,9 +202,9 @@ func TestHelpViewSearchEnterRowCollapsedAtNormalSize(t *testing.T) {
 
 	view := model.View()
 	require.Contains(t, view, "query input focused",
-		"submit's disambiguated row survives at 100x30 (earlier in the group)")
-	require.NotContains(t, view, "open mod details",
-		"select's disambiguated row is collapsed away by helpBodyBudget at 100x30 - a pre-existing limitation")
+		"submit's disambiguated row must survive the collapse at 100x30")
+	require.Contains(t, view, "open mod details",
+		"select's disambiguated row (the screen's headline action) must survive the collapse at 100x30 (#234)")
 	require.Regexp(t, `\+\d+ more`, view,
-		"the search group's tail is in fact collapsed at this size")
+		"the search group's tail must still collapse at this size - survival comes from priority, not a raised budget")
 }

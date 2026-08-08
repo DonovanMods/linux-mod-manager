@@ -548,7 +548,7 @@ func (f *fakeContextContent) HandleKey(msg tea.KeyMsg) (contextContent, tea.Cmd,
 }
 
 func (f *fakeContextContent) HelpGroup() helpGroup {
-	return helpGroup{name: "fake", entries: []string{"x", "press"}}
+	return helpGroup{name: "fake", entries: []helpItem{{text: "x"}, {text: "press"}}}
 }
 
 // TestHealthContextHostPushRenderKeyAndEscPop is the SPEC-CRITERION-4 proof:
