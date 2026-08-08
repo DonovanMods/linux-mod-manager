@@ -541,3 +541,15 @@ func TestCurseForge_ListGames_PropagatesAuthRequired(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrAuthRequired)
 }
+
+// TestModToDomain_DescriptionNotAliasedToSummary (#235): the CurseForge mod
+// response carries no full-description field, and the adapter used to paper
+// over that by copying Summary into Description — so every surface showing
+// both rendered the same paragraph twice. When the source has no description,
+// the field must stay empty.
+func TestModToDomain_DescriptionNotAliasedToSummary(t *testing.T) {
+	mod := modToDomain(Mod{ID: 1, Name: "JEI", Summary: "View Items and Recipes"}, "432")
+
+	assert.Equal(t, "View Items and Recipes", mod.Summary)
+	assert.Empty(t, mod.Description, "Description must not be a copy of Summary (#235)")
+}

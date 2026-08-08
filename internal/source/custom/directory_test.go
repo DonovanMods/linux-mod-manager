@@ -117,6 +117,15 @@ func TestDirectorySearch(t *testing.T) {
 		assert.Equal(t, "my-mods", m.SourceID)
 	})
 
+	t.Run("description is not aliased to summary (#235)", func(t *testing.T) {
+		res, err := d.Search(ctx, source.SearchQuery{Query: "backpack"})
+		require.NoError(t, err)
+		require.Len(t, res.Mods, 1)
+		assert.Equal(t, "Carry more stuff", res.Mods[0].Summary)
+		assert.Empty(t, res.Mods[0].Description,
+			"ModInfo metadata has no full-description field; Description must stay empty, not copy Summary")
+	})
+
 	t.Run("fallback parses version from name", func(t *testing.T) {
 		res, err := d.Search(ctx, source.SearchQuery{Query: "plainmod"})
 		require.NoError(t, err)
