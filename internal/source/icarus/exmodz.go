@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 )
 
@@ -94,16 +95,54 @@ func ParseExmodz(zipData []byte) (*ExmodzBundle, error) {
 		totalDeclaredSize += f.UncompressedSize64
 	}
 
+	wrapper := modWrapperDir(manifestPath)
 	bundle := &ExmodzBundle{Diff: diff, Assets: make(map[string][]byte)}
 	for _, f := range assetFiles {
 		data, err := readZipFile(f)
 		if err != nil {
 			return nil, fmt.Errorf("icarus: reading asset %s: %w", f.Name, err)
 		}
-		bundle.Assets[normalizeZipName(f.Name)] = data
+		bundle.Assets[stripModWrapper(normalizeZipName(f.Name), wrapper)] = data
 	}
 
 	return bundle, nil
+}
+
+// modWrapperDir names the directory an .EXMODZ nests its bundled assets
+// under: the manifest's own basename. Verified across every asset-bearing
+// bundle available (the #220 spike corpus plus DonovanMods/Icarus-Mods) —
+// each uses exactly one wrapper segment, and it equals the manifest basename
+// in all of them.
+func modWrapperDir(manifestPath string) string {
+	base := path.Base(normalizeZipName(manifestPath))
+	return strings.TrimSuffix(base, path.Ext(base))
+}
+
+// stripModWrapper removes the mod's own wrapper directory from a bundled
+// asset's path, yielding the Content-relative path the asset must occupy to
+// override the base game's copy.
+//
+// Without this the wrapper rides into the output pak and every bundled asset
+// lands one directory below its target, which the game silently ignores — so
+// an asset-only mod deploys, verifies OK, and does nothing (#237). Ground
+// truth is the dual-form mod Crys_Lvl120Cap_M25: its .EXMODZ stores
+// "Crys_Lvl120Cap_M25/data/Character/C_PlayerTalentGrowth.uasset" while its
+// own published _P.pak mounts that asset at
+// "Icarus/Content/data/Character/C_PlayerTalentGrowth.uasset".
+//
+// The strip is conditional on the leading segment matching the wrapper
+// (case-insensitively, since UE virtual paths are case-insensitive and
+// .EXMODZ producers vary casing). Stripping unconditionally would corrupt a
+// bundle that already stores its assets at their Content-relative path.
+func stripModWrapper(assetPath, wrapper string) string {
+	if wrapper == "" {
+		return assetPath
+	}
+	first, rest, found := strings.Cut(assetPath, "/")
+	if !found || rest == "" || !strings.EqualFold(first, wrapper) {
+		return assetPath
+	}
+	return rest
 }
 
 // normalizeZipName converts a zip entry's backslashes to forward slashes.
