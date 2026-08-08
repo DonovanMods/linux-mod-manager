@@ -707,6 +707,104 @@ func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain
 	return s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
 }
 
+// classifyCompileDeployMods pre-classifies each mod DeployProfile is about
+// to deploy on a DeployCompile game (#255): a mod contributing at least one
+// enabled merge source is DeployModMerged (its content will ride the merged
+// artifact built after the loop); a mod holding a retained convertible file
+// that enabledMergeSources excluded - the game- or mod-level ConvertPaks
+// opt-out (#221) - is DeployModRaw (it deploys its raw copy individually);
+// everything else is the zero DeployModIndividual. Keyed by
+// domain.ModKey(sourceID, modID), the same "sourceID:modID" form
+// MergeSource.ModRef carries. Best-effort by design - classification is a
+// readout, never a reason to fail the deploy, and the zero class is always
+// a safe rendering default: a non-compile game or an enabledMergeSources
+// failure returns nil, and a compiler-resolution failure mid-walk (only
+// reachable when nothing enabled is retained but a mod in mods still holds
+// a retained file, e.g. a disabled mod under --all with no compile source
+// configured) returns the classes computed so far.
+func (s *Service) classifyCompileDeployMods(game *domain.Game, profileName string, mods []*domain.InstalledMod) map[string]DeployModClass {
+	if game.DeployMode != domain.DeployCompile {
+		return nil
+	}
+	sources, err := s.enabledMergeSources(game, profileName)
+	if err != nil {
+		return nil
+	}
+	mergedRefs := make(map[string]bool, len(sources))
+	for _, src := range sources {
+		mergedRefs[src.ModRef] = true
+	}
+	gameCache := s.GetGameCache(game)
+	// Lazily resolved on the first retained file found, exactly like
+	// enabledMergeSources/reconcilePakManifests (#256).
+	var mc source.MergeCompiler
+	classes := make(map[string]DeployModClass, len(mods))
+	for _, mod := range mods {
+		ref := domain.ModKey(mod.SourceID, mod.ID)
+		if mergedRefs[ref] {
+			classes[ref] = DeployModMerged
+			continue
+		}
+		for _, fileID := range mod.FileIDs {
+			retained := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
+			if _, statErr := os.Stat(retained); statErr != nil {
+				continue // nothing retained for this fileID - not a merge source of any kind
+			}
+			if mc == nil {
+				var mcErr error
+				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+					return classes
+				}
+			}
+			if _, convertible := mc.ClassifyMergeSource(fileID); convertible {
+				classes[ref] = DeployModRaw
+				break
+			}
+		}
+	}
+	return classes
+}
+
+// recordMergeOutcome reports #255's post-sync merge readout: after a
+// successful syncMergedPak on a DeployCompile game, the just-written merge
+// fingerprint (MergedPakOutcomes) is the authoritative record of which
+// mods' content the merged artifact carries and which participants fell
+// back to a raw individual deploy. The artifact name and counts land on
+// result (for progress-less callers - the TUI) and as one DeployMergeSynced
+// event. A missing fingerprint means no merged artifact exists (zero merge
+// participants - the uninstall-to-zero path) so there is nothing to report;
+// resolution failures likewise skip the readout rather than fail an
+// already-successful deploy. Counts are per MOD, not per file: a mod
+// contributing both a converted and a failed file counts once on each side,
+// which is the accurate reading of that (rare) state.
+func (s *Service) recordMergeOutcome(game *domain.Game, profileName string, result *DeployResult, emit func(DeployProgress)) {
+	if game.DeployMode != domain.DeployCompile {
+		return
+	}
+	outcomes, ok := s.MergedPakOutcomes(game, profileName)
+	if !ok {
+		return
+	}
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		return
+	}
+	merged := make(map[string]bool, len(outcomes))
+	raw := make(map[string]bool)
+	for _, o := range outcomes {
+		ref := domain.ModKey(o.SourceID, o.ModID)
+		if o.Converted {
+			merged[ref] = true
+		} else {
+			raw[ref] = true
+		}
+	}
+	result.MergedArtifact = mc.MergedArtifactName()
+	result.MergedMods = len(merged)
+	result.RawFallbacks = len(raw)
+	emit(DeployProgress{Phase: DeployMergeSynced, Total: result.MergedMods, Detail: result.MergedArtifact, RawFallbacks: result.RawFallbacks})
+}
+
 // MergedPakOutcomes returns the stored merge fingerprint's per-mod entries
 // (with #221 conversion outcomes), if a merged pak exists for game+profile.
 // The game's compile source interprets the stored Kind strings (#256); a

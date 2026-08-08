@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostics for every update that triggers it) are deduped on exact text,
   and the status line's one-row `(N warnings)` count matches the deduped
   section (#259).
+- Deploy output on a compile-mode game (Icarus) no longer presents merged
+  mods as individual deployments (#255). The header drops the misleading
+  `using <method>` claim, each mod's `✓` line is labeled by how its content
+  actually reaches the game directory — `(merged)` for merge participants,
+  `(raw)` for a conversion-opted-out pak, unlabeled for ordinary loose-file
+  mods — and a post-sync footer finally names the one artifact that really
+  deployed (`Merged N mod(s) → zzz_LMM_Merged_P.pak`, with a
+  `(N deployed raw)` count when conversions fell back). The TUI's deploy
+  status line reports the same readout (`Deployed N mod(s) — merged N → …`).
+  `Deployed: N` still counts merge participants, and non-compile deploy
+  output is unchanged, byte for byte.
 - TUI: a mutation that completes with two or more warnings now auto-opens a
   scrollable overlay listing every warning in full, instead of collapsing
   them to an unreadable `(N warnings)` status suffix — on merged-pak games
