@@ -124,14 +124,30 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// per-mod progress events at all when there is nothing to deploy, which
 	// is exactly the "No mods to deploy" case the pre-extraction CLI checked
 	// via len(modsToDeploy) before it had been folded into the flow.
+	//
+	// On a DeployCompile game the header drops "using <method>" (#255): the
+	// listed mods are mostly carried by one merged artifact deployed after
+	// the loop, so claiming a per-mod link method up front asserted
+	// something untrue about most of the lines below it.
+	compileMode := game.DeployMode == domain.DeployCompile
 	deployHeaderPrinted := false
 	printDeployHeaderOnce := func(total int) {
 		if deployHeaderPrinted {
 			return
 		}
 		deployHeaderPrinted = true
-		fmt.Printf("Deploying %d mod(s) using %s...\n\n", total, methodName)
+		if compileMode {
+			fmt.Printf("Deploying %d mod(s) — compile mode...\n\n", total)
+		} else {
+			fmt.Printf("Deploying %d mod(s) using %s...\n\n", total, methodName)
+		}
 	}
+
+	// mergeFooterPrinted: a DeployMergeSynced footer was printed (#255), so
+	// the summary below skips its own leading blank line - the footer
+	// already separates the per-mod block and "Deployed: N" reads as part
+	// of the same closing readout.
+	mergeFooterPrinted := false
 
 	// progress prints every diagnostic and per-mod status line at its exact
 	// point of occurrence, driven entirely by core.DeployProfile's progress
@@ -166,6 +182,20 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 			// --purge pass; handled so a future change can't accidentally
 			// route them into printDeployHeaderOnce below.
 			return
+		case core.DeployMergeSynced:
+			// #255: the post-sync footer naming the merged artifact. Fires
+			// only after the deploy loop (some per-mod event has already
+			// printed the header), and its Total counts the mods the merged
+			// artifact actually carries (raw fallbacks excluded - they ride
+			// RawFallbacks), not the deploy total - so it must not fall
+			// through to printDeployHeaderOnce below.
+			fmt.Printf("\nMerged %d mod(s) → %s", p.Total, p.Detail)
+			if p.RawFallbacks > 0 {
+				fmt.Printf(" (%d deployed raw)", p.RawFallbacks)
+			}
+			fmt.Println()
+			mergeFooterPrinted = true
+			return
 		}
 
 		printDeployHeaderOnce(p.Total)
@@ -185,7 +215,19 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		case core.DeploySkipped:
 			fmt.Printf("  %s %s - %s\n", colorRed("✗"), p.ModName, p.Detail)
 		case core.DeployDeployed:
-			fmt.Printf("  %s %s\n", colorGreen("✓"), p.ModName)
+			// #255: on a compile game, label how the mod's content actually
+			// reaches the game dir - "(merged)" rides the merged artifact
+			// (optimistic for a pak whose conversion then fails; the
+			// conversion warning + footer carry the correction), "(raw)" is
+			// a ConvertPaks-opted-out pak deploying itself.
+			switch p.ModClass {
+			case core.DeployModMerged:
+				fmt.Printf("  %s %s (merged)\n", colorGreen("✓"), p.ModName)
+			case core.DeployModRaw:
+				fmt.Printf("  %s %s (raw)\n", colorGreen("✓"), p.ModName)
+			default:
+				fmt.Printf("  %s %s\n", colorGreen("✓"), p.ModName)
+			}
 		case core.DeployNote:
 			if verbose {
 				fmt.Printf("  %s\n", p.Detail)
@@ -212,7 +254,11 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return nil
 	}
 
-	fmt.Printf("\nDeployed: %d", result.Deployed)
+	if mergeFooterPrinted {
+		fmt.Printf("Deployed: %d", result.Deployed)
+	} else {
+		fmt.Printf("\nDeployed: %d", result.Deployed)
+	}
 	if failed := len(result.Skipped); failed > 0 {
 		fmt.Printf(", Failed: %d", failed)
 	}
