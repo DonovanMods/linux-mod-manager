@@ -76,9 +76,15 @@ type mergeSourceClassifier func(id string) (kind string, convertible bool)
 // convert-toggle key - want this cheaper check, not enabledMergeSources'
 // full retained-file resolution. A game with no (or an ambiguous)
 // merge-compiler source has no merge sources of any kind, so resolution
-// failure is simply false, not an error.
+// failure is simply false, not an error. Deliberately NOT gated on
+// game.DeployMode: `lmm mod convert` persists the per-mod flag on
+// non-compile games too (with an advisory that it has no effect there,
+// TestModConvertCommand_NonCompileGame), so classification must answer
+// for any game whose compile source resolves - matching the pre-#256
+// static behavior. Callers that only care about compile games gate on
+// DeployMode themselves.
 func (s *Service) ModHasPakMergeSource(game *domain.Game, mod *domain.InstalledMod) bool {
-	if mod == nil {
+	if game == nil || mod == nil {
 		return false
 	}
 	mc, err := s.mergeCompilerForGame(game)

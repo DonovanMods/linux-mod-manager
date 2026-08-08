@@ -191,7 +191,7 @@ func TestModHasPakMergeSource(t *testing.T) {
 	reg := source.NewRegistry()
 	reg.Register(formatOnlyCompilerSource{})
 	svc := &Service{registry: reg}
-	game := &domain.Game{ID: "g", SourceIDs: map[string]string{"fake-compiler": "g"}}
+	game := &domain.Game{ID: "g", DeployMode: domain.DeployCompile, SourceIDs: map[string]string{"fake-compiler": "g"}}
 
 	tests := []struct {
 		name string
@@ -214,10 +214,25 @@ func TestModHasPakMergeSource(t *testing.T) {
 	}
 
 	// #256: with no merge-compiler-capable source mapped, there is nothing
-	// to classify against - never true, regardless of FileIDs.
-	bare := &domain.Game{ID: "bare"}
+	// to classify against - never true, regardless of FileIDs. DeployCompile
+	// is set so this exercises the resolution-failure path, not the
+	// deploy-mode short-circuit.
+	bare := &domain.Game{ID: "bare", DeployMode: domain.DeployCompile}
 	if svc.ModHasPakMergeSource(bare, &domain.InstalledMod{FileIDs: []string{"pak"}}) {
 		t.Error("ModHasPakMergeSource must be false for a game with no MergeCompiler source")
+	}
+
+	// NOT gated on DeployMode: `lmm mod convert` persists the flag on
+	// non-compile games (advisory-only there), so a resolvable compiler
+	// still classifies - pre-#256 static behavior.
+	nonCompile := &domain.Game{ID: "g3", SourceIDs: map[string]string{"fake-compiler": "g3"}}
+	if !svc.ModHasPakMergeSource(nonCompile, &domain.InstalledMod{FileIDs: []string{"pak"}}) {
+		t.Error("ModHasPakMergeSource must classify for a non-DeployCompile game with a resolvable compiler")
+	}
+
+	// A nil game is false, never a panic.
+	if svc.ModHasPakMergeSource(nil, &domain.InstalledMod{FileIDs: []string{"pak"}}) {
+		t.Error("ModHasPakMergeSource must be false for a nil game")
 	}
 }
 
