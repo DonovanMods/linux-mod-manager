@@ -66,8 +66,7 @@ updating, and managing game mods from sources like NexusMods and CurseForge,
 plus user-defined custom sources (directory scans, static manifests, or REST
 APIs — see 'lmm source --help').
 
-Both a CLI (this command tree) and an interactive TUI ('lmm tui') are
-available; run 'lmm COMMAND --help' for details on any subcommand.
+Run 'lmm COMMAND --help' for details on any subcommand.
 
 EXIT CODES
 
