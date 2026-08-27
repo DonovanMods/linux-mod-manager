@@ -1180,11 +1180,6 @@ func (s *Service) GetLinker(method domain.LinkMethod) linker.Linker {
 	return linker.New(method)
 }
 
-// GetDefaultLinkMethod returns the default link method from config
-func (s *Service) GetDefaultLinkMethod() domain.LinkMethod {
-	return s.config.DefaultLinkMethod
-}
-
 // GetGameLinkMethod returns the effective link method for a game.
 // Uses the game's explicit setting if configured, otherwise falls back to global default.
 func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
@@ -1254,11 +1249,6 @@ func (s *Service) NewProfileManager() *ProfileManager {
 // NewUpdater returns an Updater wired to this service's source registry.
 func (s *Service) NewUpdater() *Updater {
 	return NewUpdater(s.registry)
-}
-
-// Cache returns the default cache manager
-func (s *Service) Cache() *cache.Cache {
-	return s.cache
 }
 
 // GetGameCachePath returns the effective cache path for a game.

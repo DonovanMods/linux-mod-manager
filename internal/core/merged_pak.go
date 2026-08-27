@@ -225,14 +225,6 @@ func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]
 	return sources, nil
 }
 
-// EnabledMergeSourcesForTest exposes enabledMergeSources to external
-// (core_test package) tests - the method itself stays unexported since it
-// is an internal implementation detail of syncMergedPak, not part of
-// Service's public API.
-func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName string) ([]source.MergeSource, error) {
-	return s.enabledMergeSources(game, profileName)
-}
-
 // syncMergedPak regenerates game+profileName's merged pak if its recorded
 // fingerprint no longer matches the CURRENT enabled-mod set/order/versions/
 // base pak (#197). Cheap when nothing changed: the fast path is one
@@ -693,17 +685,6 @@ func sameMemberSet(a, b []string) bool {
 		counts[m]--
 	}
 	return true
-}
-
-// ReconcilePakManifestsForTest exposes reconcilePakManifests to external
-// (core_test package) fault-injection tests, which need to pass a caller-
-// constructed Installer wrapping a fault-injecting linker directly - the
-// same installer parameter production syncMergedPak already threads
-// through, just supplied by the test instead of GetInstallerForProfile.
-// The method itself stays unexported; this mirrors EnabledMergeSourcesForTest
-// above.
-func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) ([]string, error) {
-	return s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
 }
 
 // classifyCompileDeployMods pre-classifies each mod DeployProfile is about
