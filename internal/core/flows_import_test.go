@@ -318,8 +318,8 @@ func TestApplyImportPartialFailure(t *testing.T) {
 
 	// #131: the failure must ALSO land in result.Warnings ("source:mod:
 	// reason", one entry per failed mod) - the live ImportModFailed event is
-	// transient, and an outcome-driven caller (the TUI) needs the reason to
-	// survive into the completed result.
+	// transient, and an outcome-driven caller needs the reason to survive
+	// into the completed result.
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "src:bad-mod")
 	assert.Contains(t, result.Warnings[0], "failed to fetch mod")

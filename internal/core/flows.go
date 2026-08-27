@@ -20,8 +20,8 @@ import (
 // (via ProfileManager.ReorderMods) and syncs the merged pak (#197: a
 // load-order change is a documented regeneration trigger, since profile
 // load order IS merge-application order - see enabledMergeSources). The
-// single seam cmd/lmm and internal/tui both call, replacing their
-// previous direct pm.ReorderMods(...) calls (CLI+TUI parity).
+// single seam cmd/lmm calls, replacing its previous direct
+// pm.ReorderMods(...) call.
 //
 // A sync failure is non-fatal and returned as part of the SAME error only
 // if the reorder itself also failed; a reorder that succeeded but whose
@@ -234,8 +234,8 @@ type UninstallOptions struct {
 
 	// No verbosity concept lives here: core never gates or prints
 	// diagnostics. UninstallResult.Notes and .Warnings are always fully
-	// populated; it is the caller's (CLI's/TUI's) job to decide what to
-	// display and under what conditions. See UninstallResult's doc comment.
+	// populated; it is the caller's job to decide what to display and
+	// under what conditions. See UninstallResult's doc comment.
 }
 
 // UninstallResult reports the outcome of UninstallMod. Every entry in both
@@ -410,8 +410,8 @@ type DeployOptions struct {
 
 // DeployPhase identifies what DeployProfile is doing for the mod named in a
 // DeployProgress event (or, for DeployPurging, for the purge pass as a
-// whole), letting callers (CLI, TUI) render phase-appropriate UI without
-// needing to know how a deploy is actually carried out.
+// whole), letting callers render phase-appropriate UI without needing to
+// know how a deploy is actually carried out.
 type DeployPhase int
 
 const (
@@ -869,8 +869,8 @@ const (
 	// textually-identical verbose-gated print exactly.
 	UpdateNote
 
-	// --- PurgeProfile progress events (#61, TUI Phase 6 prep): the
-	// standalone `lmm purge` command's flow, extending this same enum.
+	// --- PurgeProfile progress events (#61): the standalone `lmm purge`
+	// command's flow, extending this same enum.
 	// PurgeProfile also reuses DeployBeforeAllForced, DeployPurging,
 	// PurgeNote, PurgeWarning, and PurgeComplete; the two phases below are
 	// purge-command-only and NEVER fire during a deploy --purge pass, whose
@@ -1136,7 +1136,7 @@ type DeployResult struct {
 	Notes    []string
 
 	// MergedArtifact/MergedMods/RawFallbacks mirror the DeployMergeSynced
-	// event for callers with no progress stream (#255 - the TUI passes
+	// event for callers with no progress stream (#255 - a caller may pass
 	// nil): the merged artifact's file name
 	// (source.MergeCompiler.MergedArtifactName), how many mods' content it
 	// carries, and how many participants fell back to an individual raw
@@ -2168,7 +2168,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		}
 
 		// modEvent builds a per-mod event: purge-command mode carries
-		// Index/Total (a progress denominator for the TUI); deploy mode
+		// Index/Total (a progress denominator for callers); deploy mode
 		// keeps its historical event shape (ModName/ModID/Detail only).
 		modEvent := func(phase DeployPhase, detail string) DeployProgress {
 			if spec.forDeploy {
@@ -2357,9 +2357,9 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 
 // SwitchPlan is the pure, displayable diff between the currently-active
 // default profile and a target profile - computed by PlanProfileSwitch with
-// zero side effects, so a caller (the CLI, or eventually the TUI) can render
-// it (in a print block or a confirmation modal) before deciding whether to
-// call ApplyProfileSwitch. This is a behavior-preserving extraction of
+// zero side effects, so a caller can render it (in a print block or a
+// confirmation prompt) before deciding whether to call
+// ApplyProfileSwitch. This is a behavior-preserving extraction of
 // cmd/lmm/profile.go's doProfileSwitch's diff computation (through its
 // "Show changes" print block) - see the task report for the exact mapping.
 //
@@ -2391,7 +2391,7 @@ type SwitchPlan struct {
 // PlanProfileSwitch computes the diff between game's currently-active
 // default profile and target, without mutating anything (no DB writes, no
 // filesystem changes, no deploys) - callers may call this speculatively (to
-// render a confirmation modal) and discard the result without consequence.
+// render a confirmation prompt) and discard the result without consequence.
 // See SwitchPlan's doc comment; ctx is accepted for API consistency with the
 // rest of Service's methods and future-proofing, even though today's
 // algorithm performs no I/O that needs it.
@@ -2572,11 +2572,6 @@ type SwitchResult struct {
 // showing that preview, accepts whatever has changed in the interim as
 // already baked into plan; PlanProfileSwitch's own doc comment documents
 // why speculative plans are cheap enough to discard and recompute instead.
-// The TUI's coreProvider.ApplyProfileSwitch (Task 6 item e) is exactly this
-// caller: it re-plans immediately before calling this method, which is a
-// SEPARATE PlanProfileSwitch call from whichever one built the confirmation
-// modal the user actually saw - see that method's own doc comment for the
-// resulting preview/apply drift this can introduce.
 func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, progress func(DeployProgress)) (*SwitchResult, error) {
 	result := &SwitchResult{}
 	emit := func(p DeployProgress) {
@@ -2840,10 +2835,10 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 // InstallPlan is the pure, displayable result of PlanInstall: everything the
 // pre-extraction CLI's pre-install prompts (dependency tree, conflict
-// warnings, "already installed" notice) and the TUI's future install modal
-// need to render before a caller decides whether to proceed (Phase 5b Task 2
-// adds ApplyInstall to actually execute one of these). Computed with zero
-// side effects - see PlanInstall's doc comment.
+// warnings, "already installed" notice) need to render before a caller
+// decides whether to proceed (Phase 5b Task 2 adds ApplyInstall to actually
+// execute one of these). Computed with zero side effects - see
+// PlanInstall's doc comment.
 type InstallPlan struct {
 	SourceID, GameID, Profile string
 
@@ -2945,9 +2940,9 @@ type InstallPlan struct {
 
 // PlanInstall computes what installing (sourceID, modID) into profileName
 // would do - the pure, read-only half of the pre-extraction CLI's doInstall
-// (cmd/lmm/install.go), extracted with zero mutations so a caller (the CLI,
-// or the TUI's future install modal) can render it and decide whether to
-// proceed before Phase 5b Task 2's ApplyInstall executes it. See
+// (cmd/lmm/install.go), extracted with zero mutations so a caller can
+// render it and decide whether to proceed before Phase 5b Task 2's
+// ApplyInstall executes it. See
 // InstallPlan's doc comment for what each field means, and the task report
 // for the exact mapping back to doInstall.
 //
@@ -2956,7 +2951,7 @@ type InstallPlan struct {
 //   - doInstall's interactive file picking / --file flag (selectInstallFiles)
 //     and its "Install N mod(s)? [Y/n]" dependency confirm prompt - Files
 //     always reflects the same non-interactive default cmd/lmm's own --yes
-//     flag would pick; a CLI/TUI caller that resolves a different selection
+//     flag would pick; a caller that resolves a different selection
 //     overrides plan.Files before calling ApplyInstall.
 //   - --no-deps: a caller that wants to skip Dependencies can simply ignore
 //     or clear them before calling ApplyInstall.
@@ -3177,7 +3172,7 @@ type InstallOptions struct {
 	// latest, untouched by this field). Honored on BOTH paths (#140 item 2
 	// closed the STRICT gap - previously it was documented-inert there and
 	// the CLI compensated by overriding plan.Files, a "flag lies" trap for
-	// any other core caller, e.g. a TUI version picker):
+	// any other core caller):
 	//
 	//   - STRICT (no-deps): resolved by resolveStrictInstallFiles at the
 	//     very top of ApplyInstall - before the #143 lock gate, any hook,
@@ -5231,10 +5226,9 @@ type ProfileImportOptions struct {
 //     `fmt.Printf("    %s\n", n)` (4-space indent).
 //   - Warnings holds one "source:mod: reason" entry per failed mod (#131),
 //     appended at the same point Failed is bumped - so an outcome-driven
-//     caller (the TUI folds these into its completion message's Warnings,
-//     mirroring ApplyProfileSwitch's installFailures) keeps the reason and
-//     any remediation hint it carries (e.g. #95's stored-files-gone message)
-//     after the live progress line is gone.
+//     caller keeps the reason and any remediation hint it carries
+//     (e.g. #95's stored-files-gone message) after the live progress
+//     line is gone.
 //
 // Every Notes entry is ALSO reported via the progress callback at the exact
 // point it is appended (ImportNote - see its DeployPhase doc comment), with

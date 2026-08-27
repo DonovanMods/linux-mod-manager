@@ -120,7 +120,7 @@ func TestModShowGolden_JSON(t *testing.T) {
 // TestDoModShow_DescriptionHTMLCleaned (#86): mod show printed a source's raw
 // description HTML - literal <p> tags and &amp; entities in the user's
 // terminal. It now runs through the same core.CleanChangelog the update flow
-// and the TUI already share, so both interfaces render one cleaned text.
+// already uses, so both render one cleaned text.
 // JSON is deliberately NOT cleaned: it is a machine contract, and a consumer
 // may want the original markup.
 func TestDoModShow_DescriptionHTMLCleaned(t *testing.T) {

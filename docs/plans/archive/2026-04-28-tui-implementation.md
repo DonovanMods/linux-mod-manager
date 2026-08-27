@@ -1,5 +1,7 @@
 # TUI Implementation and Visual Iteration Plan
 
+> **Archived 2026-08-27:** the TUI was removed on the v2 line (see `2026-08-27-v2-core-refactor-design.md`). Kept for history.
+
 **Date:** 2026-04-28
 **Scope:** Add a Bubble Tea/Lip Gloss TUI to `lmm`, starting with visual prototypes and iterating toward a real service-backed interface.
 **Out of scope:** Replacing the existing CLI, changing config formats, implementing image thumbnails, background update daemons, or redesigning core mod-management behavior.
@@ -740,22 +742,22 @@ Do the version bump and `CHANGELOG.md` update as a separate release commit at th
 
 **Added:** 2026-07-13, after the Phase 3 (read-only service-backed) milestone shipped as v1.4.0.
 
-This section audits every CLI capability against the TUI and the phases above, so nothing is missing from the roadmap by omission. Items marked *planned* were already covered by a phase; items marked **added** were roadmap gaps discovered in this audit and are now assigned; items marked *CLI-only for now* are deliberate deferrals, not oversights.
+This section audits every CLI capability against the TUI and the phases above, so nothing is missing from the roadmap by omission. Items marked _planned_ were already covered by a phase; items marked **added** were roadmap gaps discovered in this audit and are now assigned; items marked _CLI-only for now_ are deliberate deferrals, not oversights.
 
 ### Covered by the shipped TUI (v1.4.0, read-only)
 
-| CLI capability | TUI status |
-| --- | --- |
+| CLI capability                     | TUI status                                                                                                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `status` (game/profile/mod counts) | Dashboard summary; Updates shows `?` until a check runs this session, then the real count (Phase 5b, v1.12.0); Conflicts always reflects real detection (Phase 6b) |
-| `list` (installed mods) | Installed Mods view (read-only) |
-| `list --profiles` | Profile roster (read-only, active marker) |
-| Game selection at launch | Works today via the global `-g/--game` flag (`lmm tui -g skyrim-se`) |
+| `list` (installed mods)            | Installed Mods view (read-only)                                                                                                                                    |
+| `list --profiles`                  | Profile roster (read-only, active marker)                                                                                                                          |
+| Game selection at launch           | Works today via the global `-g/--game` flag (`lmm tui -g skyrim-se`)                                                                                               |
 
 ### Already planned (no change)
 
-| CLI capability | Phase |
-| --- | --- |
-| `search`, `show` (details), auth-required messaging | Phase 4 |
+| CLI capability                                                                     | Phase   |
+| ---------------------------------------------------------------------------------- | ------- |
+| `search`, `show` (details), auth-required messaging                                | Phase 4 |
 | `install`, `enable`, `disable`, `deploy`, `profile switch`, `update` (check/apply) | Phase 5 |
 
 `conflicts`, `profile reorder`/export/import, update changelogs, and
@@ -766,33 +768,33 @@ per-mod policies (originally slated here for Phase 6) shipped — see
 
 Every row this audit originally assigned to a phase (as a roadmap gap, below) has now shipped, split across Phase 5a (v1.11.0), 6a (v1.13.0), and 6b (pending v1.14.0):
 
-| Capability | TUI status |
-| --- | --- |
-| `conflicts` | Conflicts screen (`6`): per-file owner, load-order winner, stale marker, resolution hint; `D` deploys directly from the screen (**6b**) |
-| `profile reorder` (load order) | `J`/`K` (`ctrl+down`/`ctrl+up`) on Installed Mods swap the selected mod with its neighbor and persist immediately; the list renders in load order (**6b**) |
-| `profile export`/`import` entry points | `E`/`I` on Profiles: export refuses to overwrite, import shows a categorized preview (new/installed/overwrite/cross-game) before downloading and installing, with an optional immediate switch (**6b**) |
-| update changelogs | `v` on the apply-updates confirmation modal opens a scrollable changelog overlay (a picker first, if several updates are pending) (**6b**) |
-| `update rollback <mod-id>` | `<` on Installed Mods, behind a confirmation prompt; a mod with no previous version is refused on the status line (**6b**) |
-| respecting per-mod update policies (check/apply skips pinned/local mods) | Delivered with check/apply updates itself (**5b**), not a separate item |
-| `mod set-update` (notify/auto/pin) | `P` on Installed Mods opens a notify/auto/pin picker; picking one applies immediately (**6a**) |
-| In-TUI game selector/switcher | `g`, any screen: picks from every configured game, rebinding the session and reloading (**6a**) |
-| `purge` | `X` on Dashboard/Installed Mods, behind a confirmation prompt; an empty profile short-circuits with a one-line message (**6a**) |
-| `files <mod-id>` (deployed file listing) | `f` on Installed Mods opens a scrollable per-mod deployed-files panel (**6a**) |
-| `profile create` / `profile delete` | `c`/`d` on Profiles; create validates duplicates/invalid names inline, delete refuses the active profile (**6a**) |
-| `uninstall <mod-id>` | `x` on Installed Mods (added to the Phase 5 action set by this same audit; shipped **5a**) |
+| Capability                                                               | TUI status                                                                                                                                                                                              |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `conflicts`                                                              | Conflicts screen (`6`): per-file owner, load-order winner, stale marker, resolution hint; `D` deploys directly from the screen (**6b**)                                                                 |
+| `profile reorder` (load order)                                           | `J`/`K` (`ctrl+down`/`ctrl+up`) on Installed Mods swap the selected mod with its neighbor and persist immediately; the list renders in load order (**6b**)                                              |
+| `profile export`/`import` entry points                                   | `E`/`I` on Profiles: export refuses to overwrite, import shows a categorized preview (new/installed/overwrite/cross-game) before downloading and installing, with an optional immediate switch (**6b**) |
+| update changelogs                                                        | `v` on the apply-updates confirmation modal opens a scrollable changelog overlay (a picker first, if several updates are pending) (**6b**)                                                              |
+| `update rollback <mod-id>`                                               | `<` on Installed Mods, behind a confirmation prompt; a mod with no previous version is refused on the status line (**6b**)                                                                              |
+| respecting per-mod update policies (check/apply skips pinned/local mods) | Delivered with check/apply updates itself (**5b**), not a separate item                                                                                                                                 |
+| `mod set-update` (notify/auto/pin)                                       | `P` on Installed Mods opens a notify/auto/pin picker; picking one applies immediately (**6a**)                                                                                                          |
+| In-TUI game selector/switcher                                            | `g`, any screen: picks from every configured game, rebinding the session and reloading (**6a**)                                                                                                         |
+| `purge`                                                                  | `X` on Dashboard/Installed Mods, behind a confirmation prompt; an empty profile short-circuits with a one-line message (**6a**)                                                                         |
+| `files <mod-id>` (deployed file listing)                                 | `f` on Installed Mods opens a scrollable per-mod deployed-files panel (**6a**)                                                                                                                          |
+| `profile create` / `profile delete`                                      | `c`/`d` on Profiles; create validates duplicates/invalid names inline, delete refuses the active profile (**6a**)                                                                                       |
+| `uninstall <mod-id>`                                                     | `x` on Installed Mods (added to the Phase 5 action set by this same audit; shipped **5a**)                                                                                                              |
 
 ### Deliberately CLI-only for now
 
 Phase 6 has shipped (see above); none of the rows below has been assigned to a future phase — they remain deliberate deferrals, not oversights.
 
-| Capability | Reason |
-| --- | --- |
-| `auth login`/`logout`/`status` | Login requires API-key entry and browser round-trips; Phase 4 shows clear "run `lmm auth login <source>`" instructions instead. Revisit if/when the NexusMods OAuth flow (currently deferred in TODO.local.md) lands |
-| `import` (local archives / mod_path scan) | Interactive file-picking in a TUI is heavy; the CLI flow includes fuzzy matching prompts (#27) that don't map cleanly yet |
-| `verify` (cache checksums) | Maintenance task with long runtime and rare use; no interactive benefit over the CLI |
-| `mod edit` (metadata fixes) | Rare corrective surgery; form-style editing needs widgets none of the planned views require |
-| `profile sync` / `profile apply` | Power-user reconciliation commands; semantics are easier to express (and audit) as explicit CLI invocations |
-| `game add` / `game detect` / `game set-default` / `game clear-default` | Setup-time operations, usually once per machine; keep setup in the CLI, browsing/management in the TUI |
-| Settings view; configurable keybindings (vim/standard) | Original BACKLOG wish-list items; post-v1 TUI polish once the workflows above exist. Theme is already configurable per the Phase 2 decision note |
+| Capability                                                             | Reason                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth login`/`logout`/`status`                                         | Login requires API-key entry and browser round-trips; Phase 4 shows clear "run `lmm auth login <source>`" instructions instead. Revisit if/when the NexusMods OAuth flow (currently deferred in TODO.local.md) lands |
+| `import` (local archives / mod_path scan)                              | Interactive file-picking in a TUI is heavy; the CLI flow includes fuzzy matching prompts (#27) that don't map cleanly yet                                                                                            |
+| `verify` (cache checksums)                                             | Maintenance task with long runtime and rare use; no interactive benefit over the CLI                                                                                                                                 |
+| `mod edit` (metadata fixes)                                            | Rare corrective surgery; form-style editing needs widgets none of the planned views require                                                                                                                          |
+| `profile sync` / `profile apply`                                       | Power-user reconciliation commands; semantics are easier to express (and audit) as explicit CLI invocations                                                                                                          |
+| `game add` / `game detect` / `game set-default` / `game clear-default` | Setup-time operations, usually once per machine; keep setup in the CLI, browsing/management in the TUI                                                                                                               |
+| Settings view; configurable keybindings (vim/standard)                 | Original BACKLOG wish-list items; post-v1 TUI polish once the workflows above exist. Theme is already configurable per the Phase 2 decision note                                                                     |
 
 The audit's **added** items (see "Covered — issue #37 roadmap gaps" above) have all shipped; nothing from this section remains open.

@@ -103,7 +103,7 @@ func deployRecordingProgress(t *testing.T, svc *core.Service, game *domain.Game)
 // loose-file mod - plus the post-sync DeployMergeSynced event naming the
 // merged artifact (via the source's MergedArtifactName, never a core
 // literal) and carrying the participant count, and the same readout on
-// DeployResult for progress-less callers (the TUI).
+// DeployResult for progress-less callers.
 func TestDeployProfile_Compile_ClassifiesModsAndEmitsMergeSynced(t *testing.T) {
 	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
 	svc, err := core.NewService(cfg)
@@ -141,7 +141,7 @@ func TestDeployProfile_Compile_ClassifiesModsAndEmitsMergeSynced(t *testing.T) {
 	}
 
 	// The same readout lands on DeployResult for callers with no progress
-	// stream (the TUI passes nil).
+	// stream (a caller may pass nil).
 	assert.Equal(t, "zzz_LMM_Merged_P.pak", result.MergedArtifact)
 	assert.Equal(t, 1, result.MergedMods)
 	assert.Equal(t, 0, result.RawFallbacks)

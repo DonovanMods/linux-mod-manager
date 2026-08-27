@@ -34,9 +34,9 @@ type VerifyOptions struct {
 //
 // Recorded/Effective/Version mirror the identically-named VerifyEvent extras
 // (Recorded/Effective for version_mismatch, Version for missing) - additive
-// fields (TUI layout rework, #224 follow-up) so a caller that only has the
-// final VerifyResult (not a progress listener) can still render them, e.g.
-// the Health screen's VERSION column. resolveLast clears them whenever a
+// fields (#224 follow-up) so a caller that only has the final VerifyResult
+// (not a progress listener) can still render the recorded/effective
+// versions. resolveLast clears them whenever a
 // row's Status resolves away from missing/version_mismatch, so a repaired
 // row never carries a stale pre-repair value. The CLI's own text/JSON
 // rendering is untouched by these fields - it still reads the VerifyEvent
@@ -68,8 +68,8 @@ const (
 )
 
 // VerifyEvent is emitted via a Verify run's progress callback as the engine
-// works, so a caller (the CLI, later the TUI) can render incrementally
-// instead of waiting for the final VerifyResult.
+// works, so a caller can render incrementally instead of waiting for the
+// final VerifyResult.
 type VerifyEvent struct {
 	Kind     VerifyEventKind
 	HasFiles bool
@@ -242,8 +242,8 @@ func (r *verifyRun) syncMergedPakPass() {
 // false), as the entirety of that run beyond the Begin event - see Verify's
 // own doc comment.
 //
-// A fixed_stale_deployment row's Variant is "fixed_green": the CLI/TUI
-// render the WHOLE main line green for it (unlike, say, a version repair,
+// A fixed_stale_deployment row's Variant is "fixed_green": the CLI renders
+// the WHOLE main line green for it (unlike, say, a version repair,
 // which prints a plain finding line with a separate green sub-line) - Task
 // 7 wires that rendering contract up on the CLI side.
 //
@@ -564,8 +564,8 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 // phase, and the only one skipped entirely under VerifyLocal.
 //
 // Emits VerifyEvProgress at the top of every mod's iteration (a new event
-// the CLI ignores and the TUI's status line consumes) and honors ctx
-// cancellation between mods: on cancellation the loop stops and returns
+// not currently rendered by the CLI) and honors ctx cancellation between
+// mods: on cancellation the loop stops and returns
 // ctx.Err(), leaving the caller (Verify) to return the partial result
 // already accumulated rather than a phantom "everything checked out"
 // result.

@@ -527,7 +527,7 @@ func TestProfileManager_UpsertMod_LockedRefRefusesVersionMove(t *testing.T) {
 }
 
 // TestProfileManager_ReorderMods_PreservesLockedMarker guards that Locked survives
-// when the TUI reorders mods by building refs from the loaded profile.
+// when a caller reorders mods by building refs from the loaded profile.
 func TestProfileManager_ReorderMods_PreservesLockedMarker(t *testing.T) {
 	dir := t.TempDir()
 
@@ -564,7 +564,7 @@ func TestProfileManager_ReorderMods_PreservesLockedMarker(t *testing.T) {
 	require.Len(t, profile.Mods, 2)
 
 	// Reorder with the mods in reverse order
-	// (simulates what TUI does: builds the slice from loaded profile.Mods)
+	// (simulates what a caller does: builds the slice from loaded profile.Mods)
 	reorderedMods := []domain.ModReference{
 		profile.Mods[1], // modID 67890
 		profile.Mods[0], // modID 12345 (still locked)

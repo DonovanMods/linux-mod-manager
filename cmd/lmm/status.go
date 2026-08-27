@@ -452,11 +452,10 @@ func showGameStatus(service *core.Service, gameID string) error {
 
 // formatLastDeploy renders a game's last-deploy timestamp for the CLI's
 // plain-text status output: nil (never deployed) is "never"; otherwise an
-// absolute, local "YYYY-MM-DD HH:MM" timestamp. Deliberately NOT the TUI's
-// relative-age rendering (lastDeployLabel, internal/tui/app.go) - the CLI's
-// output is scriptable/parseable, so a stable absolute format that doesn't
-// change between two invocations a second apart is preferable to a coarse
-// "3m ago" that would.
+// absolute, local "YYYY-MM-DD HH:MM" timestamp. Deliberately NOT a
+// relative-age rendering - the CLI's output is scriptable/parseable, so a
+// stable absolute format that doesn't change between two invocations a
+// second apart is preferable to a coarse "3m ago" that would.
 func formatLastDeploy(t *time.Time) string {
 	if t == nil {
 		return "never"

@@ -123,7 +123,7 @@ func TestServiceResolveModVersion(t *testing.T) {
 	assert.ErrorIs(t, err, core.ErrVersionNotFound)
 }
 
-// TestService_AvailableModVersions covers the TUI version picker's data
+// TestService_AvailableModVersions covers AvailableModVersions' data
 // source: distinct per-file versions in first-seen order, and the
 // ErrNotSupported degrade when the source's file list carries no version
 // info at all (#97).

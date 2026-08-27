@@ -7,8 +7,7 @@ import "testing"
 // CleanChangelog (Phase 6b Task 7): <br>/<p> become newlines, every other
 // tag is removed, the five entities stripHTMLForTerminal decoded are still
 // decoded, and the result is trimmed - byte-for-byte the same transform, now
-// shared by the CLI (cmd/lmm/update.go) and the TUI (coreProvider.
-// CheckUpdates, service_core.go).
+// used by the CLI (cmd/lmm/update.go).
 func TestCleanChangelogMatchesLegacyStrip(t *testing.T) {
 	tests := []struct {
 		name string

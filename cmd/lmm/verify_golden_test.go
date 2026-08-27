@@ -16,7 +16,7 @@ import (
 // --- #224 Task 1: pre-refactor golden capture ---
 //
 // These golden transcripts freeze doVerify's CURRENT byte-for-byte stdout
-// output across the scenarios that matter for the TUI verify surface work:
+// output across the scenarios that matter for the verify renderer work:
 // they are the safety net the later renderer-refactor tasks diff against, so
 // they must never be regenerated once recorded on this pre-refactor tree.
 

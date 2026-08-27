@@ -32,7 +32,7 @@ sudo mv lmm /usr/local/bin/
 
 ### With Go Install
 
-Requires Go 1.21 or later.
+Requires Go 1.27 or later.
 
 ```bash
 go install github.com/DonovanMods/linux-mod-manager/cmd/lmm@latest
@@ -182,12 +182,6 @@ converges the mod to the locked version — downgrades included. `lmm mod
 unlock` clears only the lock marker; the mod's recorded version is left
 exactly as-is, since that's the record, not the lock.
 
-In the TUI, `L` on the Installed Mods screen opens an async version picker
-for the selected mod (fetched from the source); picking a version confirms
-and locks/moves the lock immediately, and a locked mod's picker gains a
-trailing "unlock" entry. The row's flags column shows `lck` for a locked mod
-(it outranks `pin` when both apply — the lock is what the UI names).
-
 **Lock vs. pin, in one line**: pinning mutes a mod's update _notifications_;
 a lock is a lockfile entry that pins a _build_.
 
@@ -214,10 +208,10 @@ wherever they'd conflict, the lock wins and the output names it:
   "locked at v*X*; move the lock (`lmm mod lock <id> <version>`) or unlock
   first."
 - **`lmm install` of a locked mod at any other version** (an explicit
-  `--version`, or a plain reinstall that would land on a newer latest — TUI
-  install included): refused with the same remedies before anything
-  downloads or deploys. Installing at exactly the locked version
-  (reinstall/repair) still works and keeps the lock.
+  `--version`, or a plain reinstall that would land on a newer latest):
+  refused with the same remedies before anything downloads or deploys.
+  Installing at exactly the locked version (reinstall/repair) still works
+  and keeps the lock.
 - **`lmm mod edit` of a locked mod**: refused before anything is written —
   `--version` (other than the locked version itself) with the same
   move-the-lock/unlock remedies, and `--source`/`--source-id` re-linking
@@ -264,9 +258,9 @@ precedence](#games-gamesyaml) applies identically to converted paks and
 
 Conversion is on by default, and controlled at two levels: a per-game
 `convert_paks: false` in `games.yaml` turns it off for every pak mod on
-that game, and `lmm mod convert <mod-id> off` (TUI: `m` on Installed
-Mods) keeps one specific mod's pak raw regardless of the game setting —
-either one is enough to keep a pak raw. An irreconcilable pak (unreadable
+that game, and `lmm mod convert <mod-id> off` keeps one specific mod's
+pak raw regardless of the game setting — either one is enough to keep a
+pak raw. An irreconcilable pak (unreadable
 or unresolvable layout, a hyphen-ambiguous table path, a `RowStruct`
 mismatch) produces a per-mod error and falls back to raw deploy instead
 of blocking the rest of the merge; `lmm verify` reports it as
@@ -276,178 +270,6 @@ Pak mods cached before this feature shipped have no retained raw source
 to convert from. `lmm verify` flags these `needs_reingest`, and `--fix`
 re-ingests them — redownloading via the normal cache path — into the
 conversion pipeline; there is no separate migration step to run.
-
-### Terminal UI
-
-Browse your configured game, installed mods, and profiles interactively, search mod sources, inspect the source registry, and manage mods in place — enable/disable, uninstall, deploy, reorder load order, resolve file conflicts, verify integrity and fix findings, switch profiles, install from search results, check/apply updates (with changelogs and rollback), edit update policies, view a mod's deployed files, view a mod's full details, purge a profile, switch games, and create/delete/export/import profiles — with every mutating action behind a confirmation prompt:
-
-```bash
-lmm tui                     # real data
-lmm tui --theme amber       # themes: wizardry (default), amber, dos, green
-lmm tui --prototype         # demo mode with static fake data
-```
-
-Keys: `tab`/`h`/`l` cycle screens (landing on Search this way does not focus
-the input), `1`–`6` jump directly (`3` focuses search immediately, like `/`;
-`5` opens Sources, `6` opens Health, which also reports file conflicts),
-`↑↓`/`j`/`k` move, `enter`
-open/select (on Installed Mods or Search, opens a full mod details view
-with `lmm mod show` field parity — `↑↓` scroll the description, `esc`
-returns; on Profiles, switch to the selected profile; selecting "Search
-Archives" from the Dashboard menu also focuses search — explicit search
-intent focuses, passive cycling doesn't), `/` focus search from anywhere,
-type query, `enter` to search, `esc` unfocus (clears focus; afterward `s`
-cycles sources, number keys switch screens), `n`/`p` skip a paneful of
-results ahead/back (search results load continuously — there are no
-pages to turn; `n`/`p` just move the selection by a screenful, refilling
-the buffer as needed), `e`/`x`/`D` enable-disable/uninstall/deploy (see below), `i` install the
-selected search result (Search, input blurred — see below), `u` check for
-updates (Dashboard or Installed Mods — see below), `g` switch games (any
-screen — see below), `?` help, `q` quit.
-
-The Search screen defaults to **All sources**, mirroring the CLI: the typed
-query runs concurrently against every source configured for the game. Press
-`s` to cycle to a single source and back to "All sources". While "All
-sources" is selected, results carry a source column, and if any source
-failed, a one-line warning (e.g. `⚠ 1 source unavailable: my-repo: ...`)
-appears above the results — the sources that succeeded are still shown.
-Results mark already-installed mods; selecting a result shows a detail
-panel. With the search input blurred, `i` installs the selected result: lmm
-plans the install first ("Planning install…" on the status line), then opens
-a confirmation panel with the version and size, source, file(s) that will
-download, resolved dependencies (with their own download disclosure),
-conflicting files if any, and a warning if a dependency is missing or
-circular. Confirming streams download/extract/deploy progress into the
-status line; a successful install re-runs the current search so the
-result's "installed" marker updates right away.
-
-The **Sources** screen (key `5`) lists the active game's configured
-sources by default, with the same ID/TYPE/AUTH/CAPABILITIES columns as
-`lmm source list`; press `a` to toggle to every source registered with lmm
-— built-in and custom — marking which ones the active game uses. It only
-shows sources that actually registered: a custom source whose definition
-file failed to load (bad YAML, ID collision, etc.) has no row here — check
-`lmm source list` for those.
-
-On **Installed Mods**, `e` toggles the selected mod's enable/disable state
-(the direction follows its current status: disabled mods enable, everything
-else disables) and `x` uninstalls it — removing deployed files, cache, and
-its profile entry, running uninstall hooks along the way. `D` deploys the
-active profile (using its current enabled mods) from either Installed Mods
-or the Dashboard. `f` opens a scrollable panel listing the selected mod's
-deployed files (`f` again, or `esc`, closes it). `P` opens a notify/auto/pin
-picker for the selected mod's update policy — picking one applies
-immediately, no separate confirmation. `L` opens an async version picker
-(fetched from the source) to lock the mod, or move an existing lock — a
-locked mod's picker gains a trailing "unlock" entry — see [Locking mods to a
-version](#locking-mods-to-a-version). On a merge-compile game (e.g.
-Icarus), `m` toggles the selected mod's pak-to-exmod conversion on/off —
-applies immediately, no confirmation modal (the same "reversible
-metadata write" exception as the `P` policy picker above), but it's a
-metadata write, not a deploy — the merged pak itself is unchanged until
-the next deploy, which the status line's "(deploy to apply)" reminds you
-of — and a non-compile game reports the toggle as inapplicable on the
-status line instead of doing anything. The row's flags column shows `raw`
-whenever the mod's prebuilt pak is deploying unconverted — either this
-mod's own conversion flag is off, or the game's `convert_paks: false`
-disables it for the whole game (either one is enough to keep a pak raw) —
-see [Pak conversion (Icarus)](#pak-conversion-icarus).
-`J`/`K` (also `ctrl+down`/`ctrl+up`)
-swap the selected mod with its neighbor in load order and persist the new
-order right away; the list itself renders in load order, and a hint reads
-"order changed — deploy (`D`) to apply" until you redeploy. `<` rolls the
-selected mod back to its previous version behind a confirmation prompt — a
-mod with no previous version is refused on the status line instead. `X`, on
-Dashboard or Installed Mods, purges the active profile (undeploying every
-currently-deployed mod) behind a confirmation prompt; an empty profile
-short-circuits with a one-line "no mods installed" message.
-
-The **Health** screen (key `6`) lists the findings from the most recent
-verify scan — missing or mismatched cache files, unrecorded checksums, mods
-needing re-ingest, stale compiles, conversion failures, and stale
-deployments — followed by every game-directory file that two or more enabled
-mods provide (formerly the standalone Conflicts screen, folded in here): the
-current load-order winner, every other mod that also provides the file, and
-a `CONFLICT`/`STALE CONFLICT` status (stale meaning the deployed copy no
-longer matches the winner — a reorder or update landed but hasn't been
-redeployed yet). One row per finding or conflict, tinted by severity;
-selecting a finding row shows its detail and a one-line remedy naming the
-fix, selecting a conflict row shows the owner, every other providing mod,
-and a resolution hint — reorder (`J`/`K` on Installed Mods) or redeploy if
-stale. `c` runs a full (network) check, the same tier `lmm verify` runs, and
-replaces the findings with the fresh results — no confirmation, since it
-changes nothing. `F` opens a confirmation panel summarizing what a fix pass
-will attempt (counts grouped by finding type), and confirming runs that same
-full check with `lmm verify --fix`'s repairs enabled, then shows a results
-overlay listing what was fixed and what's still outstanding. `D` deploys the
-active profile directly from this screen, same as Installed Mods/Dashboard —
-the fix for a stale conflict. The header names how many rows were checked
-and how many conflicts are outstanding. The Dashboard's Health line mirrors
-this screen's findings counts — `?` before the first scan lands this
-session, `OK (local)`/`OK (full)` once a scan finds nothing, or `N
-issue(s), M warning(s) (local|full)` otherwise, `(local)`/`(full)` naming
-whichever tier last updated it — and the Dashboard's separate conflict count
-reflects this screen's real conflict detection.
-
-`u`, on Dashboard or Installed Mods, checks every checkable installed mod
-for updates (pinned and local mods are skipped) — "Checking for updates…"
-on the status line while it runs. Zero updates reports a one-line status;
-one or more opens a confirmation panel listing each `<mod> <from> → <to>`,
-and confirming applies all of them in sequence with per-update download
-progress streamed into the status line — one mod failing doesn't stop the
-rest, it's folded into the batch's warnings instead. While that panel is
-open, `v` opens the changelog for the update it names — or, with several
-updates pending, a "View changelog" picker naming each `<mod> <from> →
-<to>` first — as a scrollable overlay. After a check, `v` also works
-directly on an Installed Mods row: it shows that mod's changelog from the
-most recent check (or says there's none for it). When a confirmed batch
-finishes, an "update results" overlay lists exactly what happened, one
-`✓ <mod> <from> → <to>` (or `✗ <mod>: <error>`) line per update, so the
-applied set is never just a status-line count. The Dashboard's Updates count shows
-`?` until a check has run this session, then reflects the real number (it
-survives unrelated refreshes and only reverts to `?` after an update batch
-is actually applied, since that's what makes the count stale).
-
-On **Profiles**, `enter` on a profile other than the active one plans the
-switch and shows a preview: mods to enable/disable, or "No mod changes; set
-as default." when nothing would change. `enter` on the already-active
-profile just reports "Already on profile ..." with no modal. If the plan
-needs mods that aren't installed yet, the preview also discloses what it
-will fetch (`Will download & install N mod(s):` plus one `↓` line per mod)
-— confirming downloads and installs them as part of applying the switch,
-streaming the same progress as an install. `c` opens an input for a new
-profile name, validated inline against duplicates and invalid characters;
-`d` deletes the selected profile behind a confirmation prompt, refusing the
-active profile on the status line instead. `I` opens a "path to YAML" input
-for profile import: lmm plans the import and shows a categorized preview
-(new mods, already-installed mods, overwrite/cross-game warnings), then
-confirming downloads and installs mods as needed, with an optional
-immediate switch to the imported profile afterward. `E` opens a "path to
-save" input, prefilled with a default filename, for profile export;
-submitting refuses to overwrite an existing file.
-
-`g`, on any screen, opens a picker of every game configured in
-`games.yaml` with the active one marked; picking one rebinds the session
-(data providers, active profile, sources) and reloads the current screen.
-
-Every mutating action — enable/disable, uninstall, deploy, reorder, rollback,
-purge, profile switch/create/delete/import, install, apply updates — opens a
-confirmation panel describing what will change before it runs (reorder and
-policy edits apply immediately instead, since the choice itself is the
-confirmation): `y`/`enter` confirms, `n`/`esc` cancels, and only one action
-can be in flight at a time. Install, apply-updates, and any switch
-that downloads mods stream live progress into the status line while they
-run; once an action finishes, a one-line status message reports the outcome
-(including a warning count, if the flow reported any) and clears on your
-next keypress. Quitting (`q`/`ctrl+c`) while an action is running cancels it
-immediately but waits — "Finishing current step…" on the status line,
-bounded to a few seconds — for that step to actually finish instead of
-killing it mid-download. A source that can't perform a requested action, or
-needs authentication, renders as a clean one-line message naming the right
-CLI fallback (e.g. "run 'lmm update' from a shell instead", or `lmm auth
-login <source>`) instead of a raw error. `--prototype` mode demos all of
-these actions end to end against simulated data, including one canned
-profile that always exercises the download-and-switch path.
 
 ## Configuration
 
@@ -1142,15 +964,12 @@ internal/
 │   ├── config/           # YAML configuration
 │   └── cache/            # Mod file cache
 ├── linker/               # Deployment strategies
-├── core/                 # Business logic
-│   ├── service.go        # Main orchestrator
-│   ├── installer.go      # Install/uninstall
-│   ├── updater.go        # Update checking
-│   ├── downloader.go     # HTTP downloads
-│   └── extractor.go      # Archive extraction
-└── tui/                  # Bubble Tea application
-    ├── prototype/        # --prototype demo mode (static fake data)
-    └── theme/            # Color themes (wizardry, amber, dos, green)
+└── core/                 # Business logic
+    ├── service.go        # Main orchestrator
+    ├── installer.go      # Install/uninstall
+    ├── updater.go        # Update checking
+    ├── downloader.go     # HTTP downloads
+    └── extractor.go      # Archive extraction
 ```
 
 ## File Locations
@@ -1181,7 +1000,6 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 - [x] Conflict detection (file conflicts, circular dependency warnings)
 - [x] Mod file verification (checksums, --fix re-download)
 - [x] Automatic dependency installation (opt out with `--no-deps`)
-- [x] Interactive TUI (Bubble Tea) - see the Terminal UI section above
 - [x] CurseForge integration
 - [x] Additional first-party built-in sources beyond NexusMods/CurseForge (Icarus)
 - [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)

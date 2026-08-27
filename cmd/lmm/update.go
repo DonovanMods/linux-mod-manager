@@ -315,7 +315,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// Check for updates (partial results returned even when some mods fail to
 	// fetch) plus, for DeployCompile games, merged-pak staleness (#196/#197) -
-	// CheckGameUpdates is the single seam CLI and TUI both check through.
+	// CheckGameUpdates is the single seam the CLI checks through.
 	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed)
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
@@ -811,7 +811,7 @@ func applyRecompile(ctx context.Context, service *core.Service, game *domain.Gam
 	// through result.Warnings instead. A progress callback watching for
 	// those phases would silently never fire; print result.Warnings
 	// directly so `lmm update`'s apply path surfaces them the same way
-	// DeployProfile/the TUI already do.
+	// DeployProfile already does.
 	if result != nil {
 		for _, w := range result.Warnings {
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)

@@ -147,13 +147,11 @@ func seedModDetailInstalledPak(t *testing.T, svc *core.Service, game *domain.Gam
 }
 
 // TestModDetail_ConvertPaks covers the three-state ConvertPaks distinction
-// at the core seam both mod show and the TUI now share: nil means "does not
-// apply to this mod at all" (not a DeployCompile game, or the mod has no
-// pak-kind merge source per ModHasPakMergeSource), while a non-nil pointer
-// distinguishes "applies, and is off" from "applies, and is on" -
-// conflating any of these three would mislead either interface's render
-// (mirrors the TUI-side internal/tui.TestModDetailsFromItem_ConvertPaks,
-// which only covers the ModItem->ModDetails leg, not this DB-join leg).
+// at the core seam mod show uses: nil means "does not apply to this mod at
+// all" (not a DeployCompile game, or the mod has no pak-kind merge source
+// per ModHasPakMergeSource), while a non-nil pointer distinguishes
+// "applies, and is off" from "applies, and is on" - conflating any of
+// these three would mislead the render.
 func TestModDetail_ConvertPaks(t *testing.T) {
 	t.Run("not applicable when not a compile-deploy game", func(t *testing.T) {
 		svc, game, src := newModDetailTestService(t)

@@ -176,10 +176,9 @@ func TestShowGameStatus_NeverDeployed_ShowsNeverInText(t *testing.T) {
 
 // TestShowGameStatus_AfterDeploy_ShowsTimestampInText pins that a real
 // deploy populates the Last Deploy line with an absolute local timestamp -
-// deliberately NOT the TUI's relative-age rendering (lastDeployLabel,
-// internal/tui/app.go), since the CLI's output is scriptable and an
-// absolute, stable format is preferable there (see formatLastDeploy's doc
-// comment in status.go).
+// deliberately NOT a relative-age rendering, since the CLI's output is
+// scriptable and an absolute, stable format is preferable there (see
+// formatLastDeploy's doc comment in status.go).
 func TestShowGameStatus_AfterDeploy_ShowsTimestampInText(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	require.NoError(t, svc.AddGame(game))

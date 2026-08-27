@@ -451,7 +451,7 @@ func TestService_PlanInstall_MixedCategoriesNoPrimaryPicksMainFile(t *testing.T)
 
 // TestService_PlanInstall_AuthRequiredSourceWrapsErrAuthRequired proves the
 // returned error still satisfies errors.Is(err, domain.ErrAuthRequired) so a
-// TUI caller can render its auth hint - PlanInstall does not (and must not)
+// caller can render its own auth hint - PlanInstall does not (and must not)
 // call the CLI's own authPromptError formatting.
 func TestService_PlanInstall_AuthRequiredSourceWrapsErrAuthRequired(t *testing.T) {
 	svc := newFlowsTestService(t)
@@ -2495,8 +2495,7 @@ func TestService_ApplyInstall_BatchPath_TargetFileIDs_ArchivedWithoutShowArchive
 // only opts.TargetVersion (plan.Files still PlanInstall's latest default)
 // must get the target version installed - previously TargetVersion was
 // documented-inert there (the CLI compensated by overriding plan.Files), so
-// a future core caller (the TUI version picker) would silently install
-// latest.
+// a future core caller would silently install latest.
 func TestService_ApplyInstall_StrictPath_TargetVersion_ResolvedInCore(t *testing.T) {
 	svc, game, _ := setupInterplayService(t, false)
 
@@ -2530,8 +2529,8 @@ func TestService_ApplyInstall_StrictPath_TargetVersion_CallerSelectionWithinVers
 	require.NoError(t, err)
 	require.Empty(t, plan.Dependencies)
 
-	// The caller (the CLI's selectInstallFiles, or a TUI picker) chose the
-	// version pool's NON-default file.
+	// The caller (the CLI's selectInstallFiles) chose the version pool's
+	// NON-default file.
 	plan.Files = []domain.DownloadableFile{interplayRootFiles()[1]} // root-main-1, v1.0
 	fetchesBeforeApply := mock.fileFetches.Load()
 

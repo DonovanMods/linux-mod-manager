@@ -341,7 +341,7 @@ func renderVerifyEvent(ev core.VerifyEvent) {
 		}
 
 	case core.VerifyEvProgress:
-		// No CLI rendering - a TUI-only status-line signal (#224).
+		// Not rendered by the CLI (#224).
 	}
 }
 

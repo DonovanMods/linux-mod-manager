@@ -385,11 +385,11 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 	}
 }
 
-// TestVerify_VersionMismatchFinding_CarriesRecordedEffective is the TUI
-// layout-rework (#224 follow-up) TDD guard: the Health screen's VERSION
-// column needs the recorded/effective versions directly on VerifyFinding,
-// not just the VerifyEvent's extras (which a non-progress-subscribed caller
-// never sees) - see VerifyFinding.Recorded/Effective's own doc comment.
+// TestVerify_VersionMismatchFinding_CarriesRecordedEffective is the #224
+// follow-up TDD guard: a caller with only the final VerifyResult needs the
+// recorded/effective versions directly on VerifyFinding, not just the
+// VerifyEvent's extras (which a non-progress-subscribed caller never sees)
+// - see VerifyFinding.Recorded/Effective's own doc comment.
 func TestVerify_VersionMismatchFinding_CarriesRecordedEffective(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
@@ -416,8 +416,8 @@ func TestVerify_VersionMismatchFinding_CarriesRecordedEffective(t *testing.T) {
 	require.Equal(t, "2.0", mismatch.Effective, "VerifyFinding.Effective must carry the source-reported version")
 }
 
-// TestVerify_MissingFinding_CarriesVersion is the TUI layout-rework (#224
-// follow-up) TDD guard: the Health screen's VERSION column needs the
+// TestVerify_MissingFinding_CarriesVersion is the #224 follow-up TDD guard:
+// a caller with only the final VerifyResult needs the
 // installed mod's recorded version directly on a "missing" VerifyFinding,
 // mirroring the VerifyEvent.Version extra the CLI already renders from.
 func TestVerify_MissingFinding_CarriesVersion(t *testing.T) {
@@ -608,7 +608,7 @@ func TestVerify_ContextCancelledMidVersionPass(t *testing.T) {
 // errRedownloadRepair is a fixed sentinel error used by the fix-mode fake
 // sources below so a failed repair's finding.Note (the bare err.Error(),
 // what --json exposes) and its RepairDetail.Detail (a full sentence, what
-// the CLI's/TUI's text rendering shows) can be asserted against each other
+// the CLI's text rendering shows) can be asserted against each other
 // precisely, independent of the real downloader's own wrapped error text.
 var errRedownloadRepair = errors.New("redownload boom")
 
@@ -789,7 +789,7 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 		require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "ok"}}, result.Findings)
 
 		// The "checksum populated" outcome is a main-line "ok" row, not a
-		// RepairDetail sub-line - the CLI/TUI render it via Variant, not an
+		// RepairDetail sub-line - the CLI renders it via Variant, not an
 		// indented detail.
 		require.Empty(t, repairDetails(events))
 		var findingEvent *core.VerifyEvent

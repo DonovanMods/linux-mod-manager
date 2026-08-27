@@ -1282,9 +1282,8 @@ func anyFileHasVersion(files []domain.DownloadableFile) bool {
 // with allowFallback=false (doProfileApply's only caller is deploy-class, so
 // no allowFallback parameter is needed here) exactly - same precedence,
 // byte-identical error wording, so callers/tests can't tell which package
-// produced a given error. See the CANONICAL NOTE at
-// internal/tui/service_core.go:254-261 for why this is a hand-duplicated
-// twin rather than a shared helper (cmd/lmm is package main).
+// produced a given error. This is a hand-duplicated twin rather than a
+// shared helper because cmd/lmm is package main.
 //
 // version == "" (legacy refs) and version-less file lists (the #130 vacuous
 // rule) fall through to the pre-#96 behavior unchanged: storedFileIDs found

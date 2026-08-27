@@ -282,7 +282,7 @@ type AggregateSearchResult struct {
 	// TotalCount is summed across sources with INDEPENDENT per-source
 	// pagination cursors, so a caller cannot derive "is there a next page"
 	// from TotalCount and a single global PageSize the way single-source
-	// search can (see internal/tui/search.go's hasNextPage): 3 sources whose
+	// search can (see sourceHasMore below): 3 sources whose
 	// entire 10-mod catalog fits on page 0 sum to a TotalCount of 30, which
 	// against a pageSize of 10 falsely implies 3 pages exist, when actually
 	// every source already returned everything it has. Exhausted applies
@@ -298,18 +298,18 @@ type AggregateSearchResult struct {
 	// counted here. Zero means NONE of the game's sources support searching
 	// at all, which is indistinguishable from a genuine zero-result search
 	// unless a caller checks this field - the honesty-notice fix (#58 item
-	// 3): CLI/TUI render a distinct "no source supports search" notice
+	// 3): callers render a distinct "no source supports search" notice
 	// instead of a plain "no mods found" when this is 0.
 	AttemptedCount int
 }
 
 // sourceHasMore reports whether res (one source's response to the given
-// page/pageSize request) might have a page N+1 - the exact per-single-source
-// heuristic internal/tui/search.go's hasNextPage already applies (TotalCount
-// bounds it precisely when the source reports one; otherwise a full page
-// might mean more, a short one means none) - applied here per CONTRIBUTING
-// SOURCE so SearchAllSources can tell a truly-exhausted merge from one that
-// might still have more (see AggregateSearchResult.Exhausted's doc comment).
+// page/pageSize request) might have a page N+1, using the per-single-source
+// heuristic (TotalCount bounds it precisely when the source reports one;
+// otherwise a full page might mean more, a short one means none) - applied
+// here per CONTRIBUTING SOURCE so SearchAllSources can tell a
+// truly-exhausted merge from one that might still have more (see
+// AggregateSearchResult.Exhausted's doc comment).
 // pageSize <= 0 (e.g. the CLI's "let the source apply its own default" case,
 // see cmd/lmm/search.go's searchPageSize) has no next-page concept at all.
 func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
@@ -493,7 +493,7 @@ func (s *Service) ResolveModVersion(ctx context.Context, sourceID string, mod *d
 }
 
 // AvailableModVersions lists the distinct per-file versions mod's source
-// reports, in first-seen order - the TUI version picker's data (#97).
+// reports, in first-seen order (#97).
 // Wraps source.ErrNotSupported (same format as ResolveVersionFiles) when
 // the file list carries no version info at all.
 func (s *Service) AvailableModVersions(ctx context.Context, sourceID string, mod *domain.Mod) ([]string, error) {
@@ -1180,11 +1180,6 @@ func (s *Service) GetLinker(method domain.LinkMethod) linker.Linker {
 	return linker.New(method)
 }
 
-// GetDefaultLinkMethod returns the default link method from config
-func (s *Service) GetDefaultLinkMethod() domain.LinkMethod {
-	return s.config.DefaultLinkMethod
-}
-
 // GetGameLinkMethod returns the effective link method for a game.
 // Uses the game's explicit setting if configured, otherwise falls back to global default.
 func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
@@ -1254,11 +1249,6 @@ func (s *Service) NewProfileManager() *ProfileManager {
 // NewUpdater returns an Updater wired to this service's source registry.
 func (s *Service) NewUpdater() *Updater {
 	return NewUpdater(s.registry)
-}
-
-// Cache returns the default cache manager
-func (s *Service) Cache() *cache.Cache {
-	return s.cache
 }
 
 // GetGameCachePath returns the effective cache path for a game.

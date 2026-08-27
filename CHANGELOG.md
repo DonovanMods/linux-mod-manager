@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The interactive terminal UI (`lmm tui`) and the `internal/tui` package. v2's interfaces are the CLI and, in a later release, a local web UI (`lmm serve`). Design: `docs/plans/2026-08-27-v2-core-refactor-design.md`.
+
+### Changed
+
+- Building lmm now requires Go 1.27.
+
 ## [1.30.1] - 2026-08-08
 
 ### Changed

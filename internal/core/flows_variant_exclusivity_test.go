@@ -333,11 +333,8 @@ func TestApplyInstall_BatchPath_Success_StillRunsBeforeAll(t *testing.T) {
 }
 
 // TestPlanInstall_BothVariants_DefaultsToExmodz is #211's parity acceptance:
-// PlanInstall's non-interactive default (what the TUI, --yes, and every
-// batch path install) must pick the exmodz variant when both exist. The TUI
-// has no file chooser and installs plan.Files exactly as planned
-// (internal/tui/service_core.go), so this single core assertion covers both
-// interfaces.
+// PlanInstall's non-interactive default (used by --yes and every batch path
+// install) must pick the exmodz variant when both exist.
 func TestPlanInstall_BothVariants_DefaultsToExmodz(t *testing.T) {
 	svc, game, mc := setupVariantExclusivityService(t)
 

@@ -72,9 +72,8 @@ type mergeSourceClassifier func(id string) (kind string, convertible bool)
 // retained-source disk checks (unlike enabledMergeSources, which
 // additionally confirms ingest actually RETAINED something). Callers that
 // only need "does pak-conversion state have any effect on this mod at all"
-// - e.g. the TUI deciding whether to show the "raw" flag or honor the
-// convert-toggle key - want this cheaper check, not enabledMergeSources'
-// full retained-file resolution. A game with no (or an ambiguous)
+// want this cheaper check, not enabledMergeSources' full retained-file
+// resolution. A game with no (or an ambiguous)
 // merge-compiler source has no merge sources of any kind, so resolution
 // failure is simply false, not an error. Deliberately NOT gated on
 // game.DeployMode: `lmm mod convert` persists the per-mod flag on
@@ -224,14 +223,6 @@ func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]
 		}
 	}
 	return sources, nil
-}
-
-// EnabledMergeSourcesForTest exposes enabledMergeSources to external
-// (core_test package) tests - the method itself stays unexported since it
-// is an internal implementation detail of syncMergedPak, not part of
-// Service's public API.
-func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName string) ([]source.MergeSource, error) {
-	return s.enabledMergeSources(game, profileName)
 }
 
 // syncMergedPak regenerates game+profileName's merged pak if its recorded
@@ -696,17 +687,6 @@ func sameMemberSet(a, b []string) bool {
 	return true
 }
 
-// ReconcilePakManifestsForTest exposes reconcilePakManifests to external
-// (core_test package) fault-injection tests, which need to pass a caller-
-// constructed Installer wrapping a fault-injecting linker directly - the
-// same installer parameter production syncMergedPak already threads
-// through, just supplied by the test instead of GetInstallerForProfile.
-// The method itself stays unexported; this mirrors EnabledMergeSourcesForTest
-// above.
-func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) ([]string, error) {
-	return s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
-}
-
 // classifyCompileDeployMods pre-classifies each mod DeployProfile is about
 // to deploy on a DeployCompile game (#255): a mod contributing at least one
 // enabled merge source is DeployModMerged (its content will ride the merged
@@ -770,7 +750,7 @@ func (s *Service) classifyCompileDeployMods(game *domain.Game, profileName strin
 // fingerprint (MergedPakOutcomes) is the authoritative record of which
 // mods' content the merged artifact carries and which participants fell
 // back to a raw individual deploy. The artifact name and counts land on
-// result (for progress-less callers - the TUI) and as one DeployMergeSynced
+// result (for progress-less callers) and as one DeployMergeSynced
 // event. A missing fingerprint means no merged artifact exists (zero merge
 // participants - the uninstall-to-zero path) so there is nothing to report;
 // resolution failures likewise skip the readout rather than fail an

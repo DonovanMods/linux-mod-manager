@@ -27,7 +27,6 @@ func TestGenManTree_ProducesPageForEveryVisibleCommand(t *testing.T) {
 
 	wantPages := []string{
 		"lmm.1",
-		"lmm-tui.1",
 		"lmm-import.1",
 		"lmm-source.1",
 		"lmm-auth.1",
@@ -39,7 +38,10 @@ func TestGenManTree_ProducesPageForEveryVisibleCommand(t *testing.T) {
 		assert.NoError(t, err, "expected %s to be generated", page)
 	}
 
-	_, err := os.Stat(filepath.Join(dir, "lmm-gen-man.1"))
+	_, err := os.Stat(filepath.Join(dir, "lmm-tui.1"))
+	assert.True(t, os.IsNotExist(err), "lmm tui was removed in v2; gen-man must not produce a page for it")
+
+	_, err = os.Stat(filepath.Join(dir, "lmm-gen-man.1"))
 	assert.True(t, os.IsNotExist(err), "gen-man is Hidden and must not get its own page")
 }
 
