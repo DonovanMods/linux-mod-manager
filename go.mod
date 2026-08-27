@@ -1,6 +1,6 @@
 module github.com/DonovanMods/linux-mod-manager
 
-go 1.25.6
+go 1.27
 
 require (
 	github.com/DonovanMods/go-unrealpak v0.1.0
