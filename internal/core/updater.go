@@ -148,12 +148,11 @@ func IsNewerVersion(currentVersion, newVersion string) bool {
 	return domain.IsNewerVersion(currentVersion, newVersion)
 }
 
-// CheckGameUpdates is the single seam CLI and TUI both check updates
-// through (#196/#197): it combines Updater.CheckUpdates' remote version
+// CheckGameUpdates is the single seam CLI checks updates through
+// (#196/#197): it combines Updater.CheckUpdates' remote version
 // checks with CheckMergedPakStaleness' local merged-pak staleness scan
 // (#197's generalization of #196's per-mod base-pak check to the merged
-// model), so "does this profile need attention" means the same thing in
-// both interfaces. profileName is required (#197): staleness is scoped to
+// model). profileName is required (#197): staleness is scoped to
 // ONE profile's merged pak, not the whole game.
 //
 // Errors from either half are tolerated the same way CheckUpdates already

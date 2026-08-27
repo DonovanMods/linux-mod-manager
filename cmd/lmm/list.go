@@ -132,9 +132,8 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 	// untracked mod must never silently deploy), which would make such a
 	// mod vanish from a listing instead of just being placed first (lowest
 	// priority, since it has no claim to "final say"). OrderByProfile is
-	// the same never-omitting seam the TUI's mod list already uses
-	// (internal/tui/service_core.go's Overview) - reusing it here keeps the
-	// CLI and TUI in agreement on what "the load order" looks like.
+	// the never-omitting seam that keeps every installed mod visible in
+	// the listing.
 	mods = core.OrderByProfile(profileYAML, mods)
 
 	if jsonOutput {

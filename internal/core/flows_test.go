@@ -2365,7 +2365,7 @@ exit 1`)
 // iterations, aborting BETWEEN mods (never mid-file-operation) with the
 // established partial-result convention (see
 // TestService_DeployProfile_FatalErrorAfterAccumulatedDiagnostic_ReturnsPartialResult) -
-// the seam 5b's cancel-then-drain quit path (TUI) relies on. The progress
+// the seam 5b's cancel-then-drain quit path relies on. The progress
 // callback cancels ctx the instant the first mod's DeployDeployed event
 // fires; the second and third mods must never be touched at all.
 func TestService_DeployProfile_ContextCancelledBetweenMods_ReturnsPartialResultWithCtxErr(t *testing.T) {
@@ -2672,8 +2672,8 @@ func TestService_PlanProfileSwitch_UnknownTargetProfileReturnsError(t *testing.T
 }
 
 // TestService_PlanProfileSwitch_PerformsZeroMutations guards the
-// "pure computation" contract the TUI depends on: calling
-// PlanProfileSwitch speculatively (e.g. to render a confirmation modal) and
+// "pure computation" contract callers depend on: calling
+// PlanProfileSwitch speculatively (e.g. to render a confirmation prompt) and
 // discarding the result must leave the DB, cache, and profile YAMLs
 // byte-for-byte untouched.
 func TestService_PlanProfileSwitch_PerformsZeroMutations(t *testing.T) {

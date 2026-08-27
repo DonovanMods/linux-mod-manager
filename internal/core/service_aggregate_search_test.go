@@ -209,9 +209,9 @@ func TestSearchAllSourcesNotExhaustedWhenASourceHasMore(t *testing.T) {
 }
 
 // TestSearchAllSourcesExhaustedFallsBackToShortPageWhenTotalUnknown mirrors
-// the single-source hasNextPage fallback (internal/tui/search.go) for a
-// source that reports no TotalCount at all: a short (partial) page is the
-// only available "no more" signal.
+// the single-source sourceHasMore fallback for a source that reports no
+// TotalCount at all: a short (partial) page is the only available "no more"
+// signal.
 func TestSearchAllSourcesExhaustedFallsBackToShortPageWhenTotalUnknown(t *testing.T) {
 	shortPage := &searchStubSource{id: "alpha", result: source.SearchResult{Mods: mods("alpha", "m1"), TotalCount: 0}}
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, shortPage)

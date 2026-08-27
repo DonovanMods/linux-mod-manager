@@ -165,8 +165,8 @@ func cacheDirExists(path string) (bool, error) {
 // (pre-refactor) - the cmd/svc/game/profile parameters are replaced by the
 // verifyRun receiver (svc/game/profile come from r), and every inline
 // fmt.Printf (previously gated on !jsonOutput) is now an unconditional
-// VerifyEvRepairDetail emission: the CLI/TUI's own renderer decides
-// whether to print it, same as every other repair site ported in Task 4.
+// VerifyEvRepairDetail emission: the CLI's own renderer decides whether to
+// print it, same as every other repair site ported in Task 4.
 func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledMod, effective string) (note string, siblingFailures int, err error) {
 	recorded := mod.Version
 	gameCache := r.svc.GetGameCache(r.game)

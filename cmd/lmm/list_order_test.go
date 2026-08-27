@@ -73,10 +73,9 @@ func TestList_DisplaysProfileLoadOrder_NotInstallOrder(t *testing.T) {
 // deliberately OMITS a mod absent from the profile's load order - correct
 // for deploy, since an untracked mod must never silently deploy, but wrong
 // for a listing, where every installed mod must still be visible. list.go
-// uses core.OrderByProfile instead (the same seam the TUI's mod list
-// already uses - internal/tui/service_core.go's Overview), which never
-// omits: a load-order-absent mod is placed first (lowest priority - it has
-// no claim to "final say"), never dropped.
+// uses core.OrderByProfile instead, which never omits: a load-order-absent
+// mod is placed first (lowest priority - it has no claim to "final say"),
+// never dropped.
 func TestList_ModMissingFromLoadOrder_StillShown(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	seedDeployableMod(t, svc, game, "a", "Tracked Mod", "a.esp")

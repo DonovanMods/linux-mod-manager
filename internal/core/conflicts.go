@@ -54,8 +54,8 @@ type ProfileConflict struct {
 // query aborting - mirroring OrderByProfile's nil handling. The query reads
 // the DB (GetInstalledMods, GetFileOwner) and walks each enabled mod's cache
 // directory (ListFiles); ctx is checked between per-mod cache walks so a
-// caller cancelling mid-query (e.g. the TUI's quit-drain) gets ctx.Err()
-// promptly instead of paying for the remaining walks.
+// caller cancelling mid-query gets ctx.Err() promptly instead of paying for
+// the remaining walks.
 func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, profileName string) ([]ProfileConflict, error) {
 	mods, err := s.GetInstalledMods(game.ID, profileName)
 	if err != nil {

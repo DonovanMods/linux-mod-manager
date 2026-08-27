@@ -14,8 +14,8 @@ import (
 // profile, its local install state. Composed here rather than in each caller
 // because the install state spans three stores - the DB row (version,
 // policy), the profile YAML (lock), and the game config (pak conversion
-// eligibility) - and the CLI/TUI parity directive forbids each surface
-// re-deriving that join for itself (#86).
+// eligibility) - and the parity directive forbids each frontend re-deriving
+// that join for itself (#86).
 type ModDetail struct {
 	Mod       *domain.Mod
 	Installed *InstalledDetail

@@ -181,7 +181,7 @@ func (s *Icarus) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Dow
 	} else {
 		// #211: with both variants published, the mergeable exmodz is the
 		// default everywhere IsPrimary is honored (CLI default mark, --yes,
-		// TUI plan, batch, profile apply, selectDeployFiles) - the prebuilt
+		// batch, profile apply, selectDeployFiles) - the prebuilt
 		// pak stays explicitly selectable.
 		for i := range out {
 			if out[i].ID == "exmodz" {
