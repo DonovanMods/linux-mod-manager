@@ -35,8 +35,8 @@ type VerifyOptions struct {
 // Recorded/Effective/Version mirror the identically-named VerifyEvent extras
 // (Recorded/Effective for version_mismatch, Version for missing) - additive
 // fields (#224 follow-up) so a caller that only has the final VerifyResult
-// (not a progress listener) can still render them, e.g. the Health
-// screen's VERSION column. resolveLast clears them whenever a
+// (not a progress listener) can still render the recorded/effective
+// versions. resolveLast clears them whenever a
 // row's Status resolves away from missing/version_mismatch, so a repaired
 // row never carries a stale pre-repair value. The CLI's own text/JSON
 // rendering is untouched by these fields - it still reads the VerifyEvent

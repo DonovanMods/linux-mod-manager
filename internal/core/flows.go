@@ -2391,7 +2391,7 @@ type SwitchPlan struct {
 // PlanProfileSwitch computes the diff between game's currently-active
 // default profile and target, without mutating anything (no DB writes, no
 // filesystem changes, no deploys) - callers may call this speculatively (to
-// render a confirmation modal) and discard the result without consequence.
+// render a confirmation prompt) and discard the result without consequence.
 // See SwitchPlan's doc comment; ctx is accepted for API consistency with the
 // rest of Service's methods and future-proofing, even though today's
 // algorithm performs no I/O that needs it.

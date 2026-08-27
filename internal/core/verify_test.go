@@ -386,7 +386,7 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 }
 
 // TestVerify_VersionMismatchFinding_CarriesRecordedEffective is the #224
-// follow-up TDD guard: the Health screen's VERSION column needs the
+// follow-up TDD guard: a caller with only the final VerifyResult needs the
 // recorded/effective versions directly on VerifyFinding, not just the
 // VerifyEvent's extras (which a non-progress-subscribed caller never sees)
 // - see VerifyFinding.Recorded/Effective's own doc comment.
@@ -417,7 +417,7 @@ func TestVerify_VersionMismatchFinding_CarriesRecordedEffective(t *testing.T) {
 }
 
 // TestVerify_MissingFinding_CarriesVersion is the #224 follow-up TDD guard:
-// the Health screen's VERSION column needs the
+// a caller with only the final VerifyResult needs the
 // installed mod's recorded version directly on a "missing" VerifyFinding,
 // mirroring the VerifyEvent.Version extra the CLI already renders from.
 func TestVerify_MissingFinding_CarriesVersion(t *testing.T) {
