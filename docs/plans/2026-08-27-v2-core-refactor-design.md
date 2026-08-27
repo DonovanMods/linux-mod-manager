@@ -89,8 +89,12 @@ output plus 32 golden files.
   explicit `--base v2`. `develop` and `main` remain the v1 line (v1 fixes and any v1
   features keep flowing develop → main as today). At v2.0.0, `v2` is PR'd into `main`
   as the release and `develop` is fast-forwarded to it; whether a `v1` maintenance
-  branch is kept afterwards is decided at that point. `v2` should carry the same
-  ruleset protection as `develop` (PRs required, Copilot review, no force-push).
+  branch is kept afterwards is decided at that point. `v2` is ruleset-protected
+  against deletion and force-push only ("Protect v2", 21684423); **PRs are not
+  enforced until the v2 public-release milestone** — the internal SDD review loop and
+  the phase-end whole-branch live review are the gates. PRs remain available on demand
+  for an independent (Copilot) review of a specific unit. At the public-release
+  milestone the ruleset is brought up to `develop`'s (PR required, Copilot review).
 - **Versioning:** v1.30.x is the public line. Everything here lands on `v2`
   unreleased. v2.0.0 is one deliberate cut, timed after Phase 3 or after `serve` —
   decided then. No interim pre-releases. `--json` shapes may change once, at v2.0.0.
@@ -437,13 +441,15 @@ The pre-change CLI is the spec.
   filter (no milestones, per policy).
 - A second, mostly-empty EPIC "v2: `lmm serve` local web UI" holds the intents of the
   closed TUI issues as a checklist. Not designed now.
-- Process is the develop-branch workflow with `v2` substituted for `develop`: Orca
-  `orchestration` by name; worktrees via
-  `orca-ide worktree create --base-branch v2 --issue <n>`; SDD review policy; PRs
-  `--base v2` (main is still the default branch, so a forgotten flag is caught by
-  protection, as today); issues close at the `v2` merge with the usual
-  merged-but-unreleased comment; no version bumps; CHANGELOG under `[Unreleased]`
-  (the whole block moves at v2.0.0).
+- Process is the develop-branch workflow with `v2` substituted for `develop`, minus
+  mandatory PRs: Orca `orchestration` by name; worktrees via
+  `orca-ide worktree create --base-branch v2 --issue <n>`; SDD review policy
+  (implementer → reviewer → fix waves) per unit; each unit is still its own story
+  branch, **merged into `v2` locally with `--no-ff`** so it stays one revertable merge
+  commit; issues close at that merge with a comment naming the merge commit; no
+  version bumps; CHANGELOG under `[Unreleased]` (the whole block moves at v2.0.0).
+  Open a PR `--base v2` only when an independent Copilot review is wanted (recommended
+  for the `DeployProgress` contract change and each phase-end integration).
 - **v1 work continues on `develop`/`main` untouched.** Anything that lands there and is
   also wanted in v2 is cherry-picked onto `v2` with manual resolution (expected once the
   TUI is gone); never merge `develop` or `main` wholesale into `v2`. Keep v1 traffic to
@@ -477,6 +483,7 @@ BepInEx) — they resume after Phase 1 on the new contracts.
 | 2026-08-27 | TUI removed first, not carried | Adapter is Bubble-Tea-shaped, not HTTP-shaped; avoids 3× seam changes |
 | 2026-08-27 | Approach C (contracts first) | Deliberate API without rewrite risk; develop stays shippable |
 | 2026-08-27 | v1.30.x stays on develop/main; v2 on a dedicated `v2` branch until one v2.0.0 cut | Sparse versioning; v1 fixes keep flowing; JSON shapes may change once |
+| 2026-08-27 | No mandatory PRs on `v2` until public release; deletion + force-push still blocked; `--no-ff` local merges per unit | Solo-dev velocity; SDD loop + phase-end live review are the real gates; history stays revertable per unit |
 | 2026-08-27 | `internal/app` composition root | Keeps concrete sources out of core; one bootstrap for both frontends |
 | 2026-08-27 | Boundary enforced by ratchet test | The parity directive was unenforced and half-worked |
 | 2026-08-27 | Trailing `EventSink` param; typed events; fixed envelope | Explicit, per-operation, serializable; kills ctx smuggling |
