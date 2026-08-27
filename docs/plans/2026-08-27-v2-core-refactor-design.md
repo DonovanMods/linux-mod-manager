@@ -67,8 +67,10 @@ are callback gates (`InstallOptions.ConfirmConflicts`, `ProfileImportOptions.Con
    Mutating commands have no `--json`. Bootstrap (paths, dir hardening, source
    registration, ~140 LOC in `root.go`) lives in cmd; no `XDG_*` support (#270).
 5. `flows.go` is 5,469 lines; `service.go` 1,466.
-6. 5 exported methods are called by nobody (`AddGame`, `IsSourceAuthenticated`,
-   `GetDefaultLinkMethod`, `GetInstaller`, `Cache`); two `…ForTest` exports.
+6. Two exported methods have no callers at all (`GetDefaultLinkMethod`, `Cache`);
+   three more have no production caller but heavy test use (`AddGame` ~120 refs,
+   `GetInstaller` ~70, `IsSourceAuthenticated` 5); two `…ForTest` exports serve
+   `package core_test` files.
 
 **Existing strengths to generalize:** the Plan/Apply pairs (`PlanInstall`/`ApplyInstall`,
 `PlanImport`/`ApplyImport`, `PlanProfileSwitch`/`ApplyProfileSwitch`); conflicts returned
@@ -111,7 +113,8 @@ cmd/lmm/            CLI only: cobra wiring, flags, rendering, prompts, range par
                     May import ONLY internal/app, internal/core, internal/domain,
                     internal/source (the interface package; no subpackages).
 internal/
-  app/              Composition root. app.Open(ctx, app.Options) (*core.Service, error):
+  app/              Composition root. app.Open(app.Options) (*core.Service, error)
+                    (gains ctx in Phase 1 alongside core.NewService):
                     path resolution (XDG + legacy fallback), directory creation and
                     0700 hardening, built-in source construction and API-key
                     resolution, custom-source loading. The ONLY package allowed to
@@ -149,8 +152,10 @@ two directions:
 
 - The 27 CLI-only primitives lose their external caller as each flow lifts and are
   **unexported in the same PR**. That is how "lifted" is verified.
-- The 5 never-called exports and the two `…ForTest` exports go in Phase 0 (the latter
-  move to `export_test.go`).
+- The two never-called exports go in Phase 0, and the two `…ForTest` exports move to
+  `export_test.go` there. `AddGame`, `GetInstaller`, `IsSourceAuthenticated` are
+  production-dead but test-used; they are unexported or removed in Phase 2 as the
+  tests that use them migrate with their flows.
 
 Net: ~90 → ~55–60 exported methods, all flows or queries a frontend legitimately needs,
 each with a doc comment.
@@ -374,7 +379,7 @@ will later map to HTTP statuses).
    `CLAUDE.md` "CLI and TUI are equally first-class" paragraph with the boundary rule
    and the new layout.
 2. `go.mod` → `go 1.27`.
-3. Delete the 5 never-called exports; move `EnabledMergeSourcesForTest` and
+3. Delete `GetDefaultLinkMethod` and `Cache`; move `EnabledMergeSourcesForTest` and
    `ReconcilePakManifestsForTest` into `export_test.go`.
 4. `internal/app` composition root + #270 XDG (legacy-path fallback when the XDG dir is
    absent and `~/.config/lmm` / `~/.local/share/lmm` exist; `--config`/`--data` still
