@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -87,36 +89,82 @@ func TestRunRoot_PropagatesContextCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-// TestRoot_LogLevel_InvalidRejectedBeforeSubcommand pins that an invalid
-// --log-level is rejected before any subcommand runs, even one that would
-// otherwise short-circuit (--help never opens a Service, so without eager
-// validation a bad level was silently never seen).
-func TestRoot_LogLevel_InvalidRejectedBeforeSubcommand(t *testing.T) {
-	// `lmm --log-level loud game list --help` must fail with the flag error and exit code 1,
-	// not print help (pre-fix: --help never opens a Service, so the bad level is never seen).
-	var out, errb bytes.Buffer
-	rootCmd.SetOut(&out)
-	rootCmd.SetErr(&errb)
-	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil); logLevel = "off" })
-	rootCmd.SetArgs([]string{"--log-level", "loud", "game", "list", "--help"})
-	err := rootCmd.ExecuteContext(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `invalid --log-level "loud"`)
-	assert.NotContains(t, out.String(), "Usage:")
+// TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere pins Important #1 of
+// the Task 1 review: an invalid --log-level must produce exactly
+// newCLILogger's error text - no pflag *InvalidValueError wrapper prefix
+// (`invalid argument %q for %q flag: `) and no `initializing service: `
+// prefix - on every path that can reach flag parsing, whether or not that
+// path would otherwise short-circuit past PersistentPreRunE (--help,
+// --version, completion) or open a Service (game list). Also pins that the
+// failure maps to Execute's exit-1 branch (not the exit-2 cancellation
+// branch) and that the printed text is byte-identical in both plain
+// (stderr) and --json (stdout) mode.
+func TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere(t *testing.T) {
+	const wantErrText = `invalid --log-level "loud": expected off, error, warn, info, or debug`
+	wantPlain := "Error: " + wantErrText + "\n"
+	wantJSON := `{"error":"invalid --log-level \"loud\": expected off, error, warn, info, or debug"}` + "\n"
+
+	cases := []struct {
+		name string
+		args []string
+		json bool
+	}{
+		{"game list plain", []string{"--log-level", "loud", "game", "list"}, false},
+		// --json must be parsed before --log-level: pflag's FlagSet.Parse
+		// stops at the first Set error, so a --json placed after the bad
+		// --log-level would never be reached.
+		{"game list --json", []string{"--json", "--log-level", "loud", "game", "list"}, true},
+		{"--help", []string{"--log-level", "loud", "--help"}, false},
+		{"--version", []string{"--log-level", "loud", "--version"}, false},
+		{"completion bash", []string{"--log-level", "loud", "completion", "bash"}, false},
+		{"game list --help", []string{"--log-level", "loud", "game", "list", "--help"}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, errb bytes.Buffer
+			rootCmd.SetOut(&out)
+			rootCmd.SetErr(&errb)
+			oldJSON := jsonOutput
+			jsonOutput = false
+			t.Cleanup(func() {
+				rootCmd.SetOut(nil)
+				rootCmd.SetErr(nil)
+				logLevel = "off"
+				jsonOutput = oldJSON
+			})
+			rootCmd.SetArgs(tc.args)
+
+			err := runRoot(context.Background())
+			require.Error(t, err)
+			assert.False(t, errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled),
+				"a flag-parse failure must map to Execute's exit-1 branch, not the exit-2 cancellation branch")
+			assert.EqualError(t, err, wantErrText)
+			assert.Equal(t, tc.json, jsonOutput, "jsonOutput must reflect whether --json was parsed before the flag error")
+			assert.NotContains(t, out.String(), "Usage:", "a flag-parse failure must not print cobra's usage/help text")
+
+			if tc.json {
+				printed := captureStdout(t, func() error { reportError(err); return nil })
+				assert.Equal(t, wantJSON, printed)
+			} else {
+				printed, _ := captureStderrErr(t, func() error { reportError(err); return nil })
+				assert.Equal(t, wantPlain, printed)
+			}
+		})
+	}
 }
 
-// TestRoot_LogLevel_InvalidRejectedBeforeVersion pins that PersistentPreRunE
-// on rootCmd runs for every subcommand, including built-in ones like
-// --version, since no subcommand in this tree defines its own
-// PersistentPreRun(E) to shadow it (cobra runs only the nearest one in the
-// command chain).
-func TestRoot_LogLevel_InvalidRejectedBeforeVersion(t *testing.T) {
-	var out, errb bytes.Buffer
-	rootCmd.SetOut(&out)
-	rootCmd.SetErr(&errb)
-	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil); logLevel = "off" })
-	rootCmd.SetArgs([]string{"--log-level", "loud", "--version"})
-	err := rootCmd.ExecuteContext(context.Background())
+// TestRoot_FlagErrorFunc_OnlyUnwrapsLogLevel pins that the pflag
+// InvalidValueError unwrap is scoped to --log-level only: an invalid value
+// for a different flag keeps cobra's default wrapped
+// `invalid argument %q for %q flag: ...` text untouched.
+func TestRoot_FlagErrorFunc_OnlyUnwrapsLogLevel(t *testing.T) {
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil) })
+	rootCmd.SetArgs([]string{"--json=notabool", "game", "list"})
+
+	err := runRoot(context.Background())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `invalid --log-level "loud"`)
+	assert.Contains(t, err.Error(), `invalid argument "notabool" for "--json" flag:`)
 }

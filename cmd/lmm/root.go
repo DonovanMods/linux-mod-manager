@@ -125,7 +125,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (NO_COLOR env is also honored)")
 	logLevel = "off"
-	rootCmd.PersistentFlags().Var(logLevelFlag{&logLevel}, "log-level", "diagnostic log level written to stderr (off, error, warn, info, debug)")
+	rootCmd.PersistentFlags().Var(logLevelFlag{&logLevel}, logLevelFlagName, "diagnostic log level written to stderr (off, error, warn, info, debug)")
+	rootCmd.SetFlagErrorFunc(logLevelFlagErrorFunc)
 }
 
 // stdoutColorCapable reports whether the live os.Stdout is a color-capable

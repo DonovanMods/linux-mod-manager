@@ -25,3 +25,47 @@ func TestNewCLILogger(t *testing.T) {
 	_, err = newCLILogger("loud", &buf)
 	assert.EqualError(t, err, `invalid --log-level "loud": expected off, error, warn, info, or debug`)
 }
+
+// TestLogLevelFlag covers logLevelFlag's pflag.Value implementation
+// directly (Minor #1 of the Task 1 review): String's nil-dest guard, Set
+// on every valid level plus one invalid value, and Type.
+func TestLogLevelFlag(t *testing.T) {
+	t.Run("String_NilDest", func(t *testing.T) {
+		var f logLevelFlag
+		assert.Empty(t, f.String())
+	})
+
+	t.Run("Type", func(t *testing.T) {
+		var dest string
+		f := logLevelFlag{&dest}
+		assert.Equal(t, "string", f.Type())
+	})
+
+	cases := []struct {
+		name    string
+		value   string
+		wantErr string
+	}{
+		{name: "off", value: "off"},
+		{name: "error", value: "error"},
+		{name: "warn", value: "warn"},
+		{name: "info", value: "info"},
+		{name: "debug", value: "debug"},
+		{name: "invalid", value: "loud", wantErr: `invalid --log-level "loud": expected off, error, warn, info, or debug`},
+	}
+	for _, tc := range cases {
+		t.Run("Set_"+tc.name, func(t *testing.T) {
+			var dest string
+			f := logLevelFlag{&dest}
+			err := f.Set(tc.value)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				assert.Equal(t, tc.value, dest)
+				assert.Equal(t, tc.value, f.String())
+				return
+			}
+			assert.EqualError(t, err, tc.wantErr)
+			assert.Empty(t, dest, "an invalid value must not be written to dest")
+		})
+	}
+}

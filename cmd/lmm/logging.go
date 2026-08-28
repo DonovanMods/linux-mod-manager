@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // newCLILogger builds the diagnostics logger for --log-level. "off" discards.
@@ -27,6 +31,10 @@ func newCLILogger(level string, w io.Writer) (*slog.Logger, error) {
 	}
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: lvl})), nil
 }
+
+// logLevelFlagName is the flag name registered in root.go's init() and
+// matched against in logLevelFlagErrorFunc.
+const logLevelFlagName = "log-level"
 
 // logLevelFlag is a pflag.Value wrapping --log-level's destination string.
 // Cobra checks --help and (when Version is set) --version at the top of a
@@ -54,3 +62,20 @@ func (f logLevelFlag) Set(v string) error {
 }
 
 func (f logLevelFlag) Type() string { return "string" }
+
+// logLevelFlagErrorFunc is rootCmd's FlagErrorFunc. pflag's FlagSet.Set
+// wraps every flag Value's Set error in *pflag.InvalidValueError, whose
+// Error() always prepends `invalid argument %q for %q flag: ` ahead of the
+// cause - for --log-level, that wrapper would make ParseFlags fail with a
+// different string than every other path that surfaces the same
+// validation (e.g. initServiceWith calling newCLILogger directly).
+// Unwrapping back to the cause here makes --log-level's error text
+// identical everywhere it's rejected. Every other flag's parse error is
+// returned unchanged, so it keeps cobra's default wrapped text.
+func logLevelFlagErrorFunc(_ *cobra.Command, err error) error {
+	var invalidErr *pflag.InvalidValueError
+	if errors.As(err, &invalidErr) && invalidErr.GetFlag() != nil && invalidErr.GetFlag().Name == logLevelFlagName {
+		return invalidErr.Unwrap()
+	}
+	return err
+}
