@@ -20,7 +20,7 @@ func newResolveTestService(t *testing.T) *core.Service {
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 

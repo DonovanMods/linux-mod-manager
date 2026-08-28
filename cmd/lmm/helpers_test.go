@@ -242,6 +242,7 @@ func TestWithService_PropagatesFnError(t *testing.T) {
 	dataDir = t.TempDir()
 
 	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
 	sentinel := errors.New("boom")
 
 	err := withService(cmd, func(ctx context.Context, svc *core.Service) error {
@@ -292,7 +293,7 @@ func TestWithGameService_ResolvesGame(t *testing.T) {
 	gameID = "testgame"
 
 	// Seed the game via a one-off service so withGameService can resolve it.
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
 	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:      "testgame",
@@ -302,6 +303,7 @@ func TestWithGameService_ResolvesGame(t *testing.T) {
 	require.NoError(t, svc.Close())
 
 	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
 	var seen *domain.Game
 
 	err = withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {

@@ -103,7 +103,7 @@ func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
 		t.Setenv(envVar, "env-value")
 
 		src := &keySource{id: "precedence-src", name: "Precedence Src", envKey: envVar}
-		registerSource(svc, src, os.Stderr)
+		registerSource(t.Context(), svc, src, os.Stderr)
 
 		assert.Equal(t, "env-value", src.apiKey)
 	})
@@ -114,7 +114,7 @@ func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
 		t.Setenv(envVar, "")
 
 		src := &keySource{id: "precedence-src", name: "Precedence Src", envKey: envVar}
-		registerSource(svc, src, os.Stderr)
+		registerSource(t.Context(), svc, src, os.Stderr)
 
 		assert.Equal(t, "token-value", src.apiKey)
 	})
@@ -130,7 +130,7 @@ func TestRegisterSources_BuiltinAuthenticatesWithEnvAndToken(t *testing.T) {
 	svc := newTestService(t)
 	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "stored-db-key"))
 
-	registerSources(svc, t.TempDir(), os.Stderr)
+	registerSources(t.Context(), svc, t.TempDir(), os.Stderr)
 
 	src, err := svc.GetSource("nexusmods")
 	require.NoError(t, err)
@@ -160,7 +160,7 @@ manifest:
 `)
 	t.Setenv("LMM_MY_CUSTOM_API_KEY", "custom-env-key")
 
-	registerSources(svc, cfgDir, os.Stderr)
+	registerSources(t.Context(), svc, cfgDir, os.Stderr)
 
 	src, err := svc.GetSource("my-custom")
 	require.NoError(t, err)
@@ -184,7 +184,7 @@ directory:
 `, t.TempDir()))
 
 	var warnBuf bytes.Buffer
-	registerSources(svc, cfgDir, &warnBuf)
+	registerSources(t.Context(), svc, cfgDir, &warnBuf)
 
 	src, err := svc.GetSource("nexusmods")
 	require.NoError(t, err)
@@ -244,7 +244,7 @@ directory:
 `) // construction-failure branch
 
 	var warnBuf bytes.Buffer
-	registerCustomSources(svc, cfgDir, &warnBuf)
+	registerCustomSources(t.Context(), svc, cfgDir, &warnBuf)
 
 	byID := map[string]source.ModSource{}
 	for _, s := range svc.ListSources() {

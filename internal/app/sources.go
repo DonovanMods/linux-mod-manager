@@ -31,16 +31,16 @@ var builtinSourceFactories = []func() source.ModSource{
 // registerSources registers the built-in sources followed by every custom
 // source definition under <cfgDir>/sources. Built-ins register first, so a
 // custom definition reusing a built-in ID loses the collision (and warns).
-func registerSources(svc *core.Service, cfgDir string, warn io.Writer) {
+func registerSources(ctx context.Context, svc *core.Service, cfgDir string, warn io.Writer) {
 	for _, factory := range builtinSourceFactories {
-		registerSource(svc, factory(), warn)
+		registerSource(ctx, svc, factory(), warn)
 	}
-	registerCustomSources(svc, cfgDir, warn)
+	registerCustomSources(ctx, svc, cfgDir, warn)
 }
 
 // registerSource attaches src's API key (when it declares Auth) and registers
 // it, unless the ID is already taken.
-func registerSource(svc *core.Service, src source.ModSource, warn io.Writer) {
+func registerSource(ctx context.Context, svc *core.Service, src source.ModSource, warn io.Writer) {
 	id := src.ID()
 	if _, err := svc.GetSource(id); err == nil {
 		_, _ = fmt.Fprintf(warn, "warning: skipping source %q: id already in use\n", id) //nolint:errcheck // best-effort warning write
@@ -49,7 +49,7 @@ func registerSource(svc *core.Service, src source.ModSource, warn io.Writer) {
 	// Gate on Capabilities().Auth: a key set on an auth-less source would be
 	// stored but never attached to a request.
 	if setter, ok := src.(interface{ SetAPIKey(string) }); ok && source.CapabilitiesOf(src).Auth {
-		if key := ResolveAPIKey(context.Background(), svc, src); key != "" {
+		if key := ResolveAPIKey(ctx, svc, src); key != "" {
 			setter.SetAPIKey(key)
 		}
 	}
@@ -59,7 +59,7 @@ func registerSource(svc *core.Service, src source.ModSource, warn io.Writer) {
 // registerCustomSources loads <cfgDir>/sources/*.yaml and registers each
 // definition, warning and skipping on load errors, construction failures, and
 // ID collisions.
-func registerCustomSources(svc *core.Service, cfgDir string, warn io.Writer) {
+func registerCustomSources(ctx context.Context, svc *core.Service, cfgDir string, warn io.Writer) {
 	defs, loadErrs, err := config.LoadSourceDefinitions(cfgDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(warn, "warning: loading custom sources: %v\n", err) //nolint:errcheck // best-effort warning write
@@ -74,7 +74,7 @@ func registerCustomSources(svc *core.Service, cfgDir string, warn io.Writer) {
 			_, _ = fmt.Fprintf(warn, "warning: skipping source %q: %v\n", def.ID, err) //nolint:errcheck // best-effort warning write
 			continue
 		}
-		registerSource(svc, src, warn)
+		registerSource(ctx, svc, src, warn)
 	}
 }
 

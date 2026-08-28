@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,8 +11,13 @@ import (
 
 // Open resolves the installation's paths, prepares its directories, opens the
 // core service, and registers every mod source. The caller owns the returned
-// service and must Close it.
-func Open(opts Options) (*core.Service, error) {
+// service and must Close it. ctx governs the bootstrap token reads that
+// source registration performs; an already-cancelled ctx aborts before any
+// directory or service work.
+func Open(ctx context.Context, opts Options) (*core.Service, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	p, err := ResolvePaths(opts)
 	if err != nil {
 		return nil, err
@@ -28,7 +34,7 @@ func Open(opts Options) (*core.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	registerSources(svc, p.ConfigDir, warnWriter(opts))
+	registerSources(ctx, svc, p.ConfigDir, warnWriter(opts))
 	return svc, nil
 }
 

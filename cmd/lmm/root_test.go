@@ -16,7 +16,7 @@ func TestInitService_RegistersSources(t *testing.T) {
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, svc.Close())
@@ -44,7 +44,7 @@ func TestInitService_UsesFlagsNotEnvironment(t *testing.T) {
 	configDir = t.TempDir()
 	dataDir = filepath.Join(t.TempDir(), "lmm")
 
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
