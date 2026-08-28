@@ -952,6 +952,7 @@ CONVERSION FAILED is read straight from the merged pak's stored fingerprint — 
 ```text
 cmd/lmm/                  # CLI entry point (Cobra)
 internal/
+├── app/                  # Composition root: app.Open resolves paths (XDG), prepares dirs, opens core, registers sources
 ├── domain/               # Core types (Mod, Profile, Game)
 ├── source/               # Mod source abstraction
 │   ├── nexusmods/        # NexusMods API client
