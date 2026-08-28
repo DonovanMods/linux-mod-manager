@@ -52,9 +52,9 @@ func (t *VerifyTier) UnmarshalText(b []byte) error {
 
 // VerifyOptions configures a Verify run.
 type VerifyOptions struct {
-	Tier      VerifyTier
-	Fix       bool
-	ModFilter string
+	Tier      VerifyTier `json:"tier"`
+	Fix       bool       `json:"fix"`
+	ModFilter string     `json:"mod_filter,omitempty"`
 }
 
 // VerifyFinding is one reported row - a per-file or per-mod outcome from a
@@ -84,10 +84,11 @@ type VerifyFinding struct {
 
 // VerifyResult is the accumulated outcome of a Verify run.
 type VerifyResult struct {
-	Findings         []VerifyFinding
-	Issues, Warnings int
-	Checked          int  // feeds the CLI's "No files found for mod X" gate
-	HasFiles         bool // false = the #217 empty-profile path ran
+	Findings []VerifyFinding `json:"findings"`
+	Issues   int             `json:"issues"`
+	Warnings int             `json:"warnings"`
+	Checked  int             `json:"checked"`   // feeds the CLI's "No files found for mod X" gate
+	HasFiles bool            `json:"has_files"` // false = the #217 empty-profile path ran
 }
 
 // VerifyEventKind identifies what a VerifyEvent carries.

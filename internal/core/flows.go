@@ -67,15 +67,15 @@ func (s *Service) reorderProfileMods(ctx context.Context, gameID, profileName st
 // byte-identical pre-5a output should print each entry to stdout ONLY
 // under --verbose, verbatim, e.g. `fmt.Printf("  %s\n", n)`.
 type EnableResult struct {
-	Changed bool
-	Notes   []string
+	Changed bool     `json:"changed"`
+	Notes   []string `json:"notes,omitempty"`
 	// Warnings holds diagnostics that must reach the user unconditionally
 	// (#197 postsmoke fix), unlike Notes' --verbose-only display contract -
 	// today, only a merged-pak sync failure. A silent sync failure here is
 	// exactly the class of bug the postsmoke fix-wave exists to close: the
 	// mod's Enabled bit flips, but the game directory may not actually
 	// reflect it.
-	Warnings []string
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // DisableResult reports the outcome of DisableMod. Changed mirrors
@@ -87,11 +87,11 @@ type EnableResult struct {
 // print each entry to stdout ONLY under --verbose, verbatim, e.g.
 // `fmt.Printf("  %s\n", n)`.
 type DisableResult struct {
-	Changed bool
-	Notes   []string
+	Changed bool     `json:"changed"`
+	Notes   []string `json:"notes,omitempty"`
 	// Warnings mirrors EnableResult.Warnings' identical rationale
 	// (#197 postsmoke fix): unconditional display, unlike Notes.
-	Warnings []string
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // EnableMod deploys an installed-but-disabled mod's files from the cache to
@@ -292,8 +292,8 @@ type UninstallOptions struct {
 // On error, the returned result carries any diagnostics accumulated before
 // the failure; callers should surface them alongside the error.
 type UninstallResult struct {
-	Warnings []string // unconditional, stderr, audience: operator/always-visible
-	Notes    []string // --verbose-gated, stdout, audience: diagnostic detail
+	Warnings []string `json:"warnings,omitempty"` // unconditional, stderr, audience: operator/always-visible
+	Notes    []string `json:"notes,omitempty"`    // --verbose-gated, stdout, audience: diagnostic detail
 }
 
 // UninstallMod removes a mod from the profile: runs uninstall hooks,
@@ -1182,10 +1182,10 @@ func (c *DeployModClass) UnmarshalText(b []byte) error {
 // On error, the returned result carries any diagnostics accumulated before
 // the failure; callers should surface them alongside the error.
 type DeployResult struct {
-	Deployed int
-	Skipped  []string
-	Warnings []string
-	Notes    []string
+	Deployed int      `json:"deployed"`
+	Skipped  []string `json:"skipped,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+	Notes    []string `json:"notes,omitempty"`
 
 	// MergedArtifact/MergedMods/RawFallbacks mirror the DeployMergeSynced
 	// event for callers with no event sink (#255 - a caller may pass
@@ -1195,9 +1195,9 @@ type DeployResult struct {
 	// deploy (failed conversion). All zero when the deploy produced/kept
 	// no merged artifact: non-compile games, or a compile profile with no
 	// merge participants.
-	MergedArtifact string
-	MergedMods     int
-	RawFallbacks   int
+	MergedArtifact string `json:"merged_artifact,omitempty"`
+	MergedMods     int    `json:"merged_mods"`
+	RawFallbacks   int    `json:"raw_fallbacks"`
 }
 
 // errNoDeployFiles mirrors cmd/lmm's errNoDownloadableFiles for the
@@ -2355,10 +2355,10 @@ type PurgeOptions struct {
 // len(Skipped) is doPurge's historical `failed` counter, so the CLI's
 // "Purged: N, Failed: M" summary comes from Purged and len(Skipped).
 type PurgeResult struct {
-	Purged   int
-	Skipped  []string
-	Warnings []string
-	Notes    []string
+	Purged   int      `json:"purged"`
+	Skipped  []string `json:"skipped,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+	Notes    []string `json:"notes,omitempty"`
 }
 
 // PurgeProfile undeploys every mod in mods from game's directory - the
@@ -2439,11 +2439,13 @@ func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileNa
 // ProfileManager.Switch implementation coexisted with it until #60 retired
 // it - this flow is the only switch implementation now.)
 type SwitchPlan struct {
-	GameID, From, To string
+	GameID string `json:"game_id"`
+	From   string `json:"from"`
+	To     string `json:"to"`
 
-	ToEnable  []domain.InstalledMod // installed+disabled (or installed under a different profile) -> enable, deployed under To
-	ToDisable []domain.InstalledMod // enabled under From but absent from To -> disable, undeployed under From
-	ToInstall []domain.ModReference // in To but not installed anywhere -> download+install (FileIDs preserved from the installed mod's own record when this is really a cache-miss redeploy - see PlanProfileSwitch)
+	ToEnable  []domain.InstalledMod `json:"to_enable"`  // installed+disabled (or installed under a different profile) -> enable, deployed under To
+	ToDisable []domain.InstalledMod `json:"to_disable"` // enabled under From but absent from To -> disable, undeployed under From
+	ToInstall []domain.ModReference `json:"to_install"` // in To but not installed anywhere -> download+install (FileIDs preserved from the installed mod's own record when this is really a cache-miss redeploy - see PlanProfileSwitch)
 
 	// PriorVersions carries, for each ToInstall entry that is really a #96
 	// version-drift convergence (keyed by domain.ModKey(SourceID, ModID)),
@@ -2454,10 +2456,10 @@ type SwitchPlan struct {
 	// the new version doesn't serve) rather than merely installed over -
 	// mirroring ApplyUpdate's Installer.Replace semantics. Absent for every
 	// other ToInstall entry (brand-new installs, cache-miss redeploys).
-	PriorVersions map[string]domain.InstalledMod
+	PriorVersions map[string]domain.InstalledMod `json:"prior_versions,omitempty"`
 
-	NoChanges     bool // To's mod set matches From's content-wise; only SetDefault is needed
-	AlreadyActive bool // To is already the active default profile; nothing to plan
+	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise; only SetDefault is needed
+	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
 }
 
 // PlanProfileSwitch computes the diff between game's currently-active
@@ -2618,12 +2620,14 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 // On error, the returned result carries any diagnostics/counts accumulated
 // before the failure; callers should surface them alongside the error.
 type SwitchResult struct {
-	Disabled, Enabled, Installed int
-	Notes                        []string
+	Disabled  int      `json:"disabled"`
+	Enabled   int      `json:"enabled"`
+	Installed int      `json:"installed"`
+	Notes     []string `json:"notes,omitempty"`
 	// Warnings holds diagnostics that must reach the user unconditionally
 	// (#197 postsmoke fix), unlike Notes' --verbose-only display contract -
 	// today, only a merged-pak sync failure for plan.To.
-	Warnings []string
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ApplyProfileSwitch executes a plan produced by PlanProfileSwitch: disables
@@ -2897,9 +2901,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 // execute one of these). Computed with zero side effects - see
 // PlanInstall's doc comment.
 type InstallPlan struct {
-	SourceID, GameID, Profile string
+	SourceID string `json:"source_id"`
+	GameID   string `json:"game_id"`
+	Profile  string `json:"profile"`
 
-	Mod domain.Mod // the mod that would be installed, freshly fetched via GetMod
+	Mod domain.Mod `json:"mod"` // the mod that would be installed, freshly fetched via GetMod
 
 	// Files is the file(s) that WOULD be downloaded: GetModFiles' result
 	// after filterAndSortInstallFiles (doInstall's filterAndSortFiles,
@@ -2913,7 +2919,7 @@ type InstallPlan struct {
 	// (see the task report). Always exactly one file in practice: neither
 	// selectDeployFiles nor this non-interactive default ever picks more
 	// than one without a stored/explicit multi-file selection.
-	Files []domain.DownloadableFile
+	Files []domain.DownloadableFile `json:"files"`
 
 	// Dependencies is target's resolved, not-yet-installed dependency chain,
 	// deepest dependency first (install order) - target itself is excluded
@@ -2930,7 +2936,7 @@ type InstallPlan struct {
 	// failing the plan either way, but (#52 item 10) only records a
 	// DependencyWarnings entry when the failure was something OTHER than
 	// source.ErrNotSupported - see DependencyWarnings.
-	Dependencies []domain.Mod
+	Dependencies []domain.Mod `json:"dependencies"`
 
 	// MissingDependencies records dependency references resolveDependencies
 	// found but couldn't resolve (source fetch failure, or a SourceID
@@ -2939,11 +2945,11 @@ type InstallPlan struct {
 	// brief's directional API struct; added because the brief's own framing
 	// ("output contains everything the CLI's pre-install prompts... need to
 	// display") requires it to reproduce that warning - see the task report.
-	MissingDependencies []domain.ModReference
+	MissingDependencies []domain.ModReference `json:"missing_dependencies,omitempty"`
 	// CycleDetected mirrors resolveDependencies' cycleDetected: a circular
 	// reference was found while resolving Dependencies (install order is
 	// best-effort). Same rationale as MissingDependencies.
-	CycleDetected bool
+	CycleDetected bool `json:"cycle_detected"`
 
 	// DependencyWarnings records one entry per GetDependencies call that
 	// failed with something OTHER than source.ErrNotSupported while
@@ -2957,7 +2963,7 @@ type InstallPlan struct {
 	// CycleDetected surface their own non-fatal degradations. Each entry is
 	// "<sourceID:modID>: <error>", already formatted for direct display
 	// (see resolveInstallDependencies).
-	DependencyWarnings []string
+	DependencyWarnings []string `json:"dependency_warnings,omitempty"`
 
 	// Conflicts lists files installing Mod would overwrite from OTHER
 	// installed mods, exactly as installer.GetConflicts reports them - but
@@ -2969,7 +2975,7 @@ type InstallPlan struct {
 	// confirmInstallConflicts, which likewise treats ANY GetConflicts error
 	// (a cache-miss included) as "no conflicts, continue" rather than an
 	// install-blocking failure - see the task report.
-	Conflicts []Conflict
+	Conflicts []Conflict `json:"conflicts,omitempty"`
 
 	// Replaces is the currently-installed row for (SourceID, Mod.ID,
 	// Profile), if any - non-nil means installing this plan would use
@@ -2978,13 +2984,13 @@ type InstallPlan struct {
 	// existingMod exactly: populated regardless of whether the installed
 	// version matches Mod.Version, so both a same-version reinstall and a
 	// version upgrade set this.
-	Replaces *domain.InstalledMod
+	Replaces *domain.InstalledMod `json:"replaces,omitempty"`
 
 	// TotalDownloadBytes is the sum of Files' declared sizes, or -1 if any
 	// selected file's size is unreported (Size <= 0, matching the
 	// DownloadEvent convention used elsewhere in this file: only a
 	// positive TotalBytes/Size is treated as "known").
-	TotalDownloadBytes int64
+	TotalDownloadBytes int64 `json:"total_download_bytes"`
 
 	// ShowArchived is the showArchived value PlanInstall was called with -
 	// stored on the plan (Phase 5b Task 2) so ApplyInstall can resolve each
@@ -2992,7 +2998,7 @@ type InstallPlan struct {
 	// Dependencies' doc comment) using the identical filter the CLI showed
 	// the user at plan time, without a second, possibly-inconsistent
 	// parameter on InstallOptions. "The plan is the contract."
-	ShowArchived bool
+	ShowArchived bool `json:"show_archived"`
 }
 
 // PlanInstall computes what installing (sourceID, modID) into profileName
@@ -3367,13 +3373,13 @@ type InstallResult struct {
 	// skip-and-continue semantics as every dependency (Fix wave 1 - see
 	// task-2-report.md's "Fix wave 1" entry) - a primary failure there
 	// populates Failed/Skipped below instead of returning an error.
-	Installed []string
+	Installed []string `json:"installed"`
 	// Skipped holds "<name>: <reason>" entries for any mod that failed in
 	// the BATCH (Dependencies-present) path - dependency OR primary alike
 	// (Fix wave 1 restored the primary's participation; see InstallOptions'
 	// Force doc comment). Always empty in the STRICT (no-deps) path, since
 	// a primary failure there returns an error instead.
-	Skipped []string
+	Skipped []string `json:"skipped,omitempty"`
 	// Failed holds JUST the display names (no reason - see Skipped for
 	// that) of every BATCH-path mod that failed, dependency or primary
 	// alike, in the SAME order Skipped uses - mirrors batchInstallMods' own
@@ -3381,14 +3387,14 @@ type InstallResult struct {
 	// restored terminal "--- Summary ---\nInstalled: %d\nFailed: %d (%s)\n"
 	// block joins verbatim (task-2-report.md's Fix wave 1). Always empty
 	// in the STRICT (no-deps) path.
-	Failed []string
+	Failed []string `json:"failed,omitempty"`
 
 	// FilesDeployed is the number of files extracted for the STRICT path's
 	// PRIMARY mod across all of plan.Files - mirrors doInstall's
 	// totalFileCount / the pre-extraction CLI's final "Files deployed: %d"
 	// line. Always 0 in the BATCH path (batchInstallMods' terminal summary
 	// never printed a file count, only Installed/Failed - see Failed).
-	FilesDeployed int
+	FilesDeployed int `json:"files_deployed"`
 
 	// MergedPakSyncFailed is true when this call's own end-of-install
 	// syncMergedPak attempt returned a hard error (#197 postsmoke review
@@ -3398,10 +3404,10 @@ type InstallResult struct {
 	// stderr). False when the sync succeeded, including when it returned
 	// its own non-fatal merge warnings - those still leave the pak
 	// deployed. Always false for a non-DeployCompile game.
-	MergedPakSyncFailed bool
+	MergedPakSyncFailed bool `json:"merged_pak_sync_failed"`
 
-	Warnings []string
-	Notes    []string
+	Warnings []string `json:"warnings,omitempty"`
+	Notes    []string `json:"notes,omitempty"`
 }
 
 // ensureProfileExists creates profileName if it doesn't exist yet, matching
@@ -4587,9 +4593,9 @@ type UpdateOptions struct {
 // On error, the returned result carries any diagnostics accumulated before
 // the failure; callers should surface them alongside the error.
 type UpdateApplyResult struct {
-	Applied  []string
-	Warnings []string
-	Notes    []string
+	Applied  []string `json:"applied"`
+	Warnings []string `json:"warnings,omitempty"`
+	Notes    []string `json:"notes,omitempty"`
 }
 
 // ErrModLocked reports an update apply refused because the profile ref is
@@ -4942,8 +4948,11 @@ type RollbackOptions struct {
 // accumulated before the failure; callers should surface them alongside the
 // error.
 type RollbackResult struct {
-	ModName, FromVersion, ToVersion string
-	Warnings, Notes                 []string
+	ModName     string   `json:"mod_name"`
+	FromVersion string   `json:"from_version"`
+	ToVersion   string   `json:"to_version"`
+	Warnings    []string `json:"warnings,omitempty"`
+	Notes       []string `json:"notes,omitempty"`
 }
 
 // ApplyRollback rolls the installed mod identified by sourceID/modID back to
@@ -5173,7 +5182,7 @@ type ImportPlan struct {
 	// Profile is the parsed-but-not-yet-saved profile (ProfileManager.
 	// ParseProfile's result) - its Name/Mods drive both the CLI's preview
 	// print and ApplyImport's own save step.
-	Profile *domain.Profile
+	Profile *domain.Profile `json:"profile,omitempty"`
 
 	// Installed holds every profile mod already installed (a DB row exists)
 	// at the profile's own version (or with no version recorded in the
@@ -5188,14 +5197,16 @@ type ImportPlan struct {
 	// across EVERY saved profile for the game, not just the one being
 	// imported into - doProfileImport's cross-profile scan, :428-438). All
 	// three preserve profile.Mods' own order.
-	Installed, NeedsRedownload, Missing []domain.ModReference
+	Installed       []domain.ModReference `json:"installed"`
+	NeedsRedownload []domain.ModReference `json:"needs_redownload"`
+	Missing         []domain.ModReference `json:"missing"`
 
 	// Exists reports whether a profile with this name is already saved for
 	// the game - purely informational (e.g. so a caller can warn before even
 	// attempting the save); ApplyImport does not consult it, instead letting
 	// ProfileManager.ImportWithOptions' own existence check (driven by
 	// ProfileImportOptions.Force) produce the authoritative error.
-	Exists bool
+	Exists bool `json:"exists"`
 
 	// data is the raw import bytes, preserved so ApplyImport can hand them
 	// to ProfileManager.ImportWithOptions unchanged - PlanImport parses via
@@ -5362,9 +5373,12 @@ type ProfileImportOptions struct {
 // accumulated before the failure (none, today, since the save is the very
 // first step) - callers should surface it alongside the error.
 type ProfileImportResult struct {
-	ProfileName                string
-	Installed, Failed, Skipped int
-	Warnings, Notes            []string
+	ProfileName string   `json:"profile_name"`
+	Installed   int      `json:"installed"`
+	Failed      int      `json:"failed"`
+	Skipped     int      `json:"skipped"`
+	Warnings    []string `json:"warnings,omitempty"`
+	Notes       []string `json:"notes,omitempty"`
 }
 
 // ApplyImport executes a plan produced by PlanImport: saves the profile

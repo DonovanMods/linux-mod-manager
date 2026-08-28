@@ -24,10 +24,10 @@ import (
 // an lmm cache root with no DB row at all (SourceID/ModID empty - a "sweep
 // find").
 type ConvergedFile struct {
-	Path     string // game-dir-relative
-	Reason   string // "no longer provided by <source>/<mod>" | "dangling link into lmm cache"
-	SourceID string // owning mod when known ("" for sweep finds with no row)
-	ModID    string
+	Path     string `json:"path"`                // game-dir-relative
+	Reason   string `json:"reason"`              // "no longer provided by <source>/<mod>" | "dangling link into lmm cache"
+	SourceID string `json:"source_id,omitempty"` // owning mod when known ("" for sweep finds with no row)
+	ModID    string `json:"mod_id,omitempty"`
 }
 
 // ConvergeResult is ConvergeDeployedFiles' outcome. Removed's meaning
@@ -39,7 +39,7 @@ type ConvergedFile struct {
 // read Removed's length, not the number of candidates detection found;
 // per-item failures are surfaced via the returned joined error instead.
 type ConvergeResult struct {
-	Removed []ConvergedFile
+	Removed []ConvergedFile `json:"removed"`
 }
 
 // ConvergeDeployedFiles reconciles gameDir/profileName's on-disk state

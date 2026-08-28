@@ -112,8 +112,8 @@ func UpdateCheckable(mod domain.InstalledMod) bool {
 // are reported separately because the remedies differ: a pin can be lifted, a
 // local mod can never be checked.
 type UpdateSkips struct {
-	Pinned int
-	Local  int
+	Pinned int `json:"pinned"`
+	Local  int `json:"local"`
 }
 
 // Total is the number of mods that will not be checked at all.

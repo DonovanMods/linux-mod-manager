@@ -64,18 +64,18 @@ func ParseLinkMethod(s string) (method LinkMethod, ok bool) {
 
 // Game represents a moddable game
 type Game struct {
-	ID                  string            // Unique slug, e.g., "skyrim-se"
-	Name                string            // Display name
-	InstallPath         string            // Game installation directory
-	ModPath             string            // Where mods should be deployed
-	SourceIDs           map[string]string // Map source to game ID, e.g., "nexusmods" -> "skyrimspecialedition"
-	LinkMethod          LinkMethod        // How to deploy mods
-	LinkMethodExplicit  bool              // True if LinkMethod was explicitly set in config
-	CachePath           string            // Optional: custom cache path for this game's mods
-	Hooks               GameHooks         // Optional: hooks for install/uninstall operations
-	DeployMode          DeployMode        // How to handle downloaded files (extract vs copy)
-	ConvertPaks         bool              // #221: convert prebuilt .pak mods into the merged pak (DeployCompile games; default true when omitted from games.yaml, must be set explicitly for direct Game literals)
-	ConvertPaksExplicit bool              // True if ConvertPaks was explicitly set in config (round-trip fidelity, like LinkMethodExplicit)
+	ID                  string            `json:"id"`                    // Unique slug, e.g., "skyrim-se"
+	Name                string            `json:"name"`                  // Display name
+	InstallPath         string            `json:"install_path"`          // Game installation directory
+	ModPath             string            `json:"mod_path"`              // Where mods should be deployed
+	SourceIDs           map[string]string `json:"source_ids"`            // Map source to game ID, e.g., "nexusmods" -> "skyrimspecialedition"
+	LinkMethod          LinkMethod        `json:"link_method"`           // How to deploy mods
+	LinkMethodExplicit  bool              `json:"link_method_explicit"`  // True if LinkMethod was explicitly set in config
+	CachePath           string            `json:"cache_path,omitempty"`  // Optional: custom cache path for this game's mods
+	Hooks               GameHooks         `json:"hooks"`                 // Optional: hooks for install/uninstall operations
+	DeployMode          DeployMode        `json:"deploy_mode"`           // How to handle downloaded files (extract vs copy)
+	ConvertPaks         bool              `json:"convert_paks"`          // #221: convert prebuilt .pak mods into the merged pak (DeployCompile games; default true when omitted from games.yaml, must be set explicitly for direct Game literals)
+	ConvertPaksExplicit bool              `json:"convert_paks_explicit"` // True if ConvertPaks was explicitly set in config (round-trip fidelity, like LinkMethodExplicit)
 }
 
 // DeployMode determines how downloaded mod archives are handled

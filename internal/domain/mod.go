@@ -57,9 +57,9 @@ func (p *UpdatePolicy) UnmarshalText(b []byte) error {
 
 // ModFile represents a single file within a mod archive (after extraction)
 type ModFile struct {
-	Path     string // Relative path within mod archive
-	Size     int64
-	Checksum string // SHA256
+	Path     string `json:"path"` // Relative path within mod archive
+	Size     int64  `json:"size"`
+	Checksum string `json:"checksum"` // SHA256
 }
 
 // DownloadableFile represents a file available for download from a mod source
@@ -107,46 +107,46 @@ type ModReference struct {
 
 // Mod represents a mod from any source
 type Mod struct {
-	ID           string
-	SourceID     string
-	Name         string
-	Version      string
-	Author       string
-	Summary      string
-	Description  string
-	GameID       string
-	Category     string
-	Downloads    int64
-	Endorsements *int64
-	PictureURL   string // Main image URL (e.g. NexusMods picture_url)
-	SourceURL    string // Web page URL (e.g. CurseForge mod page)
-	Files        []ModFile
-	Dependencies []ModReference
-	UpdatedAt    time.Time
+	ID           string         `json:"id"`
+	SourceID     string         `json:"source_id"`
+	Name         string         `json:"name"`
+	Version      string         `json:"version"`
+	Author       string         `json:"author"`
+	Summary      string         `json:"summary"`
+	Description  string         `json:"description"`
+	GameID       string         `json:"game_id"`
+	Category     string         `json:"category"`
+	Downloads    int64          `json:"downloads"`
+	Endorsements *int64         `json:"endorsements,omitempty"`
+	PictureURL   string         `json:"picture_url"` // Main image URL (e.g. NexusMods picture_url)
+	SourceURL    string         `json:"source_url"`  // Web page URL (e.g. CurseForge mod page)
+	Files        []ModFile      `json:"files"`
+	Dependencies []ModReference `json:"dependencies"`
+	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
 // InstalledMod tracks a mod installed in a profile
 type InstalledMod struct {
 	Mod
-	ProfileName     string
-	UpdatePolicy    UpdatePolicy
-	InstalledAt     time.Time
-	Enabled         bool       // User intent: wants this mod active
-	Deployed        bool       // Current state: files are in game directory
-	PreviousVersion string     // Version before last update (for rollback)
-	PreviousFileIDs []string   // File IDs before last update (for rollback)
-	LinkMethod      LinkMethod // How the mod was deployed (symlink, hardlink, copy)
-	FileIDs         []string   // Source-specific file IDs that were downloaded
-	ManualDownload  bool       // True if mod requires manual download (CurseForge restricted, etc.)
-	ConvertPaks     bool       // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
+	ProfileName     string       `json:"profile_name"`
+	UpdatePolicy    UpdatePolicy `json:"update_policy"`
+	InstalledAt     time.Time    `json:"installed_at"`
+	Enabled         bool         `json:"enabled"`                     // User intent: wants this mod active
+	Deployed        bool         `json:"deployed"`                    // Current state: files are in game directory
+	PreviousVersion string       `json:"previous_version,omitempty"`  // Version before last update (for rollback)
+	PreviousFileIDs []string     `json:"previous_file_ids,omitempty"` // File IDs before last update (for rollback)
+	LinkMethod      LinkMethod   `json:"link_method"`                 // How the mod was deployed (symlink, hardlink, copy)
+	FileIDs         []string     `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
+	ManualDownload  bool         `json:"manual_download"`             // True if mod requires manual download (CurseForge restricted, etc.)
+	ConvertPaks     bool         `json:"convert_paks"`                // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
 }
 
 // Update represents an available update for an installed mod
 type Update struct {
-	InstalledMod       InstalledMod
-	NewVersion         string
-	Changelog          string
-	FileIDReplacements map[string]string // Old file ID -> new file ID when a file was superseded (e.g. NexusMods FileUpdates)
+	InstalledMod       InstalledMod      `json:"installed_mod"`
+	NewVersion         string            `json:"new_version"`
+	Changelog          string            `json:"changelog,omitempty"`
+	FileIDReplacements map[string]string `json:"file_id_replacements,omitempty"` // Old file ID -> new file ID when a file was superseded (e.g. NexusMods FileUpdates)
 	// RecompileNeeded marks a DeployCompile mod whose deployed compile no
 	// longer matches the game's live base data.pak (#196, "the Friday
 	// problem": a weekly base-pak refresh silently reverts the tables a
@@ -154,14 +154,14 @@ type Update struct {
 	// equals InstalledMod.Version in this case - the mod itself hasn't
 	// changed, only the base pak has - so callers must not treat NewVersion
 	// as a real version bump when this is set.
-	RecompileNeeded bool
+	RecompileNeeded bool `json:"recompile_needed"`
 	// RecompileReason qualifies RecompileNeeded with why a recompile/resync
 	// is needed (#197 postsmoke UX fix): "base pak updated" when the
 	// merged/compiled fingerprint no longer matches current inputs, "not
 	// deployed" when the fingerprint still matches but the artifact is
 	// missing from the game directory (#197 I5's wedge case). Empty when
 	// RecompileNeeded is false.
-	RecompileReason string
+	RecompileReason string `json:"recompile_reason,omitempty"`
 }
 
 // ModKey returns a unique lookup key for a mod: "sourceID:modID".
