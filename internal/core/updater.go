@@ -158,6 +158,26 @@ func IsNewerVersion(currentVersion, newVersion string) bool {
 	return domain.IsNewerVersion(currentVersion, newVersion)
 }
 
+// lockState reports whether (sourceID, modID) is locked in gameID/
+// profileName's profile and, if so, at what version - the "load profile ->
+// FindRef -> check .Locked" pattern PlanUpdate/PlanUpdateFrom and
+// CheckGameUpdates' stamping loop below all duplicated inline (#289 review,
+// Minor 1). A missing/unreadable profile reports unlocked rather than an
+// error - matching every other lock gate's convention (a lock cannot exist
+// in a profile that doesn't load); err is always nil today, kept for
+// symmetry with this file's other ctx-taking Service methods.
+func (s *Service) lockState(ctx context.Context, gameID, profileName, sourceID, modID string) (locked bool, lockedVersion string, err error) {
+	prof, perr := s.NewProfileManager().Get(gameID, profileName)
+	if perr != nil {
+		return false, "", nil
+	}
+	ref := prof.FindRef(sourceID, modID)
+	if ref != nil && ref.Locked {
+		return true, ref.Version, nil
+	}
+	return false, "", nil
+}
+
 // CheckGameUpdates is the single seam CLI checks updates through
 // (#196/#197): it combines Updater.CheckUpdates' remote version
 // checks with CheckMergedPakStaleness' local merged-pak staleness scan
@@ -191,19 +211,17 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 		}
 	}
 
-	// #289: stamp each entry's lock state from the profile, read ONCE here -
-	// the single seam that lets every caller (cmd/lmm's bulk table/JSON,
-	// PlanUpdate) drop its own profile scan. A missing/unreadable profile
-	// leaves every entry unlocked, matching every other "profile load
-	// failure means unlocked" precedent (ApplyUpdate's own lock gate,
+	// #289: stamp each entry's lock state via lockState - the single seam
+	// that lets every caller (cmd/lmm's bulk table/JSON, PlanUpdate/
+	// PlanUpdateFrom) drop its own profile scan. A missing/unreadable
+	// profile leaves every entry unlocked, matching every other "profile
+	// load failure means unlocked" precedent (ApplyUpdate's own lock gate,
 	// applySingleUpdate before this task).
-	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
-		for i := range updates {
-			ref := prof.FindRef(updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)
-			if ref != nil && ref.Locked {
-				updates[i].Locked = true
-				updates[i].LockedVersion = ref.Version
-			}
+	for i := range updates {
+		locked, lockedVersion, _ := s.lockState(ctx, game.ID, profileName, updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)
+		if locked {
+			updates[i].Locked = true
+			updates[i].LockedVersion = lockedVersion
 		}
 	}
 

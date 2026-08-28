@@ -452,13 +452,13 @@ func (s *Service) planUpdateBase(ctx context.Context, game *domain.Game, profile
 	// #97: mirrors applySingleUpdate's own pre-lift profile load - a
 	// missing/unreadable profile is treated as unlocked (a lock cannot exist
 	// in an unloadable profile).
-	var ref *domain.ModReference
-	if prof, perr := s.NewProfileManager().Get(game.ID, profileName); perr == nil {
-		ref = prof.FindRef(mod.SourceID, mod.ID)
+	locked, lockedVersion, err := s.lockState(ctx, game.ID, profileName, mod.SourceID, mod.ID)
+	if err != nil {
+		return nil, err
 	}
-	if ref != nil && ref.Locked {
+	if locked {
 		plan.Locked = true
-		plan.LockedVersion = ref.Version
+		plan.LockedVersion = lockedVersion
 	}
 
 	return plan, nil
