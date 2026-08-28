@@ -75,7 +75,7 @@ func doConflicts(ctx context.Context, svc *core.Service, game *domain.Game) erro
 		return err
 	}
 
-	mods, err := svc.GetInstalledMods(game.ID, profileName)
+	mods, err := svc.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}

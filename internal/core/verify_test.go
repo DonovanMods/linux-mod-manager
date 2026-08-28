@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,7 +76,7 @@ func seedVerifyMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID,
 		}
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       modID,
 			SourceID: sourceID,
@@ -105,21 +107,21 @@ func TestVerify_LocalWalk_StatusesAndCounts(t *testing.T) {
 
 	// (a) fully cached + checksummed -> ok
 	seedVerifyMod(t, svc, game, "src", "mod-ok", "Mod OK", "1.0", []string{"ok-file"}, true)
-	require.NoError(t, svc.SaveFileChecksum("src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
 
 	// (b) checksum row whose version dir is absent -> missing
 	seedVerifyMod(t, svc, game, "src", "mod-missing", "Mod Missing", "1.0", []string{"missing-file"}, false)
-	require.NoError(t, svc.SaveFileChecksum("src", "mod-missing", game.ID, "default", "missing-file", "checksum-missing"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-missing", game.ID, "default", "missing-file", "checksum-missing"))
 
 	// (c) row with empty checksum -> no_checksum
 	seedVerifyMod(t, svc, game, "src", "mod-no-checksum", "Mod No Checksum", "1.0", []string{"no-checksum-file"}, true)
 
 	// (d) checksum row for an uninstalled mod -> skipped.
 	seedVerifyMod(t, svc, game, "src", "mod-gone", "Mod Gone", "1.0", []string{"gone-file"}, true)
-	require.NoError(t, svc.SaveFileChecksum("src", "mod-gone", game.ID, "default", "gone-file", "checksum-gone"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-gone", game.ID, "default", "gone-file", "checksum-gone"))
 	orphanChecksumRow(t, dataDir, "src", "mod-gone", game.ID, "default")
 
-	files, err := svc.GetFilesWithChecksums(game.ID, "default")
+	files, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, files, 4, "precondition: four checksum rows exist")
 
@@ -166,6 +168,46 @@ func TestVerify_LocalWalk_StatusesAndCounts(t *testing.T) {
 	}
 }
 
+// newVerifyTestServiceWithFiles is newVerifyTestService plus a single mod
+// deployed and checksummed under n distinct file IDs, all fully cached - the
+// TestVerify_LocalWalk_StatusesAndCounts "(a) fully cached + checksummed ->
+// ok" fixture, repeated n times so perFileWalk's loop has n rows to iterate.
+func newVerifyTestServiceWithFiles(t *testing.T, n int) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, _ := newVerifyTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.AddGame(game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	fileIDs := make([]string, n)
+	for i := range fileIDs {
+		fileIDs[i] = fmt.Sprintf("file-%d", i)
+	}
+	seedVerifyMod(t, svc, game, "src", "mod-ok", "Mod OK", "1.0", fileIDs, true)
+	for _, fileID := range fileIDs {
+		require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-ok", game.ID, "default", fileID, "checksum-"+fileID))
+	}
+	return svc, game
+}
+
+// TestVerify_ContextCancelledDuringWalk pins the per-file walk's ctx check:
+// cancelling after the first finding stops the walk with ctx.Err().
+func TestVerify_ContextCancelledDuringWalk(t *testing.T) {
+	svc, game := newVerifyTestServiceWithFiles(t, 5) // 5 deployed files
+	ctx, cancel := context.WithCancel(context.Background())
+	findings := 0
+	_, err := svc.Verify(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, func(ev core.VerifyEvent) {
+		if ev.Kind == core.VerifyEvFinding {
+			findings++
+			cancel()
+		}
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, findings)
+}
+
 // TestVerify_EmptyProfile_HasFilesFalse proves the #217 empty-profile path:
 // no checksummed files at all means an empty result and a Begin event
 // carrying HasFiles=false. Task 2's brief is explicit that the
@@ -209,10 +251,10 @@ func TestVerify_ModFilter_LimitsRows(t *testing.T) {
 	require.NoError(t, err)
 
 	seedVerifyMod(t, svc, game, "src", "mod-a", "Mod A", "1.0", []string{"a-file"}, true)
-	require.NoError(t, svc.SaveFileChecksum("src", "mod-a", game.ID, "default", "a-file", "checksum-a"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-a", game.ID, "default", "a-file", "checksum-a"))
 
 	seedVerifyMod(t, svc, game, "src", "mod-b", "Mod B", "1.0", []string{"b-file"}, true)
-	require.NoError(t, svc.SaveFileChecksum("src", "mod-b", game.ID, "default", "b-file", "checksum-b"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-b", game.ID, "default", "b-file", "checksum-b"))
 
 	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{ModFilter: "mod-a"}, nil)
 	require.NoError(t, err)
@@ -254,7 +296,7 @@ func TestVerify_LocalTier_NeverTouchesNetwork(t *testing.T) {
 	svc.RegisterSource(&trapGetModFilesSource{mockSource: newMockSource("trap-src"), t: t})
 
 	seedVerifyMod(t, svc, game, "trap-src", "mod-a", "Mod A", "1.0", []string{"a-file"}, true)
-	require.NoError(t, svc.SaveFileChecksum("trap-src", "mod-a", game.ID, "default", "a-file", "checksum-a"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "trap-src", "mod-a", game.ID, "default", "a-file", "checksum-a"))
 
 	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, nil)
 	require.NoError(t, err)
@@ -317,19 +359,19 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 	// drives the version pass's iteration order, and therefore
 	// VerifyEvProgress's Index/ModName sequence below.
 	seedVerifyMod(t, svc, game, "vsrc", "reachable-mod", "Reachable", "1.0", []string{"f1"}, true)
-	require.NoError(t, svc.SaveFileChecksum("vsrc", "reachable-mod", game.ID, "default", "f1", "cs-reachable"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "vsrc", "reachable-mod", game.ID, "default", "f1", "cs-reachable"))
 
 	seedVerifyMod(t, svc, game, "vsrc", "unreachable-mod", "Unreachable", "1.0", []string{"f1"}, true)
-	require.NoError(t, svc.SaveFileChecksum("vsrc", "unreachable-mod", game.ID, "default", "f1", "cs-unreachable"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "vsrc", "unreachable-mod", game.ID, "default", "f1", "cs-unreachable"))
 
 	seedVerifyMod(t, svc, game, "vsrc", "unverifiable-mod", "Unverifiable", "1.0", []string{"f1"}, true)
-	require.NoError(t, svc.SaveFileChecksum("vsrc", "unverifiable-mod", game.ID, "default", "f1", "cs-unverifiable"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "vsrc", "unverifiable-mod", game.ID, "default", "f1", "cs-unverifiable"))
 
 	seedVerifyMod(t, svc, game, "vsrc", "mismatch-mod", "Mismatch", "1.0", []string{"f1"}, true)
-	require.NoError(t, svc.SaveFileChecksum("vsrc", "mismatch-mod", game.ID, "default", "f1", "cs-mismatch"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "vsrc", "mismatch-mod", game.ID, "default", "f1", "cs-mismatch"))
 
 	seedVerifyMod(t, svc, game, "vsrc", "locked-mod", "Locked", "1.0", []string{"f1"}, true)
-	require.NoError(t, svc.SaveFileChecksum("vsrc", "locked-mod", game.ID, "default", "f1", "cs-locked"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "vsrc", "locked-mod", game.ID, "default", "f1", "cs-locked"))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "vsrc", ModID: "locked-mod", Version: "1.0", FileIDs: []string{"f1"}}))
 	require.NoError(t, pm.SetModLock(game.ID, "default", "vsrc", "locked-mod", "2.0"))
 
@@ -405,7 +447,7 @@ func TestVerify_VersionMismatchFinding_CarriesRecordedEffective(t *testing.T) {
 	svc.RegisterSource(src)
 
 	seedVerifyMod(t, svc, game, "vsrc", "mismatch-mod", "Mismatch", "1.0", []string{"f1"}, true)
-	require.NoError(t, svc.SaveFileChecksum("vsrc", "mismatch-mod", game.ID, "default", "f1", "checksum-mismatch"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "vsrc", "mismatch-mod", game.ID, "default", "f1", "checksum-mismatch"))
 
 	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
@@ -429,7 +471,7 @@ func TestVerify_MissingFinding_CarriesVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	seedVerifyMod(t, svc, game, "src", "missing-mod", "Missing Mod", "1.5", []string{"missing-file"}, false)
-	require.NoError(t, svc.SaveFileChecksum("src", "missing-mod", game.ID, "default", "missing-file", "checksum-missing"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "missing-mod", game.ID, "default", "missing-file", "checksum-missing"))
 
 	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, nil)
 	require.NoError(t, err)
@@ -479,7 +521,7 @@ func TestVerify_CompileGameStatuses(t *testing.T) {
 	// retained source (predates #221's widened ingest) - PakNeedsReingest's
 	// lazy-migration case.
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "legacypak", SourceID: "fake-compiler", Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -491,7 +533,7 @@ func TestVerify_CompileGameStatuses(t *testing.T) {
 	// The same pre-#221 shape, but SourceLocal - the note text switches on
 	// this.
 	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "locallegacy", "1.0", "locallegacy.pak", []byte("local-legacy-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "locallegacy", SourceID: domain.SourceLocal, Name: "Local Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -588,10 +630,10 @@ func TestVerify_ContextCancelledMidVersionPass(t *testing.T) {
 	svc.RegisterSource(src)
 
 	seedVerifyMod(t, svc, game, "csrc", "mod-a", "Mod A", "1.0", []string{"f1"}, true)
-	require.NoError(t, svc.SaveFileChecksum("csrc", "mod-a", game.ID, "default", "f1", "cs-a"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "csrc", "mod-a", game.ID, "default", "f1", "cs-a"))
 
 	seedVerifyMod(t, svc, game, "csrc", "mod-b", "Mod B", "1.0", []string{"f1"}, true)
-	require.NoError(t, svc.SaveFileChecksum("csrc", "mod-b", game.ID, "default", "f1", "cs-b"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "csrc", "mod-b", game.ID, "default", "f1", "cs-b"))
 
 	result, err := svc.Verify(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.ErrorIs(t, err, context.Canceled)
@@ -703,7 +745,7 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		mock.AddDownload("1", []byte("fresh content"))
 		svc.RegisterSource(&nonArchiveDownloadSource{mockSourceWithDownloads: mock})
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, false)
-		require.NoError(t, svc.SaveFileChecksum("rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
+		require.NoError(t, svc.SaveFileChecksum(context.Background(), "rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
 
 		var events []core.VerifyEvent
 		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
@@ -723,7 +765,7 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		svc, game := newFixTestGame(t)
 		svc.RegisterSource(newEmptyDirSource(t, "rsrc", "mod1"))
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"main"}, false)
-		require.NoError(t, svc.SaveFileChecksum("rsrc", "mod1", game.ID, "default", "main", "old-checksum"))
+		require.NoError(t, svc.SaveFileChecksum(context.Background(), "rsrc", "mod1", game.ID, "default", "main", "old-checksum"))
 
 		var events []core.VerifyEvent
 		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
@@ -745,7 +787,7 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		svc, game := newFixTestGame(t)
 		svc.RegisterSource(&redownloadURLFailingSource{mockSource: newMockSource("rsrc")})
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, false)
-		require.NoError(t, svc.SaveFileChecksum("rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
+		require.NoError(t, svc.SaveFileChecksum(context.Background(), "rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
 
 		var events []core.VerifyEvent
 		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
@@ -915,7 +957,7 @@ func newNeedsReingestFixGame(t *testing.T, src source.ModSource, sourceID string
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, sourceID, "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "legacypak", SourceID: sourceID, Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -985,7 +1027,7 @@ func TestVerify_Fix_NeedsReingest_Redownload(t *testing.T) {
 func TestVerify_Fix_SourceLocal_NoRepairAttempted(t *testing.T) {
 	svc, game := newFixTestGame(t)
 	seedVerifyMod(t, svc, game, domain.SourceLocal, "mod1", "Mod One", "1.0", []string{"1"}, false)
-	require.NoError(t, svc.SaveFileChecksum(domain.SourceLocal, "mod1", game.ID, "default", "1", "old-checksum"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), domain.SourceLocal, "mod1", game.ID, "default", "1", "old-checksum"))
 
 	var events []core.VerifyEvent
 	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
@@ -1026,15 +1068,15 @@ func newVersionRepairFixGame(t *testing.T, deployed bool) (*core.Service, *domai
 	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.5", "2", []byte("plugin content")))
 
 	seedVerifyMod(t, svc, game, "test-src", "mod1", "Mod One", "1.5", []string{"2"}, false)
-	require.NoError(t, svc.SaveFileChecksum("test-src", "mod1", game.ID, "default", "2", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "test-src", "mod1", game.ID, "default", "2", "deadbeef"))
 
 	pm := svc.NewProfileManager()
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"}}))
 
 	if deployed {
-		require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "default", true))
-		require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "default", domain.LinkSymlink))
-		mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+		require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "default", true))
+		require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "default", domain.LinkSymlink))
+		mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 		require.NoError(t, err)
 		require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &mod.Mod, "default"))
 	}
@@ -1052,7 +1094,7 @@ func addVersionRepairSibling(t *testing.T, svc *core.Service, game *domain.Game,
 	_, err := pm.Create(game.ID, profileName)
 	require.NoError(t, err)
 	require.NoError(t, pm.UpsertMod(game.ID, profileName, domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: recordedVersion, FileIDs: fileIDs}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: recordedVersion, GameID: game.ID},
 		ProfileName:  profileName,
 		Enabled:      true,
@@ -1107,7 +1149,7 @@ func TestVerify_Fix_VersionMismatch_NotDeployed_RepairsCacheAndRecord(t *testing
 	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must exist under the effective version")
 	require.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "cache must no longer exist under the recorded version")
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	require.Equal(t, "1.0", mod.Version, "DB row must be corrected to the effective version")
 
@@ -1156,7 +1198,7 @@ func TestVerify_Fix_VersionMismatch_RenameBlocked_NoRelink(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, preTarget, postTarget, "the deployment must still point at the original (intact) recorded-version cache dir - no relink")
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	require.Equal(t, "1.0", mod.Version, "DB is still corrected even though the deployment was left alone")
 	require.True(t, mod.Deployed, "Deployed must remain true - the existing deployment is still valid")
@@ -1189,7 +1231,7 @@ func TestVerify_Fix_VersionMismatch_LockedPrimary_RefusesRepair(t *testing.T) {
 	require.Equal(t, "version_mismatch", f.Status, "status must NOT flip to ok - --fix refused the repair")
 	require.Equal(t, "locked", f.Note)
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	require.Equal(t, "1.5", mod.Version, "a locked record must not be rewritten by --fix")
 
@@ -1220,7 +1262,7 @@ func TestVerify_Fix_VersionMismatch_SiblingRepaired(t *testing.T) {
 	require.Equal(t, 0, result.Issues)
 	require.Equal(t, 0, result.Warnings)
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	require.Equal(t, "1.0", secondMod.Version, "sibling DB row must be corrected to the effective version")
 
@@ -1259,7 +1301,7 @@ func TestVerify_Fix_VersionMismatch_SiblingDiffers_DeclinedWithWarning(t *testin
 	require.Equal(t, 0, result.Issues, "the primary row's own repair still succeeds")
 	require.Equal(t, 1, result.Warnings, "the declined sibling counts as a warning")
 
-	differsMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "differs")
+	differsMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "differs")
 	require.NoError(t, err)
 	require.Equal(t, "1.5", differsMod.Version, "a sibling with different FileIDs must NOT be auto-repaired")
 
@@ -1292,7 +1334,7 @@ func TestVerify_Fix_VersionMismatch_SiblingLocked_DeclinedWithWarning(t *testing
 	require.Equal(t, 0, result.Issues)
 	require.Equal(t, 1, result.Warnings, "the declined locked sibling counts as a warning")
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	require.Equal(t, "1.5", secondMod.Version, "a locked sibling must NOT be auto-repaired")
 
@@ -1337,7 +1379,7 @@ func TestVerify_Fix_VersionMismatch_Deployed_RelinkFailure_ClearsDeployedFlag(t 
 	require.Equal(t, "version_mismatch", f.Status, "status must stay version_mismatch - the repair did not fully succeed")
 	require.Contains(t, f.Note, "repair failed: relinking deployed files:")
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	require.Equal(t, "1.0", mod.Version, "the version correction from the cache/DB/profile steps must stand even though the re-link failed")
 	require.False(t, mod.Deployed, "Deployed must be cleared when the re-link fails")
@@ -1381,7 +1423,7 @@ func TestVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingStillRepaired(t *t
 	require.Contains(t, f.Note, "second", "the successful sibling repair must still be visible in the note despite the primary relink failure")
 	require.Contains(t, f.Note, "repair failed: relinking deployed files:")
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	require.Equal(t, "1.0", secondMod.Version, "the sibling repair must have gone through independently of the primary's relink failure")
 
@@ -1501,7 +1543,7 @@ func TestVerify_MainPath_ConvergenceAfterFileWalk(t *testing.T) {
 	require.NoError(t, err)
 
 	seedVerifyMod(t, svc, game, "src", "mod-ok", "Mod OK", "1.0", []string{"ok-file"}, true)
-	require.NoError(t, svc.SaveFileChecksum("src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
 
 	strayDanglingSymlink(t, svc, game, "stray.pak")
 
@@ -1559,7 +1601,7 @@ func TestVerify_Fix_SyncMergedPak_NonCompileGame_NoWarningEvents(t *testing.T) {
 	require.NoError(t, err)
 
 	seedVerifyMod(t, svc, game, "src", "mod-ok", "Mod OK", "1.0", []string{"ok-file"}, true)
-	require.NoError(t, svc.SaveFileChecksum("src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
 
 	var events []core.VerifyEvent
 	_, err = svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) {
@@ -1611,7 +1653,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 	// count - the fileCountPrePass fixture.
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file", []byte("x")))
 	require.NoError(t, os.Remove(gameCache.GetFilePath(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "fc-mod", SourceID: "fake-compiler", Name: "FC Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -1619,7 +1661,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "fc-mod", Version: "1.0", FileIDs: []string{"fc-file"}}))
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "fc-mod", game.ID, "default", "fc-file", "checksum-fc"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "fc-mod", game.ID, "default", "fc-file", "checksum-fc"))
 
 	// goodmod converts cleanly; badpak's conversion is scripted to fail -
 	// the conversion_failed fixture (TestVerify_CompileGameStatuses' own
@@ -1630,7 +1672,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 	// legacypak: a pre-#221 pak cache entry (deployable member, no retained
 	// source) - the needs_reingest fixture.
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "legacypak", SourceID: "fake-compiler", Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -1641,7 +1683,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 
 	// missing-mod: a checksummed row with no cache entry at all - the
 	// missing fixture.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "missing-mod", SourceID: "fake-compiler", Name: "Missing Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -1649,7 +1691,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "missing-mod", Version: "1.0", FileIDs: []string{"missing-file"}}))
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "missing-mod", game.ID, "default", "missing-file", "checksum-missing"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "missing-mod", game.ID, "default", "missing-file", "checksum-missing"))
 
 	// First (only) sync: stamps MergedPakOutcomes with badpak's conversion
 	// failure and establishes an up-to-date fingerprint.
@@ -1663,7 +1705,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 	// A stray dangling symlink for the convergence pass to find.
 	strayDanglingSymlink(t, svc, game, "stray.pak")
 
-	files, err := svc.GetFilesWithChecksums(game.ID, "default")
+	files, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, nil)

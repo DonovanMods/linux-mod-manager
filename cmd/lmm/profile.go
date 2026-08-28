@@ -611,7 +611,7 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 	}
 
 	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(game.ID, profileName)
+	installedMods, err := service.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -671,7 +671,7 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		fmt.Println("Will add to profile:")
 		for _, ref := range toAdd {
 			// Try to get mod name from DB
-			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, game.ID, profileName)
+			mod, _ := service.GetInstalledMod(ctx, ref.SourceID, ref.ModID, game.ID, profileName)
 			if mod != nil {
 				fmt.Printf("  + %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
 			} else {
@@ -690,7 +690,7 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 	if len(toUpdate) > 0 {
 		fmt.Println("Will update FileIDs for:")
 		for _, ref := range toUpdate {
-			mod, _ := service.GetInstalledMod(ref.SourceID, ref.ModID, game.ID, profileName)
+			mod, _ := service.GetInstalledMod(ctx, ref.SourceID, ref.ModID, game.ID, profileName)
 			if mod != nil {
 				fmt.Printf("  ~ %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
 			} else {
@@ -755,11 +755,11 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 
 func runProfileReorder(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileReorder(service, game, args)
+		return doProfileReorder(ctx, service, game, args)
 	})
 }
 
-func doProfileReorder(service *core.Service, game *domain.Game, args []string) error {
+func doProfileReorder(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 
 	profileName, err := resolveProfile(service, game.ID, profileReorderProfile)
 	if err != nil {
@@ -776,7 +776,7 @@ func doProfileReorder(service *core.Service, game *domain.Game, args []string) e
 			fmt.Printf("No mods in profile %s.\n", profileName)
 			return nil
 		}
-		installed, _ := service.GetInstalledMods(game.ID, profileName)
+		installed, _ := service.GetInstalledMods(ctx, game.ID, profileName)
 		nameByKey := make(map[string]string)
 		for i := range installed {
 			key := installed[i].SourceID + ":" + installed[i].ID
@@ -854,7 +854,7 @@ func doProfileReorder(service *core.Service, game *domain.Game, args []string) e
 		}
 	}
 
-	if err := service.ReorderProfileMods(game.ID, profileName, newRefs); err != nil {
+	if err := service.ReorderProfileMods(ctx, game.ID, profileName, newRefs); err != nil {
 		return fmt.Errorf("reordering: %w", err)
 	}
 	fmt.Printf("✓ Load order updated for profile %s.\n", profileName)
@@ -891,7 +891,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 
 	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(game.ID, profileName)
+	installedMods, err := service.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -1021,7 +1021,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		}
 	}
 
-	installer, err := service.GetInstallerForProfile(game, profileName)
+	installer, err := service.GetInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return err
 	}
@@ -1033,7 +1033,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
 			}
 		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, profileName, false); err != nil {
+		if err := service.SetModEnabled(ctx, im.SourceID, im.ID, game.ID, profileName, false); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -1049,7 +1049,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			}
 			continue
 		}
-		if err := service.SetModEnabled(im.SourceID, im.ID, game.ID, profileName, true); err != nil {
+		if err := service.SetModEnabled(ctx, im.SourceID, im.ID, game.ID, profileName, true); err != nil {
 			if verbose {
 				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
 			}
@@ -1184,7 +1184,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				FileIDs:      downloadedFileIDs,
 			}
 			installedMod.Mod.GameID = game.ID
-			if err := service.SaveInstalledMod(installedMod); err != nil {
+			if err := service.SaveInstalledMod(ctx, installedMod); err != nil {
 				fmt.Printf("    Error: save failed: %v\n", err)
 				continue
 			}

@@ -214,7 +214,7 @@ func doAuthLogin(ctx context.Context, service *core.Service, sourceID string) er
 		fmt.Println("done")
 	}
 
-	if err := service.SaveSourceToken(sourceID, apiKey); err != nil {
+	if err := service.SaveSourceToken(ctx, sourceID, apiKey); err != nil {
 		return fmt.Errorf("saving token: %w", err)
 	}
 	printLoginResult(os.Stdout, hasValidator)
@@ -272,7 +272,7 @@ func selectAuthSource(service *core.Service, args []string) (string, error) {
 // also work for sources that are no longer registered (definition file
 // deleted after a key was stored) — otherwise the stored token becomes
 // unremovable via the CLI.
-func resolveLogoutSource(service *core.Service, args []string) (string, error) {
+func resolveLogoutSource(ctx context.Context, service *core.Service, args []string) (string, error) {
 	if len(args) == 0 {
 		return selectAuthSource(service, args) // interactive prompt path unchanged
 	}
@@ -280,7 +280,7 @@ func resolveLogoutSource(service *core.Service, args []string) (string, error) {
 	if isAuthCapableSource(service, sourceID) {
 		return sourceID, nil
 	}
-	token, err := service.GetSourceToken(sourceID)
+	token, err := service.GetSourceToken(ctx, sourceID)
 	if err != nil {
 		return "", fmt.Errorf("checking stored credentials for %s: %w", sourceID, err)
 	}
@@ -315,11 +315,11 @@ func authDisplayName(service *core.Service, sourceID string) string {
 
 func runAuthLogout(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		sourceID, err := resolveLogoutSource(service, args)
+		sourceID, err := resolveLogoutSource(ctx, service, args)
 		if err != nil {
 			return err
 		}
-		if err := service.DeleteSourceToken(sourceID); err != nil {
+		if err := service.DeleteSourceToken(ctx, sourceID); err != nil {
 			return fmt.Errorf("removing token: %w", err)
 		}
 		fmt.Printf("Removed %s credentials.\n", authDisplayName(service, sourceID))
@@ -329,7 +329,7 @@ func runAuthLogout(cmd *cobra.Command, args []string) error {
 
 func runAuthStatus(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		return doAuthStatus(service)
+		return doAuthStatus(ctx, service)
 	})
 }
 
@@ -342,7 +342,7 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 // registered at all (e.g. its definition file was deleted after `lmm auth
 // login`) - the former is fixable by re-declaring auth, the latter only by
 // removing the stale token, so each gets its own wording.
-func doAuthStatus(service *core.Service) error {
+func doAuthStatus(ctx context.Context, service *core.Service) error {
 	sources := authCapableSources(service)
 	registered := make(map[string]bool, len(sources))
 
@@ -350,7 +350,7 @@ func doAuthStatus(service *core.Service) error {
 		id := src.ID()
 		registered[id] = true
 
-		token, err := service.GetSourceToken(id)
+		token, err := service.GetSourceToken(ctx, id)
 		if err != nil {
 			return fmt.Errorf("checking %s: %w", id, err)
 		}
@@ -375,7 +375,7 @@ func doAuthStatus(service *core.Service) error {
 	// fails, e.g. the custom source's definition file was deleted after
 	// `lmm auth login`). Surface each with wording that points at the right
 	// fix rather than lumping both under one "no matching source" message.
-	tokens, err := service.ListSourceTokens()
+	tokens, err := service.ListSourceTokens(ctx)
 	if err != nil {
 		return fmt.Errorf("listing stored tokens: %w", err)
 	}

@@ -315,7 +315,7 @@ func TestAuthStatusCmd_WithStoredToken(t *testing.T) {
 	// First, save a token
 	svc, err := initService()
 	require.NoError(t, err)
-	err = svc.SaveSourceToken("nexusmods", "stored-test-key-12345")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "stored-test-key-12345")
 	require.NoError(t, err)
 	require.NoError(t, svc.Close())
 
@@ -342,11 +342,11 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 	// First, save a token
 	svc, err := initService()
 	require.NoError(t, err)
-	err = svc.SaveSourceToken("nexusmods", "stored-test-key-12345")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "stored-test-key-12345")
 	require.NoError(t, err)
 
 	// Verify token exists
-	token, err := svc.GetSourceToken("nexusmods")
+	token, err := svc.GetSourceToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	require.NoError(t, svc.Close())
@@ -371,7 +371,7 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 		require.NoError(t, svc2.Close())
 	})
 
-	token, err = svc2.GetSourceToken("nexusmods")
+	token, err = svc2.GetSourceToken(context.Background(), "nexusmods")
 	assert.NoError(t, err)
 	assert.Nil(t, token)
 }
@@ -468,18 +468,18 @@ func TestResolveLogoutSource(t *testing.T) {
 
 	// A token stored for a source whose definition file has been deleted:
 	// not registered, but logout must still be able to remove it.
-	require.NoError(t, svc.SaveSourceToken("ghost-repo", "leftover-key"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "ghost-repo", "leftover-key"))
 
-	id, err := resolveLogoutSource(svc, []string{"ghost-repo"})
+	id, err := resolveLogoutSource(context.Background(), svc, []string{"ghost-repo"})
 	require.NoError(t, err)
 	assert.Equal(t, "ghost-repo", id)
 
 	// Unknown ID with no token and no registration still errors.
-	_, err = resolveLogoutSource(svc, []string{"never-existed"})
+	_, err = resolveLogoutSource(context.Background(), svc, []string{"never-existed"})
 	assert.Error(t, err)
 
 	// Built-ins keep working.
-	id, err = resolveLogoutSource(svc, []string{"nexusmods"})
+	id, err = resolveLogoutSource(context.Background(), svc, []string{"nexusmods"})
 	require.NoError(t, err)
 	assert.Equal(t, "nexusmods", id)
 }
@@ -548,7 +548,7 @@ func TestAuthLogin_ValidatorPath(t *testing.T) {
 	assert.Contains(t, out, "Successfully authenticated with Validated Src!")
 	assert.NotContains(t, out, "validated on first use")
 
-	token, err := svc.GetSourceToken("validated-src")
+	token, err := svc.GetSourceToken(context.Background(), "validated-src")
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.Equal(t, "supersecret-key", token.APIKey)
@@ -580,7 +580,7 @@ func TestAuthLogin_StoredPath(t *testing.T) {
 	assert.Contains(t, out, "Stored (validated on first use).")
 	assert.Contains(t, out, "API key stored for stored-src.")
 
-	token, err := svc.GetSourceToken("stored-src")
+	token, err := svc.GetSourceToken(context.Background(), "stored-src")
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.Equal(t, "supersecret-key", token.APIKey)
@@ -608,7 +608,7 @@ func TestAuthStatus_UniformIteration(t *testing.T) {
 	svc.RegisterSource(curseforge.New(nil, ""))
 	svc.RegisterSource(&mockAuthSource{id: "acme-mods", name: "Acme Mods"})
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	for _, want := range []string{"(nexusmods):", "(curseforge):", "(acme-mods):"} {
 		assert.Equal(t, 1, strings.Count(out, want), "%q must be listed exactly once, got:\n%s", want, out)
@@ -636,7 +636,7 @@ func TestAuthStatus_RendersDisplayNameAlongsideID(t *testing.T) {
 	svc.RegisterSource(nexusmods.New(nil, ""))
 	svc.RegisterSource(curseforge.New(nil, ""))
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	assert.Contains(t, lines, "Nexus Mods (nexusmods): authenticated via NEXUSMODS_API_KEY (key: tes...890)")

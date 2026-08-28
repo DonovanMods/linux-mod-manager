@@ -19,7 +19,7 @@ import (
 // issue - it's self-healing via `lmm update`, not corruption).
 func TestDoVerify_StaleCompile_ReportedAsWarning(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 
 	verifyProfile = "default"
 	t.Cleanup(func() { verifyProfile = "" })
@@ -53,7 +53,7 @@ func TestDoVerify_StaleCompile_ReportedAsWarning(t *testing.T) {
 // text unconditionally.
 func TestDoVerify_StaleCompile_NotDeployed_ReasonSaysSo(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
@@ -77,7 +77,7 @@ func TestDoVerify_StaleCompile_NotDeployed_ReasonSaysSo(t *testing.T) {
 // TestDoVerify_StaleCompile_JSON is the --json sibling of the above.
 func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 
 	verifyProfile = "default"
 	jsonOutput = true
@@ -122,7 +122,7 @@ func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 // up-to-date exmodz mod verifies with no file_count_mismatch row at all.
 func TestDoVerify_HealthyExmodzMod_NoFileCountMismatch(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 	// Sync so the merged pak is up to date - isolates the file-count check
 	// from the (separately tested) stale_compile row.
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
@@ -165,7 +165,7 @@ func TestDoVerify_HealthyExmodzMod_NoFileCountMismatch(t *testing.T) {
 // broken to repair.
 func TestDoVerify_Fix_SyncsMergedPak(t *testing.T) {
 	svc, game, _, _ := setupDoUpdateRecompileTest(t)
-	require.NoError(t, svc.SaveFileChecksum("fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", "exmodz-file-id", "deadbeef"))
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 

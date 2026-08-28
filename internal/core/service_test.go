@@ -185,11 +185,11 @@ func TestService_SaveSourceToken(t *testing.T) {
 	})
 
 	// Save a token
-	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
 	require.NoError(t, err)
 
 	// Verify it's saved
-	assert.True(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.True(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 }
 
 func TestService_DeleteSourceToken(t *testing.T) {
@@ -206,14 +206,14 @@ func TestService_DeleteSourceToken(t *testing.T) {
 	})
 
 	// Save a token
-	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
 	require.NoError(t, err)
-	assert.True(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.True(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 
 	// Delete it
-	err = svc.DeleteSourceToken("nexusmods")
+	err = svc.DeleteSourceToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
-	assert.False(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.False(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 }
 
 func TestService_IsSourceAuthenticated(t *testing.T) {
@@ -230,14 +230,14 @@ func TestService_IsSourceAuthenticated(t *testing.T) {
 	})
 
 	// Not authenticated initially
-	assert.False(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.False(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 
 	// Save a token
-	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
 	require.NoError(t, err)
 
 	// Now authenticated
-	assert.True(t, svc.IsSourceAuthenticated("nexusmods"))
+	assert.True(t, svc.IsSourceAuthenticated(context.Background(), "nexusmods"))
 }
 
 func TestService_GetSourceToken(t *testing.T) {
@@ -254,16 +254,16 @@ func TestService_GetSourceToken(t *testing.T) {
 	})
 
 	// No token initially
-	token, err := svc.GetSourceToken("nexusmods")
+	token, err := svc.GetSourceToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	assert.Nil(t, token)
 
 	// Save a token
-	err = svc.SaveSourceToken("nexusmods", "test-api-key")
+	err = svc.SaveSourceToken(context.Background(), "nexusmods", "test-api-key")
 	require.NoError(t, err)
 
 	// Get the token
-	token, err = svc.GetSourceToken("nexusmods")
+	token, err = svc.GetSourceToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	require.NotNil(t, token)
 	assert.Equal(t, "test-api-key", token.APIKey)
@@ -354,15 +354,15 @@ func TestService_UpdateModVersion(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}
-	err = svc.SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(context.Background(), installedMod)
 	require.NoError(t, err)
 
 	// Update the version
-	err = svc.UpdateModVersion("test", "123", "skyrim-se", "default", "2.0.0")
+	err = svc.UpdateModVersion(context.Background(), "test", "123", "skyrim-se", "default", "2.0.0")
 	require.NoError(t, err)
 
 	// Verify the update
-	updated, err := svc.GetInstalledMod("test", "123", "skyrim-se", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0.0", updated.Version)
 	assert.Equal(t, "1.0.0", updated.PreviousVersion)
@@ -395,15 +395,15 @@ func TestService_RollbackModVersion(t *testing.T) {
 		Enabled:         true,
 		PreviousVersion: "1.0.0",
 	}
-	err = svc.SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(context.Background(), installedMod)
 	require.NoError(t, err)
 
 	// Rollback the version
-	err = svc.RollbackModVersion("test", "123", "skyrim-se", "default")
+	err = svc.RollbackModVersion(context.Background(), "test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 
 	// Verify the rollback
-	rolledBack, err := svc.GetInstalledMod("test", "123", "skyrim-se", "default")
+	rolledBack, err := svc.GetInstalledMod(context.Background(), "test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.0", rolledBack.Version)
 	assert.Equal(t, "2.0.0", rolledBack.PreviousVersion)
@@ -433,11 +433,11 @@ func TestService_RollbackModVersion_NoPreviousVersion(t *testing.T) {
 		},
 		ProfileName: "default",
 	}
-	err = svc.SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(context.Background(), installedMod)
 	require.NoError(t, err)
 
 	// Rollback should fail
-	err = svc.RollbackModVersion("test", "123", "skyrim-se", "default")
+	err = svc.RollbackModVersion(context.Background(), "test", "123", "skyrim-se", "default")
 	require.Error(t, err)
 }
 
@@ -466,23 +466,23 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 	}
-	err = svc.SaveInstalledMod(installedMod)
+	err = svc.SaveInstalledMod(context.Background(), installedMod)
 	require.NoError(t, err)
 
 	// Change policy to auto
-	err = svc.SetModUpdatePolicy("test", "123", "skyrim-se", "default", domain.UpdateAuto)
+	err = svc.SetModUpdatePolicy(context.Background(), "test", "123", "skyrim-se", "default", domain.UpdateAuto)
 	require.NoError(t, err)
 
 	// Verify
-	updated, err := svc.GetInstalledMod("test", "123", "skyrim-se", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdateAuto, updated.UpdatePolicy)
 
 	// Change policy to pinned
-	err = svc.SetModUpdatePolicy("test", "123", "skyrim-se", "default", domain.UpdatePinned)
+	err = svc.SetModUpdatePolicy(context.Background(), "test", "123", "skyrim-se", "default", domain.UpdatePinned)
 	require.NoError(t, err)
 
-	updated, err = svc.GetInstalledMod("test", "123", "skyrim-se", "default")
+	updated, err = svc.GetInstalledMod(context.Background(), "test", "123", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdatePinned, updated.UpdatePolicy)
 }
@@ -1010,26 +1010,36 @@ func (m *mockSourceWithFileURL) GetDownloadURL(ctx context.Context, mod *domain.
 // mockSourceWithDownloads extends mockSource with download URL support
 type mockSourceWithDownloads struct {
 	*mockSource
-	downloads map[string][]byte // fileID -> zip content
-	server    *httptest.Server
+	payloads map[string][]byte // fileID -> zip content
+	server   *httptest.Server
 
 	// served counts download requests the test server actually handled, so a
 	// test can assert a cache-first guard SKIPPED the download rather than
 	// inferring it from side effects (#96 round 2). Atomic because the
 	// handler runs on the server's own goroutine.
 	served atomic.Int64
+
+	// downloads counts requests the test server has fully served; onDownload
+	// (if set) fires right after, once per request - a per-file-cancellation
+	// test hangs a cancel() off it to assert a loop never starts the next
+	// file once ctx is done (e.g. TestService_ApplyInstall_
+	// ContextCancelledBetweenPrimaryFiles). Both are only ever touched by
+	// this single-threaded test server's handler and read after the
+	// triggering client call has returned, so no atomic is needed.
+	downloads  int
+	onDownload func()
 }
 
 func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
 	m := &mockSourceWithDownloads{
 		mockSource: newMockSource(id),
-		downloads:  make(map[string][]byte),
+		payloads:   make(map[string][]byte),
 	}
 	// Create test server that serves our downloads
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.served.Add(1)
 		fileID := filepath.Base(r.URL.Path)
-		if content, ok := m.downloads[fileID]; ok {
+		if content, ok := m.payloads[fileID]; ok {
 			w.Header().Set("Content-Type", "application/zip")
 			if _, err := w.Write(content); err != nil {
 				return
@@ -1037,12 +1047,16 @@ func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
+		m.downloads++
+		if m.onDownload != nil {
+			m.onDownload()
+		}
 	}))
 	return m
 }
 
 func (m *mockSourceWithDownloads) AddDownload(fileID string, content []byte) {
-	m.downloads[fileID] = content
+	m.payloads[fileID] = content
 }
 
 func (m *mockSourceWithDownloads) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
@@ -1114,20 +1128,20 @@ func TestService_ModLifecycleFacade(t *testing.T) {
 		Deployed:     false,
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(mod))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), mod))
 
-	require.NoError(t, svc.SetModDeployed("test", "42", "g1", "default", true))
-	got, err := svc.GetInstalledMod("test", "42", "g1", "default")
+	require.NoError(t, svc.SetModDeployed(context.Background(), "test", "42", "g1", "default", true))
+	got, err := svc.GetInstalledMod(context.Background(), "test", "42", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, got.Deployed)
 
-	require.NoError(t, svc.SetModEnabled("test", "42", "g1", "default", false))
-	got, err = svc.GetInstalledMod("test", "42", "g1", "default")
+	require.NoError(t, svc.SetModEnabled(context.Background(), "test", "42", "g1", "default", false))
+	got, err = svc.GetInstalledMod(context.Background(), "test", "42", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, got.Enabled)
 
-	require.NoError(t, svc.DeleteInstalledMod("test", "42", "g1", "default"))
-	_, err = svc.GetInstalledMod("test", "42", "g1", "default")
+	require.NoError(t, svc.DeleteInstalledMod(context.Background(), "test", "42", "g1", "default"))
+	_, err = svc.GetInstalledMod(context.Background(), "test", "42", "g1", "default")
 	assert.Error(t, err, "mod should be gone after delete")
 }
 
@@ -1144,7 +1158,7 @@ func TestService_GetFileOwner_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	sourceID, modID, found, err := svc.GetFileOwner("g1", "default", "missing/path.txt")
+	sourceID, modID, found, err := svc.GetFileOwner(context.Background(), "g1", "default", "missing/path.txt")
 	require.NoError(t, err)
 	assert.False(t, found)
 	assert.Empty(t, sourceID)

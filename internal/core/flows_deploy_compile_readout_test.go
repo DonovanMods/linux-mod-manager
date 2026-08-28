@@ -46,7 +46,7 @@ func seedExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, modID, na
 	t.Helper()
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, "1.0", cache.RetainedSourceName(fileID), []byte(name+"-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -62,7 +62,7 @@ func seedExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, modID, na
 func seedLooseMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, fileName string) {
 	t.Helper()
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "fake-compiler", modID, "1.0", fileName, []byte("loose-data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -114,7 +114,7 @@ func TestDeployProfile_Compile_ClassifiesModsAndEmitsMergeSynced(t *testing.T) {
 
 	seedExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
 	seedEnabledPakMod(t, svc, game, "fake-compiler", "raw-pak", "1.0", "raw.pak", []byte("raw-pak-bytes"))
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "raw-pak", game.ID, "default", false))
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false))
 	seedLooseMod(t, svc, game, "loose", "Loose Mod", "loose.esp")
 
 	result, deployed, deployedAt, mergeEvents, mergeAt := deployRecordingProgress(t, svc, game)
@@ -223,7 +223,7 @@ func TestDeployProfile_NonCompile_NoMergeReadout(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "a", "1.0", "a.esp", []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,

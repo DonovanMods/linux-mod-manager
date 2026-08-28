@@ -285,7 +285,9 @@ func (pm *ProfileManager) Export(gameID, profileName string) ([]byte, error) {
 	}
 
 	// Get installed mods to populate FileIDs
-	installedMods, err := pm.db.GetInstalledMods(context.Background(), gameID, profileName) // TODO(v2-p1-task3): ctx threaded in Task 3
+	// ProfileManager does not thread ctx in this phase (design decision) -
+	// see Service.GetInstalledMods for the ctx-aware equivalent.
+	installedMods, err := pm.db.GetInstalledMods(context.Background(), gameID, profileName)
 	if err == nil {
 		// Build lookup map of installed mods by source:mod key
 		installedMap := make(map[string]*domain.InstalledMod)

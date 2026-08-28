@@ -50,7 +50,7 @@ func TestDirectorySourceEndToEnd(t *testing.T) {
 	url, err := src.GetDownloadURL(ctx, &mod, files[0].ID)
 	require.NoError(t, err)
 
-	result, err := svc.ingestLocalToCache(gameCache, game, &mod, &files[0], url[len("file://"):])
+	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, &mod, &files[0], url[len("file://"):])
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 	assert.True(t, gameCache.Exists("7dtd", "my-mods", "BiggerBackpack", "1.2.0"))
@@ -116,9 +116,9 @@ func TestDirectorySourceGameIDSurvivesEmptySourceMapping(t *testing.T) {
 	// The key assertion: an install-shaped save must be visible via GetInstalledMods,
 	// which filters by game_id — a blank GameID would silently orphan the row.
 	installed := &domain.InstalledMod{Mod: *mod, ProfileName: "default", Enabled: true}
-	require.NoError(t, svc.SaveInstalledMod(installed))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), installed))
 
-	got, err := svc.GetInstalledMods(game.ID, "default")
+	got, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, got, 1, "installed mod must be visible under the game's own ID")
 	assert.Equal(t, mod.ID, got[0].ID)

@@ -112,7 +112,7 @@ func TestDoProfileImport_AllInstalled_PrintsSummaryAndSkipsInstallStep(t *testin
 	require.NoError(t, err)
 
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("cached")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -151,7 +151,7 @@ func TestDoProfileImport_NeedsRedownload_ReinstallsUsingStoredFileIDs(t *testing
 
 	// DB record exists (with FileIDs ["extra"], NOT the primary) but nothing
 	// is in cache - a cache-miss redownload.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -185,7 +185,7 @@ func TestDoProfileImport_NeedsRedownload_ReinstallsUsingStoredFileIDs(t *testing
 		"--- Summary ---\n"+
 		"Installed: 1\n", stripDownloadProgress(out))
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"extra"}, installed.FileIDs, "the redownload must use the DB-stored FileIDs, not the (empty) profile YAML ones")
 }
@@ -225,7 +225,7 @@ func TestDoProfileImport_MissingWithInstall_AcceptedInstallsMod(t *testing.T) {
 		"--- Summary ---\n"+
 		"Installed: 1\n", stripDownloadProgress(out))
 
-	_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	require.NoError(t, err)
 }
 
@@ -256,7 +256,7 @@ func TestDoProfileImport_PromptDeclined_NoInstallHappens(t *testing.T) {
 		"\n"+
 		"Download and install mods? [Y/n]: Skipped. Use 'lmm profile apply target' to install them later.\n", out)
 
-	_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	assert.Error(t, err, "declining must leave zero install mutations")
 
 	pm := getProfileManager(svc)
@@ -324,7 +324,7 @@ func TestDoProfileImport_NoInstallFlag_SkipsPromptEntirely(t *testing.T) {
 		"\n"+
 		"Skipped installing 1 mod(s). Use 'lmm profile apply target' to install them later.\n", out)
 
-	_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	assert.Error(t, err)
 }
 
@@ -399,7 +399,7 @@ func TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary(t *test
 	assert.NotContains(t, out, "--- Summary ---", "a prompt read failure must not fall through to the summary block")
 	assert.NotContains(t, out, "Skipped", "a prompt read failure is not a decline")
 
-	_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "target")
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	assert.Error(t, err, "no install may happen after a failed prompt read")
 }
 

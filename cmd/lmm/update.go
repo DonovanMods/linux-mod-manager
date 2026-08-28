@@ -216,7 +216,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Get installed mods
-	installed, err := service.GetInstalledMods(game.ID, profileName)
+	installed, err := service.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("failed to get installed mods: %w", err)
 	}
@@ -854,7 +854,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 
 	// Get the installed mod - kept CLI-side for the header below (see this
 	// function's doc comment); ApplyRollback fetches it again internally.
-	mod, err := service.GetInstalledMod(updateSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, updateSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}

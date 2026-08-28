@@ -50,7 +50,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 	// from search - omits the Installed block. Any other failure is a real
 	// DB error and must surface rather than masquerade as an uninstalled
 	// mod, which the user cannot tell apart from an absence (#236).
-	installed, err := s.GetInstalledMod(sourceID, modID, game.ID, profile)
+	installed, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profile)
 	switch {
 	case errors.Is(err, domain.ErrModNotFound):
 		return detail, nil

@@ -180,8 +180,8 @@ func mergedFingerprintsEqual(a, b MergedFingerprint, classify mergeSourceClassif
 // while an import-compiled entry's is keyed by its own archive filename
 // (see Task 2/3's ingest branches) - FileIDs is the one list that already
 // carries whichever identity applies, for either origin.
-func (s *Service) enabledMergeSources(game *domain.Game, profileName string) ([]source.MergeSource, error) {
-	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+func (s *Service) enabledMergeSources(ctx context.Context, game *domain.Game, profileName string) ([]source.MergeSource, error) {
+	mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile mods: %w", err)
 	}
@@ -248,7 +248,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 		return nil, nil
 	}
 
-	current, sources, err := s.currentMergedFingerprint(game, profileName)
+	current, sources, err := s.currentMergedFingerprint(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +256,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	gameCache := s.GetGameCache(game)
 	syntheticMod := &domain.Mod{ID: mergedPakModID, SourceID: domain.SourceMerged, Version: mergedPakVersion, GameID: game.ID}
 
-	installer, err := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +407,7 @@ func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileN
 // first-install transient (raw deployed, then first sync converts) is
 // healed here, not left for the next verify.
 func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) (warnings []string, err error) {
-	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+	mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile mods: %w", err)
 	}
@@ -702,11 +702,11 @@ func sameMemberSet(a, b []string) bool {
 // reachable when nothing enabled is retained but a mod in mods still holds
 // a retained file, e.g. a disabled mod under --all with no compile source
 // configured) returns the classes computed so far.
-func (s *Service) classifyCompileDeployMods(game *domain.Game, profileName string, mods []*domain.InstalledMod) map[string]DeployModClass {
+func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Game, profileName string, mods []*domain.InstalledMod) map[string]DeployModClass {
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	sources, err := s.enabledMergeSources(game, profileName)
+	sources, err := s.enabledMergeSources(ctx, game, profileName)
 	if err != nil {
 		return nil
 	}
@@ -757,11 +757,11 @@ func (s *Service) classifyCompileDeployMods(game *domain.Game, profileName strin
 // already-successful deploy. Counts are per MOD, not per file: a mod
 // contributing both a converted and a failed file counts once on each side,
 // which is the accurate reading of that (rare) state.
-func (s *Service) recordMergeOutcome(game *domain.Game, profileName string, result *DeployResult, emit func(DeployProgress)) {
+func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, profileName string, result *DeployResult, emit func(DeployProgress)) {
 	if game.DeployMode != domain.DeployCompile {
 		return
 	}
-	outcomes, ok := s.MergedPakOutcomes(game, profileName)
+	outcomes, ok := s.MergedPakOutcomes(ctx, game, profileName)
 	if !ok {
 		return
 	}
@@ -790,7 +790,7 @@ func (s *Service) recordMergeOutcome(game *domain.Game, profileName string, resu
 // The game's compile source interprets the stored Kind strings (#256); a
 // stored fingerprint implies a source produced it, so failing to resolve
 // one now (unconfigured since) reads as "no outcomes available".
-func (s *Service) MergedPakOutcomes(game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
+func (s *Service) MergedPakOutcomes(ctx context.Context, game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
 	gameCache := s.GetGameCache(game)
 	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
 	fp, ok := readMergedFingerprint(cachePath)
@@ -837,7 +837,7 @@ func normalizeOutcomes(mods []MergedFingerprintEntry, classify mergeSourceClassi
 // retains the source on redownload, and the next SyncMergedPak picks it up.
 // Gated on BOTH game- and mod-level ConvertPaks (like enabledMergeSources'
 // own participation gate) so a legacy/opted-out mod is never touched.
-func (s *Service) PakNeedsReingest(game *domain.Game, mod *domain.InstalledMod, fileID string) (bool, error) {
+func (s *Service) PakNeedsReingest(ctx context.Context, game *domain.Game, mod *domain.InstalledMod, fileID string) (bool, error) {
 	if game.DeployMode != domain.DeployCompile || !game.ConvertPaks || !mod.ConvertPaks {
 		return false, nil
 	}
@@ -887,8 +887,8 @@ func readMergedFingerprint(cachePath string) (fp MergedFingerprint, ok bool) {
 // error) when there is nothing to merge - callers distinguish "nothing to
 // do" from "failed to compute" via the returned slice's length, exactly
 // like syncMergedPak's own zero-sources branch does.
-func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string) (MergedFingerprint, []source.MergeSource, error) {
-	sources, err := s.enabledMergeSources(game, profileName)
+func (s *Service) currentMergedFingerprint(ctx context.Context, game *domain.Game, profileName string) (MergedFingerprint, []source.MergeSource, error) {
+	sources, err := s.enabledMergeSources(ctx, game, profileName)
 	if err != nil {
 		return MergedFingerprint{}, nil, fmt.Errorf("listing enabled merge sources: %w", err)
 	}
@@ -921,7 +921,7 @@ func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string
 		current.Mods = append(current.Mods, MergedFingerprintEntry{SourceID: sourceID, ModID: modID, Checksum: sum, Kind: src.Kind, Converted: true})
 	}
 
-	mods, err := s.GetInstalledModsInProfileOrder(game.ID, profileName)
+	mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
 	if err != nil {
 		return MergedFingerprint{}, sources, fmt.Errorf("loading profile mods: %w", err)
 	}
@@ -942,12 +942,12 @@ func (s *Service) currentMergedFingerprint(game *domain.Game, profileName string
 // model). Returns nil, nil - not an error - when the merged pak is
 // up to date, when there is nothing to merge (zero enabled exmodz mods),
 // or when game is not a DeployCompile game.
-func (s *Service) CheckMergedPakStaleness(game *domain.Game, profileName string) (*domain.Update, error) {
+func (s *Service) CheckMergedPakStaleness(ctx context.Context, game *domain.Game, profileName string) (*domain.Update, error) {
 	if game.DeployMode != domain.DeployCompile {
 		return nil, nil
 	}
 
-	current, sources, err := s.currentMergedFingerprint(game, profileName)
+	current, sources, err := s.currentMergedFingerprint(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -1052,7 +1052,7 @@ func (s *Service) PurgeMergedPak(ctx context.Context, game *domain.Game, profile
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	installer, err := s.GetInstallerForProfile(game, profileName)
+	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return err
 	}

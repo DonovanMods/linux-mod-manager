@@ -162,7 +162,7 @@ func IsNewerVersion(currentVersion, newVersion string) bool {
 func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod) ([]domain.Update, error) {
 	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, installed)
 
-	staleUpd, staleErr := s.CheckMergedPakStaleness(game, profileName)
+	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)
 	if staleErr != nil && checkErr == nil {
 		checkErr = staleErr
 	}

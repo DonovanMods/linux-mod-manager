@@ -125,7 +125,7 @@ func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -216,7 +216,7 @@ func TestDoUninstall_Verbose_PrintsAllThreeHistoricalNotesByteIdentically(t *tes
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -316,7 +316,7 @@ func TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr(t *testing.T) {
 		Hooks: domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failScript}},
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,

@@ -64,7 +64,7 @@ func setupSearchColorTest(t *testing.T) (*core.Service, *domain.Game) {
 	}
 	require.NoError(t, svc.AddGame(game))
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "m1", SourceID: spy.id, Name: "Installed Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,

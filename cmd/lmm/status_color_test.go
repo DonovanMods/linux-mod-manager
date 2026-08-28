@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,7 +21,7 @@ func TestShowGameStatus_EnabledDisabledCounts_PlainWhenColorDisabled(t *testing.
 	seedModWithState(t, svc, game, "2", "Disabled Mod", false, false)
 
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.NotContains(t, out, "\x1b[")
@@ -36,7 +37,7 @@ func TestShowGameStatus_EnabledDisabledCounts_ColoredWhenTTY(t *testing.T) {
 
 	withColorCapableStdout(t, true)
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.Contains(t, out, ansiGreen+"1"+ansiReset, "enabled count should be accented green")
@@ -55,12 +56,12 @@ func TestDoStatus_TableHeader_BoldedWhenTTY_AlignmentUnaffected(t *testing.T) {
 	resetColorFlags(t)
 	withColorCapableStdout(t, false)
 	plain := captureStdout(t, func() error {
-		return doStatus(svc)
+		return doStatus(context.Background(), svc)
 	})
 
 	withColorCapableStdout(t, true)
 	colored := captureStdout(t, func() error {
-		return doStatus(svc)
+		return doStatus(context.Background(), svc)
 	})
 
 	assert.Contains(t, colored, ansiBold, "table header should be accented when color is enabled")
@@ -80,12 +81,12 @@ func TestDoStatus_LastColumnCount_CyanWhenTTY_AlignmentUnaffected(t *testing.T) 
 	resetColorFlags(t)
 	withColorCapableStdout(t, false)
 	plain := captureStdout(t, func() error {
-		return doStatus(svc)
+		return doStatus(context.Background(), svc)
 	})
 
 	withColorCapableStdout(t, true)
 	colored := captureStdout(t, func() error {
-		return doStatus(svc)
+		return doStatus(context.Background(), svc)
 	})
 
 	assert.Contains(t, colored, ansiCyan+"1"+ansiReset, "the last column's count should be a cyan accent")
@@ -105,7 +106,7 @@ func TestShowGameStatus_RicherValues_ColoredWhenTTY(t *testing.T) {
 
 	withColorCapableStdout(t, true)
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.Contains(t, out, ansiGreen+"default"+ansiReset, "the active profile name should be accented green")
@@ -125,7 +126,7 @@ func TestShowGameStatus_RicherValues_PlainWhenColorDisabled(t *testing.T) {
 	require.NoError(t, svc.NewProfileManager().SetDefault(game.ID, "default"))
 
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.NotContains(t, out, "\x1b[")

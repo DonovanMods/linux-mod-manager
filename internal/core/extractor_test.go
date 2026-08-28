@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"archive/zip"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +48,7 @@ func TestExtractor_Extract_Zip(t *testing.T) {
 	zipPath := createTestZip(t, srcDir, files)
 
 	extractor := core.NewExtractor()
-	err := extractor.Extract(zipPath, destDir)
+	err := extractor.Extract(context.Background(), zipPath, destDir)
 	require.NoError(t, err)
 
 	// Verify files were extracted
@@ -89,7 +90,7 @@ func TestExtractor_Extract_ZipWithDirectories(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
-	err = extractor.Extract(zipPath, destDir)
+	err = extractor.Extract(context.Background(), zipPath, destDir)
 	require.NoError(t, err)
 
 	// Verify directory was created
@@ -116,7 +117,7 @@ func TestExtractor_Extract_EmptyZip(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
-	err = extractor.Extract(zipPath, destDir)
+	err = extractor.Extract(context.Background(), zipPath, destDir)
 	require.NoError(t, err)
 }
 
@@ -124,7 +125,7 @@ func TestExtractor_Extract_NonExistentFile(t *testing.T) {
 	destDir := t.TempDir()
 
 	extractor := core.NewExtractor()
-	err := extractor.Extract("/nonexistent/file.zip", destDir)
+	err := extractor.Extract(context.Background(), "/nonexistent/file.zip", destDir)
 	require.Error(t, err)
 }
 
@@ -138,7 +139,7 @@ func TestExtractor_Extract_InvalidZip(t *testing.T) {
 	require.NoError(t, err)
 
 	extractor := core.NewExtractor()
-	err = extractor.Extract(invalidPath, destDir)
+	err = extractor.Extract(context.Background(), invalidPath, destDir)
 	require.Error(t, err)
 }
 
@@ -151,7 +152,7 @@ func TestExtractor_Extract_UnsupportedWithoutExtensionReportsPath(t *testing.T) 
 	require.NoError(t, err)
 
 	extractor := core.NewExtractor()
-	err = extractor.Extract(invalidPath, destDir)
+	err = extractor.Extract(context.Background(), invalidPath, destDir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported archive format for path")
 	assert.Contains(t, err.Error(), invalidPath)
@@ -181,7 +182,7 @@ func TestExtractor_Extract_TruncatedZip(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
-	err = extractor.Extract(zipPath, destDir)
+	err = extractor.Extract(context.Background(), zipPath, destDir)
 	require.Error(t, err)
 }
 
@@ -234,7 +235,7 @@ func TestExtractor_Extract_ZipWithoutExtension(t *testing.T) {
 	require.NoError(t, os.Rename(zipPath, noExtPath))
 
 	extractor := core.NewExtractor()
-	require.NoError(t, extractor.Extract(noExtPath, destDir))
+	require.NoError(t, extractor.Extract(context.Background(), noExtPath, destDir))
 
 	content, err := os.ReadFile(filepath.Join(destDir, "nested/file.txt"))
 	require.NoError(t, err)
@@ -246,7 +247,7 @@ func TestExtractor_Extract_NonExistentFileReportsPath(t *testing.T) {
 	missingPath := "/nonexistent/file.zip"
 
 	extractor := core.NewExtractor()
-	err := extractor.Extract(missingPath, destDir)
+	err := extractor.Extract(context.Background(), missingPath, destDir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "accessing archive")
 	assert.Contains(t, err.Error(), missingPath)
@@ -299,7 +300,7 @@ func TestExtractor_Extract_ZipSlipPrevention(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
-	err = extractor.Extract(zipPath, destDir)
+	err = extractor.Extract(context.Background(), zipPath, destDir)
 	// Should either error or safely extract to a sanitized path
 	// The key is that it should NOT write to ../../../etc/passwd
 	if err == nil {
@@ -375,7 +376,7 @@ func TestExtractor_Extract_RejectsReservedCacheMarkerNames(t *testing.T) {
 				{tt.member, "hostile content"},
 			})
 
-			err := core.NewExtractor().Extract(zipPath, destDir)
+			err := core.NewExtractor().Extract(context.Background(), zipPath, destDir)
 			require.Error(t, err, "extraction must fail: %s", tt.comment)
 			assert.Contains(t, err.Error(), ".lmm-", "the error must name the reserved prefix it rejected")
 
@@ -412,7 +413,7 @@ func TestExtractor_Extract_ReservedNameRejection_AppliesTo7z(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "building fixture archive: %s", out)
 
-	err = core.NewExtractor().Extract(archivePath, destDir)
+	err = core.NewExtractor().Extract(context.Background(), archivePath, destDir)
 	require.Error(t, err, "a forged marker must fail extraction on the 7z path too")
 	assert.Contains(t, err.Error(), ".lmm-")
 }
@@ -431,7 +432,7 @@ func TestExtractor_Extract_KeepsPreexistingMarkersInDest(t *testing.T) {
 	require.NoError(t, cache.MarkFileComplete(destDir, "file1"))
 
 	zipPath := createTestZip(t, srcDir, map[string]string{"mod2.esp": "second file"})
-	require.NoError(t, core.NewExtractor().Extract(zipPath, destDir))
+	require.NoError(t, core.NewExtractor().Extract(context.Background(), zipPath, destDir))
 
 	_, err := os.Stat(filepath.Join(destDir, ".lmm-file-file1"))
 	assert.NoError(t, err, "a legitimately pre-existing marker must survive extraction untouched")
@@ -462,7 +463,7 @@ func TestExtractor_Extract_PreservesPermissions(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	extractor := core.NewExtractor()
-	err = extractor.Extract(zipPath, destDir)
+	err = extractor.Extract(context.Background(), zipPath, destDir)
 	require.NoError(t, err)
 
 	// Check that the file was extracted (permissions may vary by platform)
@@ -483,7 +484,7 @@ func TestExtractor_Extract_CreatesDestDir(t *testing.T) {
 	destDir := filepath.Join(t.TempDir(), "nested", "dest")
 
 	extractor := core.NewExtractor()
-	err := extractor.Extract(zipPath, destDir)
+	err := extractor.Extract(context.Background(), zipPath, destDir)
 	require.NoError(t, err)
 
 	// Verify directory was created and file extracted

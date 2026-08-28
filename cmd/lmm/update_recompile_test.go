@@ -73,7 +73,7 @@ func setupDoUpdateRecompileTest(t *testing.T) (*core.Service, *domain.Game, *com
 		Enabled:      true,
 		FileIDs:      []string{fileID},
 	}
-	require.NoError(t, svc.SaveInstalledMod(im))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
 	pm := svc.NewProfileManager()
 	_, cerr := pm.Create(game.ID, "default")
@@ -122,7 +122,7 @@ func TestDoUpdate_JSON_ReportsRecompileNeeded(t *testing.T) {
 func TestApplySingleUpdate_Recompile_AppliesAndRedeploys(t *testing.T) {
 	svc, game, compiler, deployedPath := setupDoUpdateRecompileTest(t)
 
-	mod, err := svc.GetInstalledMod("fake-compiler", "bear-mount", "icarus", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", "icarus", "default")
 	require.NoError(t, err)
 
 	err = applySingleUpdate(context.Background(), svc, game, mod, "default")
@@ -142,7 +142,7 @@ func TestApplySingleUpdate_Recompile_JSON(t *testing.T) {
 	jsonOutput = true
 	t.Cleanup(func() { jsonOutput = false })
 
-	mod, err := svc.GetInstalledMod("fake-compiler", "bear-mount", "icarus", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", "icarus", "default")
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
@@ -173,7 +173,7 @@ func TestApplySingleUpdate_Recompile_PrintsMergeWarnings(t *testing.T) {
 	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
 	compiler.mergeWarnings = []string{"asset collision: fixture warning"}
 
-	mod, err := svc.GetInstalledMod("fake-compiler", "bear-mount", "icarus", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", "icarus", "default")
 	require.NoError(t, err)
 
 	oldStderr := os.Stderr

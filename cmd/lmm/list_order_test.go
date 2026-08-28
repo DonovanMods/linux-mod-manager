@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -83,7 +84,7 @@ func TestList_ModMissingFromLoadOrder_StillShown(t *testing.T) {
 	// Install "b" without ever adding it to the profile's load order -
 	// simulates the edge case a normal add/remove flow shouldn't produce,
 	// but which must not make the mod vanish from `lmm list`.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "b", SourceID: "src", Name: "Untracked Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,

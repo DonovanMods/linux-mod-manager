@@ -11,8 +11,8 @@ import (
 // the test binary, so none of these are part of the production API.
 
 // EnabledMergeSourcesForTest exposes enabledMergeSources.
-func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName string) ([]source.MergeSource, error) {
-	return s.enabledMergeSources(game, profileName)
+func (s *Service) EnabledMergeSourcesForTest(ctx context.Context, game *domain.Game, profileName string) ([]source.MergeSource, error) {
+	return s.enabledMergeSources(ctx, game, profileName)
 }
 
 // ReconcilePakManifestsForTest exposes reconcilePakManifests.

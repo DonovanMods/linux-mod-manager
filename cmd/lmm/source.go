@@ -259,7 +259,7 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 	if a, ok := src.(interface{ SetAPIKey(string) }); ok {
 		// Same resolution as registration (env var named by EnvKeyFor, then
 		// the stored token), so a probe sees exactly the key a real run would.
-		if key := app.ResolveAPIKey(svc, src); key != "" {
+		if key := app.ResolveAPIKey(ctx, svc, src); key != "" {
 			a.SetAPIKey(key)
 		}
 	}

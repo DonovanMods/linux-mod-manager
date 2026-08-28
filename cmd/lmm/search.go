@@ -250,7 +250,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if err != nil {
 		return err
 	}
-	installedMods, _ := service.GetInstalledMods(game.ID, profileName)
+	installedMods, _ := service.GetInstalledMods(ctx, game.ID, profileName)
 	installedKeys := make(map[string]bool)
 	for _, im := range installedMods {
 		installedKeys[domain.ModKey(im.SourceID, im.ID)] = true

@@ -63,7 +63,7 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 
 	// The mod list is fetched before confirming so the prompt's count is
 	// exactly the set core.PurgeProfile will purge.
-	mods, err := service.GetInstalledMods(game.ID, profileName)
+	mods, err := service.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}

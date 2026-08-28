@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"crypto/md5"
 	"fmt"
 	"os"
@@ -31,7 +32,7 @@ func TestIngestLocalToCacheDirectory(t *testing.T) {
 	mod := &domain.Mod{ID: "BiggerBackpack", SourceID: "my-mods", Version: "1.2.0"}
 	file := &domain.DownloadableFile{ID: "main", FileName: "BiggerBackpack"}
 
-	result, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.FilesExtracted)
 	assert.NotEmpty(t, result.Checksum, "#164: a directory ingest must produce a checksum so installs/verify can persist it")
@@ -59,23 +60,23 @@ func TestIngestLocalToCacheDirectory_ChecksumDeterministicAndDriftSensitive(t *t
 	mod := &domain.Mod{ID: "BiggerBackpack", SourceID: "my-mods", Version: "1.2.0"}
 	file := &domain.DownloadableFile{ID: "main", FileName: "BiggerBackpack"}
 
-	first, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	first, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir)
 	require.NoError(t, err)
 	require.NotEmpty(t, first.Checksum)
 
-	unchanged, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	unchanged, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir)
 	require.NoError(t, err)
 	assert.Equal(t, first.Checksum, unchanged.Checksum,
 		"re-ingesting an unchanged source directory must reproduce the same digest")
 
 	require.NoError(t, os.WriteFile(filepath.Join(modDir, "Config", "items.xml"), []byte("<items changed/>"), 0644))
-	contentDrift, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	contentDrift, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir)
 	require.NoError(t, err)
 	assert.NotEqual(t, first.Checksum, contentDrift.Checksum,
 		"changing a member file's content must change the digest")
 
 	require.NoError(t, os.WriteFile(filepath.Join(modDir, "extra.txt"), []byte("new member"), 0644))
-	memberDrift, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	memberDrift, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir)
 	require.NoError(t, err)
 	assert.NotEqual(t, contentDrift.Checksum, memberDrift.Checksum,
 		"adding a member file must change the digest")
@@ -95,7 +96,7 @@ func TestIngestLocalToCacheDirectory_EmptyMemberSet_NoChecksum(t *testing.T) {
 	mod := &domain.Mod{ID: "EmptyMod-1.0", SourceID: "my-mods", Version: "1.0"}
 	file := &domain.DownloadableFile{ID: "main", FileName: "EmptyMod-1.0"}
 
-	result, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir)
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.FilesExtracted)
 	assert.Empty(t, result.Checksum, "an empty member set has nothing to fingerprint - no digest")
@@ -121,13 +122,13 @@ func TestIngestLocalToCacheDirectory_ReingestDropsRemovedMembers(t *testing.T) {
 	mod := &domain.Mod{ID: "BiggerBackpack", SourceID: "my-mods", Version: "1.2.0"}
 	file := &domain.DownloadableFile{ID: "main", FileName: "BiggerBackpack"}
 
-	first, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	first, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir)
 	require.NoError(t, err)
 	require.Equal(t, 3, first.FilesExtracted)
 
 	require.NoError(t, os.Remove(filepath.Join(modDir, "stale.txt")))
 
-	second, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	second, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir)
 	require.NoError(t, err)
 	assert.Equal(t, 2, second.FilesExtracted, "the removed member must not be counted after re-ingest")
 
@@ -144,7 +145,7 @@ func TestIngestLocalToCacheDirectory_ReingestDropsRemovedMembers(t *testing.T) {
 	// The digest must converge on what a FRESH ingest of the shrunk source
 	// produces - the symmetry verify --fix and reinstalls depend on (#164).
 	freshCache := cache.New(t.TempDir())
-	fresh, err := svc.ingestLocalToCache(freshCache, game, mod, file, modDir)
+	fresh, err := svc.ingestLocalToCache(context.Background(), freshCache, game, mod, file, modDir)
 	require.NoError(t, err)
 	assert.Equal(t, fresh.Checksum, second.Checksum,
 		"re-ingest over an existing entry must produce the same digest as a fresh ingest of the same source")
@@ -168,7 +169,7 @@ func TestIngestLocalToCacheDirectory_MembersIncludeDereferencedSymlinks(t *testi
 	mod := &domain.Mod{ID: "LinkedMod", SourceID: "my-mods", Version: "1.0"}
 	file := &domain.DownloadableFile{ID: "main", FileName: "LinkedMod"}
 
-	result, err := svc.ingestLocalToCache(gameCache, game, mod, file, modDir)
+	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, modDir)
 	require.NoError(t, err)
 
 	files, err := gameCache.ListFiles("7dtd", "my-mods", "LinkedMod", "1.0")
@@ -194,7 +195,7 @@ func TestIngestLocalToCacheArchiveCopyMode(t *testing.T) {
 	mod := &domain.Mod{ID: "coolmod-2.0", SourceID: "my-mods", Version: "2.0"}
 	file := &domain.DownloadableFile{ID: "main", FileName: "coolmod-2.0.zip"}
 
-	result, err := svc.ingestLocalToCache(gameCache, game, mod, file, archive)
+	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, archive)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 	assert.Equal(t, fmt.Sprintf("%x", md5.Sum([]byte("zipbytes"))), result.Checksum,
@@ -225,7 +226,7 @@ func TestIngestLocalToCacheArchiveCopyModeUsesDeclaredFileName(t *testing.T) {
 	mod := &domain.Mod{ID: "coolmod-2.0", SourceID: "my-mods", Version: "2.0"}
 	file := &domain.DownloadableFile{ID: "main", FileName: "declared.zip"}
 
-	result, err := svc.ingestLocalToCache(gameCache, game, mod, file, tempFile)
+	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, tempFile)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 
@@ -254,7 +255,7 @@ func TestIngestLocalToCacheArchiveCopyMode_TraversalFileNameSanitized(t *testing
 	mod := &domain.Mod{ID: "coolmod-2.0", SourceID: "my-mods", Version: "2.0"}
 	file := &domain.DownloadableFile{ID: "main", FileName: "../evil-traversal.zip"}
 
-	result, err := svc.ingestLocalToCache(gameCache, game, mod, file, tempFile)
+	result, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, tempFile)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 
@@ -319,6 +320,6 @@ func TestIngestLocalToCacheMissingPath(t *testing.T) {
 	mod := &domain.Mod{ID: "x", SourceID: "my-mods", Version: "1.0"}
 	file := &domain.DownloadableFile{ID: "main", FileName: "x"}
 
-	_, err := svc.ingestLocalToCache(gameCache, game, mod, file, filepath.Join(t.TempDir(), "gone"))
+	_, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, filepath.Join(t.TempDir(), "gone"))
 	assert.Error(t, err)
 }

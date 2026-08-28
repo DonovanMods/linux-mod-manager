@@ -52,7 +52,7 @@ func TestPlanImportCategorizes(t *testing.T) {
 		map[string][]byte{"installed.esp": []byte("i")})
 
 	// redownload-mod: a DB row (also under "other"), but nothing in cache.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "redownload-mod", SourceID: "src", Name: "Redownload Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "other",
 		UpdatePolicy: domain.UpdateNotify,
@@ -122,7 +122,7 @@ func TestApplyImportSavesAndInstalls(t *testing.T) {
 	assert.Equal(t, 0, result.Failed)
 	assert.Equal(t, 0, result.Skipped)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "target")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1"}, installed.FileIDs)
 	assert.True(t, installed.Enabled)
@@ -187,7 +187,7 @@ func TestApplyImportConfirmInstallDeclined(t *testing.T) {
 	_, err = svc.NewProfileManager().Get("g1", "target")
 	require.NoError(t, err, "the profile must still be saved despite the decline")
 
-	_, err = svc.GetInstalledMod("src", "mod1", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	assert.Error(t, err, "declining must leave zero install mutations")
 }
 
@@ -324,9 +324,9 @@ func TestApplyImportPartialFailure(t *testing.T) {
 	assert.Contains(t, result.Warnings[0], "src:bad-mod")
 	assert.Contains(t, result.Warnings[0], "failed to fetch mod")
 
-	_, err = svc.GetInstalledMod("src", "good-mod", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "good-mod", "g1", "target")
 	assert.NoError(t, err, "the loop must continue past the bad ref and still install the good one")
-	_, err = svc.GetInstalledMod("src", "bad-mod", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "bad-mod", "g1", "target")
 	assert.Error(t, err)
 }
 
@@ -388,9 +388,9 @@ func TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T)
 	assert.Contains(t, result.Warnings[0], "src:bad-mod")
 	assert.Contains(t, result.Warnings[0], "no longer available upstream")
 
-	_, err = svc.GetInstalledMod("src", "good-mod", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "good-mod", "g1", "target")
 	assert.NoError(t, err, "the loop must continue past the bad ref and still install the good one")
-	_, err = svc.GetInstalledMod("src", "bad-mod", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "bad-mod", "g1", "target")
 	assert.Error(t, err, "bad-mod must not be installed via fallback substitution")
 }
 
@@ -428,7 +428,7 @@ func TestApplyImportRedownloadUsesStoredFileIDs(t *testing.T) {
 	require.NoError(t, err)
 	// A prior install recorded FileIDs=["stored"], but its cache entry is
 	// gone - a cache-miss redownload.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -450,7 +450,7 @@ func TestApplyImportRedownloadUsesStoredFileIDs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "target")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"stored"}, installed.FileIDs, "the redownload must fetch the DB-stored file, not the primary")
 
@@ -497,7 +497,7 @@ func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
 	require.NoError(t, err)
 	// A prior install recorded FileIDs=["1"], but its cache entry is gone -
 	// a cache-miss redownload, matching TestApplyImportRedownloadUsesStoredFileIDs's setup.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -517,7 +517,7 @@ func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "target")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version, "DB row must record the selected file's version, not the mod's latest")
 
@@ -561,7 +561,7 @@ func TestApplyImport_StoredIDsGone_HealsToRecordedVersion(t *testing.T) {
 	assert.Equal(t, 1, result.Installed, "must heal to the recorded version, not hard-fail")
 	assert.Equal(t, 0, result.Failed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "target")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version)
 	assert.Equal(t, []string{"9"}, installed.FileIDs)
@@ -619,7 +619,7 @@ func TestApplyImport_VersionlessSource_KeepsLegacyBehavior(t *testing.T) {
 	assert.Contains(t, failedEvt.Detail, "999")
 	assert.NotContains(t, failedEvt.Detail, "not available", "a versionless file list must produce the un-extended #95 wording, not the #96 extension")
 
-	_, err = svc.GetInstalledMod("src", "mod1", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	assert.Error(t, err)
 }
 
@@ -697,7 +697,7 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -729,7 +729,7 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 	assert.Equal(t, 1, result.Installed)
 	assert.Equal(t, 0, result.Failed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version)
 	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
@@ -775,7 +775,7 @@ func TestApplyImport_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
 	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.0", "mod1-old.esp", []byte("old-payload")))
 	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "src", "mod1", "1.0"), "9"))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -806,7 +806,7 @@ func TestApplyImport_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	assert.Equal(t, 0, mock.DownloadCount(),
 		"a fully-marked cache entry must be deployed from cache, not redownloaded")
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version)
 	assert.Equal(t, []string{"9"}, installed.FileIDs)
@@ -862,8 +862,8 @@ func TestApplyImportCtxCancelled(t *testing.T) {
 	require.NotNil(t, result, "partial result (the first mod's success) must not be discarded")
 	assert.Equal(t, 1, result.Installed, "the first mod must finish before cancellation is honored")
 
-	_, err = svc.GetInstalledMod("src", "mod1", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	assert.NoError(t, err, "mod1 must have completed before cancellation")
-	_, err = svc.GetInstalledMod("src", "mod2", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod2", "g1", "target")
 	assert.Error(t, err, "mod2 must never have been attempted once ctx was cancelled")
 }

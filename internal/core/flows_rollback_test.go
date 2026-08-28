@@ -57,7 +57,7 @@ func seedRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, so
 		LinkMethod:   domain.LinkSymlink,
 		FileIDs:      oldFileIDs,
 	}
-	require.NoError(t, svc.SaveInstalledMod(im))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &oldMod, "default"))
@@ -71,10 +71,10 @@ func seedRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, so
 
 	newMod := domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: newVersion, GameID: game.ID}
 	require.NoError(t, installer.Replace(context.Background(), game, &oldMod, &newMod, "default"))
-	require.NoError(t, svc.ApplyModUpdate(sourceID, modID, game.ID, "default", newVersion, newFileIDs))
+	require.NoError(t, svc.ApplyModUpdate(context.Background(), sourceID, modID, game.ID, "default", newVersion, newFileIDs))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: newVersion, FileIDs: newFileIDs}))
 
-	updated, err := svc.GetInstalledMod(sourceID, modID, game.ID, "default")
+	updated, err := svc.GetInstalledMod(context.Background(), sourceID, modID, game.ID, "default")
 	require.NoError(t, err)
 	return updated
 }
@@ -105,7 +105,7 @@ func TestApplyRollbackSwapsVersions(t *testing.T) {
 	assert.Empty(t, result.Warnings)
 	assert.Empty(t, result.Notes)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version)
 	assert.Equal(t, []string{"old-1"}, updated.FileIDs)
@@ -195,7 +195,7 @@ func TestApplyRollback_LockedRefRefusesRollback(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Empty(t, result.ModName, "no identity fields should be populated before this guard")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "the DB row must be unchanged")
 
@@ -226,7 +226,7 @@ func TestApplyRollback_UnlockedRefStillRollsBack(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version)
 }
@@ -265,7 +265,7 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 		require.NotNil(t, result)
 		assert.Empty(t, result.Warnings)
 
-		updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "2.0", updated.Version, "a fatal before_each hook must leave the DB row untouched")
 	})
@@ -293,7 +293,7 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 		}
 		assert.True(t, sawForced, "an UpdateBeforeEachForced event must fire")
 
-		updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "1.0", updated.Version, "the rollback must still apply despite the forced hook failure")
 	})
@@ -308,7 +308,7 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_each hook failed")
 
-		updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "2.0", updated.Version, "a fatal before_each hook must leave the DB row untouched")
 	})
@@ -324,7 +324,7 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 		require.Len(t, result.Warnings, 1)
 		assert.Contains(t, result.Warnings[0], "install.before_each hook failed (forced):")
 
-		updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "1.0", updated.Version)
 	})
@@ -368,7 +368,7 @@ func TestApplyRollbackAfterEachWarnings(t *testing.T) {
 	}
 	assert.Equal(t, 2, warningCount)
 
-	updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, gerr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, gerr)
 	assert.Equal(t, "1.0", updated.Version, "the rollback itself must still have applied")
 }
@@ -408,7 +408,7 @@ func TestApplyRollbackCompensatesOnDBFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), "updating database:")
 	require.NotNil(t, result, "a partial result must be returned alongside the error")
 
-	updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, gerr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, gerr)
 	assert.Equal(t, "2.0", updated.Version, "the blocked transaction must have rolled back entirely - the DB row must be untouched")
 	assert.Equal(t, "1.0", updated.PreviousVersion)
@@ -457,7 +457,7 @@ func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *doma
 		LinkMethod:   domain.LinkSymlink,
 		FileIDs:      []string{"fileA"},
 	}
-	require.NoError(t, svc.SaveInstalledMod(im))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &oldMod, "default"))
@@ -477,10 +477,10 @@ func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *doma
 	}
 	newMod := oldMod
 	require.NoError(t, installer.ReplaceForUpdate(context.Background(), game, &oldMod, &newMod, "default", []string{"fileA"}, []string{"fileB"}))
-	require.NoError(t, svc.ApplyModUpdate("src", "mod1", game.ID, "default", version, []string{"fileB"}))
+	require.NoError(t, svc.ApplyModUpdate(context.Background(), "src", "mod1", game.ID, "default", version, []string{"fileB"}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: version, FileIDs: []string{"fileB"}}))
 
-	updated, err := svc.GetInstalledMod("src", "mod1", game.ID, "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	require.Equal(t, version, updated.PreviousVersion, "seed must leave the row rollback-ready")
 	require.Equal(t, []string{"fileA"}, updated.PreviousFileIDs)
@@ -521,7 +521,7 @@ func TestApplyRollback_SameVersionFileOnlyUpdate_UndeploysRolledBackFromMember(t
 	assert.True(t, os.IsNotExist(statErr),
 		"the rolled-back-from file's member must be UNDEPLOYED despite the shared same-version cache dir (#150)")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version)
 	assert.Equal(t, []string{"fileA"}, updated.FileIDs)
@@ -562,7 +562,7 @@ func TestApplyRollback_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion(t *
 	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
 	assert.NoError(t, statErr, "a legacy cache keeps the union deployed - never guess, never undeploy without positive provenance")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"fileA"}, updated.FileIDs, "the DB swap must still restore the previous file IDs")
 }
@@ -599,7 +599,7 @@ func TestApplyRollback_SameVersionFileOnlyUpdate_CompensationStaysNarrow(t *test
 	assert.True(t, os.IsNotExist(statErr),
 		"the compensation must narrow too - the previous file's member must not stay deployed beside the restored current one")
 
-	updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, gerr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, gerr)
 	assert.Equal(t, []string{"fileB"}, updated.FileIDs, "the blocked transaction must have left the row untouched")
 }

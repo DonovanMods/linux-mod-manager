@@ -465,7 +465,7 @@ func TestDoImport_ArchiveWithID_ResolvesFileIDAndStampsMarker(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	installed, err := svc.GetInstalledMod("acme-source", "999", "g1", "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "acme-source", "999", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"55"}, installed.FileIDs,
 		"the resolved source file ID must be recorded on the DB row")
@@ -508,7 +508,7 @@ func TestDoImport_ArchiveWithID_FileListingFails_DegradesToMarkerless(t *testing
 	})
 	require.NoError(t, err, "a failed source file listing must not fail the import")
 
-	installed, err := svc.GetInstalledMod("acme-source", "999", "g1", "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "acme-source", "999", "g1", "default")
 	require.NoError(t, err)
 	assert.Empty(t, installed.FileIDs, "no resolved file means no recorded FileIDs")
 }
@@ -543,7 +543,7 @@ func TestRunImportScan_MatchedSource_ResolvesFileIDAndStampsMarker(t *testing.T)
 	})
 	require.NoError(t, err)
 
-	installed, err := svc.GetInstalledMod("acme-source", "42", "g1", "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "acme-source", "42", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"77"}, installed.FileIDs,
 		"the resolved source file ID must be recorded on the DB row")

@@ -65,7 +65,7 @@ func setupDoVerifyVersionTest(t *testing.T, recordedVersion string, fileIDs []st
 
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: recordedVersion, GameID: game.ID}, sourceFiles)
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: recordedVersion, GameID: game.ID},
 		ProfileName: "default",
 		Enabled:     true,
@@ -75,7 +75,7 @@ func setupDoVerifyVersionTest(t *testing.T, recordedVersion string, fileIDs []st
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", recordedVersion, "mod1.esp", []byte("plugin content")))
 	for _, id := range fileIDs {
-		require.NoError(t, svc.SaveFileChecksum("test-src", "mod1", game.ID, "default", id, "deadbeef"))
+		require.NoError(t, svc.SaveFileChecksum(context.Background(), "test-src", "mod1", game.ID, "default", id, "deadbeef"))
 	}
 
 	verifyProfile = "default"
@@ -330,15 +330,15 @@ func setupDoVerifyFixTest(t *testing.T, deployed bool) (*cobra.Command, *core.Se
 	})
 
 	if deployed {
-		// Targeted setters, not a full svc.SaveInstalledMod(mod) - the
+		// Targeted setters, not a full svc.SaveInstalledMod(context.Background(), mod) - the
 		// latter's full-row upsert would wipe the checksum
 		// setupDoVerifyVersionTest just seeded (the exact audit Finding 1
 		// bug pattern, here as a test-setup artifact rather than
 		// production code - fixed the same way).
-		require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "default", true))
-		require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "default", domain.LinkSymlink))
+		require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "default", true))
+		require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "default", domain.LinkSymlink))
 
-		mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+		mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 		require.NoError(t, err)
 		require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &mod.Mod, "default"))
 	}
@@ -389,7 +389,7 @@ func TestDoVerify_Fix_VersionMismatch_NotDeployed_RepairsRecord(t *testing.T) {
 	assert.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must exist under the effective (new) version key")
 	assert.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "cache must no longer exist under the recorded (old) version key")
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", mod.Version, "DB row must be corrected to the effective version")
 
@@ -500,7 +500,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_StillFixesDB(t *testing.T) {
 	assert.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "pre-existing new cache entry must be left untouched")
 
 	// DB is still fixed despite the blocked rename.
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", mod.Version, "DB row must still be corrected even when the cache rename is blocked")
 }
@@ -583,7 +583,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_Deployed_LeavesWorkingSymlin
 	require.NoError(t, err)
 	assert.Equal(t, "plugin content", string(content), "the working deployment's content must be untouched")
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", mod.Version, "DB is still corrected even though the deployment was left alone")
 	assert.True(t, mod.Deployed, "Deployed must remain true - the existing deployment is still valid")
@@ -623,7 +623,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag(t 
 
 	// Steps 1-3 (cache rename, DB save, profile upsert) already completed
 	// before the re-link failed, so the version correction stands.
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", mod.Version, "the version correction from steps 1-3 must stand even though step 4 failed")
 
@@ -664,7 +664,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag(t 
 	// is the net that would have caught Finding 1.
 	assert.Contains(t, out2, "All files verified OK.", "the second run must be clean - not hit NO CHECKSUM or any other new issue")
 
-	mod2, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod2, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.False(t, mod2.Deployed, "Deployed must still read false on the second run - nothing re-marks it deployed on its own")
 }
@@ -705,7 +705,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged(t *testi
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
 	assert.Equal(t, 1, result.Issues, "a failed rename must not repair the row - the issue must still be counted")
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", mod.Version, "DB row must still hold the OLD version - no write happens when the rename itself fails")
 
@@ -742,7 +742,7 @@ func TestDoVerify_Fix_VersionMismatch_PreservesFileChecksum(t *testing.T) {
 	cmd, svc, game := setupDoVerifyFixTest(t, false)
 
 	// Sanity: the fixture seeds a real checksum before the repair runs.
-	before, err := svc.GetFilesWithChecksums(game.ID, "default")
+	before, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, before, 1)
 	require.Equal(t, "deadbeef", before[0].Checksum)
@@ -756,7 +756,7 @@ func TestDoVerify_Fix_VersionMismatch_PreservesFileChecksum(t *testing.T) {
 	})
 	require.Contains(t, out, "Repaired", "sanity: the repair must have actually run")
 
-	after, err := svc.GetFilesWithChecksums(game.ID, "default")
+	after, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	found := false
 	for _, f := range after {
@@ -806,7 +806,7 @@ func TestDoVerify_Fix_VersionMismatch_RetryAfterPartialFailure_StillRepairsSibli
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", secondMod.Version, "the sibling must still be repaired on retry, even though no rename happened THIS run - the cache already lives at the effective version")
 }
@@ -842,7 +842,7 @@ func TestDoVerify_Fix_VersionMismatch_UpsertModFailsBeforeDBWrite_ConvergesOnRet
 	})
 	assert.Contains(t, out1, "Repair failed", "run 1 must fail visibly, not silently")
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", mod.Version, "the DB must NOT have been written when the profile upsert (which now runs first) fails")
 
@@ -881,7 +881,7 @@ func TestDoVerify_Fix_VersionMismatch_OldPathStatErrorBlocksRepair(t *testing.T)
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", mod.Version, "a genuine stat failure on the old cache path must block the repair entirely - no DB write, same as an os.Rename failure")
 }
@@ -912,7 +912,7 @@ func setupDoVerifyFixSiblingTest(t *testing.T) (*cobra.Command, *core.Service, *
 	require.NoError(t, pm.AddMod(game.ID, "second", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"},
 	}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
 		ProfileName: "second",
 		Enabled:     true,
@@ -923,20 +923,20 @@ func setupDoVerifyFixSiblingTest(t *testing.T) (*cobra.Command, *core.Service, *
 	// its own recorded checksum, not a NULL one), and load-bearing for
 	// tests asserting the sibling repair path doesn't wipe it (audit
 	// Finding 1's class, Copilot round 8).
-	require.NoError(t, svc.SaveFileChecksum("test-src", "mod1", game.ID, "second", "2", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "test-src", "mod1", game.ID, "second", "2", "deadbeef"))
 
 	_, err = pm.Create(game.ID, "third")
 	require.NoError(t, err)
 	require.NoError(t, pm.AddMod(game.ID, "third", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Version: "2.0", FileIDs: []string{"2"},
 	}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: game.ID},
 		ProfileName: "third",
 		Enabled:     true,
 		FileIDs:     []string{"2"},
 	}))
-	require.NoError(t, svc.SaveFileChecksum("test-src", "mod1", game.ID, "third", "2", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "test-src", "mod1", game.ID, "third", "2", "deadbeef"))
 
 	return cmd, svc, game
 }
@@ -973,7 +973,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotInstalled_SkippedSilentl
 	assert.NotContains(t, out, "fourth", "a profile that never had the mod must be a silent skip - no warning, no mention at all")
 	assert.NotContains(t, out, "Warning", "the not-installed case must not be reported as a failure")
 
-	_, err = svc.GetInstalledMod("test-src", "mod1", game.ID, "fourth")
+	_, err = svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "fourth")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "sanity: 'fourth' genuinely has no row for mod1 - this is the ErrModNotFound path, not a different bug")
 }
 
@@ -997,7 +997,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord(t
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
 	assert.Equal(t, 0, result.Issues)
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", secondMod.Version, "sibling DB row must be corrected to the effective version")
 
@@ -1013,7 +1013,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord(t
 	}
 	assert.True(t, found, "expected a mod1 ref in the second profile: %+v", secondProfile.Mods)
 
-	thirdMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "third")
+	thirdMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "third")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", thirdMod.Version, "sibling with a different recorded version must not be touched")
 
@@ -1075,7 +1075,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_SiblingsUntouched(t *testing
 	})
 	assert.Contains(t, out, "Note")
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", secondMod.Version, "sibling must be untouched when the cache rename itself was blocked")
 }
@@ -1099,7 +1099,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRep
 	require.NoError(t, pm.AddMod(game.ID, "differs", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"3"},
 	}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
 		ProfileName: "differs",
 		Enabled:     true,
@@ -1116,14 +1116,14 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRep
 	assert.Contains(t, out, "differs", "a warning must identify the profile whose file selection differs")
 	assert.Contains(t, out, "file selection", "the warning must explain why this sibling wasn't auto-repaired")
 
-	differsMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "differs")
+	differsMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "differs")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", differsMod.Version, "a sibling with different FileIDs must NOT be auto-repaired, even though its recorded version matches")
 
 	// "second" (same version, SAME FileIDs as primary) must still be
 	// auto-repaired normally - this finding only withholds repair from
 	// siblings whose file selection actually differs.
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", secondMod.Version, "a sibling with matching FileIDs must still be auto-repaired")
 }
@@ -1166,7 +1166,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *t
 	assert.Contains(t, out, "lmm mod unlock -s test-src -p second mod1", "the unlock remedy must be flagged the same way")
 	assert.NotContains(t, out, "may be broken", "an un-deployed sibling has no broken deployment to warn about")
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", secondMod.Version, "a locked sibling must NOT be auto-repaired - rewriting it would move the lock's target")
 
@@ -1191,8 +1191,8 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_LockedAndDeployed_WarnsDepl
 
 	pm := getProfileManager(svc)
 	require.NoError(t, pm.SetModLock(game.ID, "second", "test-src", "mod1", ""))
-	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
-	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
+	require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "second", domain.LinkSymlink))
 
 	oldJSON := jsonOutput
 	jsonOutput = false
@@ -1204,7 +1204,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_LockedAndDeployed_WarnsDepl
 	assert.Contains(t, out, "Mod One is locked at v1.5 in profile second")
 	assert.Contains(t, out, "its deployment may be broken until the lock is moved or cleared", "a Deployed locked sibling's warning must flag the now-broken deployment")
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", secondMod.Version, "still not auto-repaired")
 }
@@ -1220,8 +1220,8 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing
 	// latter's full-row upsert would wipe the checksum
 	// setupDoVerifyVersionTest seeded (audit Finding 1's exact pattern,
 	// here as a test-setup artifact - Copilot round 8, PR #128).
-	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
-	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
+	require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "second", domain.LinkSymlink))
 
 	oldJSON := jsonOutput
 	jsonOutput = true
@@ -1247,7 +1247,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing
 	// result.Files' status wouldn't observe whether "second"'s own
 	// checksum survived the targeted setters above, since verify never
 	// looks at a non-active profile's checksums. Check directly instead.
-	secondFiles, err := svc.GetFilesWithChecksums(game.ID, "second")
+	secondFiles, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "second")
 	require.NoError(t, err)
 	for _, f := range secondFiles {
 		if f.ModID == "mod1" && f.FileID == "2" {
@@ -1255,7 +1255,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing
 		}
 	}
 
-	afterMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	afterMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.True(t, afterMod.Deployed, "Deployed remains true after a successful sibling re-link")
 }
@@ -1274,8 +1274,8 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 
 	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - see
 	// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks.
-	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
-	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
+	require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "second", domain.LinkSymlink))
 
 	require.NoError(t, os.Chmod(game.ModPath, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
@@ -1291,7 +1291,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 	// This run only checks the "default" profile, so "NO CHECKSUM" in its
 	// own output wouldn't reflect whether "second"'s checksum survived the
 	// targeted setters above - check directly instead.
-	secondFiles, err := svc.GetFilesWithChecksums(game.ID, "second")
+	secondFiles, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "second")
 	require.NoError(t, err)
 	for _, f := range secondFiles {
 		if f.ModID == "mod1" && f.FileID == "2" {
@@ -1299,12 +1299,12 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_Clears
 		}
 	}
 
-	afterMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	afterMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", afterMod.Version, "the sibling's version correction must stand even though its re-link failed")
 	assert.False(t, afterMod.Deployed, "sibling Deployed must be cleared when its re-link fails")
 
-	primaryMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	primaryMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", primaryMod.Version, "the primary row must still be repaired despite the sibling's re-link failure")
 
@@ -1332,8 +1332,8 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_JSONNo
 
 	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - see
 	// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks.
-	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
-	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
+	require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "second", domain.LinkSymlink))
 
 	require.NoError(t, os.Chmod(game.ModPath, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
@@ -1361,7 +1361,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_JSONNo
 	// This run only checks the "default" profile, so result.Files wouldn't
 	// reflect whether "second"'s checksum survived the targeted setters
 	// above - check directly instead.
-	secondFiles, err := svc.GetFilesWithChecksums(game.ID, "second")
+	secondFiles, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "second")
 	require.NoError(t, err)
 	for _, f := range secondFiles {
 		if f.ModID == "mod1" && f.FileID == "2" {
@@ -1423,7 +1423,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_WarnsInTextM
 	assert.Contains(t, out, "1 warning(s)", "a failed sibling repair must be counted as a warning in the summary")
 	assert.NotContains(t, out, "All files verified OK.", "the summary must not claim a clean run while a sibling repair failed")
 
-	thirdMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "third")
+	thirdMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "third")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", thirdMod.Version, "a sibling that was never a candidate must not be touched by another sibling's failure")
 }
@@ -1500,7 +1500,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_ListFails_WarnsOnce(t *test
 
 	// The primary repair (by-path, unaffected by the missing read bit on
 	// the shared directory) must still have gone through.
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", mod.Version, "the primary row must still be repaired even though sibling discovery failed")
 }
@@ -1524,10 +1524,10 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 	// straggler wasn't in Copilot round 8's three cited sites, but matches
 	// the same pattern - caught by grepping the whole file per the
 	// coordinator's instruction).
-	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "default", true))
-	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "default", domain.LinkSymlink))
+	require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "default", true))
+	require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "default", domain.LinkSymlink))
 
-	primaryMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	primaryMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &primaryMod.Mod, "default"))
 
@@ -1559,7 +1559,7 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
 
 	// The sibling itself was, in fact, repaired.
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", secondMod.Version, "the sibling repair must have gone through independently of the primary's relink failure")
 }
@@ -1646,7 +1646,7 @@ func setupDoVerifyRedownloadTest(t *testing.T) (*cobra.Command, *core.Service, *
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: game.ID},
 		[]domain.DownloadableFile{{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"}})
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: game.ID},
 		ProfileName: "default",
 		Enabled:     true,
@@ -1852,7 +1852,7 @@ func setupDoVerifyDirectorySourceTest(t *testing.T, modDirName string, memberFil
 	mod, err := svc.GetMod(ctx, "my-mods", game.ID, modDirName)
 	require.NoError(t, err)
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: *mod, ProfileName: "default", Enabled: true, FileIDs: []string{"main"},
 	}))
 
@@ -1882,7 +1882,7 @@ func setupDoVerifyDirectorySourceTest(t *testing.T, modDirName string, memberFil
 // in the given game/profile, failing the test if the row is absent.
 func storedChecksum(t *testing.T, svc *core.Service, gameID, profile, sourceID, modID, fileID string) string {
 	t.Helper()
-	files, err := svc.GetFilesWithChecksums(gameID, profile)
+	files, err := svc.GetFilesWithChecksums(context.Background(), gameID, profile)
 	require.NoError(t, err)
 	for _, f := range files {
 		if f.SourceID == sourceID && f.ModID == modID && f.FileID == fileID {
@@ -2099,7 +2099,7 @@ func TestDoVerify_Fix_VersionMismatchLocked_RefusesRepair(t *testing.T) {
 	// The record must be completely unchanged: DB still at "1.5", cache
 	// still keyed at "1.5" (not renamed to the effective "1.0"), profile
 	// ref still at "1.5".
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", mod.Version, "a locked record must not be rewritten by --fix")
 
@@ -2168,7 +2168,7 @@ func TestDoVerify_Fix_VersionMismatchUnlocked_StillRepairs(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
 	assert.Equal(t, 0, result.Issues, "an unlocked mismatch must still be repaired and drop back out of issues")
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", mod.Version, "an unlocked record must still be corrected to the effective version")
 }
@@ -2341,7 +2341,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinksWithProfileLinkMethod(t *t
 	require.NoError(t, err)
 	assert.Equal(t, "plugin content", string(content))
 
-	mod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.LinkCopy, mod.LinkMethod, "the re-link must record the effective method on the row, same as DeployProfile")
 	assert.True(t, mod.Deployed, "Deployed remains true after a successful re-link")
@@ -2363,8 +2363,8 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinksWithSibling
 	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - the
 	// latter's full-row upsert would wipe the checksum the fixture seeded
 	// (audit Finding 1's exact pattern, here as a test-setup artifact).
-	require.NoError(t, svc.SetModDeployed("test-src", "mod1", game.ID, "second", true))
-	require.NoError(t, svc.SetModLinkMethod("test-src", "mod1", game.ID, "second", domain.LinkSymlink))
+	require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "second", true))
+	require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "second", domain.LinkSymlink))
 
 	oldJSON := jsonOutput
 	jsonOutput = false
@@ -2386,7 +2386,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinksWithSibling
 	require.NoError(t, err)
 	assert.Equal(t, "plugin content", string(content))
 
-	secondMod, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "second")
+	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
 	require.NoError(t, err)
 	assert.Equal(t, domain.LinkCopy, secondMod.LinkMethod, "the sibling re-link must record its profile's effective method on the row")
 	assert.True(t, secondMod.Deployed, "Deployed remains true after a successful sibling re-link")

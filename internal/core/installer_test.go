@@ -133,7 +133,7 @@ func TestInstaller_IsInstalled(t *testing.T) {
 	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 
 	// Not installed yet
-	installed, err := installer.IsInstalled(game, mod)
+	installed, err := installer.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.False(t, installed)
 
@@ -142,7 +142,7 @@ func TestInstaller_IsInstalled(t *testing.T) {
 	require.NoError(t, err)
 
 	// Now installed
-	installed, err = installer.IsInstalled(game, mod)
+	installed, err = installer.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.True(t, installed)
 }
@@ -177,7 +177,7 @@ func TestInstaller_IsInstalled_PartialInstallReturnsFalse(t *testing.T) {
 	require.NoError(t, os.Symlink(aSrc, aDst))
 
 	// IsInstalled must return false when not all files are deployed
-	installed, err := installer.IsInstalled(game, mod)
+	installed, err := installer.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.False(t, installed, "partial install should not report as installed")
 }
@@ -1047,7 +1047,7 @@ func TestInstaller_Install_SkipsUnclaimedFiles(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "unclaimed stale pak must not deploy")
 
 	// Deployed-file views agree with the deploy decision.
-	deployed, err := inst.GetDeployedFiles(game, mod)
+	deployed, err := inst.GetDeployedFiles(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.Empty(t, deployed)
 }
@@ -1069,7 +1069,7 @@ func TestInstaller_Install_LegacyBareMarker_DeploysUnion(t *testing.T) {
 	_, err := os.Lstat(filepath.Join(gameDir, "MorePoints_P.pak"))
 	assert.NoError(t, err, "legacy entry must keep deploying its pak")
 
-	installed, err := inst.IsInstalled(game, mod)
+	installed, err := inst.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.True(t, installed)
 }
@@ -1092,7 +1092,7 @@ func TestInstaller_IsInstalled_RetainOnlyEntry(t *testing.T) {
 	mod := &domain.Mod{ID: "m1", SourceID: "icarus", Version: "1.4", GameID: "icarus"}
 	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 
-	installed, err := inst.IsInstalled(game, mod)
+	installed, err := inst.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.False(t, installed, "empty deployable set keeps IsInstalled's len==0 false answer")
 }

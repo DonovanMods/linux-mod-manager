@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -97,7 +98,7 @@ func TestListCmd_UsesActiveProfileAfterSwitch(t *testing.T) {
 	jsonOutput = true
 
 	out := captureStdout(t, func() error {
-		return doList(&cobra.Command{}, svc, game)
+		return doList(context.Background(), &cobra.Command{}, svc, game)
 	})
 	assert.Contains(t, out, `"profile": "target"`, "flagless list must use the active profile")
 }

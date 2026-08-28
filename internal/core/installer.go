@@ -484,7 +484,7 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 
 // IsInstalled checks if a mod is currently deployed. Returns true only if every
 // cached file is deployed (partial installs report as not installed).
-func (i *Installer) IsInstalled(game *domain.Game, mod *domain.Mod) (bool, error) {
+func (i *Installer) IsInstalled(ctx context.Context, game *domain.Game, mod *domain.Mod) (bool, error) {
 	// Check if mod is cached first
 	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 		return false, nil
@@ -561,7 +561,7 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 }
 
 // GetDeployedFiles returns the list of files deployed for a mod
-func (i *Installer) GetDeployedFiles(game *domain.Game, mod *domain.Mod) ([]string, error) {
+func (i *Installer) GetDeployedFiles(ctx context.Context, game *domain.Game, mod *domain.Mod) ([]string, error) {
 	if !i.cache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 		return nil, nil
 	}
@@ -643,6 +643,9 @@ func (i *Installer) InstallBatch(ctx context.Context, game *domain.Game, mods []
 
 	// Install each mod
 	for idx, mod := range mods {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		// Apply version if provided
 		if idx < len(versions) && versions[idx] != "" {
 			mod.Version = versions[idx]
@@ -728,6 +731,9 @@ func (i *Installer) UninstallBatch(ctx context.Context, game *domain.Game, mods 
 
 	// Uninstall each mod
 	for _, installedMod := range mods {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		mod := &installedMod.Mod
 
 		// Run before_each hook

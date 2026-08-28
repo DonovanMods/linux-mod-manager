@@ -34,11 +34,11 @@ func init() {
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		return doStatus(service)
+		return doStatus(ctx, service)
 	})
 }
 
-func doStatus(service *core.Service) error {
+func doStatus(ctx context.Context, service *core.Service) error {
 	games := service.ListGames()
 
 	if len(games) == 0 {
@@ -58,13 +58,13 @@ func doStatus(service *core.Service) error {
 	// If a specific game is requested, show details for that game
 	if gameID != "" {
 		if jsonOutput {
-			return showGameStatusJSON(service, gameID)
+			return showGameStatusJSON(ctx, service, gameID)
 		}
-		return showGameStatus(service, gameID)
+		return showGameStatus(ctx, service, gameID)
 	}
 
 	if jsonOutput {
-		return outputStatusJSON(service, games)
+		return outputStatusJSON(ctx, service, games)
 	}
 
 	// Load config to check for default game
@@ -102,7 +102,7 @@ func doStatus(service *core.Service) error {
 		// Get mod count from active profile
 		var modCount int
 		if defaultProfile, err := pm.GetDefault(game.ID); err == nil {
-			mods, _ := service.GetInstalledMods(game.ID, defaultProfile.Name)
+			mods, _ := service.GetInstalledMods(ctx, game.ID, defaultProfile.Name)
 			modCount = len(mods)
 			totalMods += modCount
 		}
@@ -178,7 +178,7 @@ type statusGameJSON struct {
 	IsDefault   bool     `json:"is_default,omitempty"`
 }
 
-func outputStatusJSON(service *core.Service, games []*domain.Game) error {
+func outputStatusJSON(ctx context.Context, service *core.Service, games []*domain.Game) error {
 	cfg, _ := config.Load(service.ConfigDir())
 	pm := service.NewProfileManager()
 
@@ -191,7 +191,7 @@ func outputStatusJSON(service *core.Service, games []*domain.Game) error {
 		}
 		var modCount int
 		if defaultProfile, err := pm.GetDefault(game.ID); err == nil {
-			mods, _ := service.GetInstalledMods(game.ID, defaultProfile.Name)
+			mods, _ := service.GetInstalledMods(ctx, game.ID, defaultProfile.Name)
 			modCount = len(mods)
 		}
 		linkMethod := service.GetGameLinkMethod(game)
@@ -212,7 +212,7 @@ func outputStatusJSON(service *core.Service, games []*domain.Game) error {
 	return enc.Encode(out)
 }
 
-func showGameStatusJSON(service *core.Service, gameID string) error {
+func showGameStatusJSON(ctx context.Context, service *core.Service, gameID string) error {
 	game, err := service.GetGame(gameID)
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
@@ -242,7 +242,7 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 	if defaultProfile, err := pm.GetDefault(gameID); err == nil {
 		// Mirror the text twin (showGameStatus): the effective method is the
 		// active profile's resolution (profile > game > global, #155).
-		method, err := service.GetEffectiveLinkMethod(game, defaultProfile.Name)
+		method, err := service.GetEffectiveLinkMethod(ctx, game, defaultProfile.Name)
 		if err != nil {
 			return err
 		}
@@ -250,7 +250,7 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 		if defaultProfile.LinkMethodExplicit {
 			out.LinkMethodSource = "profile"
 		}
-		mods, _ := service.GetInstalledMods(gameID, defaultProfile.Name)
+		mods, _ := service.GetInstalledMods(ctx, gameID, defaultProfile.Name)
 		out.ActiveProfile = defaultProfile.Name
 		out.InstalledModCount = len(mods)
 		var enabled int
@@ -261,7 +261,7 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 		}
 		out.EnabledModCount = enabled
 
-		lastDeploy, err := service.GetLastDeployTime(gameID, defaultProfile.Name)
+		lastDeploy, err := service.GetLastDeployTime(ctx, gameID, defaultProfile.Name)
 		if err != nil {
 			return fmt.Errorf("status: last deploy time: %w", err)
 		}
@@ -272,7 +272,7 @@ func showGameStatusJSON(service *core.Service, gameID string) error {
 		// stored fingerprint (MergedPakOutcomes), same source verify's own
 		// "conversion_failed" rows use.
 		if game.DeployMode == domain.DeployCompile {
-			if outcomes, ok := service.MergedPakOutcomes(game, defaultProfile.Name); ok {
+			if outcomes, ok := service.MergedPakOutcomes(ctx, game, defaultProfile.Name); ok {
 				for _, entry := range outcomes {
 					if !entry.Converted {
 						out.ConversionFailures++
@@ -329,7 +329,7 @@ type statusProfileJSON struct {
 	IsDefault bool   `json:"is_default"`
 }
 
-func showGameStatus(service *core.Service, gameID string) error {
+func showGameStatus(ctx context.Context, service *core.Service, gameID string) error {
 	game, err := service.GetGame(gameID)
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
@@ -396,7 +396,7 @@ func showGameStatus(service *core.Service, gameID string) error {
 	// Show installed mods count for active profile
 	defaultProfile, err := pm.GetDefault(gameID)
 	if err == nil {
-		mods, _ := service.GetInstalledMods(gameID, defaultProfile.Name)
+		mods, _ := service.GetInstalledMods(ctx, gameID, defaultProfile.Name)
 		fmt.Printf("\nActive Profile: %s\n", colorGreen(defaultProfile.Name))
 		fmt.Printf("  Installed Mods: %s\n", colorCyan(strconv.Itoa(len(mods))))
 
@@ -415,7 +415,7 @@ func showGameStatus(service *core.Service, gameID string) error {
 			fmt.Printf("  Enabled: %s, Disabled: %s\n", colorGreen(strconv.Itoa(enabled)), colorDim(strconv.Itoa(disabled)))
 		}
 
-		lastDeploy, err := service.GetLastDeployTime(gameID, defaultProfile.Name)
+		lastDeploy, err := service.GetLastDeployTime(ctx, gameID, defaultProfile.Name)
 		if err != nil {
 			return fmt.Errorf("status: last deploy time: %w", err)
 		}
@@ -433,7 +433,7 @@ func showGameStatus(service *core.Service, gameID string) error {
 		// #221 design §5: surface pak-conversion failures here too, not just
 		// 'lmm verify' - only when there's actually something to report.
 		if game.DeployMode == domain.DeployCompile {
-			if outcomes, ok := service.MergedPakOutcomes(game, defaultProfile.Name); ok {
+			if outcomes, ok := service.MergedPakOutcomes(ctx, game, defaultProfile.Name); ok {
 				var failures int
 				for _, entry := range outcomes {
 					if !entry.Converted {

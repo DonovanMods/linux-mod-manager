@@ -20,7 +20,7 @@ import (
 func seedLocalMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name string) {
 	t.Helper()
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, domain.SourceLocal, modID, "1.0", name+".esp", []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: domain.SourceLocal, Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -154,7 +154,7 @@ func TestDoUpdate_CheckFailed_DoesNotClaimUpToDate(t *testing.T) {
 func TestDoUpdate_SingleMod_AmbiguousAcrossSources(t *testing.T) {
 	svc, game := localUpdateGame(t)
 	seedLocalMod(t, svc, game, "12345", "Local Twin")
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "12345", SourceID: "curseforge", Name: "Remote Twin", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -174,7 +174,7 @@ func TestDoUpdate_SingleMod_AmbiguousAcrossSources(t *testing.T) {
 func TestDoUpdate_AmbiguousRemoteOnly_OmitsLocalCaveat(t *testing.T) {
 	svc, game := localUpdateGame(t)
 	for _, src := range []string{"nexusmods", "curseforge"} {
-		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 			Mod:          domain.Mod{ID: "12345", SourceID: src, Name: "Twin " + src, Version: "1.0", GameID: game.ID},
 			ProfileName:  "default",
 			UpdatePolicy: domain.UpdateNotify,

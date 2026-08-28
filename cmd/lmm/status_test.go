@@ -168,7 +168,7 @@ func TestShowGameStatus_NeverDeployed_ShowsNeverInText(t *testing.T) {
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp") // profile exists, never deployed
 
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.Contains(t, out, "Last Deploy: never")
@@ -186,7 +186,7 @@ func TestShowGameStatus_AfterDeploy_ShowsTimestampInText(t *testing.T) {
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
 
 	out := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 
 	assert.NotContains(t, out, "Last Deploy: never")
@@ -204,7 +204,7 @@ func TestShowGameStatusJSON_NeverDeployed_OmitsLastDeploy(t *testing.T) {
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
 	out := captureStdout(t, func() error {
-		return showGameStatusJSON(svc, game.ID)
+		return showGameStatusJSON(context.Background(), svc, game.ID)
 	})
 
 	var raw map[string]interface{}
@@ -236,12 +236,12 @@ func TestShowGameStatusJSON_ProfileLinkMethodOverride_TextJSONParity(t *testing.
 	setVerifyProfileLinkMethod(t, svc, game.ID, "default", domain.LinkCopy)
 
 	textOut := captureStdout(t, func() error {
-		return showGameStatus(svc, game.ID)
+		return showGameStatus(context.Background(), svc, game.ID)
 	})
 	require.Contains(t, textOut, "Link Method: copy (per-profile)", "sanity: the text twin resolves the profile override")
 
 	jsonOut := captureStdout(t, func() error {
-		return showGameStatusJSON(svc, game.ID)
+		return showGameStatusJSON(context.Background(), svc, game.ID)
 	})
 
 	var raw map[string]interface{}
@@ -277,7 +277,7 @@ func TestShowGameStatusJSON_LinkMethodSource_GameAndGlobal(t *testing.T) {
 			seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
 			out := captureStdout(t, func() error {
-				return showGameStatusJSON(svc, game.ID)
+				return showGameStatusJSON(context.Background(), svc, game.ID)
 			})
 
 			var raw map[string]interface{}
@@ -301,7 +301,7 @@ func TestShowGameStatusJSON_NoProfiles_LinkMethodSourceStillPresent(t *testing.T
 	require.NoError(t, svc.AddGame(game))
 
 	out := captureStdout(t, func() error {
-		return showGameStatusJSON(svc, game.ID)
+		return showGameStatusJSON(context.Background(), svc, game.ID)
 	})
 
 	var raw map[string]interface{}
@@ -319,7 +319,7 @@ func TestShowGameStatusJSON_AfterDeploy_IncludesLastDeploy(t *testing.T) {
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
 
 	out := captureStdout(t, func() error {
-		return showGameStatusJSON(svc, game.ID)
+		return showGameStatusJSON(context.Background(), svc, game.ID)
 	})
 
 	var decoded statusGameDetailJSON
@@ -349,11 +349,11 @@ func TestShowGameStatus_ConversionFailures_ShownInTextAndJSON(t *testing.T) {
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
-	textOut := captureStdout(t, func() error { return showGameStatus(svc, game.ID) })
+	textOut := captureStdout(t, func() error { return showGameStatus(context.Background(), svc, game.ID) })
 	assert.Contains(t, textOut, "pak conversion failures: 1")
 	assert.Contains(t, textOut, "lmm verify")
 
-	jsonOut := captureStdout(t, func() error { return showGameStatusJSON(svc, game.ID) })
+	jsonOut := captureStdout(t, func() error { return showGameStatusJSON(context.Background(), svc, game.ID) })
 	var decoded statusGameDetailJSON
 	require.NoError(t, json.Unmarshal([]byte(jsonOut), &decoded))
 	assert.Equal(t, 1, decoded.ConversionFailures)

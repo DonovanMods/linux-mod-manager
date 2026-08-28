@@ -250,7 +250,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		}()
 
 		extractedPath := filepath.Join(tempDir, "extracted")
-		if err := i.extractor.Extract(archivePath, extractedPath); err != nil {
+		if err := i.extractor.Extract(ctx, archivePath, extractedPath); err != nil {
 			return nil, fmt.Errorf("extracting archive: %w", err)
 		}
 
@@ -363,7 +363,7 @@ func (s *Service) ResolveImportedFile(ctx context.Context, sourceID string, sour
 // undeploy narrowing can attribute its members. Import writes the cache
 // directly (no staging commit), so the marker is stamped after the fact;
 // the members are whatever the entry actually holds.
-func (s *Service) MarkImportedFileComplete(game *domain.Game, mod *domain.Mod, fileID string) error {
+func (s *Service) MarkImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
 	gameCache := s.GetGameCache(game)
 	members, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {

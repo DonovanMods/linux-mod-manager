@@ -192,7 +192,7 @@ func TestDoPurge_HappyPath_ByteExactOutput(t *testing.T) {
 		_, err := os.Lstat(filepath.Join(game.ModPath, f))
 		assert.True(t, os.IsNotExist(err), "%s must be undeployed", f)
 	}
-	mod, err := svc.GetInstalledMod("src", "a", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "a", "g1", "default")
 	require.NoError(t, err, "records must be preserved without --uninstall")
 	assert.False(t, mod.Deployed)
 }
@@ -234,7 +234,7 @@ func TestDoPurge_Uninstall_OmitsPreservedTrailer_RemovesRecords(t *testing.T) {
 	assert.Contains(t, out, "\nPurged: 1 mod(s)\n")
 	assert.NotContains(t, out, "Mod records preserved")
 
-	_, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "--uninstall must delete the DB record")
 	profile, err := svc.NewProfileManager().Get("g1", "default")
 	require.NoError(t, err)

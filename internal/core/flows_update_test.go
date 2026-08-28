@@ -55,7 +55,7 @@ func seedUpdatableMod(t *testing.T, svc *core.Service, game *domain.Game, source
 		LinkMethod:   domain.LinkSymlink,
 		FileIDs:      fileIDs,
 	}
-	require.NoError(t, svc.SaveInstalledMod(im))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &im.Mod, "default"))
@@ -67,7 +67,7 @@ func seedUpdatableMod(t *testing.T, svc *core.Service, game *domain.Game, source
 	}
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs}))
 
-	updated, err := svc.GetInstalledMod(sourceID, modID, game.ID, "default")
+	updated, err := svc.GetInstalledMod(context.Background(), sourceID, modID, game.ID, "default")
 	require.NoError(t, err)
 	return updated
 }
@@ -110,7 +110,7 @@ func TestService_ApplyUpdate_HappyPathEndToEnd(t *testing.T) {
 	assert.Equal(t, "new-content", string(newContent))
 
 	// DB sequencing: version, FileIDs, PreviousVersion/PreviousFileIDs.
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version)
 	assert.Equal(t, []string{"new-1"}, updated.FileIDs)
@@ -167,7 +167,7 @@ func TestApplyUpdate_StoredFileIDsGoneUpstream_FallsBackToPrimary(t *testing.T) 
 	require.NoError(t, err, "the new version's primary file must be deployed")
 	assert.Equal(t, "new-content", string(newContent))
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"new-1"}, updated.FileIDs, "the fallback primary file's ID must be recorded")
 }
@@ -255,7 +255,7 @@ func TestService_ApplyUpdate_FileIDReplacements(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 
-		updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"new-1"}, updated.FileIDs)
 	})
@@ -290,7 +290,7 @@ func TestService_ApplyUpdate_FileIDReplacements(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 
-		updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{"new-1", "old-2"}, updated.FileIDs, "the un-replaced ID must be retained verbatim, not dropped or defaulted to primary")
 	})
@@ -329,7 +329,7 @@ func TestService_ApplyUpdate_FileIDReplacements(t *testing.T) {
 		_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 		require.NoError(t, err)
 
-		updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []string{"new-1", "old-2"}, updated.FileIDs,
 			"version labels must not turn the documented retain-verbatim rule into a silent drop")
@@ -369,7 +369,7 @@ func TestService_ApplyUpdate_FileIDReplacements(t *testing.T) {
 		_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 		require.NoError(t, err)
 
-		updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"patch14"}, updated.FileIDs,
 			"the explicit supersede mapping must outrank the target version's primary file")
@@ -412,7 +412,7 @@ func TestService_ApplyUpdate_RollbackPreconditionPreserved(t *testing.T) {
 
 	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the previous version's cache entry must survive an update, for rollback")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.PreviousVersion, "doUpdateRollback's precondition: PreviousVersion must be set")
 	assert.True(t, svc.GetGameCache(game).Exists("g1", updated.SourceID, updated.ID, updated.PreviousVersion), "doUpdateRollback's precondition: the previous version must still be cached")
@@ -453,7 +453,7 @@ func TestService_ApplyUpdate_DownloadFailure(t *testing.T) {
 	assert.Equal(t, "old-content", string(oldContent))
 	assert.False(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "2.0"))
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version, "DB row must be unchanged")
 	assert.Equal(t, "", updated.PreviousVersion)
@@ -503,7 +503,7 @@ func TestService_ApplyUpdate_ContextCancelledBetweenDownloadAndDeploy_ReturnsPar
 	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1-new.esp"))
 	assert.True(t, os.IsNotExist(statErr), "the NEW version must never have been deployed")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version, "DB row must be unchanged")
 }
@@ -564,6 +564,50 @@ func TestService_ApplyUpdate_ProgressEvents(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// setupTwoFileUpdate is TestService_ApplyUpdate_ProgressEvents' fixture with
+// a 2-file replacement (multiFileDownloadSource, two entries) so a per-file
+// cancellation test has more than one file to observe. The old mod's own
+// FileIDs are stamped to match the two new file IDs directly: with
+// installedVersion/targetVersion both set and neither served file carrying
+// an explicit Version, resolveUpdateSelection's classification falls
+// straight through to selectDeployFiles, which returns every stored-ID match
+// verbatim - the simplest way to pin an exact 2-file selection without
+// fighting the version-drift heuristics the ambiguous-file path exists for.
+func setupTwoFileUpdate(t *testing.T) (*core.Service, *domain.Game, *multiFileDownloadSource, domain.Update) {
+	t.Helper()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"new-1", "new-2"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+
+	src := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "new-1", Name: "New File 1", FileName: "mod1-new-1.esp", IsPrimary: true},
+			{ID: "new-2", Name: "New File 2", FileName: "mod1-new-2.esp"},
+		},
+	}
+	svc.RegisterSource(src)
+	src.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+	src.AddDownload("new-1", []byte("new-1-content"))
+	src.AddDownload("new-2", []byte("new-2-content"))
+
+	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
+	return svc, game, src, upd
+}
+
+// TestService_ApplyUpdate_ContextCancelledBetweenDownloads pins that the
+// update download loop checks ctx per file (today the check sits after the
+// loop, so every file downloads before cancellation is noticed).
+func TestService_ApplyUpdate_ContextCancelledBetweenDownloads(t *testing.T) {
+	svc, game, src, upd := setupTwoFileUpdate(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	src.onDownload = func() { cancel() }
+	_, err := svc.ApplyUpdate(ctx, game, "default", upd, core.UpdateOptions{}, nil)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, src.downloads)
+}
+
 // TestService_ApplyUpdate_GameIDNormalization is the P3-class regression
 // test the brief calls for: ApplyUpdate's DB/profile writes must key off the
 // GAME's own ID (game.ID) throughout, never a possibly-different GameID a
@@ -598,7 +642,7 @@ func TestService_ApplyUpdate_GameIDNormalization(t *testing.T) {
 	require.NoError(t, err, "the fetched newMod's mismatched GameID must not break the update")
 	assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err, "the DB row must still be found under the real game ID")
 	assert.Equal(t, "2.0", updated.Version)
 
@@ -666,7 +710,7 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 		assert.Contains(t, err.Error(), "uninstall.before_each hook failed")
 		assert.Empty(t, result.Applied)
 
-		updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "1.0", updated.Version, "a fatal before_each hook must leave the DB row untouched")
 	})
@@ -751,7 +795,7 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 		}
 		assert.Equal(t, 2, warningCount)
 
-		updated, gerr := svc.GetInstalledMod("src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "2.0", updated.Version, "the update itself must still have applied")
 	})
@@ -795,7 +839,7 @@ func TestApplyUpdate_RecordsEffectiveFileVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0b", updated.Version, "the file's own version must be recorded, not the mod-level NewVersion")
 	assert.Equal(t, "1.0", updated.PreviousVersion, "rollback must still target the prior installed version")
@@ -847,7 +891,7 @@ func TestApplyUpdate_LockedRefRefusesUpdate(t *testing.T) {
 
 	assert.Equal(t, 0, mock.DownloadCount(), "a locked mod must never be downloaded")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version, "the DB row must be unchanged")
 	assert.Equal(t, []string{"old-1"}, updated.FileIDs, "the DB row must be unchanged")
@@ -883,7 +927,7 @@ func TestApplyUpdate_UnlockedRefStillUpdates(t *testing.T) {
 
 	assert.Equal(t, 1, mock.DownloadCount())
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version)
 }
@@ -937,7 +981,7 @@ func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.
 	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.3", updated.Version, "the update must advance the recorded version, not re-stamp the installed one")
 	assert.Equal(t, []string{"103"}, updated.FileIDs, "the NEW version's file must be selected, not the still-listed old one")
@@ -1059,7 +1103,7 @@ func TestApplyUpdate_PartialFileIDReplacements_StillAdvances(t *testing.T) {
 	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.3", updated.Version, "a partial map must not switch the #143 fix off")
 	assert.ElementsMatch(t, []string{"extra1000", "main103"}, updated.FileIDs,
@@ -1113,7 +1157,7 @@ func TestApplyUpdate_LabelAmbiguousExtra_IsSurfacedAsAWarning(t *testing.T) {
 	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.3", updated.Version, "the record must still advance")
 
@@ -1181,7 +1225,7 @@ func TestApplyUpdate_CategoryLessAmbiguousPair_PrimaryBreaksTie(t *testing.T) {
 	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.3", updated.Version, "the record must still advance")
 	assert.ElementsMatch(t, []string{"main103", "extra101"}, updated.FileIDs,
@@ -1241,7 +1285,7 @@ func TestApplyUpdate_NonMatchingCategoryAmbiguousPair_PrimaryBreaksTie(t *testin
 	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "the record must still advance")
 	assert.ElementsMatch(t, []string{"main-new", "extra-old"}, updated.FileIDs,
@@ -1311,7 +1355,7 @@ func TestApplyUpdate_NoOpGuard_NothingNewUnderTarget_ErrorsWithLabellingHint(t *
 
 	// The error fires during selection - before any hook, download, or write -
 	// so the old version must remain fully installed and deployed.
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version, "the record must be untouched")
 	assert.ElementsMatch(t, []string{"main-old", "opt-new"}, updated.FileIDs)
@@ -1358,7 +1402,7 @@ func TestApplyUpdate_NoOpGuard_RepairStillNotAdvancing_ErrorsWithFileHint(t *tes
 	assert.NotContains(t, err.Error(), "labelling",
 		"the labelling-quirk hint belongs to the nothing-new-to-add branch only")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version)
 	assert.Equal(t, []string{"fileB"}, updated.FileIDs, "the record must be untouched")
@@ -1406,7 +1450,7 @@ func TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies(t *testing.T) {
 	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 	require.NoError(t, err, "a file-only update whose version string is unchanged must still apply")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"fileB"}, updated.FileIDs, "the superseding file must be recorded")
 
@@ -1477,7 +1521,7 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_UndeploysSupersededMember(t *test
 	assert.True(t, os.IsNotExist(statErr),
 		"the superseded file's member must be UNDEPLOYED despite the shared same-version cache dir")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"fileB"}, updated.FileIDs)
 }
@@ -1567,7 +1611,7 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_ChainedUpdatesStayUndeployed(t *t
 	require.True(t, os.IsNotExist(statErr), "update 1 must undeploy A's member")
 
 	// Update 2: B -> C, against the reloaded record.
-	mid, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	mid, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	require.Equal(t, []string{"fileB"}, mid.FileIDs)
 	upd2 := domain.Update{InstalledMod: *mid, NewVersion: "1.0", FileIDReplacements: map[string]string{"fileB": "fileC"}}
@@ -1582,7 +1626,7 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_ChainedUpdatesStayUndeployed(t *t
 	assert.True(t, os.IsNotExist(statErr),
 		"A's STALE marker must not resurrect a.esp - survivors are the current file IDs, not every marker in the dir")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"fileC"}, updated.FileIDs)
 }
@@ -1650,7 +1694,7 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_PureRemovalCompensationStaysNarro
 	assert.True(t, os.IsNotExist(statErr),
 		"the reversed compensation must narrow too - a stale generation's member never deployed pre-update must not appear")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"fileA", "fileB"}, updated.FileIDs, "RollbackModVersion must have restored the record")
 }
@@ -1696,7 +1740,7 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion(t *te
 	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-fileB.esp"))
 	assert.NoError(t, statErr)
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"fileB"}, updated.FileIDs, "the record still advances")
 }
@@ -1753,7 +1797,7 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_CompensatedFailureRestoresSuperse
 	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
 	assert.True(t, os.IsNotExist(statErr), "the uncommitted new file's member must be removed by the reverse Replace")
 
-	updated, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"fileA"}, updated.FileIDs, "RollbackModVersion must have restored the record")
 	assert.Equal(t, "1.0", updated.Version)

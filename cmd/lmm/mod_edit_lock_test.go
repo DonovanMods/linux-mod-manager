@@ -62,7 +62,7 @@ func TestDoModEdit_ReLink_LockedRef_Refuses(t *testing.T) {
 	assert.True(t, profile.Mods[0].Locked, "the Locked marker must not be dropped")
 	assert.Equal(t, "1.0", profile.Mods[0].Version)
 
-	dbMod, dbErr := svc.GetInstalledMod("src", "a", game.ID, "default")
+	dbMod, dbErr := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, dbErr)
 	require.NotNil(t, dbMod, "the DB row must keep its original source:id")
 	assert.Equal(t, "1.0", dbMod.Version)
@@ -89,7 +89,7 @@ func TestDoModEdit_Version_LockedRef_RefusesBeforeDBWrite(t *testing.T) {
 	assert.Contains(t, err.Error(), "lmm mod lock -s src -p default a <version>")
 	assert.Contains(t, err.Error(), "lmm mod unlock -s src -p default a")
 
-	dbMod, dbErr := svc.GetInstalledMod("src", "a", game.ID, "default")
+	dbMod, dbErr := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, dbErr)
 	require.NotNil(t, dbMod)
 	assert.Equal(t, "1.0", dbMod.Version, "the DB row must not move before the lock refusal")
@@ -122,7 +122,7 @@ func TestDoModEdit_Version_MatchingLock_Allowed(t *testing.T) {
 
 	require.NoError(t, err)
 
-	dbMod, dbErr := svc.GetInstalledMod("src", "a", game.ID, "default")
+	dbMod, dbErr := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, dbErr)
 	require.NotNil(t, dbMod)
 	assert.Equal(t, "1.0", dbMod.Version)
@@ -152,7 +152,7 @@ func TestDoModEdit_MetadataOnly_LockedRef_Allowed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "name -> Renamed Mod A")
 
-	dbMod, dbErr := svc.GetInstalledMod("src", "a", game.ID, "default")
+	dbMod, dbErr := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, dbErr)
 	require.NotNil(t, dbMod)
 	assert.Equal(t, "Renamed Mod A", dbMod.Name)

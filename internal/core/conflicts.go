@@ -57,7 +57,7 @@ type ProfileConflict struct {
 // caller cancelling mid-query gets ctx.Err() promptly instead of paying for
 // the remaining walks.
 func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, profileName string) ([]ProfileConflict, error) {
-	mods, err := s.GetInstalledMods(game.ID, profileName)
+	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -130,7 +130,7 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 			continue
 		}
 
-		ownerSourceID, ownerModID, found, err := s.GetFileOwner(game.ID, profileName, path)
+		ownerSourceID, ownerModID, found, err := s.GetFileOwner(ctx, game.ID, profileName, path)
 		if err != nil {
 			// GetFileOwner errs only on storage failure; conflating that with
 			// "no owner recorded" would silently under-report conflicts.

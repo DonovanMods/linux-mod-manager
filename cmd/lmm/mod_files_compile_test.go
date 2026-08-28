@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -39,7 +40,7 @@ func TestDoModFiles_DeployCompile_ExmodzModExplainsMergedPak(t *testing.T) {
 	const modID, version, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: "Bear Mount", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -53,7 +54,7 @@ func TestDoModFiles_DeployCompile_ExmodzModExplainsMergedPak(t *testing.T) {
 	t.Cleanup(func() { modSource, modProfile = oldSource, oldProfile })
 
 	out := captureStdout(t, func() error {
-		return doModFiles(svc, game, modID)
+		return doModFiles(context.Background(), svc, game, modID)
 	})
 
 	assert.Contains(t, out, "merged pak")
@@ -86,7 +87,7 @@ func TestDoModFiles_NonCompile_ZeroFiles_KeepsOriginalMessage(t *testing.T) {
 	require.NoError(t, pm.SetDefault(game.ID, "default"))
 
 	const modID, version = "broken-mod", "1.0"
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-source", Name: "Broken Mod", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -99,7 +100,7 @@ func TestDoModFiles_NonCompile_ZeroFiles_KeepsOriginalMessage(t *testing.T) {
 	t.Cleanup(func() { modSource, modProfile = oldSource, oldProfile })
 
 	out := captureStdout(t, func() error {
-		return doModFiles(svc, game, modID)
+		return doModFiles(context.Background(), svc, game, modID)
 	})
 
 	assert.Contains(t, out, "No deployed files tracked")

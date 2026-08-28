@@ -266,7 +266,7 @@ func seedInstalledForUpdate(t *testing.T, svc *core.Service, game *domain.Game, 
 		LinkMethod:   domain.LinkSymlink,
 		FileIDs:      fileIDs,
 	}
-	require.NoError(t, svc.SaveInstalledMod(im))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &im.Mod, "default"))
@@ -278,7 +278,7 @@ func seedInstalledForUpdate(t *testing.T, svc *core.Service, game *domain.Game, 
 	}
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs}))
 
-	updated, err := svc.GetInstalledMod(sourceID, modID, game.ID, "default")
+	updated, err := svc.GetInstalledMod(context.Background(), sourceID, modID, game.ID, "default")
 	require.NoError(t, err)
 	return updated
 }
@@ -341,14 +341,14 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 
 	// mod1: auto-policy, succeeds.
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"m1-old"}, map[string][]byte{"mod1-old.esp": []byte("old1")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "mod1", "g1", "default", domain.UpdateAuto))
+	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdateAuto))
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "m1-new", FileName: "mod1-new.esp", IsPrimary: true}})
 	src.AddDownload("m1-new", []byte("new1"))
 
 	// mod2: auto-policy, download fails (no AddDownload registered).
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod2", "Mod Two", "1.0", []string{"m2-old"}, map[string][]byte{"mod2-old.esp": []byte("old2")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "mod2", "g1", "default", domain.UpdateAuto))
+	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod2", "g1", "default", domain.UpdateAuto))
 	src.AddMod(&domain.Mod{ID: "mod2", SourceID: "test-src", Name: "Mod Two", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "m2-new", FileName: "mod2-new.esp", IsPrimary: true}})
 
@@ -368,15 +368,15 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 	assert.Contains(t, out, "\nApplying 1 remaining update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod Three 1.0 → 2.0\n")
 
-	updated1, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated1, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated1.Version, "mod1 must have applied")
 
-	updated2, err := svc.GetInstalledMod("test-src", "mod2", "g1", "default")
+	updated2, err := svc.GetInstalledMod(context.Background(), "test-src", "mod2", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated2.Version, "mod2's failure must not have applied, but the batch must have continued past it")
 
-	updated3, err := svc.GetInstalledMod("test-src", "mod3", "g1", "default")
+	updated3, err := svc.GetInstalledMod(context.Background(), "test-src", "mod3", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated3.Version, "mod3 (--all, notify-policy) must have applied")
 }
@@ -391,7 +391,7 @@ func TestDoUpdate_DryRun_ZeroSideEffectsAndOutputUnchanged(t *testing.T) {
 	updateDryRun = true
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	require.NoError(t, svc.SetModUpdatePolicy("test-src", "mod1", "g1", "default", domain.UpdateAuto))
+	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdateAuto))
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 	// Deliberately no AddDownload - if ApplyUpdate were ever called, the
@@ -415,7 +415,7 @@ func TestDoUpdate_DryRun_ZeroSideEffectsAndOutputUnchanged(t *testing.T) {
 	_, err := os.Stat(callLog)
 	assert.True(t, os.IsNotExist(err), "no hook (and therefore no flow) must ever run under --dry-run")
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", updated.Version, "dry-run must not mutate anything")
 
@@ -507,7 +507,7 @@ func TestDoUpdateRollback_Integration_AfterApplySingleUpdate(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	}))
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	require.Equal(t, "2.0", updated.Version)
 	require.Equal(t, "1.0", updated.PreviousVersion)
@@ -520,7 +520,7 @@ func TestDoUpdateRollback_Integration_AfterApplySingleUpdate(t *testing.T) {
 	assert.Contains(t, out, "Rolling back Mod One 2.0 → 1.0...\n")
 	assert.Contains(t, out, "\n✓ Rolled back: Mod One 2.0 → 1.0\n")
 
-	rolledBack, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	rolledBack, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", rolledBack.Version, "rollback must restore the previous version")
 
@@ -580,7 +580,7 @@ func TestApplyUpdate_ForcedBeforeEachHookFailure_PrintsWarningAndApplies(t *test
 	assert.Contains(t, stderr,
 		"Warning: uninstall.before_each hook failed (forced): hook failed with exit code 1: "+failScript+"\n")
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "the update must still apply despite the forced hook failure")
 }
@@ -621,7 +621,7 @@ func TestApplyUpdate_AfterEachHookFailures_PrintWarningsAndSucceed(t *testing.T)
 	assert.Contains(t, stderr,
 		"Warning: install.after_each hook failed: hook failed with exit code 1: "+installScript+"\n")
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "the update must have applied despite both after_each hook failures")
 }

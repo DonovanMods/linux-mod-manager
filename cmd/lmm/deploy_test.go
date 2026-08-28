@@ -128,7 +128,7 @@ func seedDeployableMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 	t.Helper()
 
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", modID, "1.0", fileName, []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -554,7 +554,7 @@ mods:
 
 	// InstalledMod row exists (enabled, in the profile) but nothing was
 	// ever stored in the cache - forces DeployProfile's redownload branch.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "redl", SourceID: "e2e-repo", Name: "Redownload Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -643,7 +643,7 @@ mods:
 
 	// InstalledMod row exists (enabled, in the profile) but nothing was ever
 	// stored in the cache - forces DeployProfile's redownload branch.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "redlfail", SourceID: "e2e-repo-fail", Name: "Redownload Fail Mod", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,

@@ -240,7 +240,7 @@ func TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically(t
 	// something to undeploy.
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -327,7 +327,7 @@ func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -394,7 +394,7 @@ func TestDoModEnable_ErrorPath_NilResultDoesNotPanic(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "src", "1", "1.0", "plugin.esp", []byte("data")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
