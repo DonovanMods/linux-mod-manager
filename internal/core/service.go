@@ -1494,16 +1494,12 @@ func (s *Service) applyModUpdate(ctx context.Context, sourceID, modID, gameID, p
 	return s.db.ApplyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
 }
 
-// RollbackModVersion reverts a mod to its previous version
-func (s *Service) RollbackModVersion(ctx context.Context, sourceID, modID, gameID, profileName string) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.rollbackModVersion(ctx, sourceID, modID, gameID, profileName)
-}
-
+// rollbackModVersion reverts a mod to its previous version. Unexported
+// (v2 Phase 2 Unit I Task 10, #289): the exported RollbackModVersion wrapper
+// had zero production callers - only ApplyRollback/ApplyUpdate call this
+// directly, already inside their own beginOp - and its DB-level behavior
+// (including the "no previous version" failure) is pinned independently by
+// internal/storage/db's own TestSwapModVersions/TestSwapModVersions_NoPreviousVersion.
 func (s *Service) rollbackModVersion(ctx context.Context, sourceID, modID, gameID, profileName string) error {
 	return s.db.SwapModVersions(ctx, sourceID, modID, gameID, profileName)
 }

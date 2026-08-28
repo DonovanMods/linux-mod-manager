@@ -393,6 +393,26 @@ func TestJSONGoldens(t *testing.T) {
 				Notes:    []string{"rolled back Sample Mod"},
 			},
 		},
+		{
+			// Every optional key is populated (Locked/LockedVersion/Refusal
+			// and CacheMissing together) - on a real plan a locked rollback and
+			// a missing cache entry can co-occur, but the golden's job is to
+			// pin each key's wire shape, not to be a plausible plan (same
+			// convention as update_plan above).
+			"rollback_plan",
+			core.RollbackPlan{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				FromVersion:   "1.2.3",
+				ToVersion:     "1.2.2",
+				Locked:        true,
+				LockedVersion: "1.2.3",
+				Refusal:       "mod is locked: Sample Mod is locked at v1.2.3 in profile default - move the lock with 'lmm mod lock -s nexusmods -p default 42 <version>' or unlock with 'lmm mod unlock -s nexusmods -p default 42'",
+				CacheMissing:  true,
+			},
+		},
 	}
 
 	seen := make(map[string]bool, len(tests))

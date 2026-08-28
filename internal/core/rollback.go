@@ -1,9 +1,9 @@
-// Package core: this file holds the rollback flow - ApplyRollback, its
-// options/result types and every private helper they own - moved verbatim
-// out of flows.go by v2 Phase 2 Unit I (#289), per the phase plan's "flows.go
-// shrinks every unit" constraint. The move commit changed nothing but the
-// file the code lives in; PlanRollback and ApplyRollback's plan-taking
-// signature follow in their own commit.
+// Package core: this file holds the rollback flow - PlanRollback/
+// ApplyRollback, their options/plan/result types and every private helper
+// they own - moved verbatim out of flows.go by v2 Phase 2 Unit I (#289), per
+// the phase plan's "flows.go shrinks every unit" constraint. The move commit
+// changed nothing but the file the code lives in; PlanRollback and the
+// lock-state additions that follow it are their own commit.
 package core
 
 import (
@@ -12,6 +12,114 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
+
+// --- PlanRollback (v2 Phase 2 Unit I, #289) ---
+
+// RollbackPlan is the pure, displayable result of PlanRollback: everything
+// the pre-extraction CLI's doUpdateRollback computed inline before deciding
+// whether to print its "Rolling back..." header and call ApplyRollback, or
+// refuse as a skip (locked) or an error (not installed, no previous
+// version). See PlanRollback's doc comment for the exact mapping.
+type RollbackPlan struct {
+	// Mod is the installed mod PlanRollback was asked about, freshly re-read
+	// via GetInstalledMod - mirrors UpdatePlan.Mod exactly.
+	Mod domain.InstalledMod `json:"mod"`
+	// FromVersion/ToVersion name the rollback's direction: FromVersion is
+	// Mod.Version, ToVersion is Mod.PreviousVersion - split out (rather than
+	// making a renderer read them off Mod directly) so a caller's "%s → %s"
+	// header/footer never has to know which InstalledMod field means what,
+	// mirroring RollbackResult's own ModName/FromVersion/ToVersion split.
+	FromVersion string `json:"from_version"`
+	ToVersion   string `json:"to_version"`
+	// Locked/LockedVersion mirror the profile ref's lock state, read once -
+	// same semantics as UpdatePlan.Locked/LockedVersion. LockedVersion is the
+	// lock's OWN recorded version (domain.ModReference.Version), which can
+	// differ from Mod.Version - 'lmm mod lock <id> <version>' allows locking
+	// at a version other than the one currently installed - so a renderer
+	// needing the exact locked-at version (doUpdateRollback's "locked at
+	// v%s") cannot substitute FromVersion for it.
+	Locked        bool   `json:"locked"`
+	LockedVersion string `json:"locked_version,omitempty"`
+	// Refusal is LockedRefRefusalError's text, precomputed whenever Locked -
+	// mirrors UpdatePlan.Refusal (there populated only when Locked &&
+	// Update != nil; here a rollback is always "available" once PlanRollback
+	// returns successfully, so Locked alone gates it). cmd/lmm's own
+	// renderer keeps its pre-existing hand-worded text instead (byte-
+	// identity; Phase 3 unifies wording), so this is not read by any
+	// --json/plain output today.
+	Refusal string `json:"refusal,omitempty"`
+	// CacheMissing reports that ToVersion's cache entry is gone (pruned, or
+	// manually deleted since the update that set PreviousVersion) - the
+	// second of doUpdateRollback's two pre-ApplyRollback guards. Unlike the
+	// "no previous version" guard (which PlanRollback itself refuses with an
+	// error, since there is nothing left to plan), this is captured as plan
+	// data: ApplyRollback re-derives it independently at apply time anyway
+	// (a plan can go stale between planning and applying), so PlanRollback
+	// only needs to report it for a renderer that wants to refuse before
+	// ever calling ApplyRollback, matching doUpdateRollback's own ordering.
+	CacheMissing bool `json:"cache_missing"`
+	// snapshot is the installed-mod set this plan was computed against
+	// (Ruling 5): ApplyRollback re-derives it under beginOp and returns
+	// ErrStalePlan when it no longer matches. Unexported and outside the
+	// wire contract, mirroring UpdatePlan.snapshot exactly.
+	snapshot installedSnapshot `json:"-"`
+}
+
+// PlanRollback computes what "lmm update rollback <mod-id>" would do for
+// (sourceID, modID) in profileName - the pure, read-only half of the pre-
+// extraction CLI's doUpdateRollback. No DB write, filesystem write, or hook
+// execution ever happens here; the only reads are GetInstalledMod, the
+// profile's lock state, and a cache-existence check.
+//
+// Errors mirror doUpdateRollback's own first two guards exactly: a missing
+// mod returns GetInstalledMod's raw error (domain.ErrModNotFound - the CLI
+// wraps it as "mod not found: %s", matching its pre-extraction text), and an
+// empty PreviousVersion returns "no previous version available for
+// rollback" verbatim. Both guards are true error returns, not plan data,
+// because there is nothing left to plan - a caller cannot render an
+// unlocked/locked or cache-missing/cache-present rollback for a mod that
+// either doesn't exist or has nothing to roll back to. The remaining two
+// pre-extraction checks (locked, cache missing) DO return a valid plan -
+// see RollbackPlan's doc comment for why.
+func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*RollbackPlan, error) {
+	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+
+	if mod.PreviousVersion == "" {
+		return nil, fmt.Errorf("no previous version available for rollback")
+	}
+
+	// Ruling 5: record the installed set this plan is being computed
+	// against, so ApplyRollback can refuse it once that set has moved on.
+	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+
+	plan := &RollbackPlan{
+		Mod:         *mod,
+		FromVersion: mod.Version,
+		ToVersion:   mod.PreviousVersion,
+		snapshot:    snapshot,
+	}
+
+	locked, lockedVersion, err := s.lockState(ctx, game.ID, profileName, mod.SourceID, mod.ID)
+	if err != nil {
+		return nil, err
+	}
+	if locked {
+		plan.Locked = true
+		plan.LockedVersion = lockedVersion
+		ref := &domain.ModReference{Version: lockedVersion}
+		plan.Refusal = LockedRefRefusalError(mod.Mod, profileName, ref).Error()
+	}
+
+	plan.CacheMissing = !s.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.PreviousVersion)
+
+	return plan, nil
+}
 
 // --- ApplyRollback (Phase 6b Task 5) ---
 
@@ -33,12 +141,13 @@ type RollbackOptions struct {
 //
 //   - ModName, FromVersion, ToVersion identify the rollback - split into
 //     separate fields (unlike UpdateApplyResult.Applied's single formatted
-//     string) because the CLI needs FromVersion/ToVersion independently for
-//     its own "Rolling back %s %s → %s..." header, printed BEFORE
-//     ApplyRollback is even called (the CLI keeps its own GetInstalledMod
-//     call for that header - see ApplyRollback's doc comment). All three are
-//     populated as soon as ApplyRollback's guard checks pass - before any
-//     hook runs - so a caller can rely on them for its footer even though
+//     string) because the CLI needs them independently for its own "Rolling
+//     back %s %s → %s..." header, printed BEFORE ApplyRollback is even
+//     called (the CLI renders that header from RollbackPlan.Mod/FromVersion/
+//     ToVersion instead of its own GetInstalledMod call - see PlanRollback's
+//     doc comment). All three are populated as soon as ApplyRollback's
+//     guard checks pass - before any hook runs - so a caller can rely on
+//     them for its footer even though
 //     they are not gated on the whole rollback having succeeded the way
 //     UpdateApplyResult.Applied is (ApplyRollback has no equivalent
 //     "succeeded end to end" list; callers infer success from a nil error).
@@ -72,33 +181,35 @@ type RollbackResult struct {
 	Notes       []string `json:"notes,omitempty"`
 }
 
-// ApplyRollback rolls the installed mod identified by sourceID/modID back to
-// its PreviousVersion, following cmd/lmm/update.go's pre-extraction
-// doUpdateRollback ordering exactly: GetInstalledMod -> guard checks ->
-// hooks -> installer.ReplaceForUpdate(current -> previous) - the extracted
-// CLI's plain Replace step, now carrying the reversed file-ID transition
-// (current FileIDs -> PreviousFileIDs) that narrows a same-version rollback
-// to the restored file's own members (#150) -> RollbackModVersion (DB
-// swap, with a compensating reverse-replace on failure) -> SetModLinkMethod
-// -> reload -> ProfileManager.UpsertMod (compensating BOTH the DB swap and
-// the Replace on failure). This is a behavior-preserving extraction - see the
-// task report for the full mapping. Unlike ApplyUpdate, there is no
-// download step at all - the previous version's files already live in the
-// cache (ApplyUpdate itself guarantees this: it never deletes a mod's OLD
-// cache entry - see ApplyUpdate's own doc comment) - so the FIRST thing this
-// function's caller-visible behavior depends on is that cache entry still
-// existing.
+// ApplyRollback rolls plan.Mod back to its PreviousVersion, following
+// cmd/lmm/update.go's pre-extraction doUpdateRollback ordering exactly:
+// guard checks -> hooks -> installer.ReplaceForUpdate(current -> previous) -
+// the extracted CLI's plain Replace step, now carrying the reversed file-ID
+// transition (current FileIDs -> PreviousFileIDs) that narrows a
+// same-version rollback to the restored file's own members (#150) ->
+// RollbackModVersion (DB swap, with a compensating reverse-replace on
+// failure) -> SetModLinkMethod -> reload -> ProfileManager.UpsertMod
+// (compensating BOTH the DB swap and the Replace on failure). This is a
+// behavior-preserving extraction - see the task report for the full
+// mapping. Unlike ApplyUpdate, there is no download step at all - the
+// previous version's files already live in the cache (ApplyUpdate itself
+// guarantees this: it never deletes a mod's OLD cache entry - see
+// ApplyUpdate's own doc comment) - so the FIRST thing this function's
+// caller-visible behavior depends on is that cache entry still existing.
 //
-// Guards, checked before anything else, in order: mod.PreviousVersion must
-// be non-empty ("no previous version available for rollback" - a mod that
-// has never been updated, or has already been rolled back once, has no
-// second previous version to roll back to), and the previous version must
-// still exist in the game's cache ("previous version %s not found in
-// cache" - defends against a cache entry pruned or manually deleted between
-// the update and the rollback). Both mirror doUpdateRollback's own two
-// precondition checks verbatim, including their exact error text (the CLI's
-// own "mod not found: %s" wrapping of a failed GetInstalledMod is preserved
-// here too, for the same reason).
+// Guards, checked before anything else (after Ruling 5's checkPlanFresh),
+// in order: mod.PreviousVersion must be non-empty ("no previous version
+// available for rollback" - a mod that has never been updated, or has
+// already been rolled back once, has no second previous version to roll
+// back to), and the previous version must still exist in the game's cache
+// ("previous version %s not found in cache" - defends against a cache entry
+// pruned or manually deleted between the update and the rollback). Both
+// mirror doUpdateRollback's own two precondition checks verbatim, including
+// their exact error text - and both are re-derived here from plan.Mod
+// rather than trusted from RollbackPlan.CacheMissing/the plan's own
+// implicit "PreviousVersion != empty" guarantee, mirroring ApplyUpdate's own
+// independent lock re-check: a plan is a snapshot, and either condition can
+// have changed in the window between PlanRollback and this call.
 //
 // Hook failure semantics mirror doUpdateRollback's own two, independently
 // Force-gated before_each hooks (uninstall.before_each for the CURRENT
@@ -128,16 +239,16 @@ type RollbackResult struct {
 // diagnostics/identity fields accumulated before the failure - callers
 // should surface them alongside the error (see RollbackResult's doc
 // comment).
-func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts RollbackOptions, sink EventSink) (*RollbackResult, error) {
+func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, plan *RollbackPlan, opts RollbackOptions, sink EventSink) (*RollbackResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &RollbackResult{}, err
 	}
 	defer release()
-	return s.applyRollback(ctx, game, profileName, sourceID, modID, opts, sink)
+	return s.applyRollback(ctx, game, plan, opts, sink)
 }
 
-func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts RollbackOptions, sink EventSink) (*RollbackResult, error) {
+func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *RollbackPlan, opts RollbackOptions, sink EventSink) (*RollbackResult, error) {
 	result := &RollbackResult{}
 	emit := func(e Event) {
 		if sink != nil {
@@ -145,10 +256,16 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
-	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
-	if err != nil {
-		return result, fmt.Errorf("mod not found: %s", modID)
+	// Ruling 5: the plan is a contract about a world that may have moved.
+	// First statement inside the op (ApplyRollback took beginOp just above),
+	// before any lock check, hook, or side effect - mirroring applyUpdate's
+	// own placement.
+	if err := s.checkPlanFresh(ctx, plan.Mod.GameID, plan.Mod.ProfileName, plan.snapshot); err != nil {
+		return result, err
 	}
+
+	mod := plan.Mod
+	profileName := mod.ProfileName
 
 	// #97: a locked ref refuses rollback entirely, mirroring ApplyUpdate's
 	// own gate - rollback moves a locked ref's Version just as surely as an
