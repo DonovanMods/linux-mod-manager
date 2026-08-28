@@ -9,12 +9,15 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
-// ErrNoDownloadableFiles is FilterAndSortFiles/PrimaryFile/
-// SelectFilesForVersion's sentinel for an empty file list - the mod's
-// source offers nothing to install/deploy. This text is part of the CLI
-// contract: cmd/lmm/profile.go's errNoDownloadableFiles and this package's
-// former errNoDeployFiles were hand-kept byte-identical before the two
-// copies were unified into this one sentinel.
+// ErrNoDownloadableFiles is SelectFilesForVersion's (and, beneath it,
+// selectDeployFiles') sentinel for an empty file list - the mod's source
+// offers nothing to install/deploy. FilterAndSortFiles and PrimaryFile
+// cannot return it: neither returns an error at all (an empty input yields
+// an empty slice and a nil *DownloadableFile respectively), so deciding
+// what "nothing left" means is their callers' job. This text is part of the
+// CLI contract: cmd/lmm/profile.go's errNoDownloadableFiles and this
+// package's former errNoDeployFiles were hand-kept byte-identical before
+// the two copies were unified into this one sentinel.
 var ErrNoDownloadableFiles = errors.New("no downloadable files")
 
 // ErrStoredFilesUnavailable is SelectFilesForVersion's sentinel for a
