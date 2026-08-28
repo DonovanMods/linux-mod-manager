@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -89,55 +88,6 @@ func TestProfileCreateCmd_NoName(t *testing.T) {
 	err := cmd.Execute()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "accepts 1 arg")
-}
-
-func TestSelectPrimaryFile(t *testing.T) {
-	tests := []struct {
-		name     string
-		files    []domain.DownloadableFile
-		expected string
-	}{
-		{
-			name: "returns primary file when available",
-			files: []domain.DownloadableFile{
-				{ID: "1", FileName: "optional.zip", IsPrimary: false},
-				{ID: "2", FileName: "main.zip", IsPrimary: true},
-				{ID: "3", FileName: "update.zip", IsPrimary: false},
-			},
-			expected: "2",
-		},
-		{
-			name: "returns first file when no primary",
-			files: []domain.DownloadableFile{
-				{ID: "1", FileName: "first.zip", IsPrimary: false},
-				{ID: "2", FileName: "second.zip", IsPrimary: false},
-			},
-			expected: "1",
-		},
-		{
-			name: "returns first primary when multiple primaries",
-			files: []domain.DownloadableFile{
-				{ID: "1", FileName: "first.zip", IsPrimary: false},
-				{ID: "2", FileName: "primary1.zip", IsPrimary: true},
-				{ID: "3", FileName: "primary2.zip", IsPrimary: true},
-			},
-			expected: "2",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := selectPrimaryFile(tt.files)
-			assert.NotNil(t, result)
-			assert.Equal(t, tt.expected, result.ID)
-		})
-	}
-}
-
-func TestSelectPrimaryFile_EmptySlice(t *testing.T) {
-	var files []domain.DownloadableFile
-	result := selectPrimaryFile(files)
-	assert.Nil(t, result)
 }
 
 // --- doProfileSwitch (Task 4 CLI refit) ---
@@ -481,144 +431,6 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 	assert.Less(t, insC, insA, "install-eligible mods must print in profile.Mods order")
 }
 
-// TestSelectFilesToDownload_VersionAuthoritative is the #96 direct unit test
-// for selectFilesToDownload's version parameter: same precedence as
-// internal/core's selectVersionedDeployFiles (drift heals to the recorded
-// version, gone IDs heal to the recorded version, an unresolvable target
-// hard-fails naming the version, and an empty version preserves the exact
-// pre-#96 behavior).
-func TestSelectFilesToDownload_VersionAuthoritative(t *testing.T) {
-	// file11 (another 1.0 file) and file12 (a non-primary file at an
-	// unrelated version, 2.0) extend the base fixture to cover the fast
-	// path and the stored-intersect-matches precedence (rule 3) without
-	// disturbing any of the original four assertions below - each is
-	// re-verified against the larger fixture inline.
-	files := []domain.DownloadableFile{
-		{ID: "10", Version: "1.5", IsPrimary: true, Category: "MAIN"},
-		{ID: "9", Version: "1.0", Category: "ARCHIVED"},
-		{ID: "11", Version: "1.0", Category: "ARCHIVED"},
-		{ID: "12", Version: "2.0", Category: "OPTIONAL"},
-	}
-
-	// Drift: stored ID exists upstream but is the wrong version - version wins.
-	got, err := selectFilesToDownload(files, []string{"10"}, "1.0")
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "9", got[0].ID)
-
-	// Gone IDs heal to the recorded version.
-	got, err = selectFilesToDownload(files, []string{"999"}, "1.0")
-	require.NoError(t, err)
-	assert.Equal(t, "9", got[0].ID)
-
-	// Unresolvable, no stored ID present upstream at all: extended #95
-	// wording (rule 4a).
-	_, err = selectFilesToDownload(files, []string{"999"}, "0.5")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `version "0.5" not available`)
-
-	// Legacy: empty version behaves exactly as before.
-	got, err = selectFilesToDownload(files, nil, "")
-	require.NoError(t, err)
-	assert.Equal(t, "10", got[0].ID)
-
-	// Rule 2 (fast path): both stored IDs are returned as-is, without
-	// re-resolution, once their combined effective version agrees with the
-	// record - file9 (1.0) is the representative (neither stored file is
-	// primary, so the first one carrying a version wins), and file12 (2.0,
-	// an unrelated companion file's own version) rides along BOTH. This is
-	// what distinguishes the fast path from rule 3's stored-intersect-
-	// matches, which would keep only file9 (file12 isn't a 1.0 match).
-	got, err = selectFilesToDownload(files, []string{"9", "12"}, "1.0")
-	require.NoError(t, err)
-	require.Len(t, got, 2, "fast path must return the whole stored set, not just the version-matching subset")
-	gotIDs := []string{got[0].ID, got[1].ID}
-	assert.ElementsMatch(t, []string{"9", "12"}, gotIDs)
-
-	// Rule 3 (stored ∩ matches): stored IDs 10 and 9 disagree in effective
-	// version with the record (file10, the primary, is 1.5) so the fast
-	// path does not fire; among the files that DO match "1.0" (9 and 11),
-	// only the one that was ALSO a stored ID (9) is kept - file11 is
-	// excluded even though it's a 1.0 match, because it was never a stored
-	// ID for this mod.
-	got, err = selectFilesToDownload(files, []string{"10", "9"}, "1.0")
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "9", got[0].ID)
-
-	// Rule 5 (ErrVersionNotFound wrap): no stored IDs at all, and the
-	// requested version matches nothing upstream.
-	_, err = selectFilesToDownload(files, nil, "3.0")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, core.ErrVersionNotFound))
-	assert.Contains(t, err.Error(), "edit the profile's version or reinstall")
-
-	// Rule 4b (new split, #96 fix round 1): a stored ID (12) IS still
-	// present upstream, but the recorded version (3.0) matches nothing -
-	// this is a wrong version record on a file that's still there, not a
-	// gone file, so it must NOT get the #95 "no longer available upstream"
-	// wording; it gets a distinct ErrVersionNotFound wrap pointing at
-	// verify/update instead of reinstall.
-	_, err = selectFilesToDownload(files, []string{"12"}, "3.0")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, core.ErrVersionNotFound))
-	assert.NotContains(t, err.Error(), "no longer available upstream", "a present-upstream stored ID must not get the gone-file wording")
-	assert.Contains(t, err.Error(), `installed file(s) (ID(s): 12) do not match recorded version "3.0"`)
-	assert.Contains(t, err.Error(), "run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version")
-}
-
-// TestSelectFilesToDownload_CategoryPriorityTieBreak covers #144 item 5 for
-// the cmd twin: when the recorded version offers no primary file and no
-// stored ID narrows the choice, the final fallback used to be matches[0] -
-// upstream listing order - ignoring fileCategoryPriority entirely. The
-// category priority (MAIN > OPTIONAL > UPDATE > MISCELLANEOUS > unknown >
-// archived) now breaks that tie, stable: first-listed wins among equal
-// priorities, so category-less listings (custom sources) behave exactly as
-// before.
-//
-// PARITY: internal/core/flows_selection_test.go's
-// TestSelectVersionedDeployFiles_CategoryPriorityTieBreak encodes this SAME
-// fixture table and expected picks through selectVersionedDeployFiles - this
-// tail is the hand-mirrored twin of core's pickVersionMatch (internal/core
-// cannot import cmd/lmm), so the two tests are the drift guard for the
-// twins. Change both together, or not at all.
-func TestSelectFilesToDownload_CategoryPriorityTieBreak(t *testing.T) {
-	files := []domain.DownloadableFile{
-		{ID: "misc20", Version: "2.0", Category: "MISCELLANEOUS"},
-		{ID: "upd20", Version: "2.0", Category: "UPDATE"},
-		{ID: "opt20", Version: "2.0", Category: "OPTIONAL"},
-		{ID: "optA30", Version: "3.0", Category: "OPTIONAL"},
-		{ID: "optB30", Version: "3.0", Category: "OPTIONAL"},
-		{ID: "plain40a", Version: "4.0"},
-		{ID: "plain40b", Version: "4.0"},
-		{ID: "beta50", Version: "5.0", Category: "beta"},
-		{ID: "upd50", Version: "5.0", Category: "update"},
-		{ID: "opt60", Version: "6.0", Category: "OPTIONAL"},
-		{ID: "miscPrim60", Version: "6.0", Category: "MISCELLANEOUS", IsPrimary: true},
-	}
-
-	cases := []struct {
-		name    string
-		version string
-		wantID  string
-	}{
-		{"category priority beats listing order", "2.0", "opt20"},
-		{"equal categories keep first-listed", "3.0", "optA30"},
-		{"category-less files keep first-listed", "4.0", "plain40a"},
-		{"known category beats unknown, case-insensitively", "5.0", "upd50"},
-		{"a primary file still outranks category priority", "6.0", "miscPrim60"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := selectFilesToDownload(files, nil, tc.version)
-			require.NoError(t, err)
-			require.Len(t, got, 1)
-			assert.Equal(t, tc.wantID, got[0].ID)
-		})
-	}
-}
-
 // TestDoProfileApply_StampsSelectedFileVersion guards issue #94 for
 // doProfileApply's "install missing mods" save site: when a mod referenced
 // by the profile (but not yet installed) has a primary file whose version
@@ -631,8 +443,7 @@ func TestSelectFilesToDownload_CategoryPriorityTieBreak(t *testing.T) {
 //
 // The profile ref's Version is deliberately "" (a legacy/unpinned ref), not
 // "1.0": #96 made a non-empty ref.Version an authoritative exact-match pin
-// for selectFilesToDownload (mirroring internal/core's
-// selectVersionedDeployFiles), and "1.0" here was only ever the mod-level
+// for core.SelectFilesForVersion, and "1.0" here was only ever the mod-level
 // label coincidentally reused for the ref before #96 existed - the
 // mod-vs-file version discrepancy this test actually guards is entirely
 // between src.AddMod's Version and the served file's Version, independent
@@ -668,20 +479,20 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 // TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution guards
 // #95 for doProfileApply's "install missing mods" loop: when a profile mod's
 // stored FileIDs no longer match anything the source currently lists,
-// selectFilesToDownload must fail the mod with the upstream-gone error
+// core.SelectFilesForVersion must fail the mod with the upstream-gone error
 // instead of silently substituting the primary file (mirrors
 // internal/core's TestService_DeployProfile_StoredFileIDsGone_
 // SkipsModWithClearError from task B1). A second mod with valid FileIDs
 // proves the toInstall loop continues past the failure rather than
 // aborting.
 //
-// The served files carry no Version (unlike TestSelectFilesToDownload_
-// VersionAuthoritative's fixture) so anyFileHasVersion is false and this
-// exercises selectFilesToDownloadLegacy - #96 deliberately changes this
-// exact scenario for a VERSIONED source (gone FileIDs now heal to a
-// version-matched file rather than hard-failing); the un-extended #95
-// no-substitution contract this test guards only still applies vacuously,
-// per decision 1/4.
+// The served files carry no Version (unlike
+// TestSelectFilesForVersion_VersionAuthoritative's fixture, internal/core's
+// selection_test.go) so this exercises SelectFilesForVersion's legacy,
+// version-blind fallthrough - #96 deliberately changes this exact scenario
+// for a VERSIONED source (gone FileIDs now heal to a version-matched file
+// rather than hard-failing); the un-extended #95 no-substitution contract
+// this test guards only still applies vacuously, per decision 1/4.
 func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 
