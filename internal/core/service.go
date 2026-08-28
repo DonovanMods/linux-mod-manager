@@ -65,7 +65,7 @@ type Service struct {
 	opSem      chan struct{}
 	downloader *Downloader
 	extractor  *Extractor
-	log        *slog.Logger
+	log        *slog.Logger // Diagnostics logger; nil means discard (see logger()).
 
 	configDir string
 	dataDir   string
@@ -141,6 +141,21 @@ func (s *Service) Close() error {
 // Logger returns the diagnostics logger this Service was constructed with
 // (ServiceConfig.Logger), or a discarding logger if none was given.
 func (s *Service) Logger() *slog.Logger {
+	return s.log
+}
+
+// discardLogger is handed back by logger() for a Service whose log field is
+// nil - a single shared instance rather than allocating one per call.
+var discardLogger = slog.New(slog.DiscardHandler)
+
+// logger returns s.log if set, or discardLogger otherwise, so every internal
+// log call site is safe even for a Service built by a raw struct literal
+// (several white-box tests in this package do this) rather than NewService,
+// which is the only place s.log is normally populated.
+func (s *Service) logger() *slog.Logger {
+	if s.log == nil {
+		return discardLogger
+	}
 	return s.log
 }
 
@@ -671,7 +686,7 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 	defer func() {
 		if rmErr := os.RemoveAll(stagePath); rmErr != nil {
-			s.log.Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
+			s.logger().Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
 		}
 	}()
 
@@ -795,7 +810,7 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 	}
 	defer func() {
 		if rmErr := os.RemoveAll(stagePath); rmErr != nil {
-			s.log.Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
+			s.logger().Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
 		}
 	}()
 
@@ -1440,7 +1455,7 @@ func (s *Service) ListSourceTokens(ctx context.Context) ([]db.StoredToken, error
 func (s *Service) IsSourceAuthenticated(ctx context.Context, sourceID string) bool {
 	has, err := s.db.HasToken(ctx, sourceID)
 	if err != nil {
-		s.log.Warn("checking source authentication failed", "source_id", sourceID, "err", err)
+		s.logger().Warn("checking source authentication failed", "source_id", sourceID, "err", err)
 		return false
 	}
 	return has

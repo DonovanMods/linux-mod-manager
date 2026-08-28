@@ -52,7 +52,7 @@ func (s *Service) reorderProfileMods(ctx context.Context, gameID, profileName st
 	}
 	// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 	if _, err := s.syncMergedPak(context.WithoutCancel(ctx), game, profileName); err != nil {
-		s.log.Warn("merged pak sync after reorder failed", "game_id", gameID, "profile", profileName, "err", err)
+		s.logger().Warn("merged pak sync after reorder failed", "game_id", gameID, "profile", profileName, "err", err)
 	}
 	return nil
 }
@@ -3533,7 +3533,14 @@ func (s *reinstallCacheTransaction) Commit() error {
 func (s *Service) lockedInstallRefusal(ctx context.Context, plan *InstallPlan, opts InstallOptions) error {
 	prof, err := s.NewProfileManager().Get(plan.GameID, plan.Profile)
 	if err != nil {
-		s.log.Warn("profile load failed while checking lock", "game_id", plan.GameID, "profile", plan.Profile, "err", err)
+		if errors.Is(err, domain.ErrProfileNotFound) {
+			// A profile that hasn't been materialized as a YAML file yet is
+			// the everyday case on a first-ever install, not a fault -
+			// Warn here would fire on essentially every fresh install.
+			s.logger().Debug("profile not found while checking lock", "game_id", plan.GameID, "profile", plan.Profile, "err", err)
+		} else {
+			s.logger().Warn("profile load failed while checking lock", "game_id", plan.GameID, "profile", plan.Profile, "err", err)
+		}
 		return nil
 	}
 	ref := prof.FindRef(plan.Mod.SourceID, plan.Mod.ID)
@@ -4420,10 +4427,10 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 				// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 				rctx := context.WithoutCancel(ctx)
 				if err := reinstallTxn.RestoreLive(rctx); err != nil {
-					s.log.Warn("rollback after failed install also failed", "step", "restore_live", "err", err)
+					s.logger().Warn("rollback after failed install also failed", "step", "restore_live", "err", err)
 				}
 				if err := installer.ReplaceWithCaches(rctx, game, reinstallTxn.snapshot, s.GetGameCache(game), &plan.Replaces.Mod, &plan.Replaces.Mod, plan.Profile); err != nil {
-					s.log.Warn("rollback after failed install also failed", "step", "replace_with_caches", "err", err)
+					s.logger().Warn("rollback after failed install also failed", "step", "replace_with_caches", "err", err)
 				}
 			}
 			return nil, fmt.Errorf("deployment failed: %w", replaceErr)
@@ -4452,19 +4459,19 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		if plan.Replaces != nil {
 			if reinstallTxn != nil {
 				if err := reinstallTxn.RestoreLive(rctx); err != nil {
-					s.log.Warn("rollback after failed install also failed", "step", "restore_live", "err", err)
+					s.logger().Warn("rollback after failed install also failed", "step", "restore_live", "err", err)
 				}
 				if err := installer.ReplaceWithCaches(rctx, game, reinstallTxn.staged, s.GetGameCache(game), &mod, &plan.Replaces.Mod, plan.Profile); err != nil {
-					s.log.Warn("rollback after failed install also failed", "step", "replace_with_caches", "err", err)
+					s.logger().Warn("rollback after failed install also failed", "step", "replace_with_caches", "err", err)
 				}
 			} else {
 				if err := installer.Replace(rctx, game, &mod, &plan.Replaces.Mod, plan.Profile); err != nil {
-					s.log.Warn("rollback after failed install also failed", "step", "replace", "err", err)
+					s.logger().Warn("rollback after failed install also failed", "step", "replace", "err", err)
 				}
 			}
 		} else {
 			if err := installer.Uninstall(rctx, game, &mod, plan.Profile); err != nil {
-				s.log.Warn("rollback after failed install also failed", "step", "uninstall", "err", err)
+				s.logger().Warn("rollback after failed install also failed", "step", "uninstall", "err", err)
 			}
 		}
 		return nil, fmt.Errorf("failed to save mod: %w", err)
@@ -4815,7 +4822,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 	if err := s.applyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		if rerr := installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs); rerr != nil {
-			s.log.Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
+			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
 		}
 		return result, fmt.Errorf("updating database: %w", err)
 	}
@@ -4832,10 +4839,10 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {
-			s.log.Warn("rollback after failed install also failed", "step", "rollback_mod_version", "err", rerr)
+			s.logger().Warn("rollback after failed install also failed", "step", "rollback_mod_version", "err", rerr)
 		}
 		if rerr := installer.ReplaceForUpdate(rctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs); rerr != nil {
-			s.log.Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
+			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
 		}
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
@@ -5084,7 +5091,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 	if err := s.rollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		if rerr := installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs); rerr != nil {
-			s.log.Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
+			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
 		}
 		return result, fmt.Errorf("updating database: %w", err)
 	}
@@ -5110,10 +5117,10 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {
-			s.log.Warn("rollback after failed install also failed", "step", "rollback_mod_version", "err", rerr)
+			s.logger().Warn("rollback after failed install also failed", "step", "rollback_mod_version", "err", rerr)
 		}
 		if rerr := installer.ReplaceForUpdate(rctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs); rerr != nil {
-			s.log.Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
+			s.logger().Warn("rollback after failed install also failed", "step", "replace_for_update", "err", rerr)
 		}
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
