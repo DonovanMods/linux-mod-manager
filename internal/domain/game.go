@@ -25,6 +25,10 @@ func (m LinkMethod) String() string {
 }
 
 // MarshalText implements encoding.TextMarshaler.
+//
+// NOTE: yaml.v3 also honours TextMarshaler — a struct that yaml-marshals this
+// type will now emit the name, not the int. The storage/config DTOs use
+// plain strings; keep it that way.
 func (m LinkMethod) MarshalText() ([]byte, error) { return []byte(m.String()), nil }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
@@ -101,6 +105,14 @@ func (m DeployMode) String() string {
 }
 
 // MarshalText implements encoding.TextMarshaler.
+//
+// NOTE: yaml.v3 also honours TextMarshaler — a struct that yaml-marshals this
+// type will now emit the name, not the int. The storage/config DTOs use
+// plain strings; keep it that way.
+//
+// Out-of-range values marshal as the default name ("extract"), not an error
+// — this is String()'s pre-existing behaviour, preserved on purpose (unlike
+// LinkMethod/VerifyTier, which reject).
 func (m DeployMode) MarshalText() ([]byte, error) { return []byte(m.String()), nil }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
