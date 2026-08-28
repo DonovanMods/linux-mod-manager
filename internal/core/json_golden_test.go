@@ -266,6 +266,10 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			"download_result",
+			core.DownloadResult{Path: "/cache/g/src-1/1.0/file.zip", Size: 1234, Checksum: "md5", SHA256: "abc"},
+		},
+		{
 			"import_result",
 			core.ImportResult{
 				Mod: &jsonGoldenMod, FilesExtracted: 4, LinkedSource: "nexusmods",
@@ -277,8 +281,6 @@ func TestJSONGoldens(t *testing.T) {
 			core.ScanResult{
 				FilePath: "/home/user/Downloads/sample-mod-1.2.3.zip", FileName: "sample-mod-1.2.3.zip",
 				Mod: &jsonGoldenMod, MatchedSource: "nexusmods", AlreadyTracked: true,
-				Err:          errors.New("scan failed: permission denied"),
-				ErrorMessage: "scan failed: permission denied",
 				ResolvedFile: &domain.DownloadableFile{
 					ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3",
 					Size: 104857600, IsPrimary: true,

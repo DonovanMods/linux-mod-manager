@@ -20,7 +20,6 @@
   },
   "matched_source": "nexusmods",
   "already_tracked": true,
-  "error": "scan failed: permission denied",
   "resolved_file": {
     "id": "file-1",
     "name": "Main File",

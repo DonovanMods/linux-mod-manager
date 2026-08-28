@@ -25,10 +25,10 @@ const (
 
 // DownloadResult contains the outcome of a download
 type DownloadResult struct {
-	Path     string // Final file path
-	Size     int64  // Bytes downloaded
-	Checksum string // MD5 hash of downloaded file (recorded in the DB)
-	SHA256   string // SHA-256 of downloaded file (compared against source-declared checksums)
+	Path     string `json:"path"`     // Final file path
+	Size     int64  `json:"size"`     // Bytes downloaded
+	Checksum string `json:"checksum"` // MD5 hash of downloaded file (recorded in the DB)
+	SHA256   string `json:"sha256"`   // SHA-256 of downloaded file (compared against source-declared checksums)
 }
 
 // Downloader handles HTTP file downloads with progress tracking
