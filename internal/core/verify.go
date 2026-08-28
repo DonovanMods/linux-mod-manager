@@ -21,6 +21,35 @@ const (
 	VerifyFull
 )
 
+// verifyTierNames maps each VerifyTier to its wire name. Keep in declaration
+// order.
+var verifyTierNames = [...]string{
+	VerifyLocal: "local",
+	VerifyFull:  "full",
+}
+
+// String returns the tier's wire name.
+func (t VerifyTier) String() string {
+	if t >= 0 && int(t) < len(verifyTierNames) && verifyTierNames[t] != "" {
+		return verifyTierNames[t]
+	}
+	return fmt.Sprintf("verify_tier(%d)", int(t))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (t VerifyTier) MarshalText() ([]byte, error) { return []byte(t.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (t *VerifyTier) UnmarshalText(b []byte) error {
+	for i, n := range verifyTierNames {
+		if n == string(b) {
+			*t = VerifyTier(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown verify tier %q", b)
+}
+
 // VerifyOptions configures a Verify run.
 type VerifyOptions struct {
 	Tier      VerifyTier

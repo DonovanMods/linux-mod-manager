@@ -1,5 +1,7 @@
 package domain
 
+import "fmt"
+
 // LinkMethod determines how mods are deployed to game directories
 type LinkMethod int
 
@@ -20,6 +22,19 @@ func (m LinkMethod) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (m LinkMethod) MarshalText() ([]byte, error) { return []byte(m.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (m *LinkMethod) UnmarshalText(b []byte) error {
+	method, ok := ParseLinkMethod(string(b))
+	if !ok {
+		return fmt.Errorf("unknown link method %q", b)
+	}
+	*m = method
+	return nil
 }
 
 // ValidLinkMethods lists ParseLinkMethod's recognized non-empty values, in
@@ -83,6 +98,19 @@ func (m DeployMode) String() string {
 	default:
 		return "extract"
 	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (m DeployMode) MarshalText() ([]byte, error) { return []byte(m.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (m *DeployMode) UnmarshalText(b []byte) error {
+	mode, ok := ParseDeployMode(string(b))
+	if !ok {
+		return fmt.Errorf("unknown deploy mode %q", b)
+	}
+	*m = mode
+	return nil
 }
 
 // ValidDeployModes is ValidLinkMethods' counterpart for ParseDeployMode.

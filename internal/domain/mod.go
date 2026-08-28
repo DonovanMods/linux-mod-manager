@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,6 +25,35 @@ const (
 	UpdateAuto                       // Automatically apply updates
 	UpdatePinned                     // Never update
 )
+
+func (p UpdatePolicy) String() string {
+	switch p {
+	case UpdateAuto:
+		return "auto"
+	case UpdatePinned:
+		return "pinned"
+	default:
+		return "notify"
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (p UpdatePolicy) MarshalText() ([]byte, error) { return []byte(p.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (p *UpdatePolicy) UnmarshalText(b []byte) error {
+	switch string(b) {
+	case "notify":
+		*p = UpdateNotify
+	case "auto":
+		*p = UpdateAuto
+	case "pinned":
+		*p = UpdatePinned
+	default:
+		return fmt.Errorf("unknown update policy %q", b)
+	}
+	return nil
+}
 
 // ModFile represents a single file within a mod archive (after extraction)
 type ModFile struct {
