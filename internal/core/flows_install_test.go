@@ -2849,6 +2849,49 @@ func TestService_ApplyInstall_SameVersionReinstall_CancelledMidDeploy_RestoresLi
 	assert.Empty(t, leaked, "Rollback must remove the snapshot temp dir even when the restore ran under a cancelled ctx")
 }
 
+// --- Fix round 2: recovery paths never inherit the caller's cancellation ---
+
+// TestService_ApplyInstall_FreshInstall_CancelledAtDBSave_UndeploysFiles is the
+// round-2 regression guard: every best-effort recovery call that runs AFTER the
+// primary operation failed must run under context.WithoutCancel, because the
+// cancellation that provoked the failure would otherwise also disable its
+// recovery. The plain-install shape is the cheapest and most common instance -
+// Ctrl-C landing on SaveInstalledMod means installer.Uninstall gets the same
+// dead ctx, returns ctx.Err() at its first file, and leaves an orphaned
+// deployment in the game directory with no installed_mods row to find it by.
+func TestService_ApplyInstall_FreshInstall_CancelledAtDBSave_UndeploysFiles(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.Nil(t, plan.Replaces, "a fresh install - the plain (non-transaction) path")
+
+	// The deploy has already succeeded by the time this fires; the DB save is
+	// the step the cancellation breaks.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc.SetBeforeSaveInstalledForTest(cancel)
+
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+
+	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1.esp"))
+	assert.True(t, os.IsNotExist(statErr),
+		"the Uninstall recovery must run to completion under the cancelled ctx, leaving no orphaned deployment: %v", statErr)
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
+	assert.Error(t, err, "the failed save must leave no installed_mods row")
+}
+
 // TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFailureAndErrors
 // is review finding I2's regression guard: on the BATCH path the primary is
 // the LAST entry in the loop by construction, so a per-file ctx check that

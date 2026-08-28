@@ -4407,8 +4407,10 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 		if replaceErr != nil {
 			if reinstallTxn != nil {
-				_ = reinstallTxn.RestoreLive(context.WithoutCancel(ctx))                                                                                      //nolint:errcheck // best-effort recovery on an already-erroring path
-				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.snapshot, s.GetGameCache(game), &plan.Replaces.Mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
+				// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
+				rctx := context.WithoutCancel(ctx)
+				_ = reinstallTxn.RestoreLive(rctx)                                                                                                             //nolint:errcheck // best-effort recovery on an already-erroring path
+				_ = installer.ReplaceWithCaches(rctx, game, reinstallTxn.snapshot, s.GetGameCache(game), &plan.Replaces.Mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
 			}
 			return nil, fmt.Errorf("deployment failed: %w", replaceErr)
 		}
@@ -4427,16 +4429,21 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	}
 	installedMod.Mod.GameID = game.ID
 
+	if s.beforeSaveInstalled != nil {
+		s.beforeSaveInstalled()
+	}
 	if err := s.SaveInstalledMod(ctx, installedMod); err != nil {
+		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
+		rctx := context.WithoutCancel(ctx)
 		if plan.Replaces != nil {
 			if reinstallTxn != nil {
-				_ = reinstallTxn.RestoreLive(context.WithoutCancel(ctx))                                                                      //nolint:errcheck // best-effort recovery on an already-erroring path
-				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.staged, s.GetGameCache(game), &mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
+				_ = reinstallTxn.RestoreLive(rctx)                                                                                             //nolint:errcheck // best-effort recovery on an already-erroring path
+				_ = installer.ReplaceWithCaches(rctx, game, reinstallTxn.staged, s.GetGameCache(game), &mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
 			} else {
-				_ = installer.Replace(ctx, game, &mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
+				_ = installer.Replace(rctx, game, &mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
 			}
 		} else {
-			_ = installer.Uninstall(ctx, game, &mod, plan.Profile) //nolint:errcheck // best-effort recovery
+			_ = installer.Uninstall(rctx, game, &mod, plan.Profile) //nolint:errcheck // best-effort recovery
 		}
 		return nil, fmt.Errorf("failed to save mod: %w", err)
 	}
@@ -4785,7 +4792,8 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	if err := s.ApplyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
-		_ = installer.ReplaceForUpdate(ctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
+		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
+		_ = installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
 
@@ -4800,8 +4808,10 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	pm := s.NewProfileManager()
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-		_ = s.RollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName)                                //nolint:errcheck // best-effort recovery on an already-erroring path
-		_ = installer.ReplaceForUpdate(ctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
+		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
+		rctx := context.WithoutCancel(ctx)
+		_ = s.RollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName)                                //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(rctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
 
@@ -5046,7 +5056,8 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 	}
 
 	if err := s.RollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
-		_ = installer.ReplaceForUpdate(ctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
+		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
+		_ = installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
 
@@ -5070,8 +5081,10 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		Version:  rolledBackMod.Version,
 		FileIDs:  rolledBackMod.FileIDs,
 	}); err != nil {
-		_ = s.RollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName)                                    //nolint:errcheck // best-effort recovery on an already-erroring path
-		_ = installer.ReplaceForUpdate(ctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
+		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
+		rctx := context.WithoutCancel(ctx)
+		_ = s.RollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName)                                    //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = installer.ReplaceForUpdate(rctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
 

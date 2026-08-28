@@ -19,3 +19,10 @@ func (s *Service) EnabledMergeSourcesForTest(ctx context.Context, game *domain.G
 func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) ([]string, error) {
 	return s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
 }
+
+// SetBeforeSaveInstalledForTest arms the install flow's pre-SaveInstalledMod
+// hook so a test can make that DB write fail (e.g. by cancelling the ctx)
+// after the deploy has already succeeded.
+func (s *Service) SetBeforeSaveInstalledForTest(fn func()) {
+	s.beforeSaveInstalled = fn
+}

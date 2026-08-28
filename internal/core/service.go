@@ -50,6 +50,14 @@ type Service struct {
 	configDir string
 	dataDir   string
 	cacheDir  string
+
+	// beforeSaveInstalled, when non-nil, runs immediately before the install
+	// flow's SaveInstalledMod call - the only point between a successful
+	// deploy and the DB write, and therefore the only place a test can arm
+	// the failure the deploy-recovery paths exist for. Test-only seam
+	// (export_test.go's SetBeforeSaveInstalledForTest); always nil in
+	// production.
+	beforeSaveInstalled func()
 }
 
 // NewService creates a new core service instance
