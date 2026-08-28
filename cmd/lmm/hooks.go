@@ -1,11 +1,13 @@
 // Package main: this file's helpers are what's left after Task 2 (#286)
 // moved hook RESOLUTION into core (Service.hookRunner/resolvedHooks/
 // hookContextFor, internal/core/hooks_resolve.go) - every core.XOptions
-// literal now resolves its own hooks, so getHookRunner/getResolvedHooks/
-// makeHookContext have exactly two remaining callers: batchInstallMods
-// (install.go, the CLI-side batch install engine ApplyInstall does not
-// cover) and doImport's archive tail (import.go). Remaining helpers die
-// with batchInstallMods (Unit H) and doImport's archive tail (Unit K).
+// literal now resolves its own hooks. Unit H (#288) removed the second of
+// the two remaining callers by deleting batchInstallMods, so all four
+// helpers below now have exactly ONE caller between them: doImport's
+// archive tail (import.go), which sequences install.before_all/before_each/
+// after_each/after_all itself. Nothing here shrank with that deletion -
+// doImport uses every one of them - so the whole file dies with that tail
+// in Unit K, per ruling 1.
 package main
 
 import (

@@ -164,9 +164,10 @@ type installBatchFixture struct {
 	redact      map[string]string
 }
 
-// runInstallBatchGolden drives installMultipleMods - the ONLY caller of
-// batchInstallMods (see installMultipleMods's doc comment in install.go) -
-// for one scenario, and compares (or, with -update-install-batch, records) a
+// runInstallBatchGolden drives installMultipleMods - the multi-select
+// install path these goldens exist to freeze, which delegated to
+// batchInstallMods before Task 7 and goes through core.PlanInstallMany +
+// core.ApplyInstall after it - for one scenario, and compares (or, with -update-install-batch, records) a
 // four-section transcript in a fixed order: stdout, stderr, the returned
 // error's text (or "<nil>"), and a JSON dump of end state. Nothing here is
 // sorted beyond what the real code already orders - the order IS the
@@ -244,9 +245,9 @@ func twoFreshModsVerboseFixture(t *testing.T) installBatchFixture {
 }
 
 // reinstallSameVersionPlusFreshFixture pre-installs mod-a at v1.0 (via a
-// direct, uncaptured batchInstallMods call), then the CAPTURED batch
+// direct, uncaptured installMultipleMods call), then the CAPTURED batch
 // reinstalls mod-a at the SAME effective version alongside a fresh mod-b -
-// batchInstallMods has no same-version dedup: it always uninstalls + clears
+// the batch path has no same-version dedup: it always uninstalls + clears
 // cache + redownloads + redeploys, unconditionally.
 func reinstallSameVersionPlusFreshFixture(t *testing.T) installBatchFixture {
 	t.Helper()
@@ -254,7 +255,7 @@ func reinstallSameVersionPlusFreshFixture(t *testing.T) installBatchFixture {
 	modA := &domain.Mod{ID: "mod-a", SourceID: "test-src", Name: "Mod A", Version: "1.0", Author: "Alice", GameID: "g1"}
 	src.AddMod(modA, []domain.DownloadableFile{{ID: "a-file", Name: "Main", FileName: "modA.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"}})
 	src.AddDownload("a-file", []byte("mod a v1 content"))
-	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{modA}, "default"))
+	require.NoError(t, installMultipleMods(context.Background(), svc, game, []*domain.Mod{modA}, "default"))
 
 	modB := &domain.Mod{ID: "mod-b", SourceID: "test-src", Name: "Mod B", Version: "2.0", Author: "Bob", GameID: "g1"}
 	src.AddMod(modB, []domain.DownloadableFile{{ID: "b-file", Name: "Main", FileName: "modB.esp", IsPrimary: true, Category: "MAIN", Version: "2.0"}})
@@ -281,7 +282,7 @@ func lockedRefDifferentVersionFixture(t *testing.T) installBatchFixture {
 	mod := &domain.Mod{ID: "mod-a", SourceID: "test-src", Name: "Mod A", Version: "1.0", Author: "Alice", GameID: "g1"}
 	src.AddMod(mod, []domain.DownloadableFile{{ID: "f1", Name: "Main", FileName: "modA.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"}})
 	src.AddDownload("f1", []byte("v1 content"))
-	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.NoError(t, installMultipleMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
 
 	pm := getProfileManager(svc)
 	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod-a", ""))

@@ -112,8 +112,9 @@ mods:
 }
 
 // TestBatchInstallMods_VisibleUnderLMMGameIDWhenSourceMappingDiffers covers
-// the second install-orphan save site (batchInstallMods, used by both
-// multi-select search installs and dependency-resolved installs). Same bug,
+// the second install-orphan save site: the BATCH engine behind both
+// multi-select search installs and dependency-resolved installs (cmd's
+// batchInstallMods until #288, core's applyInstallBatchMod since). Same bug,
 // same fix: the persisted GameID must be normalized to the lmm game.
 func TestBatchInstallMods_VisibleUnderLMMGameIDWhenSourceMappingDiffers(t *testing.T) {
 	mux := http.NewServeMux()
@@ -177,7 +178,7 @@ mods:
 	require.NoError(t, err)
 	require.Equal(t, "skyrim", mod.GameID, "GetMod stamps the source-mapped GameID for querying the source")
 
-	require.NoError(t, batchInstallMods(ctx, svc, game, []*domain.Mod{mod}, "default"))
+	require.NoError(t, installMultipleMods(ctx, svc, game, []*domain.Mod{mod}, "default"))
 
 	installed, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
 	require.NoError(t, err)

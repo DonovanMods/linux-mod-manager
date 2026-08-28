@@ -48,9 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Internal: the file-selection policy (filter/sort by category, primary-file pick, and
   version-authoritative file resolution) existed three times - once each in `cmd/lmm/install.go`,
   `cmd/lmm/profile.go`/`deploy.go`, and `internal/core/flows.go` - hand-kept byte-identical. It now
-  lives once, in `internal/core/selection.go`, exported as `core.FilterAndSortFiles`,
-  `core.PrimaryFile`, and `core.SelectFilesForVersion`; the `cmd/lmm` copies are deleted. No
-  user-visible change: CLI output and error text are byte-identical. (#287)
+  lives once, in `internal/core/selection.go`, exported as `core.FilterAndSortFiles` and
+  `core.SelectFilesForVersion` (the primary-file pick is package-internal - see #288); the
+  `cmd/lmm` copies are deleted. No user-visible change: CLI output and error text are
+  byte-identical. (#287)
+- Internal: `lmm install <query>`'s multi-select path no longer has an install engine of its own.
+  `batchInstallMods` - 300 lines in `cmd/lmm/install.go` that hand-rolled hooks, lock gating,
+  download, deploy, persistence and the merged-pak sync, bypassing `ApplyInstall` entirely - is
+  replaced by `core.PlanInstallMany` plus a batch branch of `core.ApplyInstall`, sharing the
+  per-mod engine the dependency path already used. `InstallPlan` gains `Batch`
+  (`[]*InstallPlanEntry`), and every `ApplyInstall` now re-derives the installed-mod set its plan
+  was computed against and refuses a stale one (`core.ErrStalePlan`). The install flow moved out
+  of `flows.go` into `internal/core/install.go`. No user-visible change: CLI output and end state
+  are byte-identical, pinned by `cmd/lmm/testdata/install_batch_golden/`. (#288)
 
 ### Fixed
 

@@ -118,8 +118,9 @@ func TestDoInstall_DeployCompile_AnnouncesRetaining(t *testing.T) {
 // CACHE but never DEPLOYED it - batchInstallMods is a bespoke
 // reimplementation of install/deploy that never went through
 // Service.ApplyInstall, the only seam that used to sync the merged pak.
-// This drives the REAL production batchInstallMods (not a reimplementation
-// or a mock) with two DIFFERENT exmodz mods and proves the merged pak is
+// This drives the REAL production multi-select path (not a reimplementation
+// or a mock - batchInstallMods before #288, core.ApplyInstall's batch branch
+// after it) with two DIFFERENT exmodz mods and proves the merged pak is
 // actually deployed on disk afterward, containing BOTH mods' content -
 // exactly the class of test whose absence let this ship.
 func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
@@ -147,7 +148,7 @@ func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
 	src.AddDownload("wolf-exmodz", []byte("wolf-bytes"))
 
 	out, err := captureStdoutErr(t, func() error {
-		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{bearMod, wolfMod}, "default")
+		return installMultipleMods(context.Background(), svc, game, []*domain.Mod{bearMod, wolfMod}, "default")
 	})
 	require.NoError(t, err)
 
@@ -193,7 +194,7 @@ func TestBatchInstallMods_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *tes
 	require.NoError(t, pipeErr)
 	os.Stderr = w
 	out, err := captureStdoutErr(t, func() error {
-		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{bearMod, wolfMod}, "default")
+		return installMultipleMods(context.Background(), svc, game, []*domain.Mod{bearMod, wolfMod}, "default")
 	})
 	_ = w.Close()
 	os.Stderr = oldStderr
