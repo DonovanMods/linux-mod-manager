@@ -191,5 +191,21 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 		}
 	}
 
+	// #289: stamp each entry's lock state from the profile, read ONCE here -
+	// the single seam that lets every caller (cmd/lmm's bulk table/JSON,
+	// PlanUpdate) drop its own profile scan. A missing/unreadable profile
+	// leaves every entry unlocked, matching every other "profile load
+	// failure means unlocked" precedent (ApplyUpdate's own lock gate,
+	// applySingleUpdate before this task).
+	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+		for i := range updates {
+			ref := prof.FindRef(updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)
+			if ref != nil && ref.Locked {
+				updates[i].Locked = true
+				updates[i].LockedVersion = ref.Version
+			}
+		}
+	}
+
 	return updates, checkErr
 }

@@ -348,6 +348,34 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Every optional key is populated (Update, RecompileNeeded,
+			// Changelog, Refusal all together) - on a real plan RecompileNeeded
+			// and a version-bump Update never co-occur, but the golden's job is
+			// to pin each key's wire shape, not to be a plausible plan (same
+			// convention as install_plan/install_plan_entry above).
+			"update_plan",
+			core.UpdatePlan{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.2", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				Locked:        true,
+				LockedVersion: "1.2.2",
+				Pinned:        false,
+				Update: &domain.Update{
+					InstalledMod: domain.InstalledMod{
+						Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.2", GameID: "skyrim-se", UpdatedAt: fixedTime},
+						ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+					},
+					NewVersion: "1.2.3",
+					Changelog:  "Fixed a crash on load.",
+				},
+				RecompileNeeded: true,
+				Changelog:       "Fixed a crash on load.",
+				Refusal:         "mod is locked: Sample Mod is locked at v1.2.2 in profile default - move the lock with 'lmm mod lock -s nexusmods -p default 42 <version>' or unlock with 'lmm mod unlock -s nexusmods -p default 42'",
+			},
+		},
+		{
 			// Applied is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null".
 			"update_apply_result",

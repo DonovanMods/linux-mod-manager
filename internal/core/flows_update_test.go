@@ -96,7 +96,9 @@ func TestService_ApplyUpdate_HappyPathEndToEnd(t *testing.T) {
 	mock.AddDownload("new-1", []byte("new-content"))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -160,7 +162,9 @@ func TestApplyUpdate_StoredFileIDsGoneUpstream_FallsBackToPrimary(t *testing.T) 
 	// No FileIDReplacements - the old stored ID "old-1" simply isn't among
 	// the new version's files at all, forcing the primary-file fallback.
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err, "update must succeed via the primary-file fallback, not fail")
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
@@ -218,7 +222,9 @@ exit 0`)
 	})
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -273,7 +279,9 @@ func TestService_ApplyUpdate_ResolvesHooksBeforeFirstMutation(t *testing.T) {
 	done := make(chan outcome, 1)
 	go func() {
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 		done <- outcome{result, err}
 	}()
 
@@ -327,7 +335,9 @@ func TestService_ApplyUpdate_FileIDReplacements(t *testing.T) {
 		mock.AddDownload("new-1", []byte("new-content"))
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0", FileIDReplacements: map[string]string{"old-1": "new-1"}}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 
@@ -362,7 +372,9 @@ func TestService_ApplyUpdate_FileIDReplacements(t *testing.T) {
 		mock.AddDownload("old-2", []byte("unchanged-extra"))
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0", FileIDReplacements: map[string]string{"old-1": "new-1"}}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 
@@ -402,7 +414,9 @@ func TestService_ApplyUpdate_FileIDReplacements(t *testing.T) {
 		mock.AddDownload("old-2", []byte("unchanged-extra"))
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0", FileIDReplacements: map[string]string{"old-1": "new-1"}}
-		_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 		require.NoError(t, err)
 
 		updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
@@ -442,7 +456,9 @@ func TestService_ApplyUpdate_FileIDReplacements(t *testing.T) {
 		mock.AddDownload("patch14", []byte("patch14-content"))
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0", FileIDReplacements: map[string]string{"patch13": "patch14"}}
-		_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 		require.NoError(t, err)
 
 		updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
@@ -483,7 +499,9 @@ func TestService_ApplyUpdate_RollbackPreconditionPreserved(t *testing.T) {
 	mock.AddDownload("new-1", []byte("new-content"))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
 	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "mod1", "1.0"), "the previous version's cache entry must survive an update, for rollback")
@@ -518,7 +536,9 @@ func TestService_ApplyUpdate_DownloadFailure(t *testing.T) {
 	// Deliberately no AddDownload("new-1", ...) - the download 404s.
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "downloading update:")
 	require.NotNil(t, result, "a partial result must be returned alongside the error")
@@ -563,7 +583,9 @@ func TestService_ApplyUpdate_ContextCancelledBetweenDownloadAndDeploy_ReturnsPar
 
 	ctx, cancel := context.WithCancel(context.Background())
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(ctx, game, "default", upd, core.UpdateOptions{}, func(e core.Event) {
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(ctx, game, plan, core.UpdateOptions{}, func(e core.Event) {
 		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.UpdateDownloadDone {
 			cancel()
 		}
@@ -609,7 +631,9 @@ func TestService_ApplyUpdate_ProgressEvents(t *testing.T) {
 
 	sink, seen := core.RecordEvents()
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, sink)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -640,7 +664,9 @@ func TestService_ApplyUpdate_ProgressEvents(t *testing.T) {
 	old2 := seedUpdatableMod(t, svc, game, "src", "mod2", "Mod Two", "1.0", []string{"m2-old"}, map[string][]byte{"mod2-old.esp": []byte("old")})
 	mock.AddMod("g1", &domain.Mod{ID: "mod2", SourceID: "src", Name: "Mod Two", Version: "2.0", GameID: "g1"})
 	upd2 := domain.Update{InstalledMod: *old2, NewVersion: "2.0"}
-	_, err = svc.ApplyUpdate(context.Background(), game, "default", upd2, core.UpdateOptions{}, nil)
+	plan, err = svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd2)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 }
 
@@ -715,7 +741,9 @@ func TestService_ApplyUpdate_ContextCancelledBetweenDownloads(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	src.onDownload = func() { cancel() } // fires once file 1's bytes are written
 
-	_, err := svc.ApplyUpdate(ctx, game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(ctx, game, plan, core.UpdateOptions{}, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, int64(1), src.urlRequests.Load(), "file 2's iteration must never start: the loop head, not the transport, has to stop it")
 	assert.Equal(t, int64(1), src.downloads.Load())
@@ -751,7 +779,9 @@ func TestService_ApplyUpdate_GameIDNormalization(t *testing.T) {
 	mock.AddDownload("new-1", []byte("new-content"))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err, "the fetched newMod's mismatched GameID must not break the update")
 	assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 
@@ -817,7 +847,9 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 		seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_each hook failed")
 		assert.Empty(t, result.Applied)
@@ -834,7 +866,9 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 
 		sink, seen := core.RecordEvents()
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Force: true}, sink)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{Force: true}, sink)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 		require.Len(t, result.Warnings, 1)
@@ -857,7 +891,9 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_each hook failed")
 	})
@@ -868,7 +904,9 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Force: true}, nil)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{Force: true}, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 		require.Len(t, result.Warnings, 1)
@@ -885,7 +923,9 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 
 		sink, seen := core.RecordEvents()
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, sink)
+		plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+		require.NoError(t, err)
+		result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, sink)
 		require.NoError(t, err, "after_each hook failures must never fail the update")
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 		require.Len(t, result.Warnings, 2)
@@ -940,7 +980,9 @@ func TestApplyUpdate_RecordsEffectiveFileVersion(t *testing.T) {
 	mock.AddDownload("20", []byte("new-content"))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -986,7 +1028,9 @@ func TestApplyUpdate_LockedRefRefusesUpdate(t *testing.T) {
 	require.NoError(t, pm.SetModLock("g1", "default", "src", "mod1", ""))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrModLocked)
 	assert.Contains(t, err.Error(), "locked at v")
@@ -1027,7 +1071,9 @@ func TestApplyUpdate_UnlockedRefStillUpdates(t *testing.T) {
 	mock.AddDownload("new-1", []byte("new-content"))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, mock.DownloadCount())
@@ -1083,7 +1129,9 @@ func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.
 	mock.AddDownload("103", []byte("v103"))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "1.0.3"}
-	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
@@ -1205,7 +1253,9 @@ func TestApplyUpdate_PartialFileIDReplacements_StillAdvances(t *testing.T) {
 		NewVersion:         "1.0.3",
 		FileIDReplacements: map[string]string{"extra999": "extra1000"},
 	}
-	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
@@ -1259,7 +1309,9 @@ func TestApplyUpdate_LabelAmbiguousExtra_IsSurfacedAsAWarning(t *testing.T) {
 	mock.AddDownload("main101", []byte("main101"))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "1.0.3"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
@@ -1327,7 +1379,9 @@ func TestApplyUpdate_CategoryLessAmbiguousPair_PrimaryBreaksTie(t *testing.T) {
 	mock.AddDownload("main101", []byte("main101"))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "1.0.3"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
@@ -1387,7 +1441,9 @@ func TestApplyUpdate_NonMatchingCategoryAmbiguousPair_PrimaryBreaksTie(t *testin
 	mock.AddDownload("main-old", []byte("main-old"))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
@@ -1446,7 +1502,9 @@ func TestApplyUpdate_NoOpGuard_NothingNewUnderTarget_ErrorsWithLabellingHint(t *
 	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.Error(t, err, "a selection that provably cannot advance the record must fail loudly, not loop")
 	assert.Contains(t, err.Error(), `update to "2.0" would re-install exactly what is already installed`)
 	assert.Contains(t, err.Error(), "every file the source offers under \"2.0\" is already installed",
@@ -1499,7 +1557,9 @@ func TestApplyUpdate_NoOpGuard_RepairStillNotAdvancing_ErrorsWithFileHint(t *tes
 	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "1.0"}
-	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.Error(t, err, "re-selecting exactly the installed file must fail loudly, not loop")
 	assert.Contains(t, err.Error(), `update to "1.0" would re-install exactly what is already installed`)
 	assert.Contains(t, err.Error(), "reinstall the mod or use --file to pick one explicitly",
@@ -1552,7 +1612,9 @@ func TestApplyUpdate_FileOnlyUpdate_SameVersionStringApplies(t *testing.T) {
 		NewVersion:         "1.0",
 		FileIDReplacements: map[string]string{"fileA": "fileB"},
 	}
-	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err, "a file-only update whose version string is unchanged must still apply")
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
@@ -1616,7 +1678,9 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_UndeploysSupersededMember(t *test
 		NewVersion:         "1.0",
 		FileIDReplacements: map[string]string{"fileA": "fileB"},
 	}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, result.Warnings)
 
@@ -1666,7 +1730,9 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_SharedMemberSurvives(t *testing.T
 		NewVersion:         "1.0",
 		FileIDReplacements: map[string]string{"fileA": "fileB"},
 	}
-	_, err = svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
 	_, statErr := os.Lstat(filepath.Join(gameDir, "a-only.esp"))
@@ -1710,7 +1776,9 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_ChainedUpdatesStayUndeployed(t *t
 
 	// Update 1: A -> B.
 	upd1 := domain.Update{InstalledMod: *old, NewVersion: "1.0", FileIDReplacements: map[string]string{"fileA": "fileB"}}
-	_, err := svc.ApplyUpdate(context.Background(), game, "default", upd1, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd1)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 	_, statErr := os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
 	require.True(t, os.IsNotExist(statErr), "update 1 must undeploy A's member")
@@ -1720,7 +1788,9 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_ChainedUpdatesStayUndeployed(t *t
 	require.NoError(t, err)
 	require.Equal(t, []string{"fileB"}, mid.FileIDs)
 	upd2 := domain.Update{InstalledMod: *mid, NewVersion: "1.0", FileIDReplacements: map[string]string{"fileB": "fileC"}}
-	_, err = svc.ApplyUpdate(context.Background(), game, "default", upd2, core.UpdateOptions{}, nil)
+	plan, err = svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd2)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 
 	_, statErr = os.Stat(filepath.Join(gameDir, "mod1-fileC.esp"))
@@ -1787,7 +1857,9 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_PureRemovalCompensationStaysNarro
 		NewVersion:         "1.0",
 		FileIDReplacements: map[string]string{"fileA": "fileB"},
 	}
-	_, err = svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "updating profile")
 
@@ -1836,7 +1908,9 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion(t *te
 		NewVersion:         "1.0",
 		FileIDReplacements: map[string]string{"fileA": "fileB"},
 	}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	result, err := svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.NoError(t, err, "a legacy cache entry must never make the update fail")
 	assert.Empty(t, result.Warnings, "the fallback must be silent - no warning storm for every old cache")
 
@@ -1893,7 +1967,9 @@ func TestApplyUpdate_SameVersionFileOnlyUpdate_CompensatedFailureRestoresSuperse
 		NewVersion:         "1.0",
 		FileIDReplacements: map[string]string{"fileA": "fileB"},
 	}
-	_, err = svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
+	require.NoError(t, err)
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "updating profile")
 

@@ -329,6 +329,115 @@ func guardNoOpUpdateSelection(files []domain.DownloadableFile, targetVersion, in
 	return repaired, nil
 }
 
+// --- PlanUpdate (v2 Phase 2 Unit I, #289) ---
+
+// UpdatePlan is the pure, displayable result of PlanUpdate: everything the
+// pre-extraction CLI's applySingleUpdate (cmd/lmm/update.go) computed inline
+// before deciding which of its four branches to render and, for the
+// version-bump branch, whether to apply. See PlanUpdate's doc comment for
+// the exact mapping.
+type UpdatePlan struct {
+	// Mod is the installed mod PlanUpdate was asked about, freshly re-read
+	// via GetInstalledMod - its GameID/ProfileName double as the plan's
+	// implicit "which profile" identity (mirroring InstallPlan's own
+	// GameID/Profile fields, just carried on the embedded domain.Mod/
+	// InstalledMod instead of duplicated).
+	Mod domain.InstalledMod `json:"mod"`
+	// Locked/LockedVersion mirror the profile ref's lock state, read once -
+	// same semantics as domain.Update.Locked/LockedVersion (CheckGameUpdates
+	// already stamps these on Update when one exists, but PlanUpdate also
+	// needs them when there is no update at all, e.g. the pinned branch's
+	// "(also locked)" caveat).
+	Locked        bool   `json:"locked"`
+	LockedVersion string `json:"locked_version,omitempty"`
+	// Pinned reports Mod.UpdatePolicy == domain.UpdatePinned.
+	Pinned bool `json:"pinned"`
+	// Update is the result of checking (Mod.SourceID, Mod.ID) for an update -
+	// nil means CheckGameUpdates found nothing for this mod (up to date, or
+	// pinned/filtered before the source was ever queried; a DeployCompile
+	// game's merged-pak staleness check can still populate this even for a
+	// pinned mod - see CheckGameUpdates - matching applySingleUpdate's own
+	// pre-lift precedence exactly: the zero-updates check always ran first).
+	Update *domain.Update `json:"update,omitempty"`
+	// RecompileNeeded mirrors Update.RecompileNeeded when Update != nil,
+	// false otherwise - a convenience so a renderer never needs to nil-check
+	// Update just to read this one bit.
+	RecompileNeeded bool `json:"recompile_needed"`
+	// Changelog is CleanChangelog(Update.Changelog) - empty when Update is
+	// nil or carries no changelog.
+	Changelog string `json:"changelog,omitempty"`
+	// Refusal is LockedRefRefusalError's text, precomputed whenever Locked
+	// && Update != nil - the canonical wording, for a consumer that wants
+	// it. cmd/lmm's own renderer keeps its pre-existing hand-worded text
+	// instead (byte-identity; Phase 3 unifies wording - see the task
+	// report), so this is not read by any --json/plain output today.
+	Refusal string `json:"refusal,omitempty"`
+	// snapshot is the installed-mod set this plan was computed against
+	// (Ruling 5): ApplyUpdate re-derives it under beginOp and returns
+	// ErrStalePlan when it no longer matches. Unexported and outside the
+	// wire contract, mirroring InstallPlan.snapshot exactly.
+	snapshot installedSnapshot `json:"-"`
+}
+
+// PlanUpdate computes what "lmm update <mod-id>" would do for (sourceID,
+// modID) in profileName - the pure, read-only half of the pre-extraction
+// CLI's applySingleUpdate. See UpdatePlan's doc comment for what each field
+// means, and the task report for the exact mapping back to
+// applySingleUpdate's four branches.
+//
+// Network reads (CheckGameUpdates, which delegates to the registered
+// source's CheckUpdates) are expected; no DB write, filesystem write, hook
+// execution, or download ever happens here.
+func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*UpdatePlan, error) {
+	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ruling 5: record the installed set this plan is being computed
+	// against, so ApplyUpdate can refuse it once that set has moved on.
+	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+
+	plan := &UpdatePlan{
+		Mod:      *mod,
+		Pinned:   mod.UpdatePolicy == domain.UpdatePinned,
+		snapshot: snapshot,
+	}
+
+	// #97: mirrors applySingleUpdate's own pre-lift profile load - a
+	// missing/unreadable profile is treated as unlocked (a lock cannot exist
+	// in an unloadable profile).
+	var ref *domain.ModReference
+	if prof, perr := s.NewProfileManager().Get(game.ID, profileName); perr == nil {
+		ref = prof.FindRef(sourceID, modID)
+	}
+	if ref != nil && ref.Locked {
+		plan.Locked = true
+		plan.LockedVersion = ref.Version
+	}
+
+	updates, err := s.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check update: %w", err)
+	}
+	if len(updates) == 0 {
+		return plan, nil
+	}
+
+	upd := updates[0]
+	plan.Update = &upd
+	plan.RecompileNeeded = upd.RecompileNeeded
+	plan.Changelog = CleanChangelog(upd.Changelog)
+	if plan.Locked {
+		plan.Refusal = LockedRefRefusalError(mod.Mod, profileName, ref).Error()
+	}
+
+	return plan, nil
+}
+
 // --- ApplyUpdate (Phase 5b Task 3) ---
 
 // UpdateOptions configures ApplyUpdate. Unlike InstallOptions/DeployOptions,
@@ -470,22 +579,35 @@ func lockedRefRefusalMessage(mod domain.Mod, profileName string, ref *domain.Mod
 // sink may be nil. On error, the returned result carries any
 // diagnostics accumulated before the failure - callers should surface them
 // alongside the error (see UpdateApplyResult's doc comment).
-func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileName string, upd domain.Update, opts UpdateOptions, sink EventSink) (*UpdateApplyResult, error) {
+func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, plan *UpdatePlan, opts UpdateOptions, sink EventSink) (*UpdateApplyResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &UpdateApplyResult{}, err
 	}
 	defer release()
-	return s.applyUpdate(ctx, game, profileName, upd, opts, sink)
+	return s.applyUpdate(ctx, game, plan, opts, sink)
 }
 
-func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileName string, upd domain.Update, opts UpdateOptions, sink EventSink) (*UpdateApplyResult, error) {
+func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *UpdatePlan, opts UpdateOptions, sink EventSink) (*UpdateApplyResult, error) {
 	result := &UpdateApplyResult{}
 	emit := func(e Event) {
 		if sink != nil {
 			sink(e)
 		}
 	}
+
+	// Ruling 5: the plan is a contract about a world that may have moved.
+	// First statement inside the op (ApplyUpdate took beginOp just above),
+	// before any lock check, hook, or side effect - a stale plan is refused
+	// having changed nothing at all, mirroring applyInstall's own placement.
+	if err := s.checkPlanFresh(ctx, plan.Mod.GameID, plan.Mod.ProfileName, plan.snapshot); err != nil {
+		return result, err
+	}
+	if plan.Update == nil {
+		return result, fmt.Errorf("update plan has no update to apply")
+	}
+	profileName := plan.Mod.ProfileName
+	upd := *plan.Update
 
 	// #286 review (Important 1): resolved before the download loop below,
 	// applyUpdate's first mutation - mirroring every other flow

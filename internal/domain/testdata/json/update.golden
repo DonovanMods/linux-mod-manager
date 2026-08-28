@@ -30,5 +30,6 @@
     "file-0": "file-1"
   },
   "recompile_needed": true,
-  "recompile_reason": "base pak updated"
+  "recompile_reason": "base pak updated",
+  "locked": false
 }

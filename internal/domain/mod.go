@@ -170,6 +170,14 @@ type Update struct {
 	// missing from the game directory (#197 I5's wedge case). Empty when
 	// RecompileNeeded is false.
 	RecompileReason string `json:"recompile_reason,omitempty"`
+	// Locked/LockedVersion mirror the profile ref's lock state for this
+	// entry (#289): stamped once by Service.CheckGameUpdates from a single
+	// profile read, so callers (cmd/lmm) never need their own scan of the
+	// profile's Mods to find out. LockedVersion is only meaningful (and only
+	// ever set) when Locked is true - the profile ref's own Version, which
+	// may differ from InstalledMod.Version.
+	Locked        bool   `json:"locked,omitempty"`
+	LockedVersion string `json:"locked_version,omitempty"`
 }
 
 // ModKey returns a unique lookup key for a mod: "sourceID:modID".
