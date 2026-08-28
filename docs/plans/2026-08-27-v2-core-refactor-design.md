@@ -283,8 +283,10 @@ rides the same PR.
   `Enable/Disable`, `Set*`, `Reorder*`, `Save*`) are **serialized service-wide**.
 - Mechanism: a 1-slot semaphore acquired with `ctx`
   (`select { case s.opSem <- struct{}{}: … case <-ctx.Done(): return ctx.Err() }`), so
-  a waiter is itself cancellable. Held for the whole mutation including hooks. Reads
-  during a mutation see WAL snapshot state, per-mod consistent by the invariant above.
+  a waiter is itself cancellable. `beginOp` checks `ctx.Err()` before the `select` so an
+  already-done ctx loses deterministically instead of racing the semaphore 50/50. Held
+  for the whole mutation including hooks. Reads during a mutation see WAL snapshot
+  state, per-mod consistent by the invariant above.
 - Not finer-grained: a mod manager should never run two deploys against one game
   concurrently; per-game locking is YAGNI until `serve` proves a need (the semaphore is
   one field, easy to key by game later). `serve`'s job runner executes sequentially
@@ -497,7 +499,6 @@ BepInEx) — they resume after Phase 1 on the new contracts.
 | 2026-08-27 | Service-wide mutation serialization via ctx-aware semaphore | Two deploys on one game is never wanted; per-game is YAGNI |
 | 2026-08-27 | Events suppressed under `--json` | One-document-on-stdout invariant; streaming is serve's job |
 | 2026-08-27 | Plan/Apply for all mutations except setters/reorder; no frontend callbacks from Apply | Serializable previews; works over HTTP |
-| pending | `encoding/json` v1 vs v2 for the contract | Phase 1 spike |
 | pending | v2.0.0 timing (after Phase 3 vs after serve) | User decides at Phase 3 close |
 | 2026-08-27 | Update-check progress via an optional `source.UpdateProgressReporter` interface, not a `ModSource.CheckUpdates` signature change | Same explicitness, no churn across 6 implementations + 18 test mocks; only nexusmods/curseforge report per-mod |
 | 2026-08-27 | slog is wired to a new `--log-level` flag (default off), not to `--verbose` | `-v` prints 21 user-facing stdout lines that must stay byte-identical; diagnostics are a separate channel |
@@ -507,3 +508,7 @@ BepInEx) — they resume after Phase 1 on the new contracts.
 | 2026-08-27 | `encoding/json/v2` for the core contract goldens (Deterministic + indent); CLI `--json` unchanged until Phase 3 | v2 defaults (nil slice → `[]`, strict names) enforce the contract rules; Go 1.27 ships it stable |
 | 2026-08-28 | `yaml.v3` honours `TextMarshaler`: `storage/config` DTOs keep plain-string enum fields; never yaml-marshal domain types directly | Task 18's `MarshalText` on `LinkMethod`/`DeployMode`/`UpdatePolicy` would silently switch `yaml.v3` output from int to name for any struct that yaml-marshals the domain type itself |
 | 2026-08-28 | error-as-text wire convention: `Err error json:"-"` + `ErrorMessage string json:"error,omitempty"` (`SourceWarning`, `ScanResult`; `BatchResult` when tagged — #285) | One convention for "error rendered as text" instead of two divergent Go/wire names for the same idea |
+| 2026-08-28 | `beginOp` checks `ctx.Err()` before the semaphore `select`, not just inside it | Deterministic loss on a done ctx instead of a 50/50 race between the two `select` arms |
+| 2026-08-28 | `app.Open` takes ctx; bootstrap token reads are cancellable; the sanctioned `context.Background()` sites remain three | `internal/app/sources.go`'s `ResolveAPIKey` call was the fourth, unadjudicated site; threading ctx through `Open` closes it rather than adding a fourth exception |
+| 2026-08-28 | `lmm game detect` opens SQLite/config via `app.Open` since `710f13f` — intentional user-visible delta (a corrupt `lmm.db` now fails `detect`) | Consistency with every other command, and `SaveGame` needs a `Service`; accepted, not a regression |
+| 2026-08-28 | `verifyRun` storing the per-call ctx in a struct field is accepted, not a "ctx in a struct" violation | Request-scoped struct created and discarded inside one `Verify` call; the no-ctx-in-structs rule targets long-lived objects, not this shape |

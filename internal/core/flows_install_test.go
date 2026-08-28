@@ -1816,7 +1816,8 @@ func TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBefor
 	// must fire BEFORE the uninstall-existing block, not after it.
 	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "root", "1.0"),
 		"the lock target's cache entry must not be deleted on a refused reinstall")
-	for _, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for _, ph := range phases {
 		assert.NotEqual(t, core.InstallDepReinstalling, ph,
 			"the uninstall-existing block must never run for the refused locked primary")
 	}

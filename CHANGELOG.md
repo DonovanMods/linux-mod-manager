@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default config and data directories honor `XDG_CONFIG_HOME` / `XDG_DATA_HOME` (defaults `~/.config/lmm` and `~/.local/share/lmm`). When an XDG variable is set but its lmm directory does not exist and the legacy one does, the legacy directory is used so existing installs keep working. `--config`/`--data` and `cache_path` still override. Bootstrap (paths, directory hardening, source registration) now lives in `internal/app` so every frontend resolves identically. (#270)
 - `lmm --config X --data Y` no longer requires `$HOME` to be set. (#277)
 - Every I/O method on the core service takes a `context.Context`; long-running loops (downloads, deploys, verify) stop at the next iteration after cancellation, and best-effort recovery paths never inherit the caller's cancellation. (#278)
+- Internal: `core.Service` documents and enforces a concurrency contract — query methods run
+  concurrently with each other and with at most one in-flight mutation; mutations are serialized
+  service-wide through a one-slot semaphore acquired with the caller's context, so a waiter is
+  itself cancellable. The games map is guarded by an RWMutex and `SaveGame` replaces `AddGame`.
+  (#279)
+- Internal: the four ad-hoc progress mechanisms (`DeployProgress`, `DownloadProgress`, the
+  `VerifyEvent` callback and the context-smuggled update-check callback) are replaced by one
+  typed event stream (`EventSink`) with a fixed `{"type","data"}` wire envelope pinned by
+  goldens. No user-visible change: CLI output is byte-identical. (#280)
 - Internal: `internal/domain` and `internal/core`'s Plan/Result types now carry snake_case `json`
   tags, and the int enums (`LinkMethod`, `DeployMode`, `UpdatePolicy`, `VerifyTier`,
   `VerifyEventKind`, `DeployModClass`) marshal as their text names. Each type's wire shape is

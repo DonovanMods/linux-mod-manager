@@ -1364,7 +1364,7 @@ func TestService_DeployProfile_MissingCacheModRedownloads(t *testing.T) {
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
-	phases := phasesOf(*seen)
+	phases, _ := phasesOf(*seen)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed)
@@ -1501,7 +1501,8 @@ func TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError(t *testi
 	assert.Contains(t, result.Skipped[0], "stale-id")
 
 	var sawSkipped bool
-	for _, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for _, ph := range phases {
 		if ph == core.DeploySkipped {
 			sawSkipped = true
 		}
@@ -1538,7 +1539,7 @@ func TestService_DeployProfile_StoredIDsGone_HealsToRecordedVersion(t *testing.T
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
-	phases := phasesOf(*seen)
+	phases, _ := phasesOf(*seen)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed, "must heal to the recorded version, not skip")
@@ -1988,7 +1989,8 @@ exit 1`)
 	require.NotNil(t, result)
 
 	require.NotEmpty(t, *seen)
-	first, ok := (*seen)[0].(core.HookEvent)
+	phases, events := phasesOf(*seen)
+	first, ok := events[0].(core.HookEvent)
 	require.True(t, ok, "the forced before_all warning must be the first event emitted")
 	assert.Equal(t, core.DeployBeforeAllForced, first.Phase, "the forced before_all warning must be the first event emitted")
 	assert.Equal(t, "install.before_all", first.Stage)
@@ -1996,8 +1998,8 @@ exit 1`)
 	assert.Contains(t, first.Detail, "forced")
 	assert.Equal(t, first.Detail, result.Warnings[0], "the event's Detail must match the recorded Warning text verbatim")
 
-	require.Greater(t, len(*seen), 1, "at least one later event (the mod itself deploying) must exist")
-	assert.NotEqual(t, core.DeployBeforeAllForced, phasesOf(*seen)[1])
+	require.Greater(t, len(phases), 1, "at least one later event (the mod itself deploying) must exist")
+	assert.NotEqual(t, core.DeployBeforeAllForced, phases[1])
 }
 
 // TestService_DeployProfile_SkipHooks_RunsNoHooks guards Task 16: SkipHooks
@@ -2061,14 +2063,15 @@ exit 1`)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	require.GreaterOrEqual(t, len(*seen), 2)
-	first, ok := (*seen)[0].(core.HookEvent)
+	phases, events := phasesOf(*seen)
+	require.GreaterOrEqual(t, len(events), 2)
+	first, ok := events[0].(core.HookEvent)
 	require.True(t, ok)
 	assert.Equal(t, core.DeployBeforeAllForced, first.Phase)
 	assert.Equal(t, "uninstall.before_all", first.Stage)
 	assert.Contains(t, first.Detail, "uninstall.before_all hook failed")
 	assert.Contains(t, first.Detail, "forced")
-	assert.Equal(t, core.DeployPurging, phasesOf(*seen)[1], "the purge header event must come right after the forced warning")
+	assert.Equal(t, core.DeployPurging, phases[1], "the purge header event must come right after the forced warning")
 }
 
 // TestService_DeployProfile_PerModNoteDiagnostics_CarryModAttributionAndPrecedeSuccessEvent
@@ -2173,14 +2176,15 @@ func TestService_DeployProfile_UndeployFailureEmitsNoteEventBeforeSuccessEvent(t
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: undeploy Test Mod: "))
 
 	require.Len(t, *seen, 2)
-	note, ok := (*seen)[0].(core.StepEvent)
+	phases, events := phasesOf(*seen)
+	note, ok := events[0].(core.StepEvent)
 	require.True(t, ok)
 	assert.Equal(t, core.DeployNote, note.Phase)
 	assert.Equal(t, "Test Mod", note.ModName)
 	require.NotNil(t, note.Mod)
 	assert.Equal(t, "1", note.Mod.ModID)
 	assert.Equal(t, result.Notes[0], note.Detail)
-	assert.Equal(t, core.DeployDeployed, phasesOf(*seen)[1], "the Note event must precede the success event")
+	assert.Equal(t, core.DeployDeployed, phases[1], "the Note event must precede the success event")
 }
 
 // TestService_DeployProfile_PurgeBeforeEachSkip_EmitsWarningEventWithModAttribution
@@ -2270,7 +2274,8 @@ func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) 
 	// PurgeNote must be emitted before DeployPurging's redeploy-phase
 	// events (it belongs to the purge phase).
 	purgingIdx, noteIdx := -1, -1
-	for i, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for i, ph := range phases {
 		if ph == core.DeployPurging {
 			purgingIdx = i
 		}
@@ -2838,7 +2843,8 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	assert.Contains(t, result.Notes[0], "could not update profile")
 
 	var disabledIdx, enabledIdx, installingIdx = -1, -1, -1
-	for i, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for i, ph := range phases {
 		switch ph {
 		case core.SwitchDisabled:
 			disabledIdx = i
@@ -3053,7 +3059,8 @@ func TestService_ApplyProfileSwitch_EnableLoop_InstallFailureSkipsModEntirely(t 
 	require.Len(t, result.Notes, 1)
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to deploy Test Mod: "), "note: %q", result.Notes[0])
 
-	for _, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for _, ph := range phases {
 		assert.NotEqual(t, core.SwitchEnabled, ph, "no SwitchEnabled event must fire for a mod whose Install failed")
 	}
 
@@ -3104,7 +3111,8 @@ func TestService_ApplyProfileSwitch_EnableLoop_SetModEnabledFailureIsNonFatalNot
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to update Test Mod: "))
 
 	var sawEnabled bool
-	for _, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for _, ph := range phases {
 		if ph == core.SwitchEnabled {
 			sawEnabled = true
 		}
@@ -3255,8 +3263,9 @@ func TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBl
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Installed)
 
+	phases, events := phasesOf(*seen)
 	var failIdx, doneIdx = -1, -1
-	for i, ph := range phasesOf(*seen) {
+	for i, ph := range phases {
 		switch ph {
 		case core.SwitchDownloadFailed:
 			failIdx = i
@@ -3267,7 +3276,7 @@ func TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBl
 	require.NotEqual(t, -1, failIdx, "expected a SwitchDownloadFailed event")
 	require.NotEqual(t, -1, doneIdx, "expected a SwitchDownloadDone event")
 	assert.Less(t, failIdx, doneIdx, "the loop-done event must fire after the failure event, mirroring the unconditional trailing blank line")
-	assert.Contains(t, (*seen)[failIdx].(core.ModEvent).Detail, "download failed")
+	assert.Contains(t, events[failIdx].(core.ModEvent).Detail, "download failed")
 }
 
 // TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod
@@ -4309,7 +4318,7 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 	}
 
 	require.NotEmpty(t, *seen)
-	phases := phasesOf(*seen)
+	phases, _ := phasesOf(*seen)
 	assert.Equal(t, core.DeployPurging, phases[0])
 	assert.Equal(t, 2, (*seen)[0].(core.FlowEvent).EventScope().Total)
 	var purged []core.ModEvent
@@ -4479,13 +4488,14 @@ func TestService_PurgeProfile_BeforeAllFailure_ForcedWarnsBeforePurging(t *testi
 
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "uninstall.before_all hook failed (forced):")
-	require.GreaterOrEqual(t, len(*seen), 2)
-	first, ok := (*seen)[0].(core.HookEvent)
+	phases, events := phasesOf(*seen)
+	require.GreaterOrEqual(t, len(events), 2)
+	first, ok := events[0].(core.HookEvent)
 	require.True(t, ok, "the forced warning must precede the purge header")
 	assert.Equal(t, core.DeployBeforeAllForced, first.Phase, "the forced warning must precede the purge header")
 	assert.Equal(t, "uninstall.before_all", first.Stage)
 	assert.Equal(t, result.Warnings[0], first.Detail)
-	assert.Equal(t, core.DeployPurging, phasesOf(*seen)[1])
+	assert.Equal(t, core.DeployPurging, phases[1])
 }
 
 func TestService_PurgeProfile_AfterHookFailures_WarningsUseModNameAndDeferEmission(t *testing.T) {
@@ -4516,7 +4526,8 @@ func TestService_PurgeProfile_AfterHookFailures_WarningsUseModNameAndDeferEmissi
 	assert.Contains(t, result.Warnings[1], "uninstall.after_all hook failed:")
 
 	purgedIdx, firstWarnIdx := -1, -1
-	for i, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for i, ph := range phases {
 		if ph == core.PurgeModPurged {
 			purgedIdx = i
 		}
@@ -4627,7 +4638,8 @@ func TestService_PurgeProfile_Uninstall_DeleteRecordFailure_CountsFailedSkipsAft
 	require.NotEmpty(t, result.Notes)
 	assert.Contains(t, result.Notes[0], "⚠ Test Mod - failed to remove record:")
 
-	for _, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for _, ph := range phases {
 		assert.NotEqual(t, core.PurgeModPurged, ph, "a delete-record failure must not count as purged")
 	}
 	_, err = os.Stat(marker)
@@ -4695,7 +4707,8 @@ func TestService_PurgeProfile_CtxCancelledBetweenMods_ReturnsPartialResult(t *te
 		}
 	}
 	assert.Equal(t, 1, stillDeployed, "the second mod must remain deployed")
-	for _, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for _, ph := range phases {
 		assert.NotEqual(t, core.PurgeComplete, ph, "a cancelled purge must not report completion")
 	}
 }

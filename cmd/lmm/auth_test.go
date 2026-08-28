@@ -313,7 +313,7 @@ func TestAuthStatusCmd_WithStoredToken(t *testing.T) {
 	})
 
 	// First, save a token
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
 	err = svc.SaveSourceToken(context.Background(), "nexusmods", "stored-test-key-12345")
 	require.NoError(t, err)
@@ -340,7 +340,7 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 	dataDir = t.TempDir()
 
 	// First, save a token
-	svc, err := initService()
+	svc, err := initService(t.Context())
 	require.NoError(t, err)
 	err = svc.SaveSourceToken(context.Background(), "nexusmods", "stored-test-key-12345")
 	require.NoError(t, err)
@@ -365,7 +365,7 @@ func TestAuthLogoutCmd_WithStoredToken(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify token is gone
-	svc2, err := initService()
+	svc2, err := initService(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, svc2.Close())

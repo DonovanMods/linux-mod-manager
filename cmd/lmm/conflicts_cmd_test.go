@@ -15,7 +15,7 @@ import (
 // setupConflictsCmdTest points the package-global configDir/dataDir at temp
 // dirs and opens a *core.Service against them (with a CacheDir matching
 // getServiceConfig's default, dataDir/cache, since no config.yaml is
-// written), then registers a game via svc.AddGame so a later, independently
+// written), then registers a game via svc.SaveGame so a later, independently
 // opened service — the one initService builds inside the real command path —
 // can resolve it. Unlike setupConflictsTest (conflicts_test.go), which hands
 // doConflicts an isolated *core.Service the command path never touches, this

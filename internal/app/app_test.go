@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,7 +13,7 @@ import (
 
 func openForTest(t *testing.T, opts Options) {
 	t.Helper()
-	svc, err := Open(opts)
+	svc, err := Open(t.Context(), opts)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	// Built-ins are registered unconditionally.
@@ -60,4 +61,15 @@ func TestOpen_CreatesConfigAndCacheDirs(t *testing.T) {
 		require.NoError(t, err, dir)
 		assert.True(t, info.IsDir(), dir)
 	}
+}
+
+// TestOpen_AlreadyCancelledContext pins that a cancelled ctx aborts Open
+// before any directory creation or service work, returning ctx.Err() rather
+// than opening successfully or failing later with an unrelated error.
+func TestOpen_AlreadyCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := Open(ctx, Options{ConfigDir: t.TempDir(), DataDir: t.TempDir()})
+	require.ErrorIs(t, err, context.Canceled)
 }

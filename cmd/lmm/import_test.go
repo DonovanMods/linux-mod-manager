@@ -116,7 +116,7 @@ func (s *fakeMatchSource) CheckUpdates(ctx context.Context, installed []domain.I
 // acceptance rule as before, unchanged.
 
 // setupTryMatchSourcesTest builds a *core.Service and registers game with it
-// via AddGame - required because tryMatchSources calls
+// via SaveGame - required because tryMatchSources calls
 // service.SourcesForGame, which (unlike resolveSource) resolves gameID
 // against the service's own internal game registry, not a bare struct.
 func setupTryMatchSourcesTest(t *testing.T) (*core.Service, *domain.Game) {

@@ -4,6 +4,7 @@
   "install_path": "/home/user/games/skyrim-se",
   "mod_path": "/home/user/games/skyrim-se/Data",
   "source_ids": {
+    "curseforge": "skyrim-special-edition",
     "nexusmods": "skyrimspecialedition"
   },
   "link_method": "symlink",

@@ -27,7 +27,7 @@ func withService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.Serv
 // withServiceOpts is withService with bootstrap options (e.g. a custom warning
 // writer); ConfigDir and DataDir still come from the global flags.
 func withServiceOpts(cmd *cobra.Command, opts app.Options, fn func(ctx context.Context, svc *core.Service) error) error {
-	svc, err := initServiceWith(opts)
+	svc, err := initServiceWith(cmd.Context(), opts)
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}

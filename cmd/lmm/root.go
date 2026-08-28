@@ -320,13 +320,13 @@ func runRoot(ctx context.Context) error {
 
 // initService builds the CLI's *core.Service from the global --config/--data
 // flags. See app.Open for what bootstrap involves.
-func initService() (*core.Service, error) {
-	return initServiceWith(app.Options{})
+func initService(ctx context.Context) (*core.Service, error) {
+	return initServiceWith(ctx, app.Options{})
 }
 
 // initServiceWith is initService with additional bootstrap options; ConfigDir
 // and DataDir always come from the flags.
-func initServiceWith(opts app.Options) (*core.Service, error) {
+func initServiceWith(ctx context.Context, opts app.Options) (*core.Service, error) {
 	opts.ConfigDir = configDir
 	opts.DataDir = dataDir
 	logger, err := newCLILogger(logLevel, os.Stderr)
@@ -334,7 +334,7 @@ func initServiceWith(opts app.Options) (*core.Service, error) {
 		return nil, err
 	}
 	opts.Logger = logger
-	return app.Open(opts)
+	return app.Open(ctx, opts)
 }
 
 // getServiceConfig resolves the on-disk layout the CLI flags select, without
