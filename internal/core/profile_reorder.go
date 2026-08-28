@@ -8,8 +8,21 @@ package core
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+)
+
+// ErrModNotInProfile and ErrAmbiguousModID are ResolveReorder's two error
+// sentinels, wrapped to reproduce cmd/lmm's pre-lift doProfileReorder text
+// byte-for-byte (profile.go:830/842's "mod %s not in profile" and :847's
+// "ambiguous mod id %s (use source:modid): %s") so errors.Is keeps working
+// for callers while the printed text stays frozen.
+var (
+	ErrModNotInProfile = errors.New("not in profile")
+	ErrAmbiguousModID  = errors.New("ambiguous mod id")
 )
 
 // ReorderProfileMods persists mods as gameID/profileName's new load order
@@ -51,4 +64,72 @@ func (s *Service) reorderProfileMods(ctx context.Context, gameID, profileName st
 		s.logger().Warn("merged pak sync after reorder failed", "game_id", gameID, "profile", profileName, "err", err)
 	}
 	return nil
+}
+
+// ResolveReorder turns user-supplied mod identifiers ("source:modid" or a bare mod ID) into the new
+// load order: mentioned mods first in the given order (deduplicated), then every unmentioned profile
+// mod in its existing relative order. Errors: ErrAmbiguousModID (text as profile.go:848), ErrModNotInProfile (text as :851).
+//
+// Lifted verbatim (Task 13) from cmd/lmm's pre-extraction doProfileReorder,
+// which built this same byKey/newRefs resolution inline before calling
+// ReorderProfileMods. It does not itself mutate anything - the caller still
+// calls ReorderProfileMods with the returned order.
+func (s *Service) ResolveReorder(ctx context.Context, game *domain.Game, profileName string, ids []string) ([]domain.ModReference, error) {
+	profile, err := s.NewProfileManager().Get(game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("loading profile: %w", err)
+	}
+
+	// Key by sourceID:modID so mods from different sources with the same ModID are not overwritten.
+	byKey := make(map[string]domain.ModReference)
+	for _, ref := range profile.Mods {
+		key := ref.SourceID + ":" + ref.ModID
+		byKey[key] = ref
+	}
+
+	var newRefs []domain.ModReference
+	seen := make(map[string]bool)
+	for _, id := range ids {
+		var ref domain.ModReference
+		var key string
+		if strings.Contains(id, ":") {
+			key = id
+			var ok bool
+			ref, ok = byKey[key]
+			if !ok {
+				return nil, fmt.Errorf("mod %s %w", id, ErrModNotInProfile)
+			}
+		} else {
+			// Look up by ModID only; ambiguous if multiple sources have this ModID
+			var matches []string
+			for k, r := range byKey {
+				if r.ModID == id {
+					matches = append(matches, k)
+				}
+			}
+			switch len(matches) {
+			case 0:
+				return nil, fmt.Errorf("mod %s %w", id, ErrModNotInProfile)
+			case 1:
+				key = matches[0]
+				ref = byKey[key]
+			default:
+				return nil, fmt.Errorf("%w %s (use source:modid): %s", ErrAmbiguousModID, id, strings.Join(matches, ", "))
+			}
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		newRefs = append(newRefs, ref)
+	}
+	// Append mods not mentioned in ids (unchanged relative order)
+	for _, ref := range profile.Mods {
+		key := ref.SourceID + ":" + ref.ModID
+		if !seen[key] {
+			newRefs = append(newRefs, ref)
+		}
+	}
+
+	return newRefs, nil
 }
