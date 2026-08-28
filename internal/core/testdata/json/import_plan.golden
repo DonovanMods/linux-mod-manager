@@ -1,0 +1,53 @@
+{
+  "profile": {
+    "name": "default",
+    "game_id": "skyrim-se",
+    "mods": [
+      {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "version": "1.2.3",
+        "locked": false
+      }
+    ],
+    "link_method": "symlink",
+    "link_method_explicit": false,
+    "is_default": false,
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "hooks_explicit": {
+      "install": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      },
+      "uninstall": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      }
+    }
+  },
+  "installed": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "42",
+      "version": "1.2.3",
+      "locked": false
+    }
+  ],
+  "needs_redownload": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "7",
+      "version": "1.0.0",
+      "locked": false
+    }
+  ],
+  "missing": [],
+  "exists": true
+}

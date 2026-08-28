@@ -1,0 +1,9 @@
+{
+  "name": "default",
+  "game_id": "skyrim-se",
+  "mods": [],
+  "link_method": "hardlink",
+  "overrides": {
+    "config/game.ini": "[General]\nsLanguage=ENGLISH\n"
+  }
+}

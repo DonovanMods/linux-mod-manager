@@ -1,0 +1,70 @@
+{
+  "game_id": "skyrim-se",
+  "from": "default",
+  "to": "hardcore",
+  "to_enable": [
+    {
+      "id": "7",
+      "source_id": "nexusmods",
+      "name": "Realistic Needs",
+      "version": "",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "skyrim-se",
+      "category": "",
+      "downloads": 0,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "updated_at": "2026-08-27T12:00:00Z",
+      "profile_name": "hardcore",
+      "update_policy": "notify",
+      "installed_at": "2026-08-27T12:00:00Z",
+      "enabled": false,
+      "deployed": false,
+      "link_method": "symlink",
+      "manual_download": false,
+      "convert_paks": false
+    }
+  ],
+  "to_disable": [],
+  "to_install": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "8",
+      "version": "1.0.0",
+      "locked": false
+    }
+  ],
+  "prior_versions": {
+    "nexusmods:8": {
+      "id": "8",
+      "source_id": "nexusmods",
+      "name": "Old Mod",
+      "version": "0.9.0",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "skyrim-se",
+      "category": "",
+      "downloads": 0,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "updated_at": "2026-08-27T12:00:00Z",
+      "profile_name": "default",
+      "update_policy": "notify",
+      "installed_at": "2026-08-27T12:00:00Z",
+      "enabled": false,
+      "deployed": false,
+      "link_method": "symlink",
+      "manual_download": false,
+      "convert_paks": false
+    }
+  },
+  "no_changes": false,
+  "already_active": false
+}

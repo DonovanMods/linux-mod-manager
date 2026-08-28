@@ -1,0 +1,11 @@
+{
+  "mod_name": "Sample Mod",
+  "from_version": "1.2.3",
+  "to_version": "1.2.2",
+  "warnings": [
+    "could not sync merged pak"
+  ],
+  "notes": [
+    "rolled back Sample Mod"
+  ]
+}

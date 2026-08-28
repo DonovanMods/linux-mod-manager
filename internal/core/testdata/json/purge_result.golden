@@ -1,0 +1,12 @@
+{
+  "purged": 2,
+  "skipped": [
+    "LockedMod: locked"
+  ],
+  "warnings": [
+    "could not remove cache directory"
+  ],
+  "notes": [
+    "purged orphaned cache entry"
+  ]
+}

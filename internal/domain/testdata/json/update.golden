@@ -1,0 +1,34 @@
+{
+  "installed_mod": {
+    "id": "42",
+    "source_id": "nexusmods",
+    "name": "Sample Mod",
+    "version": "1.2.2",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "skyrim-se",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z",
+    "profile_name": "default",
+    "update_policy": "notify",
+    "installed_at": "2026-08-27T12:00:00Z",
+    "enabled": true,
+    "deployed": true,
+    "link_method": "symlink",
+    "manual_download": false,
+    "convert_paks": false
+  },
+  "new_version": "1.2.3",
+  "changelog": "Fixed a crash on load.",
+  "file_id_replacements": {
+    "file-0": "file-1"
+  },
+  "recompile_needed": true,
+  "recompile_reason": "base pak updated"
+}

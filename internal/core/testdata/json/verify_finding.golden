@@ -1,0 +1,10 @@
+{
+  "mod_id": "42",
+  "mod_name": "Sample Mod",
+  "file_id": "file-1",
+  "status": "version_mismatch",
+  "note": "recorded version does not match effective",
+  "recorded": "1.2.2",
+  "effective": "1.2.3",
+  "version": "1.2.3"
+}

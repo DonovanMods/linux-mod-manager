@@ -1,0 +1,15 @@
+{
+  "deployed": 5,
+  "skipped": [
+    "OptionalAddon: no files selected"
+  ],
+  "warnings": [
+    "merge sync produced 1 raw fallback"
+  ],
+  "notes": [
+    "redeployed after cache miss"
+  ],
+  "merged_artifact": "merged.pak",
+  "merged_mods": 3,
+  "raw_fallbacks": 1
+}
