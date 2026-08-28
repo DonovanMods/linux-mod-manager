@@ -488,8 +488,8 @@ func TestService_ApplyUpdate_ContextCancelledBetweenDownloadAndDeploy_ReturnsPar
 
 	ctx, cancel := context.WithCancel(context.Background())
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(ctx, game, "default", upd, core.UpdateOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.UpdateDownloadDone {
+	result, err := svc.ApplyUpdate(ctx, game, "default", upd, core.UpdateOptions{}, func(e core.Event) {
+		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.UpdateDownloadDone {
 			cancel()
 		}
 	})
@@ -532,25 +532,29 @@ func TestService_ApplyUpdate_ProgressEvents(t *testing.T) {
 	// verbose-gated print, which required a known total) never fires.
 	mock.AddDownload("new-1", []byte(strings.Repeat("x", 1024)))
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
 	var sawDownloading, sawDone bool
-	for _, e := range events {
-		switch e.Phase {
-		case core.UpdateDownloading:
+	for _, e := range *seen {
+		switch ev := e.(type) {
+		case core.DownloadEvent:
+			if ev.Phase != core.UpdateDownloading {
+				continue
+			}
 			sawDownloading = true
-			assert.Equal(t, "Mod One", e.ModName)
-			assert.Equal(t, "mod1", e.ModID)
-			assert.Equal(t, "src", e.SourceID)
-			assert.GreaterOrEqual(t, e.Percent, 0.0)
-		case core.UpdateDownloadDone:
-			sawDone = true
+			assert.Equal(t, "Mod One", ev.ModName)
+			require.NotNil(t, ev.Mod)
+			assert.Equal(t, "mod1", ev.Mod.ModID)
+			assert.Equal(t, "src", ev.Mod.SourceID)
+			assert.GreaterOrEqual(t, ev.Percent, 0.0)
+		case core.StepEvent:
+			if ev.Phase == core.UpdateDownloadDone {
+				sawDone = true
+			}
 		}
 	}
 	assert.True(t, sawDownloading, "at least one UpdateDownloading tick expected for a known-size download")
@@ -755,21 +759,20 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 		hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
 		runner := core.NewHookRunner(5 * time.Second)
 
-		var events []core.DeployProgress
+		sink, seen := core.RecordEvents()
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner, Force: true}, func(p core.DeployProgress) {
-			events = append(events, p)
-		})
+		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner, Force: true}, sink)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 		require.Len(t, result.Warnings, 1)
 		assert.Contains(t, result.Warnings[0], "uninstall.before_each hook failed (forced):")
 
 		var sawForced bool
-		for _, e := range events {
-			if e.Phase == core.UpdateBeforeEachForced {
+		for _, e := range *seen {
+			if hook, ok := e.(core.HookEvent); ok && hook.Phase == core.UpdateBeforeEachForced {
 				sawForced = true
-				assert.Equal(t, result.Warnings[0], e.Detail)
+				assert.Equal(t, result.Warnings[0], hook.Detail)
+				assert.Equal(t, "uninstall.before_each", hook.Stage)
 			}
 		}
 		assert.True(t, sawForced, "an UpdateBeforeEachForced event must fire")
@@ -810,11 +813,9 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 		}
 		runner := core.NewHookRunner(5 * time.Second)
 
-		var events []core.DeployProgress
+		sink, seen := core.RecordEvents()
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner}, func(p core.DeployProgress) {
-			events = append(events, p)
-		})
+		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner}, sink)
 		require.NoError(t, err, "after_each hook failures must never fail the update")
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 		require.Len(t, result.Warnings, 2)
@@ -822,8 +823,8 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 		assert.Contains(t, result.Warnings[1], "install.after_each hook failed")
 
 		var warningCount int
-		for _, e := range events {
-			if e.Phase == core.UpdateWarning {
+		for _, e := range *seen {
+			if w, ok := e.(core.WarningEvent); ok && w.Phase == core.UpdateWarning {
 				warningCount++
 			}
 		}

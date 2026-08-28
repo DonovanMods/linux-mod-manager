@@ -1024,19 +1024,17 @@ func TestService_DeployProfile_MultiModDeploysInProfileOrder(t *testing.T) {
 	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
 	seedProfileWithMod(t, svc, "g1", "default", "src", "b", "1.0")
 
-	var events []core.DeployProgress
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 3, result.Deployed)
 	assert.Empty(t, result.Skipped)
 
 	var order []string
-	for _, e := range events {
-		if e.Phase == core.DeployDeployed {
-			order = append(order, e.ModName)
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.DeployDeployed {
+			order = append(order, m.ModName)
 		}
 	}
 	assert.Equal(t, []string{"Mod C", "Mod A", "Mod B"}, order, "deploy order must follow profile order")
@@ -1317,9 +1315,9 @@ func TestService_DeployProfile_PurgeRemovesFilesFirstAndPreservesEnabledSet(t *t
 	require.NoError(t, err, "precondition: the disabled mod's file must be deployed before purge")
 
 	var purgeTotal int
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, func(p core.DeployProgress) {
-		if p.Phase == core.DeployPurging {
-			purgeTotal = p.Total
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, func(e core.Event) {
+		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.DeployPurging {
+			purgeTotal = fe.EventScope().Total
 		}
 	})
 	require.NoError(t, err)
@@ -1364,10 +1362,9 @@ func TestService_DeployProfile_MissingCacheModRedownloads(t *testing.T) {
 	}))
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	var phases []core.DeployPhase
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		phases = append(phases, p.Phase)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
+	phases := phasesOf(*seen)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed)
@@ -1431,10 +1428,8 @@ func TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloa
 	}))
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	var events []core.DeployProgress
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
 	require.NoError(t, err, "a per-mod download failure must not fail the whole deploy")
 	require.NotNil(t, result)
 
@@ -1442,17 +1437,22 @@ func TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloa
 	require.Len(t, result.Skipped, 1, "accounting must be unchanged: exactly one Skipped entry")
 	assert.Contains(t, result.Skipped[0], "Download Fail Mod: download failed:")
 
-	var failEvt *core.DeployProgress
-	for i := range events {
-		assert.NotEqual(t, core.DeploySkipped, events[i].Phase,
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		m, ok := e.(core.ModEvent)
+		if !ok {
+			continue
+		}
+		assert.NotEqual(t, core.DeploySkipped, m.Phase,
 			"DeploySkipped must not also fire for a download failure - see DeploySkipped's doc comment ('a reason other than a hook or download failure') and cmd/lmm/deploy.go's DeploySkipped handler, which would double-print alongside DeployDownloadFailed's")
-		if events[i].Phase == core.DeployDownloadFailed {
-			failEvt = &events[i]
+		if m.Phase == core.DeployDownloadFailed {
+			failEvt = &m
 		}
 	}
 	require.NotNil(t, failEvt, "DeployDownloadFailed event must fire on download failure")
 	assert.Equal(t, "Download Fail Mod", failEvt.ModName)
-	assert.Equal(t, "1", failEvt.ModID)
+	require.NotNil(t, failEvt.Mod)
+	assert.Equal(t, "1", failEvt.Mod.ModID)
 	assert.Contains(t, failEvt.Detail, "download failed:")
 }
 
@@ -1490,10 +1490,8 @@ func TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError(t *testi
 	}))
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	var events []core.DeployProgress
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
 	require.NoError(t, err, "a per-mod stored-file-gone failure must not fail the whole deploy")
 	require.NotNil(t, result)
 
@@ -1503,8 +1501,8 @@ func TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError(t *testi
 	assert.Contains(t, result.Skipped[0], "stale-id")
 
 	var sawSkipped bool
-	for i := range events {
-		if events[i].Phase == core.DeploySkipped {
+	for _, ph := range phasesOf(*seen) {
+		if ph == core.DeploySkipped {
 			sawSkipped = true
 		}
 	}
@@ -1538,10 +1536,9 @@ func TestService_DeployProfile_StoredIDsGone_HealsToRecordedVersion(t *testing.T
 	}))
 	seedProfileWithMod(t, svc, "g1", "default", "src", "mod1", "1.0")
 
-	var phases []core.DeployPhase
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		phases = append(phases, p.Phase)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
+	phases := phasesOf(*seen)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed, "must heal to the recorded version, not skip")
@@ -1841,10 +1838,10 @@ func TestService_DeployProfile_ProgressCallback_IndexTotalModNameSequence(t *tes
 	seedProfileWithMod(t, svc, "g1", "default", "src", "2", "1.0")
 	seedProfileWithMod(t, svc, "g1", "default", "src", "3", "1.0")
 
-	var seen []core.DeployProgress
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.DeployDeployed {
-			seen = append(seen, p)
+	var seen []core.ModEvent
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.DeployDeployed {
+			seen = append(seen, m)
 		}
 	})
 	require.NoError(t, err)
@@ -1956,7 +1953,7 @@ exit 0`)
 
 // --- Fix wave 1: progress-event positioning (review findings) ---
 //
-// The tests below guard DeployProgress events added to restore the
+// The tests below guard the flow events added to restore the
 // pre-extraction CLI's console positioning for diagnostics that Task 3
 // correctly accumulated into DeployResult.Warnings/Notes but only surfaced
 // via progress events for a subset of cases (DeployBeforeEachSkipped/
@@ -1983,21 +1980,24 @@ exit 1`)
 	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: failScript}}
 	runner := core.NewHookRunner(5 * time.Second)
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
 		Hooks: hooks, HookRunner: runner, Force: true,
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	require.NotEmpty(t, events)
-	assert.Equal(t, core.DeployBeforeAllForced, events[0].Phase, "the forced before_all warning must be the first event emitted")
-	assert.Contains(t, events[0].Detail, "install.before_all hook failed")
-	assert.Contains(t, events[0].Detail, "forced")
-	assert.Equal(t, events[0].Detail, result.Warnings[0], "the event's Detail must match the recorded Warning text verbatim")
+	require.NotEmpty(t, *seen)
+	first, ok := (*seen)[0].(core.HookEvent)
+	require.True(t, ok, "the forced before_all warning must be the first event emitted")
+	assert.Equal(t, core.DeployBeforeAllForced, first.Phase, "the forced before_all warning must be the first event emitted")
+	assert.Equal(t, "install.before_all", first.Stage)
+	assert.Contains(t, first.Detail, "install.before_all hook failed")
+	assert.Contains(t, first.Detail, "forced")
+	assert.Equal(t, first.Detail, result.Warnings[0], "the event's Detail must match the recorded Warning text verbatim")
 
-	require.Greater(t, len(events), 1, "at least one later event (the mod itself deploying) must exist")
-	assert.NotEqual(t, core.DeployBeforeAllForced, events[1].Phase)
+	require.Greater(t, len(*seen), 1, "at least one later event (the mod itself deploying) must exist")
+	assert.NotEqual(t, core.DeployBeforeAllForced, phasesOf(*seen)[1])
 }
 
 // TestService_DeployProfile_PurgeForcedBeforeAllWarning_EmitsEventBeforePurgingEvent
@@ -2019,18 +2019,21 @@ exit 1`)
 	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
 	runner := core.NewHookRunner(5 * time.Second)
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
 		Purge: true, Hooks: hooks, HookRunner: runner, Force: true,
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	require.GreaterOrEqual(t, len(events), 2)
-	assert.Equal(t, core.DeployBeforeAllForced, events[0].Phase)
-	assert.Contains(t, events[0].Detail, "uninstall.before_all hook failed")
-	assert.Contains(t, events[0].Detail, "forced")
-	assert.Equal(t, core.DeployPurging, events[1].Phase, "the purge header event must come right after the forced warning")
+	require.GreaterOrEqual(t, len(*seen), 2)
+	first, ok := (*seen)[0].(core.HookEvent)
+	require.True(t, ok)
+	assert.Equal(t, core.DeployBeforeAllForced, first.Phase)
+	assert.Equal(t, "uninstall.before_all", first.Stage)
+	assert.Contains(t, first.Detail, "uninstall.before_all hook failed")
+	assert.Contains(t, first.Detail, "forced")
+	assert.Equal(t, core.DeployPurging, phasesOf(*seen)[1], "the purge header event must come right after the forced warning")
 }
 
 // TestService_DeployProfile_PerModNoteDiagnostics_CarryModAttributionAndPrecedeSuccessEvent
@@ -2073,10 +2076,8 @@ func TestService_DeployProfile_PerModNoteDiagnostics_CarryModAttributionAndPrece
 
 	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
 
-	var events []core.DeployProgress
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
 	require.NoError(t, err, "SetModLinkMethod/SetModDeployed failures must not fail the deploy")
 	require.NotNil(t, result)
 	assert.Equal(t, 2, result.Deployed, "both mods must still deploy despite the bookkeeping failures")
@@ -2087,11 +2088,12 @@ func TestService_DeployProfile_PerModNoteDiagnostics_CarryModAttributionAndPrece
 	for _, modName := range []string{"Mod A", "Mod B"} {
 		var noteIdxs []int
 		var deployedIdx = -1
-		for i, e := range events {
-			if e.ModName != modName {
+		for i, e := range *seen {
+			fe, ok := e.(core.FlowEvent)
+			if !ok || fe.EventScope().ModName != modName {
 				continue
 			}
-			switch e.Phase {
+			switch fe.FlowPhase() {
 			case core.DeployNote:
 				noteIdxs = append(noteIdxs, i)
 			case core.DeployDeployed:
@@ -2127,22 +2129,23 @@ func TestService_DeployProfile_UndeployFailureEmitsNoteEventBeforeSuccessEvent(t
 	require.NoError(t, os.Remove(deployedPath))
 	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
-	var events []core.DeployProgress
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed)
 	require.Len(t, result.Notes, 1)
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: undeploy Test Mod: "))
 
-	require.Len(t, events, 2)
-	assert.Equal(t, core.DeployNote, events[0].Phase)
-	assert.Equal(t, "Test Mod", events[0].ModName)
-	assert.Equal(t, "1", events[0].ModID)
-	assert.Equal(t, result.Notes[0], events[0].Detail)
-	assert.Equal(t, core.DeployDeployed, events[1].Phase, "the Note event must precede the success event")
+	require.Len(t, *seen, 2)
+	note, ok := (*seen)[0].(core.StepEvent)
+	require.True(t, ok)
+	assert.Equal(t, core.DeployNote, note.Phase)
+	assert.Equal(t, "Test Mod", note.ModName)
+	require.NotNil(t, note.Mod)
+	assert.Equal(t, "1", note.Mod.ModID)
+	assert.Equal(t, result.Notes[0], note.Detail)
+	assert.Equal(t, core.DeployDeployed, phasesOf(*seen)[1], "the Note event must precede the success event")
 }
 
 // TestService_DeployProfile_PurgeBeforeEachSkip_EmitsWarningEventWithModAttribution
@@ -2169,24 +2172,26 @@ exit 0`)
 	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}}
 	runner := core.NewHookRunner(5 * time.Second)
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
 		Purge: true, All: true, Hooks: hooks, HookRunner: runner,
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	var found *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.PurgeWarning && events[i].ModName == "Bad Mod" {
-			found = &events[i]
+	var found *core.WarningEvent
+	for _, e := range *seen {
+		w, ok := e.(core.WarningEvent)
+		if ok && w.Phase == core.PurgeWarning && w.ModName == "Bad Mod" {
+			found = &w
 			break
 		}
 	}
 	require.NotNil(t, found, "expected a PurgeWarning event attributed to Bad Mod")
-	assert.Equal(t, "bad", found.ModID)
-	assert.Contains(t, found.Detail, "uninstall.before_each hook failed")
-	assert.Contains(t, result.Warnings, found.Detail, "the event's Detail must match the recorded Warning text verbatim")
+	require.NotNil(t, found.Mod)
+	assert.Equal(t, "bad", found.Mod.ModID)
+	assert.Contains(t, found.Message, "uninstall.before_each hook failed")
+	assert.Contains(t, result.Warnings, found.Message, "the event's Message must match the recorded Warning text verbatim")
 }
 
 // TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent guards
@@ -2209,17 +2214,16 @@ func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) 
 	require.NoError(t, os.Remove(deployedPath))
 	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
-	var events []core.DeployProgress
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{Purge: true}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	var found *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.PurgeNote {
-			found = &events[i]
+	var found *core.StepEvent
+	for _, e := range *seen {
+		step, ok := e.(core.StepEvent)
+		if ok && step.Phase == core.PurgeNote {
+			found = &step
 			break
 		}
 	}
@@ -2231,11 +2235,11 @@ func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) 
 	// PurgeNote must be emitted before DeployPurging's redeploy-phase
 	// events (it belongs to the purge phase).
 	purgingIdx, noteIdx := -1, -1
-	for i, e := range events {
-		if e.Phase == core.DeployPurging {
+	for i, ph := range phasesOf(*seen) {
+		if ph == core.DeployPurging {
 			purgingIdx = i
 		}
-		if e.Phase == core.PurgeNote && noteIdx == -1 {
+		if ph == core.PurgeNote && noteIdx == -1 {
 			noteIdx = i
 		}
 	}
@@ -2343,26 +2347,27 @@ exit 1`)
 	hooks := &core.ResolvedHooks{Install: domain.HookConfig{AfterEach: afterEachScript, AfterAll: afterAllScript}}
 	runner := core.NewHookRunner(5 * time.Second)
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
 		Hooks: hooks, HookRunner: runner,
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed)
 	require.Len(t, result.Warnings, 3, "after_each + after_all + overrides")
 
 	overridesIdx, afterEachIdx, afterAllIdx := -1, -1, -1
-	for i, e := range events {
-		if e.Phase != core.DeployWarning {
+	for i, e := range *seen {
+		w, ok := e.(core.WarningEvent)
+		if !ok || w.Phase != core.DeployWarning {
 			continue
 		}
 		switch {
-		case strings.Contains(e.Detail, "applying profile overrides"):
+		case strings.Contains(w.Message, "applying profile overrides"):
 			overridesIdx = i
-		case strings.Contains(e.Detail, "after_each"):
+		case strings.Contains(w.Message, "after_each"):
 			afterEachIdx = i
-		case strings.Contains(e.Detail, "after_all"):
+		case strings.Contains(w.Message, "after_all"):
 			afterAllIdx = i
 		}
 	}
@@ -2394,8 +2399,8 @@ func TestService_DeployProfile_ContextCancelledBetweenMods_ReturnsPartialResultW
 	seedProfileWithMod(t, svc, "g1", "default", "src", "c", "1.0")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.DeployDeployed && p.ModName == "Mod A" {
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.DeployDeployed && m.ModName == "Mod A" {
 			cancel()
 		}
 	})
@@ -2416,7 +2421,7 @@ func TestService_DeployProfile_ContextCancelledBetweenMods_ReturnsPartialResultW
 //
 // These extract doProfileSwitch (cmd/lmm/profile.go) into a pure diff
 // computation (PlanProfileSwitch) plus an execution step (ApplyProfileSwitch)
-// that reuses the DeployProgress carrier/phase-constant pattern established
+// that reuses the flow-event/phase-constant pattern established
 // by Task 3, extended with Switch*-prefixed phases rather than a parallel
 // SwitchProgress type - see the task report for the full phase mapping.
 
@@ -2786,10 +2791,8 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "install-me", Version: "1.0"}},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.Error(t, err, "SetDefault must fail deterministically: target profile was never created")
 	assert.Contains(t, err.Error(), "setting default profile")
 	require.NotNil(t, result, "counts/diagnostics accumulated before the fatal SetDefault error must not be discarded")
@@ -2800,8 +2803,8 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	assert.Contains(t, result.Notes[0], "could not update profile")
 
 	var disabledIdx, enabledIdx, installingIdx = -1, -1, -1
-	for i, e := range events {
-		switch e.Phase {
+	for i, ph := range phasesOf(*seen) {
+		switch ph {
 		case core.SwitchDisabled:
 			disabledIdx = i
 		case core.SwitchEnabled:
@@ -2950,10 +2953,8 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 		ToDisable: []domain.InstalledMod{*disableMod},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Disabled, "the mod must still be counted as disabled despite both failures")
@@ -2961,13 +2962,13 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to undeploy Test Mod: "), "note[0]: %q", result.Notes[0])
 	assert.True(t, strings.HasPrefix(result.Notes[1], "Warning: failed to update Test Mod: "), "note[1]: %q", result.Notes[1])
 
-	var noteEvents []core.DeployProgress
+	var noteEvents []core.StepEvent
 	disabledIdx := -1
-	for i, e := range events {
-		if e.Phase == core.SwitchDisableNote {
-			noteEvents = append(noteEvents, e)
+	for i, e := range *seen {
+		if step, ok := e.(core.StepEvent); ok && step.Phase == core.SwitchDisableNote {
+			noteEvents = append(noteEvents, step)
 		}
-		if e.Phase == core.SwitchDisabled {
+		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.SwitchDisabled {
 			disabledIdx = i
 		}
 	}
@@ -3009,18 +3010,16 @@ func TestService_ApplyProfileSwitch_EnableLoop_InstallFailureSkipsModEntirely(t 
 		ToEnable: []domain.InstalledMod{*enableMod},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err, "an Install failure must not fail the whole switch")
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Enabled)
 	require.Len(t, result.Notes, 1)
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to deploy Test Mod: "), "note: %q", result.Notes[0])
 
-	for _, e := range events {
-		assert.NotEqual(t, core.SwitchEnabled, e.Phase, "no SwitchEnabled event must fire for a mod whose Install failed")
+	for _, ph := range phasesOf(*seen) {
+		assert.NotEqual(t, core.SwitchEnabled, ph, "no SwitchEnabled event must fire for a mod whose Install failed")
 	}
 
 	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
@@ -3061,10 +3060,8 @@ func TestService_ApplyProfileSwitch_EnableLoop_SetModEnabledFailureIsNonFatalNot
 		ToEnable: []domain.InstalledMod{*enableMod},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Enabled, "Install still succeeded, so the mod must still be counted as enabled")
@@ -3072,8 +3069,8 @@ func TestService_ApplyProfileSwitch_EnableLoop_SetModEnabledFailureIsNonFatalNot
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to update Test Mod: "))
 
 	var sawEnabled bool
-	for _, e := range events {
-		if e.Phase == core.SwitchEnabled {
+	for _, ph := range phasesOf(*seen) {
+		if ph == core.SwitchEnabled {
 			sawEnabled = true
 		}
 	}
@@ -3169,23 +3166,22 @@ func TestService_ApplyProfileSwitch_InstallLoop_FetchFailureSkipsModAndContinues
 		},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err, "a per-mod fetch failure must not fail the whole switch")
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed, "the good mod must still install")
 
-	var errEvt *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.SwitchInstallError {
-			errEvt = &events[i]
+	var errEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError {
+			errEvt = &m
 			break
 		}
 	}
 	require.NotNil(t, errEvt)
-	assert.Equal(t, "bad", errEvt.ModID)
+	require.NotNil(t, errEvt.Mod)
+	assert.Equal(t, "bad", errEvt.Mod.ModID)
 	assert.Contains(t, errEvt.Detail, "failed to fetch mod")
 
 	_, err = os.Lstat(filepath.Join(gameDir, "good.esp"))
@@ -3218,17 +3214,15 @@ func TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBl
 		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Installed)
 
 	var failIdx, doneIdx = -1, -1
-	for i, e := range events {
-		switch e.Phase {
+	for i, ph := range phasesOf(*seen) {
+		switch ph {
 		case core.SwitchDownloadFailed:
 			failIdx = i
 		case core.SwitchDownloadDone:
@@ -3238,7 +3232,7 @@ func TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBl
 	require.NotEqual(t, -1, failIdx, "expected a SwitchDownloadFailed event")
 	require.NotEqual(t, -1, doneIdx, "expected a SwitchDownloadDone event")
 	assert.Less(t, failIdx, doneIdx, "the loop-done event must fire after the failure event, mirroring the unconditional trailing blank line")
-	assert.Contains(t, events[failIdx].Detail, "download failed")
+	assert.Contains(t, (*seen)[failIdx].(core.ModEvent).Detail, "download failed")
 }
 
 // TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod
@@ -3282,18 +3276,16 @@ func TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod(t *te
 		},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed, "only mod2 should install; mod1 fails")
 
-	var failEvt *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.SwitchInstallError && events[i].ModName == "Mod One" {
-			failEvt = &events[i]
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
 		}
 	}
 	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
@@ -3500,18 +3492,16 @@ func TestApplyProfileSwitch_StoredIDsGone_VersionAlsoGone_HardFails(t *testing.T
 		},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err, "a per-mod resolution failure must not fail the whole switch")
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed, "mod2 must still install")
 
-	var failEvt *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.SwitchInstallError && events[i].ModName == "Mod One" {
-			failEvt = &events[i]
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
 		}
 	}
 	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
@@ -3559,18 +3549,16 @@ func TestApplyProfileSwitch_VersionlessSource_KeepsLegacyBehavior(t *testing.T) 
 		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0", FileIDs: []string{"999"}}},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Installed, "a versionless source's stale FileIDs must still hard-fail exactly as before #96")
 
-	var failEvt *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.SwitchInstallError && events[i].ModName == "Mod One" {
-			failEvt = &events[i]
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
 		}
 	}
 	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
@@ -3652,18 +3640,16 @@ func TestApplyProfileSwitch_VersionMatchesNothing_NoStoredIDs_ErrVersionNotFound
 		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "9.9"}},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Installed)
 
-	var failEvt *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.SwitchInstallError && events[i].ModName == "Mod One" {
-			failEvt = &events[i]
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
 		}
 	}
 	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
@@ -3699,18 +3685,16 @@ func TestApplyProfileSwitch_StoredIDPresentButVersionGone_NewErrorWording(t *tes
 		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "9.9", FileIDs: []string{"10"}}},
 	}
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Installed)
 
-	var failEvt *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.SwitchInstallError && events[i].ModName == "Mod One" {
-			failEvt = &events[i]
+	var failEvt *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstallError && m.ModName == "Mod One" {
+			failEvt = &m
 		}
 	}
 	require.NotNil(t, failEvt, "expected a SwitchInstallError event for mod1")
@@ -4117,8 +4101,8 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_Retur
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(p core.DeployProgress) {
-		if p.Phase == core.SwitchDisabled && p.ModName == "Mod A" {
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchDisabled && m.ModName == "Mod A" {
 			cancel()
 		}
 	})
@@ -4160,8 +4144,8 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenEnableLoopMods_Return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(p core.DeployProgress) {
-		if p.Phase == core.SwitchEnabled && p.ModName == "Mod A" {
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchEnabled && m.ModName == "Mod A" {
 			cancel()
 		}
 	})
@@ -4213,8 +4197,8 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenInstallLoopMods_Retur
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(p core.DeployProgress) {
-		if p.Phase == core.SwitchInstalled && p.ModID == "first" {
+	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.SwitchInstalled && m.Mod != nil && m.Mod.ModID == "first" {
 			cancel()
 		}
 	})
@@ -4272,10 +4256,8 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 	require.NoError(t, err)
 	require.Len(t, mods, 2)
 
-	var events []core.DeployProgress
-	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 2, result.Purged)
@@ -4291,13 +4273,14 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 		assert.False(t, mod.Deployed, "mod %s must be marked not deployed", id)
 	}
 
-	require.NotEmpty(t, events)
-	assert.Equal(t, core.DeployPurging, events[0].Phase)
-	assert.Equal(t, 2, events[0].Total)
-	var purged []core.DeployProgress
-	for _, e := range events {
-		if e.Phase == core.PurgeModPurged {
-			purged = append(purged, e)
+	require.NotEmpty(t, *seen)
+	phases := phasesOf(*seen)
+	assert.Equal(t, core.DeployPurging, phases[0])
+	assert.Equal(t, 2, (*seen)[0].(core.FlowEvent).EventScope().Total)
+	var purged []core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.PurgeModPurged {
+			purged = append(purged, m)
 		}
 	}
 	require.Len(t, purged, 2)
@@ -4308,7 +4291,7 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 		names[e.ModName] = true
 	}
 	assert.True(t, names["Mod A"] && names["Mod B"], "each mod must get its own PurgeModPurged event")
-	assert.Equal(t, core.PurgeComplete, events[len(events)-1].Phase)
+	assert.Equal(t, core.PurgeComplete, phases[len(phases)-1])
 }
 
 func TestService_PurgeProfile_EmptyModList_NoEventsNoHooks(t *testing.T) {
@@ -4321,14 +4304,14 @@ func TestService_PurgeProfile_EmptyModList_NoEventsNoHooks(t *testing.T) {
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\nexit 1")
 	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", nil, core.PurgeOptions{
 		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Zero(t, result.Purged)
-	assert.Empty(t, events)
+	assert.Empty(t, *seen)
 }
 
 func TestService_PurgeProfile_Uninstall_RemovesRecordsAndProfileEntries(t *testing.T) {
@@ -4378,23 +4361,24 @@ exit 0`)
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
 		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Purged)
 
-	var found *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.PurgeModSkipped {
-			found = &events[i]
+	var found *core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.PurgeModSkipped {
+			found = &m
 			break
 		}
 	}
 	require.NotNil(t, found, "expected a PurgeModSkipped event")
 	assert.Equal(t, "Bad Mod", found.ModName)
-	assert.Equal(t, "bad", found.ModID)
+	require.NotNil(t, found.Mod)
+	assert.Equal(t, "bad", found.Mod.ModID)
 	assert.True(t, strings.HasPrefix(found.Detail, "uninstall.before_each hook failed: "),
 		"Detail must carry the baked prefix the CLI prints after \"Skipped <name>: \"")
 	require.Len(t, result.Skipped, 1)
@@ -4422,15 +4406,15 @@ func TestService_PurgeProfile_BeforeAllFailure_FatalWithoutForce(t *testing.T) {
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
 		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "uninstall.before_all hook failed:")
 	require.NotNil(t, result, "partial-result convention: the accumulated result comes back alongside the error")
 	assert.Zero(t, result.Purged)
-	assert.Empty(t, events)
+	assert.Empty(t, *seen)
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.NoError(t, err, "nothing may be purged when before_all fails without Force")
@@ -4451,19 +4435,22 @@ func TestService_PurgeProfile_BeforeAllFailure_ForcedWarnsBeforePurging(t *testi
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
 		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second), Force: true,
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Purged)
 
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "uninstall.before_all hook failed (forced):")
-	require.GreaterOrEqual(t, len(events), 2)
-	assert.Equal(t, core.DeployBeforeAllForced, events[0].Phase, "the forced warning must precede the purge header")
-	assert.Equal(t, result.Warnings[0], events[0].Detail)
-	assert.Equal(t, core.DeployPurging, events[1].Phase)
+	require.GreaterOrEqual(t, len(*seen), 2)
+	first, ok := (*seen)[0].(core.HookEvent)
+	require.True(t, ok, "the forced warning must precede the purge header")
+	assert.Equal(t, core.DeployBeforeAllForced, first.Phase, "the forced warning must precede the purge header")
+	assert.Equal(t, "uninstall.before_all", first.Stage)
+	assert.Equal(t, result.Warnings[0], first.Detail)
+	assert.Equal(t, core.DeployPurging, phasesOf(*seen)[1])
 }
 
 func TestService_PurgeProfile_AfterHookFailures_WarningsUseModNameAndDeferEmission(t *testing.T) {
@@ -4481,10 +4468,10 @@ func TestService_PurgeProfile_AfterHookFailures_WarningsUseModNameAndDeferEmissi
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
 		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Purged)
 
@@ -4494,11 +4481,11 @@ func TestService_PurgeProfile_AfterHookFailures_WarningsUseModNameAndDeferEmissi
 	assert.Contains(t, result.Warnings[1], "uninstall.after_all hook failed:")
 
 	purgedIdx, firstWarnIdx := -1, -1
-	for i, e := range events {
-		if e.Phase == core.PurgeModPurged {
+	for i, ph := range phasesOf(*seen) {
+		if ph == core.PurgeModPurged {
 			purgedIdx = i
 		}
-		if e.Phase == core.PurgeWarning && firstWarnIdx == -1 {
+		if ph == core.PurgeWarning && firstWarnIdx == -1 {
 			firstWarnIdx = i
 		}
 	}
@@ -4524,18 +4511,16 @@ func TestService_PurgeProfile_UndeployFailure_EmitsPurgeNoteAndStillCounts(t *te
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
-	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Purged, "an undeploy failure is best-effort: the mod still counts as purged")
 	assert.Empty(t, result.Skipped)
 
-	var found *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.PurgeNote {
-			found = &events[i]
+	var found *core.StepEvent
+	for _, e := range *seen {
+		if step, ok := e.(core.StepEvent); ok && step.Phase == core.PurgeNote {
+			found = &step
 			break
 		}
 	}
@@ -4595,10 +4580,10 @@ func TestService_PurgeProfile_Uninstall_DeleteRecordFailure_CountsFailedSkipsAft
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
+	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
 		Uninstall: true, Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
-	}, func(p core.DeployProgress) { events = append(events, p) })
+	}, sink)
 	require.NoError(t, err)
 
 	assert.Zero(t, result.Purged)
@@ -4607,8 +4592,8 @@ func TestService_PurgeProfile_Uninstall_DeleteRecordFailure_CountsFailedSkipsAft
 	require.NotEmpty(t, result.Notes)
 	assert.Contains(t, result.Notes[0], "⚠ Test Mod - failed to remove record:")
 
-	for _, e := range events {
-		assert.NotEqual(t, core.PurgeModPurged, e.Phase, "a delete-record failure must not count as purged")
+	for _, ph := range phasesOf(*seen) {
+		assert.NotEqual(t, core.PurgeModPurged, ph, "a delete-record failure must not count as purged")
 	}
 	_, err = os.Stat(marker)
 	assert.True(t, os.IsNotExist(err), "after_each must be skipped when the record delete fails")
@@ -4656,10 +4641,10 @@ func TestService_PurgeProfile_CtxCancelledBetweenMods_ReturnsPartialResult(t *te
 	require.Len(t, mods, 2)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	var events []core.DeployProgress
-	result, err := svc.PurgeProfile(ctx, game, "default", mods, core.PurgeOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-		if p.Phase == core.PurgeModPurged {
+	sink, seen := core.RecordEvents()
+	result, err := svc.PurgeProfile(ctx, game, "default", mods, core.PurgeOptions{}, func(e core.Event) {
+		sink(e)
+		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.PurgeModPurged {
 			cancel()
 		}
 	})
@@ -4675,8 +4660,8 @@ func TestService_PurgeProfile_CtxCancelledBetweenMods_ReturnsPartialResult(t *te
 		}
 	}
 	assert.Equal(t, 1, stillDeployed, "the second mod must remain deployed")
-	for _, e := range events {
-		assert.NotEqual(t, core.PurgeComplete, e.Phase, "a cancelled purge must not report completion")
+	for _, ph := range phasesOf(*seen) {
+		assert.NotEqual(t, core.PurgeComplete, ph, "a cancelled purge must not report completion")
 	}
 }
 
@@ -4725,8 +4710,8 @@ func TestService_DeployProfile_CancelledDuringLastModRedownload_RecordsSkipAndEr
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.DeployRedownloading && p.ModName == "Last Mod" {
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(e core.Event) {
+		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.DeployRedownloading && fe.EventScope().ModName == "Last Mod" {
 			cancel()
 		}
 	})
@@ -4760,7 +4745,7 @@ func TestService_QueriesRunDuringMutation(t *testing.T) {
 	go func() {
 		defer close(deployDone)
 		first := true
-		_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(core.DeployProgress) {
+		_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(core.Event) {
 			if first {
 				first = false
 				close(started)

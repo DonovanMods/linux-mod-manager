@@ -737,10 +737,8 @@ func TestService_ApplyInstall_ChecksumSaveFailure_WarningNotDoublePrefixed(t *te
 	`)
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err, "a checksum-save failure must not fail the whole install")
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Mod One"}, result.Installed)
@@ -750,14 +748,14 @@ func TestService_ApplyInstall_ChecksumSaveFailure_WarningNotDoublePrefixed(t *te
 	assert.Contains(t, result.Warnings[0], "blocked for test")
 	assert.NotContains(t, result.Warnings[0], "Warning:", "the Warnings entry itself must not carry a baked-in prefix - the caller's printer adds it")
 
-	var warningEvt *core.DeployProgress
-	for i := range events {
-		if events[i].Phase == core.InstallWarning {
-			warningEvt = &events[i]
+	var warningEvt *core.WarningEvent
+	for _, e := range *seen {
+		if w, ok := e.(core.WarningEvent); ok && w.Phase == core.InstallWarning {
+			warningEvt = &w
 		}
 	}
 	require.NotNil(t, warningEvt, "an InstallWarning event must fire for the checksum-save failure")
-	assert.Equal(t, result.Warnings[0], warningEvt.Detail)
+	assert.Equal(t, result.Warnings[0], warningEvt.Message)
 }
 
 // TestService_ApplyInstall_DependencyInstallOrder proves dependencies
@@ -987,29 +985,34 @@ func TestService_ApplyInstall_ProgressEvents(t *testing.T) {
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
 	var sawStarted, sawDownloading, sawDone, sawInstalled bool
-	for _, e := range events {
-		switch e.Phase {
-		case core.InstallDownloadStarted:
-			sawStarted = true
-			assert.Equal(t, "Mod One", e.ModName)
-			require.NotNil(t, e.File)
-		case core.InstallDownloading:
-			sawDownloading = true
-			assert.GreaterOrEqual(t, e.Percent, 0.0)
-			assert.Greater(t, e.TotalBytes, int64(0))
-		case core.InstallDownloadDone:
-			sawDone = true
-		case core.InstallDone:
-			sawInstalled = true
-			assert.Equal(t, "Mod One", e.ModName)
+	for _, e := range *seen {
+		switch ev := e.(type) {
+		case core.StepEvent:
+			switch ev.Phase {
+			case core.InstallDownloadStarted:
+				sawStarted = true
+				assert.Equal(t, "Mod One", ev.ModName)
+				require.NotNil(t, ev.File)
+			case core.InstallDownloadDone:
+				sawDone = true
+			}
+		case core.DownloadEvent:
+			if ev.Phase == core.InstallDownloading {
+				sawDownloading = true
+				assert.GreaterOrEqual(t, ev.Percent, 0.0)
+				assert.Greater(t, ev.TotalBytes, int64(0))
+			}
+		case core.ModEvent:
+			if ev.Phase == core.InstallDone {
+				sawInstalled = true
+				assert.Equal(t, "Mod One", ev.ModName)
+			}
 		}
 	}
 	assert.True(t, sawStarted, "InstallDownloadStarted must fire")
@@ -1078,14 +1081,18 @@ func TestService_ApplyInstall_ContextCancelledBetweenPrimaryFiles(t *testing.T) 
 
 	var started []int
 	var failed int
-	sink := func(p core.DeployProgress) {
-		switch p.Phase {
+	sink := func(e core.Event) {
+		fe, ok := e.(core.FlowEvent)
+		if !ok {
+			return
+		}
+		switch fe.FlowPhase() {
 		case core.InstallDownloadStarted:
-			started = append(started, p.Index)
+			started = append(started, fe.EventScope().Index)
 		case core.InstallDownloadFailed:
 			failed++
 		case core.InstallDownloadDone:
-			if p.Index == 1 {
+			if fe.EventScope().Index == 1 {
 				cancel() // file 1's bytes are cached; the loop head is next
 			}
 		}
@@ -1796,10 +1803,8 @@ func TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBefor
 	// derivation - fails transiently; every later call succeeds.
 	mock.failNext = 1
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err, "batch semantics: the locked primary skips, the run itself succeeds")
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Dep One"}, result.Installed, "the dependency must still install")
@@ -1811,8 +1816,8 @@ func TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBefor
 	// must fire BEFORE the uninstall-existing block, not after it.
 	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "root", "1.0"),
 		"the lock target's cache entry must not be deleted on a refused reinstall")
-	for _, evt := range events {
-		assert.NotEqual(t, core.InstallDepReinstalling, evt.Phase,
+	for _, ph := range phasesOf(*seen) {
+		assert.NotEqual(t, core.InstallDepReinstalling, ph,
 			"the uninstall-existing block must never run for the refused locked primary")
 	}
 
@@ -1892,8 +1897,8 @@ func TestService_ApplyInstall_ContextCancelledBetweenBatchMods_ReturnsPartialRes
 	require.Len(t, plan.Dependencies, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.InstallDepInstalled && p.ModName == "Dep One" {
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.InstallDepInstalled && m.ModName == "Dep One" {
 			cancel()
 		}
 	})
@@ -1959,10 +1964,8 @@ exit 0`)
 	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failScript}}
 	runner := core.NewHookRunner(5 * time.Second)
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, sink)
 	require.NoError(t, err, "the primary's before_each failure must never fail the whole install in the BATCH path, even without Force")
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Dep One"}, result.Installed, "only the dependency installs - the primary was skipped")
@@ -1975,21 +1978,21 @@ exit 0`)
 	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "root", "g1", "default")
 	assert.Error(t, dbErr, "the skipped primary must not be saved")
 
-	var installingEvents []core.DeployProgress
-	for _, e := range events {
-		if e.Phase == core.InstallDepInstalling {
-			installingEvents = append(installingEvents, e)
+	var installingEvents []core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.InstallDepInstalling {
+			installingEvents = append(installingEvents, m)
 		}
 	}
 	require.Len(t, installingEvents, 2, "InstallDepInstalling must fire for the primary too, not just the dependency")
 	assert.Equal(t, 1, installingEvents[0].Index)
 	assert.Equal(t, 2, installingEvents[0].Total, "Index/Total must span the WHOLE combined list (dep + primary)")
 	assert.Equal(t, "Dep One", installingEvents[0].ModName)
-	assert.Equal(t, "1.0", installingEvents[0].ModVersion)
+	assert.Equal(t, "1.0", installingEvents[0].Version)
 	assert.Equal(t, 2, installingEvents[1].Index)
 	assert.Equal(t, 2, installingEvents[1].Total)
 	assert.Equal(t, "Root", installingEvents[1].ModName)
-	assert.Equal(t, "1.0", installingEvents[1].ModVersion)
+	assert.Equal(t, "1.0", installingEvents[1].Version)
 }
 
 // TestService_ApplyInstall_DependenciesPresent_InstalledEventCarriesFileCount
@@ -2016,18 +2019,16 @@ func TestService_ApplyInstall_DependenciesPresent_InstalledEventCarriesFileCount
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
 	assert.Equal(t, 0, result.FilesDeployed, "FilesDeployed is a STRICT-path-only accumulator - the BATCH path never touches it")
 
-	var installedEvents []core.DeployProgress
-	for _, e := range events {
-		if e.Phase == core.InstallDepInstalled {
-			installedEvents = append(installedEvents, e)
+	var installedEvents []core.ModEvent
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.InstallDepInstalled {
+			installedEvents = append(installedEvents, m)
 		}
 	}
 	require.Len(t, installedEvents, 2)
@@ -2066,16 +2067,14 @@ func TestService_ApplyInstall_DependenciesPresent_ExistingPrimaryUsesUninstallNo
 	require.NoError(t, err)
 	require.NotNil(t, plan.Replaces, "the primary IS already installed - PlanInstall must still populate Replaces")
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
 
 	var sawReinstalling bool
-	for _, e := range events {
-		if e.Phase == core.InstallDepReinstalling && e.ModName == "Root" {
+	for _, e := range *seen {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.InstallDepReinstalling && m.ModName == "Root" {
 			sawReinstalling = true
 		}
 	}
@@ -2112,23 +2111,25 @@ func TestService_ApplyInstall_DependenciesPresent_ProgressVocabularyRestored(t *
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
 
-	var events []core.DeployProgress
-	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
 
 	var sawFileSelected, sawDownloadDone, sawChecksum int
-	for _, e := range events {
-		switch e.Phase {
+	for _, e := range *seen {
+		step, ok := e.(core.StepEvent)
+		if !ok {
+			continue
+		}
+		switch step.Phase {
 		case core.InstallDepFileSelected:
 			sawFileSelected++
-			require.NotNil(t, e.File)
+			require.NotNil(t, step.File)
 		case core.InstallDepDownloadDone:
 			sawDownloadDone++
 		case core.InstallChecksumComputed:
 			sawChecksum++
-			assert.NotEmpty(t, e.Detail)
+			assert.NotEmpty(t, step.Detail)
 		}
 	}
 	assert.Equal(t, 2, sawFileSelected, "one per mod - dependency and primary alike")
@@ -2855,8 +2856,8 @@ func TestService_ApplyInstall_SameVersionReinstall_CancelledMidDeploy_RestoresLi
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.InstallDeploying {
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, func(e core.Event) {
+		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.InstallDeploying {
 			cancel()
 		}
 	})
@@ -2946,8 +2947,8 @@ func TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFail
 	defer cancel()
 	var cancelled bool
 	opts := core.InstallOptions{TargetVersion: "1.0", TargetFileIDs: []string{"root-main-1", "root-opt-1"}}
-	result, err := svc.ApplyInstall(ctx, game, plan, opts, func(p core.DeployProgress) {
-		if !cancelled && p.Phase == core.InstallDepDownloadDone && p.ModName == "Root" {
+	result, err := svc.ApplyInstall(ctx, game, plan, opts, func(e core.Event) {
+		if fe, ok := e.(core.FlowEvent); ok && !cancelled && fe.FlowPhase() == core.InstallDepDownloadDone && fe.EventScope().ModName == "Root" {
 			cancelled = true
 			cancel()
 		}

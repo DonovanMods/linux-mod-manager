@@ -78,3 +78,14 @@ func TestDeployPhase_TextRoundTrip(t *testing.T) {
 		assert.Equal(t, i, got, "round-trip mismatch for phase %d (%q)", int(i), name)
 	}
 }
+
+// phasesOf projects recorded events to their phases, for ordered assertions.
+func phasesOf(events []core.Event) []core.DeployPhase {
+	out := make([]core.DeployPhase, 0, len(events))
+	for _, e := range events {
+		if fe, ok := e.(core.FlowEvent); ok {
+			out = append(out, fe.FlowPhase())
+		}
+	}
+	return out
+}
