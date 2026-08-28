@@ -1031,6 +1031,48 @@ const (
 	// (MergedArtifact/MergedMods/RawFallbacks) for callers with no
 	// progress stream.
 	DeployMergeSynced
+
+	// --- v2 Phase 2 Unit H (#288): three phases that exist so the BATCH
+	// install engine can emit DATA where its two frontends' frozen wordings
+	// differ. `lmm install <query>`'s multi-select path (batchInstallMods
+	// before the lift) and `lmm install`'s dependency path (doInstallBatch)
+	// print the same three facts with different text; core cannot pick one
+	// without breaking the other's byte-identity, so each renders its own
+	// sentence from the same event. Appended at the end of the enum so no
+	// existing phase's numeric value moves. ---
+
+	// InstallLockRefusal fires when a BATCH-path mod is skipped because its
+	// profile ref is LOCKED at another version. Detail is the refusal
+	// SENTENCE ONLY - LockedRefRefusalError's text minus its ErrModLocked
+	// prefix (see lockedRefRefusalMessage) - because the multi-select path
+	// prints exactly that ("  Skipped: <sentence>") while the dependency
+	// path prints the wrapped error ("  Skipped: mod is locked:
+	// <sentence>"). InstallResult.Skipped keeps the FULL wrapped error text
+	// either way, so a caller reading the result (rather than the stream)
+	// still gets the sentinel-prefixed message every other lock gate
+	// produces.
+	InstallLockRefusal
+	// InstallChecksumSaveFailed fires when a BATCH-path mod's
+	// SaveFileChecksum fails - non-fatal, the mod stays installed. Message
+	// carries the reason with no prefix at all ("failed to save checksum:
+	// ..."), matching InstallResult.Warnings' own no-baked-in-prefix
+	// convention: the multi-select path prints it INDENTED ("  Warning:
+	// %s") and the dependency path flush ("Warning: %s"). Distinct from
+	// InstallWarning purely for that indent - the STRICT path's own
+	// checksum failure still uses InstallWarning.
+	InstallChecksumSaveFailed
+	// InstallMergedPakSyncFailed fires when ApplyInstall's unconditional
+	// end-of-install merged-pak sync returns a hard error. Message is the
+	// RAW error text, with no leading phrase, because the two frontends
+	// word it differently ("Warning: syncing merged pak: %s" on the
+	// single-mod/dependency paths, "Warning: could not sync merged pak: %s"
+	// on the multi-select one). InstallResult.Warnings keeps its own
+	// "syncing merged pak: %v" entry unchanged, and
+	// InstallResult.MergedPakSyncFailed records the same fact for callers
+	// with no progress stream. The sync's non-fatal WARNINGS (as opposed to
+	// a hard failure) still arrive as ordinary InstallWarning events - both
+	// frontends print those identically.
+	InstallMergedPakSyncFailed
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -1057,6 +1099,8 @@ var deployPhaseNames = [...]string{
 	ImportSaved: "import_saved", ImportInstalling: "import_installing", ImportModInstalling: "import_mod_installing",
 	ImportDownloading: "import_downloading", ImportDownloadDone: "import_download_done", ImportModFailed: "import_mod_failed",
 	ImportModInstalled: "import_mod_installed", ImportNote: "import_note", DeployMergeSynced: "deploy_merge_synced",
+	InstallLockRefusal: "install_lock_refusal", InstallChecksumSaveFailed: "install_checksum_save_failed",
+	InstallMergedPakSyncFailed: "install_merged_pak_sync_failed",
 }
 
 // String returns the phase's wire name.
@@ -2776,8 +2820,19 @@ var ErrModLocked = errors.New("mod is locked")
 // always resolves against the SAME ref this error is actually about,
 // regardless of which profile/source the caller had active.
 func LockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModReference) error {
-	return fmt.Errorf("%w: %s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'",
-		ErrModLocked, mod.Name, ref.Version, profileName, mod.SourceID, profileName, mod.ID, mod.SourceID, profileName, mod.ID)
+	return fmt.Errorf("%w: %s", ErrModLocked, lockedRefRefusalMessage(mod, profileName, ref))
+}
+
+// lockedRefRefusalMessage is LockedRefRefusalError's human-readable half:
+// the refusal sentence WITHOUT the ErrModLocked sentinel prefix. Split out
+// (#288) because the BATCH install engine's InstallLockRefusal event carries
+// the sentence alone - `lmm install <query>`'s multi-select path has always
+// printed it unwrapped, while the dependency path prints the wrapped error -
+// and splitting it here is what keeps the two from drifting apart in wording
+// the way the four hand-copied refusals LockedRefRefusalError replaced did.
+func lockedRefRefusalMessage(mod domain.Mod, profileName string, ref *domain.ModReference) string {
+	return fmt.Sprintf("%s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'",
+		mod.Name, ref.Version, profileName, mod.SourceID, profileName, mod.ID, mod.SourceID, profileName, mod.ID)
 }
 
 // ApplyUpdate applies upd to the installed mod it references

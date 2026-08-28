@@ -127,6 +127,92 @@ type InstallPlan struct {
 	// the user at plan time, without a second, possibly-inconsistent
 	// parameter on InstallOptions. "The plan is the contract."
 	ShowArchived bool `json:"show_archived"`
+
+	// Batch, when non-nil, makes this a MULTI-MOD plan produced by
+	// PlanInstallMany rather than PlanInstall, and ApplyInstall runs the
+	// batch engine over these entries, in order, instead of consulting
+	// Mod/Files/Dependencies at all. It is `lmm install <query>`'s
+	// multi-select path (cmd/lmm's batchInstallMods before v2 Phase 2 Unit
+	// H, #288): a flat list of independent mods, each installed with the
+	// same skip-and-continue semantics a dependency gets, with NO
+	// dependency expansion of its own. Mod/SourceID/Files/Dependencies/
+	// Conflicts/Replaces/TotalDownloadBytes are all zero on such a plan -
+	// there is no single "the mod" for them to describe; every per-mod fact
+	// lives on the entry (see InstallPlanEntry). A nil Batch is the
+	// single-mod plan every other caller builds.
+	Batch []*InstallPlanEntry `json:"batch,omitempty"`
+
+	// snapshot is the installed-mod set this plan was computed against
+	// (ruling 5): ApplyInstall re-derives it under beginOp and returns
+	// ErrStalePlan when it no longer matches, so a plan a frontend held
+	// while something else installed, removed, or disabled a mod is
+	// refused rather than applied against a world it never saw. Unexported
+	// and outside the wire contract on purpose - it is a precondition, not
+	// a displayable fact, and a JSON frontend re-plans rather than
+	// round-tripping one.
+	snapshot installedSnapshot `json:"-"`
+}
+
+// InstallPlanEntry is one mod's worth of a PlanInstallMany plan: what the
+// batch engine would do for it, decided BEFORE anything is touched. Each
+// entry is planned exactly the way the pre-lift batchInstallMods planned a
+// mod inline - GetModFiles, FilterAndSortFiles, then the primary file -
+// with no dependency expansion and no interactive selection.
+type InstallPlanEntry struct {
+	// Mod is the mod to install, with its version exactly as the caller
+	// supplied it (the search result's own). Deliberately NOT re-stamped
+	// with Version below: install.before_each fires before file selection
+	// on this path and has always seen the mod-level version, so the
+	// distinction is load-bearing, not cosmetic.
+	Mod *domain.Mod `json:"mod"`
+
+	// File is the primary file this entry would download - primaryFile's
+	// pick from the FilterAndSortFiles-filtered list. Exactly one file: the
+	// multi-select path has never had a --file/--version pin or an
+	// interactive picker to widen it. Nil when FetchError is set.
+	File *domain.DownloadableFile `json:"file,omitempty"`
+
+	// Version is the version this entry would RECORD - File's
+	// domain.EffectiveInstalledVersion stamp (#94) - which is what the DB
+	// row, the profile ref, the cache key, and the lock comparison below
+	// all use. May differ from Mod.Version when the source stamps its
+	// version on the file rather than the mod. Empty when FetchError is set.
+	Version string `json:"version"`
+
+	// Reinstall reports that (Mod.SourceID, Mod.ID) is ALREADY installed in
+	// this profile, at any version: the batch path has no same-version
+	// dedup, so Apply uninstalls the existing deployment and deletes its
+	// cache entry before downloading, unconditionally.
+	Reinstall bool `json:"reinstall"`
+
+	// Locked, when non-nil, is the LOCKED profile ref that will make Apply
+	// skip this entry (recording it in InstallResult.Skipped/Failed with
+	// LockedRefRefusalError's text) rather than install it - the ref's
+	// version differs from Version above, and only an explicit lock/unlock
+	// may move it (#143). Apply re-derives this under its own lock rather
+	// than trusting the field, so a lock taken between plan and apply is
+	// still honored; the field exists so a frontend can say so up front.
+	Locked *domain.ModReference `json:"locked,omitempty"`
+
+	// Conflicts lists files this entry would overwrite from OTHER installed
+	// mods, on the same best-effort terms as InstallPlan.Conflicts: only a
+	// mod already in the cache can report any, since GetConflicts inspects
+	// the extracted file list and a plan never downloads. Purely
+	// informational here - the batch path warns and overwrites, it has
+	// never blocked - and Apply recomputes it post-download (the earliest
+	// point a never-cached mod's conflicts exist at all) for the warning it
+	// actually emits.
+	Conflicts []Conflict `json:"conflicts,omitempty"`
+
+	// FetchError, when non-empty, is the plan-time file-resolution failure
+	// that will make Apply report this entry as Failed - with its previous
+	// installation still intact, since the skip happens before the
+	// uninstall step (#143 finding F1). Carries the fully-worded reason
+	// verbatim: "failed to get mod files: <err>" for a GetModFiles failure,
+	// or "no downloadable files available" when the filter leaves nothing.
+	// One entry's failure never fails the plan - the rest of the batch
+	// still installs, exactly as it did mid-loop before the lift.
+	FetchError string `json:"fetch_error,omitempty"`
 }
 
 // PlanInstall computes what installing (sourceID, modID) into profileName
@@ -169,12 +255,20 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 		return nil, fmt.Errorf("failed to fetch mod: %w", err)
 	}
 
+	// Ruling 5: record the installed set this plan is being computed
+	// against, so ApplyInstall can refuse it once that set has moved on.
+	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+
 	plan := &InstallPlan{
 		SourceID:     sourceID,
 		GameID:       game.ID,
 		Profile:      profileName,
 		Mod:          *mod,
 		ShowArchived: showArchived,
+		snapshot:     snapshot,
 	}
 
 	existing, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
@@ -252,6 +346,102 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	if installer, err := s.GetInstallerForProfile(ctx, game, profileName); err == nil {
 		if conflicts, err := installer.GetConflicts(ctx, game, mod, profileName); err == nil {
 			plan.Conflicts = conflicts
+		}
+	}
+
+	return plan, nil
+}
+
+// PlanInstallMany computes what installing every mod in mods (in the given
+// order) into profileName would do - the multi-mod counterpart of
+// PlanInstall, and the read-only half of `lmm install <query>`'s
+// multi-select path (cmd/lmm's batchInstallMods before v2 Phase 2 Unit H,
+// #288). The returned plan's Batch drives ApplyInstall's batch engine; every
+// other InstallPlan field except GameID/Profile/ShowArchived is left zero
+// (see InstallPlan.Batch).
+//
+// Each entry is planned exactly the way batchInstallMods planned a mod
+// inline, in the same order, with the same three deliberate omissions:
+//
+//   - NO dependency expansion. batchInstallMods never resolved one, and the
+//     lifted path installs exactly the mods the user selected - not their
+//     transitive requirements. (`lmm install --id <mod>` is the path that
+//     expands dependencies; it goes through PlanInstall.)
+//   - NO interactive/--file/--version selection. The primary file
+//     (primaryFile over the FilterAndSortFiles-filtered list) is the whole
+//     policy; there is no flag on this path that could widen or pin it.
+//   - NO plan-level failure for one mod's problem. A GetModFiles failure or
+//     an empty filtered list is recorded on that ENTRY (FetchError) and the
+//     rest of the batch still plans - mirroring the pre-lift loop, where
+//     one mod's fetch failure printed an Error line and continued.
+//
+// mod.SourceID (not a single plan-level source) is used for every source
+// call, matching batchInstallMods' own `sourceID := mod.SourceID`: the
+// selection this plans came from a search whose results each carry their
+// own source.
+//
+// Network reads (GetModFiles) and read-only cache/DB/profile reads are
+// expected; no DB write, filesystem write, cache write, hook execution, or
+// download ever happens here.
+func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profileName string, mods []*domain.Mod, showArchived bool) (*InstallPlan, error) {
+	// Ruling 5: the installed set this plan is computed against, re-derived
+	// (and compared) by ApplyInstall. Doubles as the Reinstall oracle below
+	// - it is exactly GetInstalledMods' keys for this game/profile, which is
+	// what the pre-lift loop's per-mod GetInstalledMod call asked - so the
+	// batch costs one query instead of one per mod.
+	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+
+	plan := &InstallPlan{
+		GameID:       game.ID,
+		Profile:      profileName,
+		ShowArchived: showArchived,
+		Batch:        make([]*InstallPlanEntry, 0, len(mods)),
+		snapshot:     snapshot,
+	}
+
+	// A missing/unreadable profile simply holds no locks - PlanInstall's and
+	// lockedInstallRefusal's own tolerant convention.
+	var profile *domain.Profile
+	if p, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+		profile = p
+	}
+	// Conflict detection is best-effort on exactly PlanInstall.Conflicts'
+	// terms (see InstallPlanEntry.Conflicts): a resolution failure here just
+	// means no entry reports conflicts, never a failed plan.
+	installer, installerErr := s.GetInstallerForProfile(ctx, game, profileName)
+
+	for _, mod := range mods {
+		entry := &InstallPlanEntry{Mod: mod}
+		plan.Batch = append(plan.Batch, entry)
+
+		files, err := s.GetModFiles(ctx, mod.SourceID, mod)
+		if err != nil {
+			entry.FetchError = fmt.Sprintf("failed to get mod files: %v", err)
+			continue
+		}
+		files = FilterAndSortFiles(files, showArchived)
+		if len(files) == 0 {
+			entry.FetchError = "no downloadable files available"
+			continue
+		}
+		entry.File = primaryFile(files)
+		entry.Version = domain.EffectiveInstalledVersion(mod.Version, []*domain.DownloadableFile{entry.File}) // #94
+
+		if _, installed := snapshot[domain.ModKey(mod.SourceID, mod.ID)]; installed {
+			entry.Reinstall = true
+		}
+		if profile != nil {
+			if ref := profile.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked && ref.Version != entry.Version {
+				entry.Locked = ref
+			}
+		}
+		if installerErr == nil {
+			if conflicts, err := installer.GetConflicts(ctx, game, mod, profileName); err == nil {
+				entry.Conflicts = conflicts
+			}
 		}
 	}
 
@@ -951,6 +1141,23 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		return result, err
 	}
 
+	// Ruling 5: the plan is a contract about a world that may have moved.
+	// First statement inside the op (ApplyInstall took beginOp just above),
+	// so nothing this call does can race the re-derivation, and BEFORE any
+	// pin resolution, lock gate, hook, or side effect - a stale plan is
+	// refused having changed nothing at all.
+	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
+		return result, err
+	}
+
+	// The BATCH-of-independent-mods path (PlanInstallMany) shares nothing
+	// with the single-mod machinery below - no primary, no dependencies, no
+	// pins - so it branches here rather than threading a flag through all
+	// of it. See applyInstallBatch.
+	if plan.Batch != nil {
+		return s.applyInstallBatch(ctx, game, plan, opts, result, emit)
+	}
+
 	// #140: fold opts.TargetVersion/TargetFileIDs into the STRICT path's
 	// plan.Files up front, BEFORE the #143 lock gate below judges the
 	// would-be version and before any hook or side effect - a caller-
@@ -1088,11 +1295,11 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
-			var overrideFiles []domain.DownloadableFile
+			target := batchTarget{mod: mod, idx: idx, total: total}
 			if idx == total-1 {
-				overrideFiles = primaryOverrideFiles
+				target.files = primaryOverrideFiles
 			}
-			if warn := s.applyInstallBatchMod(ctx, game, plan, mod, idx, total, linkMethod, pm, opts, hooks, runner, result, emit, overrideFiles); warn != nil {
+			if warn := s.applyInstallBatchMod(ctx, game, plan, target, linkMethod, pm, opts, hooks, runner, result, emit); warn != nil {
 				deferredWarnings = append(deferredWarnings, *warn)
 			}
 		}
@@ -1125,25 +1332,156 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		emit(w)
 	}
 
-	// #197 postsmoke fix: appending to result.Warnings alone is not loud -
-	// doInstall (cmd/lmm) never reads result.Warnings back, only the
-	// progress events emitted live above (InstallWarning is what actually
-	// reaches stderr). A sync failure here used to be completely silent,
-	// the exact plumbing gap that let the postsmoke bug through even on
-	// the already-fixed single-mod install path.
-	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, plan.Profile); syncErr != nil {
-		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
-		result.Warnings = append(result.Warnings, msg)
-		result.MergedPakSyncFailed = true
-		emit(WarningEvent{Scope: Scope{Op: OpInstall}, Phase: InstallWarning, Message: msg})
-	} else {
-		for _, w := range syncWarnings {
-			result.Warnings = append(result.Warnings, w)
-			emit(WarningEvent{Scope: Scope{Op: OpInstall}, Phase: InstallWarning, Message: w})
-		}
-	}
+	s.syncMergedPakAfterInstall(ctx, game, plan.Profile, result, emit)
 
 	return result, nil
+}
+
+// syncMergedPakAfterInstall is the unconditional end-of-install merged-pak
+// sync every ApplyInstall path ends with (#197: a DeployCompile ".exmodz"
+// mod deploys zero files of its own - this sync is what actually puts its
+// content on disk, so skipping it left the merged pak generated in cache but
+// never deployed, with nothing to warn the user).
+//
+// #197 postsmoke fix: appending to result.Warnings alone is not loud - the
+// CLI never reads result.Warnings back, only the progress events emitted
+// live. A sync failure here used to be completely silent, the exact
+// plumbing gap that let the postsmoke bug through even on the
+// already-fixed single-mod install path. The hard failure gets its own
+// InstallMergedPakSyncFailed phase (#288) carrying the RAW error, because
+// the multi-select frontend words the line differently from the other two;
+// the sync's non-fatal warnings stay ordinary InstallWarnings, which every
+// frontend prints identically.
+func (s *Service) syncMergedPakAfterInstall(ctx context.Context, game *domain.Game, profileName string, result *InstallResult, emit func(Event)) {
+	syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName)
+	if syncErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("syncing merged pak: %v", syncErr))
+		result.MergedPakSyncFailed = true
+		emit(WarningEvent{Scope: Scope{Op: OpInstall}, Phase: InstallMergedPakSyncFailed, Message: syncErr.Error()})
+		return
+	}
+	for _, w := range syncWarnings {
+		result.Warnings = append(result.Warnings, w)
+		emit(WarningEvent{Scope: Scope{Op: OpInstall}, Phase: InstallWarning, Message: w})
+	}
+}
+
+// applyInstallBatch runs plan.Batch - PlanInstallMany's flat list of
+// independent mods - through the same per-mod engine the dependency path
+// uses (applyInstallBatchMod), reproducing cmd/lmm's pre-lift
+// batchInstallMods sequence exactly: ensure the profile exists (a create
+// failure is fatal, before anything else happens), resolve the link method,
+// run install.before_all once (Force downgrades a failure to a warning),
+// install every entry with skip-and-continue semantics, run
+// install.after_all once regardless of how many entries failed, flush the
+// accumulated after_each/after_all hook warnings together, then sync the
+// merged pak unconditionally.
+//
+// No entry is ever fatal to the batch: a locked ref, a plan-time fetch
+// failure, a failing before_each, a download/deploy/save failure - each
+// records the mod in Skipped/Failed and moves on, which is why the terminal
+// summary counts rather than an error is how this path reports trouble.
+func (s *Service) applyInstallBatch(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, result *InstallResult, emit func(Event)) (*InstallResult, error) {
+	pm := s.NewProfileManager()
+	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
+		return result, fmt.Errorf("could not create profile: %w", err)
+	}
+
+	linkMethod, err := s.GetEffectiveLinkMethod(ctx, game, plan.Profile)
+	if err != nil {
+		return result, err
+	}
+
+	hooks, err := s.resolvedHooks(ctx, game, plan.Profile)
+	if err != nil {
+		return result, err
+	}
+	runner, err := s.hookRunner(ctx)
+	if err != nil {
+		return result, err
+	}
+	hookCtx := hookContextFor(game)
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_all", hooks.GetInstallBeforeAll()); err != nil {
+		if !opts.Force {
+			return result, fmt.Errorf("install.before_all hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("install.before_all hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(HookEvent{Scope: Scope{Op: OpInstall}, Phase: InstallBeforeAllForced, Stage: "install.before_all", Detail: msg})
+	}
+
+	// deferredWarnings mirrors the dependency path's own convention (itself
+	// modeled on batchInstallMods' printHookWarnings, which accumulated hook
+	// errors across the WHOLE loop and printed them together only after
+	// everything else had already happened).
+	var deferredWarnings []Event
+
+	total := len(plan.Batch)
+	for idx, entry := range plan.Batch {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		// A local copy: the engine stamps the effective version onto the
+		// mod it installs, and a plan a caller may re-inspect (or re-apply
+		// after ErrStalePlan) must not be quietly rewritten by applying it.
+		mod := *entry.Mod
+		target := batchTarget{mod: &mod, idx: idx, total: total, planError: entry.FetchError}
+		if entry.File != nil {
+			target.files = []domain.DownloadableFile{*entry.File}
+		}
+		if warn := s.applyInstallBatchMod(ctx, game, plan, target, linkMethod, pm, opts, hooks, runner, result, emit); warn != nil {
+			deferredWarnings = append(deferredWarnings, *warn)
+		}
+	}
+	// A cancellation inside the LAST entry's own iteration never reaches the
+	// head-of-loop check above - without this, install.after_all would run
+	// and the call would return (result, nil) (review finding I2).
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_all", hooks.GetInstallAfterAll()); err != nil {
+		msg := fmt.Sprintf("install.after_all hook failed: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		deferredWarnings = append(deferredWarnings, WarningEvent{Scope: Scope{Op: OpInstall}, Phase: InstallWarning, Message: msg})
+	}
+
+	for _, w := range deferredWarnings {
+		emit(w)
+	}
+
+	s.syncMergedPakAfterInstall(ctx, game, plan.Profile, result, emit)
+
+	return result, nil
+}
+
+// batchTarget is one mod's worth of input to applyInstallBatchMod - what
+// the two BATCH callers resolve differently, gathered into one value rather
+// than four more positional parameters.
+type batchTarget struct {
+	// mod is the mod to install and idx/total its 1-based position in the
+	// batch (used for the "[idx/total]" readout every frontend renders).
+	mod        *domain.Mod
+	idx, total int
+
+	// files, when non-nil, is the FINAL file selection - every entry
+	// downloads and is recorded, in order, with no further sub-selection.
+	// The dependency path sets it only for the primary's own iteration, to
+	// carry ApplyInstall's #96/#140 opts.TargetVersion/TargetFileIDs
+	// resolution (dependencies pass nil and re-derive their own selection
+	// at latest - decision 6); the multi-select path sets it for EVERY
+	// entry, since PlanInstallMany already picked each mod's primary file.
+	// Nil means "derive it here" (GetModFiles + FilterAndSortFiles +
+	// primary-or-first), which is also the one place more than one file per
+	// mod can appear (--file can name several).
+	files []domain.DownloadableFile
+
+	// planError, when non-empty, is a failure decided BEFORE this call -
+	// PlanInstallMany's own file-resolution step - to be reported in place
+	// of installing the mod, after install.before_each has run. Always
+	// empty on the dependency path, which resolves files inline instead.
+	planError string
 }
 
 // applyInstallBatchMod installs one mod from the BATCH path's combined
@@ -1165,22 +1503,21 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 // the install.after_each warning event to defer (nil if none), matching
 // ApplyInstall's deferredWarnings convention.
 //
-// overrideFiles, when non-nil, is the FINAL file selection - every entry
-// downloads and is recorded, in order, with no further sub-selection -
-// exclusively how ApplyInstall's #96/#140 opts.TargetVersion/TargetFileIDs
-// pins reach the PRIMARY's iteration (already resolved to exact files
-// before the loop started; see ApplyInstall's own comment). This is the one
-// place the BATCH path installs more than one file per mod (--file can name
-// several); the no-override derivation below always selects exactly one.
-// Every dependency iteration passes nil here and re-derives its own
-// selection exactly as before - decision 6, dependencies install at latest
-// regardless of the primary's pins.
-func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, hooks *ResolvedHooks, runner *HookRunner, result *InstallResult, emit func(Event), overrideFiles []domain.DownloadableFile) *WarningEvent {
-	scope := Scope{Op: OpInstall, Index: idx + 1, Total: total, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
-	skip := func(label, reason string) {
-		emit(ModEvent{Scope: scope, Phase: InstallDepSkipped, Detail: fmt.Sprintf("%s: %s", label, reason)})
+// t carries the mod, its position in the batch, and the two things the two
+// callers resolve differently - see batchTarget.
+func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, t batchTarget, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, hooks *ResolvedHooks, runner *HookRunner, result *InstallResult, emit func(Event)) *WarningEvent {
+	mod, overrideFiles := t.mod, t.files
+	scope := Scope{Op: OpInstall, Index: t.idx + 1, Total: t.total, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
+	// fail records this mod's failure on the result; every caller pairs it
+	// with an event of its own, because the skip reason and the sentence a
+	// frontend prints are not always the same string (see the lock gate).
+	fail := func(reason string) {
 		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
 		result.Failed = append(result.Failed, mod.Name)
+	}
+	skip := func(label, reason string) {
+		emit(ModEvent{Scope: scope, Phase: InstallDepSkipped, Detail: fmt.Sprintf("%s: %s", label, reason)})
+		fail(reason)
 	}
 
 	emit(ModEvent{Scope: scope, Phase: InstallDepInstalling, Version: mod.Version})
@@ -1189,6 +1526,17 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
 		skip("Skipped", fmt.Sprintf("install.before_each hook failed: %v", err))
+		return nil
+	}
+
+	// A plan-time file-resolution failure (PlanInstallMany's own GetModFiles
+	// /empty-list step, which the dependency path performs inline below
+	// instead) is reported HERE - after install.before_each, before anything
+	// is removed - so the pre-lift ordering holds either way: the mod's
+	// header line, then its hook, then the Error line, with its previous
+	// installation still intact.
+	if t.planError != "" {
+		skip("Error", t.planError)
 		return nil
 	}
 
@@ -1249,7 +1597,13 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	// Note below.
 	if prof, err := pm.Get(game.ID, plan.Profile); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
-			skip("Skipped", LockedRefRefusalError(*mod, plan.Profile, ref).Error())
+			// InstallLockRefusal, not the generic InstallDepSkipped: the
+			// event carries the refusal SENTENCE and the result carries the
+			// ErrModLocked-wrapped error, because the two frontends print
+			// this one line differently (see InstallLockRefusal's doc
+			// comment).
+			emit(ModEvent{Scope: scope, Phase: InstallLockRefusal, Detail: lockedRefRefusalMessage(*mod, plan.Profile, ref)})
+			fail(LockedRefRefusalError(*mod, plan.Profile, ref).Error())
 			return nil
 		}
 	}
@@ -1337,7 +1691,9 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		LinkMethod:   linkMethod,
 		FileIDs:      fileIDs,
 	}
-	installedMod.Mod.GameID = game.ID
+	// Normalize GameID to the lmm game: sources stamp their own domain id
+	// onto the mods they return (see applyInstallPrimary's identical save site).
+	installedMod.GameID = game.ID
 	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 		skip("Error", fmt.Sprintf("failed to save mod: %v", err))
 		return nil
@@ -1347,7 +1703,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		if err := s.saveFileChecksum(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile, cs.fileID, cs.checksum); err != nil {
 			msg := fmt.Sprintf("failed to save checksum: %v", err)
 			result.Warnings = append(result.Warnings, msg)
-			emit(WarningEvent{Scope: scope, Phase: InstallWarning, Message: msg})
+			emit(WarningEvent{Scope: scope, Phase: InstallChecksumSaveFailed, Message: msg})
 		}
 	}
 
@@ -1600,7 +1956,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		LinkMethod:   linkMethod,
 		FileIDs:      downloadedFileIDs,
 	}
-	installedMod.Mod.GameID = game.ID
+	installedMod.GameID = game.ID
 
 	if s.beforeSaveInstalled != nil {
 		s.beforeSaveInstalled()

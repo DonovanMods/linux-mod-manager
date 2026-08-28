@@ -159,6 +159,33 @@ func TestJSONGoldens(t *testing.T) {
 				},
 				TotalDownloadBytes: 104857600,
 				ShowArchived:       true,
+				// A real plan is EITHER single-mod (Mod/Files/Dependencies)
+				// or a PlanInstallMany batch (Batch) - never both. This row
+				// populates both anyway, the same way it already populates
+				// MissingDependencies, CycleDetected, Conflicts and Replaces
+				// together: the golden's job is to pin every key's wire
+				// shape, not to be a plausible plan.
+				Batch: []*core.InstallPlanEntry{
+					{Mod: &jsonGoldenMod, Version: "1.2.3", Reinstall: true},
+				},
+			},
+		},
+		{
+			// Every optional key is populated, FetchError included - on a
+			// real entry it never co-occurs with File/Version, but the
+			// golden's job is to pin each key's wire shape, not to be a
+			// plausible entry (the install_plan row above does the same).
+			"install_plan_entry",
+			core.InstallPlanEntry{
+				Mod:       &jsonGoldenMod,
+				File:      &domain.DownloadableFile{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", Size: 104857600, IsPrimary: true},
+				Version:   "1.2.3",
+				Reinstall: true,
+				Locked:    &domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.2", Locked: true},
+				Conflicts: []core.Conflict{
+					{RelativePath: "Data/textures/armor/mesh.dds", CurrentSourceID: "nexusmods", CurrentModID: "7"},
+				},
+				FetchError: "failed to get mod files: rate limited",
 			},
 		},
 		{
