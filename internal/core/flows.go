@@ -1870,7 +1870,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		return skip("no files available")
 	}
 
-	filesToDownload, _, err := selectVersionedDeployFiles(files, mod.Version, mod.FileIDs, false)
+	filesToDownload, err := SelectFilesForVersion(files, mod.FileIDs, mod.Version)
 	if err != nil {
 		return skip(err.Error())
 	}
@@ -2587,7 +2587,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 
-			filesToDownload, _, err := selectVersionedDeployFiles(files, ref.Version, ref.FileIDs, false)
+			filesToDownload, err := SelectFilesForVersion(files, ref.FileIDs, ref.Version)
 			if err != nil {
 				fail(err.Error())
 				continue
@@ -2720,8 +2720,8 @@ type InstallPlan struct {
 	Mod domain.Mod `json:"mod"` // the mod that would be installed, freshly fetched via GetMod
 
 	// Files is the file(s) that WOULD be downloaded: GetModFiles' result
-	// after filterAndSortInstallFiles (doInstall's filterAndSortFiles,
-	// ported - strips ARCHIVED/OLD_VERSION/DELETED unless showArchived, sorts
+	// after FilterAndSortFiles (also doInstall's default filter/sort - strips
+	// ARCHIVED/OLD_VERSION/DELETED unless showArchived, sorts
 	// MAIN>OPTIONAL>UPDATE>MISCELLANEOUS>other), then the same non-interactive
 	// default cmd/lmm/install.go's selectInstallFiles falls back to (the
 	// primary file, or the sole/first file) absent --file or an interactive
@@ -2832,9 +2832,9 @@ type InstallPlan struct {
 //     or clear them before calling ApplyInstall.
 //
 // showArchived mirrors doInstall's --show-archived flag exactly: it is
-// threaded straight into filterAndSortInstallFiles (the faithful port of
-// cmd/lmm/install.go's filterAndSortFiles - same ARCHIVED/OLD_VERSION/DELETED
-// filter set, same MAIN>OPTIONAL>UPDATE>MISCELLANEOUS>other sort), which runs
+// threaded straight into FilterAndSortFiles (same ARCHIVED/OLD_VERSION/DELETED
+// filter set, same MAIN>OPTIONAL>UPDATE>MISCELLANEOUS>other sort as
+// doInstall's own default), which runs
 // BEFORE the "no downloadable files" check and BEFORE selectDeployFiles - so
 // a mod whose files are all archived reports the CLI's exact error instead
 // of a plan, and the no-IsPrimary fallback picks the CLI's post-sort file,
@@ -2894,12 +2894,12 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mod files: %w", err)
 	}
-	files = filterAndSortInstallFiles(files, showArchived)
+	files = FilterAndSortFiles(files, showArchived)
 	// This explicit check is intentionally NOT redundant with
 	// selectDeployFiles's own len==0 guard below: that guard returns
-	// errNoDeployFiles ("no downloadable files"), which is NOT byte-identical
-	// to doInstall's message - so it stays here to reproduce doInstall's
-	// exact wording on the FILTERED list.
+	// ErrNoDownloadableFiles ("no downloadable files"), which is NOT
+	// byte-identical to doInstall's message - so it stays here to reproduce
+	// doInstall's exact wording on the FILTERED list.
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no downloadable files available for this mod")
 	}
@@ -3448,7 +3448,7 @@ func (s *Service) resolveInstallCandidatePool(ctx context.Context, sourceID stri
 	if targetVersion != "" {
 		return ResolveVersionFiles(sourceID, files, targetVersion)
 	}
-	return filterAndSortInstallFiles(files, showArchived), nil
+	return FilterAndSortFiles(files, showArchived), nil
 }
 
 // selectInstallTargetFiles applies targetFileIDs to pool (every ID must
@@ -3905,7 +3905,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 			skip("Error", fmt.Sprintf("failed to get mod files: %v", err))
 			return nil
 		}
-		files = filterAndSortInstallFiles(files, plan.ShowArchived)
+		files = FilterAndSortFiles(files, plan.ShowArchived)
 		if len(files) == 0 {
 			skip("Error", "no downloadable files available")
 			return nil
@@ -5318,7 +5318,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		} else if len(ref.FileIDs) > 0 {
 			fileIDsToUse = ref.FileIDs
 		}
-		filesToDownload, _, err := selectVersionedDeployFiles(files, ref.Version, fileIDsToUse, false)
+		filesToDownload, err := SelectFilesForVersion(files, fileIDsToUse, ref.Version)
 		if err != nil {
 			fail(err.Error())
 			continue

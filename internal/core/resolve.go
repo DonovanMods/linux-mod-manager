@@ -20,7 +20,7 @@ var ErrVersionNotFound = errors.New("version not found")
 // version, from a source's raw (unfiltered) file list - archived/old/deleted
 // files are eligible by design, since a version pin usually targets one
 // (#96). Matches are returned category-sorted (MAIN first, mirroring
-// filterAndSortInstallFiles' ordering) so callers can apply their own
+// FilterAndSortFiles' ordering) so callers can apply their own
 // sub-selection (--file, the primary heuristic).
 //
 // Degradation is dynamic rather than capability-driven: a list in which no

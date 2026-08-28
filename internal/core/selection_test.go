@@ -1,12 +1,10 @@
 package core
 
-// In-package unit tests for flows.go's unexported file-selection helpers.
-// This file is `package core` (precedent: changelog_test.go and others)
-// because the subject under test - pickVersionMatch's tail via
-// selectVersionedDeployFiles - is unexported and a pure function of its
-// inputs; the end-to-end ApplyUpdate harness in flows_update_test.go cannot
-// isolate the no-primary tie-break without dragging in install/deploy
-// fixtures that add nothing here.
+// Unit tests for selection.go's file-selection policy: FilterAndSortFiles,
+// PrimaryFile, and SelectFilesForVersion. Some cases (pickVersionMatch's
+// tie-break tail) are pure functions of their inputs that the end-to-end
+// ApplyUpdate harness in flows_update_test.go cannot isolate without
+// dragging in install/deploy fixtures that add nothing here.
 
 import (
 	"testing"
@@ -17,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSelectVersionedDeployFiles_CategoryPriorityTieBreak covers #144 item 5:
+// TestSelectFilesForVersion_CategoryPriorityTieBreak covers #144 item 5:
 // when the target version offers no primary file and no stored ID narrows the
 // choice, pickVersionMatch used to fall to matches[0] - upstream listing
 // order - ignoring installFileCategoryPriority entirely. The category
@@ -25,13 +23,12 @@ import (
 // now breaks that tie, stable: first-listed wins among equal priorities, so
 // category-less listings (custom sources) behave exactly as before.
 //
-// PARITY: cmd/lmm/profile_test.go's
-// TestSelectFilesToDownload_CategoryPriorityTieBreak encodes this SAME
-// fixture table and expected picks through selectFilesToDownload -
-// pickVersionMatch's tail is hand-mirrored there (internal/core cannot
-// import cmd/lmm), so the two tests are the drift guard for the twins.
-// Change both together, or not at all.
-func TestSelectVersionedDeployFiles_CategoryPriorityTieBreak(t *testing.T) {
+// This fixture and case table used to be hand-duplicated in
+// cmd/lmm/profile_test.go as TestSelectFilesToDownload_CategoryPriorityTieBreak
+// (a drift guard for what was then a hand-mirrored twin of pickVersionMatch's
+// tail); #287 unified the twins into SelectFilesForVersion, so that copy is
+// gone and this is the only version of the test.
+func TestSelectFilesForVersion_CategoryPriorityTieBreak(t *testing.T) {
 	files := []domain.DownloadableFile{
 		{ID: "misc20", Version: "2.0", Category: "MISCELLANEOUS"},
 		{ID: "upd20", Version: "2.0", Category: "UPDATE"},
@@ -60,9 +57,8 @@ func TestSelectVersionedDeployFiles_CategoryPriorityTieBreak(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, fellBack, err := selectVersionedDeployFiles(files, tc.version, nil, false)
+			got, err := SelectFilesForVersion(files, nil, tc.version)
 			require.NoError(t, err)
-			assert.False(t, fellBack)
 			require.Len(t, got, 1)
 			assert.Equal(t, tc.wantID, got[0].ID)
 		})
