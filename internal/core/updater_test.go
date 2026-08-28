@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -302,4 +303,59 @@ func TestCompareVersions(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// allUpdatesMockSource reports every installed mod handed to it as having an
+// update to "2.0", regardless of ID - unlike updateMockSource above (which
+// tracks a single currentMod and so can only represent an update for ONE
+// installed mod at a time), this lets
+// TestService_CheckGameUpdates_LoadsProfileOnce seed more than one
+// updatable mod from a single mock instance. Embeds updateMockSource purely
+// for its ID()/Name()/etc. no-op implementations; CheckUpdates below shadows
+// the promoted one.
+type allUpdatesMockSource struct {
+	*updateMockSource
+}
+
+func (m *allUpdatesMockSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	updates := make([]domain.Update, len(installed))
+	for i, inst := range installed {
+		updates[i] = domain.Update{InstalledMod: inst, NewVersion: "2.0"}
+	}
+	return updates, nil
+}
+
+// TestService_CheckGameUpdates_LoadsProfileOnce guards #289 review's
+// performance/correctness fix: CheckGameUpdates' lock-state stamping loop
+// used to call lockState (and so ProfileManager.Get -> a fresh profile YAML
+// read) once PER update entry, reloading the same profile from disk N times
+// for a listing of N mods. It must now load the profile once for the whole
+// call, deriving each entry's lock state from that single read
+// (lockStateFromProfile). Instrumented via core.CountProfileLoadsForTest
+// (profile_export_test.go), which wraps ProfileManager.Get's own file-read
+// seam (loadProfile, profile.go) with a counter - a filesystem-level
+// alternative (deleting/mutating the on-disk profile mid-loop) would be
+// racy and non-deterministic, so this counts the seam directly instead.
+func TestService_CheckGameUpdates_LoadsProfileOnce(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	svc.RegisterSource(&allUpdatesMockSource{updateMockSource: &updateMockSource{id: "src"}})
+
+	const n = 3
+	installed := make([]domain.InstalledMod, 0, n)
+	for i := 1; i <= n; i++ {
+		modID := fmt.Sprintf("mod%d", i)
+		mod := seedUpdatableMod(t, svc, game, "src", modID, "Mod "+modID, "1.0", []string{"file-" + modID}, map[string][]byte{modID + ".esp": []byte("content")})
+		installed = append(installed, *mod)
+	}
+
+	var updates []domain.Update
+	loads := core.CountProfileLoadsForTest(func() {
+		var err error
+		updates, err = svc.CheckGameUpdates(context.Background(), game, "default", installed, nil)
+		require.NoError(t, err)
+	})
+
+	require.Len(t, updates, n, "sanity: every seeded mod must be reported as updatable")
+	assert.Equal(t, 1, loads, "CheckGameUpdates must load the profile once for the whole listing, not once per update entry")
 }
