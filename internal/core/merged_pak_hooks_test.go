@@ -17,7 +17,7 @@ import (
 func TestEnableMod_SyncsMergedPak(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
-	require.NoError(t, svc.SetModEnabled(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", false))
+	require.NoError(t, svc.SetModEnabledForTest(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", false))
 
 	_, err := svc.EnableMod(context.Background(), game, "default", "fake-compiler", "bear-mount")
 	require.NoError(t, err)

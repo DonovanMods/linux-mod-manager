@@ -363,7 +363,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		emit(StepEvent{Scope: scope, Phase: phase, Detail: msg})
 	}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, plan.Profile)
+	installer, err := s.getInstallerForProfile(ctx, game, plan.Profile)
 	if err != nil {
 		return result, err
 	}
@@ -499,7 +499,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 				Deployed:     true, // the Install/Replace above just succeeded
 				FileIDs:      fileIDs,
 			}
-			installedMod.Mod.GameID = game.ID
+			installedMod.GameID = game.ID // the embedded Mod's field
 			if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 				fail(fmt.Sprintf("save failed: %v", err))
 				continue

@@ -73,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `doProfileReorder` no longer builds the mod lookup itself, and its no-args listing path reads the
   profile through `core.ProfileManager.Get` instead of `storage/config` directly. No user-visible
   change: CLI output and error text are byte-identical. (#290)
+- Internal: `lmm profile apply` is Plan/Apply — the ~360-line converge engine in `cmd/lmm`
+  (three-way diff, source resolution, download, deploy/replace, persistence and the merged-pak
+  sync) moves into `core.PlanProfileApply`/`core.ApplyProfileApply` with a typed plan whose
+  install entries are resolved against their source at plan time, an `ErrStalePlan` freshness
+  guard, and progress reported through the event stream. `cmd/lmm` keeps only the prompt and the
+  printed lines. No user-visible change: CLI output is byte-identical. (#290)
 
 ### Fixed
 

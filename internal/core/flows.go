@@ -86,7 +86,7 @@ func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName,
 		return nil, fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 	}
 
 	result := &DisableResult{}
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +311,7 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err))
 	}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return result, err
 	}
@@ -1705,7 +1705,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		spec.emit(HookEvent{Scope: Scope{Op: spec.op}, Phase: DeployBeforeAllForced, Stage: "uninstall.before_all", Detail: msg})
 	}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return err
 	}
@@ -2172,11 +2172,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// link methods - the disable loop undeploys the FROM profile's
 	// deployments (which were made with plan.From's method), while the
 	// enable and install loops deploy into plan.To.
-	fromInstaller, err := s.GetInstallerForProfile(ctx, game, plan.From)
+	fromInstaller, err := s.getInstallerForProfile(ctx, game, plan.From)
 	if err != nil {
 		return result, err
 	}
-	toInstaller, err := s.GetInstallerForProfile(ctx, game, plan.To)
+	toInstaller, err := s.getInstallerForProfile(ctx, game, plan.To)
 	if err != nil {
 		return result, err
 	}
@@ -2662,7 +2662,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		return result, nil
 	}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, profile.Name)
+	installer, err := s.getInstallerForProfile(ctx, game, profile.Name)
 	if err != nil {
 		return result, err
 	}

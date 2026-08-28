@@ -1347,11 +1347,13 @@ func (s *Service) GetInstaller(game *domain.Game) *Installer {
 	return s.NewInstallerWithLinker(game, s.GetLinker(s.GetGameLinkMethod(game)))
 }
 
-// GetInstallerForProfile returns an Installer whose linker honors
+// getInstallerForProfile returns an Installer whose linker honors
 // profileName's effective link method (GetEffectiveLinkMethod) - the
 // profile-aware companion to GetInstaller. Propagates GetEffectiveLinkMethod's
-// new error case (#189) rather than swallowing it.
-func (s *Service) GetInstallerForProfile(ctx context.Context, game *domain.Game, profileName string) (*Installer, error) {
+// new error case (#189) rather than swallowing it. Unexported with
+// doProfileApply's lift (#290): an Installer is a core primitive, and that
+// flow held cmd's last reference to one.
+func (s *Service) getInstallerForProfile(ctx context.Context, game *domain.Game, profileName string) (*Installer, error) {
 	method, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
 	if err != nil {
 		return nil, err
@@ -1546,16 +1548,9 @@ func (s *Service) setModFileIDs(ctx context.Context, sourceID, modID, gameID, pr
 	return s.db.SetModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
 }
 
-// SetModEnabled toggles the enabled flag for an installed mod.
-func (s *Service) SetModEnabled(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.setModEnabled(ctx, sourceID, modID, gameID, profileName, enabled)
-}
-
+// setModEnabled toggles the enabled flag for an installed mod. Unexported
+// with doProfileApply's lift (#290): the profile-apply loops were the last
+// cmd callers, and every flow that flips this flag now lives in core.
 func (s *Service) setModEnabled(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
 	return s.db.SetModEnabled(ctx, sourceID, modID, gameID, profileName, enabled)
 }

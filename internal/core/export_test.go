@@ -61,5 +61,5 @@ func (s *Service) SetModEnabledForTest(ctx context.Context, sourceID, modID, gam
 // same lift unexported: an Installer is a core primitive no frontend
 // touches, but core's own tests deploy through one to build fixtures.
 func (s *Service) GetInstallerForProfileForTest(ctx context.Context, game *domain.Game, profileName string) (*Installer, error) {
-	return s.GetInstallerForProfile(ctx, game, profileName)
+	return s.getInstallerForProfile(ctx, game, profileName)
 }

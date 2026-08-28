@@ -1,6 +1,6 @@
 // Package core: this file holds the profile-reorder flow -
-// ReorderProfileMods, moved verbatim out of flows.go by v2 Phase 2 Unit ...
-// (Task 13), per the phase plan's "flows.go shrinks every unit" constraint.
+// ReorderProfileMods, moved verbatim out of flows.go by v2 Phase 2 Unit J
+// (#290), per the phase plan's "flows.go shrinks every unit" constraint.
 // The move commit changes nothing but the file the code lives in;
 // ResolveReorder (the identifier-resolution policy lifted out of cmd/lmm's
 // doProfileReorder) is added in its own follow-up commit.
@@ -17,8 +17,8 @@ import (
 
 // ErrModNotInProfile and ErrAmbiguousModID are ResolveReorder's two error
 // sentinels, wrapped to reproduce cmd/lmm's pre-lift doProfileReorder text
-// byte-for-byte (profile.go:830/842's "mod %s not in profile" and :847's
-// "ambiguous mod id %s (use source:modid): %s") so errors.Is keeps working
+// byte-for-byte ("mod %s not in profile" and "ambiguous mod id %s (use
+// source:modid): %s") so errors.Is keeps working
 // for callers while the printed text stays frozen.
 var (
 	ErrModNotInProfile = errors.New("not in profile")
@@ -68,7 +68,8 @@ func (s *Service) reorderProfileMods(ctx context.Context, gameID, profileName st
 
 // ResolveReorder turns user-supplied mod identifiers ("source:modid" or a bare mod ID) into the new
 // load order: mentioned mods first in the given order (deduplicated), then every unmentioned profile
-// mod in its existing relative order. Errors: ErrAmbiguousModID (text as profile.go:848), ErrModNotInProfile (text as :851).
+// mod in its existing relative order. Errors: ErrAmbiguousModID and
+// ErrModNotInProfile, both worded exactly as doProfileReorder printed them.
 //
 // Lifted verbatim (Task 13) from cmd/lmm's pre-extraction doProfileReorder,
 // which built this same byKey/newRefs resolution inline before calling

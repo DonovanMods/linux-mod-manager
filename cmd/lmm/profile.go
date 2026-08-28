@@ -828,144 +828,45 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doProfileApply owns profile-name resolution, plan-printing, the
+// "Proceed?" confirmation prompt and event-driven console output; the diff,
+// the source resolution and the disable/enable/install execution live in
+// core.PlanProfileApply/core.ApplyProfileApply (#290). The prompt
+// deliberately stays here rather than in core: core never blocks on user
+// input.
 func doProfileApply(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
+	profileName := profileApplyTarget(service, game, args)
 
-	pm := getProfileManager(service)
-
-	// Determine profile name
-	var profileName string
-	if len(args) > 0 {
-		profileName = args[0]
-	} else {
-		defaultProfile, err := pm.GetDefault(game.ID)
-		if err != nil {
-			profileName = "default"
-		} else {
-			profileName = defaultProfile.Name
-		}
-	}
-
-	// Get the profile
-	profile, err := pm.Get(game.ID, profileName)
+	plan, err := service.PlanProfileApply(ctx, game, profileName)
 	if err != nil {
-		return fmt.Errorf("profile not found: %s", profileName)
+		return err
 	}
 
-	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(ctx, game.ID, profileName)
-	if err != nil {
-		return fmt.Errorf("getting installed mods: %w", err)
-	}
-
-	// Build lookup of installed mods
-	installedByKey := make(map[string]*domain.InstalledMod)
-	for i := range installedMods {
-		key := installedMods[i].SourceID + ":" + installedMods[i].ID
-		installedByKey[key] = &installedMods[i]
-	}
-
-	// Build set of profile mod keys
-	profileKeys := make(map[string]domain.ModReference)
-	for _, mr := range profile.Mods {
-		key := mr.SourceID + ":" + mr.ModID
-		profileKeys[key] = mr
-	}
-
-	// Calculate differences
-	var toDisable []*domain.InstalledMod
-	var toEnable []*domain.InstalledMod
-	var toInstall []domain.ModReference
-	needsRedownloadSet := make(map[string]bool) // Track which mods are re-downloads
-	needsReplaceSet := make(map[string]bool)    // #96: mods needing Installer.Replace (already deployed at the wrong version), not a bare Install
-
-	// Check installed mods against profile. Deterministic order: iterate
-	// core.OrderByProfile(profile, installedMods) - not `for key, im :=
-	// range installedByKey`, which iterates map order - keeping installedByKey
-	// only for the membership lookup below.
-	ordered := core.OrderByProfile(profile, installedMods)
-	for i := range ordered {
-		im := &ordered[i]
-		key := im.SourceID + ":" + im.ID
-		if _, inProfile := profileKeys[key]; !inProfile {
-			// Installed but not in profile - disable it
-			if im.Enabled {
-				toDisable = append(toDisable, im)
-			}
-		} else {
-			// In profile - make sure it's enabled and at the profile's version
-			ref := profileKeys[key]
-			if ref.Version != "" && im.Version != ref.Version {
-				// #96 convergence: the profile names a different version
-				// than the installed row - reinstall at the profile's
-				// version (downgrades included), regardless of enabled
-				// state. ref is passed as-is: its own FileIDs (if any)
-				// describe the TARGET version; the installed row's
-				// describe the wrong one.
-				toInstall = append(toInstall, ref)
-				needsRedownloadSet[key] = false // fresh target version: profile FileIDs, not the DB's
-				needsReplaceSet[key] = im.Deployed
-				continue
-			}
-			if !im.Enabled {
-				// Check if cache exists before adding to toEnable
-				if service.GetGameCache(game).Exists(game.ID, im.SourceID, im.ID, im.Version) {
-					toEnable = append(toEnable, im)
-				} else {
-					// Cache missing - need to re-download
-					toInstall = append(toInstall, domain.ModReference{
-						SourceID: im.SourceID,
-						ModID:    im.ID,
-						Version:  im.Version,
-						FileIDs:  im.FileIDs,
-					})
-					needsRedownloadSet[key] = true
-				}
-			}
-		}
-	}
-
-	// Check profile mods against installed. Deterministic order: iterate
-	// profile.Mods - not `for key, ref := range profileKeys`, which iterates
-	// map order. seen guards the same dedup profileKeys gave for free.
-	seen := make(map[string]bool, len(profile.Mods))
-	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		if _, installed := installedByKey[key]; !installed {
-			// In profile but not installed
-			toInstall = append(toInstall, ref)
-		}
-	}
-
-	// Show changes
-	if len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0 {
+	if plan.NoChanges {
 		fmt.Printf("System already matches profile %s.\n", profileName)
 		return nil
 	}
 
 	fmt.Printf("Applying profile: %s\n\n", profileName)
 
-	if len(toDisable) > 0 {
-		fmt.Printf("Will disable %d mod(s):\n", len(toDisable))
-		for _, im := range toDisable {
+	if len(plan.ToDisable) > 0 {
+		fmt.Printf("Will disable %d mod(s):\n", len(plan.ToDisable))
+		for _, im := range plan.ToDisable {
 			fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
 		}
 	}
 
-	if len(toEnable) > 0 {
-		fmt.Printf("Will enable %d mod(s):\n", len(toEnable))
-		for _, im := range toEnable {
+	if len(plan.ToEnable) > 0 {
+		fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
+		for _, im := range plan.ToEnable {
 			fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
 		}
 	}
 
-	if len(toInstall) > 0 {
-		fmt.Printf("Will install %d mod(s):\n", len(toInstall))
-		for _, ref := range toInstall {
-			fmt.Printf("  ↓ %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+	if len(plan.ToInstall) > 0 {
+		fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
+		for _, entry := range plan.ToInstall {
+			fmt.Printf("  ↓ %s:%s v%s\n", entry.Ref.SourceID, entry.Ref.ModID, entry.Ref.Version)
 		}
 	}
 
@@ -982,204 +883,76 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		}
 	}
 
-	installer, err := service.GetInstallerForProfile(ctx, game, profileName)
+	// progress prints every diagnostic and per-mod status line at its exact
+	// point of occurrence, driven entirely by core.ApplyProfileApply's
+	// events - the same Switch* phase vocabulary doProfileSwitch renders,
+	// because the two flows print the same lines (see core's profile_apply.go).
+	// Everything here is stdout; result.Notes is never batch-printed below
+	// since every entry already has an event here.
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		switch p.Phase {
+		case core.SwitchDisableNote, core.SwitchEnableNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		case core.SwitchDisabled:
+			fmt.Printf("  ✓ Disabled: %s\n", p.ModName)
+		case core.SwitchEnabled:
+			fmt.Printf("  ✓ Enabled: %s\n", p.ModName)
+		case core.SwitchInstalling:
+			fmt.Println("\nInstalling missing mods...")
+		case core.SwitchInstallingMod:
+			fmt.Printf("  Installing %s:%s...\n", p.SourceID, p.ModID)
+		case core.SwitchInstallError:
+			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.SwitchDownloading:
+			fmt.Printf("\r    Downloading: %.1f%%", p.Percent)
+		case core.SwitchDownloadFailed:
+			fmt.Println()
+			fmt.Printf("    Error: %s\n", p.Detail)
+		case core.SwitchDownloadDone:
+			fmt.Println()
+		case core.SwitchInstalled:
+			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
+		case core.SwitchInstallNote:
+			if verbose {
+				fmt.Printf("    %s\n", p.Detail)
+			}
+		}
+	}
+
+	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, progress)
 	if err != nil {
+		// Diagnostics accumulated before a fatal error were already printed
+		// live via progress - nothing left to print here.
 		return err
 	}
 
-	// Disable mods
-	for _, im := range toDisable {
-		if err := installer.Uninstall(ctx, game, &im.Mod, profileName); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to undeploy %s: %v\n", im.Name, err)
-			}
-		}
-		if err := service.SetModEnabled(ctx, im.SourceID, im.ID, game.ID, profileName, false); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
-			}
-		}
-		fmt.Printf("  ✓ Disabled: %s\n", im.Name)
-	}
-
-	// Enable mods
-	for _, im := range toEnable {
-		if err := installer.Install(ctx, game, &im.Mod, profileName); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to deploy %s: %v\n", im.Name, err)
-			}
-			continue
-		}
-		if err := service.SetModEnabled(ctx, im.SourceID, im.ID, game.ID, profileName, true); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: failed to update %s: %v\n", im.Name, err)
-			}
-		}
-		fmt.Printf("  ✓ Enabled: %s\n", im.Name)
-	}
-
-	// Install missing mods
-	if len(toInstall) > 0 {
-		fmt.Println("\nInstalling missing mods...")
-		for _, ref := range toInstall {
-			fmt.Printf("  Installing %s:%s...\n", ref.SourceID, ref.ModID)
-
-			// Fetch mod details
-			mod, err := service.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
-			if err != nil {
-				fmt.Printf("    Error: failed to fetch mod: %v\n", err)
-				continue
-			}
-
-			// Get files
-			files, err := service.GetModFiles(ctx, ref.SourceID, mod)
-			if err != nil {
-				fmt.Printf("    Error: failed to get files: %v\n", err)
-				continue
-			}
-
-			if len(files) == 0 {
-				fmt.Printf("    Error: no downloadable files\n")
-				continue
-			}
-
-			// Select files to download - use stored FileIDs for re-downloads, or profile FileIDs for new installs
-			key := ref.SourceID + ":" + ref.ModID
-			var fileIDsToUse []string
-			if needsRedownloadSet[key] {
-				// Re-download: use DB-stored FileIDs (from ref, which was populated from im.FileIDs)
-				fileIDsToUse = ref.FileIDs
-			} else if len(ref.FileIDs) > 0 {
-				// New install: use FileIDs from profile
-				fileIDsToUse = ref.FileIDs
-			}
-			filesToDownload, err := core.SelectFilesForVersion(files, fileIDsToUse, ref.Version)
-			if err != nil {
-				fmt.Printf("    Error: %v\n", err)
-				continue
-			}
-			mod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload) // #94
-
-			// #96: cache-first - a convergence entry (or any other
-			// already-cached-at-this-version reinstall) skips the download
-			// step entirely once the stamped version is already cached.
-			// Review finding 2: HasFileIDs (not bare Exists) - a version
-			// directory can exist yet be only PARTIALLY populated by a
-			// previous download run that broke off partway through a
-			// multi-file mod; skipping on directory presence alone would
-			// silently leave it that way forever. Round 2: the check is by
-			// FILE ID (the per-file completion markers
-			// commitStagedCacheWithMarker stamps), never by FileName - a
-			// cache entry for an extracted archive holds member names that
-			// match no DownloadableFile, so a name-based check would miss
-			// every archive-based mod and redownload a complete cache.
-			downloadedFileIDs := make([]string, 0, len(filesToDownload))
-			for _, f := range filesToDownload {
-				downloadedFileIDs = append(downloadedFileIDs, f.ID)
-			}
-			if !service.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
-				// Download each file
-				progressFn := func(e core.Event) {
-					if d, ok := e.(core.DownloadEvent); ok && d.TotalBytes > 0 {
-						fmt.Printf("\r    Downloading: %.1f%%", d.Percent)
-					}
-				}
-
-				downloadFailed := false
-				for _, selectedFile := range filesToDownload {
-					_, err = service.DownloadMod(ctx, ref.SourceID, game, mod, selectedFile, progressFn)
-					if err != nil {
-						fmt.Println()
-						fmt.Printf("    Error: download failed: %v\n", err)
-						downloadFailed = true
-						break
-					}
-				}
-				fmt.Println()
-
-				if downloadFailed {
-					continue
-				}
-			}
-
-			// Deploy. #96: a mod already deployed at the wrong version must
-			// be replaced (removing files the new version no longer serves),
-			// not just have new files installed alongside stale ones -
-			// mirrors ApplyUpdate's Installer.Replace semantics
-			// (internal/core/flows.go). Review finding 4: guard the map
-			// lookup with its own ok - needsReplaceSet[key] should never be
-			// true without a corresponding installedByKey[key] row, but a
-			// bare index expression would panic on a nil *InstalledMod if
-			// that invariant were ever violated.
-			//
-			// Round 2: the deployed flag alone isn't enough - Installer.
-			// Replace reads the OLD version's cache entry to work out which
-			// files to retire and hard-fails with "old mod not in cache"
-			// when it's been pruned, which would abort convergence outright
-			// and leave the old deployment on disk. Only Replace when that
-			// entry is still there; otherwise fall back to a bare Install,
-			// exactly as core's ApplyProfileSwitch does. The caveat is the
-			// same in both twins: without the old file list, files the new
-			// version no longer serves stay behind as stale deployments
-			// (`lmm verify` surfaces them) - strictly better than failing to
-			// converge at all.
-			if prev, ok := installedByKey[key]; ok && needsReplaceSet[key] &&
-				service.GetGameCache(game).Exists(game.ID, prev.SourceID, prev.ID, prev.Version) {
-				if err := installer.Replace(ctx, game, &prev.Mod, mod, profileName); err != nil {
-					fmt.Printf("    Error: deploy failed: %v\n", err)
-					continue
-				}
-			} else if err := installer.Install(ctx, game, mod, profileName); err != nil {
-				fmt.Printf("    Error: deploy failed: %v\n", err)
-				continue
-			}
-
-			// Save to DB. Normalize GameID to the lmm game (see comment on
-			// the doProfileSwitch save site for why).
-			installedMod := &domain.InstalledMod{
-				Mod:          *mod,
-				ProfileName:  profileName,
-				UpdatePolicy: domain.UpdateNotify,
-				Enabled:      true,
-				Deployed:     true, // review finding 3: Install/Replace above just succeeded
-				FileIDs:      downloadedFileIDs,
-			}
-			installedMod.Mod.GameID = game.ID
-			if err := service.SaveInstalledMod(ctx, installedMod); err != nil {
-				fmt.Printf("    Error: save failed: %v\n", err)
-				continue
-			}
-
-			// Update profile with actual downloaded FileIDs
-			modRef := domain.ModReference{
-				SourceID: mod.SourceID,
-				ModID:    mod.ID,
-				Version:  mod.Version,
-				FileIDs:  downloadedFileIDs,
-			}
-			if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-				if verbose {
-					fmt.Printf("    Warning: could not update profile: %v\n", err)
-				}
-			}
-
-			fmt.Printf("    ✓ Installed: %s\n", mod.Name)
-		}
-	}
-
-	// #197 postsmoke seam-audit fix: doProfileApply is a bespoke
-	// disable/enable/install reimplementation - like batchInstallMods, it
-	// never went through a core seam that syncs the merged pak. Sync
-	// failures are printed unconditionally, matching batchInstallMods'
-	// loud-failure fix.
-	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
-	} else {
-		for _, w := range syncWarnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-		}
+	// #197: unconditional stderr, unlike the --verbose-gated Notes above -
+	// today, only the merged-pak sync's own diagnostics.
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
 	fmt.Printf("\n✓ Applied profile: %s\n", profileName)
 	return nil
+}
+
+// profileApplyTarget resolves which profile `lmm profile apply` acts on: the
+// positional argument when given, else the game's default profile, else the
+// literal "default" (an unreadable default is not an error here - the plan's
+// own profile lookup reports a missing profile).
+func profileApplyTarget(service *core.Service, game *domain.Game, args []string) string {
+	if len(args) > 0 {
+		return args[0]
+	}
+	defaultProfile, err := getProfileManager(service).GetDefault(game.ID)
+	if err != nil {
+		return "default"
+	}
+	return defaultProfile.Name
 }
