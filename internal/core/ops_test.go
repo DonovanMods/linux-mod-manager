@@ -60,3 +60,23 @@ func TestBeginOp_WaiterIsCancellable(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.Len(t, svc.opSem, 1, "slot must still be held by the first caller")
 }
+
+// TestBeginOp_PreCancelledCtxNeverAcquires pins that beginOp is
+// deterministic when ctx is already done before the select ever runs: with
+// the slot free, a done ctx must always lose rather than racing the free
+// slot 50/50 (v2 Phase 1 Task 6 fix round 1, #279 review finding I1).
+func TestBeginOp_PreCancelledCtxNeverAcquires(t *testing.T) {
+	svc := newOpsService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for i := 0; i < 200; i++ {
+		release, err := svc.beginOp(ctx)
+		if err == nil {
+			release()
+			t.Fatalf("iteration %d: beginOp acquired the slot with an already-cancelled ctx and a free slot; want ctx.Err() every time", i)
+		}
+		require.ErrorIs(t, err, context.Canceled, "iteration %d", i)
+		require.Len(t, svc.opSem, 0, "iteration %d: slot must stay free when the caller never acquires", i)
+	}
+}

@@ -19,12 +19,13 @@ func TestService_SaveGame_ConcurrentWithReaders(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	ctx := context.Background()
 
+	errs := make(chan error, 8)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: fmt.Sprintf("g%d", i), Name: "G", InstallPath: t.TempDir(), ModPath: "Mods"}))
+			errs <- svc.SaveGame(ctx, &domain.Game{ID: fmt.Sprintf("g%d", i), Name: "G", InstallPath: t.TempDir(), ModPath: "Mods"})
 		}(i)
 		go func() {
 			defer wg.Done()
@@ -33,6 +34,10 @@ func TestService_SaveGame_ConcurrentWithReaders(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
 	require.Len(t, svc.ListGames(), 8)
 	g, err := svc.GetGame("g3")
 	require.NoError(t, err)

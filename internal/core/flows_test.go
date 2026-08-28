@@ -4740,23 +4740,34 @@ func TestService_DeployProfile_CancelledDuringLastModRedownload_RecordsSkipAndEr
 }
 
 // TestService_QueriesRunDuringMutation pins the contract end to end under
-// -race (v2 Phase 1 Task 6, #279): readers hammer GetInstalledMods/ListGames
-// while a DeployProfile holds the mutation slot; nothing races.
+// -race (v2 Phase 1 Task 6, #279; rewritten in fix round 1 per review
+// finding I2): a DeployProfile holds the mutation slot open on a gate, 16
+// query goroutines (GetInstalledMods + ListGames) must all complete while
+// the gate is still closed, and a second mutation (SetModEnabled) started
+// during that same window must NOT return until the gate opens. A
+// regression that lets a query - or a second mutation - through
+// unserialized deadlocks this test into one of its timeouts instead of
+// passing green with nothing checked.
 func TestService_QueriesRunDuringMutation(t *testing.T) {
 	svc, game := newDeployableService(t)
 	ctx := context.Background()
 
 	started := make(chan struct{})
-	finished := make(chan struct{})
+	gate := make(chan struct{})
+	errs := make(chan error, 32)
+
+	deployDone := make(chan struct{})
 	go func() {
-		defer close(finished)
-		_, _ = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(core.DeployProgress) {
-			select {
-			case <-started:
-			default:
+		defer close(deployDone)
+		first := true
+		_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(core.DeployProgress) {
+			if first {
+				first = false
 				close(started)
+				<-gate
 			}
 		})
+		errs <- err
 	}()
 	<-started
 
@@ -4765,10 +4776,52 @@ func TestService_QueriesRunDuringMutation(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = svc.GetInstalledMods(ctx, game.ID, "default")
+			if _, err := svc.GetInstalledMods(ctx, game.ID, "default"); err != nil {
+				errs <- err
+			}
 			_ = svc.ListGames()
 		}()
 	}
-	wg.Wait()
-	<-finished
+	queriesDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(queriesDone)
+	}()
+	select {
+	case <-queriesDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queries blocked behind a mutation")
+	}
+
+	secondDone := make(chan struct{})
+	go func() {
+		defer close(secondDone)
+		if err := svc.SetModEnabled(ctx, "src", "1", game.ID, "default", false); err != nil {
+			errs <- err
+		}
+	}()
+
+	select {
+	case <-secondDone:
+		t.Fatal("second mutation returned while the first mutation still holds the slot")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(gate)
+
+	select {
+	case <-deployDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("DeployProfile never finished after the gate was released")
+	}
+	select {
+	case <-secondDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second mutation never finished after the gate was released")
+	}
+
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
 }

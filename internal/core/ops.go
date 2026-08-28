@@ -11,6 +11,9 @@ import "context"
 // mutating methods acquire the slot; their unexported implementations do
 // not, so flows can compose them without re-entering the semaphore.
 func (s *Service) beginOp(ctx context.Context) (release func(), err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	select {
 	case s.opSem <- struct{}{}:
 		return func() { <-s.opSem }, nil
