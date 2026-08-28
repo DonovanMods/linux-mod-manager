@@ -193,7 +193,7 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				continue
 			}
 			result.Removed = append(result.Removed, cf)
-			if err := s.db.DeleteDeployedFile(game.ID, profileName, path); err != nil {
+			if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
 				errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
 			}
 		}
@@ -282,7 +282,7 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			return nil
 		}
 		result.Removed = append(result.Removed, cf)
-		_ = s.db.DeleteDeployedFile(game.ID, profileName, rel) // best-effort: no row typically exists here
+		_ = s.db.DeleteDeployedFile(ctx, game.ID, profileName, rel) // best-effort: no row typically exists here
 
 		return nil
 	})

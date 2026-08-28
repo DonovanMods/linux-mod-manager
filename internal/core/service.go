@@ -1147,7 +1147,7 @@ func (s *Service) AddGame(game *domain.Game) error {
 
 // GetInstalledMods returns all installed mods for a game/profile (DB order: installed_at).
 func (s *Service) GetInstalledMods(gameID, profileName string) ([]domain.InstalledMod, error) {
-	return s.db.GetInstalledMods(gameID, profileName)
+	return s.db.GetInstalledMods(context.Background(), gameID, profileName) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // GetInstalledModsInProfileOrder returns installed mods in profile load order (first = lowest priority).
@@ -1157,7 +1157,7 @@ func (s *Service) GetInstalledModsInProfileOrder(gameID, profileName string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("loading profile: %w", err)
 	}
-	all, err := s.db.GetInstalledMods(gameID, profileName)
+	all, err := s.db.GetInstalledMods(context.Background(), gameID, profileName) // TODO(v2-p1-task3): ctx threaded in Task 3
 	if err != nil {
 		return nil, err
 	}
@@ -1288,29 +1288,29 @@ func (s *Service) ConfigDir() string {
 
 // SaveSourceToken saves an API token for a source
 func (s *Service) SaveSourceToken(sourceID, apiKey string) error {
-	return s.db.SaveToken(sourceID, apiKey)
+	return s.db.SaveToken(context.Background(), sourceID, apiKey) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // GetSourceToken retrieves an API token for a source
 func (s *Service) GetSourceToken(sourceID string) (*db.StoredToken, error) {
-	return s.db.GetToken(sourceID)
+	return s.db.GetToken(context.Background(), sourceID) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // DeleteSourceToken removes an API token for a source
 func (s *Service) DeleteSourceToken(sourceID string) error {
-	return s.db.DeleteToken(sourceID)
+	return s.db.DeleteToken(context.Background(), sourceID) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // ListSourceTokens returns every stored API token, including ones whose
 // source is no longer registered (e.g. the custom-source definition file
 // was removed) — used by `lmm auth status` to surface orphaned credentials.
 func (s *Service) ListSourceTokens() ([]db.StoredToken, error) {
-	return s.db.ListTokens()
+	return s.db.ListTokens(context.Background()) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // IsSourceAuthenticated checks if a source has a stored API token
 func (s *Service) IsSourceAuthenticated(sourceID string) bool {
-	has, err := s.db.HasToken(sourceID)
+	has, err := s.db.HasToken(context.Background(), sourceID) // TODO(v2-p1-task3): ctx threaded in Task 3
 	if err != nil {
 		return false
 	}
@@ -1319,53 +1319,53 @@ func (s *Service) IsSourceAuthenticated(sourceID string) bool {
 
 // UpdateModVersion updates the version of an installed mod, preserving the previous version for rollback
 func (s *Service) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion string) error {
-	return s.db.UpdateModVersion(sourceID, modID, gameID, profileName, newVersion)
+	return s.db.UpdateModVersion(context.Background(), sourceID, modID, gameID, profileName, newVersion) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // ApplyModUpdate updates version and file IDs atomically, preserving rollback state.
 func (s *Service) ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
-	return s.db.ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion, fileIDs)
+	return s.db.ApplyModUpdate(context.Background(), sourceID, modID, gameID, profileName, newVersion, fileIDs) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // RollbackModVersion reverts a mod to its previous version
 func (s *Service) RollbackModVersion(sourceID, modID, gameID, profileName string) error {
-	return s.db.SwapModVersions(sourceID, modID, gameID, profileName)
+	return s.db.SwapModVersions(context.Background(), sourceID, modID, gameID, profileName) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // SetModUpdatePolicy sets the update policy for an installed mod
 func (s *Service) SetModUpdatePolicy(sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
-	return s.db.UpdateModPolicy(sourceID, modID, gameID, profileName, policy)
+	return s.db.UpdateModPolicy(context.Background(), sourceID, modID, gameID, profileName, policy) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // SetModLinkMethod sets the deployment method for an installed mod
 func (s *Service) SetModLinkMethod(sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
-	return s.db.SetModLinkMethod(sourceID, modID, gameID, profileName, linkMethod)
+	return s.db.SetModLinkMethod(context.Background(), sourceID, modID, gameID, profileName, linkMethod) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // SetModFileIDs updates the file IDs for an installed mod
 func (s *Service) SetModFileIDs(sourceID, modID, gameID, profileName string, fileIDs []string) error {
-	return s.db.SetModFileIDs(sourceID, modID, gameID, profileName, fileIDs)
+	return s.db.SetModFileIDs(context.Background(), sourceID, modID, gameID, profileName, fileIDs) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // SetModEnabled toggles the enabled flag for an installed mod.
 func (s *Service) SetModEnabled(sourceID, modID, gameID, profileName string, enabled bool) error {
-	return s.db.SetModEnabled(sourceID, modID, gameID, profileName, enabled)
+	return s.db.SetModEnabled(context.Background(), sourceID, modID, gameID, profileName, enabled) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // SetModDeployed records whether a mod's files are currently deployed.
 func (s *Service) SetModDeployed(sourceID, modID, gameID, profileName string, deployed bool) error {
-	return s.db.SetModDeployed(sourceID, modID, gameID, profileName, deployed)
+	return s.db.SetModDeployed(context.Background(), sourceID, modID, gameID, profileName, deployed) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // SetModConvertPaks toggles per-mod pak-to-exmod conversion (#221). A local
 // DB write; the caller re-syncs the merged pak to apply the change.
 func (s *Service) SetModConvertPaks(sourceID, modID, gameID, profileName string, convert bool) error {
-	return s.db.SetModConvertPaks(sourceID, modID, gameID, profileName, convert)
+	return s.db.SetModConvertPaks(context.Background(), sourceID, modID, gameID, profileName, convert) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // SaveInstalledMod persists an installed-mod record (insert or update).
 func (s *Service) SaveInstalledMod(mod *domain.InstalledMod) error {
-	return s.db.SaveInstalledMod(mod)
+	return s.db.SaveInstalledMod(context.Background(), mod) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // SetModVersion corrects an installed mod's recorded version without
@@ -1377,18 +1377,18 @@ func (s *Service) SaveInstalledMod(mod *domain.InstalledMod) error {
 // version-record repair, issue #94), where the file IDs and their
 // checksums are already correct.
 func (s *Service) SetModVersion(sourceID, modID, gameID, profileName, version string) error {
-	return s.db.SetModVersion(sourceID, modID, gameID, profileName, version)
+	return s.db.SetModVersion(context.Background(), sourceID, modID, gameID, profileName, version) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // DeleteInstalledMod removes the installed-mod record from the active profile.
 func (s *Service) DeleteInstalledMod(sourceID, modID, gameID, profileName string) error {
-	return s.db.DeleteInstalledMod(sourceID, modID, gameID, profileName)
+	return s.db.DeleteInstalledMod(context.Background(), sourceID, modID, gameID, profileName) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // GetDeployedFilesForMod returns the relative paths the given mod has deployed
 // in the named profile.
 func (s *Service) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string) ([]string, error) {
-	return s.db.GetDeployedFilesForMod(gameID, profileName, sourceID, modID)
+	return s.db.GetDeployedFilesForMod(context.Background(), gameID, profileName, sourceID, modID) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // GetLastDeployTime returns the timestamp of the most recent deploy for the
@@ -1396,13 +1396,13 @@ func (s *Service) GetDeployedFilesForMod(gameID, profileName, sourceID, modID st
 // never been deployed - see db.DB.GetLastDeployTime's own doc comment for
 // why nil is not an error.
 func (s *Service) GetLastDeployTime(gameID, profileName string) (*time.Time, error) {
-	return s.db.GetLastDeployTime(gameID, profileName)
+	return s.db.GetLastDeployTime(context.Background(), gameID, profileName) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // GetFileOwner reports which mod currently owns a deployed file. The bool is
 // false when no record exists; err is non-nil only on storage errors.
 func (s *Service) GetFileOwner(gameID, profileName, relativePath string) (sourceID, modID string, found bool, err error) {
-	owner, err := s.db.GetFileOwner(gameID, profileName, relativePath)
+	owner, err := s.db.GetFileOwner(context.Background(), gameID, profileName, relativePath) // TODO(v2-p1-task3): ctx threaded in Task 3
 	if err != nil {
 		return "", "", false, err
 	}
@@ -1423,7 +1423,7 @@ type DeployedFile struct {
 // GetFilesWithChecksums returns every tracked file in the profile with its
 // recorded checksum (empty when none has been computed yet).
 func (s *Service) GetFilesWithChecksums(gameID, profileName string) ([]DeployedFile, error) {
-	rows, err := s.db.GetFilesWithChecksums(gameID, profileName)
+	rows, err := s.db.GetFilesWithChecksums(context.Background(), gameID, profileName) // TODO(v2-p1-task3): ctx threaded in Task 3
 	if err != nil {
 		return nil, err
 	}
@@ -1436,12 +1436,12 @@ func (s *Service) GetFilesWithChecksums(gameID, profileName string) ([]DeployedF
 
 // SaveFileChecksum records the verified checksum for a downloaded mod file.
 func (s *Service) SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, checksum string) error {
-	return s.db.SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, checksum)
+	return s.db.SaveFileChecksum(context.Background(), sourceID, modID, gameID, profileName, fileID, checksum) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // GetInstalledMod retrieves a single installed mod
 func (s *Service) GetInstalledMod(sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
-	return s.db.GetInstalledMod(sourceID, modID, gameID, profileName)
+	return s.db.GetInstalledMod(context.Background(), sourceID, modID, gameID, profileName) // TODO(v2-p1-task3): ctx threaded in Task 3
 }
 
 // GetDependencies returns dependencies for a mod from the specified source

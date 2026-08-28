@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -27,7 +28,7 @@ func installTestMod(t *testing.T, database *db.DB) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}
-	require.NoError(t, database.SaveInstalledMod(mod))
+	require.NoError(t, database.SaveInstalledMod(context.Background(), mod))
 }
 
 // Note: the result.RowsAffected() error-classification branch shared by
@@ -51,10 +52,10 @@ func TestUpdateModPolicy(t *testing.T) {
 
 	installTestMod(t, database)
 
-	err = database.UpdateModPolicy("nexusmods", "12345", "skyrim-se", "default", domain.UpdateAuto)
+	err = database.UpdateModPolicy(context.Background(), "nexusmods", "12345", "skyrim-se", "default", domain.UpdateAuto)
 	require.NoError(t, err)
 
-	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdateAuto, retrieved.UpdatePolicy)
 }
@@ -71,7 +72,7 @@ func TestSaveInstalledMod_PreservesUpdatePolicyOnResave(t *testing.T) {
 
 	installTestMod(t, database) // saved with domain.UpdateNotify
 
-	err = database.UpdateModPolicy("nexusmods", "12345", "skyrim-se", "default", domain.UpdatePinned)
+	err = database.UpdateModPolicy(context.Background(), "nexusmods", "12345", "skyrim-se", "default", domain.UpdatePinned)
 	require.NoError(t, err)
 
 	// Simulate a reinstall: callers always pass UpdateNotify.
@@ -87,9 +88,9 @@ func TestSaveInstalledMod_PreservesUpdatePolicyOnResave(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}
-	require.NoError(t, database.SaveInstalledMod(mod))
+	require.NoError(t, database.SaveInstalledMod(context.Background(), mod))
 
-	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.UpdatePinned, retrieved.UpdatePolicy,
 		"resaving an installed mod must preserve the existing update policy")
@@ -100,7 +101,7 @@ func TestUpdateModPolicy_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
-	err = database.UpdateModPolicy("nexusmods", "nonexistent", "skyrim-se", "default", domain.UpdateAuto)
+	err = database.UpdateModPolicy(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", domain.UpdateAuto)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -111,17 +112,17 @@ func TestSetModEnabled(t *testing.T) {
 
 	installTestMod(t, database)
 
-	err = database.SetModEnabled("nexusmods", "12345", "skyrim-se", "default", false)
+	err = database.SetModEnabled(context.Background(), "nexusmods", "12345", "skyrim-se", "default", false)
 	require.NoError(t, err)
 
-	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.False(t, retrieved.Enabled)
 
-	err = database.SetModEnabled("nexusmods", "12345", "skyrim-se", "default", true)
+	err = database.SetModEnabled(context.Background(), "nexusmods", "12345", "skyrim-se", "default", true)
 	require.NoError(t, err)
 
-	retrieved, err = database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err = database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.True(t, retrieved.Enabled)
 }
@@ -131,7 +132,7 @@ func TestSetModEnabled_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
-	err = database.SetModEnabled("nexusmods", "nonexistent", "skyrim-se", "default", false)
+	err = database.SetModEnabled(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", false)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -142,10 +143,10 @@ func TestSetModLinkMethod(t *testing.T) {
 
 	installTestMod(t, database)
 
-	err = database.SetModLinkMethod("nexusmods", "12345", "skyrim-se", "default", domain.LinkHardlink)
+	err = database.SetModLinkMethod(context.Background(), "nexusmods", "12345", "skyrim-se", "default", domain.LinkHardlink)
 	require.NoError(t, err)
 
-	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.LinkHardlink, retrieved.LinkMethod)
 }
@@ -155,7 +156,7 @@ func TestSetModLinkMethod_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
-	err = database.SetModLinkMethod("nexusmods", "nonexistent", "skyrim-se", "default", domain.LinkCopy)
+	err = database.SetModLinkMethod(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", domain.LinkCopy)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -186,19 +187,19 @@ func TestSetModVersion(t *testing.T) {
 		Enabled:     true,
 		FileIDs:     []string{"111"},
 	}
-	require.NoError(t, database.SaveInstalledMod(mod))
-	require.NoError(t, database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "111", "deadbeef"))
+	require.NoError(t, database.SaveInstalledMod(context.Background(), mod))
+	require.NoError(t, database.SaveFileChecksum(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "111", "deadbeef"))
 
-	err = database.SetModVersion("nexusmods", "12345", "skyrim-se", "default", "1.0")
+	err = database.SetModVersion(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "1.0")
 	require.NoError(t, err)
 
-	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", retrieved.Version, "version must be corrected")
 	assert.Empty(t, retrieved.PreviousVersion, "SetModVersion must not shift PreviousVersion - unlike UpdateModVersion, this is a correction, not an update with a rollback path")
 	assert.Equal(t, []string{"111"}, retrieved.FileIDs, "FileIDs must be untouched")
 
-	files, err := database.GetFilesWithChecksums("skyrim-se", "default")
+	files, err := database.GetFilesWithChecksums(context.Background(), "skyrim-se", "default")
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	assert.Equal(t, "deadbeef", files[0].Checksum, "SetModVersion must NOT wipe the stored checksum - unlike SaveInstalledMod's full-row upsert, which replaces installed_mod_files and loses it")
@@ -209,7 +210,7 @@ func TestSetModVersion_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
-	err = database.SetModVersion("nexusmods", "nonexistent", "skyrim-se", "default", "1.0")
+	err = database.SetModVersion(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", "1.0")
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -219,16 +220,16 @@ func TestSetModFileIDs(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
 	installTestMod(t, database)
-	require.NoError(t, database.SetModFileIDs("nexusmods", "12345", "skyrim-se", "default", []string{"111", "222"}))
+	require.NoError(t, database.SetModFileIDs(context.Background(), "nexusmods", "12345", "skyrim-se", "default", []string{"111", "222"}))
 
-	fileIDs, err := database.GetModFileIDs("nexusmods", "12345", "skyrim-se", "default")
+	fileIDs, err := database.GetModFileIDs(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"111", "222"}, fileIDs)
 
 	// A second call must replace, not append.
-	require.NoError(t, database.SetModFileIDs("nexusmods", "12345", "skyrim-se", "default", []string{"333"}))
+	require.NoError(t, database.SetModFileIDs(context.Background(), "nexusmods", "12345", "skyrim-se", "default", []string{"333"}))
 
-	fileIDs, err = database.GetModFileIDs("nexusmods", "12345", "skyrim-se", "default")
+	fileIDs, err = database.GetModFileIDs(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"333"}, fileIDs)
 }
@@ -244,7 +245,7 @@ func TestSetModFileIDs_EmptyOnMissingModIsANoOp(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
-	err = database.SetModFileIDs("nexusmods", "nonexistent", "skyrim-se", "default", []string{})
+	err = database.SetModFileIDs(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", []string{})
 	assert.NoError(t, err)
 }
 
@@ -257,7 +258,7 @@ func TestSetModFileIDs_NonEmptyOnMissingModFailsForeignKey(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
-	err = database.SetModFileIDs("nexusmods", "nonexistent", "skyrim-se", "default", []string{"111"})
+	err = database.SetModFileIDs(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", []string{"111"})
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, domain.ErrModNotFound, "the error is a raw FK-constraint failure, not the usual not-found sentinel")
 	assert.Contains(t, err.Error(), "FOREIGN KEY")
@@ -271,9 +272,9 @@ func TestSetModFileIDs_SkipsEmptyStringIDs(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, database.Close()) })
 
 	installTestMod(t, database)
-	require.NoError(t, database.SetModFileIDs("nexusmods", "12345", "skyrim-se", "default", []string{"111", "", "222"}))
+	require.NoError(t, database.SetModFileIDs(context.Background(), "nexusmods", "12345", "skyrim-se", "default", []string{"111", "", "222"}))
 
-	fileIDs, err := database.GetModFileIDs("nexusmods", "12345", "skyrim-se", "default")
+	fileIDs, err := database.GetModFileIDs(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"111", "222"}, fileIDs)
 }
@@ -294,26 +295,26 @@ func TestSetModConvertPaks(t *testing.T) {
 		ProfileName: "default",
 		Enabled:     true,
 	}
-	require.NoError(t, database.SaveInstalledMod(mod))
+	require.NoError(t, database.SaveInstalledMod(context.Background(), mod))
 
-	got, err := database.GetInstalledMod("icarus", "m1", "icarus", "default")
+	got, err := database.GetInstalledMod(context.Background(), "icarus", "m1", "icarus", "default")
 	require.NoError(t, err)
 	assert.True(t, got.ConvertPaks, "convert_paks must default to true (schema DEFAULT 1)")
 
-	require.NoError(t, database.SetModConvertPaks("icarus", "m1", "icarus", "default", false))
+	require.NoError(t, database.SetModConvertPaks(context.Background(), "icarus", "m1", "icarus", "default", false))
 
-	got, err = database.GetInstalledMod("icarus", "m1", "icarus", "default")
+	got, err = database.GetInstalledMod(context.Background(), "icarus", "m1", "icarus", "default")
 	require.NoError(t, err)
 	assert.False(t, got.ConvertPaks, "convert_paks not persisted off")
 
 	// Reinstall (SaveInstalledMod upsert) must NOT reset the user's flag.
-	require.NoError(t, database.SaveInstalledMod(mod))
+	require.NoError(t, database.SaveInstalledMod(context.Background(), mod))
 
-	got, err = database.GetInstalledMod("icarus", "m1", "icarus", "default")
+	got, err = database.GetInstalledMod(context.Background(), "icarus", "m1", "icarus", "default")
 	require.NoError(t, err)
 	assert.False(t, got.ConvertPaks, "reinstall reset convert_paks - the column must stay out of the upsert")
 
 	// Unknown mod -> domain.ErrModNotFound (targeted-setter contract).
-	err = database.SetModConvertPaks("icarus", "nope", "icarus", "default", true)
+	err = database.SetModConvertPaks(context.Background(), "icarus", "nope", "icarus", "default", true)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }

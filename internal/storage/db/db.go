@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -20,19 +21,32 @@ type DB struct {
 	*sql.DB
 }
 
+// dsnFor builds the modernc.org/sqlite DSN. Pragmas passed as _pragma= query
+// parameters run on EVERY new pooled connection (the driver applies them in
+// newConn); a plain Exec after Open would only reach one connection (#271).
+func dsnFor(path string) string {
+	if path == ":memory:" {
+		return "file::memory:?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	}
+	return "file:" + path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+}
+
 // New creates a new database connection and runs migrations
 func New(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", path)
+	sqlDB, err := sql.Open("sqlite", dsnFor(path))
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
-
-	// Enable foreign keys and WAL mode for better performance
-	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;"); err != nil {
-		if closeErr := sqlDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("setting pragmas: %w (closing database: %v)", err, closeErr)
-		}
-		return nil, fmt.Errorf("setting pragmas: %w", err)
+	if path == ":memory:" {
+		// Each pooled connection to ":memory:" is a separate database;
+		// tests rely on there being exactly one.
+		sqlDB.SetMaxOpenConns(1)
+	}
+	// Force the first connection now so a bad path fails here, not on
+	// the first query.
+	if err := sqlDB.Ping(); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
 	// Before any write, so the main database file is already 0600 when SQLite
@@ -47,7 +61,7 @@ func New(path string) (*DB, error) {
 
 	database := &DB{DB: sqlDB}
 
-	if err := database.migrate(); err != nil {
+	if err := database.migrate(context.Background()); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
 			return nil, fmt.Errorf("running migrations: %w (closing database: %v)", err, closeErr)
 		}

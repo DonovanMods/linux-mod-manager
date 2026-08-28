@@ -60,7 +60,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed)
 			if i.db != nil {
-				_ = i.db.DeleteDeployedFiles(game.ID, profileName, mod.SourceID, mod.ID)
+				_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, mod.SourceID, mod.ID)
 			}
 			if rollbackErr != nil {
 				return &domain.DeployError{Op: fmt.Sprintf("deploying %s", file), Primary: err, Rollback: rollbackErr}
@@ -71,7 +71,7 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 
 		// Track file ownership in database (for conflict detection)
 		if i.db != nil {
-			if err := i.db.SaveDeployedFile(game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
+			if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, mod.SourceID, mod.ID); err != nil {
 				// Roll back only the file that failed to track; leave previously
 				// deployed+tracked files and DB records intact.
 				if rollbackErr := rollbackDeploy(i.linker, game.ModPath, []string{file}); rollbackErr != nil {
@@ -230,17 +230,17 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 	}
 
 	if i.db != nil {
-		if err := i.db.DeleteDeployedFiles(game.ID, profileName, oldMod.SourceID, oldMod.ID); err != nil {
+		if err := i.db.DeleteDeployedFiles(ctx, game.ID, profileName, oldMod.SourceID, oldMod.ID); err != nil {
 			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
 				return &domain.DeployError{Op: "resetting file tracking", Primary: err, Rollback: rollbackErr}
 			}
 			return fmt.Errorf("resetting file tracking: %w", err)
 		}
 		for _, file := range newFiles {
-			if err := i.db.SaveDeployedFile(game.ID, profileName, file, newMod.SourceID, newMod.ID); err != nil {
-				_ = i.db.DeleteDeployedFiles(game.ID, profileName, newMod.SourceID, newMod.ID)
+			if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, newMod.SourceID, newMod.ID); err != nil {
+				_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, newMod.SourceID, newMod.ID)
 				for _, oldFile := range oldRestorable {
-					_ = i.db.SaveDeployedFile(game.ID, profileName, oldFile, oldMod.SourceID, oldMod.ID)
+					_ = i.db.SaveDeployedFile(ctx, game.ID, profileName, oldFile, oldMod.SourceID, oldMod.ID)
 				}
 				if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet); rollbackErr != nil {
 					return &domain.DeployError{Op: fmt.Sprintf("tracking deployed file %s", file), Primary: err, Rollback: rollbackErr}
@@ -448,7 +448,7 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 		}
 		files = nil
 		if i.db != nil {
-			if files, err = i.db.GetDeployedFilesForMod(game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+			if files, err = i.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
 				return fmt.Errorf("listing tracked deployed files: %w", err)
 			}
 		}
@@ -471,7 +471,7 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 
 	// Remove file ownership records from database
 	if i.db != nil {
-		if err := i.db.DeleteDeployedFiles(game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+		if err := i.db.DeleteDeployedFiles(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
 			return fmt.Errorf("removing file tracking: %w", err)
 		}
 	}
@@ -540,7 +540,7 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 	}
 
 	// Check for conflicts
-	dbConflicts, err := i.db.CheckFileConflicts(game.ID, profileName, files)
+	dbConflicts, err := i.db.CheckFileConflicts(ctx, game.ID, profileName, files)
 	if err != nil {
 		return nil, fmt.Errorf("checking conflicts: %w", err)
 	}

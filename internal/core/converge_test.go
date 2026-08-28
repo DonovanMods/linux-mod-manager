@@ -532,8 +532,8 @@ func TestConverge_RowPass_RejectsUnsafeDeployedFileRecords(t *testing.T) {
 
 	rawDB, err := db.New(filepath.Join(dataDir, "lmm.db"))
 	require.NoError(t, err)
-	require.NoError(t, rawDB.SaveDeployedFile("g1", "default", "../outside.pak", "src", "m1"))
-	require.NoError(t, rawDB.SaveDeployedFile("g1", "default", absPath, "src", "m1"))
+	require.NoError(t, rawDB.SaveDeployedFile(context.Background(), "g1", "default", "../outside.pak", "src", "m1"))
+	require.NoError(t, rawDB.SaveDeployedFile(context.Background(), "g1", "default", absPath, "src", "m1"))
 	require.NoError(t, rawDB.Close())
 
 	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -40,8 +41,8 @@ func decodeFileIDs(raw *string) ([]string, error) {
 // UpdateModPolicy. A first-time insert still uses the policy passed in.
 // Similarly, convert_paks is never written here - the schema default covers first
 // insert, and SetModConvertPaks is the only writer, so reinstall can't reset it.
-func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
-	tx, err := d.Begin()
+func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) error {
+	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
 	}
@@ -56,7 +57,7 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 		return err
 	}
 
-	_, err = tx.Exec(`
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id, mod_id, game_id, profile_name) DO UPDATE SET
@@ -77,7 +78,7 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 	}
 
 	// Replace file IDs within the same transaction
-	if err := replaceModFileIDsTx(tx, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.FileIDs); err != nil {
+	if err := replaceModFileIDsTx(ctx, tx, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.FileIDs); err != nil {
 		return err
 	}
 
@@ -85,8 +86,8 @@ func (d *DB) SaveInstalledMod(mod *domain.InstalledMod) error {
 }
 
 // GetInstalledMods returns all installed mods for a game/profile combination
-func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.InstalledMod, err error) {
-	rows, err := d.Query(`
+func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (mods []domain.InstalledMod, err error) {
+	rows, err := d.QueryContext(ctx, `
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks
 		FROM installed_mods
 		WHERE game_id = ? AND profile_name = ?
@@ -95,11 +96,6 @@ func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.Install
 	if err != nil {
 		return nil, fmt.Errorf("querying installed mods: %w", err)
 	}
-	defer func() {
-		if cerr := rows.Close(); err == nil && cerr != nil {
-			err = fmt.Errorf("closing rows: %w", cerr)
-		}
-	}()
 
 	for rows.Next() {
 		var mod domain.InstalledMod
@@ -112,6 +108,7 @@ func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.Install
 			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks,
 		)
 		if err != nil {
+			_ = rows.Close()
 			return nil, fmt.Errorf("scanning installed mod: %w", err)
 		}
 		if prevVersion != nil {
@@ -119,17 +116,24 @@ func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.Install
 		}
 		mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
 		if err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
 		mods = append(mods, mod)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
+	rowsErr := rows.Err()
+	if cerr := rows.Close(); cerr != nil {
+		return nil, fmt.Errorf("closing rows: %w", cerr)
+	}
+	if rowsErr != nil {
+		return nil, rowsErr
 	}
 
-	// Batch fetch file IDs for all mods (avoids N+1)
-	fileIDsByMod, err := d.getModFileIDsBatch(gameID, profileName)
+	// Batch fetch file IDs for all mods (avoids N+1). The first query's Rows
+	// is already closed above: with MaxOpenConns(1) (":memory:"), issuing this
+	// second query while the first is still open would deadlock (#271).
+	fileIDsByMod, err := d.getModFileIDsBatch(ctx, gameID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting file IDs: %w", err)
 	}
@@ -142,8 +146,8 @@ func (d *DB) GetInstalledMods(gameID, profileName string) (mods []domain.Install
 }
 
 // getModFileIDsBatch returns file IDs for all mods in game/profile, keyed by "sourceID:modID"
-func (d *DB) getModFileIDsBatch(gameID, profileName string) (out map[string][]string, err error) {
-	rows, err := d.Query(`
+func (d *DB) getModFileIDsBatch(ctx context.Context, gameID, profileName string) (out map[string][]string, err error) {
+	rows, err := d.QueryContext(ctx, `
 		SELECT source_id, mod_id, file_id FROM installed_mod_files
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY source_id, mod_id
@@ -170,8 +174,8 @@ func (d *DB) getModFileIDsBatch(gameID, profileName string) (out map[string][]st
 }
 
 // DeleteInstalledMod removes an installed mod record
-func (d *DB) DeleteInstalledMod(sourceID, modID, gameID, profileName string) error {
-	result, err := d.Exec(`
+func (d *DB) DeleteInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) error {
+	result, err := d.ExecContext(ctx, `
 		DELETE FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName)
@@ -193,8 +197,8 @@ func (d *DB) DeleteInstalledMod(sourceID, modID, gameID, profileName string) err
 }
 
 // UpdateModPolicy updates the update policy for an installed mod
-func (d *DB) UpdateModPolicy(sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
-	result, err := d.Exec(`
+func (d *DB) UpdateModPolicy(ctx context.Context, sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
+	result, err := d.ExecContext(ctx, `
 		UPDATE installed_mods SET update_policy = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, policy, sourceID, modID, gameID, profileName)
@@ -216,8 +220,8 @@ func (d *DB) UpdateModPolicy(sourceID, modID, gameID, profileName string, policy
 }
 
 // SetModConvertPaks sets the per-mod pak-conversion flag (#221).
-func (d *DB) SetModConvertPaks(sourceID, modID, gameID, profileName string, convert bool) error {
-	result, err := d.Exec(`
+func (d *DB) SetModConvertPaks(ctx context.Context, sourceID, modID, gameID, profileName string, convert bool) error {
+	result, err := d.ExecContext(ctx, `
 		UPDATE installed_mods SET convert_paks = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, convert, sourceID, modID, gameID, profileName)
@@ -239,8 +243,8 @@ func (d *DB) SetModConvertPaks(sourceID, modID, gameID, profileName string, conv
 }
 
 // SetModEnabled enables or disables a mod
-func (d *DB) SetModEnabled(sourceID, modID, gameID, profileName string, enabled bool) error {
-	result, err := d.Exec(`
+func (d *DB) SetModEnabled(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
+	result, err := d.ExecContext(ctx, `
 		UPDATE installed_mods SET enabled = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, enabled, sourceID, modID, gameID, profileName)
@@ -262,8 +266,8 @@ func (d *DB) SetModEnabled(sourceID, modID, gameID, profileName string, enabled 
 }
 
 // SetModDeployed sets whether a mod is currently deployed to the game directory
-func (d *DB) SetModDeployed(sourceID, modID, gameID, profileName string, deployed bool) error {
-	result, err := d.Exec(`
+func (d *DB) SetModDeployed(ctx context.Context, sourceID, modID, gameID, profileName string, deployed bool) error {
+	result, err := d.ExecContext(ctx, `
 		UPDATE installed_mods SET deployed = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, deployed, sourceID, modID, gameID, profileName)
@@ -285,11 +289,11 @@ func (d *DB) SetModDeployed(sourceID, modID, gameID, profileName string, deploye
 }
 
 // GetInstalledMod retrieves a single installed mod
-func (d *DB) GetInstalledMod(sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
+func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) (*domain.InstalledMod, error) {
 	var mod domain.InstalledMod
 	var prevVersion *string
 	var prevFileIDs *string
-	err := d.QueryRow(`
+	err := d.QueryRowContext(ctx, `
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author,
 		       update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download,
 		       summary, source_url, convert_paks
@@ -317,7 +321,7 @@ func (d *DB) GetInstalledMod(sourceID, modID, gameID, profileName string) (*doma
 	}
 
 	// Fetch file IDs
-	fileIDs, err := d.GetModFileIDs(sourceID, modID, gameID, profileName)
+	fileIDs, err := d.GetModFileIDs(ctx, sourceID, modID, gameID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting file IDs: %w", err)
 	}
@@ -327,8 +331,8 @@ func (d *DB) GetInstalledMod(sourceID, modID, gameID, profileName string) (*doma
 }
 
 // GetModFileIDs retrieves the file IDs for an installed mod
-func (d *DB) GetModFileIDs(sourceID, modID, gameID, profileName string) (fileIDs []string, err error) {
-	rows, err := d.Query(`
+func (d *DB) GetModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string) (fileIDs []string, err error) {
+	rows, err := d.QueryContext(ctx, `
 		SELECT file_id FROM installed_mod_files
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName)
@@ -352,8 +356,8 @@ func (d *DB) GetModFileIDs(sourceID, modID, gameID, profileName string) (fileIDs
 	return fileIDs, rows.Err()
 }
 
-func getModFileIDsTx(tx *sql.Tx, sourceID, modID, gameID, profileName string) (fileIDs []string, err error) {
-	rows, err := tx.Query(`
+func getModFileIDsTx(ctx context.Context, tx *sql.Tx, sourceID, modID, gameID, profileName string) (fileIDs []string, err error) {
+	rows, err := tx.QueryContext(ctx, `
 		SELECT file_id FROM installed_mod_files
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName)
@@ -389,8 +393,8 @@ func getModFileIDsTx(tx *sql.Tx, sourceID, modID, gameID, profileName string) (f
 // file IDs themselves never changed. SetModVersion exists specifically to
 // avoid that: the version is wrong, the file IDs and their checksums are
 // not, so only the version column should move.
-func (d *DB) SetModVersion(sourceID, modID, gameID, profileName, version string) error {
-	result, err := d.Exec(`
+func (d *DB) SetModVersion(ctx context.Context, sourceID, modID, gameID, profileName, version string) error {
+	result, err := d.ExecContext(ctx, `
 		UPDATE installed_mods SET version = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, version, sourceID, modID, gameID, profileName)
@@ -412,8 +416,8 @@ func (d *DB) SetModVersion(sourceID, modID, gameID, profileName, version string)
 }
 
 // UpdateModVersion updates a mod's version, preserving the previous version and file IDs for rollback.
-func (d *DB) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion string) error {
-	currentFileIDs, err := d.GetModFileIDs(sourceID, modID, gameID, profileName)
+func (d *DB) UpdateModVersion(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
+	currentFileIDs, err := d.GetModFileIDs(ctx, sourceID, modID, gameID, profileName)
 	if err != nil {
 		return err
 	}
@@ -421,7 +425,7 @@ func (d *DB) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion s
 	if err != nil {
 		return err
 	}
-	result, err := d.Exec(`
+	result, err := d.ExecContext(ctx, `
 		UPDATE installed_mods
 		SET previous_version = version, previous_file_ids = ?, version = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
@@ -444,8 +448,8 @@ func (d *DB) UpdateModVersion(sourceID, modID, gameID, profileName, newVersion s
 }
 
 // SetModLinkMethod updates the link method for an installed mod
-func (d *DB) SetModLinkMethod(sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
-	result, err := d.Exec(`
+func (d *DB) SetModLinkMethod(ctx context.Context, sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
+	result, err := d.ExecContext(ctx, `
 		UPDATE installed_mods SET link_method = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, linkMethod, sourceID, modID, gameID, profileName)
@@ -467,20 +471,20 @@ func (d *DB) SetModLinkMethod(sourceID, modID, gameID, profileName string, linkM
 }
 
 // SetModFileIDs updates the file IDs for an installed mod
-func (d *DB) SetModFileIDs(sourceID, modID, gameID, profileName string, fileIDs []string) error {
-	return d.replaceModFileIDs(sourceID, modID, gameID, profileName, fileIDs)
+func (d *DB) SetModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string) error {
+	return d.replaceModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
 }
 
 // ApplyModUpdate updates version and file IDs atomically while preserving rollback state.
-func (d *DB) ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion string, newFileIDs []string) error {
-	tx, err := d.Begin()
+func (d *DB) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, newFileIDs []string) error {
+	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	var currentVersion string
-	err = tx.QueryRow(`
+	err = tx.QueryRowContext(ctx, `
 		SELECT version FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(&currentVersion)
@@ -491,7 +495,7 @@ func (d *DB) ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion str
 		return fmt.Errorf("checking current version: %w", err)
 	}
 
-	currentFileIDs, err := getModFileIDsTx(tx, sourceID, modID, gameID, profileName)
+	currentFileIDs, err := getModFileIDsTx(ctx, tx, sourceID, modID, gameID, profileName)
 	if err != nil {
 		return err
 	}
@@ -500,7 +504,7 @@ func (d *DB) ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion str
 		return err
 	}
 
-	_, err = tx.Exec(`
+	_, err = tx.ExecContext(ctx, `
 		UPDATE installed_mods
 		SET previous_version = ?, previous_file_ids = ?, version = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
@@ -509,7 +513,7 @@ func (d *DB) ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion str
 		return fmt.Errorf("updating mod version: %w", err)
 	}
 
-	if err := replaceModFileIDsTx(tx, sourceID, modID, gameID, profileName, newFileIDs); err != nil {
+	if err := replaceModFileIDsTx(ctx, tx, sourceID, modID, gameID, profileName, newFileIDs); err != nil {
 		return err
 	}
 
@@ -518,8 +522,8 @@ func (d *DB) ApplyModUpdate(sourceID, modID, gameID, profileName, newVersion str
 
 // SwapModVersions swaps version and previous_version (for rollback).
 // The read/write and file ID restoration are performed atomically within a transaction.
-func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error {
-	tx, err := d.Begin()
+func (d *DB) SwapModVersions(ctx context.Context, sourceID, modID, gameID, profileName string) error {
+	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
 	}
@@ -528,7 +532,7 @@ func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error 
 	var version string
 	var prevVersion *string
 	var prevFileIDsRaw *string
-	err = tx.QueryRow(`
+	err = tx.QueryRowContext(ctx, `
 		SELECT version, previous_version, previous_file_ids FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(&version, &prevVersion, &prevFileIDsRaw)
@@ -547,7 +551,7 @@ func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error 
 	if err != nil {
 		return err
 	}
-	currentFileIDs, err := getModFileIDsTx(tx, sourceID, modID, gameID, profileName)
+	currentFileIDs, err := getModFileIDsTx(ctx, tx, sourceID, modID, gameID, profileName)
 	if err != nil {
 		return err
 	}
@@ -556,7 +560,7 @@ func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error 
 		return err
 	}
 
-	_, err = tx.Exec(`
+	_, err = tx.ExecContext(ctx, `
 		UPDATE installed_mods
 		SET version = ?, previous_version = ?, previous_file_ids = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
@@ -564,7 +568,7 @@ func (d *DB) SwapModVersions(sourceID, modID, gameID, profileName string) error 
 	if err != nil {
 		return fmt.Errorf("swapping mod versions: %w", err)
 	}
-	if err := replaceModFileIDsTx(tx, sourceID, modID, gameID, profileName, prevFileIDs); err != nil {
+	if err := replaceModFileIDsTx(ctx, tx, sourceID, modID, gameID, profileName, prevFileIDs); err != nil {
 		return err
 	}
 
@@ -583,8 +587,8 @@ type FileWithChecksum struct {
 // installed_mod_files row must already exist: an UPDATE matching no row would
 // otherwise succeed as a silent no-op while the caller believes the checksum
 // was persisted (#164), so 0 affected rows is an error.
-func (d *DB) SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, checksum string) error {
-	res, err := d.Exec(`
+func (d *DB) SaveFileChecksum(ctx context.Context, sourceID, modID, gameID, profileName, fileID, checksum string) error {
+	res, err := d.ExecContext(ctx, `
 		UPDATE installed_mod_files SET checksum = ?
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ? AND file_id = ?
 	`, checksum, sourceID, modID, gameID, profileName, fileID)
@@ -604,9 +608,9 @@ func (d *DB) SaveFileChecksum(sourceID, modID, gameID, profileName, fileID, chec
 
 // GetFileChecksum retrieves the checksum for a specific file
 // Returns empty string if file not found or has no checksum
-func (d *DB) GetFileChecksum(sourceID, modID, gameID, profileName, fileID string) (string, error) {
+func (d *DB) GetFileChecksum(ctx context.Context, sourceID, modID, gameID, profileName, fileID string) (string, error) {
 	var checksum *string
-	err := d.QueryRow(`
+	err := d.QueryRowContext(ctx, `
 		SELECT checksum FROM installed_mod_files
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ? AND file_id = ?
 	`, sourceID, modID, gameID, profileName, fileID).Scan(&checksum)
@@ -623,8 +627,8 @@ func (d *DB) GetFileChecksum(sourceID, modID, gameID, profileName, fileID string
 }
 
 // GetFilesWithChecksums returns all files for a game/profile with their checksums
-func (d *DB) GetFilesWithChecksums(gameID, profileName string) (files []FileWithChecksum, err error) {
-	rows, err := d.Query(`
+func (d *DB) GetFilesWithChecksums(ctx context.Context, gameID, profileName string) (files []FileWithChecksum, err error) {
+	rows, err := d.QueryContext(ctx, `
 		SELECT source_id, mod_id, file_id, checksum
 		FROM installed_mod_files
 		WHERE game_id = ? AND profile_name = ?
@@ -655,18 +659,18 @@ func (d *DB) GetFilesWithChecksums(gameID, profileName string) (files []FileWith
 
 // execer abstracts *sql.DB and *sql.Tx for running SQL statements.
 type execer interface {
-	Exec(query string, args ...any) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // replaceModFileIDs replaces all file IDs for a mod within a new transaction.
-func (d *DB) replaceModFileIDs(sourceID, modID, gameID, profileName string, fileIDs []string) error {
-	tx, err := d.Begin()
+func (d *DB) replaceModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string) error {
+	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if err := replaceModFileIDsTx(tx, sourceID, modID, gameID, profileName, fileIDs); err != nil {
+	if err := replaceModFileIDsTx(ctx, tx, sourceID, modID, gameID, profileName, fileIDs); err != nil {
 		return err
 	}
 
@@ -674,8 +678,8 @@ func (d *DB) replaceModFileIDs(sourceID, modID, gameID, profileName string, file
 }
 
 // replaceModFileIDsTx performs the DELETE + INSERT within an existing transaction/execer.
-func replaceModFileIDsTx(e execer, sourceID, modID, gameID, profileName string, fileIDs []string) error {
-	_, err := e.Exec(`
+func replaceModFileIDsTx(ctx context.Context, e execer, sourceID, modID, gameID, profileName string, fileIDs []string) error {
+	_, err := e.ExecContext(ctx, `
 		DELETE FROM installed_mod_files
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName)
@@ -687,7 +691,7 @@ func replaceModFileIDsTx(e execer, sourceID, modID, gameID, profileName string, 
 		if fileID == "" {
 			continue
 		}
-		_, err = e.Exec(`
+		_, err = e.ExecContext(ctx, `
 			INSERT INTO installed_mod_files (source_id, mod_id, game_id, profile_name, file_id)
 			VALUES (?, ?, ?, ?, ?)
 		`, sourceID, modID, gameID, profileName, fileID)
