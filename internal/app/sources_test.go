@@ -99,7 +99,7 @@ func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
 
 	t.Run("env value wins when both env and a stored token are present", func(t *testing.T) {
 		svc := newTestService(t)
-		require.NoError(t, svc.SaveSourceToken("precedence-src", "token-value"))
+		require.NoError(t, svc.SaveSourceToken(context.Background(), "precedence-src", "token-value"))
 		t.Setenv(envVar, "env-value")
 
 		src := &keySource{id: "precedence-src", name: "Precedence Src", envKey: envVar}
@@ -110,7 +110,7 @@ func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
 
 	t.Run("stored token applies when no env value is present", func(t *testing.T) {
 		svc := newTestService(t)
-		require.NoError(t, svc.SaveSourceToken("precedence-src", "token-value"))
+		require.NoError(t, svc.SaveSourceToken(context.Background(), "precedence-src", "token-value"))
 		t.Setenv(envVar, "")
 
 		src := &keySource{id: "precedence-src", name: "Precedence Src", envKey: envVar}
@@ -128,7 +128,7 @@ func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
 func TestRegisterSources_BuiltinAuthenticatesWithEnvAndToken(t *testing.T) {
 	t.Setenv("NEXUSMODS_API_KEY", "env-key-value")
 	svc := newTestService(t)
-	require.NoError(t, svc.SaveSourceToken("nexusmods", "stored-db-key"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "stored-db-key"))
 
 	registerSources(svc, t.TempDir(), os.Stderr)
 

@@ -78,11 +78,11 @@ func init() {
 
 func runList(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doList(cmd, service, game)
+		return doList(ctx, cmd, service, game)
 	})
 }
 
-func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error {
+func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game *domain.Game) error {
 	if listProfiles {
 		return runListProfiles(cmd, service, game.ID, game.Name)
 	}
@@ -92,7 +92,7 @@ func doList(cmd *cobra.Command, service *core.Service, game *domain.Game) error 
 		return err
 	}
 
-	mods, err := service.GetInstalledMods(game.ID, profileName)
+	mods, err := service.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}

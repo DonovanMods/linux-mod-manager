@@ -59,7 +59,7 @@ func setupDoModLockTest(t *testing.T) (*core.Service, *domain.Game, *fakeInstall
 func seedLockableMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, version string) {
 	t.Helper()
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -234,7 +234,7 @@ func TestDoModLock_VersionlessSource_NamesPin(t *testing.T) {
 	svc.RegisterSource(novers)
 	game.SourceIDs["novers"] = "g1"
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "a", SourceID: "novers", Name: "Mod A", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -265,7 +265,7 @@ func TestDoModUnlock_ClearsMarkerLeavesVersionIntact(t *testing.T) {
 	require.NoError(t, pm.SetModLock(game.ID, "default", "src", "a", "2.0"))
 
 	out := captureStdout(t, func() error {
-		return doModUnlock(svc, game, "a")
+		return doModUnlock(context.Background(), svc, game, "a")
 	})
 
 	assert.Contains(t, out, "✓ Mod A unlocked (update policy: notify)")
@@ -288,7 +288,7 @@ func TestDoModUnlock_AlreadyUnlocked_IdempotentSuccess(t *testing.T) {
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
 
 	out := captureStdout(t, func() error {
-		return doModUnlock(svc, game, "a")
+		return doModUnlock(context.Background(), svc, game, "a")
 	})
 
 	assert.Contains(t, out, "✓ Mod A unlocked (update policy: notify)")
@@ -309,7 +309,7 @@ func TestDoModUnlock_AlreadyUnlocked_IdempotentSuccess(t *testing.T) {
 // silently regress into writing a lock with an empty target.
 func TestDoModLock_NoVersion_MissingFromProfile_Errors(t *testing.T) {
 	svc, game, _ := setupDoModLockTest(t)
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -347,7 +347,7 @@ func TestDoModLock_NotInstalled_ModNotFound(t *testing.T) {
 func TestDoModUnlock_NotInstalled_ModNotFound(t *testing.T) {
 	svc, game, _ := setupDoModLockTest(t)
 
-	err := doModUnlock(svc, game, "missing")
+	err := doModUnlock(context.Background(), svc, game, "missing")
 
 	require.Error(t, err)
 	assert.Equal(t, "mod not found: missing", err.Error())

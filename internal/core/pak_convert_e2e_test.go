@@ -61,7 +61,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	// Deploy pakmod's raw pak BEFORE the first sync, mirroring the real
 	// ingest-then-first-sync window (TestPakInstallThenSyncNeverDoubleApplies)
 	// - so "raw link gone" below is a genuine transition, not "never existed".
-	installer, err := svc.GetInstallerForProfile(game, "default")
+	installer, err := svc.GetInstallerForProfile(context.Background(), game, "default")
 	require.NoError(t, err)
 	pakMod := &domain.Mod{ID: "pakmod", SourceID: "fake-compiler", GameID: game.ID, Version: "1.0"}
 	require.NoError(t, installer.Install(context.Background(), game, pakMod, "default"))
@@ -94,7 +94,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak deployed")
 
-	outcomes, ok := svc.MergedPakOutcomes(game, "default")
+	outcomes, ok := svc.MergedPakOutcomes(context.Background(), game, "default")
 	require.True(t, ok)
 	exmodOutcome, found := findOutcome(outcomes, "exmod")
 	require.True(t, found)
@@ -104,7 +104,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.True(t, pakOutcome.Converted)
 
 	// --- Step 2: toggle pakmod's conversion off ---
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "pakmod", game.ID, "default", false))
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "pakmod", game.ID, "default", false))
 	rec.lastSources = nil
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -121,13 +121,13 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak still exists (exmodz-only merge must still produce one)")
 
-	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
 	require.True(t, ok)
 	_, found = findOutcome(outcomes, "pakmod")
 	require.False(t, found, "opted-out: pakmod must not appear in the merge fingerprint (membership changed)")
 
 	// --- Step 3: toggle back on ---
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "pakmod", game.ID, "default", true))
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "pakmod", game.ID, "default", true))
 	rec.lastSources = nil
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -143,14 +143,14 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak still deployed")
 
-	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
 	require.True(t, ok)
 	pakOutcome, found = findOutcome(outcomes, "pakmod")
 	require.True(t, found, "re-opted-in: pakmod must appear in the merge fingerprint again")
 	require.True(t, pakOutcome.Converted)
 
 	// --- Step 4: disable pakmod entirely ---
-	require.NoError(t, svc.SetModEnabled("fake-compiler", "pakmod", game.ID, "default", false))
+	require.NoError(t, svc.SetModEnabled(context.Background(), "fake-compiler", "pakmod", game.ID, "default", false))
 	rec.lastSources = nil
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -158,7 +158,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.Len(t, rec.lastSources, 1, "a disabled mod must contribute nothing to the merge")
 	require.Equal(t, "fake-compiler:exmod", rec.lastSources[0].ModRef)
 
-	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
 	require.True(t, ok)
 	_, found = findOutcome(outcomes, "pakmod")
 	require.False(t, found, "a disabled mod must not appear in the merge fingerprint")
@@ -204,7 +204,7 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	require.Len(t, rec.lastSources, 1)
 	require.Equal(t, "exmodz", rec.lastSources[0].Kind, "MergeCompile must receive Kind set even for a pure-exmodz profile (#221 regression net)")
 
-	outcomes, ok := svc.MergedPakOutcomes(game, "default")
+	outcomes, ok := svc.MergedPakOutcomes(context.Background(), game, "default")
 	require.True(t, ok)
 	require.Len(t, outcomes, 1)
 	require.Equal(t, "exmodz", outcomes[0].Kind)
@@ -252,7 +252,7 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	// (verify's conversion_failed rows, status's conversion-failure counts)
 	// must NOT treat that legacy shape as a conversion failure - it predates
 	// pak conversion entirely (this profile has zero pak mods).
-	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
 	require.True(t, ok)
 	require.Len(t, outcomes, 1)
 	require.True(t, outcomes[0].Converted, "a pre-#221 legacy marker (Kind:\"\", Converted:false) must never report as a conversion failure")

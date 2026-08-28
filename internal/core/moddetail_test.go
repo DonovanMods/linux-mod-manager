@@ -39,7 +39,7 @@ func newModDetailTestService(t *testing.T) (*core.Service, *domain.Game, *mockSo
 func seedModDetailInstalled(t *testing.T, svc *core.Service, game *domain.Game, modID, version string) {
 	t.Helper()
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       modID,
 			SourceID: "src",
@@ -120,7 +120,7 @@ func TestModDetail_LockJoinedFromProfileYAML(t *testing.T) {
 func seedModDetailInstalledPak(t *testing.T, svc *core.Service, game *domain.Game, modID, version string, fileIDs []string, convertPaks bool) {
 	t.Helper()
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       modID,
 			SourceID: "src",
@@ -133,7 +133,7 @@ func seedModDetailInstalledPak(t *testing.T, svc *core.Service, game *domain.Gam
 		Enabled:      true,
 		FileIDs:      fileIDs,
 	}))
-	require.NoError(t, svc.SetModConvertPaks("src", modID, game.ID, "default", convertPaks))
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "src", modID, game.ID, "default", convertPaks))
 
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
@@ -235,7 +235,7 @@ func TestModDetail_DBErrorPropagates(t *testing.T) {
 	svc.RegisterSource(src)
 	src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       "a",
 			SourceID: "src",
@@ -257,7 +257,7 @@ func TestModDetail_DBErrorPropagates(t *testing.T) {
 	// Guard: the corruption must actually yield a real (non-not-found) error
 	// from the underlying lookup - otherwise a schema change could silently
 	// turn this into a passing-for-the-wrong-reason test.
-	_, gerr := svc.GetInstalledMod("src", "a", game.ID, "default")
+	_, gerr := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.Error(t, gerr)
 	require.NotErrorIs(t, gerr, domain.ErrModNotFound)
 

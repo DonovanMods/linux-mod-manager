@@ -60,14 +60,14 @@ func TestLockedMod_CheckMergedPakStaleness_NotBlockedByLock(t *testing.T) {
 	pm := svc.NewProfileManager()
 	require.NoError(t, pm.SetModLock(game.ID, "default", "fake-compiler", "bear-mount", ""))
 
-	upd, err := svc.CheckMergedPakStaleness(game, "default")
+	upd, err := svc.CheckMergedPakStaleness(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.NotNil(t, upd, "a never-yet-generated merged pak is stale regardless of a lock elsewhere in the profile")
 
 	_, err = svc.ApplyMergedPakRegen(context.Background(), game, "default", nil)
 	require.NoError(t, err)
 
-	upd, err = svc.CheckMergedPakStaleness(game, "default")
+	upd, err = svc.CheckMergedPakStaleness(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Nil(t, upd, "after applying, the locked mod's presence must not cause a spurious permanent-stale state")
 }

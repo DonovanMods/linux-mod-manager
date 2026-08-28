@@ -41,7 +41,7 @@ func seedConflictMod(t *testing.T, svc *core.Service, game *domain.Game, modID, 
 	for path, content := range files {
 		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", modID, "1.0", path, content))
 	}
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,

@@ -69,7 +69,7 @@ func seedConvertableMod(t *testing.T, svc *core.Service, game *domain.Game, modI
 func seedConvertableModWithFileIDs(t *testing.T, svc *core.Service, game *domain.Game, modID, name, version string, fileIDs []string) {
 	t.Helper()
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -95,7 +95,7 @@ func TestModConvertCommand(t *testing.T) {
 
 	// Convert off
 	out := captureStdout(t, func() error {
-		return doModConvert(svc, game, "a", false)
+		return doModConvert(context.Background(), svc, game, "a", false)
 	})
 	assert.Contains(t, out, "✓")
 	assert.Contains(t, out, "Mod A")
@@ -103,18 +103,18 @@ func TestModConvertCommand(t *testing.T) {
 	assert.Contains(t, out, "lmm deploy", "compile-mode game should mention deploy")
 
 	// Verify DB flag is false
-	installed, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
 	assert.False(t, installed.ConvertPaks)
 
 	// Convert back on
 	out = captureStdout(t, func() error {
-		return doModConvert(svc, game, "a", true)
+		return doModConvert(context.Background(), svc, game, "a", true)
 	})
 	assert.Contains(t, out, "conversion: on")
 
 	// Verify DB flag is true
-	installed, err = svc.GetInstalledMod("src", "a", game.ID, "default")
+	installed, err = svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
 	assert.True(t, installed.ConvertPaks)
 }
@@ -128,14 +128,14 @@ func TestModConvertCommand_NonCompileGame(t *testing.T) {
 	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
 
 	out := captureStdout(t, func() error {
-		return doModConvert(svc, game, "a", false)
+		return doModConvert(context.Background(), svc, game, "a", false)
 	})
 	assert.Contains(t, out, "conversion: off")
 	assert.Contains(t, out, "note:", "non-compile game must explain the flag has no effect")
 	assert.NotContains(t, out, "lmm deploy", "non-compile game must not mention deploy")
 
 	// Verify the flag still persists
-	installed, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
 	assert.False(t, installed.ConvertPaks)
 }
@@ -152,7 +152,7 @@ func TestModConvertCommand_ConvertDisabledGame(t *testing.T) {
 	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
 
 	out := captureStdout(t, func() error {
-		return doModConvert(svc, game, "a", true)
+		return doModConvert(context.Background(), svc, game, "a", true)
 	})
 	assert.Contains(t, out, "conversion: on")
 	assert.Contains(t, out, "note:", "convert-disabled compile game must explain the game-level flag")
@@ -160,7 +160,7 @@ func TestModConvertCommand_ConvertDisabledGame(t *testing.T) {
 	assert.NotContains(t, out, "lmm deploy", "convert-disabled game must not show the generic deploy hint")
 
 	// Verify the per-mod flag still persists despite the game-level gate.
-	installed, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
 	assert.True(t, installed.ConvertPaks)
 }
@@ -171,7 +171,7 @@ func TestModConvertCommand_ConvertDisabledGame(t *testing.T) {
 func TestModConvertCommand_NotInstalled(t *testing.T) {
 	svc, game, _ := setupDoModConvertTest(t)
 
-	err := doModConvert(svc, game, "missing", false)
+	err := doModConvert(context.Background(), svc, game, "missing", false)
 
 	require.Error(t, err)
 	assert.Equal(t, "mod not found: missing", err.Error())
@@ -193,7 +193,7 @@ func TestModConvertCommand_DBErrorWrapped(t *testing.T) {
 
 	require.NoError(t, svc.Close())
 
-	err := doModConvert(svc, game, "a", false)
+	err := doModConvert(context.Background(), svc, game, "a", false)
 	require.Error(t, err)
 	assert.NotEqual(t, "mod not found: a", err.Error(), "a genuine DB failure must not be reported as mod-not-found")
 	assert.Contains(t, err.Error(), "looking up mod a")
@@ -206,7 +206,7 @@ func TestListShowsConvert(t *testing.T) {
 	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
 
 	// Set one to off, leave the other on
-	require.NoError(t, svc.SetModConvertPaks("src", "a", game.ID, "default", false))
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "src", "a", game.ID, "default", false))
 
 	// Seed another mod with convert on (default)
 	seedConvertableMod(t, svc, game, "b", "Mod B", "1.0")
@@ -218,7 +218,7 @@ func TestListShowsConvert(t *testing.T) {
 		jsonOutput = true
 		verbose = false
 		defer func() { jsonOutput, verbose = oldJSON, oldVerbose }()
-		return doList(nil, svc, game)
+		return doList(context.Background(), nil, svc, game)
 	})
 
 	// JSON should include convert_paks for both mods (compile mode game)
@@ -232,7 +232,7 @@ func TestListShowsConvert(t *testing.T) {
 		jsonOutput = false
 		verbose = true
 		defer func() { jsonOutput, verbose = oldJSON, oldVerbose }()
-		return doList(nil, svc, game)
+		return doList(context.Background(), nil, svc, game)
 	})
 
 	// Verbose table should show CONVERT column
@@ -255,7 +255,7 @@ func TestListShowsConvert_ExmodzOnly(t *testing.T) {
 		oldJSON := jsonOutput
 		jsonOutput = true
 		defer func() { jsonOutput = oldJSON }()
-		return doList(nil, svc, game)
+		return doList(context.Background(), nil, svc, game)
 	})
 
 	// JSON should NOT include convert_paks for exmodz-only mod (omitempty)
@@ -269,7 +269,7 @@ func TestListShowsConvert_ExmodzOnly(t *testing.T) {
 		jsonOutput = false
 		verbose = true
 		defer func() { jsonOutput, verbose = oldJSON, oldVerbose }()
-		return doList(nil, svc, game)
+		return doList(context.Background(), nil, svc, game)
 	})
 
 	// Verbose table should show CONVERT column
@@ -286,7 +286,7 @@ func TestModShowIncludesConvert(t *testing.T) {
 	src.AddMod(&domain.Mod{ID: "a", SourceID: "src", GameID: game.ID}, []domain.DownloadableFile{
 		{ID: "f1", Version: "1.0", Category: "MAIN"},
 	})
-	require.NoError(t, svc.SetModConvertPaks("src", "a", game.ID, "default", false))
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "src", "a", game.ID, "default", false))
 
 	// Test JSON output
 	out := captureStdout(t, func() error {
@@ -373,7 +373,7 @@ func TestListShowsConvert_NonCompileGame_OmitsConvertPaks(t *testing.T) {
 		oldJSON := jsonOutput
 		jsonOutput = true
 		defer func() { jsonOutput = oldJSON }()
-		return doList(nil, svc, game)
+		return doList(context.Background(), nil, svc, game)
 	})
 
 	// convert_paks field must not appear at all (omitempty nil contract)
@@ -390,13 +390,13 @@ func TestModConvertCommand_ExmodzOnly(t *testing.T) {
 	// Create an exmodz-only mod: FileIDs with no pak entries
 	seedConvertableModWithFileIDs(t, svc, game, "a", "Exmodz Mod", "1.0", []string{"exmodz", "mesh.uasset"})
 
-	err := doModConvert(svc, game, "a", false)
+	err := doModConvert(context.Background(), svc, game, "a", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no pak merge source")
 	assert.Contains(t, err.Error(), "pak conversion does not apply")
 
 	// Verify the flag was NOT written to the DB (should remain true from seed)
-	installed, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
 	assert.True(t, installed.ConvertPaks, "exmodz-only mod rejection must not write the flag")
 }
@@ -411,14 +411,14 @@ func TestModConvertCommand_PakSource(t *testing.T) {
 
 	// Convert off should succeed
 	out := captureStdout(t, func() error {
-		return doModConvert(svc, game, "a", false)
+		return doModConvert(context.Background(), svc, game, "a", false)
 	})
 	assert.Contains(t, out, "✓")
 	assert.Contains(t, out, "Pak Mod")
 	assert.Contains(t, out, "conversion: off")
 
 	// Verify DB flag is false
-	installed, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
 	assert.False(t, installed.ConvertPaks)
 }

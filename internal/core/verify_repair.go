@@ -51,7 +51,7 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	if result.Checksum == "" {
 		return false, nil
 	}
-	if err := r.svc.SaveFileChecksum(mod.SourceID, mod.ID, r.game.ID, r.profile, fileID, result.Checksum); err != nil {
+	if err := r.svc.SaveFileChecksum(ctx, mod.SourceID, mod.ID, r.game.ID, r.profile, fileID, result.Checksum); err != nil {
 		return false, fmt.Errorf("saving checksum: %w", err)
 	}
 	return true, nil
@@ -203,7 +203,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 		return note, 0, fmt.Errorf("updating profile record: %w", err)
 	}
 
-	if err := r.svc.SetModVersion(mod.SourceID, mod.ID, mod.GameID, r.profile, effective); err != nil {
+	if err := r.svc.SetModVersion(ctx, mod.SourceID, mod.ID, mod.GameID, r.profile, effective); err != nil {
 		return note, 0, fmt.Errorf("saving installed mod: %w", err)
 	}
 	mod.Version = effective
@@ -227,7 +227,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 		}
 		if installErr != nil {
 			mod.Deployed = false
-			if saveErr := r.svc.SetModDeployed(mod.SourceID, mod.ID, mod.GameID, r.profile, false); saveErr != nil {
+			if saveErr := r.svc.SetModDeployed(ctx, mod.SourceID, mod.ID, mod.GameID, r.profile, false); saveErr != nil {
 				relinkErr = fmt.Errorf("relinking deployed files: %w (also failed to clear deployed flag: %v)", installErr, saveErr)
 			} else {
 				relinkErr = fmt.Errorf("relinking deployed files: %w", installErr)
@@ -409,7 +409,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 			continue
 		}
 
-		sibling, err := r.svc.GetInstalledMod(mod.SourceID, mod.ID, r.game.ID, p.Name)
+		sibling, err := r.svc.GetInstalledMod(ctx, mod.SourceID, mod.ID, r.game.ID, p.Name)
 		if err != nil {
 			if !errors.Is(err, domain.ErrModNotFound) {
 				// A genuine lookup failure (DB error, corruption, etc.) is
@@ -470,7 +470,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 			continue
 		}
 
-		if err := r.svc.SetModVersion(sibling.SourceID, sibling.ID, sibling.GameID, p.Name, effective); err != nil {
+		if err := r.svc.SetModVersion(ctx, sibling.SourceID, sibling.ID, sibling.GameID, p.Name, effective); err != nil {
 			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
 			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
 			continue
@@ -490,7 +490,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: undeploy %s in profile %s: %v", sibling.Name, p.Name, undeployErr)})
 			}
 			if installErr != nil {
-				if saveErr := r.svc.SetModDeployed(sibling.SourceID, sibling.ID, sibling.GameID, p.Name, false); saveErr != nil {
+				if saveErr := r.svc.SetModDeployed(ctx, sibling.SourceID, sibling.ID, sibling.GameID, p.Name, false); saveErr != nil {
 					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v; also failed to clear deployed flag: %v)", p.Name, installErr, saveErr))
 				} else {
 					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v)", p.Name, installErr))
@@ -572,7 +572,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 // (redownloadModFile's own precedent), and svc/game come from the
 // verifyRun receiver.
 func (r *verifyRun) relinkDeployedRow(ctx context.Context, profileName string, mod *domain.InstalledMod) (installErr, recordErr, undeployErr error) {
-	method, err := r.svc.GetEffectiveLinkMethod(r.game, profileName)
+	method, err := r.svc.GetEffectiveLinkMethod(ctx, r.game, profileName)
 	if err != nil {
 		return err, nil, nil
 	}
@@ -589,7 +589,7 @@ func (r *verifyRun) relinkDeployedRow(ctx context.Context, profileName string, m
 		return err, nil, undeployErr
 	}
 	if method != mod.LinkMethod {
-		if err := r.svc.SetModLinkMethod(mod.SourceID, mod.ID, mod.GameID, profileName, method); err != nil {
+		if err := r.svc.SetModLinkMethod(ctx, mod.SourceID, mod.ID, mod.GameID, profileName, method); err != nil {
 			return nil, err, undeployErr
 		}
 		mod.LinkMethod = method

@@ -42,7 +42,7 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 			}
 			require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), []byte("exmodz-"+modID+"-"+fileID)))
 		}
-		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 			Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID + " (display)", Version: version, GameID: game.ID},
 			ProfileName:  "default",
 			Enabled:      enabled,
@@ -67,7 +67,7 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "second-mod", Version: "1.0", FileIDs: []string{"exmodz-file", "pak-file"}}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "disabled-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
 
-	sources, err := svc.EnabledMergeSourcesForTest(game, "default")
+	sources, err := svc.EnabledMergeSourcesForTest(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Len(t, sources, 2, "disabled-mod excluded; second-mod's plain-pak fileID excluded")
 	require.Equal(t, "icarus:first-mod", sources[0].ModRef)
@@ -118,7 +118,7 @@ func seedEnabledExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, so
 	t.Helper()
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, cache.RetainedSourceName(fileID), exmodzContent))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -207,7 +207,7 @@ func TestSyncMergedPak_ZeroEnabledMods_UninstallsExistingPak(t *testing.T) {
 	_, err = os.Stat(deployedPath)
 	require.NoError(t, err, "precondition: the merged pak must exist before disabling")
 
-	require.NoError(t, svc.SetModEnabled("fake-compiler", "bear-mount", game.ID, "default", false))
+	require.NoError(t, svc.SetModEnabled(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", false))
 
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestSyncMergedPak_ZeroEnabledMods_SecondZeroSyncSucceeds(t *testing.T) {
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
-	require.NoError(t, svc.SetModEnabled("fake-compiler", "bear-mount", game.ID, "default", false))
+	require.NoError(t, svc.SetModEnabled(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", false))
 
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err, "first zero-pass: undeploys the pak and deletes the merged entry")
@@ -437,7 +437,7 @@ func TestReconcilePakManifests_TwoPakFileIDs_EachClaimsOwnMember(t *testing.T) {
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, mainFileID, nil))
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, liteFileID, nil))
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -548,7 +548,7 @@ func TestReconcilePakManifests_RawFallback_RestoresPrunedDeployableCopy(t *testi
 			// The #250 damaged shape: converted manifest, no deployable copy.
 			require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, tc.fileID, nil))
 
-			require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+			require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 				Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 				ProfileName:  "default",
 				Enabled:      true,
@@ -619,7 +619,7 @@ func TestSyncMergedPak_OptOutAfterPrunedConvertedPak_RestoresRawDeploy(t *testin
 	mergedDeployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
 	require.NoError(t, os.Symlink(gameCache.GetFilePath(game.ID, domain.SourceMerged, "merged-pak", "merged", "zzz_LMM_Merged_P.pak"), mergedDeployedPath))
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,

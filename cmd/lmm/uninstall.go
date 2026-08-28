@@ -74,13 +74,13 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 				return fmt.Errorf("source %q is not configured for %s", uninstallSource, game.Name)
 			}
 		}
-		installedMod, err = service.GetInstalledMod(uninstallSource, modID, game.ID, profileName)
+		installedMod, err = service.GetInstalledMod(ctx, uninstallSource, modID, game.ID, profileName)
 		if err != nil {
 			return fmt.Errorf("mod %s not found in profile %s (source: %s)", modID, profileName, uninstallSource)
 		}
 	} else {
 		// No source specified - search all installed mods by ID
-		allMods, err := service.GetInstalledMods(game.ID, profileName)
+		allMods, err := service.GetInstalledMods(ctx, game.ID, profileName)
 		if err != nil {
 			return fmt.Errorf("listing installed mods: %w", err)
 		}

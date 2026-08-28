@@ -25,7 +25,7 @@ func NewExtractor() *Extractor {
 
 // Extract extracts an archive to the destination directory
 // Supports .zip (native), .7z and .rar (via system 7z command)
-func (e *Extractor) Extract(archivePath, destDir string) error {
+func (e *Extractor) Extract(ctx context.Context, archivePath, destDir string) error {
 	if _, err := os.Stat(archivePath); err != nil {
 		return fmt.Errorf("accessing archive %q: %w", archivePath, err)
 	}
@@ -47,9 +47,9 @@ func (e *Extractor) Extract(archivePath, destDir string) error {
 
 	switch format {
 	case "zip":
-		return e.extractZip(archivePath, destDir)
+		return e.extractZip(ctx, archivePath, destDir)
 	case "7z", "rar":
-		return e.extract7z(archivePath, destDir)
+		return e.extract7z(ctx, archivePath, destDir)
 	default:
 		return fmt.Errorf("unsupported archive format: %s", format)
 	}
@@ -117,7 +117,7 @@ func (e *Extractor) detectFormatFromPath(path string) string {
 }
 
 // extractZip extracts a ZIP archive using Go's native archive/zip package
-func (e *Extractor) extractZip(archivePath, destDir string) (err error) {
+func (e *Extractor) extractZip(ctx context.Context, archivePath, destDir string) (err error) {
 	r, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return fmt.Errorf("opening zip: %w", err)
@@ -129,6 +129,9 @@ func (e *Extractor) extractZip(archivePath, destDir string) (err error) {
 	}()
 
 	for _, f := range r.File {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := e.extractZipFile(f, destDir); err != nil {
 			return err
 		}
@@ -248,13 +251,13 @@ const extract7zTimeout = 5 * time.Minute
 
 // extract7z extracts archives using the system 7z command.
 // This handles .7z and .rar files. A timeout prevents hangs on corrupted archives.
-func (e *Extractor) extract7z(archivePath, destDir string) error {
+func (e *Extractor) extract7z(ctx context.Context, archivePath, destDir string) error {
 	_, err := exec.LookPath("7z")
 	if err != nil {
 		return fmt.Errorf("7z command not found: install p7zip-full to extract .7z and .rar files")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), extract7zTimeout)
+	ctx, cancel := context.WithTimeout(ctx, extract7zTimeout)
 	defer cancel()
 
 	// The reserved-namespace check the native zip path makes per member (see

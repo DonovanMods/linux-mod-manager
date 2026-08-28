@@ -17,7 +17,7 @@ import (
 // setPolicy overwrites a seeded mod's update policy.
 func setPolicy(t *testing.T, svc *core.Service, game *domain.Game, modID string, policy domain.UpdatePolicy) {
 	t.Helper()
-	require.NoError(t, svc.SetModUpdatePolicy("src", modID, game.ID, "default", policy))
+	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "src", modID, game.ID, "default", policy))
 }
 
 // listVerbose runs doList with --verbose and returns stdout.
@@ -28,7 +28,7 @@ func listVerbose(t *testing.T, svc *core.Service, game *domain.Game, asJSON bool
 	t.Cleanup(func() { verbose, jsonOutput = oldVerbose, oldJSON })
 
 	return captureStdout(t, func() error {
-		return doList(&cobra.Command{}, svc, game)
+		return doList(context.Background(), &cobra.Command{}, svc, game)
 	})
 }
 
@@ -86,7 +86,7 @@ func TestApplySingleUpdate_PinnedSaysPinned(t *testing.T) {
 	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 	setPolicy(t, svc, game, "a", domain.UpdatePinned)
 
-	mod, err := svc.GetInstalledMod("src", "a", game.ID, "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
 
 	out := captureStdout(t, func() error {

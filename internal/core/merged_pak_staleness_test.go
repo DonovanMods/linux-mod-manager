@@ -16,7 +16,7 @@ func TestCheckMergedPakStaleness_NotStaleWhenUnchanged(t *testing.T) {
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
-	upd, err := svc.CheckMergedPakStaleness(game, "default")
+	upd, err := svc.CheckMergedPakStaleness(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Nil(t, upd, "an up-to-date merged pak must not be reported stale")
 }
@@ -29,7 +29,7 @@ func TestCheckMergedPakStaleness_StaleAfterModEnable(t *testing.T) {
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolf-mount", "1.0", "exmodz-file", []byte("wolf-bytes"))
 
-	upd, err := svc.CheckMergedPakStaleness(game, "default")
+	upd, err := svc.CheckMergedPakStaleness(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.NotNil(t, upd)
 	require.True(t, upd.RecompileNeeded)
@@ -39,7 +39,7 @@ func TestCheckMergedPakStaleness_StaleAfterModEnable(t *testing.T) {
 
 func TestCheckMergedPakStaleness_NilWhenNoMergedPakEverGenerated(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
-	upd, err := svc.CheckMergedPakStaleness(game, "default")
+	upd, err := svc.CheckMergedPakStaleness(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Nil(t, upd, "zero enabled exmodz mods means nothing to report - not an error, not a staleness row")
 }
@@ -48,7 +48,7 @@ func TestCheckMergedPakStaleness_NonCompileGame_Nil(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "skyrim-se", ModPath: t.TempDir(), DeployMode: domain.DeployExtract}
 	require.NoError(t, svc.AddGame(game))
-	upd, err := svc.CheckMergedPakStaleness(game, "default")
+	upd, err := svc.CheckMergedPakStaleness(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Nil(t, upd)
 }
@@ -151,7 +151,7 @@ func TestCheckMergedPakStaleness_MissingArtifact_ReportsStale(t *testing.T) {
 	deployedPath := filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
 	require.NoError(t, os.Remove(deployedPath))
 
-	upd, err := svc.CheckMergedPakStaleness(game, "default")
+	upd, err := svc.CheckMergedPakStaleness(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.NotNil(t, upd, "a missing deployed artifact must be reported stale even though the fingerprint hasn't changed")
 	require.True(t, upd.RecompileNeeded)

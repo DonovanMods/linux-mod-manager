@@ -146,7 +146,7 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 	result := &VerifyResult{}
 	r := &verifyRun{ctx: ctx, svc: s, game: game, profile: profile, opts: opts, emit: progress, result: result}
 
-	files, err := s.GetFilesWithChecksums(game.ID, profile)
+	files, err := s.GetFilesWithChecksums(ctx, game.ID, profile)
 	if err != nil {
 		return nil, fmt.Errorf("getting files: %w", err)
 	}
@@ -166,7 +166,11 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 		return result, nil
 	}
 
-	r.fileCountPrePass(files)
+	if err := r.fileCountPrePass(files); err != nil {
+		// Cancelled mid-pass: return the partial result already
+		// accumulated, same contract Task 3's brief specifies.
+		return result, err
+	}
 
 	// #97 (Task 8 of the original CLI): load the profile once, up front, so
 	// the version pass below can look up each ref's lock state
@@ -176,13 +180,17 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 	// without an extra guard.
 	prof, _ := config.LoadProfile(s.ConfigDir(), game.ID, profile)
 
-	installedMods, err := s.GetInstalledMods(game.ID, profile)
+	installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 
 	r.mergedPakStalenessPass()
-	r.conversionOutcomesPass(installedMods)
+	if err := r.conversionOutcomesPass(installedMods); err != nil {
+		// Cancelled mid-pass: return the partial result already
+		// accumulated, same contract Task 3's brief specifies.
+		return result, err
+	}
 
 	if err := r.versionPass(installedMods, prof); err != nil {
 		// Cancelled mid-pass: return the partial result already
@@ -190,7 +198,11 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 		return result, err
 	}
 
-	r.perFileWalk(files)
+	if err := r.perFileWalk(files); err != nil {
+		// Cancelled mid-pass: return the partial result already
+		// accumulated, same contract Task 3's brief specifies.
+		return result, err
+	}
 
 	// #224 Task 6: --fix's merged-pak resync and the deploy-convergence
 	// sweep both close out the run, in that order - ported verbatim from
@@ -277,7 +289,7 @@ func (r *verifyRun) convergencePass() {
 // cache entry exists but is empty (0 files) despite the DB recording more
 // than zero expected files. Runs before perFileWalk, matching the CLI's
 // current phase order.
-func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
+func (r *verifyRun) fileCountPrePass(files []DeployedFile) error {
 	fileCountByMod := make(map[string]int)
 	for _, f := range files {
 		key := domain.ModKey(f.SourceID, f.ModID)
@@ -290,11 +302,14 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
 	gameCache := r.svc.GetGameCache(r.game)
 	reportedMismatch := make(map[string]bool)
 	for key, expectedCount := range fileCountByMod {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
 		if expectedCount == 0 {
 			continue
 		}
 		sourceID, modID, _ := strings.Cut(key, ":")
-		mod, err := r.svc.GetInstalledMod(sourceID, modID, r.game.ID, r.profile)
+		mod, err := r.svc.GetInstalledMod(r.ctx, sourceID, modID, r.game.ID, r.profile)
 		if err != nil {
 			// A not-installed mod (an orphaned checksum row - perFileWalk
 			// below reports this exact case itself, as "skipped") is a
@@ -345,6 +360,7 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
 			}
 		}
 	}
+	return nil
 }
 
 // perFileWalk ports cmd/lmm/verify.go's main per-file loop verbatim
@@ -356,15 +372,18 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) {
 // CHECKSUM/NEEDS REINGEST --fix redownload repairs inline at each site;
 // Task 5 adds the one repair this walk does NOT own (version_mismatch's,
 // in versionPass below).
-func (r *verifyRun) perFileWalk(files []DeployedFile) {
+func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 	gameCache := r.svc.GetGameCache(r.game)
 	for _, f := range files {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
 		if r.opts.ModFilter != "" && f.ModID != r.opts.ModFilter {
 			continue
 		}
 		r.result.Checked++
 
-		mod, err := r.svc.GetInstalledMod(f.SourceID, f.ModID, r.game.ID, r.profile)
+		mod, err := r.svc.GetInstalledMod(r.ctx, f.SourceID, f.ModID, r.game.ID, r.profile)
 		if err != nil {
 			r.result.Warnings++
 			r.finding(VerifyFinding{ModID: f.ModID, FileID: f.FileID, Status: "skipped"}, VerifyEvent{})
@@ -378,7 +397,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 		// detection lives (verify must not reimplement it). Ported from
 		// cmd/lmm/verify.go's doVerify (originally lines 696-753), including
 		// the --fix re-ingest block below (#224 Task 4).
-		need, nerr := r.svc.PakNeedsReingest(r.game, mod, f.FileID)
+		need, nerr := r.svc.PakNeedsReingest(r.ctx, r.game, mod, f.FileID)
 		if nerr != nil {
 			// A real check failure (a Stat/ListFiles error, not "nothing
 			// ingested yet") - not counted as a warning and not fatal to
@@ -487,6 +506,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) {
 		// Cache exists and checksum stored - consider OK.
 		r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{})
 	}
+	return nil
 }
 
 // mergedPakStalenessPass ports cmd/lmm/verify.go's merged-pak staleness
@@ -501,7 +521,7 @@ func (r *verifyRun) mergedPakStalenessPass() {
 		return
 	}
 
-	staleUpd, serr := r.svc.CheckMergedPakStaleness(r.game, r.profile)
+	staleUpd, serr := r.svc.CheckMergedPakStaleness(r.ctx, r.game, r.profile)
 	if serr != nil {
 		r.result.Warnings++
 		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("could not check merged pak staleness: %v", serr)}, VerifyEvent{})
@@ -522,9 +542,9 @@ func (r *verifyRun) mergedPakStalenessPass() {
 // recording a PRIOR conversion failure for one of its contributing mods. A
 // warning, not an issue - deploying raw is a documented, working fallback,
 // not corruption.
-func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) {
+func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) error {
 	if r.game.DeployMode != domain.DeployCompile {
-		return
+		return nil
 	}
 
 	modNames := make(map[string]string, len(installedMods))
@@ -532,11 +552,18 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 		modNames[domain.ModKey(m.SourceID, m.ID)] = m.Name
 	}
 
-	outcomes, ok := r.svc.MergedPakOutcomes(r.game, r.profile)
+	outcomes, ok := r.svc.MergedPakOutcomes(r.ctx, r.game, r.profile)
 	if !ok {
-		return
+		return nil
 	}
 	for _, entry := range outcomes {
+		// The check belongs to the loop that EMITS findings, not to the
+		// in-memory name-map build above (final-review Minor 2): a pass with
+		// no installed mods still walks the outcomes, and this is the loop a
+		// reader expects the cancellation guard to protect.
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
 		if entry.Converted {
 			continue
 		}
@@ -553,6 +580,7 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 		r.result.Warnings++
 		r.finding(VerifyFinding{ModID: entry.ModID, ModName: name, Status: "conversion_failed", Note: entry.FailReason}, VerifyEvent{})
 	}
+	return nil
 }
 
 // versionPass ports cmd/lmm/verify.go's per-mod version-record check

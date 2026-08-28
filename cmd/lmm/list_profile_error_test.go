@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,7 +34,7 @@ func TestDoList_InvalidProfileLinkMethod_FailsLoud(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(profilePath, append(data, []byte("\nlink_method: bogus\n")...), 0o644))
 
-	err = doList(&cobra.Command{}, svc, game)
+	err = doList(context.Background(), &cobra.Command{}, svc, game)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "link_method")
 	assert.Contains(t, err.Error(), "bogus")
@@ -50,7 +51,7 @@ func TestDoList_MissingProfileYAML_StillLists(t *testing.T) {
 	listProfile, listProfiles = "", false
 	t.Cleanup(func() { listProfile, listProfiles = oldListProfile, oldListProfiles })
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,

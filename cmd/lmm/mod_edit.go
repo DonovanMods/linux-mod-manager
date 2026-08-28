@@ -77,7 +77,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 
 	// Find the mod - search all sources
 	var installedMod *domain.InstalledMod
-	allMods, err := service.GetInstalledMods(game.ID, profileName)
+	allMods, err := service.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -194,7 +194,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 		}
 
 		// Delete old record
-		if err := service.DeleteInstalledMod(oldSourceID, oldModID, game.ID, profileName); err != nil {
+		if err := service.DeleteInstalledMod(ctx, oldSourceID, oldModID, game.ID, profileName); err != nil {
 			return fmt.Errorf("removing old record: %w", err)
 		}
 
@@ -223,7 +223,7 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 	}
 
 	// Save updated mod
-	if err := service.SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(ctx, installedMod); err != nil {
 		return fmt.Errorf("saving changes: %w", err)
 	}
 

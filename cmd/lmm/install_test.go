@@ -715,7 +715,7 @@ func TestDoInstall_Verbose_HappyPath_PrintsExpectedOutput(t *testing.T) {
 	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	assert.NoError(t, err, "file should be deployed to the game directory")
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, installed.Enabled)
 	assert.True(t, installed.Deployed)
@@ -753,9 +753,9 @@ func TestDoInstall_DependencyConfirmPrompt_DeclinedYieldsZeroMutations(t *testin
 	assert.Contains(t, out, "2. Mod One v1.0 (ID: mod1) [target]\n")
 	assert.Contains(t, out, "Install 2 mod(s)? [Y/n]: ")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.Error(t, dbErr, "declining must result in zero mutations")
-	_, dbErr = svc.GetInstalledMod("test-src", "dep1", "g1", "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), "test-src", "dep1", "g1", "default")
 	assert.Error(t, dbErr, "declining must result in zero mutations")
 }
 
@@ -809,9 +809,9 @@ func TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary(t *testi
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	assert.NoError(t, err, "primary file must be deployed")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "dep1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "dep1", "g1", "default")
 	assert.NoError(t, dbErr, "dependency must be installed")
-	_, dbErr = svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.NoError(t, dbErr, "primary must be installed")
 }
 
@@ -825,7 +825,7 @@ func TestDoInstall_DependencyPath_ReinstallPrintsRemovingPreviousInstallation(t 
 	svc, game, src := setupDoInstallTest(t)
 	installYes = true
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -881,9 +881,9 @@ func TestDoInstall_DependencyPath_DownloadFailureUsesErrorNotSkippedWording(t *t
 	assert.NotContains(t, out, "Skipped: download failed")
 	assert.Contains(t, out, "\n--- Summary ---\nInstalled: 1\nFailed: 1 (Dep One)\n")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "dep1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "dep1", "g1", "default")
 	assert.Error(t, dbErr, "the failed dependency must not be saved")
-	_, dbErr = svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.NoError(t, dbErr, "the primary must still install despite the dependency's failure")
 }
 
@@ -912,7 +912,7 @@ func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
 
 	// The primary's own file ("mod1.esp") conflicts with an already
 	// installed and deployed, unrelated mod ("other").
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -961,7 +961,7 @@ func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
 	assert.NotContains(t, out, "Continue? [y/N]", "the BATCH path must never show the blocking conflict prompt")
 	assert.Contains(t, out, "⚠ 1 file conflict(s) - will overwrite", "the conflict must still surface as a non-blocking inline warning")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.NoError(t, dbErr, "the primary must still install despite the conflict")
 }
 
@@ -974,7 +974,7 @@ func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
 func seedConflictingMod(t *testing.T, svc *core.Service, game *domain.Game) {
 	t.Helper()
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "shared.esp", []byte("o")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -1027,7 +1027,7 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		// InstallOptions.ConfirmConflicts' doc comment), but nothing
 		// deployed or saved.
 		assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the download must remain cached on decline, matching base's exact decline state")
-		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.Error(t, dbErr, "declining must leave zero DB mutations")
 	})
 
@@ -1046,7 +1046,7 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		assert.NotContains(t, out, "File conflicts detected")
 		assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
 
-		_, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.NoError(t, err)
 	})
 }
@@ -1065,7 +1065,7 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 	seedOtherOwningSharedFile := func(t *testing.T, svc *core.Service, game *domain.Game) {
 		t.Helper()
 		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "shared.esp", []byte("original-other-content")))
-		require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 			Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: "g1"},
 			ProfileName:  "default",
 			UpdatePolicy: domain.UpdateNotify,
@@ -1103,7 +1103,7 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		assert.NotContains(t, out, "Deploying to game directory...")
 
 		assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the download must remain cached on decline")
-		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.Error(t, dbErr)
 
 		content, readErr := os.ReadFile(filepath.Join(game.ModPath, "shared.esp"))
@@ -1135,7 +1135,7 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		require.NoError(t, readErr)
 		assert.Equal(t, "new-mod1-content", string(content))
 
-		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.NoError(t, dbErr)
 	})
 }
@@ -1164,7 +1164,7 @@ func TestDoInstall_ShowArchivedFlag_ThreadsThroughRefit(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no downloadable files available for this mod")
 
-		_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.Error(t, dbErr)
 	})
 
@@ -1181,7 +1181,7 @@ func TestDoInstall_ShowArchivedFlag_ThreadsThroughRefit(t *testing.T) {
 		_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 		assert.NoError(t, err, "the archived file must actually be deployed")
 
-		installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"old"}, installed.FileIDs)
 	})
@@ -1210,7 +1210,7 @@ func TestDoInstall_VersionFlag_InstallsRequestedVersion(t *testing.T) {
 
 	require.NoError(t, doInstall(context.Background(), svc, game, nil))
 
-	im, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	im, err := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", im.Version, "recorded version must be the requested one (#94 invariant)")
 	assert.Equal(t, []string{"9"}, im.FileIDs)
@@ -1292,12 +1292,12 @@ func TestDoInstall_VersionFlag_WithDependency_NamedModRecordedAtRequestedVersion
 
 	require.NoError(t, doInstall(context.Background(), svc, game, nil))
 
-	primary, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	primary, err := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", primary.Version, "the named mod must install the REQUESTED version, not the mod's latest")
 	assert.Equal(t, []string{"9"}, primary.FileIDs)
 
-	depInstalled, err := svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	depInstalled, err := svc.GetInstalledMod(context.Background(), fake.id, "dep1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", depInstalled.Version, "a dependency is untouched by --version - it installs at its own latest (#96 decision 6)")
 }
@@ -1335,12 +1335,12 @@ func TestDoInstall_FileFlag_WithDependency_HonoredForNamedMod(t *testing.T) {
 
 	require.NoError(t, doInstall(context.Background(), svc, game, nil))
 
-	primary, err := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	primary, err := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"9"}, primary.FileIDs, "--file must pin the named mod's file even on the dependency (batch) path")
 	assert.Equal(t, "1.0", primary.Version)
 
-	depInstalled, err := svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	depInstalled, err := svc.GetInstalledMod(context.Background(), fake.id, "dep1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dep-file"}, depInstalled.FileIDs, "a dependency is untouched by --file")
 }
@@ -1367,7 +1367,7 @@ func TestDoInstall_FileFlag_OnlyCommasOrWhitespace_FailsFast(t *testing.T) {
 	assert.Contains(t, err.Error(), "--file")
 	assert.Contains(t, err.Error(), "no file IDs")
 
-	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	assert.Error(t, dbErr, "nothing may be installed off a no-op --file")
 }
 
@@ -1399,9 +1399,9 @@ func TestDoInstall_FileFlag_WithDependency_UnknownFileAbortsWholeInstall(t *test
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "file ID 10 not found")
 
-	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	assert.Error(t, dbErr, "the named mod must not be installed")
-	_, dbErr = svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), fake.id, "dep1", game.ID, "default")
 	assert.Error(t, dbErr, "no dependency may be installed - the file pin aborts before any mod is touched")
 }
 
@@ -1433,9 +1433,9 @@ func TestDoInstall_VersionFlag_WithDependency_UnknownVersionAbortsWholeInstall(t
 	assert.Contains(t, err.Error(), `version "2.0"`)
 	assert.Contains(t, err.Error(), "available: 1.5")
 
-	_, dbErr := svc.GetInstalledMod(fake.id, "mod1", game.ID, "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), fake.id, "mod1", game.ID, "default")
 	assert.Error(t, dbErr, "the named mod must not be installed")
-	_, dbErr = svc.GetInstalledMod(fake.id, "dep1", game.ID, "default")
+	_, dbErr = svc.GetInstalledMod(context.Background(), fake.id, "dep1", game.ID, "default")
 	assert.Error(t, dbErr, "no dependency should be installed either - the version check aborts before any mod is touched")
 }
 
@@ -1464,7 +1464,7 @@ func TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError(t *testin
 	assert.Contains(t, err.Error(), "download failed")
 	assert.Contains(t, stderr, "Warning: install.before_all hook failed (forced): ")
 
-	_, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.Error(t, dbErr)
 }
 
@@ -1485,7 +1485,7 @@ func TestBatchInstallMods_StampsSelectedFileVersion(t *testing.T) {
 
 	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the mod's latest version")
 }
@@ -1534,7 +1534,7 @@ func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *te
 	// Zero side effects: still deployed, no new download, DB and ref intact.
 	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 	assert.Equal(t, servedBefore, src.served.Load(), "no download may be served for the refused install")
-	installed, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	installed, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, dbErr)
 	assert.Equal(t, "1.0", installed.Version, "the DB row must stay at the locked version")
 	profile, pErr := pm.Get("g1", "default")
@@ -1588,7 +1588,7 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 	assert.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 	assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"),
 		"the lock target's cache entry must survive a fetch failure")
-	installed, dbErr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	installed, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, dbErr)
 	assert.Equal(t, "1.0", installed.Version)
 }

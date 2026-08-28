@@ -133,7 +133,7 @@ func TestInstaller_IsInstalled(t *testing.T) {
 	installer := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 
 	// Not installed yet
-	installed, err := installer.IsInstalled(game, mod)
+	installed, err := installer.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.False(t, installed)
 
@@ -142,7 +142,7 @@ func TestInstaller_IsInstalled(t *testing.T) {
 	require.NoError(t, err)
 
 	// Now installed
-	installed, err = installer.IsInstalled(game, mod)
+	installed, err = installer.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.True(t, installed)
 }
@@ -177,7 +177,7 @@ func TestInstaller_IsInstalled_PartialInstallReturnsFalse(t *testing.T) {
 	require.NoError(t, os.Symlink(aSrc, aDst))
 
 	// IsInstalled must return false when not all files are deployed
-	installed, err := installer.IsInstalled(game, mod)
+	installed, err := installer.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.False(t, installed, "partial install should not report as installed")
 }
@@ -391,13 +391,13 @@ func TestInstaller_Uninstall_AbsentCacheEntry_CleansTrackingWithoutError(t *test
 
 	// A stale tracking row left behind by a deploy whose cache entry has
 	// since been removed out from under it.
-	require.NoError(t, database.SaveDeployedFile("g", "default", "a.esp", "src", "1"))
+	require.NoError(t, database.SaveDeployedFile(context.Background(), "g", "default", "a.esp", "src", "1"))
 
 	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), database)
 	require.NoError(t, inst.Uninstall(context.Background(), game, mod, "default"),
 		"an absent cache entry means nothing to undeploy, not an error")
 
-	rows, err := database.GetDeployedFilesForMod("g", "default", "src", "1")
+	rows, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "1")
 	require.NoError(t, err)
 	require.Empty(t, rows, "stale tracking rows must still be cleared when the cache entry is gone")
 }
@@ -423,7 +423,7 @@ func TestInstaller_Uninstall_AbsentCacheEntry_RemovesTrackedDeployedFiles(t *tes
 	deployedPath := filepath.Join(gameDir, "data", "a.esp")
 	require.NoError(t, os.MkdirAll(filepath.Dir(deployedPath), 0755))
 	require.NoError(t, os.WriteFile(deployedPath, []byte("copied"), 0644))
-	require.NoError(t, database.SaveDeployedFile("g", "default", "data/a.esp", "src", "1"))
+	require.NoError(t, database.SaveDeployedFile(context.Background(), "g", "default", "data/a.esp", "src", "1"))
 
 	inst := core.NewInstaller(modCache, linker.New(domain.LinkCopy), database)
 	require.NoError(t, inst.Uninstall(context.Background(), game, mod, "default"))
@@ -431,7 +431,7 @@ func TestInstaller_Uninstall_AbsentCacheEntry_RemovesTrackedDeployedFiles(t *tes
 	_, err = os.Stat(deployedPath)
 	require.True(t, os.IsNotExist(err), "the tracked deployed file must be removed via the DB fallback")
 
-	rows, err := database.GetDeployedFilesForMod("g", "default", "src", "1")
+	rows, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "1")
 	require.NoError(t, err)
 	require.Empty(t, rows)
 }
@@ -467,7 +467,7 @@ func TestInstaller_Install_DeployFailureRollsBackAndClearsDB(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "b.esp should not exist")
 
 	// DB should have no records for this mod
-	paths, err := database.GetDeployedFilesForMod("g", "default", "src", "1")
+	paths, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "1")
 	require.NoError(t, err)
 	assert.Empty(t, paths, "DB should have no deployed file records for this mod")
 }
@@ -777,7 +777,7 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_UndeploysSupersededSoleMembers(
 	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
 	assert.NoError(t, err, "the superseding file's member must be deployed")
 
-	rows, err := database.GetDeployedFilesForMod("g", "default", "src", "mod")
+	rows, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "mod")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"shared.esp", "b.esp"}, rows,
 		"the superseded member's deployed-files row must be removed like any other obsolete file's")
@@ -857,7 +857,7 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_ReverseRestoresOldDeployment(t 
 	seedSameDirNewFile(t, modCache, game, mod, false)
 
 	require.NoError(t, inst.ReplaceForUpdate(context.Background(), game, mod, mod, "default", []string{"fileA"}, []string{"fileB"}))
-	rows, err := database.GetDeployedFilesForMod("g", "default", "src", "mod")
+	rows, err := database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "mod")
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"shared.esp", "b.esp"}, rows)
 
@@ -870,7 +870,7 @@ func TestInstaller_ReplaceForUpdate_SameCacheDir_ReverseRestoresOldDeployment(t 
 	_, err = os.Lstat(filepath.Join(gameDir, "b.esp"))
 	assert.True(t, os.IsNotExist(err), "the uncommitted new file's sole member must be removed")
 
-	rows, err = database.GetDeployedFilesForMod("g", "default", "src", "mod")
+	rows, err = database.GetDeployedFilesForMod(context.Background(), "g", "default", "src", "mod")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a.esp", "shared.esp"}, rows,
 		"the compensated deployed-file rows must describe the restored OLD deployment")
@@ -1047,7 +1047,7 @@ func TestInstaller_Install_SkipsUnclaimedFiles(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "unclaimed stale pak must not deploy")
 
 	// Deployed-file views agree with the deploy decision.
-	deployed, err := inst.GetDeployedFiles(game, mod)
+	deployed, err := inst.GetDeployedFiles(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.Empty(t, deployed)
 }
@@ -1069,7 +1069,7 @@ func TestInstaller_Install_LegacyBareMarker_DeploysUnion(t *testing.T) {
 	_, err := os.Lstat(filepath.Join(gameDir, "MorePoints_P.pak"))
 	assert.NoError(t, err, "legacy entry must keep deploying its pak")
 
-	installed, err := inst.IsInstalled(game, mod)
+	installed, err := inst.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.True(t, installed)
 }
@@ -1092,7 +1092,7 @@ func TestInstaller_IsInstalled_RetainOnlyEntry(t *testing.T) {
 	mod := &domain.Mod{ID: "m1", SourceID: "icarus", Version: "1.4", GameID: "icarus"}
 	inst := core.NewInstaller(modCache, linker.New(domain.LinkSymlink), nil)
 
-	installed, err := inst.IsInstalled(game, mod)
+	installed, err := inst.IsInstalled(context.Background(), game, mod)
 	require.NoError(t, err)
 	assert.False(t, installed, "empty deployable set keeps IsInstalled's len==0 false answer")
 }

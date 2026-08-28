@@ -107,7 +107,7 @@ func TestApplySingleUpdate_JSON(t *testing.T) {
 		svc, game, _ := setupDoUpdateTest(t)
 		mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
 		mod.UpdatePolicy = domain.UpdatePinned
-		require.NoError(t, svc.SaveInstalledMod(mod))
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), mod))
 
 		out := captureStdout(t, func() error {
 			return applySingleUpdate(context.Background(), svc, game, mod, "default")
@@ -145,7 +145,7 @@ func TestApplySingleUpdate_JSON(t *testing.T) {
 		assert.Equal(t, "Fixed bugs.", doc.Changelog, "JSON carries the cleaned changelog, not raw HTML")
 		assert.Equal(t, "available", doc.Status)
 
-		updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		require.NoError(t, err)
 		assert.Equal(t, "1.0", updated.Version, "dry-run must not mutate anything")
 	})

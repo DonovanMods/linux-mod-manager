@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,7 +30,7 @@ func TestCopyDir_FollowsSymlinkedSubdir(t *testing.T) {
 	// which is the layout that triggered EISDIR before this fix.
 	require.NoError(t, os.Symlink(real, filepath.Join(src, "assets")))
 
-	err := copyDir(src, dst)
+	err := copyDir(context.Background(), src, dst)
 	require.NoError(t, err, "copying a nested dir-symlink must not fail with EISDIR")
 
 	got, err := os.ReadFile(filepath.Join(dst, "assets", "texture.dds"))
@@ -52,7 +53,7 @@ func TestCopyDir_DetectsSymlinkCycle(t *testing.T) {
 	src := t.TempDir()
 	require.NoError(t, os.Symlink(src, filepath.Join(src, "loop")))
 
-	err := copyDir(src, filepath.Join(t.TempDir(), "dst"))
+	err := copyDir(context.Background(), src, filepath.Join(t.TempDir(), "dst"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cycle")
 }
@@ -75,7 +76,7 @@ func TestCopyDir_RefusesNestedDirSymlinkEscapingRoot(t *testing.T) {
 	require.NoError(t, os.Symlink(outside, filepath.Join(src, "escape-link")))
 	require.NoError(t, os.WriteFile(filepath.Join(src, "mod.info"), []byte("info"), 0644))
 
-	err := copyDir(src, dst)
+	err := copyDir(context.Background(), src, dst)
 	require.Error(t, err, "a nested dir symlink escaping the copy root must fail the copy, not silently follow")
 	assert.Contains(t, err.Error(), "escape-link", "error should name the offending entry")
 
@@ -99,7 +100,7 @@ func TestCopyDir_RefusesNestedFileSymlinkEscapingRoot(t *testing.T) {
 
 	require.NoError(t, os.Symlink(outsideFile, filepath.Join(src, "sneaky.conf")))
 
-	err := copyDir(src, dst)
+	err := copyDir(context.Background(), src, dst)
 	require.Error(t, err, "a nested file symlink escaping the copy root must fail the copy")
 	assert.Contains(t, err.Error(), "sneaky.conf", "error should name the offending entry")
 
@@ -119,7 +120,7 @@ func TestCopyDir_TopLevelSymlinkedRootStillCopies(t *testing.T) {
 	require.NoError(t, os.Symlink(real, linkedRoot))
 
 	dst := filepath.Join(t.TempDir(), "dst")
-	err := copyDir(linkedRoot, dst)
+	err := copyDir(context.Background(), linkedRoot, dst)
 	require.NoError(t, err, "the copy root itself being a symlink must still work")
 
 	got, err := os.ReadFile(filepath.Join(dst, "mod.info"))

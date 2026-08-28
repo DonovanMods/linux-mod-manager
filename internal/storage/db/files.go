@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -23,8 +24,8 @@ type FileConflict struct {
 
 // SaveDeployedFile records that a file is deployed by a specific mod.
 // Uses upsert to handle overwrites (new mod takes ownership).
-func (d *DB) SaveDeployedFile(gameID, profileName, relativePath, sourceID, modID string) error {
-	_, err := d.Exec(`
+func (d *DB) SaveDeployedFile(ctx context.Context, gameID, profileName, relativePath, sourceID, modID string) error {
+	_, err := d.ExecContext(ctx, `
 		INSERT INTO deployed_files (game_id, profile_name, relative_path, source_id, mod_id)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(game_id, profile_name, relative_path) DO UPDATE SET
@@ -53,9 +54,9 @@ func (d *DB) SaveDeployedFile(gameID, profileName, relativePath, sourceID, modID
 // Selecting the actual column keeps the declared-type conversion intact and
 // is equivalent to MAX for this query shape (both scoped to one game/profile,
 // ORDER BY DESC LIMIT 1 is exactly "the row with the largest deployed_at").
-func (d *DB) GetLastDeployTime(gameID, profileName string) (*time.Time, error) {
+func (d *DB) GetLastDeployTime(ctx context.Context, gameID, profileName string) (*time.Time, error) {
 	var deployedAt time.Time
-	err := d.QueryRow(`
+	err := d.QueryRowContext(ctx, `
 		SELECT deployed_at FROM deployed_files
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY deployed_at DESC
@@ -72,9 +73,9 @@ func (d *DB) GetLastDeployTime(gameID, profileName string) (*time.Time, error) {
 
 // GetFileOwner returns the mod that owns a specific file path.
 // Returns nil if no mod owns the file.
-func (d *DB) GetFileOwner(gameID, profileName, relativePath string) (*FileOwner, error) {
+func (d *DB) GetFileOwner(ctx context.Context, gameID, profileName, relativePath string) (*FileOwner, error) {
 	var owner FileOwner
-	err := d.QueryRow(`
+	err := d.QueryRowContext(ctx, `
 		SELECT source_id, mod_id FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND relative_path = ?
 	`, gameID, profileName, relativePath).Scan(&owner.SourceID, &owner.ModID)
@@ -88,8 +89,8 @@ func (d *DB) GetFileOwner(gameID, profileName, relativePath string) (*FileOwner,
 }
 
 // DeleteDeployedFiles removes all deployed file records for a specific mod.
-func (d *DB) DeleteDeployedFiles(gameID, profileName, sourceID, modID string) error {
-	_, err := d.Exec(`
+func (d *DB) DeleteDeployedFiles(ctx context.Context, gameID, profileName, sourceID, modID string) error {
+	_, err := d.ExecContext(ctx, `
 		DELETE FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
 	`, gameID, profileName, sourceID, modID)
@@ -103,8 +104,8 @@ func (d *DB) DeleteDeployedFiles(gameID, profileName, sourceID, modID string) er
 // row that does not exist is a silent no-op - convergence (#168/#212) calls
 // this for paths it just undeployed, and a row may already be gone when the
 // path was attributed only by a dangling link.
-func (d *DB) DeleteDeployedFile(gameID, profileName, relativePath string) error {
-	_, err := d.Exec(`
+func (d *DB) DeleteDeployedFile(ctx context.Context, gameID, profileName, relativePath string) error {
+	_, err := d.ExecContext(ctx, `
 		DELETE FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND relative_path = ?`,
 		gameID, profileName, relativePath)
@@ -115,8 +116,8 @@ func (d *DB) DeleteDeployedFile(gameID, profileName, relativePath string) error 
 }
 
 // GetDeployedFilesForMod returns all file paths deployed by a specific mod.
-func (d *DB) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string) (paths []string, err error) {
-	rows, err := d.Query(`
+func (d *DB) GetDeployedFilesForMod(ctx context.Context, gameID, profileName, sourceID, modID string) (paths []string, err error) {
+	rows, err := d.QueryContext(ctx, `
 		SELECT relative_path FROM deployed_files
 		WHERE game_id = ? AND profile_name = ? AND source_id = ? AND mod_id = ?
 		ORDER BY relative_path
@@ -142,7 +143,7 @@ func (d *DB) GetDeployedFilesForMod(gameID, profileName, sourceID, modID string)
 
 // CheckFileConflicts checks which of the given paths are already owned by other mods.
 // Returns a slice of conflicts (empty if no conflicts).
-func (d *DB) CheckFileConflicts(gameID, profileName string, paths []string) (conflicts []FileConflict, err error) {
+func (d *DB) CheckFileConflicts(ctx context.Context, gameID, profileName string, paths []string) (conflicts []FileConflict, err error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
@@ -162,7 +163,7 @@ func (d *DB) CheckFileConflicts(gameID, profileName string, paths []string) (con
 		ORDER BY relative_path
 	`, strings.Join(placeholders, ","))
 
-	rows, err := d.Query(query, args...)
+	rows, err := d.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("checking conflicts: %w", err)
 	}

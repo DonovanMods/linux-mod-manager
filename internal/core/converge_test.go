@@ -54,7 +54,7 @@ func TestConverge_RowDrivenStaleRemoved(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(gameDir, "a.esp"))
 	assert.NoError(t, err, "a.esp must be untouched")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.esp"}, rows, "gone.esp's row must be deleted")
 }
@@ -87,7 +87,7 @@ func TestConverge_SharedPathProtectedByUnion(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(gameDir, "shared.esp"))
 	assert.NoError(t, err, "shared.esp's game-dir symlink must survive")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"shared.esp"}, rows, "row must survive too")
 }
@@ -191,7 +191,7 @@ func TestConverge_DryRunTouchesNothing(t *testing.T) {
 	}
 
 	// Nothing in the DB changed.
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a.esp", "gone.esp"}, rows, "dry run must not delete rows")
 }
@@ -230,7 +230,7 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(gameDir, "untracked.txt"))
 	assert.NoError(t, err, "an untracked regular file with no row must never be touched")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.esp"}, rows)
 }
@@ -271,7 +271,7 @@ func TestConverge_RowPass_UndeployFailureExcludedFromRemoved(t *testing.T) {
 	_, statErr := os.Stat(deployedPath)
 	assert.NoError(t, statErr, "the file must survive a failed undeploy")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"gone.esp"}, rows, "the row must survive a failed undeploy")
 }
@@ -388,7 +388,7 @@ func TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared(t *testing.T) {
 	_, err = os.Stat(filepath.Join(gameDir, "a.esp"))
 	assert.NoError(t, err, "a.esp must survive: an absent cache entry is unknown provenance, not grounds for deletion")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a.esp"}, rows, "the row must survive too")
 }
@@ -475,7 +475,7 @@ func TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence(t *testing.
 	_, err = os.Lstat(filepath.Join(gameDir, "gone.esp"))
 	assert.True(t, os.IsNotExist(err), "the dangling symlink must be swept, even though its row's mod has unknown provenance")
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.Empty(t, rows, "the sweep's best-effort DeleteDeployedFile should clean up the now-orphaned row")
 }
@@ -532,8 +532,8 @@ func TestConverge_RowPass_RejectsUnsafeDeployedFileRecords(t *testing.T) {
 
 	rawDB, err := db.New(filepath.Join(dataDir, "lmm.db"))
 	require.NoError(t, err)
-	require.NoError(t, rawDB.SaveDeployedFile("g1", "default", "../outside.pak", "src", "m1"))
-	require.NoError(t, rawDB.SaveDeployedFile("g1", "default", absPath, "src", "m1"))
+	require.NoError(t, rawDB.SaveDeployedFile(context.Background(), "g1", "default", "../outside.pak", "src", "m1"))
+	require.NoError(t, rawDB.SaveDeployedFile(context.Background(), "g1", "default", absPath, "src", "m1"))
 	require.NoError(t, rawDB.Close())
 
 	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
@@ -554,7 +554,7 @@ func TestConverge_RowPass_RejectsUnsafeDeployedFileRecords(t *testing.T) {
 	assert.NotContains(t, paths, "../outside.pak")
 	assert.NotContains(t, paths, absPath)
 
-	rows, err := svc.GetDeployedFilesForMod("g1", "default", "src", "m1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), "g1", "default", "src", "m1")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"a.esp", "../outside.pak", absPath}, rows, "unsafe rows are left alone - deleting records based on corrupt data is its own hazard")
 }

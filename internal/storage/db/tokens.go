@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -14,8 +15,8 @@ type StoredToken struct {
 }
 
 // SaveToken saves or updates an API token for a source
-func (d *DB) SaveToken(sourceID, apiKey string) error {
-	_, err := d.Exec(`
+func (d *DB) SaveToken(ctx context.Context, sourceID, apiKey string) error {
+	_, err := d.ExecContext(ctx, `
         INSERT INTO auth_tokens (source_id, token_data, updated_at)
         VALUES (?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(source_id) DO UPDATE SET
@@ -29,9 +30,9 @@ func (d *DB) SaveToken(sourceID, apiKey string) error {
 }
 
 // GetToken retrieves an API token for a source
-func (d *DB) GetToken(sourceID string) (*StoredToken, error) {
+func (d *DB) GetToken(ctx context.Context, sourceID string) (*StoredToken, error) {
 	var token StoredToken
-	err := d.QueryRow(`
+	err := d.QueryRowContext(ctx, `
         SELECT source_id, token_data, updated_at
         FROM auth_tokens
         WHERE source_id = ?
@@ -47,8 +48,8 @@ func (d *DB) GetToken(sourceID string) (*StoredToken, error) {
 }
 
 // DeleteToken removes an API token for a source
-func (d *DB) DeleteToken(sourceID string) error {
-	_, err := d.Exec("DELETE FROM auth_tokens WHERE source_id = ?", sourceID)
+func (d *DB) DeleteToken(ctx context.Context, sourceID string) error {
+	_, err := d.ExecContext(ctx, "DELETE FROM auth_tokens WHERE source_id = ?", sourceID)
 	if err != nil {
 		return fmt.Errorf("deleting token: %w", err)
 	}
@@ -56,9 +57,9 @@ func (d *DB) DeleteToken(sourceID string) error {
 }
 
 // HasToken checks if a token exists for a source
-func (d *DB) HasToken(sourceID string) (bool, error) {
+func (d *DB) HasToken(ctx context.Context, sourceID string) (bool, error) {
 	var count int
-	err := d.QueryRow("SELECT COUNT(*) FROM auth_tokens WHERE source_id = ?", sourceID).Scan(&count)
+	err := d.QueryRowContext(ctx, "SELECT COUNT(*) FROM auth_tokens WHERE source_id = ?", sourceID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("checking token: %w", err)
 	}
@@ -69,8 +70,8 @@ func (d *DB) HasToken(sourceID string) (bool, error) {
 // regardless of whether that source is still registered. `lmm auth status`
 // uses this to surface orphaned tokens (source removed or renamed) that
 // would otherwise be invisible.
-func (d *DB) ListTokens() ([]StoredToken, error) {
-	rows, err := d.Query(`
+func (d *DB) ListTokens(ctx context.Context) ([]StoredToken, error) {
+	rows, err := d.QueryContext(ctx, `
         SELECT source_id, token_data, updated_at
         FROM auth_tokens
         ORDER BY source_id

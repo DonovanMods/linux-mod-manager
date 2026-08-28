@@ -45,7 +45,7 @@ func setupRollbackReadyMod(t *testing.T) (*core.Service, *domain.Game, *domain.I
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	}))
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	require.Equal(t, "2.0", updated.Version)
 	require.Equal(t, "1.0", updated.PreviousVersion)
@@ -110,7 +110,7 @@ func TestDoUpdateRollback_Locked_RefusesBeforeHeader_Text(t *testing.T) {
 	assert.Contains(t, out, "Rollback available: 2.0 → 1.0 — but Mod One is locked at v2.0.")
 	assert.Contains(t, out, "Move the lock: lmm mod lock -s test-src -p default mod1 1.0   |   Unlock: lmm mod unlock -s test-src -p default mod1", "both remedies must carry -s/-p so a copy-paste can never resolve against a different source/profile")
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "a locked mod must not roll back")
 }
@@ -137,7 +137,7 @@ func TestDoUpdateRollback_Locked_JSON_SkippedDocument(t *testing.T) {
 	assert.Equal(t, "skipped", doc.Status)
 	assert.Equal(t, "locked", doc.Reason)
 
-	updated, err := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version)
 }
@@ -157,7 +157,7 @@ func TestDoUpdateRollback_HookForceGate(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_each hook failed")
 
-		updated, gerr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "2.0", updated.Version, "a fatal before_each hook must leave the DB row untouched")
 	})
@@ -177,7 +177,7 @@ func TestDoUpdateRollback_HookForceGate(t *testing.T) {
 		assert.Contains(t, stderr,
 			"Warning: uninstall.before_each hook failed (forced): hook failed with exit code 1: "+failScript+"\n")
 
-		updated, gerr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+		updated, gerr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		require.NoError(t, gerr)
 		assert.Equal(t, "1.0", updated.Version, "the rollback must still apply despite the forced hook failure")
 	})
@@ -241,7 +241,7 @@ func TestDoUpdateRollback_AfterEachHookFailures_PrintWarningsInOrderAndSucceed(t
 	require.GreaterOrEqual(t, iIdx, 0, "install.after_each warning must be present")
 	assert.Less(t, uIdx, iIdx, "uninstall.after_each warning must print before install.after_each")
 
-	updated, gerr := svc.GetInstalledMod("test-src", "mod1", "g1", "default")
+	updated, gerr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, gerr)
 	assert.Equal(t, "1.0", updated.Version, "the rollback itself must still have applied")
 }

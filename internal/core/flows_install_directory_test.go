@@ -107,7 +107,7 @@ func TestApplyInstall_DirectorySource_SameVersionReinstall_DropsRemovedMember(t 
 	assert.True(t, os.IsNotExist(lstatErr), "the removed member must be undeployed from the game directory")
 	assert.FileExists(t, filepath.Join(game.ModPath, "ModInfo.xml"), "the surviving member must stay deployed")
 
-	checksums, err := svc.GetFilesWithChecksums(game.ID, "default")
+	checksums, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, checksums, 1)
 	assert.NotEmpty(t, checksums[0].Checksum, "the reinstall must persist the refreshed digest so verify runs clean")

@@ -100,13 +100,13 @@ mods:
 
 	require.NoError(t, doInstall(context.Background(), svc, game, nil))
 
-	installed, err := svc.GetInstalledMods(game.ID, "default")
+	installed, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, installed, 1, "installed mod must be visible under the lmm game ID after install")
 	assert.Equal(t, "cool-mod", installed[0].ID)
 	assert.Equal(t, "testgame", installed[0].GameID, "persisted GameID must be normalized to the lmm game, not the source-mapped value")
 
-	orphaned, err := svc.GetInstalledMods("skyrim", "default")
+	orphaned, err := svc.GetInstalledMods(context.Background(), "skyrim", "default")
 	require.NoError(t, err)
 	assert.Empty(t, orphaned, "installed mod must not be filed under the source-mapped game ID")
 }
@@ -179,13 +179,13 @@ mods:
 
 	require.NoError(t, batchInstallMods(ctx, svc, game, []*domain.Mod{mod}, "default"))
 
-	installed, err := svc.GetInstalledMods(game.ID, "default")
+	installed, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, installed, 1, "installed mod must be visible under the lmm game ID after batch install")
 	assert.Equal(t, "cool-mod", installed[0].ID)
 	assert.Equal(t, "testgame", installed[0].GameID)
 
-	orphaned, err := svc.GetInstalledMods("skyrim", "default")
+	orphaned, err := svc.GetInstalledMods(context.Background(), "skyrim", "default")
 	require.NoError(t, err)
 	assert.Empty(t, orphaned, "installed mod must not be filed under the source-mapped game ID")
 }

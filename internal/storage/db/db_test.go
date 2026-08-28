@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -160,13 +161,13 @@ func TestNew_TightensExistingPermissions(t *testing.T) {
 
 // TestNew_BadPath pins the error path taken when the database file can't be
 // opened at all (parent directory doesn't exist): the modernc.org/sqlite
-// driver defers the actual open past sql.Open, so the failure surfaces from
-// the first Exec (the PRAGMA statement), not from db.New's call to sql.Open.
+// driver defers the actual open past sql.Open, so New pings the connection
+// explicitly to surface the failure there rather than on the first query.
 func TestNew_BadPath(t *testing.T) {
 	_, err := db.New("/nonexistent-root-dir-xyz/sub/lmm.db")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "setting pragmas")
+	assert.Contains(t, err.Error(), "opening database")
 }
 
 func TestInstalledMods_SaveAndGet(t *testing.T) {
@@ -188,10 +189,10 @@ func TestInstalledMods_SaveAndGet(t *testing.T) {
 		Enabled:      true,
 	}
 
-	err = database.SaveInstalledMod(mod)
+	err = database.SaveInstalledMod(context.Background(), mod)
 	require.NoError(t, err)
 
-	retrieved, err := database.GetInstalledMods("skyrim-se", "default")
+	retrieved, err := database.GetInstalledMods(context.Background(), "skyrim-se", "default")
 	require.NoError(t, err)
 	require.Len(t, retrieved, 1)
 
@@ -216,13 +217,13 @@ func TestInstalledMods_Delete(t *testing.T) {
 		ProfileName: "default",
 	}
 
-	err = database.SaveInstalledMod(mod)
+	err = database.SaveInstalledMod(context.Background(), mod)
 	require.NoError(t, err)
 
-	err = database.DeleteInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	err = database.DeleteInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 
-	mods, err := database.GetInstalledMods("skyrim-se", "default")
+	mods, err := database.GetInstalledMods(context.Background(), "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Empty(t, mods)
 }
@@ -258,15 +259,15 @@ func TestUpdateModVersion(t *testing.T) {
 		},
 		ProfileName: "default",
 	}
-	err = database.SaveInstalledMod(mod)
+	err = database.SaveInstalledMod(context.Background(), mod)
 	require.NoError(t, err)
 
 	// Update version
-	err = database.UpdateModVersion("nexusmods", "12345", "skyrim-se", "default", "2.0.0")
+	err = database.UpdateModVersion(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "2.0.0")
 	require.NoError(t, err)
 
 	// Retrieve and verify
-	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0.0", retrieved.Version)
 	assert.Equal(t, "1.0.0", retrieved.PreviousVersion)
@@ -289,15 +290,15 @@ func TestSwapModVersions(t *testing.T) {
 		ProfileName:     "default",
 		PreviousVersion: "1.0.0",
 	}
-	err = database.SaveInstalledMod(mod)
+	err = database.SaveInstalledMod(context.Background(), mod)
 	require.NoError(t, err)
 
 	// Swap versions (rollback)
-	err = database.SwapModVersions("nexusmods", "12345", "skyrim-se", "default")
+	err = database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 
 	// Verify swap
-	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.0", retrieved.Version)
 	assert.Equal(t, "2.0.0", retrieved.PreviousVersion)
@@ -319,20 +320,20 @@ func TestApplyModUpdateAndRollbackRestoresFileIDs(t *testing.T) {
 		ProfileName: "default",
 		FileIDs:     []string{"old-main", "old-patch"},
 	}
-	require.NoError(t, database.SaveInstalledMod(mod))
+	require.NoError(t, database.SaveInstalledMod(context.Background(), mod))
 
-	require.NoError(t, database.ApplyModUpdate("nexusmods", "12345", "skyrim-se", "default", "2.0.0", []string{"new-main"}))
+	require.NoError(t, database.ApplyModUpdate(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "2.0.0", []string{"new-main"}))
 
-	updated, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	updated, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0.0", updated.Version)
 	assert.Equal(t, "1.0.0", updated.PreviousVersion)
 	assert.Equal(t, []string{"new-main"}, updated.FileIDs)
 	assert.Equal(t, []string{"old-main", "old-patch"}, updated.PreviousFileIDs)
 
-	require.NoError(t, database.SwapModVersions("nexusmods", "12345", "skyrim-se", "default"))
+	require.NoError(t, database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default"))
 
-	rolledBack, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	rolledBack, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0.0", rolledBack.Version)
 	assert.Equal(t, "2.0.0", rolledBack.PreviousVersion)
@@ -356,11 +357,11 @@ func TestSwapModVersions_NoPreviousVersion(t *testing.T) {
 		},
 		ProfileName: "default",
 	}
-	err = database.SaveInstalledMod(mod)
+	err = database.SaveInstalledMod(context.Background(), mod)
 	require.NoError(t, err)
 
 	// Swap should fail - no previous version
-	err = database.SwapModVersions("nexusmods", "12345", "skyrim-se", "default")
+	err = database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	assert.Error(t, err)
 }
 
@@ -382,10 +383,10 @@ func TestGetInstalledMod(t *testing.T) {
 		UpdatePolicy: domain.UpdateAuto,
 		Enabled:      true,
 	}
-	err = database.SaveInstalledMod(mod)
+	err = database.SaveInstalledMod(context.Background(), mod)
 	require.NoError(t, err)
 
-	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.Equal(t, mod.ID, retrieved.ID)
 	assert.Equal(t, mod.Name, retrieved.Name)
@@ -397,7 +398,7 @@ func TestGetInstalledMod_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = database.Close() }()
 
-	_, err = database.GetInstalledMod("nexusmods", "nonexistent", "skyrim-se", "default")
+	_, err = database.GetInstalledMod(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -419,29 +420,29 @@ func TestSetModDeployed(t *testing.T) {
 		Enabled:     true,
 		Deployed:    true,
 	}
-	err = database.SaveInstalledMod(mod)
+	err = database.SaveInstalledMod(context.Background(), mod)
 	require.NoError(t, err)
 
 	// Verify initial deployed state
-	retrieved, err := database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err := database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.True(t, retrieved.Deployed)
 
 	// Set deployed to false (purge scenario)
-	err = database.SetModDeployed("nexusmods", "12345", "skyrim-se", "default", false)
+	err = database.SetModDeployed(context.Background(), "nexusmods", "12345", "skyrim-se", "default", false)
 	require.NoError(t, err)
 
 	// Verify deployed is now false but enabled unchanged
-	retrieved, err = database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err = database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.False(t, retrieved.Deployed)
 	assert.True(t, retrieved.Enabled) // Enabled should remain true
 
 	// Set deployed back to true (deploy scenario)
-	err = database.SetModDeployed("nexusmods", "12345", "skyrim-se", "default", true)
+	err = database.SetModDeployed(context.Background(), "nexusmods", "12345", "skyrim-se", "default", true)
 	require.NoError(t, err)
 
-	retrieved, err = database.GetInstalledMod("nexusmods", "12345", "skyrim-se", "default")
+	retrieved, err = database.GetInstalledMod(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.True(t, retrieved.Deployed)
 }
@@ -451,7 +452,7 @@ func TestSetModDeployed_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = database.Close() }()
 
-	err = database.SetModDeployed("nexusmods", "nonexistent", "skyrim-se", "default", false)
+	err = database.SetModDeployed(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", false)
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -500,15 +501,15 @@ func TestSaveFileChecksum(t *testing.T) {
 		ProfileName: "default",
 		FileIDs:     []string{"67890"},
 	}
-	err = database.SaveInstalledMod(mod)
+	err = database.SaveInstalledMod(context.Background(), mod)
 	require.NoError(t, err)
 
 	// Save checksum
-	err = database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "67890", "a1b2c3d4e5f6")
+	err = database.SaveFileChecksum(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "67890", "a1b2c3d4e5f6")
 	require.NoError(t, err)
 
 	// Retrieve checksum
-	checksum, err := database.GetFileChecksum("nexusmods", "12345", "skyrim-se", "default", "67890")
+	checksum, err := database.GetFileChecksum(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "67890")
 	require.NoError(t, err)
 	assert.Equal(t, "a1b2c3d4e5f6", checksum)
 
@@ -516,7 +517,7 @@ func TestSaveFileChecksum(t *testing.T) {
 	// counts rows matched by the UPDATE even when the new value equals the
 	// old (unlike MySQL), so the RowsAffected guard added for #164 must not
 	// misread an idempotent re-save as "row missing".
-	err = database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "67890", "a1b2c3d4e5f6")
+	err = database.SaveFileChecksum(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "67890", "a1b2c3d4e5f6")
 	require.NoError(t, err, "idempotent same-value checksum re-save must not trip the 0-rows guard")
 }
 
@@ -529,7 +530,7 @@ func TestSaveFileChecksum_NoMatchingRow_ReturnsError(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = database.Close() }()
 
-	err = database.SaveFileChecksum("nexusmods", "nonexistent", "skyrim-se", "default", "99999", "a1b2c3d4e5f6")
+	err = database.SaveFileChecksum(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", "99999", "a1b2c3d4e5f6")
 	require.Error(t, err, "updating a nonexistent installed_mod_files row must fail loudly, not silently no-op")
 	assert.Contains(t, err.Error(), "no installed file row")
 }
@@ -539,7 +540,7 @@ func TestGetFileChecksum_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = database.Close() }()
 
-	checksum, err := database.GetFileChecksum("nexusmods", "nonexistent", "skyrim-se", "default", "99999")
+	checksum, err := database.GetFileChecksum(context.Background(), "nexusmods", "nonexistent", "skyrim-se", "default", "99999")
 	require.NoError(t, err)
 	assert.Equal(t, "", checksum) // Empty string for missing checksum
 }
@@ -561,17 +562,17 @@ func TestGetFilesWithChecksums(t *testing.T) {
 		ProfileName: "default",
 		FileIDs:     []string{"111", "222"},
 	}
-	err = database.SaveInstalledMod(mod)
+	err = database.SaveInstalledMod(context.Background(), mod)
 	require.NoError(t, err)
 
 	// Save checksums
-	err = database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "111", "hash111")
+	err = database.SaveFileChecksum(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "111", "hash111")
 	require.NoError(t, err)
-	err = database.SaveFileChecksum("nexusmods", "12345", "skyrim-se", "default", "222", "hash222")
+	err = database.SaveFileChecksum(context.Background(), "nexusmods", "12345", "skyrim-se", "default", "222", "hash222")
 	require.NoError(t, err)
 
 	// Retrieve all files with checksums
-	files, err := database.GetFilesWithChecksums("skyrim-se", "default")
+	files, err := database.GetFilesWithChecksums(context.Background(), "skyrim-se", "default")
 	require.NoError(t, err)
 	require.Len(t, files, 2)
 

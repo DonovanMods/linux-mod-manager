@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func listNonVerbose(t *testing.T, svc *core.Service, game *domain.Game) string {
 	t.Cleanup(func() { verbose, jsonOutput = oldVerbose, oldJSON })
 
 	return captureStdout(t, func() error {
-		return doList(&cobra.Command{}, svc, game)
+		return doList(context.Background(), &cobra.Command{}, svc, game)
 	})
 }
 
@@ -32,7 +33,7 @@ func listNonVerbose(t *testing.T, svc *core.Service, game *domain.Game) string {
 func seedModWithState(t *testing.T, svc *core.Service, game *domain.Game, modID, name string, enabled, deployed bool) {
 	t.Helper()
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,

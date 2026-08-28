@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -640,12 +641,15 @@ func (c *Cache) GetFilePath(gameID, sourceID, modID, version, relativePath strin
 // cache and back. Dropping the completion markers on that round trip would
 // silently downgrade a complete entry to a pre-marker one and cost a
 // redundant redownload on the next cache-first check.
-func (c *Cache) CloneMod(dest *Cache, gameID, sourceID, modID, version string) error {
+func (c *Cache) CloneMod(ctx context.Context, dest *Cache, gameID, sourceID, modID, version string) error {
 	files, err := walkEntries(c.ModPath(gameID, sourceID, modID, version), true)
 	if err != nil {
 		return err
 	}
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		srcPath := c.GetFilePath(gameID, sourceID, modID, version, file)
 		dstPath := dest.GetFilePath(gameID, sourceID, modID, version, file)
 		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {

@@ -39,7 +39,7 @@ import (
 // THIS error verbatim rather than letting it collapse into the generic
 // "installation cancelled" text, matching the pre-extraction CLI's own
 // `if err != nil { return err }` before its y/N check.
-func confirmInstallConflicts(service *core.Service, game *domain.Game, profileName string, conflicts []core.Conflict) (proceed bool, readErr error) {
+func confirmInstallConflicts(ctx context.Context, service *core.Service, game *domain.Game, profileName string, conflicts []core.Conflict) (proceed bool, readErr error) {
 	fmt.Printf("\n⚠ File conflicts detected:\n")
 
 	modConflicts := make(map[string][]string)
@@ -52,7 +52,7 @@ func confirmInstallConflicts(service *core.Service, game *domain.Game, profileNa
 		parts := strings.SplitN(key, ":", 2)
 		sourceID, modID := parts[0], parts[1]
 
-		conflictMod, _ := service.GetInstalledMod(sourceID, modID, game.ID, profileName)
+		conflictMod, _ := service.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 		modName := modID
 		if conflictMod != nil {
 			modName = conflictMod.Name
@@ -223,7 +223,7 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 	}
 
 	// Mark already-installed mods in the listing
-	installedMods, _ := service.GetInstalledMods(gameID, profileName)
+	installedMods, _ := service.GetInstalledMods(ctx, gameID, profileName)
 	installedIDs := make(map[string]bool)
 	for _, im := range installedMods {
 		if im.SourceID == source {
@@ -638,7 +638,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		// ConfirmConflicts' doc comment. --force still skips it entirely
 		// (ApplyInstall never calls this when opts.Force is set).
 		ConfirmConflicts: func(conflicts []core.Conflict) bool {
-			proceed, err := confirmInstallConflicts(service, game, profileName, conflicts)
+			proceed, err := confirmInstallConflicts(ctx, service, game, profileName, conflicts)
 			if err != nil {
 				promptErr = err
 				return false
@@ -1165,7 +1165,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		}
 	}
 
-	linkMethod, err := service.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := service.GetEffectiveLinkMethod(ctx, game, profileName)
 	if err != nil {
 		return err
 	}
@@ -1258,7 +1258,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		}
 
 		// Remove previous installation if re-installing
-		if existingMod, err := service.GetInstalledMod(sourceID, mod.ID, game.ID, profileName); err == nil && existingMod != nil {
+		if existingMod, err := service.GetInstalledMod(ctx, sourceID, mod.ID, game.ID, profileName); err == nil && existingMod != nil {
 			fmt.Printf("  Removing previous installation...\n")
 			if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil && verbose {
 				fmt.Printf("  Warning: could not remove old files: %v\n", err)
@@ -1316,7 +1316,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			FileIDs:      []string{selectedFile.ID},
 		}
 		installedMod.Mod.GameID = game.ID
-		if err := service.SaveInstalledMod(installedMod); err != nil {
+		if err := service.SaveInstalledMod(ctx, installedMod); err != nil {
 			fmt.Printf("  Error: failed to save mod: %v\n", err)
 			failed = append(failed, mod.Name)
 			continue
@@ -1324,7 +1324,7 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 
 		// Store checksum
 		if !skipVerify && downloadResult.Checksum != "" {
-			if err := service.SaveFileChecksum(sourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum); err != nil {
+			if err := service.SaveFileChecksum(ctx, sourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum); err != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: failed to save checksum: %v\n", err)
 			}
 		}

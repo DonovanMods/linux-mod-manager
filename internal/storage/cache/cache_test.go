@@ -1,6 +1,7 @@
 package cache_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,7 +162,7 @@ func TestCache_CloneMod_PreservesMarkers(t *testing.T) {
 	require.NoError(t, src.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "real.esp", []byte("data")))
 	require.NoError(t, cache.MarkFileComplete(src.ModPath("skyrim-se", "nexusmods", "12345", "1.0.0"), "1001"))
 
-	require.NoError(t, src.CloneMod(dst, "skyrim-se", "nexusmods", "12345", "1.0.0"))
+	require.NoError(t, src.CloneMod(context.Background(), dst, "skyrim-se", "nexusmods", "12345", "1.0.0"))
 
 	files, err := dst.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
 	require.NoError(t, err)
@@ -343,7 +344,7 @@ func TestCache_CloneMod(t *testing.T) {
 	require.NoError(t, src.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "main.esp", []byte("main")))
 	require.NoError(t, src.Store("skyrim-se", "nexusmods", "12345", "1.0.0", "optional/patch.esp", []byte("patch")))
 
-	require.NoError(t, src.CloneMod(dst, "skyrim-se", "nexusmods", "12345", "1.0.0"))
+	require.NoError(t, src.CloneMod(context.Background(), dst, "skyrim-se", "nexusmods", "12345", "1.0.0"))
 
 	files, err := dst.ListFiles("skyrim-se", "nexusmods", "12345", "1.0.0")
 	require.NoError(t, err)
@@ -451,7 +452,7 @@ func TestCache_ManifestMarkersStayReservedAndComplete(t *testing.T) {
 	assert.True(t, c.HasFileIDs("g", "src", "mod", "1.0", []string{"1001"}))
 
 	dst := cache.New(t.TempDir())
-	require.NoError(t, c.CloneMod(dst, "g", "src", "mod", "1.0"))
+	require.NoError(t, c.CloneMod(context.Background(), dst, "g", "src", "mod", "1.0"))
 	cloned, err := dst.FileManifests("g", "src", "mod", "1.0")
 	require.NoError(t, err)
 	m, ok := cloned["1001"]

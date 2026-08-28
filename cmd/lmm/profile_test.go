@@ -259,7 +259,7 @@ func TestDoProfileSwitch_PrintsPlanAndPrompts_ProceedDeclined_NoMutations(t *tes
 	require.NoError(t, err)
 	assert.Equal(t, "default", def.Name, "declining must not switch the default profile")
 
-	mod, err := svc.GetInstalledMod("src", "disable-me", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, mod.Enabled, "declining must not disable any mod")
 }
@@ -284,7 +284,7 @@ func TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput(t *testi
 
 	// enable-me: installed (cached) but disabled, under "target" already.
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "enable-me", "1.0", "enable.esp", []byte("e")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "enable-me", SourceID: "src", Name: "Enable Me", Version: "1.0", GameID: game.ID},
 		ProfileName:  "target",
 		UpdatePolicy: domain.UpdateNotify,
@@ -353,7 +353,7 @@ mods:
 	_, err = os.Lstat(filepath.Join(game.ModPath, "disable.esp"))
 	assert.True(t, os.IsNotExist(err), "disable.esp should be undeployed")
 
-	installed, err := svc.GetInstalledMod("e2e-repo", "install-me", "g1", "target")
+	installed, err := svc.GetInstalledMod(context.Background(), "e2e-repo", "install-me", "g1", "target")
 	require.NoError(t, err)
 	assert.Equal(t, "g1", installed.GameID, "persisted GameID must be normalized to the lmm game")
 }
@@ -408,7 +408,7 @@ func seedApplyCandidateMod(t *testing.T, svc *core.Service, game *domain.Game, s
 		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -660,7 +660,7 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 
 	require.NoError(t, doProfileApply(context.Background(), svc, game, nil))
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.1", installed.Version, "installed mod version must be the selected file's version, not the profile ref's version")
 }
@@ -723,10 +723,10 @@ func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing
 	assert.Contains(t, out, "stale-id", "the error must name the stale file ID")
 	assert.NotContains(t, out, "using primary", "the old silent-fallback warning must not print")
 
-	_, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	assert.Error(t, err, "mod1 must not be installed - no substitution should occur")
 
-	installed2, err := svc.GetInstalledMod("test-src", "mod2", game.ID, "default")
+	installed2, err := svc.GetInstalledMod(context.Background(), "test-src", "mod2", game.ID, "default")
 	require.NoError(t, err, "mod2 must still install - the toInstall loop must continue past mod1's failure")
 	assert.Equal(t, "1.0", installed2.Version)
 }
@@ -755,7 +755,7 @@ func TestDoProfileApply_VersionDrift_SchedulesReinstall(t *testing.T) {
 	assert.Contains(t, out, "src:mod1 v1.0")
 	assert.NotContains(t, out, "Will enable", "a version-drifted mod must not be classified as a plain enable")
 
-	installed, err := svc.GetInstalledMod("src", "mod1", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", installed.Version, "declining the prompt must not mutate anything")
 }
@@ -804,7 +804,7 @@ func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) 
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -829,7 +829,7 @@ func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) 
 
 	assert.Contains(t, out, "✓ Installed: Mod One\n")
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version, "must record the pinned version, not the source's latest")
 	assert.Equal(t, []string{"old"}, installed.FileIDs, "must have selected the archived 1.0 file")
@@ -971,7 +971,7 @@ func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *te
 	// mod1 is installed, enabled and genuinely DEPLOYED at 1.5...
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -1002,7 +1002,7 @@ func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *te
 	assert.NotContains(t, out, "deploy failed", "a pruned old cache must not break convergence")
 	assert.Contains(t, out, "✓ Installed: Mod One\n")
 
-	installed, err := svc.GetInstalledMod("test-src", "mod1", game.ID, "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version, "convergence must still reach the profile's pinned version")
 	assert.Equal(t, []string{"old"}, installed.FileIDs)

@@ -1,11 +1,14 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
+	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -20,19 +23,50 @@ type DB struct {
 	*sql.DB
 }
 
-// New creates a new database connection and runs migrations
+// dsnFor builds the modernc.org/sqlite DSN. Pragmas passed as _pragma= query
+// parameters run on EVERY new pooled connection (the driver applies them in
+// newConn); a plain Exec after Open would only reach one connection (#271).
+// The path is percent-encoded so '#', '?', '%' and spaces cannot be read as
+// URI syntax. path must be absolute (or ":memory:") — url.URL renders a
+// relative Path as "file://<path>", which parses back with the path's first
+// segment as the host instead of as part of the file path; New resolves
+// relative paths before calling this.
+func dsnFor(path string) string {
+	const pragmas = "_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	if path == ":memory:" {
+		return "file::memory:?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	}
+	u := url.URL{Scheme: "file", Path: path, RawQuery: pragmas}
+	return u.String()
+}
+
+// New creates a new database connection and runs migrations. A relative path
+// is resolved against the current working directory before being placed in
+// the DSN, since a relative path in a "file:" URI is ambiguous (see dsnFor).
 func New(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", path)
+	dsnPath := path
+	if path != ":memory:" {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolving database path: %w", err)
+		}
+		dsnPath = abs
+	}
+
+	sqlDB, err := sql.Open("sqlite", dsnFor(dsnPath))
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
-
-	// Enable foreign keys and WAL mode for better performance
-	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;"); err != nil {
-		if closeErr := sqlDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("setting pragmas: %w (closing database: %v)", err, closeErr)
-		}
-		return nil, fmt.Errorf("setting pragmas: %w", err)
+	if path == ":memory:" {
+		// Each pooled connection to ":memory:" is a separate database;
+		// tests rely on there being exactly one.
+		sqlDB.SetMaxOpenConns(1)
+	}
+	// Force the first connection now so a bad path fails here, not on
+	// the first query.
+	if err := sqlDB.Ping(); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
 	// Before any write, so the main database file is already 0600 when SQLite
@@ -47,7 +81,7 @@ func New(path string) (*DB, error) {
 
 	database := &DB{DB: sqlDB}
 
-	if err := database.migrate(); err != nil {
+	if err := database.migrate(context.Background()); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
 			return nil, fmt.Errorf("running migrations: %w (closing database: %v)", err, closeErr)
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"strings"
@@ -70,7 +71,7 @@ func TestDoAuthStatusIncludesCustomSources(t *testing.T) {
 
 	t.Setenv("LMM_MY_REPO_API_KEY", "supersecretkey")
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	// "(<id>): ..." — doAuthStatus renders "<Name> (<id>): ..." for every
 	// auth-capable source, built-in or custom (see
@@ -103,7 +104,7 @@ func TestDoAuthStatusListsCustomSourcesInSortedOrder(t *testing.T) {
 		svc.RegisterSource(src)
 	}
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	// Each source's Name equals its ID above, so the rendered "<Name>
 	// (<id>): ..." line contains "(<id>):" once per source.
@@ -136,11 +137,11 @@ func TestDoAuthStatusListsOrphanedTokens(t *testing.T) {
 
 	// A token for a source ID that matches nothing registered (built-in or
 	// custom) — e.g. its definition file was deleted after login.
-	require.NoError(t, svc.SaveSourceToken("ghost-repo", "leftover-secret-key"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "ghost-repo", "leftover-secret-key"))
 	// A token for a still-registered built-in must not be reported as orphaned.
-	require.NoError(t, svc.SaveSourceToken("nexusmods", "built-in-key-1234567"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "built-in-key-1234567"))
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	assert.Contains(t, out, "ghost-repo: stored token with no matching source (key:")
 	assert.Contains(t, out, "remove with: lmm auth logout ghost-repo")
@@ -172,11 +173,11 @@ func TestDoAuthStatusDistinguishesAuthRemovedFromUnregistered(t *testing.T) {
 	require.NoError(t, err)
 	svc.RegisterSource(dir)
 
-	require.NoError(t, svc.SaveSourceToken("local-mods", "stale-auth-key-123456"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "local-mods", "stale-auth-key-123456"))
 	// Truly-unregistered case must still render its own distinct wording.
-	require.NoError(t, svc.SaveSourceToken("ghost-repo", "leftover-secret-key"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "ghost-repo", "leftover-secret-key"))
 
-	out := captureStdout(t, func() error { return doAuthStatus(svc) })
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
 
 	assert.Contains(t, out, "local-mods: stored token for source without auth declared (key:")
 	assert.Contains(t, out, "stale token? remove with: lmm auth logout local-mods")

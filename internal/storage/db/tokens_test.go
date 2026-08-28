@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -14,11 +15,11 @@ func TestSaveToken(t *testing.T) {
 		require.NoError(t, db.Close())
 	})
 
-	err := db.SaveToken("nexusmods", "test-api-key-123")
+	err := db.SaveToken(context.Background(), "nexusmods", "test-api-key-123")
 	require.NoError(t, err)
 
 	// Verify it was saved
-	token, err := db.GetToken("nexusmods")
+	token, err := db.GetToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	assert.Equal(t, "nexusmods", token.SourceID)
 	assert.Equal(t, "test-api-key-123", token.APIKey)
@@ -32,17 +33,17 @@ func TestSaveToken_Update(t *testing.T) {
 	})
 
 	// Save initial token
-	err := db.SaveToken("nexusmods", "old-key")
+	err := db.SaveToken(context.Background(), "nexusmods", "old-key")
 	require.NoError(t, err)
 
 	time.Sleep(10 * time.Millisecond) // Ensure time difference
 
 	// Update with new token
-	err = db.SaveToken("nexusmods", "new-key")
+	err = db.SaveToken(context.Background(), "nexusmods", "new-key")
 	require.NoError(t, err)
 
 	// Verify update
-	token, err := db.GetToken("nexusmods")
+	token, err := db.GetToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	assert.Equal(t, "new-key", token.APIKey)
 }
@@ -53,7 +54,7 @@ func TestGetToken_NotFound(t *testing.T) {
 		require.NoError(t, db.Close())
 	})
 
-	token, err := db.GetToken("nonexistent")
+	token, err := db.GetToken(context.Background(), "nonexistent")
 	assert.NoError(t, err)
 	assert.Nil(t, token)
 }
@@ -65,15 +66,15 @@ func TestDeleteToken(t *testing.T) {
 	})
 
 	// Save a token
-	err := db.SaveToken("nexusmods", "test-key")
+	err := db.SaveToken(context.Background(), "nexusmods", "test-key")
 	require.NoError(t, err)
 
 	// Delete it
-	err = db.DeleteToken("nexusmods")
+	err = db.DeleteToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 
 	// Verify deletion
-	token, err := db.GetToken("nexusmods")
+	token, err := db.GetToken(context.Background(), "nexusmods")
 	assert.NoError(t, err)
 	assert.Nil(t, token)
 }
@@ -85,7 +86,7 @@ func TestDeleteToken_NotFound(t *testing.T) {
 	})
 
 	// Deleting non-existent token should not error
-	err := db.DeleteToken("nonexistent")
+	err := db.DeleteToken(context.Background(), "nonexistent")
 	assert.NoError(t, err)
 }
 
@@ -96,25 +97,25 @@ func TestHasToken(t *testing.T) {
 	})
 
 	// No token initially
-	has, err := db.HasToken("nexusmods")
+	has, err := db.HasToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	assert.False(t, has)
 
 	// Save a token
-	err = db.SaveToken("nexusmods", "test-key")
+	err = db.SaveToken(context.Background(), "nexusmods", "test-key")
 	require.NoError(t, err)
 
 	// Now has token
-	has, err = db.HasToken("nexusmods")
+	has, err = db.HasToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	assert.True(t, has)
 
 	// Delete token
-	err = db.DeleteToken("nexusmods")
+	err = db.DeleteToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 
 	// No longer has token
-	has, err = db.HasToken("nexusmods")
+	has, err = db.HasToken(context.Background(), "nexusmods")
 	require.NoError(t, err)
 	assert.False(t, has)
 }
@@ -126,14 +127,14 @@ func TestListTokens(t *testing.T) {
 	})
 
 	// No tokens initially.
-	tokens, err := db.ListTokens()
+	tokens, err := db.ListTokens(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, tokens)
 
-	require.NoError(t, db.SaveToken("nexusmods", "key-a"))
-	require.NoError(t, db.SaveToken("ghost-repo", "key-b"))
+	require.NoError(t, db.SaveToken(context.Background(), "nexusmods", "key-a"))
+	require.NoError(t, db.SaveToken(context.Background(), "ghost-repo", "key-b"))
 
-	tokens, err = db.ListTokens()
+	tokens, err = db.ListTokens(context.Background())
 	require.NoError(t, err)
 	require.Len(t, tokens, 2)
 	// Ordered by source_id so callers get deterministic output.

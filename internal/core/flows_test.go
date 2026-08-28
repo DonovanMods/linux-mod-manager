@@ -66,7 +66,7 @@ func seedInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, source
 		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       modID,
 			SourceID: sourceID,
@@ -92,7 +92,7 @@ func seedNamedInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, s
 		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       modID,
 			SourceID: sourceID,
@@ -125,7 +125,7 @@ func TestService_EnableMod_DeploysDisabledMod(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.NoError(t, err, "plugin.esp should be deployed to the game dir")
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, mod.Enabled)
 	assert.True(t, mod.Deployed, "#183: enabling a mod must also record it as deployed")
@@ -162,7 +162,7 @@ func TestService_EnableMod_MissingCacheErrors(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "not found in cache")
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled, "DB must remain untouched when cache is missing")
 }
@@ -188,7 +188,7 @@ func TestService_EnableMod_DeployFailurePropagatesAndLeavesDBUntouched(t *testin
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to deploy mod")
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled, "DB must remain untouched on deploy failure")
 }
@@ -220,7 +220,7 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 	// precondition DisableMod actually sees for a genuinely-deployed mod.
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
-	require.NoError(t, svc.SetModDeployed("src", "1", "g1", "default", true))
+	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true))
 
 	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
 	require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 
 	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "1", "1.0"), "cache entry must be preserved")
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled)
 	assert.False(t, mod.Deployed, "#183: disabling a mod must also clear the deployed flag")
@@ -269,7 +269,7 @@ func TestService_DisableMod_AlreadyDisabledSelfHealsStaleDeployedFlag(t *testing
 	seedInstalledMod(t, svc, game, "src", "1", "1.0", false, map[string][]byte{
 		"plugin.esp": []byte("data"),
 	})
-	require.NoError(t, svc.SetModDeployed("src", "1", "g1", "default", true),
+	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true),
 		"simulate a pre-#183 disable that left the stale deployed=true flag behind")
 
 	result, err := svc.DisableMod(context.Background(), game, "default", "src", "1")
@@ -277,7 +277,7 @@ func TestService_DisableMod_AlreadyDisabledSelfHealsStaleDeployedFlag(t *testing
 	require.NotNil(t, result)
 	assert.False(t, result.Changed, "enabled status itself didn't change")
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Deployed, "#183: re-disabling an already-disabled mod must self-heal a stale deployed=true")
 }
@@ -312,7 +312,7 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
-	require.NoError(t, svc.SetModDeployed("src", "1", "g1", "default", true),
+	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true),
 		"seed Deployed=true so the post-disable assertion below actually proves a transition")
 
 	// Corrupt the deployed file into a plain file (not a symlink) so the
@@ -329,7 +329,7 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 	assert.Contains(t, result.Notes[0], "Warning: failed to undeploy some files: ",
 		"must carry the pre-5a historical prefix verbatim, matching UninstallResult's own convention")
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled, "DB should still flip to disabled even when undeploy is best-effort")
 	assert.False(t, mod.Deployed, "#183: the deployed flag must still clear to record intent, even when the undeploy itself was best-effort")
@@ -366,7 +366,7 @@ func TestService_DisableMod_SetModDeployedFailure_NonFatalNote(t *testing.T) {
 	assert.Contains(t, strings.Join(result.Notes, "\n"), "could not mark as not deployed",
 		"Notes = %v, want one mentioning the SetModDeployed failure", result.Notes)
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled, "SetModEnabled touches a different column and must still succeed")
 }
@@ -396,7 +396,7 @@ func TestService_EnableMod_SetModDeployedFailure_NonFatalNote(t *testing.T) {
 	assert.Contains(t, strings.Join(result.Notes, "\n"), "could not mark as deployed",
 		"Notes = %v, want one mentioning the SetModDeployed failure", result.Notes)
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.True(t, mod.Enabled, "SetModEnabled touches a different column and must still succeed")
 }
@@ -464,7 +464,7 @@ func TestService_UninstallMod_FullUninstall(t *testing.T) {
 
 	assert.False(t, svc.GetGameCache(game).Exists("g1", "src", "1", "1.0"), "cache entry should be deleted")
 
-	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should be removed")
 
 	profile, err := svc.NewProfileManager().Get("g1", "default")
@@ -496,7 +496,7 @@ func TestService_UninstallMod_KeepCache(t *testing.T) {
 
 	assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "1", "1.0"), "cache entry must survive with KeepCache")
 
-	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed")
 
 	profile, err := svc.NewProfileManager().Get("g1", "default")
@@ -613,7 +613,7 @@ exit 1`)
 		// Nothing should have changed: mod still installed, file still deployed.
 		_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 		assert.NoError(t, err, "deployed file must survive a fatal before_each failure")
-		_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+		_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 		assert.NoError(t, err, "DB row must survive a fatal before_each failure")
 	})
 
@@ -629,7 +629,7 @@ exit 1`)
 		assert.Contains(t, result.Warnings[0], "uninstall.before_each hook failed")
 		assert.Contains(t, result.Warnings[0], "forced")
 
-		_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+		_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 		assert.ErrorIs(t, err, domain.ErrModNotFound, "forced uninstall must still remove the DB row")
 	})
 }
@@ -671,7 +671,7 @@ exit 1`)
 		// Nothing should have changed: mod still installed, file still deployed.
 		_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 		assert.NoError(t, err, "deployed file must survive a fatal before_all failure")
-		_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+		_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 		assert.NoError(t, err, "DB row must survive a fatal before_all failure")
 	})
 
@@ -687,7 +687,7 @@ exit 1`)
 		assert.Contains(t, result.Warnings[0], "uninstall.before_all hook failed")
 		assert.Contains(t, result.Warnings[0], "forced")
 
-		_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+		_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 		assert.ErrorIs(t, err, domain.ErrModNotFound, "forced uninstall must still remove the DB row")
 	})
 }
@@ -800,7 +800,7 @@ func TestService_UninstallMod_ProfileDesyncWarnsAndContinues(t *testing.T) {
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Note: "), "must carry its historical CLI prefix: %q", result.Notes[0])
 	assert.Contains(t, result.Notes[0], domain.ErrProfileNotFound.Error())
 
-	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed despite the profile note")
 }
 
@@ -833,7 +833,7 @@ func TestService_UninstallMod_UndeployFailure_RecordedAsNoteWithHistoricalPrefix
 	require.Len(t, result.Notes, 1)
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to undeploy some files: "), "must carry its historical CLI prefix: %q", result.Notes[0])
 
-	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed despite the undeploy note")
 }
 
@@ -869,7 +869,7 @@ func TestService_UninstallMod_UndeployAndCacheDeleteFailures_RecordedAsNotesWith
 	assert.True(t, strings.HasPrefix(result.Notes[0], "Warning: failed to undeploy some files: "), "note[0] must carry its historical CLI prefix: %q", result.Notes[0])
 	assert.True(t, strings.HasPrefix(result.Notes[1], "Warning: failed to clean cache: "), "note[1] must carry its historical CLI prefix: %q", result.Notes[1])
 
-	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed despite the failures")
 }
 
@@ -908,7 +908,7 @@ exit 1`)
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "uninstall.after_each hook failed")
 
-	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should already be removed by the time after_each runs")
 }
 
@@ -1093,7 +1093,7 @@ func TestService_DeployProfile_LinkMethodOverrideHonored(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "override to copy method must not leave a symlink")
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.LinkCopy, mod.LinkMethod, "SetModLinkMethod must record the override")
 }
@@ -1160,7 +1160,7 @@ func TestService_GetEffectiveLinkMethod_Precedence(t *testing.T) {
 				}
 			}
 
-			method, err := svc.GetEffectiveLinkMethod(game, "default")
+			method, err := svc.GetEffectiveLinkMethod(context.Background(), game, "default")
 			require.NoError(t, err)
 			assert.Equal(t, tc.expectedMethod, method)
 		})
@@ -1185,7 +1185,7 @@ func TestService_GetEffectiveLinkMethod_InvalidLinkMethodSurfaces(t *testing.T) 
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(profilePath, append(data, []byte("link_method: bogus\n")...), 0644))
 
-	_, err = svc.GetEffectiveLinkMethod(game, "default")
+	_, err = svc.GetEffectiveLinkMethod(context.Background(), game, "default")
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, domain.ErrInvalidLinkMethod)
@@ -1217,7 +1217,7 @@ func TestService_DeployProfile_ProfileLinkMethodOverridesGame(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "profile-level copy must beat the game's explicit symlink")
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, domain.LinkCopy, mod.LinkMethod, "SetModLinkMethod must record the profile's effective method")
 }
@@ -1338,7 +1338,7 @@ func TestService_DeployProfile_MissingCacheModRedownloads(t *testing.T) {
 	mock.AddMod("g1", mockMod)
 
 	// InstalledMod record exists, but nothing was ever stored in the cache.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          *mockMod,
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -1405,7 +1405,7 @@ func TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloa
 	mockMod := &domain.Mod{ID: "1", SourceID: "src", Name: "Download Fail Mod", Version: "1.0", GameID: "g1"}
 	mock.AddMod("g1", mockMod)
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          *mockMod,
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -1463,7 +1463,7 @@ func TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError(t *testi
 	// mockSource.GetModFiles always returns a single file with ID "1" -
 	// "stale-id" never matches it.
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          *mockMod,
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -1511,7 +1511,7 @@ func TestService_DeployProfile_StoredIDsGone_HealsToRecordedVersion(t *testing.T
 
 	// DB row is pinned at 1.0 with stale FileIDs; nothing stored in the
 	// cache, forcing redeployFromSource.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -1551,7 +1551,7 @@ func TestService_DeployProfile_StoredIDsGone_HealPersistsFileIDs(t *testing.T) {
 
 	// DB row pinned at 1.0 with dead FileIDs; nothing in the cache, forcing
 	// redeployFromSource to heal by version match (file "9").
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -1565,7 +1565,7 @@ func TestService_DeployProfile_StoredIDsGone_HealPersistsFileIDs(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, 1, result.Deployed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "default")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"9"}, installed.FileIDs,
 		"a successful heal must persist the healed FileIDs, not keep the dead ones")
@@ -1595,21 +1595,21 @@ func TestService_DeployProfile_CacheMissRedownload_SameIDsPreserveChecksums(t *t
 	// DB row whose stored FileIDs still match the source's 1.0 file ("9"),
 	// with a recorded checksum; nothing in the cache, forcing a redownload
 	// that resolves to the very same IDs.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 		FileIDs:      []string{"9"},
 	}))
-	require.NoError(t, svc.SaveFileChecksum("src", "mod1", "g1", "default", "9", "abc123"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod1", "g1", "default", "9", "abc123"))
 	seedProfileWithMod(t, svc, "g1", "default", "src", "mod1", "1.0")
 
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Deployed)
 
-	files, err := svc.GetFilesWithChecksums("g1", "default")
+	files, err := svc.GetFilesWithChecksums(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	assert.Equal(t, "9", files[0].FileID)
@@ -2421,7 +2421,7 @@ func seedInstalledModUnderProfile(t *testing.T, svc *core.Service, game *domain.
 		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
 	}
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID:       modID,
 			SourceID: sourceID,
@@ -2640,7 +2640,7 @@ func TestService_PlanProfileSwitch_CacheMissForcesReinstallWithPreservedFileIDs(
 	require.NoError(t, err)
 
 	// DB row exists (with FileIDs), but nothing was ever stored in the cache.
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "modE", SourceID: "src", Name: "Mod E", Version: "1.0", GameID: "g1"},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -2700,7 +2700,7 @@ func TestService_PlanProfileSwitch_PerformsZeroMutations(t *testing.T) {
 	require.NoError(t, err)
 	beforeTarget, err := os.ReadFile(targetPath)
 	require.NoError(t, err)
-	beforeMods, err := svc.GetInstalledMods("g1", "default")
+	beforeMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
@@ -2715,7 +2715,7 @@ func TestService_PlanProfileSwitch_PerformsZeroMutations(t *testing.T) {
 	assert.Equal(t, beforeDefault, afterDefault, "profile YAML must be byte-for-byte unchanged after planning")
 	assert.Equal(t, beforeTarget, afterTarget, "profile YAML must be byte-for-byte unchanged after planning")
 
-	afterMods, err := svc.GetInstalledMods("g1", "default")
+	afterMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, beforeMods, afterMods, "DB rows must be untouched after planning")
 
@@ -2751,9 +2751,9 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "disable-me", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "enable-me", "Enable Me", "1.0", false, map[string][]byte{"enable.esp": []byte("e")})
 
-	disableMod, err := svc.GetInstalledMod("src", "disable-me", "g1", "default")
+	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
 	require.NoError(t, err)
-	enableMod, err := svc.GetInstalledMod("src", "enable-me", "g1", "target")
+	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "enable-me", "g1", "target")
 	require.NoError(t, err)
 
 	mock := newMockSourceWithDownloads("src")
@@ -2829,7 +2829,7 @@ func TestService_ApplyProfileSwitch_UsesTargetProfileLinkMethod(t *testing.T) {
 	setProfileLinkMethod(t, svc, "g1", "target", domain.LinkCopy)
 
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "enable-me", "Enable Me", "1.0", false, map[string][]byte{"enable.esp": []byte("e")})
-	enableMod, err := svc.GetInstalledMod("src", "enable-me", "g1", "target")
+	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "enable-me", "g1", "target")
 	require.NoError(t, err)
 
 	plan := &core.SwitchPlan{
@@ -2875,7 +2875,7 @@ func TestService_ApplyProfileSwitch_DisableLoopUsesSourceProfileLinkMethod(t *te
 	require.NoError(t, err, "precondition: the from-profile's mod must be deployed")
 	require.Equal(t, os.FileMode(0), info.Mode()&os.ModeSymlink, "precondition: the from-profile deployment must be a real copy")
 
-	disableMod, err := svc.GetInstalledMod("src", "disable-me", "g1", "default")
+	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
 	require.NoError(t, err)
 
 	plan := &core.SwitchPlan{
@@ -2929,7 +2929,7 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 	// Block updates to installed_mods.enabled so SetModEnabled fails too.
 	installEnabledBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
 
-	disableMod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 
 	plan := &core.SwitchPlan{
@@ -2988,7 +2988,7 @@ func TestService_ApplyProfileSwitch_EnableLoop_InstallFailureSkipsModEntirely(t 
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "1", "Test Mod", "1.0", false, map[string][]byte{"blocked/plugin.esp": []byte("data")})
 	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "blocked"), []byte("occupied"), 0644))
 
-	enableMod, err := svc.GetInstalledMod("src", "1", "g1", "target")
+	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
 	require.NoError(t, err)
 
 	plan := &core.SwitchPlan{
@@ -3010,7 +3010,7 @@ func TestService_ApplyProfileSwitch_EnableLoop_InstallFailureSkipsModEntirely(t 
 		assert.NotEqual(t, core.SwitchEnabled, e.Phase, "no SwitchEnabled event must fire for a mod whose Install failed")
 	}
 
-	mod, err := svc.GetInstalledMod("src", "1", "g1", "target")
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
 	require.NoError(t, err)
 	assert.False(t, mod.Enabled, "SetModEnabled must never be called after a failed Install")
 }
@@ -3040,7 +3040,7 @@ func TestService_ApplyProfileSwitch_EnableLoop_SetModEnabledFailureIsNonFatalNot
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "1", "Test Mod", "1.0", false, map[string][]byte{"plugin.esp": []byte("data")})
 	installEnabledBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
 
-	enableMod, err := svc.GetInstalledMod("src", "1", "g1", "target")
+	enableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
 	require.NoError(t, err)
 
 	plan := &core.SwitchPlan{
@@ -3108,7 +3108,7 @@ func TestService_ApplyProfileSwitch_EnableLoop_ModInstalledUnderOtherProfile_Cre
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.NoError(t, err, "the mod must be deployed to the game dir")
 
-	row, err := svc.GetInstalledMod("src", "1", "g1", "target")
+	row, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "target")
 	require.NoError(t, err, "an installed_mods row must exist under the target profile")
 	assert.True(t, row.Enabled)
 	assert.True(t, row.Deployed)
@@ -3287,9 +3287,9 @@ func TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod(t *te
 	assert.Contains(t, failEvt.Detail, "no longer available upstream")
 	assert.Contains(t, failEvt.Detail, "stale-id")
 
-	_, err = svc.GetInstalledMod("src", "mod1", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	assert.Error(t, err, "mod1 must not be installed via fallback substitution")
-	_, err = svc.GetInstalledMod("src", "mod2", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod2", "g1", "target")
 	assert.NoError(t, err, "mod2 must still install, proving the loop continues")
 }
 
@@ -3342,7 +3342,7 @@ func TestService_ApplyProfileSwitch_InstallLoop_RecordsFileVersion(t *testing.T)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "target")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version, "DB row must record the selected file's version, not the mod's latest")
 
@@ -3416,7 +3416,7 @@ func TestApplyProfileSwitch_HonorsProfileVersion_Downgrade(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version, "must record the pinned version, not the source's latest")
 	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
@@ -3452,7 +3452,7 @@ func TestApplyProfileSwitch_StoredIDsGone_HealsToRecordedVersion(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed, "must heal to the recorded version, not hard-fail")
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version)
 	assert.Equal(t, []string{"9"}, installed.FileIDs)
@@ -3506,9 +3506,9 @@ func TestApplyProfileSwitch_StoredIDsGone_VersionAlsoGone_HardFails(t *testing.T
 	assert.Contains(t, failEvt.Detail, "999")
 	assert.Contains(t, failEvt.Detail, `version "0.5" not available`)
 
-	_, err = svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	assert.Error(t, err, "mod1 must not be installed via fallback substitution")
-	_, err = svc.GetInstalledMod("src", "mod2", "g1", "stable")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod2", "g1", "stable")
 	assert.NoError(t, err, "mod2 must still install, proving the loop continues")
 }
 
@@ -3565,7 +3565,7 @@ func TestApplyProfileSwitch_VersionlessSource_KeepsLegacyBehavior(t *testing.T) 
 	assert.Contains(t, failEvt.Detail, "999")
 	assert.NotContains(t, failEvt.Detail, "not available", "a versionless file list must produce the un-extended #95 wording, not the #96 extension")
 
-	_, err = svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	assert.Error(t, err)
 }
 
@@ -3608,7 +3608,7 @@ func TestApplyProfileSwitch_StoredIDsBothAgree_FastPathReturnsWholeSet(t *testin
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"10", "9"}, installed.FileIDs,
 		"the fast path must keep the whole stored set, not re-resolve to the narrower matches(\"1.5\") set")
@@ -3795,7 +3795,7 @@ func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -3821,7 +3821,7 @@ func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version)
 	assert.Equal(t, []string{"9"}, installed.FileIDs, "must have selected the archived 1.0 file, not the primary 1.5 file")
@@ -3873,7 +3873,7 @@ func TestApplyProfileSwitch_PartialCacheEntry_StillDownloads(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed, "a partial cache entry must not fool the cache-first guard into skipping the download")
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"9"}, installed.FileIDs, "the download must actually have run and selected the 1.0 file")
 
@@ -3942,7 +3942,7 @@ func TestApplyProfileSwitch_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
 	assert.NoError(t, err, "the cached file must still be deployed")
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "stable")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "stable")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version)
 	assert.Equal(t, []string{"9"}, installed.FileIDs)
@@ -3988,7 +3988,7 @@ func TestService_ApplyProfileSwitch_InstallLoop_SavesWithNormalizedGameID(t *tes
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed)
 
-	installed, err := svc.GetInstalledMod("src", "mod1", "g1", "target")
+	installed, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
 	require.NoError(t, err, "the installed row must be visible under the lmm game ID")
 	assert.Equal(t, "g1", installed.GameID, "persisted GameID must be normalized to the lmm game, not the source-mapped value")
 }
@@ -4054,7 +4054,7 @@ func TestService_ApplyProfileSwitch_NilProgressCallbackIsSafe(t *testing.T) {
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
-	disableMod, err := svc.GetInstalledMod("src", "1", "g1", "default")
+	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 
 	plan := &core.SwitchPlan{
@@ -4093,9 +4093,9 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_Retur
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "a", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "b", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
-	modA, err := svc.GetInstalledMod("src", "a", "g1", "default")
+	modA, err := svc.GetInstalledMod(context.Background(), "src", "a", "g1", "default")
 	require.NoError(t, err)
-	modB, err := svc.GetInstalledMod("src", "b", "g1", "default")
+	modB, err := svc.GetInstalledMod(context.Background(), "src", "b", "g1", "default")
 	require.NoError(t, err)
 
 	plan := &core.SwitchPlan{
@@ -4136,9 +4136,9 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenEnableLoopMods_Return
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "a", "Mod A", "1.0", false, map[string][]byte{"a.esp": []byte("a")})
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "b", "Mod B", "1.0", false, map[string][]byte{"b.esp": []byte("b")})
 
-	modA, err := svc.GetInstalledMod("src", "a", "g1", "target")
+	modA, err := svc.GetInstalledMod(context.Background(), "src", "a", "g1", "target")
 	require.NoError(t, err)
-	modB, err := svc.GetInstalledMod("src", "b", "g1", "target")
+	modB, err := svc.GetInstalledMod(context.Background(), "src", "b", "g1", "target")
 	require.NoError(t, err)
 
 	plan := &core.SwitchPlan{
@@ -4212,7 +4212,7 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenInstallLoopMods_Retur
 
 	_, err = os.Lstat(filepath.Join(gameDir, "second.esp"))
 	assert.True(t, os.IsNotExist(err), "the second ModReference must never have been fetched/installed")
-	_, err = svc.GetInstalledMod("src", "second", "g1", "target")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "second", "g1", "target")
 	assert.ErrorIs(t, err, domain.ErrModNotFound)
 }
 
@@ -4255,7 +4255,7 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 	installSeededMod(t, svc, game, "a")
 	installSeededMod(t, svc, game, "b")
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, mods, 2)
 
@@ -4273,7 +4273,7 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 		assert.True(t, os.IsNotExist(err), "%s must be undeployed", f)
 	}
 	for _, id := range []string{"a", "b"} {
-		mod, err := svc.GetInstalledMod("src", id, "g1", "default")
+		mod, err := svc.GetInstalledMod(context.Background(), "src", id, "g1", "default")
 		require.NoError(t, err, "records must be preserved without Uninstall")
 		assert.False(t, mod.Deployed, "mod %s must be marked not deployed", id)
 	}
@@ -4327,7 +4327,7 @@ func TestService_PurgeProfile_Uninstall_RemovesRecordsAndProfileEntries(t *testi
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 	installSeededMod(t, svc, game, "1")
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{Uninstall: true}, nil)
@@ -4336,7 +4336,7 @@ func TestService_PurgeProfile_Uninstall_RemovesRecordsAndProfileEntries(t *testi
 
 	_, err = os.Lstat(filepath.Join(gameDir, "plugin.esp"))
 	assert.True(t, os.IsNotExist(err))
-	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "Uninstall must delete the DB record")
 	profile, err := svc.NewProfileManager().Get("g1", "default")
 	require.NoError(t, err)
@@ -4362,7 +4362,7 @@ fi
 exit 0`)
 	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}}
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	var events []core.DeployProgress
@@ -4406,7 +4406,7 @@ func TestService_PurgeProfile_BeforeAllFailure_FatalWithoutForce(t *testing.T) {
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\necho boom >&2\nexit 1")
 	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	var events []core.DeployProgress
@@ -4435,7 +4435,7 @@ func TestService_PurgeProfile_BeforeAllFailure_ForcedWarnsBeforePurging(t *testi
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\necho boom >&2\nexit 1")
 	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	var events []core.DeployProgress
@@ -4465,7 +4465,7 @@ func TestService_PurgeProfile_AfterHookFailures_WarningsUseModNameAndDeferEmissi
 	failScript := createTestScript(t, scriptsDir, "fail.sh", "#!/bin/bash\necho boom >&2\nexit 1")
 	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{AfterEach: failScript, AfterAll: failScript}}
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	var events []core.DeployProgress
@@ -4508,7 +4508,7 @@ func TestService_PurgeProfile_UndeployFailure_EmitsPurgeNoteAndStillCounts(t *te
 	require.NoError(t, os.Remove(deployedPath))
 	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	var events []core.DeployProgress
@@ -4547,7 +4547,7 @@ func TestService_PurgeProfile_SetModDeployedFailure_NonFatalNote(t *testing.T) {
 	installSeededMod(t, svc, game, "1")
 	installBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, nil)
@@ -4579,7 +4579,7 @@ func TestService_PurgeProfile_Uninstall_DeleteRecordFailure_CountsFailedSkipsAft
 	afterEachScript := createTestScript(t, scriptsDir, "after_each.sh", "#!/bin/bash\ntouch "+marker+"\nexit 0")
 	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{AfterEach: afterEachScript}}
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	var events []core.DeployProgress
@@ -4615,7 +4615,7 @@ func TestService_PurgeProfile_Uninstall_ProfileRemoveFailure_RecordsNote(t *test
 	_, err := pm.Create("g1", "default")
 	require.NoError(t, err)
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{Uninstall: true}, nil)
@@ -4624,7 +4624,7 @@ func TestService_PurgeProfile_Uninstall_ProfileRemoveFailure_RecordsNote(t *test
 	require.NotEmpty(t, result.Notes)
 	assert.Contains(t, result.Notes[0], "Note: Test Mod - ")
 
-	_, err = svc.GetInstalledMod("src", "1", "g1", "default")
+	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "the DB record delete must still have happened")
 }
 
@@ -4638,7 +4638,7 @@ func TestService_PurgeProfile_CtxCancelledBetweenMods_ReturnsPartialResult(t *te
 	installSeededMod(t, svc, game, "a")
 	installSeededMod(t, svc, game, "b")
 
-	mods, err := svc.GetInstalledMods("g1", "default")
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, mods, 2)
 
@@ -4665,4 +4665,63 @@ func TestService_PurgeProfile_CtxCancelledBetweenMods_ReturnsPartialResult(t *te
 	for _, e := range events {
 		assert.NotEqual(t, core.PurgeComplete, e.Phase, "a cancelled purge must not report completion")
 	}
+}
+
+// --- Fix round 1: cancellation safety (task-3 review I1) ---
+
+// TestService_DeployProfile_CancelledDuringLastModRedownload_RecordsSkipAndErrors
+// is review finding I1's regression guard: redeployFromSource's ctx checks
+// returned a bare `true`, which DeployProfile turns into a plain `continue`.
+// When the cancelled mod is the LAST one in the profile there is no next
+// iteration to trip the loop-head check, so the deploy reported success with
+// the mod silently missing. Cancelling on the last mod's DeployRedownloading
+// event (the callback immediately before its per-file download loop, so the
+// loop-head check is what fires) must both record the skip and surface a
+// context.Canceled error from DeployProfile.
+func TestService_DeployProfile_CancelledDuringLastModRedownload_RecordsSkipAndErrors(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModMultiFileSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: map[string][]domain.DownloadableFile{
+			"first": {{ID: "first-1", Name: "First File", FileName: "first.zip", Version: "1.0", IsPrimary: true}},
+			"last":  {{ID: "last-1", Name: "Last File", FileName: "last.zip", Version: "1.0", IsPrimary: true}},
+		},
+	}
+	t.Cleanup(mock.Close)
+	svc.RegisterSource(mock)
+	stageInterplayDownload(t, mock, "first-1", "first.esp")
+	stageInterplayDownload(t, mock, "last-1", "last.esp")
+	mock.AddMod("g1", &domain.Mod{ID: "first", SourceID: "src", Name: "First Mod", Version: "1.0", GameID: "g1"})
+	mock.AddMod("g1", &domain.Mod{ID: "last", SourceID: "src", Name: "Last Mod", Version: "1.0", GameID: "g1"})
+
+	// Both rows exist with nothing cached, so each mod takes
+	// redeployFromSource; the profile's order makes "last" the final one.
+	for _, m := range []struct{ id, name, fileID string }{{"first", "First Mod", "first-1"}, {"last", "Last Mod", "last-1"}} {
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+			Mod:          domain.Mod{ID: m.id, SourceID: "src", Name: m.name, Version: "1.0", GameID: "g1"},
+			ProfileName:  "default",
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+			FileIDs:      []string{m.fileID},
+		}))
+		seedProfileWithMod(t, svc, "g1", "default", "src", m.id, "1.0")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
+		if p.Phase == core.DeployRedownloading && p.ModName == "Last Mod" {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Equal(t, 1, result.Deployed, "the first mod deployed before the cancellation")
+	require.Len(t, result.Skipped, 1, "the cancelled mod must be recorded as skipped, not silently dropped")
+	assert.Contains(t, result.Skipped[0], "Last Mod")
+	assert.Contains(t, result.Skipped[0], "cancelled")
 }

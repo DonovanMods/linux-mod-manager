@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -11,11 +12,28 @@ import (
 // the test binary, so none of these are part of the production API.
 
 // EnabledMergeSourcesForTest exposes enabledMergeSources.
-func (s *Service) EnabledMergeSourcesForTest(game *domain.Game, profileName string) ([]source.MergeSource, error) {
-	return s.enabledMergeSources(game, profileName)
+func (s *Service) EnabledMergeSourcesForTest(ctx context.Context, game *domain.Game, profileName string) ([]source.MergeSource, error) {
+	return s.enabledMergeSources(ctx, game, profileName)
 }
 
 // ReconcilePakManifestsForTest exposes reconcilePakManifests.
 func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain.Game, profileName string, installer *Installer, failedByRef map[string]string) ([]string, error) {
 	return s.reconcilePakManifests(ctx, game, profileName, installer, failedByRef)
+}
+
+// SetBeforeSaveInstalledForTest arms the install flow's pre-SaveInstalledMod
+// hook so a test can make that DB write fail (e.g. by cancelling the ctx)
+// after the deploy has already succeeded.
+func (s *Service) SetBeforeSaveInstalledForTest(fn func()) {
+	s.beforeSaveInstalled = fn
+}
+
+// SetDownloadClientForTest replaces the Service's download HTTP client. A
+// cancellation test uses it to install a transport that IGNORES ctx, so the
+// only thing that can stop a per-file download loop is the loop's own guard
+// - with the stock ctx-aware transport, a cancelled ctx aborts the next
+// request by itself and the test cannot tell the two apart (final-review
+// Important 2).
+func (s *Service) SetDownloadClientForTest(c *http.Client) {
+	s.downloader = NewDownloader(c)
 }

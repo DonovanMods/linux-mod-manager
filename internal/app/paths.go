@@ -44,17 +44,20 @@ type Paths struct {
 // downloads that are expensive to fetch again and must not be treated as
 // disposable.
 func ResolvePaths(opts Options) (Paths, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Paths{}, fmt.Errorf("home directory: %w", err)
-	}
-
 	p := Paths{ConfigDir: opts.ConfigDir, DataDir: opts.DataDir}
 	if p.ConfigDir == "" {
-		p.ConfigDir = resolveBaseDir("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+		dir, err := resolveBaseDir("XDG_CONFIG_HOME", ".config")
+		if err != nil {
+			return Paths{}, err
+		}
+		p.ConfigDir = dir
 	}
 	if p.DataDir == "" {
-		p.DataDir = resolveBaseDir("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+		dir, err := resolveBaseDir("XDG_DATA_HOME", filepath.Join(".local", "share"))
+		if err != nil {
+			return Paths{}, err
+		}
+		p.DataDir = dir
 	}
 
 	// A config.yaml that fails to parse is reported with context by
@@ -69,24 +72,29 @@ func ResolvePaths(opts Options) (Paths, error) {
 
 // resolveBaseDir returns <base>/lmm, where base is the XDG variable when it is
 // set to an absolute path (the spec requires relative values to be ignored)
-// and legacyBase otherwise. When the XDG location does not exist yet but the
-// legacy one does, the legacy directory wins so installs that predate XDG
-// support keep finding their data.
-func resolveBaseDir(envVar, legacyBase string) string {
-	legacy := filepath.Join(legacyBase, appDirName)
+// and $HOME/<legacyRel> otherwise. When the XDG location does not exist yet
+// but the legacy one does, the legacy directory wins so installs that predate
+// XDG support keep finding their data. $HOME is consulted only on this path,
+// so a caller that supplies both directories explicitly never needs it (#277).
+func resolveBaseDir(envVar, legacyRel string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("home directory: %w", err)
+	}
+	legacy := filepath.Join(home, legacyRel, appDirName)
 	base := os.Getenv(envVar)
 	if base == "" || !filepath.IsAbs(base) {
-		return legacy
+		return legacy, nil
 	}
 	xdg := filepath.Join(base, appDirName)
 	if xdg == legacy {
-		return xdg
+		return xdg, nil
 	}
 	if _, err := os.Stat(xdg); err == nil {
-		return xdg
+		return xdg, nil
 	}
 	if _, err := os.Stat(legacy); err == nil {
-		return legacy
+		return legacy, nil
 	}
-	return xdg
+	return xdg, nil
 }

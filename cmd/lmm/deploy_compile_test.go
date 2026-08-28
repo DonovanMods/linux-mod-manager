@@ -56,7 +56,7 @@ func seedCompileExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, mo
 	ensureDefaultProfile(t, svc, game)
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, "1.0", cache.RetainedSourceName(fileID), []byte(name+"-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -81,7 +81,7 @@ func seedCompilePakMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, "1.0", member, pakContent))
 	versionDir := gameCache.ModPath(game.ID, "fake-compiler", modID, "1.0")
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{member}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: name, Version: "1.0", GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -103,7 +103,7 @@ func TestDoDeploy_Compile_LabelsMergedRawAndLooseAndPrintsFooter(t *testing.T) {
 	svc, game, _ := setupDoDeployCompileTest(t)
 	seedCompileExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
 	seedCompilePakMod(t, svc, game, "raw-pak", "Raw Pak Mod", "raw.pak")
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "raw-pak", game.ID, "default", false))
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false))
 	seedDeployableMod(t, svc, game, "loose", "Loose Mod", "loose.esp")
 
 	out := captureStdout(t, func() error {

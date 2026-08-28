@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -48,7 +49,7 @@ func registerSource(svc *core.Service, src source.ModSource, warn io.Writer) {
 	// Gate on Capabilities().Auth: a key set on an auth-less source would be
 	// stored but never attached to a request.
 	if setter, ok := src.(interface{ SetAPIKey(string) }); ok && source.CapabilitiesOf(src).Auth {
-		if key := ResolveAPIKey(svc, src); key != "" {
+		if key := ResolveAPIKey(context.Background(), svc, src); key != "" {
 			setter.SetAPIKey(key)
 		}
 	}
@@ -80,11 +81,11 @@ func registerCustomSources(svc *core.Service, cfgDir string, warn io.Writer) {
 // ResolveAPIKey returns the API key for src: the environment variable named
 // by EnvKeyFor(src) wins, then the token stored by `lmm auth login`; "" if
 // neither is set.
-func ResolveAPIKey(svc *core.Service, src source.ModSource) string {
+func ResolveAPIKey(ctx context.Context, svc *core.Service, src source.ModSource) string {
 	if key := os.Getenv(EnvKeyFor(src)); key != "" {
 		return key
 	}
-	token, err := svc.GetSourceToken(src.ID())
+	token, err := svc.GetSourceToken(ctx, src.ID())
 	if err != nil || token == nil {
 		return ""
 	}

@@ -499,3 +499,9 @@ BepInEx) — they resume after Phase 1 on the new contracts.
 | 2026-08-27 | Plan/Apply for all mutations except setters/reorder; no frontend callbacks from Apply | Serializable previews; works over HTTP |
 | pending | `encoding/json` v1 vs v2 for the contract | Phase 1 spike |
 | pending | v2.0.0 timing (after Phase 3 vs after serve) | User decides at Phase 3 close |
+| 2026-08-27 | Update-check progress via an optional `source.UpdateProgressReporter` interface, not a `ModSource.CheckUpdates` signature change | Same explicitness, no churn across 6 implementations + 18 test mocks; only nexusmods/curseforge report per-mod |
+| 2026-08-27 | slog is wired to a new `--log-level` flag (default off), not to `--verbose` | `-v` prints 21 user-facing stdout lines that must stay byte-identical; diagnostics are a separate channel |
+| 2026-08-27 | Phase 1 threads ctx through `Service`, `storage/db`, `Extractor.Extract`, `Cache.CloneMod`, `Installer` I/O methods — not `ProfileManager`, `storage/config`, or `linker` | Those are single-file YAML/link ops with nothing to cancel; they are reshaped in Phase 2 anyway |
+| 2026-08-27 | `VerifyEvent.Green` → semantic `Fixed bool`; `Variant` → `ChecksumPopulated bool`; `"fixed_green"` dropped (dead) | No presentation hints in events; the renderer derives colour from meaning |
+| 2026-08-27 | Every flow event carries `Phase DeployPhase`; the CLI renders via a cmd-side projection (`lineOf`) so the 8 closures stay byte-identical | The 63-phase vocabulary IS the CLI print contract; typed payloads are for serve |
+| 2026-08-27 | `encoding/json/v2` for the core contract goldens (Deterministic + indent); CLI `--json` unchanged until Phase 3 | v2 defaults (nil slice → `[]`, strict names) enforce the contract rules; Go 1.27 ships it stable |

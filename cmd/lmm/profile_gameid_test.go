@@ -93,13 +93,13 @@ mods:
 
 	require.NoError(t, doProfileApply(context.Background(), svc, game, []string{"default"}))
 
-	installed, err := svc.GetInstalledMods(game.ID, "default")
+	installed, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, installed, 1, "installed mod must be visible under the lmm game ID after profile apply")
 	assert.Equal(t, "cool-mod", installed[0].ID)
 	assert.Equal(t, "testgame", installed[0].GameID, "persisted GameID must be normalized to the lmm game, not the source-mapped value")
 
-	orphaned, err := svc.GetInstalledMods("skyrim", "default")
+	orphaned, err := svc.GetInstalledMods(context.Background(), "skyrim", "default")
 	require.NoError(t, err)
 	assert.Empty(t, orphaned, "installed mod must not be filed under the source-mapped game ID")
 }

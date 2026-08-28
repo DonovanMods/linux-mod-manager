@@ -250,7 +250,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 		}()
 
 		extractedPath := filepath.Join(tempDir, "extracted")
-		if err := i.extractor.Extract(archivePath, extractedPath); err != nil {
+		if err := i.extractor.Extract(ctx, archivePath, extractedPath); err != nil {
 			return nil, fmt.Errorf("extracting archive: %w", err)
 		}
 
@@ -270,7 +270,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 		if err := os.Rename(extractedPath, cachePath); err != nil {
 			// If rename fails (cross-device), fall back to copy
-			if err := copyDir(extractedPath, cachePath); err != nil {
+			if err := copyDir(ctx, extractedPath, cachePath); err != nil {
 				return nil, fmt.Errorf("moving to cache: %w", err)
 			}
 		}
@@ -363,7 +363,7 @@ func (s *Service) ResolveImportedFile(ctx context.Context, sourceID string, sour
 // undeploy narrowing can attribute its members. Import writes the cache
 // directly (no staging commit), so the marker is stamped after the fact;
 // the members are whatever the entry actually holds.
-func (s *Service) MarkImportedFileComplete(game *domain.Game, mod *domain.Mod, fileID string) error {
+func (s *Service) MarkImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
 	gameCache := s.GetGameCache(game)
 	members, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
@@ -396,12 +396,20 @@ func (s *Service) MarkImportedFileComplete(game *domain.Game, mod *domain.Mod, f
 // external content into the mod cache (path traversal). Escaping symlinks
 // fail the copy with an error naming the entry, rather than being silently
 // skipped - the mod is malformed or hostile, and the user should see why.
-func copyDir(src, dst string) error {
+//
+// ctx is honored per entry (see copyDirFollowing): a mod directory can hold
+// thousands of files, and on the directory-source local-ingest path
+// (ingestLocalToCache's copy branch) this is the ONLY cancellation guard
+// below the caller's per-file loop - nothing else in that branch consults
+// ctx. Aborting mid-copy is safe because every caller copies into a staging
+// directory and only publishes it (commitStagedCache*, os.Rename) after a
+// nil error, so a cancelled copy never leaves a cache entry marked complete.
+func copyDir(ctx context.Context, src, dst string) error {
 	resolvedRoot, err := filepath.EvalSymlinks(src)
 	if err != nil {
 		return fmt.Errorf("resolving %s: %w", src, err)
 	}
-	return copyDirFollowing(src, dst, resolvedRoot, map[string]bool{})
+	return copyDirFollowing(ctx, src, dst, resolvedRoot, map[string]bool{})
 }
 
 // copyDirFollowing does the recursive work for copyDir. resolvedRoot is the
@@ -415,7 +423,7 @@ func copyDir(src, dst string) error {
 // are legal (just duplicated content) and must not be flagged, but a symlink
 // that points back at a directory still being walked - an actual cycle -
 // would recurse forever without this guard.
-func copyDirFollowing(src, dst, resolvedRoot string, visited map[string]bool) error {
+func copyDirFollowing(ctx context.Context, src, dst, resolvedRoot string, visited map[string]bool) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", src, err)
@@ -441,6 +449,9 @@ func copyDirFollowing(src, dst, resolvedRoot string, visited map[string]bool) er
 	}
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 
@@ -468,7 +479,7 @@ func copyDirFollowing(src, dst, resolvedRoot string, visited map[string]bool) er
 		}
 
 		if entryInfo.IsDir() {
-			if err := copyDirFollowing(srcPath, dstPath, resolvedRoot, visited); err != nil {
+			if err := copyDirFollowing(ctx, srcPath, dstPath, resolvedRoot, visited); err != nil {
 				return err
 			}
 			continue

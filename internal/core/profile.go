@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -284,7 +285,9 @@ func (pm *ProfileManager) Export(gameID, profileName string) ([]byte, error) {
 	}
 
 	// Get installed mods to populate FileIDs
-	installedMods, err := pm.db.GetInstalledMods(gameID, profileName)
+	// ProfileManager does not thread ctx in this phase (design decision) -
+	// see Service.GetInstalledMods for the ctx-aware equivalent.
+	installedMods, err := pm.db.GetInstalledMods(context.Background(), gameID, profileName) // ProfileManager gains ctx in Phase 2 (v2 plan Task 3 ruling)
 	if err == nil {
 		// Build lookup map of installed mods by source:mod key
 		installedMap := make(map[string]*domain.InstalledMod)

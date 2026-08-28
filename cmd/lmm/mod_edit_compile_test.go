@@ -50,7 +50,7 @@ func TestDoModEdit_DeployCompile_VersionEditSyncsMergedPak(t *testing.T) {
 	const modID, oldVersion, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, oldVersion, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: "fake-compiler", Name: "Bear Mount", Version: oldVersion, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,

@@ -252,7 +252,7 @@ func seedEnabledPakMod(t *testing.T, svc *core.Service, game *domain.Game, sourc
 	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, member, pakContent))
 	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{member}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -450,7 +450,7 @@ func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, downloadResult.FilesExtracted)
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          *mod,
 		ProfileName:  "default",
 		Enabled:      true,
@@ -459,7 +459,7 @@ func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
 	}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: []string{file.ID}}))
 
-	installer, err := svc.GetInstallerForProfile(game, "default")
+	installer, err := svc.GetInstallerForProfile(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.NoError(t, installer.Install(context.Background(), game, mod, "default"))
 
@@ -524,7 +524,7 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 	require.True(t, badManifests["pak"].Recorded)
 	require.Equal(t, []string{"badmod.pak"}, badManifests["pak"].Members, "a failed conversion must keep its raw pak deployed")
 
-	outcomes, ok := svc.MergedPakOutcomes(game, "default")
+	outcomes, ok := svc.MergedPakOutcomes(context.Background(), game, "default")
 	require.True(t, ok)
 	byMod := make(map[string]core.MergedFingerprintEntry, len(outcomes))
 	for _, o := range outcomes {
@@ -550,7 +550,7 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 	// Toggle goodmod's per-mod opt-out: it must drop out of the merge
 	// (membership change -> the fingerprint regenerates and omits it) and
 	// its manifest must flip back to raw deploy.
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", "goodmod", game.ID, "default", false))
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "goodmod", game.ID, "default", false))
 
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -559,7 +559,7 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"goodmod.pak"}, goodManifests["pak"].Members, "opting out must flip goodmod back to raw deploy")
 
-	outcomes, ok = svc.MergedPakOutcomes(game, "default")
+	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
 	require.True(t, ok)
 	for _, o := range outcomes {
 		require.NotEqual(t, "goodmod", o.ModID, "an opted-out mod must not appear in the merge fingerprint")

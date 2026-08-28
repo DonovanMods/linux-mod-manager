@@ -190,7 +190,7 @@ func runModSetUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doModSetUpdate(service, game, args[0])
+		return doModSetUpdate(ctx, service, game, args[0])
 	})
 }
 
@@ -214,7 +214,7 @@ func validateModSetUpdatePolicyFlags() error {
 	return nil
 }
 
-func doModSetUpdate(service *core.Service, game *domain.Game, modID string) error {
+func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	var err error
 	modSource, err = resolveSource(service, game, modSource, false)
 	if err != nil {
@@ -227,7 +227,7 @@ func doModSetUpdate(service *core.Service, game *domain.Game, modID string) erro
 	}
 
 	// Get the mod to verify it exists and get its name
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -248,7 +248,7 @@ func doModSetUpdate(service *core.Service, game *domain.Game, modID string) erro
 	}
 
 	// Update the policy
-	if err := service.SetModUpdatePolicy(modSource, modID, game.ID, profileName, policy); err != nil {
+	if err := service.SetModUpdatePolicy(ctx, modSource, modID, game.ID, profileName, policy); err != nil {
 		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
@@ -291,7 +291,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		return err
 	}
 
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -362,7 +362,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 
 func runModUnlock(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doModUnlock(service, game, args[0])
+		return doModUnlock(ctx, service, game, args[0])
 	})
 }
 
@@ -370,7 +370,7 @@ func runModUnlock(cmd *cobra.Command, args []string) error {
 // core.ProfileManager.ClearModLock already guarantees this; unlocking is
 // policy-neutral (#97 decision), so the update policy reported here is
 // whatever it already was.
-func doModUnlock(service *core.Service, game *domain.Game, modID string) error {
+func doModUnlock(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	var err error
 	modSource, err = resolveSource(service, game, modSource, false)
 	if err != nil {
@@ -382,7 +382,7 @@ func doModUnlock(service *core.Service, game *domain.Game, modID string) error {
 		return err
 	}
 
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -416,7 +416,7 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	// Get the mod to verify it exists and get its name for display
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -469,7 +469,7 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 	}
 
 	// Get the mod to verify it exists and get its name for display
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
@@ -533,11 +533,11 @@ func printModWarnings(warnings []string) {
 
 func runModFiles(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, svc *core.Service, game *domain.Game) error {
-		return doModFiles(svc, game, args[0])
+		return doModFiles(ctx, svc, game, args[0])
 	})
 }
 
-func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
+func doModFiles(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
 	profileName, err := resolveProfile(svc, game.ID, modProfile)
 	if err != nil {
 		return err
@@ -549,13 +549,13 @@ func doModFiles(svc *core.Service, game *domain.Game, modID string) error {
 	}
 
 	// Get mod info for display
-	mod, err := svc.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := svc.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
 	// Get deployed files from database
-	files, err := svc.GetDeployedFilesForMod(game.ID, profileName, modSource, modID)
+	files, err := svc.GetDeployedFilesForMod(ctx, game.ID, profileName, modSource, modID)
 	if err != nil {
 		return fmt.Errorf("getting deployed files: %w", err)
 	}
@@ -760,11 +760,11 @@ func runModConvert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("second argument must be on|off, got %q", args[1])
 	}
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doModConvert(service, game, args[0], convert)
+		return doModConvert(ctx, service, game, args[0], convert)
 	})
 }
 
-func doModConvert(service *core.Service, game *domain.Game, modID string, convert bool) error {
+func doModConvert(ctx context.Context, service *core.Service, game *domain.Game, modID string, convert bool) error {
 	var err error
 	modSource, err = resolveSource(service, game, modSource, false)
 	if err != nil {
@@ -776,7 +776,7 @@ func doModConvert(service *core.Service, game *domain.Game, modID string, conver
 		return err
 	}
 
-	mod, err := service.GetInstalledMod(modSource, modID, game.ID, profileName)
+	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		if errors.Is(err, domain.ErrModNotFound) {
 			return fmt.Errorf("mod not found: %s", modID)
@@ -790,7 +790,7 @@ func doModConvert(service *core.Service, game *domain.Game, modID string, conver
 		return fmt.Errorf("mod %s has no pak merge source: pak conversion does not apply", modID)
 	}
 
-	if err := service.SetModConvertPaks(modSource, modID, game.ID, profileName, convert); err != nil {
+	if err := service.SetModConvertPaks(ctx, modSource, modID, game.ID, profileName, convert); err != nil {
 		return fmt.Errorf("setting pak conversion for %s: %w", mod.Name, err)
 	}
 

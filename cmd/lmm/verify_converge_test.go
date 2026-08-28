@@ -49,13 +49,13 @@ func setupDoVerifyConvergeTest(t *testing.T) (*cobra.Command, *core.Service, *do
 	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "mod1", "1.0", "a.esp", []byte("a")))
 	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "mod1", "1.0", "gone.esp", []byte("g")))
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:         domain.Mod{ID: "mod1", SourceID: domain.SourceLocal, Name: "Mod One", Version: "1.0", GameID: game.ID},
 		ProfileName: "default",
 		Enabled:     true,
 		FileIDs:     []string{"a.esp"},
 	}))
-	require.NoError(t, svc.SaveFileChecksum(domain.SourceLocal, "mod1", game.ID, "default", "a.esp", "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), domain.SourceLocal, "mod1", game.ID, "default", "a.esp", "deadbeef"))
 
 	pm := getProfileManager(svc)
 	_, err := pm.Create(game.ID, "default")
@@ -128,7 +128,7 @@ func TestDoVerify_StaleDeployment_ReportedAsWarning(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(game.ModPath, "stray.pak"))
 	assert.NoError(t, err, "plain verify must not sweep the dangling link")
 
-	rows, err := svc.GetDeployedFilesForMod(game.ID, "default", domain.SourceLocal, "mod1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "default", domain.SourceLocal, "mod1")
 	require.NoError(t, err)
 	assert.Contains(t, rows, "gone.esp", "plain verify must not delete the stale row")
 }
@@ -157,7 +157,7 @@ func TestDoVerify_Fix_StaleDeployment_RemovesAndReports(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(game.ModPath, "stray.pak"))
 	assert.True(t, os.IsNotExist(err), "--fix must sweep the dangling link")
 
-	rows, err := svc.GetDeployedFilesForMod(game.ID, "default", domain.SourceLocal, "mod1")
+	rows, err := svc.GetDeployedFilesForMod(context.Background(), game.ID, "default", domain.SourceLocal, "mod1")
 	require.NoError(t, err)
 	assert.NotContains(t, rows, "gone.esp", "--fix must delete the stale row")
 	assert.Contains(t, rows, "a.esp", "the still-valid row must survive")

@@ -112,7 +112,7 @@ func TestImportPakRetainsAndDeploysRaw(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "fake-pak-bytes", string(deployableData), "a deployable copy of the raw pak must also be staged")
 
-	require.NoError(t, svc.MarkImportedFileComplete(game, result.Mod, result.RetainedFileID))
+	require.NoError(t, svc.MarkImportedFileComplete(context.Background(), game, result.Mod, result.RetainedFileID))
 
 	manifests, err := gameCache.FileManifests(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
 	require.NoError(t, err)

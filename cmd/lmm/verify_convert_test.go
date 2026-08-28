@@ -67,7 +67,7 @@ func seedEnabledPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, so
 	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, member, pakContent))
 	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{member}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -87,7 +87,7 @@ func seedLegacyPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, sou
 	require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, fileID, pakContent))
 	versionDir := gameCache.ModPath(game.ID, sourceID, modID, version)
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{fileID}))
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: modID, Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,
@@ -175,7 +175,7 @@ func TestVerifyReportsConversionFailed_UninstalledMod(t *testing.T) {
 	// pak's stored fingerprint (and the conversion-failure entry on it) is
 	// profile-scoped and untouched, exactly the state a fingerprint entry
 	// for a since-removed mod is in.
-	require.NoError(t, svc.DeleteInstalledMod("fake-compiler", modID, game.ID, "default"))
+	require.NoError(t, svc.DeleteInstalledMod(context.Background(), "fake-compiler", modID, game.ID, "default"))
 
 	verifyProfile = "default"
 	jsonOutput = true
@@ -282,9 +282,9 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	// staying at the raw-deploy member Task 9's ingest alone would leave -
 	// the direct, convergence-independent proof of the fix is that the
 	// entry itself no longer needs re-ingesting.
-	fixedMod, err := svc.GetInstalledMod("fake-compiler", modID, game.ID, "default")
+	fixedMod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", modID, game.ID, "default")
 	require.NoError(t, err)
-	need, nerr := svc.PakNeedsReingest(game, fixedMod, fileID)
+	need, nerr := svc.PakNeedsReingest(context.Background(), game, fixedMod, fileID)
 	require.NoError(t, nerr)
 	assert.False(t, need, "the entry must no longer need reingest after --fix re-ingests it")
 
@@ -311,7 +311,7 @@ func TestVerifyNeedsReingest_ModOptedOut_NotFlagged(t *testing.T) {
 
 	const modID, version, fileID = "opted-out-pak-mod", "1.0", "OptedOut.pak"
 	seedLegacyPakModCLI(t, svc, game, "fake-compiler", modID, version, fileID, []byte("legacy-pak-bytes"))
-	require.NoError(t, svc.SetModConvertPaks("fake-compiler", modID, game.ID, "default", false))
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", modID, game.ID, "default", false))
 
 	verifyProfile = "default"
 	jsonOutput = true
@@ -400,7 +400,7 @@ func TestVerifyFileCountCarveOutMembersAware(t *testing.T) {
 	// survived. gameCache.ListFiles will therefore report 0 actual files.
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, fileID, []string{modID + ".pak"}))
 
-	require.NoError(t, svc.SaveInstalledMod(&domain.InstalledMod{
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: "Broken Pak Mod", Version: version, GameID: game.ID},
 		ProfileName:  "default",
 		Enabled:      true,

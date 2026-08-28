@@ -157,3 +157,17 @@ func TestResolvePaths(t *testing.T) {
 		})
 	}
 }
+
+// TestResolvePaths_ExplicitDirsDoNotRequireHome pins #277: a fully
+// flag-driven invocation (containers, CI) must not need $HOME.
+func TestResolvePaths_ExplicitDirsDoNotRequireHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	cfg := t.TempDir()
+	data := t.TempDir()
+
+	got, err := ResolvePaths(Options{ConfigDir: cfg, DataDir: data})
+	require.NoError(t, err)
+	assert.Equal(t, Paths{ConfigDir: cfg, DataDir: data, CacheDir: filepath.Join(data, "cache")}, got)
+}

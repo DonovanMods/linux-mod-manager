@@ -196,7 +196,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	importedFileIDs := []string{}
 	if resolvedFile != nil {
 		importedFileIDs = []string{resolvedFile.ID}
-		if err := service.MarkImportedFileComplete(game, result.Mod, resolvedFile.ID); err != nil {
+		if err := service.MarkImportedFileComplete(ctx, game, result.Mod, resolvedFile.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not mark cache entry complete: %v\n", err)
 		}
 	}
@@ -242,7 +242,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	// Set up installer for conflict checking and deployment. The installer is
 	// built from the already-resolved method so both stay consistent (and the
 	// profile file is only read once).
-	linkMethod, err := service.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := service.GetEffectiveLinkMethod(ctx, game, profileName)
 	if err != nil {
 		return err
 	}
@@ -270,7 +270,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 				sourceID, modID := parts[0], parts[1]
 
 				// Try to get mod name
-				conflictMod, _ := service.GetInstalledMod(sourceID, modID, game.ID, profileName)
+				conflictMod, _ := service.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 				modName := modID
 				if conflictMod != nil {
 					modName = conflictMod.Name
@@ -347,7 +347,7 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		FileIDs:      importedFileIDs, // empty unless resolved against the source (#139)
 	}
 
-	if err := service.SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(ctx, installedMod); err != nil {
 		return fmt.Errorf("failed to save mod: %w", err)
 	}
 
@@ -443,7 +443,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	}
 
 	// Get installed mods for this game/profile
-	installedMods, err := service.GetInstalledMods(game.ID, profileName)
+	installedMods, err := service.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -518,7 +518,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 			if im.SourceURL == "" && mod.SourceURL != "" {
 				updated.SourceURL = mod.SourceURL
 			}
-			if err := service.SaveInstalledMod(&updated); err != nil {
+			if err := service.SaveInstalledMod(ctx, &updated); err != nil {
 				if verbose {
 					fmt.Printf("  %s: metadata save failed: %v\n", im.Name, err)
 				}
@@ -619,13 +619,13 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	}
 
 	// Import each untracked mod
-	linkMethod, err := service.GetEffectiveLinkMethod(game, profileName)
+	linkMethod, err := service.GetEffectiveLinkMethod(ctx, game, profileName)
 	if err != nil {
 		return err
 	}
 
 	// Get current installed mods for duplicate checking
-	currentMods, _ := service.GetInstalledMods(game.ID, profileName)
+	currentMods, _ := service.GetInstalledMods(ctx, game.ID, profileName)
 
 	var imported, failed, skipped int
 	for _, r := range untracked {
@@ -740,7 +740,7 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 		// just written. Non-fatal - a missing marker only costs the one
 		// redundant redownload marker-less imports always paid.
 		if r.ResolvedFile != nil {
-			if err := service.MarkImportedFileComplete(game, r.Mod, r.ResolvedFile.ID); err != nil && verbose {
+			if err := service.MarkImportedFileComplete(ctx, game, r.Mod, r.ResolvedFile.ID); err != nil && verbose {
 				fmt.Printf("    Warning: could not mark cache entry complete: %v\n", err)
 			}
 		}
@@ -766,7 +766,7 @@ func importExistingMod(ctx context.Context, service *core.Service, game *domain.
 		FileIDs:        fileIDs,
 	}
 
-	if err := service.SaveInstalledMod(installedMod); err != nil {
+	if err := service.SaveInstalledMod(ctx, installedMod); err != nil {
 		return fmt.Errorf("saving to database: %w", err)
 	}
 

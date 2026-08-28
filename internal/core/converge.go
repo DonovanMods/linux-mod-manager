@@ -97,7 +97,7 @@ type ConvergeResult struct {
 // never added to Removed, only to the joined error). ctx is checked between
 // mods during the row pass and periodically during the directory walk.
 func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, profileName string, dryRun bool) (*ConvergeResult, error) {
-	mods, err := s.GetInstalledMods(game.ID, profileName)
+	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
@@ -131,7 +131,7 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		}
 	}
 
-	method, err := s.GetEffectiveLinkMethod(game, profileName)
+	method, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("resolving effective link method: %w", err)
 	}
@@ -146,7 +146,7 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		rows, err := s.GetDeployedFilesForMod(game.ID, profileName, m.SourceID, m.ID)
+		rows, err := s.GetDeployedFilesForMod(ctx, game.ID, profileName, m.SourceID, m.ID)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("getting deployed files for %s: %w", domain.ModKey(m.SourceID, m.ID), err))
 			continue
@@ -193,7 +193,7 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 				continue
 			}
 			result.Removed = append(result.Removed, cf)
-			if err := s.db.DeleteDeployedFile(game.ID, profileName, path); err != nil {
+			if err := s.db.DeleteDeployedFile(ctx, game.ID, profileName, path); err != nil {
 				errs = append(errs, fmt.Errorf("deleting deployed-file record for %s: %w", path, err))
 			}
 		}
@@ -282,7 +282,7 @@ func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, 
 			return nil
 		}
 		result.Removed = append(result.Removed, cf)
-		_ = s.db.DeleteDeployedFile(game.ID, profileName, rel) // best-effort: no row typically exists here
+		_ = s.db.DeleteDeployedFile(ctx, game.ID, profileName, rel) // best-effort: no row typically exists here
 
 		return nil
 	})
