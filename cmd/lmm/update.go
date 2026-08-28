@@ -741,12 +741,19 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 // takes a *core.UpdatePlan, and a plan computed once at the top of doUpdate
 // would go stale after the FIRST mod in the loop applies (Ruling 5 - see
 // PlanUpdate's doc comment), so each mod is re-planned immediately before
-// its own apply. update identifies which mod to re-plan; the bulk loop's own
-// printed line still uses update's fields (the bulk check's own values),
-// not the freshly re-planned ones - the two are the same mod moments apart,
-// but printing from the original avoids depending on a race-free re-check.
+// its own apply. It builds that plan via Service.PlanUpdateFrom, reusing
+// update - the exact domain.Update the bulk check already found and the
+// loop's own line already printed - rather than PlanUpdate, which would
+// re-run the whole CheckGameUpdates (including a live source query) a
+// second time per applied mod (#289 review, Important 1); PlanUpdateFrom
+// still re-reads the installed-mod row and the profile's lock state locally,
+// so a lock taken or a version changed between the listing and this apply is
+// still caught. The bulk loop's own printed line still uses update's fields
+// (the bulk check's own values), not the freshly re-planned ones - the two
+// are the same mod moments apart, but printing from the original avoids
+// depending on a race-free re-check.
 func applyBulkUpdate(ctx context.Context, service *core.Service, game *domain.Game, update domain.Update, profileName string) error {
-	plan, err := service.PlanUpdate(ctx, game, profileName, update.InstalledMod.SourceID, update.InstalledMod.ID)
+	plan, err := service.PlanUpdateFrom(ctx, game, profileName, update)
 	if err != nil {
 		return err
 	}

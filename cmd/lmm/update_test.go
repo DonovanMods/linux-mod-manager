@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -121,6 +122,12 @@ type fakeUpdateSource struct {
 	replacements map[string]map[string]string
 	authRequired bool
 	srv          *httptest.Server
+	// checkUpdatesCalls counts CheckUpdates invocations (#289 review,
+	// Important 1): applyBulkUpdate must build its plan from the update the
+	// batch listing already found (Service.PlanUpdateFrom), never by
+	// re-invoking CheckGameUpdates - see
+	// TestDoUpdate_BulkApply_ChecksSourceExactlyOnce.
+	checkUpdatesCalls int
 }
 
 func newFakeUpdateSource(id string) *fakeUpdateSource {
@@ -171,6 +178,7 @@ func (s *fakeUpdateSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, 
 	return s.srv.URL + "/" + fileID, nil
 }
 func (s *fakeUpdateSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	s.checkUpdatesCalls++
 	if s.authRequired {
 		return nil, domain.ErrAuthRequired
 	}
@@ -395,6 +403,42 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 	updated3, err := svc.GetInstalledMod(context.Background(), "test-src", "mod3", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated3.Version, "mod3 (--all, notify-policy) must have applied")
+}
+
+// TestDoUpdate_BulkApply_ChecksSourceExactlyOnce guards #289 review's
+// Important 1 fix: applyBulkUpdate must build its plan from the
+// domain.Update the batch listing already found (Service.PlanUpdateFrom),
+// never by re-invoking CheckGameUpdates (and therefore the source's
+// CheckUpdates) a second time per applied mod. Before the fix, applying 3
+// auto-policy mods cost 1 (the listing) + 3 (one re-check per apply) = 4
+// CheckUpdates calls; after the fix it must cost exactly 1, however many
+// mods are applied.
+func TestDoUpdate_BulkApply_ChecksSourceExactlyOnce(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+
+	const modCount = 3
+	for i := 1; i <= modCount; i++ {
+		id := fmt.Sprintf("mod%d", i)
+		seedInstalledForUpdate(t, svc, game, "test-src", id, id, "1.0", []string{id + "-old"}, map[string][]byte{id + "-old.esp": []byte("old")})
+		require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", id, "g1", "default", domain.UpdateAuto))
+		src.AddMod(&domain.Mod{ID: id, SourceID: "test-src", Name: id, Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: id + "-new", FileName: id + "-new.esp", IsPrimary: true}})
+		src.AddDownload(id+"-new", []byte("new"))
+	}
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, fmt.Sprintf("\nApplying %d auto-update(s)...\n", modCount))
+	assert.Equal(t, 1, src.checkUpdatesCalls, "bulk apply of N mods must perform exactly one CheckUpdates call (the listing), not N+1")
+
+	for i := 1; i <= modCount; i++ {
+		id := fmt.Sprintf("mod%d", i)
+		updated, err := svc.GetInstalledMod(context.Background(), "test-src", id, "g1", "default")
+		require.NoError(t, err)
+		assert.Equal(t, "2.0", updated.Version, "%s must have applied", id)
+	}
 }
 
 // TestDoUpdate_DryRun_ZeroSideEffectsAndOutputUnchanged guards --dry-run:

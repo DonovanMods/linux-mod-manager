@@ -212,6 +212,71 @@ func TestService_ApplyUpdate_ErrStalePlan(t *testing.T) {
 	assert.Equal(t, "1.0", updated.Version, "a stale plan must never apply")
 }
 
+// TestService_PlanUpdateFrom_RefusesLocked guards #289 review's Important 1
+// fix: applyBulkUpdate now builds its plan via PlanUpdateFrom instead of
+// re-invoking PlanUpdate/CheckGameUpdates, so PlanUpdateFrom itself must
+// still catch a lock taken between the batch listing (whose already-found
+// domain.Update it is handed) and the bulk apply - mirroring
+// TestService_PlanUpdate_VersionBumpAvailable_Locked's assertions for the
+// single-mod path.
+func TestService_PlanUpdateFrom_RefusesLocked(t *testing.T) {
+	svc, game, src := planUpdateTestGame(t)
+	mod := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+	src.currentMod = &domain.Mod{ID: "mod1", Version: "2.0"}
+
+	// The bulk listing's own check, exactly like doUpdate's top-of-function
+	// CheckGameUpdates call.
+	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", []domain.InstalledMod{*mod}, nil)
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+	assert.False(t, updates[0].Locked, "not yet locked at listing time")
+
+	// Locked after the listing, before the bulk loop's own PlanUpdateFrom call.
+	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "mod1", "1.0"))
+
+	plan, err := svc.PlanUpdateFrom(context.Background(), game, "default", updates[0])
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.NotNil(t, plan.Update)
+	assert.True(t, plan.Locked, "PlanUpdateFrom must re-read the lock state, not trust the stale updates[0].Locked")
+	assert.Equal(t, "1.0", plan.LockedVersion)
+	require.NotEmpty(t, plan.Refusal, "Refusal must be populated when Locked && Update != nil")
+	assert.Contains(t, plan.Refusal, "locked at v1.0")
+	assert.Contains(t, plan.Refusal, "lmm mod lock")
+}
+
+// TestService_ApplyUpdate_ErrStalePlan_FromPlanUpdateFrom is
+// TestService_ApplyUpdate_ErrStalePlan's analog for the PlanUpdateFrom path:
+// a plan built from an already-known domain.Update must still refuse to
+// apply once the installed-mod set has moved on since it was computed
+// (Ruling 5), exactly like a plan built via PlanUpdate.
+func TestService_ApplyUpdate_ErrStalePlan_FromPlanUpdateFrom(t *testing.T) {
+	svc, game, src := planUpdateTestGame(t)
+	mod := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+	src.currentMod = &domain.Mod{ID: "mod1", Version: "2.0"}
+
+	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", []domain.InstalledMod{*mod}, nil)
+	require.NoError(t, err)
+	require.Len(t, updates, 1)
+
+	plan, err := svc.PlanUpdateFrom(context.Background(), game, "default", updates[0])
+	require.NoError(t, err)
+	require.NotNil(t, plan.Update)
+
+	// Installed-mod set changes after the listing, before the plan is
+	// applied - the same race applyBulkUpdate's PlanUpdateFrom call must
+	// still catch.
+	seedInstalledMod(t, svc, game, "src", "mod2", "1.0", true, map[string][]byte{"mod2.esp": []byte("other")})
+
+	_, err = svc.ApplyUpdate(context.Background(), game, plan, core.UpdateOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, core.ErrStalePlan)
+
+	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", updated.Version, "a stale plan must never apply")
+}
+
 // TestService_CheckGameUpdates_EntriesCarryLocked guards #289's other half:
 // CheckGameUpdates itself stamps Locked/LockedVersion on every returned
 // entry, reading the profile once - cmd/lmm's bulk table/JSON no longer

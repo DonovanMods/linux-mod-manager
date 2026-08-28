@@ -388,12 +388,54 @@ type UpdatePlan struct {
 // Network reads (CheckGameUpdates, which delegates to the registered
 // source's CheckUpdates) are expected; no DB write, filesystem write, hook
 // execution, or download ever happens here.
+//
+// This is CheckGameUpdates-for-one-mod followed by PlanUpdateFrom, so there
+// is exactly one place ("no update" aside) that turns a domain.Update into a
+// plan - see PlanUpdateFrom's doc comment for why a caller that already has
+// an Update (applyBulkUpdate) should call that instead of this.
 func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*UpdatePlan, error) {
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, err
 	}
 
+	updates, err := s.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check update: %w", err)
+	}
+	if len(updates) == 0 {
+		return s.planUpdateBase(ctx, game, profileName, mod)
+	}
+
+	return s.planUpdateFrom(ctx, game, profileName, mod, updates[0])
+}
+
+// PlanUpdateFrom builds the plan for upd - the same UpdatePlan PlanUpdate
+// would return for upd.InstalledMod, computed WITHOUT re-invoking
+// CheckGameUpdates (#289 review, Important 1). Every field PlanUpdate would
+// have derived from a fresh CheckGameUpdates call (Update itself,
+// RecompileNeeded, Changelog) is instead read straight off upd - the exact
+// value the caller already found and, in applyBulkUpdate's case, already
+// printed to the user. Only local reads happen here: the installed-mod row
+// (to notice a version/enabled change since upd was found), the profile's
+// lock state, and a fresh installedSnapshot for Ruling 5 - no source is ever
+// queried, so a bulk apply of N mods never costs more than the batch check
+// that already found them, and the plan being applied can never disagree
+// with the update the caller printed.
+func (s *Service) PlanUpdateFrom(ctx context.Context, game *domain.Game, profileName string, upd domain.Update) (*UpdatePlan, error) {
+	mod, err := s.GetInstalledMod(ctx, upd.InstalledMod.SourceID, upd.InstalledMod.ID, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	return s.planUpdateFrom(ctx, game, profileName, mod, upd)
+}
+
+// planUpdateBase builds the fields every UpdatePlan carries regardless of
+// whether an Update was found: the Ruling-5 snapshot, Pinned, and
+// Locked/LockedVersion (via lockState). PlanUpdate's "no update" branches
+// (up to date, pinned) return this directly; planUpdateFrom layers the
+// Update-derived fields on top of it.
+func (s *Service) planUpdateBase(ctx context.Context, game *domain.Game, profileName string, mod *domain.InstalledMod) (*UpdatePlan, error) {
 	// Ruling 5: record the installed set this plan is being computed
 	// against, so ApplyUpdate can refuse it once that set has moved on.
 	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
@@ -412,26 +454,31 @@ func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName
 	// in an unloadable profile).
 	var ref *domain.ModReference
 	if prof, perr := s.NewProfileManager().Get(game.ID, profileName); perr == nil {
-		ref = prof.FindRef(sourceID, modID)
+		ref = prof.FindRef(mod.SourceID, mod.ID)
 	}
 	if ref != nil && ref.Locked {
 		plan.Locked = true
 		plan.LockedVersion = ref.Version
 	}
 
-	updates, err := s.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil)
+	return plan, nil
+}
+
+// planUpdateFrom layers upd's fields onto planUpdateBase's result - the
+// shared tail of PlanUpdate (once it has a domain.Update in hand) and the
+// exported PlanUpdateFrom.
+func (s *Service) planUpdateFrom(ctx context.Context, game *domain.Game, profileName string, mod *domain.InstalledMod, upd domain.Update) (*UpdatePlan, error) {
+	plan, err := s.planUpdateBase(ctx, game, profileName, mod)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check update: %w", err)
-	}
-	if len(updates) == 0 {
-		return plan, nil
+		return nil, err
 	}
 
-	upd := updates[0]
-	plan.Update = &upd
+	updCopy := upd
+	plan.Update = &updCopy
 	plan.RecompileNeeded = upd.RecompileNeeded
 	plan.Changelog = CleanChangelog(upd.Changelog)
 	if plan.Locked {
+		ref := &domain.ModReference{Version: plan.LockedVersion}
 		plan.Refusal = LockedRefRefusalError(mod.Mod, profileName, ref).Error()
 	}
 
