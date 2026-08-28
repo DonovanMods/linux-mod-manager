@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Hooks`/`HookRunner`/`HookContext`; every flow resolves the merged game/profile hooks and a
   `HookRunner` from config before its first mutation. No user-visible change: CLI output is
   byte-identical. (#286)
+- Internal: the file-selection policy (filter/sort by category, primary-file pick, and
+  version-authoritative file resolution) existed three times - once each in `cmd/lmm/install.go`,
+  `cmd/lmm/profile.go`/`deploy.go`, and `internal/core/flows.go` - hand-kept byte-identical. It now
+  lives once, in `internal/core/selection.go`, exported as `core.FilterAndSortFiles`,
+  `core.PrimaryFile`, and `core.SelectFilesForVersion`; the `cmd/lmm` copies are deleted. No
+  user-visible change: CLI output and error text are byte-identical. (#287)
 
 ### Fixed
 
