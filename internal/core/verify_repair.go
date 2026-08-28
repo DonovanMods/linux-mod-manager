@@ -223,7 +223,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 			// overwrites note wholesale), so a --json caller sees the
 			// partial cleanup a human would be shown.
 			relinkNotes = append(relinkNotes, fmt.Sprintf("undeploy before re-link: %v", undeployErr))
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: undeploy %s: %v", mod.Name, undeployErr)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: undeploy %s: %v", mod.Name, undeployErr)})
 		}
 		if installErr != nil {
 			mod.Deployed = false
@@ -239,7 +239,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 			// warning above.
 			msg := fmt.Sprintf("could not record link method: %v", recordErr)
 			relinkNotes = append(relinkNotes, msg)
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
 		}
 	}
 
@@ -399,7 +399,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 	profiles, err := pm.List(r.game.ID)
 	if err != nil {
 		msg := fmt.Sprintf("could not enumerate profiles to check for shared-cache siblings: %v", err)
-		r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
 		return "sibling repair check FAILED: " + msg, 1
 	}
 
@@ -420,7 +420,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				// failure rather than looking indistinguishable from "not a
 				// candidate".
 				failed = append(failed, fmt.Sprintf("%s (checking sibling: %v)", p.Name, err))
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
 			}
 			continue
 		}
@@ -429,7 +429,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 		}
 		if !fileIDsEqual(sibling.FileIDs, mod.FileIDs) {
 			differs = append(differs, p.Name)
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: profile %s records the same version but differs in file selection; run verify --fix -p %s", p.Name, p.Name)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: profile %s records the same version but differs in file selection; run verify --fix -p %s", p.Name, p.Name)})
 			continue
 		}
 
@@ -451,7 +451,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				if sibling.Deployed {
 					msg += "; its deployment may be broken until the lock is moved or cleared"
 				}
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
 				continue
 			}
 		}
@@ -466,13 +466,13 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 			FileIDs:  sibling.FileIDs,
 		}); err != nil {
 			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
 			continue
 		}
 
 		if err := r.svc.setModVersion(ctx, sibling.SourceID, sibling.ID, sibling.GameID, p.Name, effective); err != nil {
 			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
-			r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
 			continue
 		}
 		sibling.Version = effective
@@ -487,7 +487,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				// failedCount: with a successful install nothing is left
 				// broken, and a failed one already counts itself.
 				undeployWarns = append(undeployWarns, fmt.Sprintf("%s (%v)", p.Name, undeployErr))
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: undeploy %s in profile %s: %v", sibling.Name, p.Name, undeployErr)})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: undeploy %s in profile %s: %v", sibling.Name, p.Name, undeployErr)})
 			}
 			if installErr != nil {
 				if saveErr := r.svc.setModDeployed(ctx, sibling.SourceID, sibling.ID, sibling.GameID, p.Name, false); saveErr != nil {
@@ -495,7 +495,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				} else {
 					failed = append(failed, fmt.Sprintf("%s (relinking deployed files: %v)", p.Name, installErr))
 				}
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, installErr)})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, installErr)})
 				// The version correction (DB + profile, above) stands, but
 				// the deployment itself is still broken - report this as a
 				// failure, not a clean "Repaired" success.
@@ -508,12 +508,12 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				// nothing here is left broken on disk - but still surfaced
 				// in both output modes via its own parts entry below.
 				methodNotes = append(methodNotes, fmt.Sprintf("%s (%v)", p.Name, recordErr))
-				r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not record link method for profile %s: %v", p.Name, recordErr)})
+				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not record link method for profile %s: %v", p.Name, recordErr)})
 			}
 		}
 
 		repaired = append(repaired, p.Name)
-		r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repaired (profile %s): %s → %s", p.Name, recorded, effective), Green: true})
+		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repaired (profile %s): %s → %s", p.Name, recorded, effective), Fixed: true})
 	}
 
 	var parts []string

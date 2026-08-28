@@ -61,16 +61,48 @@ type VerifyEventKind int
 const (
 	VerifyEvBegin        VerifyEventKind = iota // HasFiles
 	VerifyEvFinding                             // Finding + extras; row was appended to Findings
-	VerifyEvRepairDetail                        // indented sub-line; Detail pre-formatted, Green tone flag
+	VerifyEvRepairDetail                        // indented sub-line; Detail pre-formatted, Fixed tone flag
 	VerifyEvSyncWarning                         // stderr-bound merged-pak sync warning (Detail)
 	VerifyEvVerbose                             // verbose-gated diagnostic (Detail)
-	VerifyEvProgress                            // Full-tier network tick (Index/Total/ModName)
+	VerifyEvProgress                            // Full-tier network tick (Scope.Index/Total/ModName)
 )
 
-// VerifyEvent is emitted via a Verify run's progress callback as the engine
-// works, so a caller can render incrementally instead of waiting for the
-// final VerifyResult.
+// verifyEventKindNames maps each VerifyEventKind to its wire name. Keep in
+// declaration order.
+var verifyEventKindNames = [...]string{
+	VerifyEvBegin: "begin", VerifyEvFinding: "finding", VerifyEvRepairDetail: "repair_detail",
+	VerifyEvSyncWarning: "sync_warning", VerifyEvVerbose: "verbose", VerifyEvProgress: "progress",
+}
+
+// String returns k's wire name.
+func (k VerifyEventKind) String() string {
+	if int(k) < len(verifyEventKindNames) && verifyEventKindNames[k] != "" {
+		return verifyEventKindNames[k]
+	}
+	return fmt.Sprintf("verify_event_kind(%d)", int(k))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (k VerifyEventKind) MarshalText() ([]byte, error) { return []byte(k.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (k *VerifyEventKind) UnmarshalText(b []byte) error {
+	for i, n := range verifyEventKindNames {
+		if n == string(b) {
+			*k = VerifyEventKind(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown verify event kind %q", b)
+}
+
+// VerifyEvent is emitted via a Verify run's EventSink as the engine works,
+// so a caller can render incrementally instead of waiting for the final
+// VerifyResult. Scope.Op is always OpVerify; Scope.Index/Total/ModName carry
+// a VerifyEvProgress tick's position (verifyRun.emitEv fills Op, callers
+// fill the rest of Scope where relevant).
 type VerifyEvent struct {
+	Scope
 	Kind     VerifyEventKind
 	HasFiles bool
 	Finding  VerifyFinding // valid for VerifyEvFinding
@@ -78,28 +110,38 @@ type VerifyEvent struct {
 	// Main-line extras the CLI needs beyond the finding row itself:
 	Recorded, Effective, Version string // version_mismatch / missing
 	ExpectedCount                int    // file_count_mismatch
-	Variant                      string // "" | "checksum_populated" (ok main line) | "fixed_green" (fixed_stale_deployment whole-line green - Task 6)
+	ChecksumPopulated            bool   // ok main line: a --fix redownload populated a previously-missing checksum (#164)
 
-	// Sub-line / progress payload:
-	Detail       string
-	Green        bool
-	Index, Total int
-	ModName      string
+	// Sub-line payload (VerifyEvRepairDetail):
+	Detail string
+	Fixed  bool // this sub-line reports a completed repair
 }
 
+// EventType implements Event.
+func (VerifyEvent) EventType() string { return "verify" }
+
 // verifyRun carries the state threaded through Verify's phase methods: the
-// service/game/profile/options being verified, the (nil-safe) progress
-// sink, and the result being built up. Every phase method appends to
-// result via finding/resolveLast so there's a single place that keeps
-// Findings and the emitted events in sync.
+// service/game/profile/options being verified, the (nil-safe) event sink,
+// and the result being built up. Every phase method appends to result via
+// finding/resolveLast so there's a single place that keeps Findings and the
+// emitted events in sync.
 type verifyRun struct {
 	ctx     context.Context
 	svc     *Service
 	game    *domain.Game
 	profile string
 	opts    VerifyOptions
-	emit    func(VerifyEvent)
+	sink    EventSink
 	result  *VerifyResult
+}
+
+// emitEv stamps e's Scope.Op as OpVerify and forwards it to the sink, if
+// any (a nil sink discards, matching EventSink's own contract).
+func (r *verifyRun) emitEv(e VerifyEvent) {
+	e.Op = OpVerify
+	if r.sink != nil {
+		r.sink(e)
+	}
 }
 
 // finding appends f to the result and emits the matching VerifyEvFinding
@@ -109,7 +151,7 @@ type verifyRun struct {
 func (r *verifyRun) finding(f VerifyFinding, extras VerifyEvent) {
 	r.result.Findings = append(r.result.Findings, f)
 	extras.Kind, extras.Finding = VerifyEvFinding, f
-	r.emit(extras)
+	r.emitEv(extras)
 }
 
 // resolveLast rewrites the most recently appended finding's Status/Note in
@@ -130,15 +172,15 @@ func (r *verifyRun) resolveLast(status, note string) {
 }
 
 // Verify runs the verify engine for game/profile per opts, reporting
-// incremental progress via progress (nil-safe: pass nil to skip progress
-// events entirely).
+// incremental progress via sink (nil-safe: pass nil to skip events
+// entirely).
 //
 // #224 Task 6 completes the engine: the fix-mode merged-pak resync and the
 // deploy-convergence sweep (ConvergeDeployedFiles) that close out every run,
 // including the #217 empty-profile path, which now runs nothing BUT that
 // sweep. The CLI does not call this yet - it still runs its own doVerify; a
 // later task (#224 Task 7) swaps it onto Verify.
-func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, progress func(VerifyEvent)) (*VerifyResult, error) {
+func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
 	if opts.Fix {
 		release, err := s.beginOp(ctx)
 		if err != nil {
@@ -146,16 +188,12 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 		}
 		defer release()
 	}
-	return s.verify(ctx, game, profile, opts, progress)
+	return s.verify(ctx, game, profile, opts, sink)
 }
 
-func (s *Service) verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, progress func(VerifyEvent)) (*VerifyResult, error) {
-	if progress == nil {
-		progress = func(VerifyEvent) {}
-	}
-
+func (s *Service) verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
 	result := &VerifyResult{}
-	r := &verifyRun{ctx: ctx, svc: s, game: game, profile: profile, opts: opts, emit: progress, result: result}
+	r := &verifyRun{ctx: ctx, svc: s, game: game, profile: profile, opts: opts, sink: sink, result: result}
 
 	files, err := s.GetFilesWithChecksums(ctx, game.ID, profile)
 	if err != nil {
@@ -163,7 +201,7 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	}
 
 	result.HasFiles = len(files) > 0
-	progress(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles})
+	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles})
 
 	if !result.HasFiles {
 		// #217: doVerify still runs a deploy-convergence sweep here even
@@ -242,11 +280,11 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 func (r *verifyRun) syncMergedPakPass() {
 	syncWarnings, err := r.svc.syncMergedPak(r.ctx, r.game, r.profile)
 	if err != nil {
-		r.emit(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
+		r.emitEv(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
 		return
 	}
 	for _, w := range syncWarnings {
-		r.emit(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: w})
+		r.emitEv(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: w})
 	}
 }
 
@@ -265,10 +303,11 @@ func (r *verifyRun) syncMergedPakPass() {
 // false), as the entirety of that run beyond the Begin event - see Verify's
 // own doc comment.
 //
-// A fixed_stale_deployment row's Variant is "fixed_green": the CLI renders
-// the WHOLE main line green for it (unlike, say, a version repair,
-// which prints a plain finding line with a separate green sub-line) - Task
-// 7 wires that rendering contract up on the CLI side.
+// A fixed_stale_deployment row needs no event field of its own for this: the
+// CLI renders the WHOLE main line green for it purely by keying on
+// Finding.Status (unlike, say, a version repair, which prints a plain
+// finding line with a separate green sub-line) - Task 7 wires that
+// rendering contract up on the CLI side.
 //
 // Per-item convergence failures (an Undeploy or sweep os.Remove that
 // failed) are joined into one error by ConvergeDeployedFiles rather than
@@ -280,7 +319,7 @@ func (r *verifyRun) convergencePass() {
 	if convResult != nil {
 		for _, cf := range convResult.Removed {
 			if r.opts.Fix {
-				r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "fixed_stale_deployment", Note: cf.Reason}, VerifyEvent{Variant: "fixed_green"})
+				r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "fixed_stale_deployment", Note: cf.Reason}, VerifyEvent{})
 				continue
 			}
 			r.result.Warnings++
@@ -417,7 +456,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			// as every other soft diagnostic in this codebase. The exact
 			// text (sans the CLI's own "  (verbose) " prefix) is a frozen
 			// contract - the CLI renderer depends on it verbatim.
-			r.emit(VerifyEvent{Kind: VerifyEvVerbose, Detail: fmt.Sprintf("could not check pak-reingest status for %s (%s): %v", mod.Name, f.FileID, nerr)})
+			r.emitEv(VerifyEvent{Kind: VerifyEvVerbose, Detail: fmt.Sprintf("could not check pak-reingest status for %s (%s): %v", mod.Name, f.FileID, nerr)})
 		} else if need {
 			note := "pak predates conversion support - run 'lmm verify --fix' to re-ingest"
 			if mod.SourceID == domain.SourceLocal {
@@ -436,7 +475,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
 				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID); rerr != nil {
 					r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
 				} else {
 					// Same convention as MISSING/NO CHECKSUM's own --fix
 					// success path below, and stale_deployment's
@@ -446,7 +485,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 					// status/note and back the count out.
 					r.resolveLast("fixed_needs_reingest", "re-ingested with retained source for pak conversion")
 					r.result.Warnings--
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-ingested for pak conversion", Green: true})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-ingested for pak conversion", Fixed: true})
 				}
 			}
 			continue
@@ -463,11 +502,11 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 				switch {
 				case err != nil:
 					r.resolveLast("missing", err.Error())
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
 				case persisted:
 					r.resolveLast("ok", "")
 					r.result.Issues--
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded OK", Green: true})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded OK", Fixed: true})
 				default:
 					// The re-download restored the cache - the MISSING
 					// issue is genuinely repaired - but no checksum was
@@ -477,7 +516,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 					r.resolveLast("no_checksum", "re-downloaded, but no checksum was available to store")
 					r.result.Issues--
 					r.result.Warnings++
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store - NO CHECKSUM remains"})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store - NO CHECKSUM remains"})
 				}
 			}
 			continue
@@ -487,17 +526,16 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			// #224 Task 4: --fix's redownload-to-populate-checksum repair
 			// REPLACES the plain no_checksum row emission below - ported
 			// verbatim from doVerify (originally lines 804-846), including
-			// the "ok"+Variant:"checksum_populated" main-line emission on
-			// success.
+			// the "ok"+ChecksumPopulated main-line emission on success.
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
 				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID)
 				switch {
 				case err != nil:
 					r.result.Warnings++
 					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: err.Error()}, VerifyEvent{})
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download to populate checksum failed: %v", err)})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download to populate checksum failed: %v", err)})
 				case persisted:
-					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{Variant: "checksum_populated"})
+					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "ok"}, VerifyEvent{ChecksumPopulated: true})
 				default:
 					// The download succeeded but produced no checksum to
 					// store - nothing was written, so the warning stands
@@ -505,7 +543,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 					// a lie here, and the summary lied with it).
 					r.result.Warnings++
 					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "re-downloaded, but no checksum was available to store"}, VerifyEvent{})
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store"})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Re-downloaded, but no checksum was available to store"})
 				}
 				continue
 			}
@@ -615,7 +653,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 
 	for i := range installedMods {
 		mod := &installedMods[i]
-		r.emit(VerifyEvent{Kind: VerifyEvProgress, Index: i + 1, Total: len(installedMods), ModName: mod.Name})
+		r.emitEv(VerifyEvent{Kind: VerifyEvProgress, Scope: Scope{Index: i + 1, Total: len(installedMods), ModName: mod.Name}})
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}
@@ -683,7 +721,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 					// resolve against the active profile/an ambiguous source
 					// if this mod's lock lives elsewhere.
 					refusal := fmt.Sprintf("--fix skipped: %s is locked at v%s in profile %s — the record is the lock's target; move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s' instead of rewriting it.", mod.Name, ref.Version, r.profile, mod.SourceID, r.profile, mod.ID, mod.SourceID, r.profile, mod.ID)
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: refusal})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: refusal})
 					// The Note field already exists on this contract
 					// (repair-failure/rename-blocked detail) - this is an
 					// additive use of it, not a new field. Kept short
@@ -715,16 +753,16 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 					// doc comment - and dropping either here would make
 					// them invisible to a --json caller even though they
 					// genuinely happened.
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repair failed: %v", repairErr)})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repair failed: %v", repairErr)})
 					repairNote := "repair failed: " + repairErr.Error()
 					if note != "" {
 						repairNote += "; " + note
 					}
 					r.resolveLast("version_mismatch", repairNote)
 				} else {
-					r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repaired: %s → %s", recorded, effective), Green: true})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Repaired: %s → %s", recorded, effective), Fixed: true})
 					if note != "" {
-						r.emit(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + note})
+						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Note: " + note})
 					}
 					r.resolveLast("ok", note)
 					r.result.Issues--
