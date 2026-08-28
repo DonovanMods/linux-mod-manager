@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default config and data directories honor `XDG_CONFIG_HOME` / `XDG_DATA_HOME` (defaults `~/.config/lmm` and `~/.local/share/lmm`). When an XDG variable is set but its lmm directory does not exist and the legacy one does, the legacy directory is used so existing installs keep working. `--config`/`--data` and `cache_path` still override. Bootstrap (paths, directory hardening, source registration) now lives in `internal/app` so every frontend resolves identically. (#270)
 - `lmm --config X --data Y` no longer requires `$HOME` to be set. (#277)
 - Every I/O method on the core service takes a `context.Context`; long-running loops (downloads, deploys, verify) stop at the next iteration after cancellation, and best-effort recovery paths never inherit the caller's cancellation. (#278)
+- Internal: `internal/domain` and `internal/core`'s Plan/Result types now carry snake_case `json`
+  tags, and the int enums (`LinkMethod`, `DeployMode`, `UpdatePolicy`, `VerifyTier`,
+  `VerifyEventKind`, `DeployModClass`) marshal as their text names. Each type's wire shape is
+  pinned by a golden (`internal/{domain,core}/testdata/json/*.golden`) so a shape change is a
+  visible diff. No user-visible change: the CLI's `--json` still emits its own view structs and is
+  byte-identical. (#282)
 
 ### Fixed
 
