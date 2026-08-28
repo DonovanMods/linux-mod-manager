@@ -49,6 +49,10 @@ type DownloadModResult struct {
 // service-wide through a one-slot semaphore acquired with the caller's
 // ctx, so a waiter is itself cancellable. Reads during a mutation observe
 // WAL snapshot state, which is per-mod consistent (spec §3).
+//
+// NewProfileManager returns a ProfileManager whose file mutations are NOT
+// serialized through this semaphore; Phase 2 lifts those flows into
+// serialized Service methods.
 type Service struct {
 	config     *config.Config
 	db         *db.DB

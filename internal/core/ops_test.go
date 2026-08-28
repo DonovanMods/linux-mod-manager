@@ -61,6 +61,50 @@ func TestBeginOp_WaiterIsCancellable(t *testing.T) {
 	require.Len(t, svc.opSem, 1, "slot must still be held by the first caller")
 }
 
+// TestBeginOp_BlockedWaiterIsCancellable pins the one assertion spec §3
+// makes about beginOp that no test covered before this fix: cancelling a
+// context while a caller is genuinely blocked on <-ctx.Done() (not
+// pre-cancelled - TestBeginOp_PreCancelledCtxNeverAcquires covers that path)
+// returns ctx.Err() with a nil release, and the slot stays with its
+// original holder (#279 Unit B final review finding I1; a coverage run
+// showed the <-ctx.Done() arm at ops.go:20-21 was never executed).
+func TestBeginOp_BlockedWaiterIsCancellable(t *testing.T) {
+	svc := newOpsService(t)
+	release, err := svc.beginOp(context.Background())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	type result struct {
+		release func()
+		err     error
+	}
+	results := make(chan result, 1)
+	go func() {
+		r, err := svc.beginOp(ctx)
+		results <- result{r, err}
+	}()
+
+	// Let the spawned goroutine actually reach the blocking select before
+	// cancelling: the slot is still held by the first caller (len == 1),
+	// plus a settle window so the scheduler has run it.
+	require.Len(t, svc.opSem, 1)
+	time.Sleep(50 * time.Millisecond)
+
+	cancel()
+
+	select {
+	case r := <-results:
+		require.ErrorIs(t, r.err, context.Canceled)
+		require.Nil(t, r.release)
+	case <-time.After(time.Second):
+		t.Fatal("blocked waiter never returned after cancel")
+	}
+	require.Len(t, svc.opSem, 1, "slot must still be held by the first caller")
+
+	release()
+	require.Len(t, svc.opSem, 0, "slot must free once the first holder releases")
+}
+
 // TestBeginOp_PreCancelledCtxNeverAcquires pins that beginOp is
 // deterministic when ctx is already done before the select ever runs: with
 // the slot free, a done ctx must always lose rather than racing the free

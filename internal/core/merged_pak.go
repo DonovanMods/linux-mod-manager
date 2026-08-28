@@ -388,12 +388,15 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	return warnings, nil
 }
 
-// SyncMergedPak exposes syncMergedPak as the public entry point every
-// mutation flow that can change a merged pak's inputs (enabled-mod set,
-// load order, mod version, base pak) must call after the mutation is
-// durable (#197 fix wave: rollback, purge, and both import paths were
-// found missing this call). Safe to call unconditionally - it no-ops for a
-// non-DeployCompile game and is a cheap fast-path when nothing changed.
+// SyncMergedPak acquires the mutation slot and delegates to syncMergedPak;
+// it is the frontend entry point, not something an internal mutation flow
+// should call - doing so would re-enter the semaphore and hang forever.
+// Internal flows that can change a merged pak's inputs (enabled-mod set,
+// load order, mod version, base pak) must instead call syncMergedPak
+// directly after the mutation is durable (#197 fix wave: rollback, purge,
+// and both import paths were found missing this call). Safe to call
+// unconditionally - it no-ops for a non-DeployCompile game and is a cheap
+// fast-path when nothing changed.
 func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileName string) ([]string, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {

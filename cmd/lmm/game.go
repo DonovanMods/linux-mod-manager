@@ -196,7 +196,7 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
-	svc, err := core.NewService(svcCfg)
+	svc, err := initService()
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}
