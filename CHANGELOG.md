@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `--log-level` (off|error|warn|info|debug) writes diagnostics to stderr; default off.
+- `--log-level` (off|error|warn|info|debug) writes diagnostics to stderr; default off. (#281)
 
 ### Removed
 

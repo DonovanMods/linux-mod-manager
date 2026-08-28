@@ -141,7 +141,7 @@ func (s *Service) Close() error {
 // Logger returns the diagnostics logger this Service was constructed with
 // (ServiceConfig.Logger), or a discarding logger if none was given.
 func (s *Service) Logger() *slog.Logger {
-	return s.log
+	return s.logger()
 }
 
 // discardLogger is handed back by logger() for a Service whose log field is

@@ -2032,6 +2032,7 @@ exit 1`)
 		assert.False(t, ok, "SkipHooks must suppress every HookEvent")
 	}
 	assert.Empty(t, result.Warnings)
+	assert.Equal(t, 1, result.Deployed, "the single seeded mod must actually deploy, not merely avoid hook errors")
 }
 
 // TestService_DeployProfile_PurgeForcedBeforeAllWarning_EmitsEventBeforePurgingEvent

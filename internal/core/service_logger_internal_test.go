@@ -26,6 +26,20 @@ func TestService_logger_NilLogFieldReturnsDiscard(t *testing.T) {
 	assert.False(t, log.Enabled(context.Background(), slog.LevelError), "nil log field must mean discard")
 }
 
+// TestService_Logger_NilLogFieldReturnsDiscard pins Unit D review Minor 1:
+// the exported Logger() must go through the nil-tolerant logger() accessor,
+// not return the raw s.log field directly. A Service built by a raw struct
+// literal has a nil log field; cmd/lmm/hooks.go calls svc.Logger().Warn(...)
+// directly, which panics on a nil *slog.Logger.
+func TestService_Logger_NilLogFieldReturnsDiscard(t *testing.T) {
+	svc := &Service{}
+
+	log := svc.Logger()
+
+	require.NotNil(t, log)
+	assert.False(t, log.Enabled(context.Background(), slog.LevelError), "nil log field must mean discard, not nil")
+}
+
 // TestService_lockedInstallRefusal_RawServiceDoesNotPanic pins the same
 // finding against the actual call path: a Service reached via a raw struct
 // literal, calling lockedInstallRefusal with a ProfileManager that fails to

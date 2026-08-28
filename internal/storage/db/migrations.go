@@ -39,7 +39,9 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV12,
 	}
 
-	d.log.Debug("running migrations", "from", version, "to", len(migrations))
+	if version < len(migrations) {
+		d.log.Debug("running migrations", "from", version, "to", len(migrations))
+	}
 
 	for i := version; i < len(migrations); i++ {
 		if err := migrations[i](ctx, d); err != nil {
