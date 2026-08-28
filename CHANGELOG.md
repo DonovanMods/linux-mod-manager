@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `initializing service:` prefix (rejecting the flag never actually opened a service). It now
   reads `Error: invalid --log-level "<value>": expected off, error, warn, info, or debug`
   identically on every path (#284, #285)
+- Profile-level hook overrides survive profile mutations (`config.SaveProfile` now serializes
+  `hooks:`) (#295)
 
 ## [1.30.1] - 2026-08-08
 

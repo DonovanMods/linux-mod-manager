@@ -90,6 +90,38 @@ func parseProfileHooks(yaml ProfileHooksYAML) (domain.GameHooks, domain.GameHook
 	return hooks, explicit
 }
 
+// stringPtrIfExplicit returns a pointer to value when explicit is true (the
+// *string-pointer encoding parseProfileHooks decodes: present-but-empty
+// means "explicitly disabled", absent means "inherit from game"), or nil
+// otherwise - the reverse of parseProfileHooks's per-field decoding.
+func stringPtrIfExplicit(value string, explicit bool) *string {
+	if !explicit {
+		return nil
+	}
+	return &value
+}
+
+// serializeProfileHooks converts domain hooks/explicit-flags back to their
+// YAML representation - the reverse of parseProfileHooks, used by
+// SaveProfile so a profile's hooks: overrides survive a load/mutate/save
+// cycle (#295).
+func serializeProfileHooks(hooks domain.GameHooks, explicit domain.GameHooksExplicit) ProfileHooksYAML {
+	return ProfileHooksYAML{
+		Install: ProfileHookConfigYAML{
+			BeforeAll:  stringPtrIfExplicit(hooks.Install.BeforeAll, explicit.Install.BeforeAll),
+			BeforeEach: stringPtrIfExplicit(hooks.Install.BeforeEach, explicit.Install.BeforeEach),
+			AfterEach:  stringPtrIfExplicit(hooks.Install.AfterEach, explicit.Install.AfterEach),
+			AfterAll:   stringPtrIfExplicit(hooks.Install.AfterAll, explicit.Install.AfterAll),
+		},
+		Uninstall: ProfileHookConfigYAML{
+			BeforeAll:  stringPtrIfExplicit(hooks.Uninstall.BeforeAll, explicit.Uninstall.BeforeAll),
+			BeforeEach: stringPtrIfExplicit(hooks.Uninstall.BeforeEach, explicit.Uninstall.BeforeEach),
+			AfterEach:  stringPtrIfExplicit(hooks.Uninstall.AfterEach, explicit.Uninstall.AfterEach),
+			AfterAll:   stringPtrIfExplicit(hooks.Uninstall.AfterAll, explicit.Uninstall.AfterAll),
+		},
+	}
+}
+
 // validateSegment enforces that value is usable as a single path segment:
 // non-empty (after trimming whitespace), no path separators ("/" or "\"),
 // and no ".." substring. The rule is deliberately conservative — harmless
@@ -182,6 +214,7 @@ func SaveProfile(configDir string, profile *domain.Profile) error {
 		GameID:    profile.GameID,
 		IsDefault: profile.IsDefault,
 		Mods:      make([]ModReferenceConfig, len(profile.Mods)),
+		Hooks:     serializeProfileHooks(profile.Hooks, profile.HooksExplicit),
 	}
 	// Only write link_method if explicitly set: String() never returns "", so
 	// assigning it unconditionally defeats `omitempty` and bakes a phantom
