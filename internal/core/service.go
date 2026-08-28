@@ -609,7 +609,7 @@ func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 
 	// Extract to cache location
-	cachePath, stagePath, err := prepareStaging(gameCache, game, mod)
+	cachePath, stagePath, err := prepareStaging(ctx, gameCache, game, mod)
 	if err != nil {
 		return nil, err
 	}
@@ -728,7 +728,7 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 	if info.IsDir() {
 		cachePath, stagePath, err = prepareUnseededStaging(gameCache, game, mod)
 	} else {
-		cachePath, stagePath, err = prepareStaging(gameCache, game, mod)
+		cachePath, stagePath, err = prepareStaging(ctx, gameCache, game, mod)
 	}
 	if err != nil {
 		return nil, err
@@ -739,7 +739,7 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 	var checksum string
 	switch {
 	case info.IsDir():
-		if err := copyDir(localPath, stagePath); err != nil {
+		if err := copyDir(ctx, localPath, stagePath); err != nil {
 			return nil, fmt.Errorf("copying mod directory: %w", err)
 		}
 		// Attribute the STAGED copies, not localPath's own listing: staging
@@ -866,14 +866,16 @@ func digestDirectoryMembers(root string, members []string) (string, error) {
 // mid-copy failure must leave stagePath exactly as absent as it was before
 // this call, matching the pre-extraction behavior where the caller's own
 // defer was armed BEFORE the copy step (see
-// TestPrepareStagingCleansPartialStagingOnCopyFailure).
-func prepareStaging(gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
+// TestPrepareStagingCleansPartialStagingOnCopyFailure). A cancelled ctx
+// aborts the seed copy per entry (copyDir) and takes that same
+// error-with-no-debris path.
+func prepareStaging(ctx context.Context, gameCache *cache.Cache, game *domain.Game, mod *domain.Mod) (cachePath, stagePath string, err error) {
 	cachePath, stagePath, err = prepareUnseededStaging(gameCache, game, mod)
 	if err != nil {
 		return "", "", err
 	}
 	if gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-		if err := copyDir(cachePath, stagePath); err != nil {
+		if err := copyDir(ctx, cachePath, stagePath); err != nil {
 			// Best-effort: restore the "no debris" guarantee even though
 			// copyDir itself already failed. A cleanup failure here isn't
 			// worth surfacing over the original error - it's the same

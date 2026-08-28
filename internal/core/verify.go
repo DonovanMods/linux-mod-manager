@@ -549,9 +549,6 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 
 	modNames := make(map[string]string, len(installedMods))
 	for _, m := range installedMods {
-		if err := r.ctx.Err(); err != nil {
-			return err
-		}
 		modNames[domain.ModKey(m.SourceID, m.ID)] = m.Name
 	}
 
@@ -560,6 +557,13 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 		return nil
 	}
 	for _, entry := range outcomes {
+		// The check belongs to the loop that EMITS findings, not to the
+		// in-memory name-map build above (final-review Minor 2): a pass with
+		// no installed mods still walks the outcomes, and this is the loop a
+		// reader expects the cancellation guard to protect.
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
 		if entry.Converted {
 			continue
 		}

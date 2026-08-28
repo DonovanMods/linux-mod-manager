@@ -1052,17 +1052,53 @@ func setupThreeFileInstall(t *testing.T) (*core.Service, *domain.Game, *multiFil
 
 // TestService_ApplyInstall_ContextCancelledBetweenPrimaryFiles pins that the
 // per-file download loop in applyInstallPrimary checks ctx at each iteration:
-// with three selected files and a ctx cancelled by the first download's
-// completion, the second file is never fetched.
+// with three selected files and a ctx cancelled once file 1 is fully
+// downloaded, file 2's iteration never starts.
+//
+// The loop GUARD has to be the thing that stops the flow, or the test pins
+// nothing (final-review Important 2: the first cut of this test still passed
+// with the guard deleted, because a cancelled ctx makes the HTTP transport
+// refuse the next request all by itself and the assertions could not tell
+// the two apart). Two changes make it load-bearing:
+//
+//   - Cancellation fires from the SINK, on file 1's InstallDownloadDone -
+//     emitted after DownloadModToCache has returned successfully and before
+//     the loop head is reached again. File 1 therefore always completes for
+//     real, so a failure can only come from the next iteration. (The old
+//     server-side hook cancelled while file 1's own response was still in
+//     flight, which could abort file 1 instead.)
+//   - The assertions observe what a RUN iteration does before it touches the
+//     network at all: the InstallDownloadStarted event applyInstallPrimary
+//     emits at the top of the body, and the source's GetDownloadURL call
+//     DownloadModToCache makes first. Delete the guard and both fire for
+//     file 2 no matter what the transport then does.
 func TestService_ApplyInstall_ContextCancelledBetweenPrimaryFiles(t *testing.T) {
 	svc, game, src := setupThreeFileInstall(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	src.onDownload = func() { cancel() } // fires after file 1's bytes are served
+
+	var started []int
+	var failed int
+	sink := func(p core.DeployProgress) {
+		switch p.Phase {
+		case core.InstallDownloadStarted:
+			started = append(started, p.Index)
+		case core.InstallDownloadFailed:
+			failed++
+		case core.InstallDownloadDone:
+			if p.Index == 1 {
+				cancel() // file 1's bytes are cached; the loop head is next
+			}
+		}
+	}
 
 	plan, err := svc.PlanInstall(ctx, game, "default", src.ID(), "mod-1", false)
 	require.NoError(t, err)
-	_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{TargetFileIDs: []string{"f1", "f2", "f3"}}, nil)
+	_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{TargetFileIDs: []string{"f1", "f2", "f3"}}, sink)
 	require.ErrorIs(t, err, context.Canceled)
+
+	assert.Zero(t, failed, "file 1 must have downloaded successfully - the cancellation is meant to land BETWEEN files")
+	assert.Equal(t, []int{1}, started, "file 2's iteration must never start: the loop head, not the transport, has to stop it")
+	assert.Equal(t, int64(1), src.urlRequests.Load(), "a skipped iteration never even asks the source for file 2's URL")
 	assert.Equal(t, int64(1), src.downloads.Load(), "second file must not be requested after cancellation")
 }
 

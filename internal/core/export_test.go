@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -25,4 +26,14 @@ func (s *Service) ReconcilePakManifestsForTest(ctx context.Context, game *domain
 // after the deploy has already succeeded.
 func (s *Service) SetBeforeSaveInstalledForTest(fn func()) {
 	s.beforeSaveInstalled = fn
+}
+
+// SetDownloadClientForTest replaces the Service's download HTTP client. A
+// cancellation test uses it to install a transport that IGNORES ctx, so the
+// only thing that can stop a per-file download loop is the loop's own guard
+// - with the stock ctx-aware transport, a cancelled ctx aborts the next
+// request by itself and the test cannot tell the two apart (final-review
+// Important 2).
+func (s *Service) SetDownloadClientForTest(c *http.Client) {
+	s.downloader = NewDownloader(c)
 }

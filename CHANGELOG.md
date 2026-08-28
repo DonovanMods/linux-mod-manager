@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Building lmm now requires Go 1.27.
 - Default config and data directories honor `XDG_CONFIG_HOME` / `XDG_DATA_HOME` (defaults `~/.config/lmm` and `~/.local/share/lmm`). When an XDG variable is set but its lmm directory does not exist and the legacy one does, the legacy directory is used so existing installs keep working. `--config`/`--data` and `cache_path` still override. Bootstrap (paths, directory hardening, source registration) now lives in `internal/app` so every frontend resolves identically. (#270)
 - `lmm --config X --data Y` no longer requires `$HOME` to be set. (#277)
+- Every I/O method on the core service takes a `context.Context`; long-running loops (downloads, deploys, verify) stop at the next iteration after cancellation, and best-effort recovery paths never inherit the caller's cancellation. (#278)
+
+### Fixed
+
+- SQLite pragmas (foreign_keys, WAL, busy_timeout) now apply to every pooled connection via the DSN; `:memory:` databases use a single connection. (#271)
 
 ## [1.30.1] - 2026-08-08
 

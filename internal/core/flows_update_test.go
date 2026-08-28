@@ -13,6 +13,7 @@ package core_test
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -596,15 +597,48 @@ func setupTwoFileUpdate(t *testing.T) (*core.Service, *domain.Game, *multiFileDo
 	return svc, game, src, upd
 }
 
-// TestService_ApplyUpdate_ContextCancelledBetweenDownloads pins that the
-// update download loop checks ctx per file (today the check sits after the
-// loop, so every file downloads before cancellation is noticed).
+// ctxBlindTransport forwards every request with a fresh background context,
+// so cancelling the caller's ctx cannot abort an in-flight download or make
+// the client refuse the next one. It exists to take the ctx-aware transport
+// OUT of a per-file cancellation test: with it in place, the caller's loop
+// guard is the only thing left that can stop the loop, which is exactly what
+// such a test claims to pin (final-review Important 2).
+type ctxBlindTransport struct{ base http.RoundTripper }
+
+func (t ctxBlindTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.base.RoundTrip(req.WithContext(context.Background()))
+}
+
+// TestService_ApplyUpdate_ContextCancelledBetweenDownloads pins that
+// ApplyUpdate's download loop checks ctx per file, not only after the loop:
+// with a two-file update and a ctx cancelled once file 1 has been served,
+// file 2's iteration never starts.
+//
+// ApplyUpdate emits nothing between files, so - unlike the install-side test
+// - there is no sink event to hang the cancel off; the cancel stays on the
+// server hook and the transport is neutered instead (technique (a)):
+//
+//   - a ctx-blind transport means file 1 completes for real even though the
+//     hook cancels while its response is still in flight, and means a file 2
+//     that the loop wrongly started would genuinely be fetched rather than
+//     refused by the client;
+//   - the assertion is on GetDownloadURL calls, the first thing
+//     DownloadModToCache does for a file and the earliest observable proof
+//     that an iteration ran at all.
+//
+// Nothing else on file 1's path consults ctx (no existing cache entry to
+// seed from, a non-archive payload, so no prepareStaging copy and no
+// extraction), so a cancelled ctx cannot make file 1 fail by itself.
 func TestService_ApplyUpdate_ContextCancelledBetweenDownloads(t *testing.T) {
 	svc, game, src, upd := setupTwoFileUpdate(t)
+	svc.SetDownloadClientForTest(&http.Client{Transport: ctxBlindTransport{base: http.DefaultTransport}})
+
 	ctx, cancel := context.WithCancel(context.Background())
-	src.onDownload = func() { cancel() }
+	src.onDownload = func() { cancel() } // fires once file 1's bytes are written
+
 	_, err := svc.ApplyUpdate(ctx, game, "default", upd, core.UpdateOptions{}, nil)
 	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int64(1), src.urlRequests.Load(), "file 2's iteration must never start: the loop head, not the transport, has to stop it")
 	assert.Equal(t, int64(1), src.downloads.Load())
 }
 

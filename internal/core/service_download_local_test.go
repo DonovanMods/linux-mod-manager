@@ -306,7 +306,7 @@ func TestPrepareStagingCleansPartialStagingOnCopyFailure(t *testing.T) {
 
 	expectedStagePath := cachePath + ".staging"
 
-	_, _, err := prepareStaging(gameCache, game, mod)
+	_, _, err := prepareStaging(context.Background(), gameCache, game, mod)
 	require.Error(t, err)
 
 	_, statErr := os.Stat(expectedStagePath)
@@ -322,4 +322,63 @@ func TestIngestLocalToCacheMissingPath(t *testing.T) {
 
 	_, err := svc.ingestLocalToCache(context.Background(), gameCache, game, mod, file, filepath.Join(t.TempDir(), "gone"))
 	assert.Error(t, err)
+}
+
+// cancelAfterFirstEntry reports itself live for the FIRST ctx.Err() call and
+// cancelled for every call after it. copyDirFollowing checks ctx once per
+// directory entry, so wrapping a real cancellable context this way stops a
+// directory ingest deterministically AFTER the first member has been copied
+// and BEFORE the second is touched - the mid-copy window a real Ctrl-C lands
+// in - without a timing race or a sleep. Not goroutine-safe by design: the
+// copy it instruments runs on the calling goroutine only.
+type cancelAfterFirstEntry struct {
+	context.Context
+	cancel context.CancelFunc
+	checks int
+}
+
+func (c *cancelAfterFirstEntry) Err() error {
+	if c.checks > 0 {
+		c.cancel()
+	}
+	c.checks++
+	return c.Context.Err()
+}
+
+// TestIngestLocalToCacheDirectory_CancelledMidCopy pins the per-entry ctx
+// check in copyDirFollowing, which is the ONLY cancellation guard below
+// ApplyInstall's/ApplyUpdate's per-file loops on the directory-source
+// local-ingest path: nothing else in ingestLocalToCache's copy branch
+// consults ctx (the archive branch has extractIntoStaging, the copy branch
+// had nothing). Cancelling mid-copy must abort with the ctx error AND leave
+// no cache entry behind - in particular none marked complete, which is what
+// makes a later install/verify re-ingest instead of trusting half a mod.
+func TestIngestLocalToCacheDirectory_CancelledMidCopy(t *testing.T) {
+	svc, gameCache := newLocalIngestService(t)
+
+	modDir := filepath.Join(t.TempDir(), "BiggerBackpack")
+	require.NoError(t, os.MkdirAll(modDir, 0755))
+	for _, name := range []string{"a.xml", "b.xml", "c.xml"} {
+		require.NoError(t, os.WriteFile(filepath.Join(modDir, name), []byte(name), 0644))
+	}
+
+	game := &domain.Game{ID: "7dtd", DeployMode: domain.DeployExtract}
+	mod := &domain.Mod{ID: "BiggerBackpack", SourceID: "my-mods", Version: "1.2.0"}
+	file := &domain.DownloadableFile{ID: "main", FileName: "BiggerBackpack"}
+
+	inner, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelAfterFirstEntry{Context: inner, cancel: cancel}
+
+	result, err := svc.ingestLocalToCache(ctx, gameCache, game, mod, file, modDir)
+	require.ErrorIs(t, err, context.Canceled, "a cancelled directory ingest must surface the ctx error, not copy on to completion")
+	assert.Nil(t, result)
+	assert.Greater(t, ctx.checks, 1, "the guard must be consulted per entry, not once for the whole copy")
+
+	assert.False(t, gameCache.Exists("7dtd", "my-mods", "BiggerBackpack", "1.2.0"),
+		"a cancelled ingest must publish no cache entry")
+	assert.False(t, gameCache.HasFileIDs("7dtd", "my-mods", "BiggerBackpack", "1.2.0", []string{"main"}),
+		"a cancelled ingest must leave no completion marker - a partial entry marked complete would be trusted by install/verify")
+	_, statErr := os.Stat(gameCache.ModPath("7dtd", "my-mods", "BiggerBackpack", "1.2.0") + ".staging")
+	assert.True(t, os.IsNotExist(statErr), "the staging directory must be cleaned up on a cancelled ingest")
 }

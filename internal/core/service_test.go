@@ -1029,6 +1029,17 @@ type mockSourceWithDownloads struct {
 	// response body and the handler's post-Write statements.
 	downloads  atomic.Int64
 	onDownload func()
+
+	// urlRequests counts GetDownloadURL calls - the FIRST thing
+	// DownloadModToCache does for a file, before the HTTP client (and its
+	// ctx-aware transport) is anywhere in the picture. A per-file
+	// cancellation test asserts on this rather than on served/downloads:
+	// those two only prove the transport refused to fetch file N, which a
+	// cancelled ctx produces whether or not the caller's loop guard stopped
+	// the iteration (final-review Important 2 - both cancellation tests
+	// passed with the guards they pin deleted). A loop that runs an
+	// iteration it should have skipped always bumps this counter.
+	urlRequests atomic.Int64
 }
 
 func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
@@ -1061,6 +1072,7 @@ func (m *mockSourceWithDownloads) AddDownload(fileID string, content []byte) {
 }
 
 func (m *mockSourceWithDownloads) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	m.urlRequests.Add(1)
 	return m.server.URL + "/" + fileID, nil
 }
 

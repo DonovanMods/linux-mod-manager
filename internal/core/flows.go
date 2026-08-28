@@ -41,7 +41,8 @@ func (s *Service) ReorderProfileMods(ctx context.Context, gameID, profileName st
 	if !ok {
 		return nil // an unknown game has no merged pak to sync either
 	}
-	_, _ = s.syncMergedPak(ctx, game, profileName) //nolint:errcheck // best-effort, see doc comment
+	// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
+	_, _ = s.syncMergedPak(context.WithoutCancel(ctx), game, profileName) //nolint:errcheck // best-effort, see doc comment
 	return nil
 }
 
