@@ -363,3 +363,113 @@ func TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr(t *testing.T) {
 	assert.Contains(t, cmdErr.Error(), "failed to remove mod record")
 	assert.Contains(t, stderr, "Warning: uninstall.before_each hook failed (forced): ", "the accumulated Warning must still reach stderr despite the command failing")
 }
+
+// TestDoUninstall_BeforeAllHookFails_AbortsWithoutForce characterizes the
+// pre-lift doUninstall's hook-refusal semantics (Task 2, #286): without
+// --force, a failing uninstall.before_all hook aborts the whole uninstall
+// before the mod is undeployed, cache-cleaned, or removed from the DB/
+// profile - the non-forced counterpart to
+// TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr's forced
+// case, added because nothing else in this file pinned the refusal path
+// before hook resolution moves into core.
+func TestDoUninstall_BeforeAllHookFails_AbortsWithoutForce(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\nexit 1\n"), 0755))
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		Hooks: domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}},
+	}
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create("g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod("g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+
+	oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks
+	uninstallSource = ""
+	uninstallProfile = ""
+	uninstallKeep = false
+	uninstallForce = false
+	verbose = false
+	noHooks = false
+	t.Cleanup(func() {
+		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks = oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks
+	})
+
+	cmdErr := doUninstall(context.Background(), svc, game, "1")
+	require.Error(t, cmdErr)
+	assert.Contains(t, cmdErr.Error(), "uninstall.before_all hook failed")
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	assert.NoError(t, dbErr, "a fatal before_all hook must leave the mod record untouched")
+}
+
+// TestDoUninstall_NoHooks_SkipsConfiguredHook characterizes --no-hooks for
+// doUninstall (Task 2, #286): a configured uninstall.before_all hook that
+// would otherwise abort the uninstall (it exits 1) never runs at all when
+// noHooks is set, so the uninstall proceeds and succeeds.
+func TestDoUninstall_NoHooks_SkipsConfiguredHook(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\nexit 1\n"), 0755))
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		Hooks: domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}},
+	}
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create("g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod("g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+
+	oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks
+	uninstallSource = ""
+	uninstallProfile = ""
+	uninstallKeep = false
+	uninstallForce = false
+	verbose = false
+	noHooks = true
+	t.Cleanup(func() {
+		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks = oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks
+	})
+
+	require.NoError(t, doUninstall(context.Background(), svc, game, "1"), "--no-hooks must skip the hook entirely, letting the uninstall succeed")
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
+	assert.Error(t, dbErr, "the mod record must be gone once the uninstall succeeds")
+}
