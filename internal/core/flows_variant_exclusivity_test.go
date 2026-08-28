@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -211,17 +210,15 @@ func TestApplyInstall_BatchPath_TargetFileIDs_MixedVariants_Rejected(t *testing.
 	require.False(t, gameCache.Exists(game.ID, "mc", "mod1", "1.0"), "a rejected selection must leave no cache entry")
 }
 
-// beforeAllSentinelHooks returns a ResolvedHooks whose install.before_all
-// script touches sentinel (via `touch`), plus the HookRunner to drive it -
-// mirrors TestService_ApplyInstall_HookOrder's createTestScript/HookRunner
-// pattern (flows_install_test.go), pared down to just before_all since these
-// #214 tests only care about that hook's firing order.
-func beforeAllSentinelHooks(t *testing.T, scriptsDir, sentinel string) (*core.ResolvedHooks, *core.HookRunner) {
+// seedBeforeAllSentinelHook seeds game's install.before_all hook to touch
+// sentinel (via `touch`) - mirrors TestService_ApplyInstall_HookOrder's
+// createTestScript pattern (flows_install_test.go), pared down to just
+// before_all since these #214 tests only care about that hook's firing
+// order.
+func seedBeforeAllSentinelHook(t *testing.T, svc *core.Service, game *domain.Game, scriptsDir, sentinel string) {
 	t.Helper()
 	script := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\ntouch "+sentinel+"\nexit 0")
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: script}}
-	runner := core.NewHookRunner(5 * time.Second)
-	return hooks, runner
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: script}})
 }
 
 // TestApplyInstall_BatchPath_PreResolutionFailure_SkipsBeforeAllHook is
@@ -244,9 +241,9 @@ func TestApplyInstall_BatchPath_PreResolutionFailure_SkipsBeforeAllHook(t *testi
 
 	scriptsDir := t.TempDir()
 	sentinel := filepath.Join(scriptsDir, "before_all_ran")
-	hooks, runner := beforeAllSentinelHooks(t, scriptsDir, sentinel)
+	seedBeforeAllSentinelHook(t, svc, game, scriptsDir, sentinel)
 
-	opts := core.InstallOptions{TargetFileIDs: []string{"pak", "exmodz"}, Hooks: hooks, HookRunner: runner}
+	opts := core.InstallOptions{TargetFileIDs: []string{"pak", "exmodz"}}
 	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
 	require.ErrorContains(t, err, "alternate forms of the same mod")
 
@@ -275,9 +272,9 @@ func TestApplyInstall_BatchPath_BadFileID_SkipsBeforeAllHook(t *testing.T) {
 
 	scriptsDir := t.TempDir()
 	sentinel := filepath.Join(scriptsDir, "before_all_ran")
-	hooks, runner := beforeAllSentinelHooks(t, scriptsDir, sentinel)
+	seedBeforeAllSentinelHook(t, svc, game, scriptsDir, sentinel)
 
-	opts := core.InstallOptions{TargetFileIDs: []string{"no-such-id"}, Hooks: hooks, HookRunner: runner}
+	opts := core.InstallOptions{TargetFileIDs: []string{"no-such-id"}}
 	_, err = svc.ApplyInstall(context.Background(), game, plan, opts, nil)
 	require.ErrorContains(t, err, "file ID no-such-id not found")
 
@@ -321,9 +318,9 @@ func TestApplyInstall_BatchPath_Success_StillRunsBeforeAll(t *testing.T) {
 
 	scriptsDir := t.TempDir()
 	sentinel := filepath.Join(scriptsDir, "before_all_ran")
-	hooks, runner := beforeAllSentinelHooks(t, scriptsDir, sentinel)
+	seedBeforeAllSentinelHook(t, svc, game, scriptsDir, sentinel)
 
-	opts := core.InstallOptions{TargetFileIDs: []string{"pak"}, Hooks: hooks, HookRunner: runner}
+	opts := core.InstallOptions{TargetFileIDs: []string{"pak"}}
 	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)

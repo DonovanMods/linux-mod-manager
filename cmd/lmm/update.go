@@ -772,11 +772,8 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	opts := core.UpdateOptions{
-		Hooks:       getResolvedHooks(service, game, profileName),
-		HookRunner:  getHookRunner(service),
-		HookContext: makeHookContext(game),
-		Force:       updateForce,
-		SkipHooks:   noHooks,
+		Force:     updateForce,
+		SkipHooks: noHooks,
 	}
 
 	progress := func(e core.Event) {
@@ -905,11 +902,8 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	}
 
 	opts := core.RollbackOptions{
-		Hooks:       getResolvedHooks(service, game, profileName),
-		HookRunner:  getHookRunner(service),
-		HookContext: makeHookContext(game),
-		Force:       updateForce,
-		SkipHooks:   noHooks,
+		Force:     updateForce,
+		SkipHooks: noHooks,
 	}
 
 	progress := func(e core.Event) {

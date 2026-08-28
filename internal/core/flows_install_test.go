@@ -24,7 +24,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -682,15 +681,12 @@ exit 0`)
 echo "after_all" >> `+callLog+`
 exit 0`)
 
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{
 		BeforeAll: beforeAllScript, BeforeEach: beforeEachScript,
 		AfterEach: afterEachScript, AfterAll: afterAllScript,
-	}}
-	runner := core.NewHookRunner(5 * time.Second)
+	}})
 
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{
-		Hooks: hooks, HookRunner: runner,
-	}, nil)
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -1189,8 +1185,6 @@ func TestService_ApplyInstall_ContextCancelledBetweenPrimaryFiles(t *testing.T) 
 func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 	scriptsDir := t.TempDir()
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\necho boom >&2\nexit 1\n")
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
 
 	newPlan := func(t *testing.T) (*core.Service, *domain.Game, *core.InstallPlan) {
 		svc := newFlowsTestService(t)
@@ -1200,6 +1194,7 @@ func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 		t.Cleanup(mock.Close)
 		svc.RegisterSource(mock)
 		registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}})
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 		require.NoError(t, err)
 		return svc, game, plan
@@ -1207,7 +1202,7 @@ func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 
 	t.Run("fatal without Force", func(t *testing.T) {
 		svc, game, plan := newPlan(t)
-		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_all hook failed")
 		require.NotNil(t, result)
@@ -1218,7 +1213,7 @@ func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 
 	t.Run("forced continues with a warning", func(t *testing.T) {
 		svc, game, plan := newPlan(t)
-		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner, Force: true}, nil)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Force: true}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Len(t, result.Warnings, 1)
@@ -1236,8 +1231,6 @@ func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
 	scriptsDir := t.TempDir()
 	failScript := createTestScript(t, scriptsDir, "before_each.sh", "#!/bin/bash\necho boom >&2\nexit 1\n")
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
 
 	newPlan := func(t *testing.T) (*core.Service, *domain.Game, *core.InstallPlan) {
 		svc := newFlowsTestService(t)
@@ -1247,6 +1240,7 @@ func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
 		t.Cleanup(mock.Close)
 		svc.RegisterSource(mock)
 		registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failScript}})
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 		require.NoError(t, err)
 		return svc, game, plan
@@ -1254,7 +1248,7 @@ func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
 
 	t.Run("fatal without Force", func(t *testing.T) {
 		svc, game, plan := newPlan(t)
-		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_each hook failed")
 		require.NotNil(t, result)
@@ -1263,7 +1257,7 @@ func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
 
 	t.Run("forced continues with a warning", func(t *testing.T) {
 		svc, game, plan := newPlan(t)
-		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner, Force: true}, nil)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Force: true}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Len(t, result.Warnings, 1)
@@ -1305,10 +1299,9 @@ if [ "$LMM_MOD_ID" = "dep1" ]; then
   exit 1
 fi
 exit 0`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failScript}})
 
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err, "a dependency's before_each failure must never fail the whole install, even without Force")
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Root"}, result.Installed)
@@ -1475,8 +1468,7 @@ func TestApplyInstall_ExplicitOldFile_BeforeEachHookSeesEffectiveVersion(t *test
 	beforeEach := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
 echo "install.before_each:$LMM_MOD_ID:$LMM_MOD_VERSION" >> `+callLog+`
 exit 0`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: beforeEach}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: beforeEach}})
 
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
@@ -1486,7 +1478,7 @@ exit 0`)
 		{ID: "2", Name: "Old File", FileName: "mod1-old.zip", Version: "1.0"},
 	}
 
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Mod One"}, result.Installed)
@@ -2035,11 +2027,10 @@ if [ "$LMM_MOD_ID" = "root" ]; then
   exit 1
 fi
 exit 0`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failScript}})
 
 	sink, seen := core.RecordEvents()
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, sink)
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err, "the primary's before_each failure must never fail the whole install in the BATCH path, even without Force")
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Dep One"}, result.Installed, "only the dependency installs - the primary was skipped")

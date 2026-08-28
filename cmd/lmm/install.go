@@ -628,9 +628,6 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		TargetVersion: installVersion,
 		TargetFileIDs: installFileIDList(),
 		SkipVerify:    skipVerify,
-		Hooks:         getResolvedHooks(service, game, profileName),
-		HookRunner:    getHookRunner(service),
-		HookContext:   makeHookContext(game),
 		Force:         installForce,
 		SkipHooks:     noHooks,
 		// ConfirmConflicts restores the pre-extraction CLI's blocking
@@ -772,9 +769,6 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		TargetVersion: installVersion,
 		TargetFileIDs: installFileIDList(),
 		SkipVerify:    skipVerify,
-		Hooks:         getResolvedHooks(service, game, profileName),
-		HookRunner:    getHookRunner(service),
-		HookContext:   makeHookContext(game),
 		Force:         installForce,
 		SkipHooks:     noHooks,
 	}

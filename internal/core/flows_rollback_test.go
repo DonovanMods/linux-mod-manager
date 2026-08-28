@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -256,10 +255,9 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 	t.Run("uninstall.before_each fatal without Force", func(t *testing.T) {
 		svc, game, mod := newSetup(t)
 		scriptsDir := t.TempDir()
-		hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
-		runner := core.NewHookRunner(5 * time.Second)
+		seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
-		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Hooks: hooks, HookRunner: runner}, nil)
+		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_each hook failed")
 		require.NotNil(t, result)
@@ -273,11 +271,10 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 	t.Run("uninstall.before_each forced warns and proceeds", func(t *testing.T) {
 		svc, game, mod := newSetup(t)
 		scriptsDir := t.TempDir()
-		hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
-		runner := core.NewHookRunner(5 * time.Second)
+		seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
 		sink, seen := core.RecordEvents()
-		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Hooks: hooks, HookRunner: runner, Force: true}, sink)
+		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Force: true}, sink)
 		require.NoError(t, err)
 		require.Len(t, result.Warnings, 1)
 		assert.Contains(t, result.Warnings[0], "uninstall.before_each hook failed (forced):")
@@ -300,10 +297,9 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 	t.Run("install.before_each fatal without Force", func(t *testing.T) {
 		svc, game, mod := newSetup(t)
 		scriptsDir := t.TempDir()
-		hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
-		runner := core.NewHookRunner(5 * time.Second)
+		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
-		_, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Hooks: hooks, HookRunner: runner}, nil)
+		_, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_each hook failed")
 
@@ -315,10 +311,9 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 	t.Run("install.before_each forced warns and proceeds", func(t *testing.T) {
 		svc, game, mod := newSetup(t)
 		scriptsDir := t.TempDir()
-		hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
-		runner := core.NewHookRunner(5 * time.Second)
+		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
-		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Hooks: hooks, HookRunner: runner, Force: true}, nil)
+		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Force: true}, nil)
 		require.NoError(t, err)
 		require.Len(t, result.Warnings, 1)
 		assert.Contains(t, result.Warnings[0], "install.before_each hook failed (forced):")
@@ -344,14 +339,13 @@ func TestApplyRollbackAfterEachWarnings(t *testing.T) {
 		map[string][]byte{"mod1-new.esp": []byte("new-content")})
 
 	scriptsDir := t.TempDir()
-	hooks := &core.ResolvedHooks{
+	seedHooks(t, svc, game, "default", domain.GameHooks{
 		Uninstall: domain.HookConfig{AfterEach: createTestScript(t, scriptsDir, "u_after.sh", "#!/bin/bash\necho boom >&2\nexit 1")},
 		Install:   domain.HookConfig{AfterEach: createTestScript(t, scriptsDir, "i_after.sh", "#!/bin/bash\necho boom >&2\nexit 1")},
-	}
-	runner := core.NewHookRunner(5 * time.Second)
+	})
 
 	sink, seen := core.RecordEvents()
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Hooks: hooks, HookRunner: runner}, sink)
+	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, sink)
 	require.NoError(t, err, "after_each hook failures must never fail the rollback")
 	require.Len(t, result.Warnings, 2)
 	assert.Contains(t, result.Warnings[0], "uninstall.after_each hook failed")

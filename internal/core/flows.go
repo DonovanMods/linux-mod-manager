@@ -256,14 +256,13 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 type UninstallOptions struct {
 	KeepCache bool // --keep-cache: skip deleting the mod's cache entry
 
-	// Hook plumbing, mirroring the BATCH install path's own hook fields
-	// (applyInstallBatchMod). Nil Hooks/HookRunner or SkipHooks skips hook
-	// execution entirely (e.g. --no-hooks).
-	Hooks       *ResolvedHooks
-	HookRunner  *HookRunner
-	HookContext HookContext
-	Force       bool // continue past a failing uninstall.before_* hook (warn instead of fail)
-	SkipHooks   bool // run no hooks even when Hooks/HookRunner are set (the CLI's --no-hooks)
+	// Hook plumbing: UninstallMod resolves the game/profile hooks and a
+	// HookRunner itself (Service.resolvedHooks/hookRunner, hooks_resolve.go)
+	// rather than taking them from the caller. SkipHooks (the CLI's
+	// --no-hooks) still skips execution entirely even though the hooks were
+	// resolved.
+	Force     bool // continue past a failing uninstall.before_* hook (warn instead of fail)
+	SkipHooks bool // run no hooks even when hooks are configured (the CLI's --no-hooks)
 
 	// No verbosity concept lives here: core never gates or prints
 	// diagnostics. UninstallResult.Notes and .Warnings are always fully
@@ -331,9 +330,18 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 	}
 
 	result := &UninstallResult{}
-	hookCtx := opts.HookContext
 
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "uninstall.before_all", opts.Hooks.GetUninstallBeforeAll()); err != nil {
+	hooks, err := s.resolvedHooks(ctx, game, profileName)
+	if err != nil {
+		return result, err
+	}
+	runner, err := s.hookRunner(ctx)
+	if err != nil {
+		return result, err
+	}
+	hookCtx := hookContextFor(game)
+
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.before_all", hooks.GetUninstallBeforeAll()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("uninstall.before_all hook failed: %w", err)
 		}
@@ -343,7 +351,7 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 	hookCtx.ModID = mod.ID
 	hookCtx.ModName = mod.Name
 	hookCtx.ModVersion = mod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.before_each", hooks.GetUninstallBeforeEach()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("uninstall.before_each hook failed: %w", err)
 		}
@@ -377,14 +385,14 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Notes = append(result.Notes, fmt.Sprintf("Note: %v", err))
 	}
 
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.after_each", hooks.GetUninstallAfterEach()); err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_each hook failed: %v", err))
 	}
 
 	hookCtx.ModID = ""
 	hookCtx.ModName = ""
 	hookCtx.ModVersion = ""
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "uninstall.after_all", opts.Hooks.GetUninstallAfterAll()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.after_all", hooks.GetUninstallAfterAll()); err != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.after_all hook failed: %v", err))
 	}
 
@@ -443,16 +451,13 @@ type DeployOptions struct {
 
 	All bool // --all: include disabled mods in a full-profile deploy, or allow deploying a disabled ModID.
 
-	// Hook plumbing, mirroring UninstallOptions. Nil Hooks/HookRunner or
-	// SkipHooks skips hook execution entirely (e.g. --no-hooks). The deploy
-	// pass runs install.* hooks; the purge pass (when Purge is set) runs
-	// uninstall.* hooks, matching the pre-extraction CLI's doDeploy/
-	// purgeDeployedMods split.
-	Hooks       *ResolvedHooks
-	HookRunner  *HookRunner
-	HookContext HookContext
-	Force       bool // continue past a failing before_* hook (warn instead of fail)
-	SkipHooks   bool // run no hooks even when Hooks/HookRunner are set (the CLI's --no-hooks)
+	// Hook plumbing, mirroring UninstallOptions: DeployProfile resolves the
+	// game/profile hooks and a HookRunner itself. The deploy pass runs
+	// install.* hooks; the purge pass (when Purge is set) runs uninstall.*
+	// hooks, matching the pre-extraction CLI's doDeploy/purgeDeployedMods
+	// split.
+	Force     bool // continue past a failing before_* hook (warn instead of fail)
+	SkipHooks bool // run no hooks even when hooks are configured (the CLI's --no-hooks)
 }
 
 // DeployPhase identifies what DeployProfile is doing for the mod named in
@@ -1841,6 +1846,15 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
+	hooks, err := s.resolvedHooks(ctx, game, profileName)
+	if err != nil {
+		return result, err
+	}
+	runner, err := s.hookRunner(ctx)
+	if err != nil {
+		return result, err
+	}
+
 	var enabledBeforePurge map[string]bool
 	if opts.Purge {
 		mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
@@ -1858,7 +1872,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 				enabledBeforePurge[domain.ModKey(m.SourceID, m.ID)] = true
 			}
 		}
-		if err := s.purgeForDeploy(ctx, game, profileName, mods, opts, result, emit); err != nil {
+		if err := s.purgeForDeploy(ctx, game, profileName, mods, opts, hooks, runner, result, emit); err != nil {
 			return result, fmt.Errorf("purging mods: %w", err)
 		}
 	}
@@ -1910,8 +1924,8 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		return result, nil
 	}
 
-	hookCtx := opts.HookContext
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.before_all", opts.Hooks.GetInstallBeforeAll()); err != nil {
+	hookCtx := hookContextFor(game)
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_all", hooks.GetInstallBeforeAll()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("install.before_all hook failed: %w", err)
 		}
@@ -1948,7 +1962,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		scope := Scope{Op: OpDeploy, Index: idx + 1, Total: total, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 
 		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-		if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+		if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
 			reason := fmt.Sprintf("install.before_each hook failed: %v", err)
 			emit(ModEvent{Scope: scope, Phase: DeployBeforeEachSkipped, Detail: reason})
 			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
@@ -1988,7 +2002,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		result.Deployed++
 		emit(ModEvent{Scope: scope, Phase: DeployDeployed, Class: modClasses[domain.ModKey(mod.SourceID, mod.ID)]})
 
-		if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+		if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_each", hooks.GetInstallAfterEach()); err != nil {
 			msg := fmt.Sprintf("install.after_each hook failed for %s: %v", mod.ID, err)
 			result.Warnings = append(result.Warnings, msg)
 			deferredWarnings = append(deferredWarnings, WarningEvent{Scope: scope, Phase: DeployWarning, Message: msg})
@@ -2003,7 +2017,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.after_all", opts.Hooks.GetInstallAfterAll()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_all", hooks.GetInstallAfterAll()); err != nil {
 		msg := fmt.Sprintf("install.after_all hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
 		deferredWarnings = append(deferredWarnings, WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
@@ -2146,13 +2160,13 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 // thin adapter over purgeMods - the single purge loop it shares with
 // PurgeProfile (the standalone `lmm purge` command's flow). See
 // DeployResult's doc comment for where each diagnostic ends up.
-func (s *Service) purgeForDeploy(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts DeployOptions, result *DeployResult, emit func(Event)) error {
+func (s *Service) purgeForDeploy(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts DeployOptions, hooks *ResolvedHooks, runner *HookRunner, result *DeployResult, emit func(Event)) error {
 	return s.purgeMods(ctx, game, profileName, mods, purgeSpec{
 		op:        OpDeploy,
 		forDeploy: true,
-		hooks:     opts.Hooks,
-		runner:    opts.HookRunner,
-		hookCtx:   opts.HookContext,
+		hooks:     hooks,
+		runner:    runner,
+		hookCtx:   hookContextFor(game),
 		force:     opts.Force,
 		skip:      opts.SkipHooks,
 		emit:      emit,
@@ -2337,16 +2351,13 @@ type PurgeOptions struct {
 	// it not deployed - `lmm purge --uninstall`.
 	Uninstall bool
 
-	// Hook plumbing, mirroring DeployOptions/InstallOptions: all four
-	// uninstall.* hooks fire (purge is an uninstall-family operation). Nil
-	// Hooks/HookRunner or SkipHooks skips hook execution entirely (e.g.
-	// --no-hooks). Force continues past a failing uninstall.before_all hook
-	// (recorded as a Warning) instead of aborting the purge.
-	Hooks       *ResolvedHooks
-	HookRunner  *HookRunner
-	HookContext HookContext
-	Force       bool
-	SkipHooks   bool
+	// Hook plumbing, mirroring DeployOptions/InstallOptions: PurgeProfile
+	// resolves the game/profile hooks and a HookRunner itself; all four
+	// uninstall.* hooks fire (purge is an uninstall-family operation).
+	// Force continues past a failing uninstall.before_all hook (recorded
+	// as a Warning) instead of aborting the purge.
+	Force     bool
+	SkipHooks bool
 }
 
 // PurgeResult reports the outcome of PurgeProfile. Warnings and Notes
@@ -2390,12 +2401,22 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 
 func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, sink EventSink) (*PurgeResult, error) {
 	result := &PurgeResult{}
-	err := s.purgeMods(ctx, game, profileName, mods, purgeSpec{
+
+	hooks, err := s.resolvedHooks(ctx, game, profileName)
+	if err != nil {
+		return result, err
+	}
+	runner, err := s.hookRunner(ctx)
+	if err != nil {
+		return result, err
+	}
+
+	err = s.purgeMods(ctx, game, profileName, mods, purgeSpec{
 		op:        OpPurge,
 		uninstall: opts.Uninstall,
-		hooks:     opts.Hooks,
-		runner:    opts.HookRunner,
-		hookCtx:   opts.HookContext,
+		hooks:     hooks,
+		runner:    runner,
+		hookCtx:   hookContextFor(game),
 		force:     opts.Force,
 		skip:      opts.SkipHooks,
 		emit: func(e Event) {
@@ -3283,9 +3304,8 @@ type InstallOptions struct {
 	// and dependencies alike - batchInstallMods honors the same flag).
 	SkipVerify bool
 
-	// Hook plumbing, mirroring UninstallOptions/DeployOptions. Nil
-	// Hooks/HookRunner or SkipHooks skips hook execution entirely (e.g.
-	// --no-hooks).
+	// Hook plumbing, mirroring UninstallOptions/DeployOptions: ApplyInstall
+	// resolves the game/profile hooks and a HookRunner itself.
 	//
 	// Force gates install.before_all (once, always) and, in the STRICT
 	// (no-deps) path ONLY, the primary's own install.before_each - matching
@@ -3298,11 +3318,8 @@ type InstallOptions struct {
 	// task-2-report.md's "Fix wave 1" entry - restored this for the primary
 	// too; pre-extraction doInstall delegated the WHOLE list, target
 	// included, to batchInstallMods whenever Dependencies was non-empty).
-	Hooks       *ResolvedHooks
-	HookRunner  *HookRunner
-	HookContext HookContext
-	Force       bool
-	SkipHooks   bool // run no hooks even when Hooks/HookRunner are set (the CLI's --no-hooks)
+	Force     bool
+	SkipHooks bool // run no hooks even when hooks are configured (the CLI's --no-hooks)
 
 	// ConfirmConflicts gates the STRICT (no-deps) path's deploy step
 	// (applyInstallPrimary), restoring the pre-extraction CLI's blocking
@@ -3913,8 +3930,16 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		return result, err
 	}
 
-	hookCtx := opts.HookContext
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.before_all", opts.Hooks.GetInstallBeforeAll()); err != nil {
+	hooks, err := s.resolvedHooks(ctx, game, plan.Profile)
+	if err != nil {
+		return result, err
+	}
+	runner, err := s.hookRunner(ctx)
+	if err != nil {
+		return result, err
+	}
+	hookCtx := hookContextFor(game)
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_all", hooks.GetInstallBeforeAll()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("install.before_all hook failed: %w", err)
 		}
@@ -3963,7 +3988,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 			if idx == total-1 {
 				overrideFiles = primaryOverrideFiles
 			}
-			if warn := s.applyInstallBatchMod(ctx, game, plan, mod, idx, total, linkMethod, pm, opts, result, emit, overrideFiles); warn != nil {
+			if warn := s.applyInstallBatchMod(ctx, game, plan, mod, idx, total, linkMethod, pm, opts, hooks, runner, result, emit, overrideFiles); warn != nil {
 				deferredWarnings = append(deferredWarnings, *warn)
 			}
 		}
@@ -3976,7 +4001,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		}
 	} else {
 		// --- STRICT path: only the primary, doInstall's own mechanics. ---
-		afterEachWarning, err := s.applyInstallPrimary(ctx, game, plan, linkMethod, pm, opts, result, emit)
+		afterEachWarning, err := s.applyInstallPrimary(ctx, game, plan, linkMethod, pm, opts, hooks, runner, result, emit)
 		if err != nil {
 			return result, err
 		}
@@ -3986,7 +4011,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.after_all", opts.Hooks.GetInstallAfterAll()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_all", hooks.GetInstallAfterAll()); err != nil {
 		msg := fmt.Sprintf("install.after_all hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
 		deferredWarnings = append(deferredWarnings, WarningEvent{Scope: Scope{Op: OpInstall}, Phase: InstallWarning, Message: msg})
@@ -4046,7 +4071,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 // Every dependency iteration passes nil here and re-derives its own
 // selection exactly as before - decision 6, dependencies install at latest
 // regardless of the primary's pins.
-func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(Event), overrideFiles []domain.DownloadableFile) *WarningEvent {
+func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, hooks *ResolvedHooks, runner *HookRunner, result *InstallResult, emit func(Event), overrideFiles []domain.DownloadableFile) *WarningEvent {
 	scope := Scope{Op: OpInstall, Index: idx + 1, Total: total, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 	skip := func(label, reason string) {
 		emit(ModEvent{Scope: scope, Phase: InstallDepSkipped, Detail: fmt.Sprintf("%s: %s", label, reason)})
@@ -4056,9 +4081,9 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 
 	emit(ModEvent{Scope: scope, Phase: InstallDepInstalling, Version: mod.Version})
 
-	hookCtx := opts.HookContext
+	hookCtx := hookContextFor(game)
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
 		skip("Skipped", fmt.Sprintf("install.before_each hook failed: %v", err))
 		return nil
 	}
@@ -4237,7 +4262,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	result.Installed = append(result.Installed, mod.Name)
 	emit(ModEvent{Scope: scope, Phase: InstallDepInstalled, FilesExtracted: filesExtracted})
 
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_each", hooks.GetInstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("install.after_each hook failed for %s: %v", mod.ID, err)
 		result.Warnings = append(result.Warnings, msg)
 		return &WarningEvent{Scope: scope, Phase: InstallWarning, Message: msg}
@@ -4269,7 +4294,7 @@ type fileChecksum struct {
 // Dependencies was non-empty). Returns the install.after_each warning event
 // to defer (nil if none). A non-nil error is always fatal to ApplyInstall
 // as a whole, matching doInstall's own early returns.
-func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, plan *InstallPlan, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(Event)) (*WarningEvent, error) {
+func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, plan *InstallPlan, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, hooks *ResolvedHooks, runner *HookRunner, result *InstallResult, emit func(Event)) (*WarningEvent, error) {
 	mod := plan.Mod // local, addressable copy - distinct from plan.Mod
 
 	// #94: record what is actually being installed. plan.Files is the final
@@ -4288,9 +4313,9 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	scope := Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 	modScope := Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 
-	hookCtx := opts.HookContext
+	hookCtx := hookContextFor(game)
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
 		if !opts.Force {
 			return nil, fmt.Errorf("install.before_each hook failed: %w", err)
 		}
@@ -4539,7 +4564,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	result.Installed = append(result.Installed, mod.Name)
 	emit(ModEvent{Scope: modScope, Phase: InstallDone})
 
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_each", hooks.GetInstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
 		return &WarningEvent{Scope: modScope, Phase: InstallWarning, Message: msg}, nil
@@ -4556,16 +4581,12 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 // install.before_each for the new one), matching applyUpdate's own
 // near-identical Force checks exactly.
 type UpdateOptions struct {
-	// Hook plumbing, mirroring UninstallOptions/DeployOptions/InstallOptions.
-	// Nil Hooks/HookRunner or SkipHooks skips hook execution entirely
-	// (e.g. --no-hooks).
-	Hooks       *ResolvedHooks
-	HookRunner  *HookRunner
-	HookContext HookContext
+	// Hook plumbing, mirroring UninstallOptions/DeployOptions/InstallOptions:
+	// ApplyUpdate resolves the game/profile hooks and a HookRunner itself.
 	// Force: continue past a failing uninstall.before_each/install.before_each
 	// hook (warn instead of fail), matching applyUpdate's own --force gate.
 	Force bool
-	// SkipHooks: run no hooks even when Hooks/HookRunner are set (the CLI's --no-hooks).
+	// SkipHooks: run no hooks even when hooks are configured (the CLI's --no-hooks).
 	SkipHooks bool
 }
 
@@ -4791,9 +4812,17 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 		return result, err
 	}
 
-	hookCtx := opts.HookContext
+	hooks, err := s.resolvedHooks(ctx, game, profileName)
+	if err != nil {
+		return result, err
+	}
+	runner, err := s.hookRunner(ctx)
+	if err != nil {
+		return result, err
+	}
+	hookCtx := hookContextFor(game)
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.before_each", hooks.GetUninstallBeforeEach()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("uninstall.before_each hook failed: %w", err)
 		}
@@ -4809,7 +4838,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("install.before_each hook failed: %w", err)
 		}
@@ -4832,13 +4861,13 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.after_each", hooks.GetUninstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("uninstall.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_each", hooks.GetInstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
@@ -4896,13 +4925,9 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 
 // --- ApplyRollback (Phase 6b Task 5) ---
 
-// RollbackOptions configures ApplyRollback, mirroring UpdateOptions'
-// (ApplyUpdate's own, flows.go:2971) hook plumbing exactly: Hooks/HookRunner/
-// HookContext are supplied by the caller - the CLI resolves them via
-// getHookRunner/getResolvedHooks/makeHookContext, respecting --no-hooks and
-// the configured hook timeout, concerns core deliberately does not
-// reimplement (see UpdateOptions' own doc comment). Nil Hooks/HookRunner or
-// SkipHooks skips hook execution entirely.
+// RollbackOptions configures ApplyRollback, mirroring UpdateOptions' own
+// hook plumbing exactly: ApplyRollback resolves the game/profile hooks and
+// a HookRunner itself (Service.resolvedHooks/hookRunner, hooks_resolve.go).
 //
 // Force gates ONLY the rollback's two before_each hooks - uninstall.before_each
 // (the version being rolled back FROM) and install.before_each (the version
@@ -4910,11 +4935,8 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 // exactly. As with UpdateOptions, there is no before_all/after_all pair:
 // doUpdateRollback never ran one.
 type RollbackOptions struct {
-	Hooks       *ResolvedHooks
-	HookRunner  *HookRunner
-	HookContext HookContext
-	Force       bool
-	SkipHooks   bool // run no hooks even when Hooks/HookRunner are set (the CLI's --no-hooks)
+	Force     bool
+	SkipHooks bool // run no hooks even when hooks are configured (the CLI's --no-hooks)
 }
 
 // RollbackResult reports the outcome of ApplyRollback.
@@ -5065,9 +5087,17 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 
 	scope := Scope{Op: OpRollback, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 
-	hookCtx := opts.HookContext
+	hooks, err := s.resolvedHooks(ctx, game, profileName)
+	if err != nil {
+		return result, err
+	}
+	runner, err := s.hookRunner(ctx)
+	if err != nil {
+		return result, err
+	}
+	hookCtx := hookContextFor(game)
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "uninstall.before_each", opts.Hooks.GetUninstallBeforeEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.before_each", hooks.GetUninstallBeforeEach()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("uninstall.before_each hook failed: %w", err)
 		}
@@ -5086,7 +5116,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 	prevMod.Version = mod.PreviousVersion
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = prevMod.ID, prevMod.Name, prevMod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("install.before_each hook failed: %w", err)
 		}
@@ -5105,13 +5135,13 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 	}
 
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.after_each", hooks.GetUninstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("uninstall.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = prevMod.ID, prevMod.Name, prevMod.Version
-	if err := runHook(ctx, opts.SkipHooks, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_each", hooks.GetInstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
 		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})

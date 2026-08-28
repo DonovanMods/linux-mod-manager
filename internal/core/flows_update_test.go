@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -211,14 +210,13 @@ exit 0`)
 echo "install.after_each:$LMM_MOD_ID:$LMM_MOD_VERSION" >> `+callLog+`
 exit 0`)
 
-	hooks := &core.ResolvedHooks{
+	seedHooks(t, svc, game, "default", domain.GameHooks{
 		Install:   domain.HookConfig{BeforeEach: installBeforeEach, AfterEach: installAfterEach},
 		Uninstall: domain.HookConfig{BeforeEach: uninstallBeforeEach, AfterEach: uninstallAfterEach},
-	}
-	runner := core.NewHookRunner(5 * time.Second)
+	})
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner}, nil)
+	result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -739,11 +737,10 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 	t.Run("uninstall.before_each fatal without Force", func(t *testing.T) {
 		svc, game, old, _ := newSetup(t)
 		scriptsDir := t.TempDir()
-		hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
-		runner := core.NewHookRunner(5 * time.Second)
+		seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner}, nil)
+		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_each hook failed")
 		assert.Empty(t, result.Applied)
@@ -756,12 +753,11 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 	t.Run("uninstall.before_each forced warns and proceeds", func(t *testing.T) {
 		svc, game, old, _ := newSetup(t)
 		scriptsDir := t.TempDir()
-		hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
-		runner := core.NewHookRunner(5 * time.Second)
+		seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
 		sink, seen := core.RecordEvents()
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner, Force: true}, sink)
+		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Force: true}, sink)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 		require.Len(t, result.Warnings, 1)
@@ -781,11 +777,10 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 	t.Run("install.before_each fatal without Force", func(t *testing.T) {
 		svc, game, old, _ := newSetup(t)
 		scriptsDir := t.TempDir()
-		hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
-		runner := core.NewHookRunner(5 * time.Second)
+		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner}, nil)
+		_, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_each hook failed")
 	})
@@ -793,11 +788,10 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 	t.Run("install.before_each forced warns and proceeds", func(t *testing.T) {
 		svc, game, old, _ := newSetup(t)
 		scriptsDir := t.TempDir()
-		hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
-		runner := core.NewHookRunner(5 * time.Second)
+		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner, Force: true}, nil)
+		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Force: true}, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 		require.Len(t, result.Warnings, 1)
@@ -807,15 +801,14 @@ func TestService_ApplyUpdate_HookFailureSemantics(t *testing.T) {
 	t.Run("after_each hook failures are always non-fatal warnings", func(t *testing.T) {
 		svc, game, old, _ := newSetup(t)
 		scriptsDir := t.TempDir()
-		hooks := &core.ResolvedHooks{
+		seedHooks(t, svc, game, "default", domain.GameHooks{
 			Uninstall: domain.HookConfig{AfterEach: failingScript(t, scriptsDir, "u_after.sh")},
 			Install:   domain.HookConfig{AfterEach: failingScript(t, scriptsDir, "i_after.sh")},
-		}
-		runner := core.NewHookRunner(5 * time.Second)
+		})
 
 		sink, seen := core.RecordEvents()
 		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
-		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{Hooks: hooks, HookRunner: runner}, sink)
+		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, sink)
 		require.NoError(t, err, "after_each hook failures must never fail the update")
 		assert.Equal(t, []string{"Mod One 1.0 → 2.0"}, result.Applied)
 		require.Len(t, result.Warnings, 2)

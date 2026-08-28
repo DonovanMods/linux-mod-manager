@@ -94,12 +94,9 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	}
 
 	opts := core.PurgeOptions{
-		Uninstall:   purgeUninstall,
-		Hooks:       getResolvedHooks(service, game, profileName),
-		HookRunner:  getHookRunner(service),
-		HookContext: makeHookContext(game),
-		Force:       purgeForce,
-		SkipHooks:   noHooks,
+		Uninstall: purgeUninstall,
+		Force:     purgeForce,
+		SkipHooks: noHooks,
 	}
 
 	// progress prints every diagnostic and per-mod line at its exact point
