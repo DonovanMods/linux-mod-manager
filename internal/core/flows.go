@@ -255,8 +255,9 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 type UninstallOptions struct {
 	KeepCache bool // --keep-cache: skip deleting the mod's cache entry
 
-	// Hook plumbing, mirroring BatchOptions. Nil Hooks/HookRunner or
-	// SkipHooks skips hook execution entirely (e.g. --no-hooks).
+	// Hook plumbing, mirroring the BATCH install path's own hook fields
+	// (applyInstallBatchMod). Nil Hooks/HookRunner or SkipHooks skips hook
+	// execution entirely (e.g. --no-hooks).
 	Hooks       *ResolvedHooks
 	HookRunner  *HookRunner
 	HookContext HookContext

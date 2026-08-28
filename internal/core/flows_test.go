@@ -38,6 +38,18 @@ func (s *versionedFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) 
 	}, nil
 }
 
+// createTestScript creates an executable script in the temp directory.
+// Shared by every hook-lifecycle test across this package (flows_test.go,
+// flows_install_test.go, flows_update_test.go, flows_rollback_test.go,
+// flows_variant_exclusivity_test.go) - moved here when the dead batch
+// installer's test file (its original home) was deleted (#284, #285).
+func createTestScript(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	scriptPath := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(scriptPath, []byte(content), 0755))
+	return scriptPath
+}
+
 // newFlowsTestService returns a *core.Service backed by fresh temp dirs
 // (config/data/cache), matching the construction pattern used throughout
 // service_test.go.

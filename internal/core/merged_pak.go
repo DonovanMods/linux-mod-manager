@@ -482,11 +482,11 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				// - is always safe, never a double-apply: the raw copy is
 				// never claimed as "gone" (members=nil) before it actually
 				// is.
-				// Single-mod Installer.Uninstall, not UninstallBatch - no
-				// before/after hooks run for this undeploy (hooks are only
-				// wired through the batch path's BatchOptions). User-observable:
-				// a game's uninstall/before_each/after_each hooks never fire
-				// for this reconcile-driven raw-pak takedown.
+				// Single-mod Installer.Uninstall - no before/after hooks run
+				// for this undeploy (hooks are only wired through the BATCH
+				// install path's applyInstallBatchMod, not here).
+				// User-observable: a game's uninstall/before_each/after_each
+				// hooks never fire for this reconcile-driven raw-pak takedown.
 				if uerr := installer.Uninstall(ctx, game, &mod.Mod, profileName); uerr != nil {
 					return warnings, fmt.Errorf("undeploying raw pak for %s: %w", ref, uerr)
 				}
@@ -551,9 +551,9 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, members); werr != nil {
 					return warnings, fmt.Errorf("flipping %s to raw-deploy: %w", ref, werr)
 				}
-				// Single-mod Installer.Install, not InstallBatch - same hook
-				// gap as the Uninstall call above: no install hooks run for
-				// this reconcile-driven raw-pak fallback deploy.
+				// Single-mod Installer.Install - same hook gap as the
+				// Uninstall call above: no install hooks run for this
+				// reconcile-driven raw-pak fallback deploy.
 				if ierr := installer.Install(ctx, game, &mod.Mod, profileName); ierr != nil {
 					return warnings, fmt.Errorf("deploying raw pak for %s: %w", ref, ierr)
 				}
